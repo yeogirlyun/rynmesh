@@ -1361,6 +1361,7 @@ def create_app(store: RynmeshStore | None = None):
     app.state.digest_service = DigestService(
         active_store.home,
         bootstrap_defaults=desktop_discovery,
+        profile_store=_recommendation_profile,
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.model_provider = None
@@ -1642,16 +1643,20 @@ def create_app(store: RynmeshStore | None = None):
     async def local_digest_steer(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
-        return _digest_service().steer(str(body.get("text", "")))
+        result = _digest_service().steer(str(body.get("text", "")))
+        _digest_service().build(now_unix=time.time())
+        return result
 
     @app.post("/api/local/digest/feedback")
     async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
         try:
-            return _digest_service().feedback(
+            result = _digest_service().feedback(
                 str(body.get("item_id", "")), str(body.get("action", ""))
             )
+            _digest_service().build(now_unix=time.time())
+            return result
         except DigestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1714,7 +1719,11 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="recommendation_profile_not_object")
-        return _recommendation_profile.patch(body)
+        profile = _recommendation_profile.patch(body)
+        if "direction" in body:
+            _digest_service().steer(profile["direction"])
+        _digest_service().build(now_unix=time.time())
+        return profile
 
     @app.post("/api/local/recommendations/feedback")
     async def local_recommendations_feedback(request: FastAPIRequest) -> dict[str, Any]:
@@ -1737,7 +1746,9 @@ def create_app(store: RynmeshStore | None = None):
         if item is None:
             raise HTTPException(status_code=404, detail="recommendation_content_not_found")
         try:
-            return _recommendation_profile.feedback(item, str(body.get("action", "")))
+            profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
+            _digest_service().build(now_unix=time.time())
+            return profile
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

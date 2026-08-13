@@ -108,7 +108,7 @@ export default function Home() {
         <StatTile
           label="Available recs"
           value={Math.max(availableRecommendations, recommendations.length)}
-          to="/recommendations"
+          to="/digest"
         />
         <StatTile label="Flagged" value={flagged} to="/explore?safety=flagged" tone={flagged ? "warn" : "neutral"} />
       </div>
@@ -122,7 +122,7 @@ export default function Home() {
                   <strong>Ryn is collecting the first live recommendations.</strong>
                   <p>The background agent is reviewing its built-in public catalog now; this section updates automatically when real content is ready.</p>
                 </div>
-                <Button icon={Sparkles} onClick={() => navigate("/recommendations")}>See recommendation status</Button>
+                <Button icon={Sparkles} onClick={() => navigate("/digest")}>Open For You</Button>
               </div>
             ) : null}
             <div className="rec-stack compact">

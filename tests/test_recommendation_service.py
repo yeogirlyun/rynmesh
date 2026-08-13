@@ -264,6 +264,8 @@ def test_endpoint_prefers_real_digest_content_and_accepts_feedback(tmp_path, mon
         json={"contentId": recommendations[0]["contentId"], "action": "more"},
     )
     assert feedback.status_code == 200
+    shared_profile = client.get("/api/local/recommendations/profile").json()
+    assert recommendations[0]["contentId"] in shared_profile["feedback"]
 
 
 def test_endpoint_forwards_query_limit_and_items(tmp_path, monkeypatch):
@@ -304,6 +306,7 @@ def test_profile_direction_platforms_and_feedback_change_starter_ranking(tmp_pat
     )
     assert profile.status_code == 200
     assert profile.json()["platforms"] == ["github"]
+    assert client.app.state.digest_service.get_steering()["text"] == "open source agents"
 
     before = client.post("/api/local/recommendations", json={"limit": 8}).json()
     assert before[0]["contentId"] in {"starter:agents", "starter:oss"}

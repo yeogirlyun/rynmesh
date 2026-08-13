@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rynmesh.peer_http import create_app
+from rynmesh.recommendation_profile import RecommendationProfileStore
 from rynmesh.services.digest import (
     DEFAULT_DISCOVERY_SOURCES,
     DigestError,
@@ -306,6 +307,27 @@ def test_feedback_rejects_unknown_item_and_action(tmp_path):
     item_id = service.build(now_unix=NOW)["items"][0]["item_id"]
     with pytest.raises(DigestError):
         service.feedback(item_id, "meh")
+
+
+def test_digest_and_recommendations_share_one_profile(tmp_path):
+    profile = RecommendationProfileStore(tmp_path / "recommendation-profile.json")
+    service = DigestService(
+        tmp_path,
+        fetcher=lambda *_: RSS,
+        profile_store=profile,
+    )
+    service.add_source("https://a.example/feed", tags=["technology", "platform:rss"])
+    digest = service.build(now_unix=NOW)
+    item = digest["items"][0]
+
+    service.steer("more open source, less politics")
+    assert profile.public()["direction"] == "more open source, less politics"
+    service.feedback(item["item_id"], "up")
+
+    public = profile.public()
+    assert public["feedback_count"] == 1
+    assert f"digest:{item['item_id']}" in public["feedback"]
+    assert profile.signals()["tag_weights"]["technology"] > 0
 
 
 def test_remove_source_drops_its_items(tmp_path):

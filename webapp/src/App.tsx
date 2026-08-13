@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
@@ -25,7 +25,6 @@ import Home from "./screens/Home";
 import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
-import Recommendations from "./screens/Recommendations";
 import SearchAsk from "./screens/SearchAsk";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
@@ -36,9 +35,8 @@ import UnlockGate from "./screens/components/UnlockGate";
 
 const navItems = [
   { path: "/", label: "Home", icon: NavIcons.home },
-  { path: "/digest", label: "Digest", icon: NavIcons.digest },
+  { path: "/digest", label: "For You", icon: NavIcons.digest },
   { path: "/explore", label: "Explore", icon: NavIcons.explore },
-  { path: "/recommendations", label: "Recommendations", icon: NavIcons.recommendations },
   { path: "/search-ask", label: "Search & Ask", icon: NavIcons.searchAsk },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
@@ -385,7 +383,7 @@ export function AppRoutes() {
           <Route path="digest" element={<Digest />} />
           <Route path="explore" element={<Explore />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
-          <Route path="recommendations" element={<Recommendations />} />
+          <Route path="recommendations" element={<Navigate replace to="/digest" />} />
           <Route path="search-ask" element={<SearchAsk />} />
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />

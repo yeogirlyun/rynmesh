@@ -56,6 +56,13 @@ _STOP_WORDS = {
     "with",
     "would",
 }
+_NEGATIVE_DIRECTION = re.compile(
+    r"\b(?:less|no|not|fewer|avoid|without|stop|hide|skip|don'?t want|dont want)\b",
+    re.IGNORECASE,
+)
+_POSITIVE_DIRECTION = re.compile(
+    r"\b(?:more|want|prefer|show|interested in|focus on|like)\b", re.IGNORECASE
+)
 
 
 def _now() -> str:
@@ -169,9 +176,21 @@ class RecommendationProfileStore:
                 add_tag(str(tag), 1.5)
         for platform_id in profile.get("platforms", []):
             add_tag(f"platform:{platform_id}", 1.25)
-        for word in _WORD.findall(str(profile.get("direction", "")).lower()):
-            if word not in _STOP_WORDS:
-                add_tag(f"term:{word}", 1.0)
+        direction_polarity = 1.0
+        for clause in re.split(
+            r"[,;/\n]|\band\b|\bbut\b", str(profile.get("direction", "")).lower()
+        ):
+            if _NEGATIVE_DIRECTION.search(clause):
+                direction_polarity = -1.5
+            elif _POSITIVE_DIRECTION.search(clause):
+                direction_polarity = 1.0
+            for word in _WORD.findall(clause):
+                if (
+                    word not in _STOP_WORDS
+                    and not _NEGATIVE_DIRECTION.fullmatch(word)
+                    and not _POSITIVE_DIRECTION.fullmatch(word)
+                ):
+                    add_tag(f"term:{word}", direction_polarity)
 
         feedback = profile.get("feedback", {})
         if isinstance(feedback, dict):

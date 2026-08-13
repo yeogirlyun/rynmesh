@@ -1,5 +1,6 @@
-import { Bookmark, Eye, ExternalLink, Plus, RefreshCcw, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { Bookmark, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useAppContext } from "../appContext";
 import { Button, Chip, EmptyState, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
 import DigestViewer, { type ViewerAction } from "../components/DigestViewer";
 import {
@@ -11,6 +12,7 @@ import {
   type DigestSource,
   type Watcher,
 } from "../domain/digestClient";
+import type { RecommendationProfile } from "../domain/types";
 
 function timeAgo(unix: number): string {
   if (!unix) return "";
@@ -102,6 +104,7 @@ function DigestCard({
 }
 
 export default function Digest() {
+  const { client, notify } = useAppContext();
   const [digest, setDigest] = useState<DigestPayload | null>(null);
   const [sources, setSources] = useState<DigestSource[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
@@ -117,22 +120,27 @@ export default function Digest() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [viewingIndex, setViewingIndex] = useState<number | null>(null);
+  const [profile, setProfile] = useState<RecommendationProfile | null>(null);
+  const [direction, setDirection] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
-      const [digestPayload, sourceList, watcherList, ai, status] = await Promise.all([
+      const [digestPayload, sourceList, watcherList, ai, status, recommendationProfile] = await Promise.all([
         digestApi.getDigest(),
         digestApi.listSources(),
         digestApi.listWatchers(),
         digestApi.aiStatus().catch(() => null),
         digestApi.markDiscoverySeen().catch(() => null),
+        client.getRecommendationProfile(),
       ]);
       setDigest(digestPayload);
       setSources(sourceList);
       setWatchers(watcherList);
       setAiStatus(ai);
       setDiscovery(status);
+      setProfile(recommendationProfile);
+      setDirection(recommendationProfile.direction);
       window.dispatchEvent(new Event("ryn-discovery-seen"));
       setError("");
     } catch (err) {
@@ -189,10 +197,34 @@ export default function Digest() {
   };
 
   const onFeedback = (item: DigestItem, action: ViewerAction) => {
-    void digestApi.sendFeedback(item.item_id, action).catch(() => undefined);
+    void digestApi.sendFeedback(item.item_id, action).then(async () => {
+      const [nextProfile, nextDigest] = await Promise.all([
+        client.getRecommendationProfile(),
+        digestApi.getDigest(),
+      ]);
+      setProfile(nextProfile);
+      setDigest(nextDigest);
+    }).catch(() => undefined);
     if (action === "down") {
       setHidden((current) => new Set(current).add(item.item_id));
     }
+  };
+
+  const saveProfile = async (
+    patch: Partial<Pick<RecommendationProfile, "direction" | "topics" | "platforms">>,
+  ) => {
+    const next = await client.updateRecommendationProfile(patch);
+    setProfile(next);
+    setDirection(next.direction);
+    setDigest(await digestApi.getDigest());
+    notify("ok", "Your local For You profile has been updated");
+  };
+
+  const toggleChoice = (field: "topics" | "platforms", id: string) => {
+    if (!profile) return;
+    const current = profile[field];
+    const next = current.includes(id) ? current.filter((value) => value !== id) : [...current, id];
+    void saveProfile({ [field]: next });
   };
 
   const saveForLater = async () => {
@@ -248,9 +280,9 @@ export default function Digest() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Your agent"
-        title="Daily Digest"
-        context="Ryn automatically reviews a broad public catalog across video, articles, research, podcasts, audiobooks, and comics. Add personal sources only when you want to."
+        eyebrow="Personal assistant"
+        title="For You"
+        context="One local feed for public discovery, mesh recommendations, your interests, and every feedback signal."
         actions={
           <>
             {aiStatus?.provider ? (
@@ -270,6 +302,68 @@ export default function Digest() {
       {digest?.brief ? (
         <Panel title="Briefing" className="digest-brief">
           <p className="digest-brief-text">{digest.brief}</p>
+        </Panel>
+      ) : null}
+
+      {profile ? (
+        <Panel className="recommendation-profile-panel">
+          <div className="recommendation-profile-heading">
+            <div>
+              <span className="eyebrow">Your private recommendation profile</span>
+              <h2>Tell Ryn what deserves your attention</h2>
+              <p>With no choices, Ryn explores broadly. These preferences and every feedback action now drive this same feed.</p>
+            </div>
+            <Chip tone={profile.feedback_count ? "ok" : "muted"} icon={SlidersHorizontal}>
+              {profile.feedback_count} feedback {profile.feedback_count === 1 ? "signal" : "signals"}
+            </Chip>
+          </div>
+          <label className="recommendation-direction">
+            <span>Direction</span>
+            <textarea
+              value={direction}
+              onChange={(event) => setDirection(event.target.value)}
+              placeholder="For example: More local AI and open-source research, less repetitive trend coverage."
+              rows={3}
+            />
+          </label>
+          <div className="recommendation-choice-group">
+            <span>Topics</span>
+            <div className="choice-chip-row">
+              {profile.topic_choices.map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  className={profile.topics.includes(choice.id) ? "choice-chip active" : "choice-chip"}
+                  onClick={() => toggleChoice("topics", choice.id)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="recommendation-choice-group">
+            <span>Platforms and sources</span>
+            <div className="choice-chip-row">
+              {profile.platform_choices.map((choice) => (
+                <button
+                  key={choice.id}
+                  type="button"
+                  className={profile.platforms.includes(choice.id) ? "choice-chip active" : "choice-chip"}
+                  onClick={() => toggleChoice("platforms", choice.id)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="button-row">
+            <Button variant="primary" icon={Save} onClick={() => void saveProfile({ direction })}>
+              Save direction
+            </Button>
+            <Button variant="ghost" onClick={() => void saveProfile({ direction: "", topics: [], platforms: [] })}>
+              Explore broadly
+            </Button>
+          </div>
         </Panel>
       ) : null}
 
@@ -385,4 +479,3 @@ export default function Digest() {
     </div>
   );
 }
-

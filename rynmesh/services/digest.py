@@ -25,10 +25,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from xml.etree import ElementTree
 
+from ..recommendation_profile import RecommendationProfileStore
 from ..recommender import (
     BaselineRanker,
     Candidate,
     DedupFilter,
+    DismissedContentFilter,
     PeerListSource,
     Recommender,
     SafetyFilter,
@@ -499,11 +501,13 @@ class DigestService:
         *,
         fetcher: Fetcher | None = None,
         bootstrap_defaults: bool = False,
+        profile_store: RecommendationProfileStore | None = None,
     ) -> None:
         self.dir = Path(home).expanduser() / "digest"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.fetcher = fetcher or default_fetcher
         self.bootstrap_defaults = bootstrap_defaults
+        self.profile_store = profile_store
         if bootstrap_defaults:
             self.ensure_default_sources()
 
@@ -902,6 +906,8 @@ class DigestService:
         prefs = self._load("prefs.json", {})
         prefs["steering"] = {"text": text, **parsed}
         self._save("prefs.json", prefs)
+        if self.profile_store is not None:
+            self.profile_store.patch({"direction": text})
         return {"text": text, **parsed}
 
     def feedback(self, item_id: str, action: str) -> dict[str, Any]:
@@ -941,6 +947,19 @@ class DigestService:
                     affinity[term] = round(float(affinity.get(term, 0.0)) + TERM_UP, 3)
         prefs["events"] = int(prefs.get("events", 0)) + 1
         self._save("prefs.json", prefs)
+        if self.profile_store is not None and source is not None and action != "opened":
+            content_kind, _ = self._content_shape(source, item)
+            platform = self._source_platform(source)
+            self.profile_store.feedback(
+                {
+                    "content_id": f"digest:{item_id}",
+                    "tags": list(_candidate_tags(source, item)),
+                    "content_kind": content_kind,
+                    "publisher_peer_id": f"source:{source['id']}",
+                    "source_platform": platform,
+                },
+                "more" if action in {"up", "more_like_this"} else "less",
+            )
         return {"ok": True, "source_weight": weights[item["source_id"]]}
 
     def _find_item(self, item_id: str) -> dict[str, Any] | None:
@@ -985,6 +1004,17 @@ class DigestService:
             "research": "document",
         }.get(kind, "document")
         return inferred, media_type or ("audio/mpeg" if inferred == "audio" else "text/html")
+
+    @staticmethod
+    def _source_platform(source: Mapping[str, Any]) -> str:
+        return {
+            "youtube": "youtube",
+            "reddit": "reddit",
+            "research": "arxiv",
+            "podcast": "podcasts",
+            "audiobook": "podcasts",
+            "news": "news",
+        }.get(str(source.get("kind", "rss") or "rss"), "rss")
 
     def _enrich(self, digest: dict[str, Any], provider: Any) -> dict[str, Any]:
         items = digest["items"]
@@ -1074,6 +1104,16 @@ class DigestService:
 
         liked = {t: v for t, v in prefs.get("tag_affinity", {}).items() if v > 0}
         liked.update(steer_up)
+        hidden_content_ids: set[str] = set()
+        if self.profile_store is not None:
+            profile_signals = self.profile_store.signals()
+            for tag, weight in profile_signals["tag_weights"].items():
+                liked[tag] = liked.get(tag, 0.0) + float(weight)
+            hidden_content_ids.update(
+                content_id.removeprefix("digest:")
+                for content_id in profile_signals["hidden_content_ids"]
+                if str(content_id).startswith("digest:")
+            )
         user = UserState(
             liked_tags=liked,
             fetched_content_ids=set(prefs.get("seen", [])),
@@ -1086,7 +1126,7 @@ class DigestService:
             sources=[PeerListSource({"feeds": candidates})],
             trust=trust,
             ranker=BaselineRanker(),
-            filters=[SafetyFilter(), DedupFilter()],
+            filters=[SafetyFilter(), DedupFilter(), DismissedContentFilter(hidden_content_ids)],
             exploration_fraction=0.15,
             newcomer_predicate=lambda cand: cand.publisher_peer_id not in rated_sources,
         ).recommend(user, k=len(candidates))
@@ -1156,7 +1196,7 @@ class DigestService:
                     "media_url": item.get("media_url", ""),
                     "content_kind": content_kind,
                     "content_type": content_type,
-                    "tags": list(source.get("tags", [])),
+                    "tags": list(cand.tags),
                     "published_unix": item.get("published_unix", 0.0),
                     "ai_summary": item.get("ai_summary", ""),
                     "score": round(score / max_score, 3) if max_score > 0 else 0.0,
@@ -1195,14 +1235,7 @@ class DigestService:
                 else None
             )
             source_kind = str(item.get("source_kind", "rss") or "rss")
-            platform = {
-                "youtube": "youtube",
-                "reddit": "reddit",
-                "research": "arxiv",
-                "podcast": "podcasts",
-                "audiobook": "podcasts",
-                "news": "news",
-            }.get(source_kind, "rss")
+            platform = self._source_platform({"kind": source_kind})
             out.append(
                 {
                     "content_id": f"digest:{raw_id}",

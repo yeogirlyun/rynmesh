@@ -137,7 +137,7 @@ export default function OnboardingTour({
                 <p>
                   <strong>What runs in the background:</strong> the node daemon stays online and
                   the discovery agent reviews its default public catalog about every 30 minutes.
-                  Opening Recommendations or pressing Refresh shows the latest local ranking.
+                  Opening For You or pressing Refresh shows the latest local ranking.
                 </p>
               </div>
             </>
@@ -284,7 +284,7 @@ export default function OnboardingTour({
                 from the question-mark button in the top bar.
               </p>
               <div className="tour-action-grid">
-                <button type="button" onClick={() => void finish("/recommendations")}>
+                <button type="button" onClick={() => void finish("/digest")}>
                   <Sparkles size={22} />
                   <strong>Choose my interests</strong>
                   <span>Set topics, platforms, and written direction.</span>

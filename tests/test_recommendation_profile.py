@@ -26,6 +26,16 @@ def test_profile_patch_filters_unknown_choices(tmp_path):
     assert signals["tag_weights"]["term:local"] > 0
 
 
+def test_profile_direction_understands_positive_and_negative_clauses(tmp_path):
+    store = RecommendationProfileStore(tmp_path / "profile.json")
+    store.patch({"direction": "More local AI, less politics and no crypto"})
+    signals = store.signals()
+    assert signals["tag_weights"]["term:local"] > 0
+    assert signals["tag_weights"]["term:ai"] > 0
+    assert signals["tag_weights"]["term:politics"] < 0
+    assert signals["tag_weights"]["term:crypto"] < 0
+
+
 def test_feedback_rebuilds_positive_negative_and_hidden_signals(tmp_path):
     store = RecommendationProfileStore(tmp_path / "profile.json")
     item = {
