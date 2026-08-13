@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.6.1"
+version = "0.6.2"
 description = "Ryn — desktop shell for the Rynmesh node"
 authors = ["Rynmesh Contributors"]
 license = "MIT"
