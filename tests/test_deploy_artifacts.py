@@ -142,6 +142,7 @@ def test_download_installer_marks_managed_desktop_daemon():
 def test_desktop_sidecar_is_signed_and_executed_during_verification():
     build_script = (REPO / "webapp" / "src-tauri" / "scripts" / "build-sidecar.sh").read_text()
     verifier = (REPO / "webapp" / "src-tauri" / "scripts" / "verify-sidecar.sh").read_text()
+    ci_workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text()
     release_workflow = (REPO / ".github" / "workflows" / "release.yml").read_text()
     tauri_config = (REPO / "webapp" / "src-tauri" / "tauri.conf.json").read_text()
 
@@ -151,6 +152,10 @@ def test_desktop_sidecar_is_signed_and_executed_during_verification():
     assert "grep -q 'peer_id'" in verifier
     assert "verify-sidecar.sh" in release_workflow
     assert "rynmesh-peer.entitlements.plist" in tauri_config
+    for workflow in (ci_workflow, release_workflow):
+        assert "runner: macos-15-intel" in workflow
+        assert "runner: macos-15" in workflow
+        assert "runner: macos-15-arm64" not in workflow
 
 
 def test_verify_mesh_syntax_and_expected_nodes():

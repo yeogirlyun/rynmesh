@@ -66,7 +66,16 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8791/assets/nope.js)" = 404
 
   desktop-compile:
-    runs-on: macos-14
+    name: desktop-compile (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     defaults:
       run:
         working-directory: webapp
