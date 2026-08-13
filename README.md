@@ -45,7 +45,7 @@ curl -fsSL https://github.com/yeogirlyun/rynmesh/releases/latest/download/instal
 Or install the current wheel into an existing Python environment:
 
 ```bash
-python -m pip install https://github.com/yeogirlyun/rynmesh/releases/download/v0.6.0/rynmesh-0.6.0-py3-none-any.whl
+python -m pip install https://github.com/yeogirlyun/rynmesh/releases/download/v0.6.1/rynmesh-0.6.1-py3-none-any.whl
 rynmesh-peer
 ```
 

@@ -25,4 +25,4 @@ def test_python_web_and_desktop_versions_match():
         tauri["version"],
         cargo["package"]["version"],
     }
-    assert versions == {"0.6.0"}
+    assert versions == {"0.6.1"}
