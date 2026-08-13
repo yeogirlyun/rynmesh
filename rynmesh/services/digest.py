@@ -989,6 +989,30 @@ class DigestService:
         self._save("discovery-state.json", state)
         return self.discovery_status()
 
+    def personalization_data(self) -> dict[str, Any]:
+        """Return owner-created digest preferences for a local privacy export."""
+        return dict(self._load("prefs.json", {}))
+
+    def clear_personalization(self) -> None:
+        """Erase learned source/tag weights, steering, and seen-item signals."""
+        self._save("prefs.json", {})
+        self.build(now_unix=time.time())
+
+    def clear_cached_content(self) -> None:
+        """Erase public discovery results while retaining the source catalog."""
+        for name, empty in (
+            ("items.json", {}),
+            ("health.json", []),
+            ("last_digest.json", {}),
+            ("discovery-state.json", {}),
+        ):
+            self._save(name, empty)
+
+    def cached_item_count(self) -> int:
+        return sum(
+            len(items) for items in self._load("items.json", {}).values() if isinstance(items, list)
+        )
+
     def enrich_latest(self, provider: Any) -> dict[str, Any]:
         """Add local-model summaries after the fast baseline slate is ready."""
         return self.build(now_unix=datetime.now(UTC).timestamp(), provider=provider)

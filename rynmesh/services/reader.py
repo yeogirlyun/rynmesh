@@ -8,11 +8,13 @@ sees you.
 Deliberately a readability-lite, stdlib-only implementation: find the element
 with the most paragraph text, keep its block-level children, drop chrome.
 """
+
 from __future__ import annotations
 
 import html as _html
 import json
 import re
+import shutil
 import time
 from html.parser import HTMLParser
 from pathlib import Path
@@ -27,14 +29,40 @@ CACHE_TTL_S = 24 * 3600
 EXTRACTOR_VERSION = 2
 
 # Containers whose text is never article body.
-_SKIP_TAGS = {"script", "style", "nav", "header", "footer", "aside", "form",
-              "noscript", "svg", "button", "select", "iframe"}
+_SKIP_TAGS = {
+    "script",
+    "style",
+    "nav",
+    "header",
+    "footer",
+    "aside",
+    "form",
+    "noscript",
+    "svg",
+    "button",
+    "select",
+    "iframe",
+}
 _BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre"}
 # HTML void elements never emit an end tag. Counting them while skipping a
 # subtree leaves the depth permanently unbalanced, which silently swallows the
 # rest of the document — real pages are full of <img>/<meta>/<br>.
-_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input",
-              "link", "meta", "param", "source", "track", "wbr"}
+_VOID_TAGS = {
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+}
 _CHROME_HINT = re.compile(
     r"(^|[\s_-])(nav|menu|header|footer|sidebar|comment|promo|advert|ad|cookie|"
     r"subscribe|newsletter|share|social|related|recirc|masthead)([\s_-]|$)",
@@ -155,10 +183,12 @@ class _Extractor(HTMLParser):
     # -- result -----------------------------------------------------------
     def best_blocks(self) -> list[dict[str, str]]:
         """The container holding the most real prose wins."""
+
         def score(item: tuple[int, list[tuple[str, str]]]) -> float:
             group_id, blocks = item
-            prose = sum(len(text) for tag, text in blocks
-                        if tag == "p" and len(text) >= MIN_PARAGRAPH_CHARS)
+            prose = sum(
+                len(text) for tag, text in blocks if tag == "p" and len(text) >= MIN_PARAGRAPH_CHARS
+            )
             # Demote rather than delete: a nav-ish class on an ancestor
             # shouldn't be able to discard the article it wraps.
             return prose * (0.05 if group_id in self._chrome_groups else 1.0)
@@ -230,13 +260,14 @@ def link_post_target(html: bytes, *, base_url: str) -> str:
     if not target.startswith(("http://", "https://")):
         return ""
     if "reddit.com" in target or "redd.it" in target:
-        return ""   # self-post: the discussion page is the content
+        return ""  # self-post: the discussion page is the content
     return target
 
 
 def _drop_boilerplate(blocks: list[dict[str, str]]) -> list[dict[str, str]]:
     return [
-        block for block in blocks
+        block
+        for block in blocks
         if not any(marker in block["text"].lower() for marker in _BOILERPLATE)
     ]
 
@@ -263,7 +294,7 @@ class ReaderCache:
         if now - float(payload.get("cached_at", 0)) > self.ttl_s:
             return None
         if int(payload.get("extractor", 0)) != EXTRACTOR_VERSION:
-            return None   # extracted by an older reader: re-fetch
+            return None  # extracted by an older reader: re-fetch
         return payload.get("article")
 
     def put(self, url: str, article: dict[str, Any], *, now: float) -> None:
@@ -276,6 +307,15 @@ class ReaderCache:
             encoding="utf-8",
         )
         tmp.replace(self._path(url))
+
+    def clear(self) -> None:
+        """Erase locally cached article extracts without removing the cache root."""
+        if self.dir.exists():
+            for child in self.dir.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink(missing_ok=True)
 
 
 def read_article(

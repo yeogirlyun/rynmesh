@@ -127,6 +127,12 @@ def test_resolve_auto_none_when_nothing_reachable(monkeypatch):
     assert resolve_provider(http=make_http(fail=True)) is None
 
 
+def test_resolve_does_not_use_cloud_without_explicit_permission(monkeypatch):
+    monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "present-but-not-authorized")
+    assert resolve_provider(allow_cloud=False, http=make_http(fail=True)) is None
+
+
 # ------------------------------------------------------------ search-ask ----
 
 

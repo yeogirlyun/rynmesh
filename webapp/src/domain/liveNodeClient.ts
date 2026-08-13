@@ -5,6 +5,7 @@ import type {
   NodeSettings,
   PeerFilters,
   PublishDraft,
+  PrivacyEraseScope,
 } from "./types";
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -88,6 +89,13 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     updateSettings: (patch: Partial<NodeSettings>) =>
       requestJson(`${baseUrl}/settings`, { method: "PATCH", body: JSON.stringify(patch) }),
     getActivity: () => requestJson(`${baseUrl}/activity`),
+    getPrivacyStatus: () => requestJson(`${baseUrl}/privacy/status`),
+    exportPersonalData: () => requestJson(`${baseUrl}/privacy/export`),
+    erasePersonalData: (scopes: PrivacyEraseScope[]) =>
+      requestJson(`${baseUrl}/privacy/erase`, {
+        method: "POST",
+        body: JSON.stringify({ scopes }),
+      }),
     updatesStatus: () => requestJson(`${baseUrl}/updates/status`),
     updatesCheck: () => requestJson(`${baseUrl}/updates/check`, { method: "POST" }),
     updatesApply: () => requestJson(`${baseUrl}/updates/apply`, { method: "POST" }),

@@ -9,6 +9,9 @@ import type {
   Peer,
   PeerFilters,
   PeerHealth,
+  PersonalDataExport,
+  PrivacyEraseScope,
+  PrivacyStatus,
   ProvenanceEvent,
   PublishDraft,
   PublishPrepResult,
@@ -62,6 +65,9 @@ export interface NodeClient {
   getSettings(): Promise<NodeSettings>;
   updateSettings(patch: Partial<NodeSettings>): Promise<NodeSettings>;
   getActivity(): Promise<import("./types").ActivityEvent[]>;
+  getPrivacyStatus(): Promise<PrivacyStatus>;
+  exportPersonalData(): Promise<PersonalDataExport>;
+  erasePersonalData(scopes: PrivacyEraseScope[]): Promise<{ ok: boolean; erased: string[] }>;
   updatesStatus(): Promise<UpdateStatus>;
   updatesCheck(): Promise<UpdateStatus>;
   updatesApply(): Promise<{ applied: boolean; version?: string; error?: string }>;

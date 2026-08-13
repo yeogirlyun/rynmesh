@@ -1,4 +1,5 @@
 """Persistent, local-first recommendation preferences and starter choices."""
+
 from __future__ import annotations
 
 import hashlib
@@ -135,6 +136,11 @@ class RecommendationProfileStore:
         self._write(data)
         return self.public()
 
+    def clear(self) -> dict[str, Any]:
+        """Erase all explicit and learned recommendation preferences."""
+        self._write(_defaults())
+        return self.public()
+
     def feedback(self, item: Mapping[str, Any], action: str) -> dict[str, Any]:
         action = str(action or "").strip().lower()
         if action not in _ACTIONS:
@@ -224,14 +230,70 @@ class RecommendationProfileStore:
 
 
 _STARTERS: tuple[dict[str, Any], ...] = (
-    {"id": "agents", "title": "AI agents and practical automation", "description": "Open-source agent workflows, local assistants, and tools that do useful work.", "tags": ["ai", "agents", "automation", "open-source"], "platform": "rynmesh", "kind": "code"},
-    {"id": "oss", "title": "Interesting open-source projects", "description": "New repositories and engineering work worth inspecting.", "tags": ["open-source", "software", "code", "technology"], "platform": "github", "kind": "code"},
-    {"id": "papers", "title": "New research explained clearly", "description": "Recent papers, technical results, and accessible research summaries.", "tags": ["research", "science", "papers", "learning"], "platform": "arxiv", "kind": "document"},
-    {"id": "video", "title": "Thoughtful long-form video", "description": "Technical talks, documentaries, and deep explanations instead of short-lived trends.", "tags": ["video", "learning", "culture", "technology"], "platform": "youtube", "kind": "video"},
-    {"id": "independent", "title": "Independent writing and analysis", "description": "Essays and specialist blogs selected for depth and original thinking.", "tags": ["writing", "analysis", "culture", "business"], "platform": "rss", "kind": "document"},
-    {"id": "podcasts", "title": "Podcasts matched to your interests", "description": "Conversations and interviews that reward sustained attention.", "tags": ["podcast", "learning", "business", "culture"], "platform": "podcasts", "kind": "audio"},
-    {"id": "tech-news", "title": "A calmer technology briefing", "description": "Important technology developments without repetitive headlines.", "tags": ["technology", "engineering", "startups", "news"], "platform": "news", "kind": "report"},
-    {"id": "creative", "title": "Creative work outside your usual feed", "description": "Design, music, visual experiments, and unfamiliar creators for healthy exploration.", "tags": ["art", "design", "music", "creative"], "platform": "rynmesh", "kind": "image"},
+    {
+        "id": "agents",
+        "title": "AI agents and practical automation",
+        "description": "Open-source agent workflows, local assistants, and tools that do useful work.",
+        "tags": ["ai", "agents", "automation", "open-source"],
+        "platform": "rynmesh",
+        "kind": "code",
+    },
+    {
+        "id": "oss",
+        "title": "Interesting open-source projects",
+        "description": "New repositories and engineering work worth inspecting.",
+        "tags": ["open-source", "software", "code", "technology"],
+        "platform": "github",
+        "kind": "code",
+    },
+    {
+        "id": "papers",
+        "title": "New research explained clearly",
+        "description": "Recent papers, technical results, and accessible research summaries.",
+        "tags": ["research", "science", "papers", "learning"],
+        "platform": "arxiv",
+        "kind": "document",
+    },
+    {
+        "id": "video",
+        "title": "Thoughtful long-form video",
+        "description": "Technical talks, documentaries, and deep explanations instead of short-lived trends.",
+        "tags": ["video", "learning", "culture", "technology"],
+        "platform": "youtube",
+        "kind": "video",
+    },
+    {
+        "id": "independent",
+        "title": "Independent writing and analysis",
+        "description": "Essays and specialist blogs selected for depth and original thinking.",
+        "tags": ["writing", "analysis", "culture", "business"],
+        "platform": "rss",
+        "kind": "document",
+    },
+    {
+        "id": "podcasts",
+        "title": "Podcasts matched to your interests",
+        "description": "Conversations and interviews that reward sustained attention.",
+        "tags": ["podcast", "learning", "business", "culture"],
+        "platform": "podcasts",
+        "kind": "audio",
+    },
+    {
+        "id": "tech-news",
+        "title": "A calmer technology briefing",
+        "description": "Important technology developments without repetitive headlines.",
+        "tags": ["technology", "engineering", "startups", "news"],
+        "platform": "news",
+        "kind": "report",
+    },
+    {
+        "id": "creative",
+        "title": "Creative work outside your usual feed",
+        "description": "Design, music, visual experiments, and unfamiliar creators for healthy exploration.",
+        "tags": ["art", "design", "music", "creative"],
+        "platform": "rynmesh",
+        "kind": "image",
+    },
 )
 
 

@@ -1,4 +1,4 @@
-import { BellRing, Cloud, DownloadCloud, HardDrive, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Activity, BellRing, Cloud, Download, DownloadCloud, HardDrive, History, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
@@ -7,7 +7,7 @@ import type { NodeClient } from "../domain/nodeClient";
 import { requestDesktopNotificationPermission, sendTestNotification } from "../domain/notifications";
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
-import type { NodeSettings, UpdateStatus } from "../domain/types";
+import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
   "Identity & storage",
@@ -15,6 +15,7 @@ const sections = [
   "Trust & safety",
   "AI curator",
   "Notifications",
+  "Privacy & data",
   "Ranking & publish",
   "Fetch limits",
   "Software updates",
@@ -52,7 +53,7 @@ export default function Settings() {
       <PageHeader
         eyebrow="Settings"
         title="Node policy"
-        context="Configuration belongs to the local node: identity, network, safety, AI model, ranking, and fetch limits."
+        context="Configuration and personal-assistant data belong to this local node."
         actions={<Chip tone="info">local control API</Chip>}
       />
       <aside className="settings-rail">
@@ -74,11 +75,115 @@ export default function Settings() {
         {active === "Notifications" ? (
           <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
         ) : null}
+        {active === "Privacy & data" ? (
+          <PrivacySection client={client} confirm={confirm} notify={notify} />
+        ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
         {active === "Software updates" ? <UpdatesSection client={client} /> : null}
       </Panel>
     </div>
+  );
+}
+
+function PrivacySection({
+  client,
+  confirm,
+  notify,
+}: {
+  client: NodeClient;
+  confirm: ReturnType<typeof useAppContext>["confirm"];
+  notify: (tone: "ok" | "warn" | "danger", text: string) => void;
+}) {
+  const [status, setStatus] = useState<PrivacyStatus | null>(null);
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+
+  const reload = async () => {
+    const [nextStatus, nextEvents] = await Promise.all([
+      client.getPrivacyStatus(),
+      client.getActivity(),
+    ]);
+    setStatus(nextStatus);
+    setEvents(nextEvents);
+  };
+
+  useEffect(() => {
+    void reload();
+  }, [client]);
+
+  const download = async () => {
+    const payload = await client.exportPersonalData();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `ryn-personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("ok", "Personal data export created locally");
+  };
+
+  const erase = (scopes: PrivacyEraseScope[], title: string, body: string) => {
+    confirm({
+      title,
+      body,
+      risk: "high",
+      confirmLabel: "Erase local data",
+      onConfirm: async () => {
+        await client.erasePersonalData(scopes);
+        await reload();
+        notify("ok", "Selected personal data erased from this node");
+      },
+    });
+  };
+
+  return (
+    <Section title="Privacy & local data" icon={<ShieldCheck size={22} />}>
+      <div className="privacy-local-callout">
+        <HardDrive size={18} />
+        <span>
+          <b>Your profile, history, cached reading, and audit trail stay on this node.</b>
+          <small>Public content discovery contacts the listed source sites. AI metadata leaves the device only when you explicitly enable cloud access.</small>
+        </span>
+      </div>
+      {status ? (
+        <KV rows={[
+          { label: "Storage root", value: status.storage_root },
+          { label: "Reading history", value: `${status.reading_history_items} items` },
+          { label: "Recommendation learning", value: `${status.feedback_items} feedback · ${status.learned_signals} signals` },
+          { label: "Discovery cache", value: `${status.cached_discovery_items} items · ${status.reader_cache_files} reader pages` },
+          { label: "Assistant audit", value: `${status.audit_events} events` },
+          { label: "Cloud AI", value: status.cloud_ai_enabled ? "enabled" : "disabled" },
+        ]} />
+      ) : <p className="muted">Inspecting local data…</p>}
+      <div className="button-row">
+        <Button icon={Download} variant="primary" onClick={() => void download()}>
+          Export my data
+        </Button>
+        <Button icon={History} onClick={() => erase(["history"], "Clear reading history?", "This erases opened items, bookmarks, playback position, and reading progress from this node.")}>
+          Clear history
+        </Button>
+        <Button icon={Trash2} onClick={() => erase(["profile"], "Reset recommendation learning?", "This erases your direction, topic and platform choices, and all more/less/hide feedback.")}>
+          Reset learning
+        </Button>
+        <Button icon={Trash2} onClick={() => erase(["cache"], "Clear downloaded discovery cache?", "This erases feed results and locally extracted reader pages. Default sources remain and will refill the feed on the next discovery cycle.")}>
+          Clear cache
+        </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["audit"], "Clear assistant audit?", "This permanently erases the local record of assistant activity.")}>
+          Clear audit
+        </Button>
+      </div>
+      <div className="privacy-audit">
+        <div className="privacy-audit-head"><Activity size={16} /><b>Recent assistant activity</b></div>
+        {events.slice(0, 8).map((event) => (
+          <div className="privacy-audit-row" key={event.id ?? `${event.t}-${event.text}`}>
+            <span>{event.text}</span>
+            <small>{event.t ? new Date(event.t).toLocaleString() : ""}</small>
+          </div>
+        ))}
+        {!events.length ? <p className="muted">No assistant activity recorded yet.</p> : null}
+      </div>
+    </Section>
   );
 }
 

@@ -1174,6 +1174,44 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return ACTIVITY;
     },
+    async getPrivacyStatus() {
+      await delay();
+      return {
+        storage_root: "~/.rynmesh",
+        reading_history_items: 12,
+        feedback_items: recommendationProfile.feedback_count,
+        learned_signals: recommendationProfile.learned_signals,
+        cached_discovery_items: 84,
+        reader_cache_files: 3,
+        audit_events: ACTIVITY.length,
+        cloud_ai_enabled: settings.cloud_access,
+      };
+    },
+    async exportPersonalData() {
+      await delay();
+      return {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        storage: "local" as const,
+        recommendation_profile: recommendationProfile,
+        assistant_audit: ACTIVITY,
+      };
+    },
+    async erasePersonalData(scopes) {
+      await delay();
+      if (scopes.includes("profile")) {
+        recommendationProfile = {
+          ...recommendationProfile,
+          direction: "",
+          topics: [],
+          platforms: [],
+          feedback: {},
+          feedback_count: 0,
+          learned_signals: 0,
+        };
+      }
+      return { ok: true, erased: scopes };
+    },
     async updatesStatus() {
       return { currentVersion: "0.2.0", availableVersion: null, autoUpdate: _autoUpdate, lastCheck: new Date().toISOString(), lastError: null };
     },

@@ -10,12 +10,14 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 pub struct NodeState {
     pub child: Mutex<Option<Child>>,
     pub port: u16,
+    pub stopping: AtomicBool,
 }
 
 fn capture(program: &str, args: &[&str]) -> Option<String> {
@@ -157,9 +159,18 @@ fn build_command(port: u16) -> Command {
 }
 
 pub fn start(state: &NodeState) -> std::io::Result<()> {
-    let mut guard = state.child.lock().unwrap();
-    if guard.is_some() {
+    if state.stopping.load(Ordering::SeqCst) {
         return Ok(());
+    }
+    let mut guard = state.child.lock().unwrap();
+    if let Some(child) = guard.as_mut() {
+        match child.try_wait()? {
+            None => return Ok(()),
+            Some(status) => {
+                log::warn!("managed Ryn node exited with {status}; starting a replacement");
+                *guard = None;
+            }
+        }
     }
     // A correctly configured login agent may already own the node. Reuse it
     // instead of spawning a child that can only fail with address-in-use.
@@ -177,7 +188,7 @@ pub fn start(state: &NodeState) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn stop(state: &NodeState) {
+fn stop_child(state: &NodeState) {
     let mut guard = state.child.lock().unwrap();
     if let Some(mut child) = guard.take() {
         let pid = child.id() as i32;
@@ -196,12 +207,19 @@ pub fn stop(state: &NodeState) {
     }
 }
 
+pub fn stop(state: &NodeState) {
+    state.stopping.store(true, Ordering::SeqCst);
+    stop_child(state);
+}
+
 pub fn restart(state: &NodeState) {
-    stop(state);
+    state.stopping.store(true, Ordering::SeqCst);
+    stop_child(state);
+    state.stopping.store(false, Ordering::SeqCst);
     let _ = start(state);
 }
 
-fn health_ok(port: u16) -> bool {
+pub fn health_ok(port: u16) -> bool {
     let addr = match format!("127.0.0.1:{port}").parse() {
         Ok(a) => a,
         Err(_) => return false,
@@ -225,6 +243,15 @@ fn health_ok(port: u16) -> bool {
         }
         _ => false,
     }
+}
+
+pub fn recover_if_unhealthy(state: &NodeState) -> bool {
+    if state.stopping.load(Ordering::SeqCst) || health_ok(state.port) {
+        return false;
+    }
+    log::warn!("managed Ryn node is unhealthy; restarting it");
+    restart(state);
+    wait_healthy(state.port)
 }
 
 /// ~12s budget (80 x 150ms), matching the launch script's health wait.

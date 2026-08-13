@@ -170,7 +170,28 @@ export interface ActivityEvent {
   kind: "fetch" | "scan" | "credit" | "rec" | "peer" | "verify" | "publish" | "flag";
   text: string;
   itemId?: string;
+  id?: string;
+  timestamp_unix?: number;
+  details?: Record<string, unknown>;
 }
+
+export interface PrivacyStatus {
+  storage_root: string;
+  reading_history_items: number;
+  feedback_items: number;
+  learned_signals: number;
+  cached_discovery_items: number;
+  reader_cache_files: number;
+  audit_events: number;
+  cloud_ai_enabled: boolean;
+}
+
+export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit";
+export type PersonalDataExport = Record<string, unknown> & {
+  version: number;
+  exported_at: string;
+  storage: "local";
+};
 
 export interface PublishDraft {
   path: string;

@@ -444,10 +444,7 @@ def create_app(store: RynmeshStore | None = None):
                         now = time.time()
                         hour = int(stored.get("send_hour_utc", 13))
                         last = float(stored.get("last_sent_unix", 0) or 0)
-                        due = (
-                            _dt.now(_UTC).hour >= hour
-                            and (now - last) > 20 * 3600
-                        )
+                        due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
                         if due:
                             await _asyncio.to_thread(_send_recap_now)
                 except Exception:
@@ -469,6 +466,20 @@ def create_app(store: RynmeshStore | None = None):
                     provider = _model_provider()
                     if provider is not None:
                         await _asyncio.to_thread(service.enrich_latest, provider)
+                    audit = getattr(lifespan_app.state, "assistant_audit", None)
+                    if audit is not None:
+                        status = service.discovery_status()
+                        audit.append(
+                            "rec",
+                            f"Background discovery prepared {status['item_count']} recommendations",
+                            details={
+                                "healthy_sources": status["healthy_sources"],
+                                "failed_sources": status["failed_sources"],
+                                "formats": status["formats"],
+                                "ai_provider": getattr(provider, "id", None),
+                                "network_access": True,
+                            },
+                        )
                 except Exception:
                     pass
                 status = service.discovery_status()
@@ -1347,6 +1358,7 @@ def create_app(store: RynmeshStore | None = None):
     from .services import ask as ask_service
     from .services import model_provider as model_provider_module
     from .services import recap as recap_service
+    from .services.assistant_audit import AssistantAuditStore
     from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
     from .services.reader import ReaderCache, ReaderError, read_article
@@ -1366,15 +1378,23 @@ def create_app(store: RynmeshStore | None = None):
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
+    app.state.assistant_audit = AssistantAuditStore(active_store.home / "assistant-audit.json")
     app.state.model_provider = None
     app.state.model_provider_checked_at = 0.0
 
     def _digest_service() -> DigestService:
         return app.state.digest_service
 
+    def _audit() -> AssistantAuditStore:
+        return app.state.assistant_audit
+
     def _preferred_model() -> str:
         """The owner's explicit choice, if they've made one."""
         return str(_settings.get().get("ai_model", "") or "")
+
+    def _cloud_model_allowed() -> bool:
+        stored = _settings.get()
+        return bool(stored.get("cloud_access")) and stored.get("ai_provider") == "cloud"
 
     def _model_provider():
         # Cache the resolved provider; while absent, re-probe at most every 30s
@@ -1388,7 +1408,8 @@ def create_app(store: RynmeshStore | None = None):
             app.state.model_provider_checked_at = time.time()
             try:
                 app.state.model_provider = model_provider_module.resolve_provider(
-                    preferred_model=preferred
+                    preferred_model=preferred,
+                    allow_cloud=_cloud_model_allowed(),
                 )
             except model_provider_module.ModelProviderError:
                 app.state.model_provider = None
@@ -1491,6 +1512,18 @@ def create_app(store: RynmeshStore | None = None):
         provider = _model_provider()
         if provider is not None:
             result["digest"] = service.enrich_latest(provider)
+        status = result["status"]
+        _audit().append(
+            "rec",
+            f"Manual discovery prepared {status['item_count']} recommendations",
+            details={
+                "healthy_sources": status["healthy_sources"],
+                "failed_sources": status["failed_sources"],
+                "formats": status["formats"],
+                "ai_provider": getattr(provider, "id", None),
+                "network_access": True,
+            },
+        )
         return result
 
     @app.post("/api/local/readlater")
@@ -1569,8 +1602,14 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         body = await request.json()
         current = dict(_settings.get().get("recap", {}) or {})
-        for key in ("to_address", "from_address", "smtp_host", "smtp_user",
-                    "base_url", "smtp_password"):
+        for key in (
+            "to_address",
+            "from_address",
+            "smtp_host",
+            "smtp_user",
+            "base_url",
+            "smtp_password",
+        ):
             if key in body:
                 current[key] = str(body[key])
         for key in ("smtp_port", "per_source", "send_hour_utc"):
@@ -1630,9 +1669,7 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         service = _digest_service()
         try:
-            return read_article(
-                url, fetcher=service.fetcher, cache=app.state.reader_cache
-            )
+            return read_article(url, fetcher=service.fetcher, cache=app.state.reader_cache)
         except ReaderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1646,11 +1683,20 @@ def create_app(store: RynmeshStore | None = None):
         local_control(request)
         body = await request.json()
         try:
-            return app.state.consumption_store.record(
+            record = app.state.consumption_store.record(
                 body.get("item", {}),
                 str(body.get("action", "")),
                 progress=body.get("progress"),
             )
+            action = str(body.get("action", ""))
+            if action in {"opened", "bookmark", "completed"}:
+                _audit().append(
+                    "fetch" if action == "opened" else "rec",
+                    f"Content {action}: {record['item'].get('title', record['item_id'])}",
+                    details={"action": action, "stored_locally": True},
+                    item_id=record["item_id"],
+                )
+            return record
         except ConsumptionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1658,6 +1704,7 @@ def create_app(store: RynmeshStore | None = None):
     def local_consumption_clear(request: FastAPIRequest) -> dict[str, bool]:
         local_control(request)
         app.state.consumption_store.clear()
+        _audit().append("verify", "Reading history cleared", details={"scope": "history"})
         return {"ok": True}
 
     @app.get("/api/local/digest/steer")
@@ -1671,6 +1718,11 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         result = _digest_service().steer(str(body.get("text", "")))
         _digest_service().build(now_unix=time.time())
+        _audit().append(
+            "rec",
+            "Recommendation direction updated",
+            details={"interests": result["interests"], "avoids": result["avoids"]},
+        )
         return result
 
     @app.post("/api/local/digest/feedback")
@@ -1682,6 +1734,12 @@ def create_app(store: RynmeshStore | None = None):
                 str(body.get("item_id", "")), str(body.get("action", ""))
             )
             _digest_service().build(now_unix=time.time())
+            _audit().append(
+                "rec",
+                f"Recommendation feedback recorded: {body.get('action', '')}",
+                details={"action": str(body.get("action", ""))},
+                item_id=str(body.get("item_id", "")),
+            )
             return result
         except DigestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1749,6 +1807,15 @@ def create_app(store: RynmeshStore | None = None):
         if "direction" in body:
             _digest_service().steer(profile["direction"])
         _digest_service().build(now_unix=time.time())
+        _audit().append(
+            "rec",
+            "Recommendation profile updated",
+            details={
+                "topics": profile["topics"],
+                "platforms": profile["platforms"],
+                "has_direction": bool(profile["direction"]),
+            },
+        )
         return profile
 
     @app.post("/api/local/recommendations/feedback")
@@ -1774,6 +1841,12 @@ def create_app(store: RynmeshStore | None = None):
         try:
             profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
             _digest_service().build(now_unix=time.time())
+            _audit().append(
+                "rec",
+                f"Recommendation feedback recorded: {body.get('action', '')}",
+                details={"action": str(body.get("action", ""))},
+                item_id=content_id,
+            )
             return profile
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1784,13 +1857,25 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         query = str(body.get("text", "")).strip()
         digest = _digest_service().last_digest() or {}
-        return await _asyncio.to_thread(
+        provider = _model_provider()
+        result = await _asyncio.to_thread(
             ask_service.answer,
             query,
-            provider=_model_provider(),
+            provider=provider,
             digest_items=digest.get("items", []),
             content_items=network_content(control_network_id()),
         )
+        _audit().append(
+            "rec",
+            "Search & Ask completed" if provider is not None else "Search & Ask had no model",
+            details={
+                "provider": getattr(provider, "id", None),
+                "model": getattr(provider, "model", None),
+                "network_access": getattr(provider, "id", None) == "anthropic",
+                "query_length": len(query),
+            },
+        )
+        return result
 
     @app.post("/api/local/publish/prepare")
     async def local_publish_prepare(request: FastAPIRequest) -> dict[str, Any]:
@@ -1917,7 +2002,76 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/activity")
     def local_activity(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        return []
+        events = _audit().list(limit=200)
+        for event in events:
+            stamp = float(event.get("timestamp_unix", 0.0) or 0.0)
+            event["t"] = _dt.fromtimestamp(stamp, _UTC).isoformat() if stamp else ""
+        return events
+
+    @app.get("/api/local/privacy/status")
+    def local_privacy_status(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        profile = _recommendation_profile.public()
+        return {
+            "storage_root": str(active_store.home),
+            "reading_history_items": len(app.state.consumption_store.list()),
+            "feedback_items": profile["feedback_count"],
+            "learned_signals": profile["learned_signals"],
+            "cached_discovery_items": _digest_service().cached_item_count(),
+            "reader_cache_files": sum(
+                1 for path in app.state.reader_cache.dir.glob("*.json") if path.is_file()
+            ),
+            "audit_events": len(_audit().list()),
+            "cloud_ai_enabled": bool(_settings.get().get("cloud_access", False)),
+        }
+
+    @app.get("/api/local/privacy/export")
+    def local_privacy_export(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        stored = _settings.get()
+        return {
+            "version": 1,
+            "exported_at": _iso_now(),
+            "storage": "local",
+            "recommendation_profile": _recommendation_profile.get(),
+            "digest_preferences": _digest_service().personalization_data(),
+            "reading_history": app.state.consumption_store.list(),
+            "sources": _digest_service().list_sources(),
+            "assistant_audit": _audit().list(),
+            "privacy_settings": {
+                "ai_provider": stored["ai_provider"],
+                "ai_model": stored["ai_model"],
+                "cloud_access": stored["cloud_access"],
+                "notifications_enabled": stored["notifications_enabled"],
+            },
+        }
+
+    @app.post("/api/local/privacy/erase")
+    async def local_privacy_erase(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        body = await request.json()
+        requested = body.get("scopes", []) if isinstance(body, dict) else []
+        scopes = {str(scope) for scope in requested if str(scope)}
+        allowed = {"history", "profile", "cache", "audit"}
+        if not scopes or not scopes.issubset(allowed):
+            raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
+        if "history" in scopes:
+            app.state.consumption_store.clear()
+        if "profile" in scopes:
+            _recommendation_profile.clear()
+            _digest_service().clear_personalization()
+        if "cache" in scopes:
+            _digest_service().clear_cached_content()
+            app.state.reader_cache.clear()
+        if "audit" in scopes:
+            _audit().clear()
+        else:
+            _audit().append(
+                "verify",
+                "Personal assistant data erased",
+                details={"scopes": sorted(scopes)},
+            )
+        return {"ok": True, "erased": sorted(scopes)}
 
     @app.get("/api/v1/node")
     def node_info() -> dict[str, Any]:

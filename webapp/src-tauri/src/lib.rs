@@ -1,6 +1,8 @@
 mod node;
 
 use node::NodeState;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -30,6 +32,7 @@ pub fn run() {
         .manage(NodeState {
             child: std::sync::Mutex::new(None),
             port,
+            stopping: AtomicBool::new(false),
         })
         .setup(move |app| {
             if cfg!(debug_assertions) {
@@ -88,6 +91,30 @@ pub fn run() {
                 }
             });
 
+            // A laptop can sleep through daemon failure or lose the child to
+            // an OS resource event. Three failed health checks trigger a
+            // bounded restart; ordinary slow starts are left undisturbed.
+            let watchdog = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut failures = 0_u8;
+                loop {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let state = watchdog.state::<NodeState>();
+                    if state.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                    if node::health_ok(state.port) {
+                        failures = 0;
+                    } else {
+                        failures = failures.saturating_add(1);
+                        if failures >= 3 {
+                            let _ = node::recover_if_unhealthy(state.inner());
+                            failures = 0;
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -101,8 +128,17 @@ pub fn run() {
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
-        if let RunEvent::ExitRequested { .. } = event {
-            node::stop(app_handle.state::<NodeState>().inner());
+        match event {
+            RunEvent::Resumed => {
+                let handle = app_handle.clone();
+                std::thread::spawn(move || {
+                    let _ = node::recover_if_unhealthy(handle.state::<NodeState>().inner());
+                });
+            }
+            RunEvent::ExitRequested { .. } => {
+                node::stop(app_handle.state::<NodeState>().inner());
+            }
+            _ => {}
         }
     });
 }

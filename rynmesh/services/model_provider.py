@@ -10,8 +10,9 @@ Powers Search & Ask, digest briefings, and item summaries. Two backends:
   ``curl_cffi`` for the reality transport) — selecting this backend without
   the SDK installed raises with the pip command to run.
 
-Resolution: `RYNMESH_MODEL_PROVIDER=anthropic|ollama|none` overrides;
-otherwise auto-detect (Anthropic key+SDK first, then a reachable Ollama).
+Resolution: `RYNMESH_MODEL_PROVIDER=anthropic|ollama|none` selects a backend;
+cloud selection is honored only when the caller explicitly permits cloud
+access. Otherwise only a reachable Ollama is considered.
 Everything degrades gracefully to "no provider" — features that need a model
 say so instead of failing.
 """
@@ -222,7 +223,10 @@ def _ollama_reachable(provider: "OllamaProvider") -> bool:
 
 
 def resolve_provider(
-    *, preferred_model: str = "", http: HttpJson | None = None
+    *,
+    preferred_model: str = "",
+    allow_cloud: bool = True,
+    http: HttpJson | None = None,
 ) -> ModelProvider | None:
     """Pick the active provider. Returns None when no model is reachable.
 
@@ -232,6 +236,8 @@ def resolve_provider(
     forced = os.environ.get("RYNMESH_MODEL_PROVIDER", "").strip().lower()
     if forced == "none":
         return None
+    if forced == "anthropic" and not allow_cloud:
+        return None
     if forced == "anthropic":
         return AnthropicProvider()
     if forced == "ollama":
@@ -240,7 +246,7 @@ def resolve_provider(
             raise ModelProviderError("ollama_unavailable")
         return provider
 
-    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+    if allow_cloud and os.environ.get("ANTHROPIC_API_KEY", "").strip():
         try:
             return AnthropicProvider()
         except ModelProviderError:
