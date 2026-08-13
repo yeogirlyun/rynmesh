@@ -77,7 +77,12 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: webapp/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - name: Build self-contained node sidecar
+        run: ./src-tauri/scripts/build-sidecar.sh
       - name: Compile desktop shell
         run: cargo check --manifest-path src-tauri/Cargo.toml
