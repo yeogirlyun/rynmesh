@@ -821,6 +821,38 @@ def test_signal50_media_ops_queue_runs_relay_jobs_serially(tmp_path, monkeypatch
     assert calls == [first["job_id"], second["job_id"]]
 
 
+def test_signal50_media_ops_job_reads_remain_valid_during_updates(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    import rynmesh.signal50_media_ops as media_ops
+
+    def fake_run_relay_bundle_order(*args, **kwargs):
+        time.sleep(0.05)
+        return {"status": "completed", "message": "done"}
+
+    monkeypatch.setattr(media_ops, "_run_relay_bundle_order", fake_run_relay_bundle_order)
+    app = media_ops.create_app(
+        store=RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "mesh"),
+        work_dir=tmp_path / "ops",
+    )
+    with TestClient(app) as client:
+        submitted = client.post(
+            "/api/jobs",
+            json={
+                "operation": media_ops.RELAY_BUNDLE_OPERATION,
+                "params": {"flow_job_bundle": {"content_hash": "sha256:" + "a" * 64}},
+            },
+        ).json()["job"]
+
+        responses = [client.get(f"/api/jobs/{submitted['job_id']}") for _ in range(100)]
+        completed = _wait_media_ops_test_job(client, submitted["job_id"])
+
+    assert all(response.status_code == 200 for response in responses)
+    assert all(response.json().get("job", {}).get("job_id") == submitted["job_id"] for response in responses)
+    assert completed["status"] == "completed"
+
+
 def test_signal50_service_forwards_relay_bundle_to_media_ops(monkeypatch, tmp_path) -> None:
     import rynmesh.signal50_service as service
 

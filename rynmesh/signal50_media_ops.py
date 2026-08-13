@@ -256,10 +256,16 @@ class MediaOpsState:
 
     def _write_job(self, job: dict[str, Any]) -> None:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
-        self._job_path(str(job["job_id"])).write_text(
-            json.dumps(job, indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
-        )
+        path = self._job_path(str(job["job_id"]))
+        temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temporary_path.open("w", encoding="utf-8") as handle:
+                handle.write(json.dumps(job, indent=2, ensure_ascii=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _require_local_request(request: Any) -> None:
