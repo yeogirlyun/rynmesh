@@ -17,6 +17,7 @@ import html as _html
 import json
 import re
 import ssl
+import time
 import urllib.request
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -53,6 +54,8 @@ WEIGHT_MIN, WEIGHT_MAX = 0.1, 3.0
 WEIGHT_UP, WEIGHT_DOWN, WEIGHT_OPENED = 0.2, -0.3, 0.05
 TAG_UP, TAG_DOWN = 1.0, -0.5
 DEFAULT_REFRESH_INTERVAL_S = 30 * 60
+DEGRADED_REFRESH_INTERVAL_S = 15 * 60
+OFFLINE_REFRESH_INTERVAL_S = 5 * 60
 
 _USER_AGENT = "rynmesh-digest/0.5 (+https://github.com/yeogirlyun/rynmesh)"
 _YT_CHANNEL_RE = re.compile(r"youtube\.com/channel/(UC[\w-]{10,})")
@@ -92,6 +95,15 @@ DEFAULT_DISCOVERY_SOURCES: tuple[dict[str, Any], ...] = (
         "content_kind": "video",
     },
     {
+        "id": "default-youtube-kurzgesagt",
+        "kind": "youtube",
+        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCsXVk37bltHxD1rDPwtNM8Q",
+        "title": "YouTube · Kurzgesagt",
+        "tags": ["youtube", "video", "science", "learning", "animation", "platform:youtube"],
+        "weight": 1.0,
+        "content_kind": "video",
+    },
+    {
         "id": "default-reddit-science",
         "kind": "reddit",
         "feed_url": "https://www.reddit.com/r/science/.rss",
@@ -110,12 +122,39 @@ DEFAULT_DISCOVERY_SOURCES: tuple[dict[str, Any], ...] = (
         "content_kind": "report",
     },
     {
+        "id": "default-bbc-world",
+        "kind": "news",
+        "feed_url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "title": "BBC News · World",
+        "tags": ["news", "world", "culture", "platform:news"],
+        "weight": 0.9,
+        "content_kind": "report",
+    },
+    {
+        "id": "default-ars-technica",
+        "kind": "news",
+        "feed_url": "https://feeds.arstechnica.com/arstechnica/index",
+        "title": "Ars Technica",
+        "tags": ["news", "technology", "science", "engineering", "platform:news"],
+        "weight": 1.0,
+        "content_kind": "report",
+    },
+    {
         "id": "default-arxiv-ai",
         "kind": "research",
         "feed_url": "https://export.arxiv.org/rss/cs.AI",
         "title": "arXiv · Artificial Intelligence",
         "tags": ["arxiv", "research", "science", "ai", "papers", "platform:arxiv"],
         "weight": 1.0,
+        "content_kind": "document",
+    },
+    {
+        "id": "default-arxiv-machine-learning",
+        "kind": "research",
+        "feed_url": "https://export.arxiv.org/rss/cs.LG",
+        "title": "arXiv · Machine Learning",
+        "tags": ["arxiv", "research", "machine-learning", "science", "papers", "platform:arxiv"],
+        "weight": 0.9,
         "content_kind": "document",
     },
     {
@@ -144,6 +183,24 @@ DEFAULT_DISCOVERY_SOURCES: tuple[dict[str, Any], ...] = (
         "tags": ["image", "cartoon", "science", "technology", "creative", "platform:rss"],
         "weight": 1.0,
         "content_kind": "image",
+    },
+    {
+        "id": "default-nasa-image",
+        "kind": "image",
+        "feed_url": "https://www.nasa.gov/rss/dyn/lg_image_of_the_day.rss",
+        "title": "NASA · Image of the Day",
+        "tags": ["image", "space", "science", "photography", "platform:rss"],
+        "weight": 1.0,
+        "content_kind": "image",
+    },
+    {
+        "id": "default-gutenberg-new",
+        "kind": "books",
+        "feed_url": "https://www.gutenberg.org/cache/epub/feeds/today.rss",
+        "title": "Project Gutenberg · New books",
+        "tags": ["books", "culture", "literature", "public-domain", "platform:rss"],
+        "weight": 0.8,
+        "content_kind": "document",
     },
 )
 
@@ -737,10 +794,15 @@ class DigestService:
         """Fetch every source; one bad feed never kills the run."""
         if self.bootstrap_defaults:
             self.ensure_default_sources()
+        previous_health = {
+            str(entry.get("id", "")): entry for entry in self._load("health.json", [])
+        }
         health: list[dict[str, Any]] = []
         new_count = 0
         for source in self.list_sources():
             source_id = source["id"]
+            checked_at = time.time()
+            previous = previous_health.get(source_id, {})
             if str(source.get("feed_url", "")).startswith("local:"):
                 # read-later / watcher pseudo-sources have no feed to poll
                 health.append(
@@ -750,6 +812,10 @@ class DigestService:
                         "ok": True,
                         "error": "",
                         "item_count": len(self._load("items.json", {}).get(source_id, [])),
+                        "last_checked_unix": checked_at,
+                        "last_success_unix": checked_at,
+                        "consecutive_failures": 0,
+                        "using_cached_items": False,
                     }
                 )
                 continue
@@ -765,6 +831,10 @@ class DigestService:
                         "ok": False,
                         "error": str(exc),
                         "item_count": existing,
+                        "last_checked_unix": checked_at,
+                        "last_success_unix": float(previous.get("last_success_unix", 0.0) or 0.0),
+                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0) + 1,
+                        "using_cached_items": existing > 0,
                     }
                 )
                 continue
@@ -776,6 +846,10 @@ class DigestService:
                         "ok": False,
                         "error": f"fetch_failed: {exc}",
                         "item_count": existing,
+                        "last_checked_unix": checked_at,
+                        "last_success_unix": float(previous.get("last_success_unix", 0.0) or 0.0),
+                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0) + 1,
+                        "using_cached_items": existing > 0,
                     }
                 )
                 continue
@@ -787,6 +861,10 @@ class DigestService:
                     "ok": True,
                     "error": "",
                     "item_count": len(self._load("items.json", {}).get(source_id, [])),
+                    "last_checked_unix": checked_at,
+                    "last_success_unix": checked_at,
+                    "consecutive_failures": 0,
+                    "using_cached_items": False,
                 }
             )
         self._save("health.json", health)
@@ -803,6 +881,10 @@ class DigestService:
         formats = sorted(
             {str(item.get("content_kind", "document") or "document") for item in items}
         )
+        health = list(self._load("health.json", []))
+        healthy_sources = sum(1 for entry in health if entry.get("ok"))
+        failed_sources = sum(1 for entry in health if not entry.get("ok"))
+        cached_sources = sum(1 for entry in health if entry.get("using_cached_items"))
         return {
             "phase": str(state.get("phase", "ready" if items else "waiting")),
             "message": str(state.get("message", "")),
@@ -814,6 +896,12 @@ class DigestService:
             "item_count": len(items),
             "source_count": len(self.list_sources()),
             "formats": formats,
+            "healthy_sources": healthy_sources,
+            "failed_sources": failed_sources,
+            "cached_sources": cached_sources,
+            "degraded": failed_sources > 0,
+            "offline_ready": bool(items),
+            "source_health": health,
         }
 
     def proactive_refresh(
@@ -860,16 +948,26 @@ class DigestService:
             if isinstance(value, str) and str(value) in current_ids
         }
         unread.update(newly_ranked)
+        source_health = list(refresh.get("sources", []))
+        healthy_sources = sum(1 for entry in source_health if entry.get("ok"))
+        failed_sources = sum(1 for entry in source_health if not entry.get("ok"))
+        if failed_sources and healthy_sources == 0:
+            retry_delay = OFFLINE_REFRESH_INTERVAL_S
+        elif failed_sources:
+            retry_delay = DEGRADED_REFRESH_INTERVAL_S
+        else:
+            retry_delay = DEFAULT_REFRESH_INTERVAL_S
         state.update(
             {
                 "phase": "ready" if current_ids else "waiting",
                 "message": (
                     f"{len(current_ids)} recommendations ready"
+                    + (f"; {failed_sources} sources will retry" if failed_sources else "")
                     if current_ids
                     else "No public feeds responded yet; the agent will retry"
                 ),
                 "last_completed_unix": float(now_unix),
-                "next_refresh_unix": float(now_unix + DEFAULT_REFRESH_INTERVAL_S),
+                "next_refresh_unix": float(now_unix + retry_delay),
                 "new_items": int(refresh.get("new_items", 0)),
                 "unread_item_ids": sorted(unread),
             }

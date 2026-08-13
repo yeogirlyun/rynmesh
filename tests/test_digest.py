@@ -9,6 +9,8 @@ from rynmesh.peer_http import create_app
 from rynmesh.recommendation_profile import RecommendationProfileStore
 from rynmesh.services.digest import (
     DEFAULT_DISCOVERY_SOURCES,
+    DEGRADED_REFRESH_INTERVAL_S,
+    OFFLINE_REFRESH_INTERVAL_S,
     DigestError,
     DigestService,
     parse_feed,
@@ -268,6 +270,59 @@ def test_refresh_survives_one_bad_source(tmp_path):
     assert by_ok == {True, False}
     good = next(entry for entry in result["sources"] if entry["ok"])
     assert good["item_count"] == 1  # seeded at add; bad feed didn't kill the run
+
+
+def test_discovery_uses_cached_items_and_retries_offline_sources_soon(tmp_path):
+    online = True
+
+    def fetch(*_):
+        if online:
+            return RSS
+        raise RuntimeError("offline")
+
+    service = DigestService(tmp_path, fetcher=fetch)
+    service.add_source("https://a.example/feed")
+    online = False
+
+    result = service.proactive_refresh(now_unix=NOW)
+    status = result["status"]
+    assert status["item_count"] == 1
+    assert status["healthy_sources"] == 0
+    assert status["failed_sources"] == 1
+    assert status["cached_sources"] == 1
+    assert status["offline_ready"] is True
+    assert status["next_refresh_unix"] == NOW + OFFLINE_REFRESH_INTERVAL_S
+    assert status["source_health"][0]["using_cached_items"] is True
+    assert status["source_health"][0]["consecutive_failures"] == 1
+
+
+def test_discovery_reports_degraded_health_and_retry_schedule(tmp_path):
+    service = _service(
+        tmp_path,
+        {
+            "https://good.example/feed": RSS,
+            "https://bad.example/feed": RuntimeError("blocked"),
+        },
+    )
+    service.add_source("https://good.example/feed")
+    sources = service.list_sources()
+    sources.append(
+        {
+            "id": "badbadbadbadbad1",
+            "kind": "rss",
+            "feed_url": "https://bad.example/feed",
+            "title": "Bad",
+            "tags": ["rss"],
+            "weight": 1.0,
+        }
+    )
+    service._save("sources.json", sources)
+
+    status = service.proactive_refresh(now_unix=NOW)["status"]
+    assert status["healthy_sources"] == 1
+    assert status["failed_sources"] == 1
+    assert status["degraded"] is True
+    assert status["next_refresh_unix"] == NOW + DEGRADED_REFRESH_INTERVAL_S
 
 
 def test_feedback_moves_ranking_and_suppresses_seen(tmp_path):

@@ -1,4 +1,4 @@
-import { Bookmark, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
+import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, EmptyState, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
@@ -21,6 +21,14 @@ function timeAgo(unix: number): string {
   if (hours < 24) return `${Math.floor(hours)}h ago`;
   const days = Math.floor(hours / 24);
   return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+function timeUntil(unix: number): string {
+  if (!unix) return "not scheduled";
+  const seconds = Math.max(0, unix - Date.now() / 1000);
+  if (seconds < 90) return "within a minute";
+  if (seconds < 3600) return `in ${Math.ceil(seconds / 60)} minutes`;
+  return `in ${Math.ceil(seconds / 3600)} hours`;
 }
 
 function DigestCard({
@@ -304,6 +312,45 @@ export default function Digest() {
           <p className="digest-brief-text">{digest.brief}</p>
         </Panel>
       ) : null}
+
+      <Panel className="recommendation-status-panel">
+        <div className="recommendation-status-heading">
+          <div>
+            <span className="eyebrow">Discovery health</span>
+            <h2>{discovery?.item_count ? `${discovery.item_count} items are ready` : "Ryn is collecting your first items"}</h2>
+            <p>{discovery?.message || "The background agent is preparing its first zero-setup review."}</p>
+          </div>
+          <Chip tone={discovery?.phase === "error" ? "danger" : discovery?.degraded ? "warn" : discovery?.item_count ? "ok" : "info"}>
+            {discovery?.phase === "refreshing" ? "reviewing now" : discovery?.degraded ? "using healthy sources" : discovery?.item_count ? "ready" : "starting"}
+          </Chip>
+        </div>
+        <div className="recommendation-readiness-grid">
+          <div>
+            <CheckCircle2 size={18} />
+            <span>Public sources</span>
+            <strong>{discovery ? `${discovery.healthy_sources}/${discovery.source_count} healthy` : "Checking"}</strong>
+            <p>{discovery?.cached_sources ? `${discovery.cached_sources} unavailable source${discovery.cached_sources === 1 ? " is" : "s are"} serving cached items.` : "Each source is checked independently, so one failure cannot blank your feed."}</p>
+          </div>
+          <div>
+            <Clock3 size={18} />
+            <span>Background schedule</span>
+            <strong>{timeUntil(discovery?.next_refresh_unix ?? 0)}</strong>
+            <p>{discovery?.last_completed_unix ? `Last completed ${timeAgo(discovery.last_completed_unix)}.` : "The first review starts automatically after the daemon is ready."}</p>
+          </div>
+          <div>
+            <Sparkles size={18} />
+            <span>Formats available</span>
+            <strong>{discovery?.formats.length ? discovery.formats.join(", ") : "Collecting"}</strong>
+            <p>No account, API key, YouTube handle, subreddit, or preference setup is required.</p>
+          </div>
+        </div>
+        {discovery?.failed_sources ? (
+          <div className="recommendation-runtime-note">
+            <AlertTriangle size={15} />
+            {discovery.failed_sources} source{discovery.failed_sources === 1 ? " is" : "s are"} temporarily unavailable. Ryn kept the remaining feed usable and scheduled an earlier retry.
+          </div>
+        ) : null}
+      </Panel>
 
       {profile ? (
         <Panel className="recommendation-profile-panel">

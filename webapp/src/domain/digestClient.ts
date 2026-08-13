@@ -19,6 +19,10 @@ export interface DigestSourceHealth {
   ok: boolean;
   error: string;
   item_count: number;
+  last_checked_unix: number;
+  last_success_unix: number;
+  consecutive_failures: number;
+  using_cached_items: boolean;
 }
 
 export interface DigestItem {
@@ -52,6 +56,12 @@ export interface DiscoveryStatus {
   item_count: number;
   source_count: number;
   formats: string[];
+  healthy_sources: number;
+  failed_sources: number;
+  cached_sources: number;
+  degraded: boolean;
+  offline_ready: boolean;
+  source_health: DigestSourceHealth[];
 }
 
 export interface Digest {
