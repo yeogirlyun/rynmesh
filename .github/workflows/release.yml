@@ -47,3 +47,53 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+
+  macos-desktop:
+    name: macOS desktop (${{ matrix.arch }})
+    needs: python-package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15-arm64
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install web dependencies
+        working-directory: webapp
+        run: npm ci
+      - name: Build self-contained node sidecar
+        run: ./webapp/src-tauri/scripts/build-sidecar.sh
+      - name: Build desktop disk image
+        working-directory: webapp
+        run: npm run tauri build -- --bundles dmg
+      - name: Name release artifact
+        run: |
+          dmg="$(find webapp/src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit)"
+          test -n "$dmg"
+          cp "$dmg" "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg"
+      - name: Verify desktop signature and bundled daemon
+        run: |
+          mount_dir="$(mktemp -d)"
+          hdiutil attach "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg" -mountpoint "$mount_dir" -nobrowse -readonly >/dev/null
+          trap 'hdiutil detach "$mount_dir" >/dev/null' EXIT
+          app="$mount_dir/Ryn.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          test -x "$app/Contents/MacOS/rynmesh-peer"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "${GITHUB_REF_NAME#v}"
+      - name: Upload desktop artifact to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg" --clobber

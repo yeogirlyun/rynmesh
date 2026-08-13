@@ -23,6 +23,16 @@ Rynmesh is alpha software. APIs and storage formats may change before 1.0.
 
 ## Install from GitHub
 
+### macOS desktop
+
+Download the Apple Silicon (`aarch64`) or Intel (`x86_64`) DMG from the
+[latest release](https://github.com/yeogirlyun/rynmesh/releases/latest), open it, and drag **Ryn**
+to Applications. The app contains its own node daemon and web interface; Python, Node.js, Ollama,
+an account, and source configuration are not required. Because community builds are not Apple
+notarized yet, the first launch may require Control-clicking Ryn and choosing **Open**.
+
+### Python package
+
 Python 3.10 or newer is required.
 
 ```bash
@@ -35,7 +45,7 @@ curl -fsSL https://github.com/yeogirlyun/rynmesh/releases/latest/download/instal
 Or install the current wheel into an existing Python environment:
 
 ```bash
-python -m pip install https://github.com/yeogirlyun/rynmesh/releases/download/v0.5.1/rynmesh-0.5.1-py3-none-any.whl
+python -m pip install https://github.com/yeogirlyun/rynmesh/releases/download/v0.6.0/rynmesh-0.6.0-py3-none-any.whl
 rynmesh-peer
 ```
 

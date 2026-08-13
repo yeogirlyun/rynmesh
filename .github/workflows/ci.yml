@@ -64,3 +64,20 @@ jobs:
           curl -fsS http://127.0.0.1:8791/ | grep -qi "<!doctype html"
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8791/digest)" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8791/assets/nope.js)" = 404
+
+  desktop-compile:
+    runs-on: macos-15-arm64
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Compile desktop shell
+        run: cargo check --manifest-path src-tauri/Cargo.toml
