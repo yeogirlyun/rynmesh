@@ -1,7 +1,7 @@
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
-import { Button, Chip, EmptyState, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
+import { Button, Chip, EmptyState, EvidenceDetails, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
 import DigestViewer, { type ViewerAction } from "../components/DigestViewer";
 import {
   digestApi,
@@ -106,6 +106,7 @@ function DigestCard({
               />
             </div>
           </div>
+          <EvidenceDetails packet={item.evidence_packet} />
         </div>
       </div>
     </Panel>
@@ -327,6 +328,9 @@ export default function Digest() {
 
       {digest?.brief ? (
         <Panel title="Briefing" className="digest-brief">
+          <p className="digest-brief-basis">
+            <Sparkles size={12} /> AI synthesis from titles and public-feed summaries only. Numbered references point to items below.
+          </p>
           <p className="digest-brief-text">{digest.brief}</p>
         </Panel>
       ) : null}

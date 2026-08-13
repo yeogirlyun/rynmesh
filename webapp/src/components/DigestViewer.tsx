@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { digestApi, type DigestItem, type ReaderArticle } from "../domain/digestClient";
-import { Button, Chip } from "./ui";
+import { Button, Chip, EvidenceDetails } from "./ui";
 
 export type ViewerAction = "up" | "down" | "opened" | "more_like_this";
 
@@ -271,10 +271,15 @@ export default function DigestViewer({
           ) : null}
 
           {item.ai_summary ? (
-            <p className="viewer-ai">
-              <Sparkles size={13} /> {item.ai_summary}
-            </p>
+            <div className="viewer-ai-wrap">
+              <p className="viewer-ai">
+                <Sparkles size={13} /> {item.ai_summary}
+              </p>
+              <span>AI summary from the title and public-feed description — not the full content.</span>
+            </div>
           ) : null}
+
+          <EvidenceDetails packet={item.evidence_packet} />
 
           {isArticle ? (
             <div className="viewer-article">

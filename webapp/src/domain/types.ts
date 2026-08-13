@@ -105,6 +105,18 @@ export type RecommendationEvidence =
   | "safety_passed"
   | "provenance_signed";
 
+export interface RecommendationEvidencePacket {
+  version: number;
+  content_id: string;
+  review_basis: ReviewBasis;
+  reviewed_at_unix: number;
+  source: { name: string; platform: string; url: string };
+  signals: { kind: string; label: string }[];
+  observations: { field: string; label: string; value: string }[];
+  citations: { kind: string; label: string; url: string }[];
+  limitations: string[];
+}
+
 export interface Recommendation {
   id: string;
   contentId: string;
@@ -114,6 +126,7 @@ export interface Recommendation {
   novelty: string | null;
   uncertainty: string | null;
   review_basis: ReviewBasis;
+  evidence_packet: RecommendationEvidencePacket;
   item?: ContentItem;
 }
 

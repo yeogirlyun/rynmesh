@@ -66,11 +66,36 @@ import type {
   ProvenanceStatus,
   Recommendation,
   RecommendationEvidence,
+  RecommendationEvidencePacket,
   ReviewBasis,
   SafetyOutcome,
 } from "../domain/types";
 
 type IconComponent = ComponentType<LucideProps>;
+
+export function EvidenceDetails({ packet }: { packet: RecommendationEvidencePacket }) {
+  const reviewed = packet.observations.map((observation) => observation.label).join(", ");
+  return (
+    <details className="evidence-details">
+      <summary>
+        Evidence reviewed · {packet.review_basis === "metadata" ? "metadata only" : packet.review_basis}
+      </summary>
+      <div className="evidence-details-body">
+        <p><strong>Reviewed:</strong> {reviewed || "No fields were available."}</p>
+        {packet.limitations.map((limitation) => (
+          <p className="evidence-limitation" key={limitation}>
+            <AlertTriangle size={13} /> {limitation}
+          </p>
+        ))}
+        {packet.citations.map((citation) => (
+          <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer noopener">
+            <Link2 size={13} /> {citation.label}
+          </a>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 const kindIcons: Record<ContentKind, IconComponent> = {
   video: Video,
@@ -543,6 +568,7 @@ export function RecommendationCard({
             </Chip>
           ))}
         </div>
+        <EvidenceDetails packet={rec.evidence_packet} />
         {item.starter ? (
           <div className="button-row recommendation-feedback">
             <Button variant="primary" icon={ThumbsUp} onClick={() => onFeedback?.("more")}>

@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
 from .credits import CreditPolicy
+from .recommendation_evidence import build_evidence_packet
 from .recommender import (
     BaselineRanker,
     Candidate,
@@ -300,6 +301,11 @@ def recommend_from_items(
                 "novelty": novelty,
                 "uncertainty": uncertainty,
                 "review_basis": str(item.get("review_basis", "") or "metadata"),
+                "evidence_packet": build_evidence_packet(
+                    item,
+                    signals=evidence,
+                    reviewed_at_unix=now_unix,
+                ),
                 "item": dict(item),
             }
         )

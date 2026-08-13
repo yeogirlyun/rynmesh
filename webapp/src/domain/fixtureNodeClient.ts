@@ -742,6 +742,28 @@ const ACTIVITY: ActivityEvent[] = [
   { t: "4h ago", kind: "flag", text: 'Safety scanner flagged "Glassbeach News briefing - May 2026"' },
 ];
 
+function fixtureEvidence(
+  contentId: string,
+  basis: Recommendation["review_basis"],
+): Recommendation["evidence_packet"] {
+  return {
+    version: 1,
+    content_id: contentId,
+    review_basis: basis,
+    reviewed_at_unix: Date.parse("2026-05-13T12:00:00Z") / 1000,
+    source: { name: "Fixture mesh publisher", platform: "rynmesh", url: "" },
+    signals: [],
+    observations: [{ field: "title", label: "Title", value: "Fixture content metadata" }],
+    citations: [],
+    limitations:
+      basis === "metadata"
+        ? ["Ryn reviewed metadata only, not the full content."]
+        : basis === "preview"
+          ? ["Ryn reviewed a preview, not the complete content."]
+          : [],
+  };
+}
+
 const RECOMMENDATIONS: Recommendation[] = [
   {
     id: "rec_a01",
@@ -753,6 +775,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "High overlap with active reading context.",
     uncertainty: null,
     review_basis: "preview",
+    evidence_packet: fixtureEvidence("cid_5012ff8801", "preview"),
   },
   {
     id: "rec_a02",
@@ -764,6 +787,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "Different angle than the explainers you already have.",
     uncertainty: null,
     review_basis: "preview",
+    evidence_packet: fixtureEvidence("cid_4421aedd02", "preview"),
   },
   {
     id: "rec_a03",
@@ -775,6 +799,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "Adds video form to a text-heavy thread.",
     uncertainty: "Preview-only; full fetch is 380 MB and should be confirmed.",
     review_basis: "preview",
+    evidence_packet: fixtureEvidence("cid_8881af2901", "preview"),
   },
   {
     id: "rec_a04",
@@ -786,6 +811,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "Different format: multimodal package.",
     uncertainty: "Metadata-only review. Preview not yet fetched.",
     review_basis: "metadata",
+    evidence_packet: fixtureEvidence("cid_19a32c8e0d", "metadata"),
   },
   {
     id: "rec_a05",
@@ -797,6 +823,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "Pulls library balance toward audio.",
     uncertainty: null,
     review_basis: "full",
+    evidence_packet: fixtureEvidence("cid_c01a3819e5", "full"),
   },
   {
     id: "rec_a06",
@@ -807,6 +834,7 @@ const RECOMMENDATIONS: Recommendation[] = [
     novelty: "Different domain than your usual reads.",
     uncertainty: "Attested-tier source; metadata review only.",
     review_basis: "metadata",
+    evidence_packet: fixtureEvidence("cid_be112c0f88", "metadata"),
   },
 ];
 

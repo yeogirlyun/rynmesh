@@ -1219,6 +1219,26 @@ td small {
   background: var(--bg-secondary);
 }
 
+.evidence-details {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.evidence-details summary {
+  width: fit-content;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.evidence-details[open] summary { color: var(--accent-green); }
+.evidence-details-body { display: grid; gap: 6px; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-secondary); }
+.evidence-details-body p { margin: 0; }
+.evidence-details-body a { display: inline-flex; align-items: center; gap: 5px; width: fit-content; color: var(--accent-green); }
+.evidence-limitation { display: flex; align-items: flex-start; gap: 6px; color: var(--accent-yellow); }
+.evidence-limitation svg { flex: 0 0 auto; margin-top: 1px; }
+
 .limitation,
 .alert-callout {
   display: flex;
@@ -2151,6 +2171,7 @@ td small {
 .digest-error { color: #e5484d; font-size: 12.5px; margin: 10px 0 0; }
 @media (max-width: 720px) { .digest-thumb { display: none; } }
 .digest-brief-text { margin: 0; color: var(--text-primary); font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.digest-brief-basis { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--text-muted); font-size: 11.5px; }
 .digest-ai-summary { color: var(--text-primary); }
 .digest-ai-summary svg { color: var(--accent-green); vertical-align: -1px; margin-right: 3px; }
 .digest-save-row { margin-top: 10px; }
@@ -2780,6 +2801,9 @@ button.digest-title:hover {
 .viewer-image img { max-width: 100%; border-radius: var(--radius-md); background: #fff; }
 .viewer-ai { display: flex; gap: 6px; align-items: flex-start; color: var(--text-secondary); font-size: 13px; line-height: var(--lh-body); background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 10px 12px; margin: 0 0 16px; }
 .viewer-ai svg { color: var(--accent-green); flex-shrink: 0; margin-top: 2px; }
+.viewer-ai-wrap { margin-bottom: 16px; }
+.viewer-ai-wrap .viewer-ai { margin-bottom: 4px; }
+.viewer-ai-wrap > span { color: var(--text-muted); font-size: 11.5px; }
 .viewer-article { color: var(--text-primary); font-size: 15px; line-height: 1.7; }
 .viewer-article p { margin: 0 0 14px; }
 .viewer-article h3 { margin: 22px 0 10px; font-size: 17px; }

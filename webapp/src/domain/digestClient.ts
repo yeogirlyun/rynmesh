@@ -1,3 +1,5 @@
+import type { RecommendationEvidencePacket, ReviewBasis } from "./types";
+
 // Client for the node's Daily Digest API (/api/local/sources, /api/local/digest).
 // Kept separate from NodeClient on purpose: the digest surface is live-node-only
 // (no fixture variant), and nodeClient.ts carries in-flight owner edits.
@@ -34,6 +36,7 @@ export interface DigestItem {
   link: string;
   summary: string;
   ai_summary: string;
+  ai_summary_grounding_version: number;
   author: string;
   thumbnail: string;
   media_url: string;
@@ -43,6 +46,10 @@ export interface DigestItem {
   published_unix: number;
   score: number;
   reasons: string[];
+  review_basis: ReviewBasis;
+  safety_outcome: "unscanned";
+  provenance_status: "unsigned";
+  evidence_packet: RecommendationEvidencePacket;
 }
 
 export interface DiscoveryStatus {
@@ -67,7 +74,12 @@ export interface DiscoveryStatus {
 export interface Digest {
   generated_at_unix: number;
   brief: string;
-  ai: { provider: string; model: string } | null;
+  ai: {
+    provider: string;
+    model: string;
+    review_basis: ReviewBasis;
+    grounding_version: number;
+  } | null;
   items: DigestItem[];
   sources: DigestSourceHealth[];
 }

@@ -216,6 +216,40 @@ def test_uncertainty_novelty_and_review_basis():
     assert all(rec["review_basis"] == "metadata" for rec in recs.values())
 
 
+def test_external_recommendation_has_versioned_evidence_and_original_citation():
+    item = _item(
+        content_id="digest:public",
+        external=True,
+        external_url="https://example.com/original",
+        source_peer_name="Example Feed",
+        source_platform="rss",
+        source_description="A feed-provided description.",
+        safety_outcome="unscanned",
+        provenance_status="unsigned",
+        provenance_head_hash=None,
+    )
+
+    packet = recommend_from_items([item], now_unix=NOW)[0]["evidence_packet"]
+
+    assert packet["version"] == 1
+    assert packet["review_basis"] == "metadata"
+    assert packet["source"] == {
+        "name": "Example Feed",
+        "platform": "rss",
+        "url": "https://example.com/original",
+    }
+    assert packet["citations"] == [
+        {
+            "kind": "original",
+            "label": "Original at Example Feed",
+            "url": "https://example.com/original",
+        }
+    ]
+    assert "Ryn reviewed metadata only, not the full content." in packet["limitations"]
+    assert "This item has not completed a local safety scan." in packet["limitations"]
+    assert "The source provenance is not fully verified." in packet["limitations"]
+
+
 # ---------------------------------------------------------------- endpoint ----
 
 

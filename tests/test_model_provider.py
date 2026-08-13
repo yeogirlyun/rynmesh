@@ -1,4 +1,5 @@
 """Model provider seam + Search & Ask + digest AI enrichment."""
+
 from __future__ import annotations
 
 import pytest
@@ -46,6 +47,7 @@ def make_http(tags=None, response="hello", fail=False):
 
 # ---------------------------------------------------------------- ollama ----
 
+
 def test_ollama_picks_first_installed_model_and_generates(monkeypatch):
     monkeypatch.delenv("RYNMESH_OLLAMA_MODEL", raising=False)
     provider = OllamaProvider(http=make_http(tags=["gemma3:4b", "qwen3.6:35b"]))
@@ -63,6 +65,7 @@ def test_ollama_unavailable(monkeypatch):
 
 
 # ------------------------------------------------------------- anthropic ----
+
 
 class _Block:
     def __init__(self, type_, text=""):
@@ -98,6 +101,7 @@ def test_anthropic_provider_surfaces_refusal():
 
 # -------------------------------------------------------------- resolve ----
 
+
 def test_resolve_forced_none(monkeypatch):
     monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "none")
     assert resolve_provider() is None
@@ -125,6 +129,7 @@ def test_resolve_auto_none_when_nothing_reachable(monkeypatch):
 
 # ------------------------------------------------------------ search-ask ----
 
+
 def test_ask_without_provider_is_honest():
     result = ask.answer("anything", provider=None)
     assert "No AI model is connected" in result["assistant"]["text"]
@@ -134,14 +139,27 @@ def test_ask_without_provider_is_honest():
 def test_ask_grounds_answer_in_evidence_and_cites_mesh():
     provider = FakeProvider(reply="Grounded answer [1].")
     digest_items = [
-        {"title": "Rust 2.0 released", "summary": "big release", "link": "https://ex.com/rust",
-         "source_title": "HN"},
-        {"title": "Gardening tips", "summary": "soil", "link": "https://ex.com/soil",
-         "source_title": "Blog"},
+        {
+            "title": "Rust 2.0 released",
+            "summary": "big release",
+            "link": "https://ex.com/rust",
+            "source_title": "HN",
+        },
+        {
+            "title": "Gardening tips",
+            "summary": "soil",
+            "link": "https://ex.com/soil",
+            "source_title": "Blog",
+        },
     ]
     content_items = [
-        {"content_id": "cid_1", "title": "Rust clip", "description": "video about rust",
-         "tags": ["rust"], "source_peer_name": "dan-node"},
+        {
+            "content_id": "cid_1",
+            "title": "Rust clip",
+            "description": "video about rust",
+            "tags": ["rust"],
+            "source_peer_name": "dan-node",
+        },
     ]
     result = ask.answer(
         "what happened with rust?",
@@ -157,20 +175,24 @@ def test_ask_grounds_answer_in_evidence_and_cites_mesh():
 
 
 def test_ask_provider_failure_is_reported_not_raised():
-    result = ask.answer("q", provider=FakeProvider(fail=True),
-                        digest_items=[{"title": "q item", "summary": "", "link": "x",
-                                       "source_title": "s"}])
+    result = ask.answer(
+        "q",
+        provider=FakeProvider(fail=True),
+        digest_items=[{"title": "q item", "summary": "", "link": "x", "source_title": "s"}],
+    )
     assert "failed" in result["assistant"]["text"]
 
 
 # ------------------------------------------------- digest AI enrichment ----
 
-RSS = (b'<rss version="2.0"><channel><title>T</title>'
-       b'<item><title>One</title><link>https://e.com/1</link>'
-       b'<description>first thing</description></item>'
-       b'<item><title>Two</title><link>https://e.com/2</link>'
-       b'<description>second thing</description></item>'
-       b'</channel></rss>')
+RSS = (
+    b'<rss version="2.0"><channel><title>T</title>'
+    b"<item><title>One</title><link>https://e.com/1</link>"
+    b"<description>first thing</description></item>"
+    b"<item><title>Two</title><link>https://e.com/2</link>"
+    b"<description>second thing</description></item>"
+    b"</channel></rss>"
+)
 
 
 def test_digest_enrichment_brief_and_cached_summaries(tmp_path):
@@ -180,14 +202,39 @@ def test_digest_enrichment_brief_and_cached_summaries(tmp_path):
 
     digest = service.build(now_unix=NOW, provider=provider)
     assert digest["brief"] == "- worth reading"
-    assert digest["ai"] == {"provider": "fake", "model": "fake-1"}
+    assert digest["ai"] == {
+        "provider": "fake",
+        "model": "fake-1",
+        "review_basis": "metadata",
+        "grounding_version": 1,
+    }
     assert all(item["ai_summary"] == "- worth reading" for item in digest["items"])
+    assert all(item["ai_summary_grounding_version"] == 1 for item in digest["items"])
+    assert "Use only the supplied title and feed summary" in provider.calls[0]
+    assert "do not add outside facts" in provider.calls[-1]
+    assert "supporting item numbers" in provider.calls[-1]
     first_calls = len(provider.calls)  # 2 summaries + 1 brief
 
     # summaries persist: second build only pays for the brief
     again = service.build(now_unix=NOW, provider=provider)
     assert len(provider.calls) == first_calls + 1
     assert again["items"][0]["ai_summary"]
+
+
+def test_digest_replaces_unversioned_cached_ai_summary(tmp_path):
+    service = DigestService(tmp_path, fetcher=lambda url, timeout: RSS)
+    service.add_source("https://e.com/feed")
+    service.refresh()
+    stored = service._load("items.json", {})
+    first = next(iter(stored.values()))[0]
+    first["ai_summary"] = "An old ungrounded summary."
+    service._save("items.json", stored)
+    provider = FakeProvider(reply="Grounded only in feed metadata.")
+
+    digest = service.build(now_unix=NOW, provider=provider)
+
+    assert digest["items"][0]["ai_summary"] == "Grounded only in feed metadata."
+    assert digest["items"][0]["ai_summary_grounding_version"] == 1
 
 
 def test_digest_survives_provider_failure(tmp_path):

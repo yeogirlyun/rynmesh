@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from xml.etree import ElementTree
 
+from ..recommendation_evidence import build_evidence_packet
 from ..recommendation_profile import RecommendationProfileStore
 from ..recommender import (
     BaselineRanker,
@@ -56,6 +57,7 @@ TAG_UP, TAG_DOWN = 1.0, -0.5
 DEFAULT_REFRESH_INTERVAL_S = 30 * 60
 DEGRADED_REFRESH_INTERVAL_S = 15 * 60
 OFFLINE_REFRESH_INTERVAL_S = 5 * 60
+DIGEST_SCHEMA_VERSION = 2
 
 _USER_AGENT = "rynmesh-digest/0.5 (+https://github.com/yeogirlyun/rynmesh)"
 _YT_CHANNEL_RE = re.compile(r"youtube\.com/channel/(UC[\w-]{10,})")
@@ -214,12 +216,14 @@ TERM_UP = 0.4
 STEER_TERM_WEIGHT = 2.0
 
 _TERM_RE = re.compile(r"[a-z0-9][a-z0-9+#.-]{2,23}")
-_STOPWORDS = frozenset("""
+_STOPWORDS = frozenset(
+    """
 the a an and or but of for to in on at by with from as is are was were be been
 this that these those it its into about over after before more most less than
 you your we our they their he she his her i me my not no can will just how why
 what when where who which new news show says said use used using make makes
-""".split())
+""".split()
+)
 _NEGATIVE_LEAD = re.compile(
     r"\b(?:less|no|not|fewer|avoid|without|stop|hide|skip|don'?t want|dont want)\b",
     re.IGNORECASE,
@@ -266,7 +270,8 @@ def parse_steering(text: str) -> dict[str, list[str]]:
         elif _POSITIVE_LEAD.search(clause):
             polarity = "+"
         words = [
-            word for word in _TERM_RE.findall(clause)
+            word
+            for word in _TERM_RE.findall(clause)
             if word not in _STOPWORDS
             and not _NEGATIVE_LEAD.fullmatch(word)
             and not _POSITIVE_LEAD.fullmatch(word)
@@ -833,7 +838,8 @@ class DigestService:
                         "item_count": existing,
                         "last_checked_unix": checked_at,
                         "last_success_unix": float(previous.get("last_success_unix", 0.0) or 0.0),
-                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0) + 1,
+                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0)
+                        + 1,
                         "using_cached_items": existing > 0,
                     }
                 )
@@ -848,7 +854,8 @@ class DigestService:
                         "item_count": existing,
                         "last_checked_unix": checked_at,
                         "last_success_unix": float(previous.get("last_success_unix", 0.0) or 0.0),
-                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0) + 1,
+                        "consecutive_failures": int(previous.get("consecutive_failures", 0) or 0)
+                        + 1,
                         "using_cached_items": existing > 0,
                     }
                 )
@@ -1072,6 +1079,7 @@ class DigestService:
     # that don't have one yet (cached in items.json across builds).
     BRIEF_ITEMS = 10
     SUMMARIZE_TOP = 6
+    AI_GROUNDING_VERSION = 1
 
     @staticmethod
     def _content_shape(source: dict[str, Any], item: dict[str, Any]) -> tuple[str, str]:
@@ -1122,14 +1130,21 @@ class DigestService:
 
         summarized = 0
         for item in items[: self.SUMMARIZE_TOP]:
-            if item.get("ai_summary"):
+            if (
+                item.get("ai_summary")
+                and item.get("ai_summary_grounding_version") == self.AI_GROUNDING_VERSION
+            ):
                 continue
             source_text = (item.get("summary") or item["title"])[:2000]
             try:
                 summary = provider.generate(
-                    "Summarize this item in one plain sentence (max 30 words). "
-                    "No preamble, no markdown.\n\n"
-                    f"Title: {item['title']}\nContent: {source_text}",
+                    "You are summarizing public-feed metadata, not the full item. "
+                    "Use only the supplied title and feed summary. Do not infer, add, or "
+                    "verify facts that are absent. If the metadata is insufficient, say "
+                    "'The feed does not provide enough detail to summarize this item.' "
+                    "Return one plain sentence of at most 30 words with no preamble or markdown.\n\n"
+                    f"Source: {item['source_title']}\nTitle: {item['title']}\n"
+                    f"Feed summary: {source_text}",
                     max_tokens=120,
                 )
             except Exception:
@@ -1137,29 +1152,39 @@ class DigestService:
             if not summary:
                 continue
             item["ai_summary"] = summary
+            item["ai_summary_grounding_version"] = self.AI_GROUNDING_VERSION
             summarized += 1
             for stored_item in stored.get(item["source_id"], []):
                 if stored_item["item_id"] == item["item_id"]:
                     stored_item["ai_summary"] = summary
+                    stored_item["ai_summary_grounding_version"] = self.AI_GROUNDING_VERSION
         if summarized:
             self._save("items.json", stored)
 
         try:
             listing = "\n".join(
-                f"- [{item['source_title']}] {item['title']}: "
+                f"[{index}] Source={item['source_title']} | Title={item['title']} | Feed summary="
                 f"{(item.get('ai_summary') or item.get('summary') or '')[:200]}"
-                for item in items[: self.BRIEF_ITEMS]
+                for index, item in enumerate(items[: self.BRIEF_ITEMS], start=1)
             )
             digest["brief"] = provider.generate(
-                "You are the owner's personal briefing agent. From today's items, "
-                "write a 2-4 bullet briefing of what's actually worth their time. "
-                "Plain text bullets starting with '- ', no headers, no preamble.\n\n"
+                "You are the owner's personal briefing agent. Every entry below is only "
+                "a title and public-feed summary, not full content. Use only those entries; "
+                "do not add outside facts or claim to have watched, listened to, or read them. "
+                "Write 2-4 plain-text bullets beginning with '- '. End each bullet with the "
+                "supporting item numbers, such as [1] or [2][4]. If evidence is insufficient, "
+                "say so. No header or preamble.\n\n"
                 f"{listing}",
                 max_tokens=300,
             )
         except Exception:
             digest["brief"] = ""
-        digest["ai"] = {"provider": provider.id, "model": provider.model}
+        digest["ai"] = {
+            "provider": provider.id,
+            "model": provider.model,
+            "review_basis": "metadata",
+            "grounding_version": self.AI_GROUNDING_VERSION,
+        }
         return digest
 
     # -- digest ---------------------------------------------------------------
@@ -1280,29 +1305,55 @@ class DigestService:
                 reasons.append("matches " + ", ".join(matched[:2]))
             if cand.publisher_peer_id not in rated_sources:
                 reasons.append("new source")
-            digest_items.append(
-                {
-                    "item_id": cand.content_id,
-                    "source_id": cand.publisher_peer_id,
-                    "source_title": source["title"],
-                    "source_kind": source["kind"],
-                    "title": item["title"],
-                    "link": item["link"],
-                    "summary": item.get("summary", ""),
-                    "author": item.get("author", ""),
-                    "thumbnail": item.get("thumbnail", ""),
-                    "media_url": item.get("media_url", ""),
-                    "content_kind": content_kind,
-                    "content_type": content_type,
-                    "tags": list(cand.tags),
-                    "published_unix": item.get("published_unix", 0.0),
-                    "ai_summary": item.get("ai_summary", ""),
-                    "score": round(score / max_score, 3) if max_score > 0 else 0.0,
-                    "reasons": reasons or ["from your sources"],
-                }
+            evidence_signals: list[str] = []
+            if age_h is not None and age_h < 48:
+                evidence_signals.append("fresh")
+            if weight > 1.0:
+                evidence_signals.append("source_affinity")
+            if matched:
+                evidence_signals.append("tag_match")
+            if cand.publisher_peer_id not in rated_sources:
+                evidence_signals.append("new_source")
+            digest_item = {
+                "item_id": cand.content_id,
+                "source_id": cand.publisher_peer_id,
+                "source_title": source["title"],
+                "source_kind": source["kind"],
+                "title": item["title"],
+                "link": item["link"],
+                "summary": item.get("summary", ""),
+                "author": item.get("author", ""),
+                "thumbnail": item.get("thumbnail", ""),
+                "media_url": item.get("media_url", ""),
+                "content_kind": content_kind,
+                "content_type": content_type,
+                "tags": list(cand.tags),
+                "published_unix": item.get("published_unix", 0.0),
+                "ai_summary": (
+                    item.get("ai_summary", "")
+                    if item.get("ai_summary_grounding_version") == self.AI_GROUNDING_VERSION
+                    else ""
+                ),
+                "ai_summary_grounding_version": (
+                    self.AI_GROUNDING_VERSION
+                    if item.get("ai_summary_grounding_version") == self.AI_GROUNDING_VERSION
+                    else 0
+                ),
+                "score": round(score / max_score, 3) if max_score > 0 else 0.0,
+                "reasons": reasons or ["from your sources"],
+                "review_basis": "metadata",
+                "safety_outcome": "unscanned",
+                "provenance_status": "unsigned",
+            }
+            digest_item["evidence_packet"] = build_evidence_packet(
+                digest_item,
+                signals=evidence_signals,
+                reviewed_at_unix=now_unix,
             )
+            digest_items.append(digest_item)
 
         digest: dict[str, Any] = {
+            "schema_version": DIGEST_SCHEMA_VERSION,
             "generated_at_unix": float(now_unix),
             "brief": "",
             "ai": None,
@@ -1316,7 +1367,11 @@ class DigestService:
 
     def last_digest(self) -> dict[str, Any] | None:
         digest = self._load("last_digest.json", None)
-        return digest if isinstance(digest, dict) else None
+        if not isinstance(digest, dict):
+            return None
+        if digest.get("schema_version") != DIGEST_SCHEMA_VERSION:
+            return self.build(now_unix=time.time())
+        return digest
 
     def recommendation_items(self) -> list[dict[str, Any]]:
         """Expose ranked digest entries to the shared recommendation engine."""
@@ -1341,6 +1396,7 @@ class DigestService:
                     "manifest_hash": "",
                     "title": str(item.get("title", "")),
                     "description": str(item.get("ai_summary") or item.get("summary") or ""),
+                    "source_description": str(item.get("summary") or ""),
                     "tags": list(item.get("tags", [])),
                     "content_kind": str(item.get("content_kind", "document")),
                     "content_type": str(item.get("content_type", "text/html")),
