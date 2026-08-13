@@ -26,3 +26,14 @@ def test_python_web_and_desktop_versions_match():
         cargo["package"]["version"],
     }
     assert versions == {"0.6.2"}
+
+
+def test_intel_macos_uses_last_supported_cryptography_wheel_line():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = project["project"]["dependencies"]
+
+    assert any(
+        dependency.startswith("cryptography>=48.0.1,<49.0.0")
+        and "platform_machine == 'x86_64'" in dependency
+        for dependency in dependencies
+    )
