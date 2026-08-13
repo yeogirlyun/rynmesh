@@ -828,6 +828,10 @@ let settings: NodeSettings = {
   fetch_used_mb: 4324,
   fetch_timeout_s: 60,
   onboarding_version: 0,
+  notifications_enabled: true,
+  notification_frequency: "immediate",
+  notification_quiet_start: 22,
+  notification_quiet_end: 8,
   desktop_managed: true,
   network_id: "rynmesh-main",
 };

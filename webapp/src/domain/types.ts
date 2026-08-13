@@ -196,6 +196,10 @@ export interface NodeSettings {
   fetch_used_mb: number;
   fetch_timeout_s: number;
   onboarding_version: number;
+  notifications_enabled: boolean;
+  notification_frequency: "immediate" | "hourly" | "daily";
+  notification_quiet_start: number;
+  notification_quiet_end: number;
   desktop_managed?: boolean;
   network_id?: string;
 }

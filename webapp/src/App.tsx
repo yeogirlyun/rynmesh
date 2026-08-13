@@ -20,6 +20,7 @@ import { digestApi, type DiscoveryStatus } from "./domain/digestClient";
 import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
+import { installNotificationNavigation, sendDiscoveryNotification } from "./domain/notifications";
 import type { ConfirmRequest, NodeSettings, NodeStatus, Peer, RegistryStatus, ToastMessage } from "./domain/types";
 import Home from "./screens/Home";
 import Digest from "./screens/Digest";
@@ -74,6 +75,7 @@ export default function App() {
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
+  const lastUnread = useRef(0);
 
   const notify = useCallback((tone: ToastMessage["tone"], text: string) => {
     const message = { id: crypto.randomUUID(), tone, text };
@@ -136,7 +138,12 @@ export default function App() {
     let active = true;
     const update = () => {
       void digestApi.getDiscoveryStatus().then((status) => {
-        if (active) setDiscovery(status);
+        if (!active) return;
+        setDiscovery(status);
+        if (settings && status.unread_count > lastUnread.current) {
+          void sendDiscoveryNotification(settings, status.unread_count, () => navigate("/digest"));
+        }
+        lastUnread.current = status.unread_count;
       }).catch(() => undefined);
     };
     update();
@@ -148,7 +155,15 @@ export default function App() {
       window.clearInterval(timer);
       window.removeEventListener("ryn-discovery-seen", seen);
     };
-  }, [client]);
+  }, [client, navigate, settings]);
+
+  useEffect(() => {
+    let remove: () => void = () => {};
+    void installNotificationNavigation(() => navigate("/digest")).then((unregister) => {
+      remove = unregister;
+    }).catch(() => undefined);
+    return () => remove();
+  }, [navigate]);
 
   const openDiscovery = async () => {
     navigate("/digest");

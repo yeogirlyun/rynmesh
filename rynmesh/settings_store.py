@@ -20,6 +20,10 @@ _DEFAULTS: dict[str, Any] = {
     "fetch_budget_mb": 8192,
     "fetch_timeout_s": 20,
     "onboarding_version": 0,
+    "notifications_enabled": True,
+    "notification_frequency": "immediate",
+    "notification_quiet_start": 22,
+    "notification_quiet_end": 8,
 }
 _WHITELIST = set(_DEFAULTS)
 
@@ -28,6 +32,7 @@ _CHOICES = {
     "ai_provider": {"local", "cloud"},
     "rank_default": {"weight", "newest", "trusted", "ai", "novelty"},
     "publish_visibility": {"network", "trusted", "local"},
+    "notification_frequency": {"immediate", "hourly", "daily"},
 }
 
 
@@ -56,15 +61,29 @@ class SettingsStore:
                 value = str(v or "").strip().lower()
                 if value in _CHOICES[k]:
                     data[k] = value
-            elif k in {"auto_update", "cloud_access"}:
+            elif k in {"auto_update", "cloud_access", "notifications_enabled"}:
                 data[k] = bool(v)
-            elif k in {"fetch_budget_mb", "fetch_timeout_s", "onboarding_version"}:
+            elif k in {
+                "fetch_budget_mb",
+                "fetch_timeout_s",
+                "onboarding_version",
+                "notification_quiet_start",
+                "notification_quiet_end",
+            }:
                 try:
                     number = int(v)
                 except (TypeError, ValueError):
                     continue
-                minimum = 0 if k == "onboarding_version" else 1
-                if number >= minimum:
+                minimum = 0 if k in {
+                    "onboarding_version",
+                    "notification_quiet_start",
+                    "notification_quiet_end",
+                } else 1
+                maximum = 23 if k in {
+                    "notification_quiet_start",
+                    "notification_quiet_end",
+                } else None
+                if number >= minimum and (maximum is None or number <= maximum):
                     data[k] = number
             elif k in {"ai_model", "node_name"}:
                 data[k] = str(v or "").strip()[:256]

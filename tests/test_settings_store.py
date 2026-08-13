@@ -22,6 +22,10 @@ def test_settings_api_applies_runtime_policy(tmp_path, monkeypatch):
             "publish_visibility": "trusted",
             "fetch_timeout_s": 33,
             "onboarding_version": 1,
+            "notifications_enabled": True,
+            "notification_frequency": "hourly",
+            "notification_quiet_start": 21,
+            "notification_quiet_end": 7,
         },
     )
     assert response.status_code == 200
@@ -31,6 +35,10 @@ def test_settings_api_applies_runtime_policy(tmp_path, monkeypatch):
     assert settings["publish_visibility"] == "trusted"
     assert settings["fetch_timeout_s"] == 33
     assert settings["onboarding_version"] == 1
+    assert settings["notifications_enabled"] is True
+    assert settings["notification_frequency"] == "hourly"
+    assert settings["notification_quiet_start"] == 21
+    assert settings["notification_quiet_end"] == 7
     assert store.policy.allow_warnings is False
     assert store.policy.min_pass_receipts == 1
 
@@ -39,6 +47,8 @@ def test_default_auto_update_true(tmp_path):
     s = SettingsStore(tmp_path / "settings.json")
     assert s.get()["auto_update"] is True
     assert s.get()["onboarding_version"] == 0
+    assert s.get()["notifications_enabled"] is True
+    assert s.get()["notification_frequency"] == "immediate"
 
 
 def test_patch_persists_whitelisted(tmp_path):
@@ -75,3 +85,24 @@ def test_onboarding_version_accepts_zero_but_not_negative(tmp_path):
     assert store.patch({"onboarding_version": 2})["onboarding_version"] == 2
     assert store.patch({"onboarding_version": -1})["onboarding_version"] == 2
     assert store.patch({"onboarding_version": 0})["onboarding_version"] == 0
+
+
+def test_notification_preferences_validate_frequency_and_quiet_hours(tmp_path):
+    store = SettingsStore(tmp_path / "settings.json")
+    settings = store.patch(
+        {
+            "notifications_enabled": False,
+            "notification_frequency": "daily",
+            "notification_quiet_start": 20,
+            "notification_quiet_end": 6,
+        }
+    )
+    assert settings["notifications_enabled"] is False
+    assert settings["notification_frequency"] == "daily"
+    assert settings["notification_quiet_start"] == 20
+    assert settings["notification_quiet_end"] == 6
+    invalid = store.patch(
+        {"notification_frequency": "always", "notification_quiet_start": 24}
+    )
+    assert invalid["notification_frequency"] == "daily"
+    assert invalid["notification_quiet_start"] == 20

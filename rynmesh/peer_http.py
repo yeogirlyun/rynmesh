@@ -1875,6 +1875,10 @@ def create_app(store: RynmeshStore | None = None):
             "fetch_used_mb": 0,
             "fetch_timeout_s": int(stored["fetch_timeout_s"]),
             "onboarding_version": int(stored["onboarding_version"]),
+            "notifications_enabled": bool(stored["notifications_enabled"]),
+            "notification_frequency": stored["notification_frequency"],
+            "notification_quiet_start": int(stored["notification_quiet_start"]),
+            "notification_quiet_end": int(stored["notification_quiet_end"]),
             "auto_update": stored["auto_update"],
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},

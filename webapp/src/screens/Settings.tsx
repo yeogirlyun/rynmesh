@@ -1,9 +1,10 @@
-import { Cloud, DownloadCloud, HardDrive, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
+import { BellRing, Cloud, DownloadCloud, HardDrive, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
 import type { NodeClient } from "../domain/nodeClient";
+import { requestDesktopNotificationPermission, sendTestNotification } from "../domain/notifications";
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
 import type { NodeSettings, UpdateStatus } from "../domain/types";
@@ -13,6 +14,7 @@ const sections = [
   "Network",
   "Trust & safety",
   "AI curator",
+  "Notifications",
   "Ranking & publish",
   "Fetch limits",
   "Software updates",
@@ -69,11 +71,99 @@ export default function Settings() {
         {active === "AI curator" ? (
           <AISection settings={settings} onUpdate={update} onConfirmUpdate={confirmUpdate} />
         ) : null}
+        {active === "Notifications" ? (
+          <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
+        ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
         {active === "Software updates" ? <UpdatesSection client={client} /> : null}
       </Panel>
     </div>
+  );
+}
+
+function NotificationsSection({
+  settings,
+  onUpdate,
+  notify,
+}: {
+  settings: NodeSettings;
+  onUpdate: (patch: Partial<NodeSettings>) => Promise<void>;
+  notify: (tone: "ok" | "warn" | "danger", text: string) => void;
+}) {
+  const enable = async (enabled: boolean) => {
+    if (enabled) {
+      const permission = await requestDesktopNotificationPermission();
+      if (permission !== "granted") {
+        notify("warn", "Desktop notification permission was not granted");
+        await onUpdate({ notifications_enabled: false });
+        return;
+      }
+    }
+    await onUpdate({ notifications_enabled: enabled });
+  };
+
+  return (
+    <Section title="Notifications" icon={<BellRing size={22} />}>
+      <label className="toggle-row">
+        <input
+          type="checkbox"
+          checked={settings.notifications_enabled}
+          onChange={(event) => void enable(event.target.checked)}
+        />
+        Notify me when new recommendations are ready
+      </label>
+      <div className="setting-row">
+        <span>
+          <b>Frequency</b>
+          <small>The in-app badge always updates immediately</small>
+        </span>
+        <select
+          value={settings.notification_frequency}
+          onChange={(event) => void onUpdate({
+            notification_frequency: event.target.value as NodeSettings["notification_frequency"],
+          })}
+        >
+          <option value="immediate">Immediate</option>
+          <option value="hourly">At most hourly</option>
+          <option value="daily">At most daily</option>
+        </select>
+      </div>
+      <div className="setting-row">
+        <span>
+          <b>Quiet hours</b>
+          <small>Local time, start inclusive and end exclusive</small>
+        </span>
+        <div className="setting-edit">
+          <input
+            type="number"
+            min="0"
+            max="23"
+            value={settings.notification_quiet_start}
+            onChange={(event) => void onUpdate({ notification_quiet_start: Number(event.target.value) })}
+            aria-label="Quiet hours start"
+          />
+          <span>to</span>
+          <input
+            type="number"
+            min="0"
+            max="23"
+            value={settings.notification_quiet_end}
+            onChange={(event) => void onUpdate({ notification_quiet_end: Number(event.target.value) })}
+            aria-label="Quiet hours end"
+          />
+        </div>
+      </div>
+      <Button
+        icon={BellRing}
+        onClick={async () => {
+          const sent = await sendTestNotification(() => window.location.assign("/digest"));
+          notify(sent ? "ok" : "warn", sent ? "Test notification sent" : "Notification permission is unavailable");
+        }}
+      >
+        Send test notification
+      </Button>
+    </Section>
   );
 }
 
