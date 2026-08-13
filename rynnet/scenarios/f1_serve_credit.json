@@ -1,0 +1,14 @@
+{
+  "name": "f1-serve-credit",
+  "registry": "in-testbed",
+  "network_id": "rynnet-f1",
+  "nodes": [
+    { "id": "a" },
+    { "id": "b", "netem": "delay 30ms 5ms" },
+    { "id": "c", "netem": "delay 60ms 10ms" }
+  ],
+  "publish": { "node": "a", "count": 3 },
+  "fetch": { "nodes": ["b", "c"], "timeout_s": 25 },
+  "observe": { "interval_s": 3, "duration_s": 24 },
+  "assert": { "min_fetched_per_node": 3, "publisher_credit_grew_strict": "a" }
+}

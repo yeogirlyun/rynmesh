@@ -1,0 +1,52 @@
+"""X25519 messaging keypair + authenticated seal/open for peer messaging.
+
+Defense-in-depth over the Nebula transport: a message is sealed for the
+recipient's X25519 messaging key (ECDH -> HKDF-SHA256 -> ChaCha20Poly1305), so
+relays/operators see only ciphertext. Uses only `cryptography` (no new deps).
+"""
+from __future__ import annotations
+
+import base64
+import os
+from pathlib import Path
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+_INFO = b"rynmesh-peer-msg-v1"
+
+
+def load_or_create_messaging_key(path: str | Path) -> X25519PrivateKey:
+    path = Path(path)
+    if path.exists():
+        return X25519PrivateKey.from_private_bytes(path.read_bytes())
+    key = X25519PrivateKey.generate()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(key.private_bytes_raw())
+    return key
+
+
+def public_key_b64(priv: X25519PrivateKey) -> str:
+    return base64.b64encode(priv.public_key().public_bytes_raw()).decode("ascii")
+
+
+def _shared(priv: X25519PrivateKey, their_pub_b64: str) -> bytes:
+    their_pub = X25519PublicKey.from_public_bytes(base64.b64decode(their_pub_b64))
+    raw = priv.exchange(their_pub)
+    return HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_INFO).derive(raw)
+
+
+def seal(priv: X25519PrivateKey, their_pub_b64: str, plaintext: bytes) -> tuple[str, str]:
+    nonce = os.urandom(12)
+    ct = ChaCha20Poly1305(_shared(priv, their_pub_b64)).encrypt(nonce, plaintext, None)
+    return base64.b64encode(nonce).decode("ascii"), base64.b64encode(ct).decode("ascii")
+
+
+def open_sealed(priv: X25519PrivateKey, their_pub_b64: str, nonce_b64: str, ct_b64: str) -> bytes:
+    return ChaCha20Poly1305(_shared(priv, their_pub_b64)).decrypt(
+        base64.b64decode(nonce_b64), base64.b64decode(ct_b64), None
+    )

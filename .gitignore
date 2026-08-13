@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.playwright-cli/
+.claude/
+.mypy_cache/
+.venv/
+dist/
+build/
+release/
+htmlcov/
+.coverage
+.DS_Store
+.rynmesh/
+node_modules/
+webapp/node_modules/
+webapp/.vite/
+*.tsbuildinfo
+rynnet/runs/
+webapp/src-tauri/binaries/
+deploy/env/*.env
+!deploy/env/*.env.example
+
+# built webapp folded into the package at release time
+rynmesh/webui/

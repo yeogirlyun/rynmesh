@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rynmesh"
+version = "0.5.1"
+description = "Open-source verifiable content mesh for AI agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Rynmesh Contributors"}
+]
+keywords = ["ai", "content", "p2p", "mcp", "provenance", "reputation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet",
+    "Topic :: Communications :: File Sharing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "certifi>=2024.0.0",
+    "cryptography>=42.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+# PDF rendering for the daily recap email. Optional: without it the recap
+# still sends, just without the attachment.
+recap = ["reportlab>=4.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+    "httpx>=0.27.0",  # required by starlette.testclient (test_peer_http_*)
+]
+# REALITY-style TLS fingerprint mimicry (defeats GFW active probing).
+# Optional: only needed when RYNMESH_TRANSPORT=reality.
+reality = [
+    "curl_cffi>=0.7.0",
+]
+
+[project.scripts]
+rynmesh-mcp = "rynmesh.mcp_server:main"
+rynmesh-peer = "rynmesh.peer_http:main"
+rynmesh-registry = "rynmesh.registry_http:main"
+rynmesh-signal50-veo-worker = "rynmesh.signal50_service:main"
+rynmesh-llm-worker = "rynmesh.services.llm:main"
+rynmesh-image-worker = "rynmesh.services.image:main"
+rynmesh-embeddings-worker = "rynmesh.services.embeddings:main"
+rynmesh-egress-worker = "rynmesh.services.net_egress:main"
+rynmesh-egress = "rynmesh.services.net_egress_client:main"
+rynmesh-publish = "rynmesh.tools.publish_release:main"
+rynmesh-vpn = "rynmesh.services.vpn_cli:main"
+
+[project.urls]
+Homepage = "https://rynmesh.ai"
+Repository = "https://github.com/yeogirlyun/rynmesh"
+Documentation = "https://github.com/yeogirlyun/rynmesh/tree/main/docs"
+Issues = "https://github.com/yeogirlyun/rynmesh/issues"
+Changelog = "https://github.com/yeogirlyun/rynmesh/releases"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rynmesh*"]
+
+[tool.setuptools.package-data]
+"rynmesh.services" = ["rynmesh-vpn"]
+# Built webapp, folded in by scripts/build_release.zsh so the node serves its
+# own UI. Absent in a source checkout — the daemon simply skips the mount.
+"rynmesh" = ["webui/**/*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# Test fixtures deliberately use compact one-liners and kwargs-style dict()
+# bundles for dependency injection; both read better than the expanded forms
+# here. These are formatting preferences only — every correctness rule still
+# applies to tests.
+"tests/*" = ["E701", "E702", "C408"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "C4"]
+ignore = ["E501", "N818", "N815"]

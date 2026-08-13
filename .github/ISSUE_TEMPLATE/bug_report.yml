@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem in Rynmesh
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private content, node keys, or personal infrastructure details. Report security issues through the Security tab instead.
+  - type: input
+    id: version
+    attributes:
+      label: Rynmesh version or commit
+      placeholder: v0.5.1 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [macOS, Linux, Windows, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest sequence that reliably reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and relevant logs
+      description: Redact secrets, identities, and private addresses.
+    validations:
+      required: true

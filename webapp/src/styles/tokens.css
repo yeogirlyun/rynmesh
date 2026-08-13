@@ -1,0 +1,428 @@
+/* ============================================================
+   YY UI — Design System Tokens
+   Unified for PyQt6 desktop (Avaryn / Signal50) + Web (pdf.avaryn.ai)
+
+   Structure:
+     :root          — cross-theme primitives (type, radii, spacing, motion)
+     [data-theme="dark"]  — Signal50 Workstation palette
+     [data-theme="light"] — Avaryn PDF Editor palette
+   Default theme is light (matches webapp). Add data-theme="dark" to
+   <html> or any container to flip.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=Archivo+Black&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ============================================================
+   ROOT — theme-agnostic primitives
+   ============================================================ */
+:root {
+  /* ---------- Type families ---------- */
+  --font-ui:      'Inter Tight', 'Inter', system-ui, -apple-system, 'Segoe UI',
+                  'PingFang SC', 'PingFang TC', 'Hiragino Sans', 'Apple SD Gothic Neo',
+                  'Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK KR',
+                  'Malgun Gothic', sans-serif;
+  --font-display: 'Archivo Black', 'Space Grotesk', var(--font-ui);
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular,
+                  Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-channel-tab: 'Space Grotesk', var(--font-ui);
+  --font-signature: "Snell Roundhand", "Brush Script MT", "Segoe Script", cursive;
+
+  /* ---------- Type scale (px — same across themes) ---------- */
+  --fs-caption:   12px;
+  --fs-small:     13px;
+  --fs-body:      14px;
+  --fs-button:    14px;
+  --fs-section:   17px;
+  --fs-heading:   18px;
+  --fs-page:      22px;
+  --fs-metric:    24px;
+  --fs-title:     30px;
+
+  --lh-tight: 1.15;
+  --lh-body:  1.45;
+
+  /* ---------- Weights ----------
+     YY UI uses HEAVY weights in UI chrome (850+ in web, 700+ in desktop).
+     Keep both sets of tokens; components pick the appropriate one. */
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semi:    600;
+  --fw-bold:    700;
+  --fw-black:   800;
+  --fw-ultra:   900;
+  --fw-ui-heavy: 850;   /* web UI default (mode buttons, labels) */
+
+  --ls-caption:       0.12em;  /* desktop uppercase caption */
+  --ls-caption-tight: 0.08em;
+  --ls-caption-web:   0;       /* web eyebrow — NO tracking */
+
+  /* ---------- Radii ---------- */
+  --radius-xs:  4px;
+  --radius-sm:  6px;
+  --radius-md:  8px;   /* web default (button, panel, card) */
+  --radius-lg:  12px;
+  --radius-xl:  14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 20px;  /* desktop top-level panels */
+  --radius-pill: 999px;
+
+  /* ---------- Spacing (4px base) ---------- */
+  --sp-0:  0;
+  --sp-1:  2px;
+  --sp-2:  4px;
+  --sp-3:  6px;
+  --sp-4:  8px;
+  --sp-5:  10px;
+  --sp-6:  12px;
+  --sp-7:  14px;
+  --sp-8:  16px;
+  --sp-10: 20px;
+  --sp-12: 24px;
+  --sp-16: 32px;
+  --sp-20: 40px;
+
+  /* ---------- Control sizes ---------- */
+  --ctrl-sm:  30px;   /* mode-button */
+  --ctrl-md:  34px;   /* tool-button, icon-button */
+  --ctrl-lg:  38px;   /* button, input, select */
+
+  /* ---------- Motion ---------- */
+  --ease:      cubic-bezier(0.2, 0.6, 0.2, 1);
+  --ease-soft: cubic-bezier(0.25, 0.1, 0.25, 1);  /* web default ease */
+  --dur-fast:  120ms;
+  --dur-web:   140ms;   /* web button transition duration */
+  --dur-med:   160ms;
+  --dur-slow:  240ms;
+
+  /* ---------- Channel accents (brand-level, theme-agnostic) ---------- */
+  --channel-signal50:       #FFFFFF;
+  --channel-signal-lab:     #3B82F6;
+  --channel-signal-history: #D4AF37;
+  --channel-signal-bio:     #84CC16;
+
+  /* Default theme = light (pdf.avaryn.ai) */
+  color-scheme: light;
+}
+
+/* ============================================================
+   LIGHT THEME — Avaryn PDF Editor (pdf.avaryn.ai)
+   Source: pdf-editor/web/styles.css
+   ============================================================ */
+:root,
+[data-theme="light"] {
+  --theme: light;
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg-primary:    #eef1f4;   /* app shell */
+  --bg-secondary:  #f7f9fb;   /* rails / inspector */
+  --bg-tertiary:   #ffffff;   /* panels, cards, buttons */
+  --bg-elevated:   #fbfcfd;   /* header, toolbars */
+  --bg-canvas:     #dfe4ea;   /* document canvas area */
+  --bg-hover:      #eef2f7;   /* button hover */
+  --bg-active:     #edf8f5;   /* active mode button (accent tint) */
+  --bg-selection:  rgba(37, 99, 235, 0.14);
+  --bg-muted-input:#f1f4f7;   /* disabled input */
+
+  /* Text */
+  --text-primary:   #1f2328;  /* --ink */
+  --text-secondary: #38404b;
+  --text-muted:     #68717d;
+
+  /* Lines */
+  --border-color:     #d7dde5; /* --line */
+  --border-strong:    #aeb8c5; /* --line-strong, dashed drop zones */
+  --border-subtle:    #edf1f5;
+
+  /* Accents */
+  --accent:         #0f766e;  /* Avaryn teal — primary action */
+  --accent-dark:    #0a4f49;  /* hover/pressed on teal */
+  --accent-soft:    #edf8f5;  /* teal tinted surface */
+  --accent-border:  #88beb6;  /* teal-tinted border (ready state) */
+
+  --accent-blue:    #2563eb;  /* Fit button, page active, links */
+  --accent-blue-soft:#eff6ff;
+  --accent-amber:   #b45309;  /* warnings, changed text */
+  --accent-amber-soft:#fff7ed;
+  --accent-amber-border:#e3b57e;
+  --accent-red:     #9f1239;  /* danger */
+  --accent-red-soft:#fff5f7;
+  --accent-red-border:#e4a5b5;
+
+  /* Semantic chip states */
+  --accent-green:   #0f766e;  /* alias: success = Avaryn teal */
+  --accent-yellow:  #b45309;  /* alias: warning = amber */
+
+  /* Elevation — web uses real shadow */
+  --shadow-card:    0 8px 18px rgba(22, 27, 34, 0.08);
+  --shadow-raised:  0 18px 38px rgba(22, 27, 34, 0.12);
+  --shadow-menu:    0 24px 70px rgba(17, 24, 39, 0.28);
+  --shadow-focus:   0 0 0 2px rgba(37, 99, 235, 0.18), 0 10px 20px rgba(18, 24, 38, 0.16);
+  --shadow-none:    none;
+
+  /* Tables */
+  --table-row-zebra:    #f7f9fb;
+  --table-row-selected: #eff6ff;
+
+  /* Button presets (light) */
+  --button-primary-bg:    var(--accent);
+  --button-primary-hover: var(--accent-dark);
+  --button-primary-text:  #ffffff;
+  --button-secondary-bg:  var(--text-primary);
+  --button-secondary-text:#ffffff;
+  --button-standard-bg:   var(--bg-tertiary);
+  --button-standard-border:var(--border-color);
+}
+
+/* ============================================================
+   DARK THEME — Signal50 Workstation (PyQt6)
+   Source: signal50/docs/UI_DESIGN_SYSTEM.md + theme.py (Starry Night)
+   ============================================================ */
+[data-theme="dark"] {
+  --theme: dark;
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg-primary:    #0B0F14;   /* window / text-input */
+  --bg-secondary:  #101722;   /* page / sidebar */
+  --bg-tertiary:   #16202D;   /* card / panel / button */
+  --bg-elevated:   #16202D;
+  --bg-canvas:     #0B0F14;
+  --bg-hover:      #1B2838;
+  --bg-active:     #213145;
+  --bg-selection:  #24374E;
+  --bg-muted-input:#101722;
+
+  /* Tactical Monolith alternative surfaces (Agents page) */
+  --surface-base:           #0e0e0e;
+  --surface-container-low:  #131313;
+  --surface-container-high: #1f2020;
+  --surface-bright:         #2b2c2c;
+
+  /* Text */
+  --text-primary:   #EAF0F6;
+  --text-secondary: #A8B7C7;
+  --text-muted:     #64748B;
+
+  /* Lines */
+  --border-color:  #253243;
+  --border-strong: #2F4055;
+  --border-subtle: #1B2838;
+
+  /* Accents — same semantic roles, dark-tuned values */
+  --accent:         #00D084;  /* Signal50 brand green = primary */
+  --accent-dark:    #00A066;
+  --accent-soft:    rgba(0, 208, 132, 0.12);
+  --accent-border:  #00D084;
+
+  --accent-blue:    #39A9FF;
+  --accent-blue-soft:rgba(57, 169, 255, 0.12);
+  --accent-amber:   #F5C542;
+  --accent-amber-soft:rgba(245, 197, 66, 0.12);
+  --accent-amber-border:#F5C542;
+  --accent-red:     #FF4D4F;
+  --accent-red-soft:rgba(255, 77, 79, 0.12);
+  --accent-red-border:#FF4D4F;
+
+  /* Semantic aliases */
+  --accent-green:   #00D084;
+  --accent-yellow:  #F5C542;
+
+  /* Elevation — desktop uses NO shadows; border+fill only */
+  --shadow-card:    none;
+  --shadow-raised:  none;
+  --shadow-menu:    0 2px 8px rgba(0, 0, 0, 0.35); /* one escape hatch */
+  --shadow-focus:   0 0 0 2px rgba(57, 169, 255, 0.35);
+  --shadow-none:    none;
+
+  /* Tables */
+  --table-row-zebra:    #16202D;
+  --table-row-selected: #1A3A5C;
+  --table-row-checked:  #1E3350;
+
+  /* Button presets (dark) — accent lives in bottom-border only */
+  --button-primary-bg:     var(--bg-tertiary);
+  --button-primary-hover:  var(--bg-hover);
+  --button-primary-text:   var(--accent-green);
+  --button-secondary-bg:   var(--bg-tertiary);
+  --button-secondary-text: var(--text-primary);
+  --button-standard-bg:    var(--bg-tertiary);
+  --button-standard-border:var(--border-color);
+  --button-danger-bg:      #A3383A;
+  --button-danger-hover:   #C74A4D;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+html, body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  margin: 0;
+}
+
+* { box-sizing: border-box; }
+
+::selection {
+  background: var(--bg-selection);
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Semantic type classes
+   ============================================================ */
+
+h1, .ds-title {
+  font-family: var(--font-ui);
+  font-size: var(--fs-title);
+  font-weight: var(--fw-black);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  margin: 0;
+}
+h2, .ds-page-title {
+  font-size: var(--fs-page);
+  font-weight: var(--fw-semi);
+  font-style: italic;  /* desktop page titles are italic */
+  color: var(--text-primary);
+  margin: 0;
+}
+h3, .ds-section {
+  font-size: var(--fs-heading);
+  font-weight: var(--fw-medium);
+  color: var(--text-primary);
+  margin: 0;
+}
+h4 {
+  font-size: var(--fs-section);
+  font-weight: var(--fw-bold);
+  color: var(--text-primary);
+  margin: 0;
+}
+p {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  margin: 0;
+}
+small, .ds-small {
+  color: var(--text-secondary);
+  font-size: var(--fs-small);
+}
+.ds-muted     { color: var(--text-muted); }
+.ds-secondary { color: var(--text-secondary); }
+
+/* Eyebrow / caption — desktop tracked, web flat */
+.ds-caption, .ds-eyebrow {
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-black);
+  letter-spacing: var(--ls-caption);
+  text-transform: uppercase;
+}
+.ds-eyebrow-web {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: var(--fw-ultra);
+  letter-spacing: var(--ls-caption-web);
+  text-transform: uppercase;
+}
+
+.ds-metric {
+  font-size: var(--fs-metric);
+  font-weight: var(--fw-black);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ds-mono, code, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+/* Brand wordmark — "SIGNAL in 50" */
+.ds-brand-wordmark {
+  font-family: var(--font-display);
+  font-weight: var(--fw-ultra);
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+.ds-brand-wordmark .num {
+  color: var(--accent-green);
+  font-style: italic;
+  font-weight: var(--fw-ultra);
+}
+.ds-brand-wordmark .in {
+  font-weight: var(--fw-bold);
+  font-size: 0.5em;
+  opacity: 0.8;
+  font-style: normal;
+  margin: 0 0.2em;
+}
+
+/* Avaryn brand lockup — "Avaryn PDF Editor" */
+.ds-brand-lockup {
+  display: inline-flex; align-items: baseline; gap: 10px;
+}
+.ds-brand-lockup .eyebrow {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: var(--fw-ultra);
+  text-transform: uppercase;
+}
+.ds-brand-lockup .product {
+  color: var(--text-primary);
+  font-size: 1.18rem;
+  font-weight: var(--fw-ultra);
+}
+
+/* ============================================================
+   Utility atoms
+   ============================================================ */
+
+.ds-divider { height: 1px; background: var(--border-color); }
+
+.ds-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--sp-10);
+}
+
+.ds-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-3xl);
+  padding: var(--sp-10);
+}
+
+.ds-info-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-8);
+}
+
+/* Status chip */
+.ds-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: var(--fw-bold);
+}
+.ds-chip[data-state="running"],
+.ds-chip[data-state="ready"]   { color: var(--accent-green);  border-color: var(--accent-border); background: var(--accent-soft); }
+.ds-chip[data-state="pending"],
+.ds-chip[data-state="missing"] { color: var(--accent-yellow); border-color: var(--accent-amber-border); background: var(--accent-amber-soft); }
+.ds-chip[data-state="error"]   { color: var(--accent-red);    border-color: var(--accent-red-border);   background: var(--accent-red-soft); }
+.ds-chip[data-state="info"]    { color: var(--accent-blue);   border-color: var(--accent-blue);         background: var(--accent-blue-soft); }

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" aria-label="Ryn webapp icon">
+  <defs><linearGradient id="bg-webapp-512" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#16202D"></stop><stop offset="70%" stop-color="#0B0F14"></stop></linearGradient></defs><rect width="512" height="512" rx="112.64" ry="112.64" fill="url(#bg-webapp-512)"></rect>
+  <rect width="512" height="512" rx="112.64" ry="112.64" fill="url(#sheen-webapp-512)"></rect>
+  <defs><linearGradient id="sheen-webapp-512" x1="0" y1="0" x2="0" y2="0.35"><stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.06"></stop><stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop></linearGradient></defs>
+  
+  <g transform="translate(107.52000000000001 100.096) scale(2.9696)">
+    <defs>
+      <linearGradient id="bd-webapp-512" x1="0.18" y1="0.05" x2="0.85" y2="0.95">
+        <stop offset="0%" stop-color="#5CECB1" stop-opacity="0.92"></stop>
+        <stop offset="22%" stop-color="#00D084"></stop>
+        <stop offset="65%" stop-color="#00D084"></stop>
+        <stop offset="100%" stop-color="#007048"></stop>
+      </linearGradient>
+      <radialGradient id="gl-webapp-512" cx="0.42" cy="0.22" r="0.55" fx="0.36" fy="0.18">
+        <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55"></stop>
+        <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.08"></stop>
+        <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+      </radialGradient>
+      <linearGradient id="bv-webapp-512" x1="0" y1="0.7" x2="0" y2="1">
+        <stop offset="0%" stop-color="#003E27" stop-opacity="0"></stop>
+        <stop offset="100%" stop-color="#003E27" stop-opacity="0.42"></stop>
+      </linearGradient>
+      <clipPath id="cl-webapp-512"><path d="M50 8 L86 28 L86 42 L62 50 L86 58 L86 72 L50 92 L14 72 L14 28 Z"></path></clipPath>
+    </defs>
+    <path d="M50 8 L86 28 L86 42 L62 50 L86 58 L86 72 L50 92 L14 72 L14 28 Z" fill="url(#bd-webapp-512)"></path>
+    <g clip-path="url(#cl-webapp-512)">
+      <ellipse cx="38" cy="22" rx="52" ry="22" fill="url(#gl-webapp-512)"></ellipse>
+      <rect x="-4" y="58" width="108" height="40" fill="url(#bv-webapp-512)"></rect>
+    </g>
+    <path d="M14 28 L50 8 L86 28" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path>
+    <path d="M14 72 L50 92 L86 72" fill="none" stroke="#003E27" stroke-opacity="0.55" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path>
+  </g>
+</svg>

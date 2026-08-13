@@ -1,0 +1,13 @@
+{
+  "name": "nat-relay",
+  "registry": "in-testbed",
+  "network_id": "rynnet-nat",
+  "nodes": [
+    { "id": "pubnat", "nat": true },
+    { "id": "b", "netem": "delay 30ms" }
+  ],
+  "publish": { "node": "pubnat", "count": 2 },
+  "fetch": { "nodes": ["b"], "timeout_s": 20 },
+  "observe": { "interval_s": 3, "duration_s": 18 },
+  "assert": {}
+}

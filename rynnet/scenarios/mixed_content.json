@@ -1,0 +1,21 @@
+{
+  "name": "mixed-content",
+  "registry": "in-testbed",
+  "network_id": "rynnet-mix",
+  "nodes": [
+    { "id": "a" },
+    { "id": "b", "netem": "delay 30ms 5ms" },
+    { "id": "c", "netem": "delay 60ms 10ms" }
+  ],
+  "publish": {
+    "node": "a",
+    "mix": { "images": 3, "audios": 2, "documents": 2 }
+  },
+  "fetch": { "nodes": ["b", "c"], "timeout_s": 25 },
+  "observe": { "interval_s": 3, "duration_s": 24 },
+  "assert": {
+    "min_fetched_per_node": 5,
+    "publisher_credit_grew_strict": "a",
+    "credit_band_holds": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "basic-fetch",
+  "registry": "in-testbed",
+  "network_id": "rynnet-basic",
+  "nodes": [
+    { "id": "a" },
+    { "id": "b", "netem": "delay 50ms 10ms loss 1%" },
+    { "id": "c", "netem": "delay 120ms 20ms" }
+  ],
+  "publish": { "node": "a", "count": 3 },
+  "fetch": { "nodes": ["b", "c"], "timeout_s": 25 },
+  "observe": { "interval_s": 3, "duration_s": 36 },
+  "assert": {
+    "min_fetched_per_node": 3,
+    "publisher_credit_grows": "a",
+    "credit_band_holds": true
+  }
+}

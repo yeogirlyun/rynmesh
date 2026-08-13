@@ -1,0 +1,49 @@
+name: Release package
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  python-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Build web interface
+        working-directory: webapp
+        run: npm ci && npm run build
+      - name: Build Python distributions
+        run: |
+          rm -rf rynmesh/webui
+          cp -R webapp/dist rynmesh/webui
+          python -m pip install --upgrade build
+          python -m build
+      - name: Verify wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/verify"
+          "$RUNNER_TEMP/verify/bin/pip" install dist/*.whl
+          "$RUNNER_TEMP/verify/bin/python" -c 'from rynmesh.peer_http import webui_dir; assert (webui_dir() / "index.html").is_file()'
+      - name: Prepare release metadata
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          wheel="$(basename dist/rynmesh-${version}-*.whl)"
+          sha="$(sha256sum "dist/$wheel" | awk '{print $1}')"
+          cp scripts/install.sh dist/install.sh
+          (cd dist && sha256sum *.whl > SHA256SUMS)
+          printf '{\n  "version": "%s",\n  "wheel": "https://github.com/yeogirlyun/rynmesh/releases/download/v%s/%s",\n  "sha256": "%s",\n  "install": "https://github.com/yeogirlyun/rynmesh/releases/latest/download/install.sh"\n}\n' \
+            "$version" "$version" "$wheel" "$sha" > dist/latest.json
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

@@ -1,0 +1,5 @@
+docs/investor/ export-ignore
+docs/superpowers/ export-ignore
+scripts/publish_release.zsh export-ignore
+scripts/rynnode_egress_watchdog.zsh export-ignore
+scripts/setup_rynnode_mac.zsh export-ignore

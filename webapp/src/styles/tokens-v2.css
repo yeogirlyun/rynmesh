@@ -1,0 +1,551 @@
+/* =============================================================================
+   YY UI — Tokens
+   =============================================================================
+   12-step color scales, elevation, motion, rhythm, density, state tokens.
+   Drop this after colors_and_type.css — it overrides + extends the semantic
+   layer so existing components keep working while new ones get scale access.
+
+   Naming follows the Radix 12-step model:
+     1  app background
+     2  subtle background
+     3  UI element background
+     4  hovered UI element
+     5  active / pressed UI element
+     6  subtle border / separator
+     7  UI element border / focused
+     8  hovered UI border / strong
+     9  solid background (brand)
+    10  hovered solid
+    11  low-contrast accent text
+    12  high-contrast accent text / headline ink
+   ============================================================================= */
+
+/* ---------- LIGHT (web, paper) ---------- */
+:root,
+[data-theme="light"] {
+  /* Gray (slate-warm, tuned against #eef1f4 app bg) */
+  --gray-1:  #f7f9fb;
+  --gray-2:  #eef1f4;
+  --gray-3:  #e4e8ed;
+  --gray-4:  #d7dde5;
+  --gray-5:  #c7ced8;
+  --gray-6:  #b2bac6;
+  --gray-7:  #97a0ad;
+  --gray-8:  #7b8593;
+  --gray-9:  #5c6571;
+  --gray-10: #434a54;
+  --gray-11: #2b3038;
+  --gray-12: #1f2328;
+
+  /* Teal — web primary (accent) */
+  --teal-1:  #f0faf8;
+  --teal-2:  #dff4ef;
+  --teal-3:  #c6ebe2;
+  --teal-4:  #a3dbce;
+  --teal-5:  #7bc5b3;
+  --teal-6:  #52ad97;
+  --teal-7:  #2f9480;
+  --teal-8:  #187b6b;
+  --teal-9:  #0f766e;
+  --teal-10: #0b5f59;
+  --teal-11: #0a4a45;
+  --teal-12: #063632;
+
+  /* Blue — info / selection / focus */
+  --blue-1:  #f2f6ff;
+  --blue-2:  #e3edff;
+  --blue-3:  #cfdfff;
+  --blue-4:  #afc7fb;
+  --blue-5:  #8bacf5;
+  --blue-6:  #6690ee;
+  --blue-7:  #4477e6;
+  --blue-8:  #2e63d3;
+  --blue-9:  #2563eb;
+  --blue-10: #1e4fc2;
+  --blue-11: #1b4199;
+  --blue-12: #112a66;
+
+  /* Amber — warning / changed / pending */
+  --amber-1:  #fff9ed;
+  --amber-2:  #ffefd0;
+  --amber-3:  #ffe0a6;
+  --amber-4:  #f7c874;
+  --amber-5:  #e8ae4c;
+  --amber-6:  #d4932b;
+  --amber-7:  #b97915;
+  --amber-8:  #9d6410;
+  --amber-9:  #b45309;
+  --amber-10: #934207;
+  --amber-11: #6f3106;
+  --amber-12: #432002;
+
+  /* Red — danger / destructive */
+  --red-1:  #fff5f7;
+  --red-2:  #ffe4ea;
+  --red-3:  #ffc9d4;
+  --red-4:  #f8a4b3;
+  --red-5:  #ee7f93;
+  --red-6:  #dc5874;
+  --red-7:  #c33a5a;
+  --red-8:  #ab2446;
+  --red-9:  #9f1239;
+  --red-10: #820c2e;
+  --red-11: #630822;
+  --red-12: #390413;
+
+  /* Green — success / ready */
+  --green-1:  #f0fbf4;
+  --green-2:  #dff5e6;
+  --green-3:  #c5ecd2;
+  --green-4:  #a1dcb5;
+  --green-5:  #7cc894;
+  --green-6:  #56b175;
+  --green-7:  #369558;
+  --green-8:  #1e7b43;
+  --green-9:  #146c36;
+  --green-10: #0e5729;
+  --green-11: #09421f;
+  --green-12: #052712;
+
+  /* -------- Re-point semantic layer to scale steps -------- */
+  --bg-primary:      var(--gray-2);
+  --bg-secondary:    var(--gray-1);
+  --bg-tertiary:     #ffffff;
+  --bg-elevated:     #fbfcfd;
+  --bg-canvas:       var(--gray-4);
+  --bg-hover:        var(--gray-3);
+  --bg-active:       var(--teal-2);
+  --bg-selection:    var(--blue-3);
+  --bg-muted-input:  var(--gray-2);
+
+  --text-primary:    var(--gray-12);
+  --text-secondary:  var(--gray-10);
+  --text-muted:      var(--gray-8);
+  --text-subtle:     var(--gray-7);
+  --text-inverse:    #ffffff;
+
+  --border-subtle:   var(--gray-3);
+  --border-color:    var(--gray-4);
+  --border-strong:   var(--gray-6);
+  --border-focus:    var(--blue-7);
+
+  --accent:          var(--teal-9);
+  --accent-hover:    var(--teal-8);
+  --accent-pressed:  var(--teal-10);
+  --accent-border:   var(--teal-4);
+  --accent-soft:     var(--teal-2);
+  --accent-dark:     var(--teal-11);
+  --accent-contrast: #ffffff;
+
+  --accent-blue:         var(--blue-9);
+  --accent-blue-soft:    var(--blue-2);
+  --accent-blue-border:  var(--blue-4);
+
+  --accent-amber:        var(--amber-9);
+  --accent-amber-soft:   var(--amber-2);
+  --accent-amber-border: var(--amber-4);
+
+  --accent-red:          var(--red-9);
+  --accent-red-soft:     var(--red-2);
+  --accent-red-border:   var(--red-4);
+
+  --accent-green:        var(--green-9);
+  --accent-green-soft:   var(--green-2);
+  --accent-green-border: var(--green-4);
+}
+
+/* ---------- DARK (desktop, operator) ---------- */
+[data-theme="dark"] {
+  /* Gray — cool navy ramp over #0B0F14 */
+  --gray-1:  #0B0F14;
+  --gray-2:  #101722;
+  --gray-3:  #16202D;
+  --gray-4:  #1B2838;
+  --gray-5:  #213145;
+  --gray-6:  #253243;
+  --gray-7:  #2E3E55;
+  --gray-8:  #415066;
+  --gray-9:  #64748B;
+  --gray-10: #8594a8;
+  --gray-11: #b2bdcc;
+  --gray-12: #EAF0F6;
+
+  /* Green — desktop primary (Signal50 brand) */
+  --green-1:  #042614;
+  --green-2:  #063821;
+  --green-3:  #084a2d;
+  --green-4:  #0a5e3b;
+  --green-5:  #0d7148;
+  --green-6:  #128355;
+  --green-7:  #179862;
+  --green-8:  #1cac72;
+  --green-9:  #00D084;
+  --green-10: #38dc9e;
+  --green-11: #7aeac0;
+  --green-12: #c5f7dd;
+
+  /* Teal — secondary in dark (kept for cross-theme component compat) */
+  --teal-1:  #04201e;
+  --teal-2:  #063230;
+  --teal-3:  #074540;
+  --teal-4:  #0a5a54;
+  --teal-5:  #0c7169;
+  --teal-6:  #10897f;
+  --teal-7:  #1aa196;
+  --teal-8:  #2ab9ac;
+  --teal-9:  #3ccec0;
+  --teal-10: #66dcd0;
+  --teal-11: #9bebe2;
+  --teal-12: #d0f7f2;
+
+  /* Blue — info / selection / focus */
+  --blue-1:  #071428;
+  --blue-2:  #0a1e3c;
+  --blue-3:  #0d2a55;
+  --blue-4:  #123874;
+  --blue-5:  #17478f;
+  --blue-6:  #1d59ab;
+  --blue-7:  #276cc8;
+  --blue-8:  #3285e0;
+  --blue-9:  #39A9FF;
+  --blue-10: #6cc0ff;
+  --blue-11: #a3d7ff;
+  --blue-12: #d7ecff;
+
+  /* Amber — warning / pending / changed */
+  --amber-1:  #2a1c02;
+  --amber-2:  #3e2a04;
+  --amber-3:  #533808;
+  --amber-4:  #6b470d;
+  --amber-5:  #855814;
+  --amber-6:  #9d6a1c;
+  --amber-7:  #b47e28;
+  --amber-8:  #cb9437;
+  --amber-9:  #F5C542;
+  --amber-10: #f8d470;
+  --amber-11: #fbe29c;
+  --amber-12: #fdf0ca;
+
+  /* Red — danger */
+  --red-1:  #2a0508;
+  --red-2:  #3f080c;
+  --red-3:  #570d13;
+  --red-4:  #73141b;
+  --red-5:  #8f1c25;
+  --red-6:  #aa252e;
+  --red-7:  #c52f39;
+  --red-8:  #de3a44;
+  --red-9:  #FF4D4F;
+  --red-10: #ff7a7c;
+  --red-11: #ffa6a7;
+  --red-12: #ffd3d4;
+
+  /* -------- Re-point semantic layer -------- */
+  --bg-primary:      var(--gray-1);
+  --bg-secondary:    var(--gray-2);
+  --bg-tertiary:     var(--gray-3);
+  --bg-elevated:     var(--gray-3);
+  --bg-canvas:       var(--gray-1);
+  --bg-hover:        var(--gray-4);
+  --bg-active:       var(--gray-5);
+  --bg-selection:    #24374E;
+  --bg-muted-input:  var(--gray-2);
+
+  --text-primary:    var(--gray-12);
+  --text-secondary:  var(--gray-11);
+  --text-muted:      var(--gray-9);
+  --text-subtle:     var(--gray-8);
+  --text-inverse:    var(--gray-1);
+
+  --border-subtle:   var(--gray-3);
+  --border-color:    var(--gray-6);
+  --border-strong:   var(--gray-7);
+  --border-focus:    var(--blue-9);
+
+  --accent:          var(--green-9);
+  --accent-hover:    var(--green-10);
+  --accent-pressed:  var(--green-8);
+  --accent-border:   var(--green-6);
+  --accent-soft:     var(--green-2);
+  --accent-dark:     var(--green-11);
+  --accent-contrast: var(--gray-1);
+
+  --accent-blue:         var(--blue-9);
+  --accent-blue-soft:    var(--blue-2);
+  --accent-blue-border:  var(--blue-5);
+
+  --accent-amber:        var(--amber-9);
+  --accent-amber-soft:   var(--amber-2);
+  --accent-amber-border: var(--amber-5);
+
+  --accent-red:          var(--red-9);
+  --accent-red-soft:     var(--red-2);
+  --accent-red-border:   var(--red-5);
+
+  --accent-green:        var(--green-9);
+  --accent-green-soft:   var(--green-2);
+  --accent-green-border: var(--green-5);
+}
+
+/* =============================================================================
+   Elevation — 5 named levels + one focus ring
+   =============================================================================
+   Usage map:
+     elev-0  flat (cards-on-rail, inline panels)           every surface uses 1px border instead
+     elev-1  raised card (preview page, key metric card)    gentle lift
+     elev-2  sticky toolbar / sheet (floating above canvas)
+     elev-3  popover / dropdown / context menu
+     elev-4  dialog / modal
+     elev-5  toast / command palette (top of stack)
+
+   Dark theme intentionally suppresses shadows below elev-3 — desktop spec
+   forbids shadows except on floating menus. Light theme uses real shadows
+   at every level because paper-white needs the depth.
+   ============================================================================= */
+
+:root,
+[data-theme="light"] {
+  --elev-0:     none;
+  --elev-1:     0 1px 2px rgba(22, 27, 34, 0.05), 0 4px 10px rgba(22, 27, 34, 0.06);
+  --elev-2:     0 2px 4px rgba(22, 27, 34, 0.06), 0 8px 18px rgba(22, 27, 34, 0.08);
+  --elev-3:     0 6px 14px rgba(22, 27, 34, 0.10), 0 18px 38px rgba(22, 27, 34, 0.12);
+  --elev-4:     0 10px 24px rgba(22, 27, 34, 0.14), 0 32px 60px rgba(22, 27, 34, 0.22);
+  --elev-5:     0 14px 36px rgba(22, 27, 34, 0.18), 0 44px 90px rgba(22, 27, 34, 0.28);
+  --focus-ring: 0 0 0 2px rgba(37, 99, 235, 0.25);
+  --focus-ring-inset: inset 0 0 0 2px rgba(37, 99, 235, 0.6);
+  --shadow-card:   var(--elev-1);  /* back-compat */
+  --shadow-raised: var(--elev-2);
+  --shadow-menu:   var(--elev-3);
+  --shadow-focus:  var(--focus-ring);
+}
+
+[data-theme="dark"] {
+  --elev-0:     none;
+  --elev-1:     none;                                         /* flat on desktop */
+  --elev-2:     none;                                         /* flat on desktop */
+  --elev-3:     0 2px 8px rgba(0, 0, 0, 0.35);                /* context menu */
+  --elev-4:     0 14px 32px rgba(0, 0, 0, 0.50);              /* dialog */
+  --elev-5:     0 22px 60px rgba(0, 0, 0, 0.60);              /* palette */
+  --focus-ring: 0 0 0 2px rgba(57, 169, 255, 0.55);
+  --focus-ring-inset: inset 0 0 0 2px rgba(57, 169, 255, 0.65);
+  --shadow-menu: var(--elev-3);
+  --shadow-card: none;
+  --shadow-raised: none;
+  --shadow-focus: var(--focus-ring);
+}
+
+/* =============================================================================
+   Motion grammar
+   =============================================================================
+   Durations paired to interaction classes. Never hand-pick a duration — match
+   the nature of the change:
+
+     state-change  (hover / press / focus)          120ms ease-out
+     small-ui      (toggle, switch, chip swap)      160ms ease-out
+     enter         (menu, popover, toast appear)    200ms cubic(0.2, 0.8, 0.2, 1)
+     exit          (menu, popover, toast leave)     140ms cubic(0.4, 0, 1, 1)
+     layout-shift  (accordion, row expand)          260ms cubic(0.4, 0, 0.2, 1)
+     page          (route transition)               320ms cubic(0.4, 0, 0.2, 1)
+
+   Respect reduced-motion: media query below collapses all transitions.
+   ============================================================================= */
+
+:root {
+  --ease-standard:  cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-decelerate: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:       ease-out;
+
+  --dur-state:   120ms;
+  --dur-small:   160ms;
+  --dur-enter:   200ms;
+  --dur-exit:    140ms;
+  --dur-layout:  260ms;
+  --dur-page:    320ms;
+
+  /* Back-compat aliases */
+  --dur-fast:    120ms;
+  --dur-web:     140ms;
+  --dur-med:     160ms;
+  --dur-slow:    240ms;
+  --ease:        var(--ease-standard);
+  --ease-soft:   var(--ease-decelerate);
+
+  /* Composite transition bundles */
+  --t-state:   color var(--dur-state) var(--ease-out),
+               background-color var(--dur-state) var(--ease-out),
+               border-color var(--dur-state) var(--ease-out),
+               box-shadow var(--dur-state) var(--ease-out);
+  --t-transform: transform var(--dur-state) var(--ease-out);
+  --t-enter:   opacity var(--dur-enter) var(--ease-decelerate),
+               transform var(--dur-enter) var(--ease-decelerate);
+  --t-exit:    opacity var(--dur-exit) var(--ease-accelerate),
+               transform var(--dur-exit) var(--ease-accelerate);
+  --t-layout:  grid-template-rows var(--dur-layout) var(--ease-standard),
+               height var(--dur-layout) var(--ease-standard),
+               max-height var(--dur-layout) var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-state: 0ms; --dur-small: 0ms; --dur-enter: 0ms;
+    --dur-exit: 0ms;  --dur-layout: 0ms; --dur-page: 0ms;
+  }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* =============================================================================
+   Vertical rhythm
+   =============================================================================
+   Editorial design stands on rhythm. Every block of text uses ONE of these
+   line-height / letter-spacing pairs, never a custom value.
+
+     tight   UI labels, buttons, chips, table cells          1.2  / 0
+     snug    short headings, card titles, eyebrows           1.3  / 0 (or .08em for caps)
+     normal  body UI copy, inputs, tooltips, menu items      1.45 / 0
+     relaxed long-form body, documentation, blog prose       1.6  / -0.003em
+     loose   quiet meta, captions under dense content        1.7  / 0
+   ============================================================================= */
+
+:root {
+  --lh-tight:    1.2;
+  --lh-snug:     1.3;
+  --lh-normal:   1.45;
+  --lh-relaxed:  1.6;
+  --lh-loose:    1.7;
+
+  --ls-display:  -0.01em;
+  --ls-tight:    -0.005em;
+  --ls-normal:   0;
+  --ls-wide:     0.02em;
+  --ls-eyebrow:  0.12em;
+  --ls-caps:     0.08em;
+
+  --para-gap:    1em;       /* space between paragraphs */
+  --block-gap:   1.5em;     /* space between content blocks */
+}
+
+/* =============================================================================
+   Spacing scale (4px base, 12 steps)
+   =============================================================================
+   Use these instead of arbitrary px values. Back-compat: old --sp-1 through --sp-6
+   tokens still work and are re-pointed to the new scale.
+   ============================================================================= */
+
+:root {
+  --space-0:   0;
+  --space-1:   2px;
+  --space-2:   4px;
+  --space-3:   6px;
+  --space-4:   8px;
+  --space-5:  12px;
+  --space-6:  16px;
+  --space-7:  20px;
+  --space-8:  24px;
+  --space-9:  32px;
+  --space-10: 40px;
+  --space-11: 56px;
+  --space-12: 80px;
+}
+
+/* =============================================================================
+   State tokens
+   =============================================================================
+   Every interactive component reads THESE — never hardcodes hover/press hexes.
+   This is what makes Button, Chip, MenuItem, Tab, and Row feel identical.
+   ============================================================================= */
+
+:root,
+[data-theme="light"] {
+  --state-hover-bg:       var(--gray-3);
+  --state-hover-bg-soft:  var(--gray-2);
+  --state-pressed-bg:     var(--teal-2);
+  --state-pressed-bg-alt: var(--gray-4);
+  --state-selected-bg:    var(--blue-2);
+  --state-selected-fg:    var(--blue-11);
+  --state-selected-bd:    var(--blue-7);
+  --state-focus-ring:     var(--focus-ring);
+  --state-disabled-opacity: 0.45;
+  --state-disabled-bg:    var(--gray-2);
+  --state-disabled-fg:    var(--gray-8);
+
+  --accent-hover-bg:   var(--teal-2);
+  --accent-pressed-bg: var(--teal-3);
+}
+
+[data-theme="dark"] {
+  --state-hover-bg:       var(--gray-4);
+  --state-hover-bg-soft:  var(--gray-3);
+  --state-pressed-bg:     var(--gray-5);
+  --state-pressed-bg-alt: var(--gray-5);
+  --state-selected-bg:    #1A3A5C;
+  --state-selected-fg:    var(--blue-11);
+  --state-selected-bd:    var(--blue-9);
+  --state-focus-ring:     var(--focus-ring);
+  --state-disabled-opacity: 0.45;
+  --state-disabled-bg:    var(--gray-3);
+  --state-disabled-fg:    var(--gray-9);
+
+  --accent-hover-bg:   rgba(0, 208, 132, 0.12);
+  --accent-pressed-bg: rgba(0, 208, 132, 0.20);
+}
+
+/* =============================================================================
+   Density (future-ready)
+   =============================================================================
+   Right now only two densities are defined — compact (desktop default) and
+   comfortable (web default). Components multiply spacing by these unit sizes.
+   Switch by adding data-density="compact" | "comfortable" on any ancestor.
+   ============================================================================= */
+
+:root,
+[data-density="comfortable"] { --density-unit: 1.00; --density-height: 38px; --density-height-sm: 32px; --density-height-lg: 44px; }
+[data-density="compact"]     { --density-unit: 0.85; --density-height: 30px; --density-height-sm: 26px; --density-height-lg: 36px; }
+[data-theme="dark"]          { --density-unit: 0.85; --density-height: 30px; --density-height-sm: 26px; --density-height-lg: 36px; }
+[data-theme="dark"][data-density="comfortable"] { --density-unit: 1.00; --density-height: 38px; --density-height-sm: 32px; --density-height-lg: 44px; }
+
+/* =============================================================================
+   Focus ring (apply everywhere accessible)
+   =============================================================================
+   Put `.focusable` on any clickable/tabbable element that doesn't already
+   have focus handling. Or rely on :focus-visible globally — both routes here.
+   ============================================================================= */
+
+:where(button, [role="button"], a, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-color: var(--border-focus);
+}
+
+/* =============================================================================
+   Utility: Prose (applies vertical rhythm to long-form content)
+   =============================================================================
+   Wrap any markdown/long-form body in .prose to get editorial spacing.
+   ============================================================================= */
+
+.prose {
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: var(--lh-relaxed);
+  letter-spacing: var(--ls-tight);
+  max-width: 66ch;
+  text-wrap: pretty;
+}
+.prose > * + * { margin-top: var(--para-gap); }
+.prose h1, .prose h2, .prose h3 { margin-top: var(--block-gap); line-height: var(--lh-snug); letter-spacing: var(--ls-display); font-weight: 800; }
+.prose h1 { font-size: 2rem; }
+.prose h2 { font-size: 1.5rem; }
+.prose h3 { font-size: 1.2rem; }
+.prose p  { line-height: var(--lh-relaxed); }
+.prose small, .prose .caption { color: var(--text-muted); font-size: 13px; line-height: var(--lh-loose); }
+.prose ul, .prose ol { padding-left: 1.25em; line-height: var(--lh-relaxed); }
+.prose li + li { margin-top: 0.35em; }
+.prose code { font-family: var(--font-mono); font-size: 0.92em; padding: 0.08em 0.32em; border-radius: 4px; background: var(--state-hover-bg-soft); }
+.prose blockquote {
+  margin: var(--block-gap) 0; padding: 0.4em 1em;
+  border-left: 3px solid var(--accent-border);
+  color: var(--text-secondary); font-style: italic;
+  background: var(--accent-soft);
+  border-radius: 0 6px 6px 0;
+}

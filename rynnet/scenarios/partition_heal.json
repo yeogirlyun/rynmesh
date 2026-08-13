@@ -1,0 +1,15 @@
+{
+  "name": "partition-heal",
+  "registry": "in-testbed",
+  "network_id": "rynnet-partition",
+  "nodes": [
+    { "id": "a" },
+    { "id": "b", "netem": "delay 40ms 8ms" },
+    { "id": "d" }
+  ],
+  "publish": { "node": "a", "count": 3 },
+  "fetch": { "nodes": ["b"], "timeout_s": 25 },
+  "faults": [ { "at_s": 4, "partition": ["d"], "duration_s": 8 } ],
+  "observe": { "interval_s": 3, "duration_s": 24 },
+  "assert": { "min_fetched_per_node": 3, "publisher_credit_grows": "a" }
+}

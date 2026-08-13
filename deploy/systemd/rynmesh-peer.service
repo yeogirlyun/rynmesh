@@ -1,0 +1,15 @@
+[Unit]
+Description=Rynmesh peer node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/rynmesh/rynmesh-peer.env
+ExecStart=/usr/local/bin/rynmesh-peer
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

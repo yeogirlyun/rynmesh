@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+# rynmesh-vpn — browser-only egress tunnel for the rynmesh `net.egress` service.
+#
+# Transport : one of
+#             ssh          — SSH dynamic SOCKS5 proxy through an exit gateway
+#             hysteria2    — Hysteria2 client to a provider endpoint
+#             nebula-socks — SOCKS endpoint already reachable over the Nebula overlay
+# Scope     : ONLY the apps you point at the SOCKS proxy (a dedicated Chrome
+#             profile). The rest of your machine uses your normal local ISP.
+# Security  : ssh transport lives ONLY inside the encrypted SSH channel. Nothing
+#             new is exposed on the server; no install, no sudo, no open proxy port.
+#
+# Usage:
+#   rynmesh-vpn up                 # start the tunnel (idempotent)
+#   rynmesh-vpn down               # stop the tunnel
+#   rynmesh-vpn status             # show tunnel state + verify exit
+#   rynmesh-vpn verify             # probe services through the tunnel
+#   rynmesh-vpn chrome [url...]    # launch the dedicated exit-proxied Chrome
+#   rynmesh-vpn install-agent      # auto-start + auto-restart via launchd
+#   rynmesh-vpn uninstall-agent    # remove the launchd agent
+set -euo pipefail
+
+# ---- config (override via env) ----------------------------------------------
+GATEWAY="${RYNMESH_VPN_GATEWAY:-}"
+KEY="${RYNMESH_VPN_KEY:-}"
+PORT="${RYNMESH_VPN_PORT:-1080}"
+PROFILE_DIR="${RYNMESH_VPN_PROFILE_DIR:-$HOME/.rynmesh-vpn-chrome}"
+CHROME="${RYNMESH_VPN_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+LABEL="com.rynmesh.vpn"
+PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+LOG="$HOME/Library/Logs/rynmesh-vpn.log"
+
+TRANSPORT="${RYNMESH_VPN_TRANSPORT:-ssh}"
+SOCKS_HOST="${RYNMESH_VPN_SOCKS_HOST:-127.0.0.1}"
+HYSTERIA_BIN="${RYNMESH_VPN_HYSTERIA_BIN:-hysteria}"
+HY_CFG="${RYNMESH_VPN_HYSTERIA_CFG:-/tmp/rynmesh_hysteria_${PORT}.yaml}"
+HY_PID="/tmp/rynmesh_hysteria_${PORT}.pid"
+HY_LOG="$HOME/Library/Logs/rynmesh-vpn-hysteria.log"
+
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=12
+          -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30
+          -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes)
+[ -n "$KEY" ] && SSH_OPTS=(-i "$KEY" "${SSH_OPTS[@]}")
+
+c_ok="\033[32m"; c_no="\033[31m"; c_dim="\033[2m"; c_end="\033[0m"
+
+_listening() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; }
+_pid() { pgrep -f "ssh.*-D (127\.0\.0\.1:)?$PORT .*$GATEWAY" 2>/dev/null || true; }
+
+_up_ssh() {
+  [ -n "$GATEWAY" ] || { echo -e "${c_no}✗ set RYNMESH_VPN_GATEWAY=<user>@<exit_host>${c_end}"; exit 1; }
+  if [ -n "$KEY" ] && [ ! -f "$KEY" ]; then echo -e "${c_no}✗ SSH key not found:${c_end} $KEY"; exit 1; fi
+  echo "Starting SSH tunnel -> $GATEWAY (socks5://127.0.0.1:$PORT) ..."
+  ssh -f -N -D "127.0.0.1:$PORT" "${SSH_OPTS[@]}" "$GATEWAY"
+  echo "SOCKS_PORT=$PORT" > /tmp/rynmesh_vpn_socks_port
+  sleep 1
+  if _listening; then echo -e "${c_ok}● tunnel up${c_end}"; else echo -e "${c_no}✗ failed to start${c_end}"; exit 1; fi
+}
+
+_write_hysteria_cfg() {
+  {
+    echo "server: $RYNMESH_VPN_HYSTERIA_SERVER"
+    echo "auth: $RYNMESH_VPN_HYSTERIA_AUTH"
+    echo "tls:"
+    echo "  sni: ${RYNMESH_VPN_HYSTERIA_SNI:-bing.com}"
+    [ -n "${RYNMESH_VPN_HYSTERIA_INSECURE:-}" ] && echo "  insecure: true"
+    [ -n "${RYNMESH_VPN_HYSTERIA_PIN:-}" ] && echo "  pinSHA256: $RYNMESH_VPN_HYSTERIA_PIN"
+    if [ -n "${RYNMESH_VPN_HYSTERIA_OBFS:-}" ]; then
+      echo "obfs:"; echo "  type: salamander"; echo "  salamander:"; echo "    password: $RYNMESH_VPN_HYSTERIA_OBFS"
+    fi
+    echo "bandwidth:"
+    echo "  up: ${RYNMESH_VPN_HYSTERIA_UP_MBPS:-20} mbps"
+    echo "  down: ${RYNMESH_VPN_HYSTERIA_DOWN_MBPS:-100} mbps"
+    echo "socks5:"
+    echo "  listen: 127.0.0.1:$PORT"
+  } > "$HY_CFG"
+  chmod 600 "$HY_CFG"
+}
+
+_up_hysteria() {
+  command -v "$HYSTERIA_BIN" >/dev/null 2>&1 || { echo -e "${c_no}✗ hysteria not found:${c_end} $HYSTERIA_BIN"; exit 1; }
+  : "${RYNMESH_VPN_HYSTERIA_SERVER:?set RYNMESH_VPN_HYSTERIA_SERVER=host:port}"
+  : "${RYNMESH_VPN_HYSTERIA_AUTH:?set RYNMESH_VPN_HYSTERIA_AUTH}"
+  mkdir -p "$(dirname "$HY_LOG")"
+  _write_hysteria_cfg
+  echo "Starting Hysteria2 tunnel -> $RYNMESH_VPN_HYSTERIA_SERVER (socks5://127.0.0.1:$PORT) ..."
+  nohup "$HYSTERIA_BIN" client -c "$HY_CFG" >"$HY_LOG" 2>&1 &
+  echo $! > "$HY_PID"
+  for _ in 1 2 3 4 5; do sleep 1; _listening && break; done
+  if _listening; then echo -e "${c_ok}● tunnel up${c_end} (hysteria2)"; else echo -e "${c_no}✗ failed to start${c_end} (see $HY_LOG)"; exit 1; fi
+}
+
+_up_nebula() {
+  # Nebula runs as its own OS service; nothing to start here. Just verify the
+  # overlay SOCKS endpoint is TCP-reachable.
+  if nc -z -w3 "$SOCKS_HOST" "$PORT" >/dev/null 2>&1; then
+    echo -e "${c_ok}● overlay reachable (nebula-socks)${c_end} socks5://$SOCKS_HOST:$PORT"
+    return 0
+  fi
+  if (exec 3<>"/dev/tcp/$SOCKS_HOST/$PORT") 2>/dev/null; then
+    echo -e "${c_ok}● overlay reachable (nebula-socks)${c_end} socks5://$SOCKS_HOST:$PORT"
+    return 0
+  fi
+  echo -e "${c_no}✗ overlay SOCKS not reachable${c_end} at $SOCKS_HOST:$PORT — is nebula up and enrolled?"
+  exit 1
+}
+
+up() {
+  case "$TRANSPORT" in
+    nebula-socks) _up_nebula; return $? ;;
+  esac
+  if _listening; then echo -e "${c_ok}● tunnel already up${c_end} on socks5://127.0.0.1:$PORT"; return 0; fi
+  case "$TRANSPORT" in
+    hysteria2) _up_hysteria ;;
+    *)         _up_ssh ;;
+  esac
+}
+
+down() {
+  if [ -f "$PLIST" ]; then
+    echo -e "${c_dim}note: launchd agent is installed; 'down' may be auto-restarted. Use uninstall-agent to stop permanently.${c_end}"
+  fi
+  [ -f "$HY_PID" ] && { kill "$(cat "$HY_PID")" 2>/dev/null || true; rm -f "$HY_PID"; }
+  local p; p="$(_pid)"; [ -n "$p" ] && kill $p 2>/dev/null || true
+  # robust catch-all: free the local SOCKS port regardless of transport
+  lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+  echo -e "${c_ok}● stopped${c_end}"
+}
+
+status() {
+  if _listening; then
+    echo -e "${c_ok}● tunnel UP${c_end}  socks5://127.0.0.1:$PORT  (pid $(_pid))"
+    echo -n "  exit  : "; curl --socks5-hostname 127.0.0.1:"$PORT" -s --max-time 15 ipinfo.io \
+      | tr -d '\n' | sed -E 's/.*"ip": "([^"]*)".*"city": "([^"]*)".*"country": "([^"]*)".*"org": "([^"]*)".*/\1  \2, \3  (\4)/' || echo "(could not verify)"
+    echo
+  else
+    echo -e "${c_no}● tunnel DOWN${c_end}"
+  fi
+  echo -n "  real  : "; curl -s --max-time 12 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
+    | awk -F= '/^ip=/{ip=$2} /^loc=/{loc=$2} END{printf "%s (%s) [direct, no proxy]\n", ip, loc}' || echo "(unknown)"
+}
+
+verify() {
+  _listening || { echo -e "${c_no}tunnel down — run: rynmesh-vpn up${c_end}"; exit 1; }
+  echo "Through exit (socks5://127.0.0.1:$PORT):"
+  curl --socks5-hostname 127.0.0.1:"$PORT" -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace \
+    | grep -E '^(ip|loc|colo)=' | sed 's/^/  /'
+  echo "  bilibili-zone: $(curl --socks5-hostname 127.0.0.1:"$PORT" -s --max-time 15 'https://api.bilibili.com/x/web-interface/zone' | python3 -c 'import sys,json;d=json.load(sys.stdin).get("data",{});print(d.get("country"),d.get("country_code"),d.get("isp"))' 2>/dev/null || echo '?')"
+}
+
+chrome() {
+  up
+  mkdir -p "$PROFILE_DIR"
+  [ -x "$CHROME" ] || { echo -e "${c_no}✗ Chrome not found:${c_end} $CHROME"; exit 1; }
+  local proxy_host="127.0.0.1"
+  [ "$TRANSPORT" = "nebula-socks" ] && proxy_host="$SOCKS_HOST"
+  echo -e "${c_ok}Launching Rynmesh exit Chrome${c_end} (profile: $PROFILE_DIR)"
+  echo -e "${c_dim}This whole window exits via the provider's region. Your normal Chrome is unaffected.${c_end}"
+  "$CHROME" \
+    --user-data-dir="$PROFILE_DIR" \
+    --proxy-server="socks5://$proxy_host:$PORT" \
+    --no-first-run --no-default-browser-check \
+    --window-name="Rynmesh Exit" \
+    "$@" >/dev/null 2>&1 &
+  disown || true
+}
+
+install_agent() {
+  [ -n "$GATEWAY" ] || { echo -e "${c_no}✗ set RYNMESH_VPN_GATEWAY=<user>@<exit_host>${c_end}"; exit 1; }
+  mkdir -p "$(dirname "$PLIST")" "$(dirname "$LOG")"
+  # free the port from any manually-started tunnel so launchd owns it
+  local mp; mp="$(_pid)"; [ -n "$mp" ] && { echo "stopping manual tunnel (pid $mp) so launchd can own port $PORT"; kill $mp 2>/dev/null || true; sleep 1; }
+  local key_args=""
+  [ -n "$KEY" ] && key_args="    <string>-i</string><string>${KEY}</string>"
+  cat > "$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-N</string>
+    <string>-D</string><string>127.0.0.1:${PORT}</string>
+${key_args}
+    <string>-o</string><string>BatchMode=yes</string>
+    <string>-o</string><string>ServerAliveInterval=30</string>
+    <string>-o</string><string>ServerAliveCountMax=3</string>
+    <string>-o</string><string>ExitOnForwardFailure=yes</string>
+    <string>-o</string><string>StrictHostKeyChecking=accept-new</string>
+    <string>${GATEWAY}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>${LOG}</string>
+  <key>StandardErrorPath</key><string>${LOG}</string>
+</dict>
+</plist>
+PLISTEOF
+  launchctl unload "$PLIST" 2>/dev/null || true
+  launchctl load "$PLIST"
+  echo -e "${c_ok}● launchd agent installed${c_end} ($LABEL). Tunnel auto-starts at login and auto-restarts if it drops."
+  echo "  log: $LOG"
+}
+
+uninstall_agent() {
+  [ -f "$PLIST" ] || { echo "no agent installed"; return 0; }
+  launchctl unload "$PLIST" 2>/dev/null || true
+  rm -f "$PLIST"
+  echo -e "${c_ok}● launchd agent removed${c_end}"
+}
+
+case "${1:-status}" in
+  up) up ;;
+  down) down ;;
+  status) status ;;
+  verify) verify ;;
+  chrome) shift; chrome "$@" ;;
+  install-agent) install_agent ;;
+  uninstall-agent) uninstall_agent ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
