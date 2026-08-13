@@ -21,7 +21,7 @@
     "vite": "^8.2.1"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/cli": "^2.11.2",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7"
