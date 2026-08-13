@@ -1,4 +1,5 @@
 import {
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -45,6 +46,10 @@ export default function DigestViewer({
   onClose,
   onFeedback,
   onSteer,
+  bookmarked,
+  onBookmark,
+  onProgress,
+  initialProgress,
 }: {
   items: DigestItem[];
   index: number;
@@ -52,6 +57,10 @@ export default function DigestViewer({
   onClose: () => void;
   onFeedback: (item: DigestItem, action: ViewerAction) => void;
   onSteer: (text: string) => Promise<void>;
+  bookmarked: boolean;
+  onBookmark: (item: DigestItem, bookmarked: boolean) => Promise<void>;
+  onProgress: (item: DigestItem, progress: number) => void;
+  initialProgress: number;
 }) {
   const item = items[index];
   const [article, setArticle] = useState<ReaderArticle | null>(null);
@@ -59,7 +68,10 @@ export default function DigestViewer({
   const [rated, setRated] = useState<ViewerAction | null>(null);
   const [steerText, setSteerText] = useState("");
   const [steerSaved, setSteerSaved] = useState(false);
+  const [saved, setSaved] = useState(bookmarked);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const lastProgress = useRef(0);
+  const restoredProgress = useRef(false);
 
   const kind = item?.content_kind ?? "document";
   const isArticle = kind !== "video" && kind !== "audio" && kind !== "image";
@@ -71,8 +83,18 @@ export default function DigestViewer({
     setRated(null);
     setArticle(null);
     setReaderState("idle");
+    setSaved(bookmarked);
+    lastProgress.current = initialProgress;
+    restoredProgress.current = false;
     bodyRef.current?.scrollTo({ top: 0 });
+    // Initial progress belongs to this item snapshot; later progress writes
+    // must not jump the reader while the owner is scrolling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.item_id]);
+
+  useEffect(() => {
+    setSaved(bookmarked);
+  }, [bookmarked, item?.item_id]);
 
   // Opening an item is itself a signal, exactly as it is in a feed reader.
   useEffect(() => {
@@ -98,6 +120,17 @@ export default function DigestViewer({
       cancelled = true;
     };
   }, [item?.item_id, item?.link, isArticle]);
+
+  useEffect(() => {
+    if (!isArticle || !article || restoredProgress.current || initialProgress <= 0) return;
+    restoredProgress.current = true;
+    window.requestAnimationFrame(() => {
+      const element = bodyRef.current;
+      if (!element) return;
+      const available = element.scrollHeight - element.clientHeight;
+      if (available > 0) element.scrollTo({ top: available * initialProgress });
+    });
+  }, [article, initialProgress, isArticle]);
 
   const go = useCallback(
     (delta: number) => {
@@ -143,6 +176,13 @@ export default function DigestViewer({
     window.setTimeout(() => setSteerSaved(false), 2600);
   };
 
+  const reportProgress = (progress: number) => {
+    const normalized = Math.max(0, Math.min(1, progress));
+    if (normalized < 0.95 && normalized - lastProgress.current < 0.05) return;
+    lastProgress.current = normalized;
+    onProgress(item, normalized);
+  };
+
   return (
     <div
       className="viewer-backdrop"
@@ -168,7 +208,15 @@ export default function DigestViewer({
           </div>
         </header>
 
-        <div className="viewer-body" ref={bodyRef}>
+        <div
+          className="viewer-body"
+          ref={bodyRef}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            const available = element.scrollHeight - element.clientHeight;
+            if (available > 0) reportProgress(element.scrollTop / available);
+          }}
+        >
           <h1 className="viewer-title">{item.title}</h1>
 
           {kind === "video" && embedId ? (
@@ -186,7 +234,24 @@ export default function DigestViewer({
             <div className="viewer-audio">
               {item.thumbnail ? <img src={item.thumbnail} alt="" className="viewer-audio-art" /> : null}
               {item.media_url ? (
-                <audio src={item.media_url} controls preload="none" autoPlay={false} />
+                <audio
+                  src={item.media_url}
+                  controls
+                  preload="none"
+                  autoPlay={false}
+                  onTimeUpdate={(event) => {
+                    const media = event.currentTarget;
+                    if (Number.isFinite(media.duration) && media.duration > 0) {
+                      reportProgress(media.currentTime / media.duration);
+                    }
+                  }}
+                  onLoadedMetadata={(event) => {
+                    const media = event.currentTarget;
+                    if (initialProgress > 0 && media.duration > 0) {
+                      media.currentTime = media.duration * initialProgress;
+                    }
+                  }}
+                />
               ) : (
                 <p className="viewer-note">
                   This episode didn't publish a direct audio link.{" "}
@@ -258,6 +323,17 @@ export default function DigestViewer({
               onClick={() => rate("down")}
             >
               Less
+            </Button>
+            <Button
+              icon={Bookmark}
+              variant={saved ? "primary" : "standard"}
+              onClick={() => {
+                const next = !saved;
+                setSaved(next);
+                void onBookmark(item, next);
+              }}
+            >
+              {saved ? "Saved" : "Save"}
             </Button>
             <a className="viewer-original" href={item.link} target="_blank" rel="noreferrer noopener">
               <ExternalLink size={13} /> Original

@@ -1347,6 +1347,7 @@ def create_app(store: RynmeshStore | None = None):
     from .services import ask as ask_service
     from .services import model_provider as model_provider_module
     from .services import recap as recap_service
+    from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
     from .services.reader import ReaderCache, ReaderError, read_article
 
@@ -1364,6 +1365,7 @@ def create_app(store: RynmeshStore | None = None):
         profile_store=_recommendation_profile,
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
+    app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
     app.state.model_provider = None
     app.state.model_provider_checked_at = 0.0
 
@@ -1633,6 +1635,30 @@ def create_app(store: RynmeshStore | None = None):
             )
         except ReaderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/local/consumption")
+    def local_consumption(request: FastAPIRequest) -> list[dict[str, Any]]:
+        local_control(request)
+        return app.state.consumption_store.list()
+
+    @app.post("/api/local/consumption")
+    async def local_consumption_record(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        body = await request.json()
+        try:
+            return app.state.consumption_store.record(
+                body.get("item", {}),
+                str(body.get("action", "")),
+                progress=body.get("progress"),
+            )
+        except ConsumptionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/local/consumption")
+    def local_consumption_clear(request: FastAPIRequest) -> dict[str, bool]:
+        local_control(request)
+        app.state.consumption_store.clear()
+        return {"ok": True}
 
     @app.get("/api/local/digest/steer")
     def local_digest_steering(request: FastAPIRequest) -> dict[str, Any]:

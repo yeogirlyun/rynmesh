@@ -6,6 +6,7 @@ import DigestViewer, { type ViewerAction } from "../components/DigestViewer";
 import {
   digestApi,
   type AiStatus,
+  type ConsumptionRecord,
   type DiscoveryStatus,
   type Digest as DigestPayload,
   type DigestItem,
@@ -127,20 +128,22 @@ export default function Digest() {
   const [notice, setNotice] = useState("");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
-  const [viewingIndex, setViewingIndex] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<{ items: DigestItem[]; index: number } | null>(null);
+  const [consumption, setConsumption] = useState<ConsumptionRecord[]>([]);
   const [profile, setProfile] = useState<RecommendationProfile | null>(null);
   const [direction, setDirection] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
-      const [digestPayload, sourceList, watcherList, ai, status, recommendationProfile] = await Promise.all([
+      const [digestPayload, sourceList, watcherList, ai, status, recommendationProfile, consumptionRecords] = await Promise.all([
         digestApi.getDigest(),
         digestApi.listSources(),
         digestApi.listWatchers(),
         digestApi.aiStatus().catch(() => null),
         digestApi.markDiscoverySeen().catch(() => null),
         client.getRecommendationProfile(),
+        digestApi.listConsumption(),
       ]);
       setDigest(digestPayload);
       setSources(sourceList);
@@ -149,6 +152,7 @@ export default function Digest() {
       setDiscovery(status);
       setProfile(recommendationProfile);
       setDirection(recommendationProfile.direction);
+      setConsumption(consumptionRecords);
       window.dispatchEvent(new Event("ryn-discovery-seen"));
       setError("");
     } catch (err) {
@@ -205,6 +209,11 @@ export default function Digest() {
   };
 
   const onFeedback = (item: DigestItem, action: ViewerAction) => {
+    if (action === "opened") {
+      void digestApi.recordConsumption(item, "opened").then(async () => {
+        setConsumption(await digestApi.listConsumption());
+      }).catch(() => undefined);
+    }
     void digestApi.sendFeedback(item.item_id, action).then(async () => {
       const [nextProfile, nextDigest] = await Promise.all([
         client.getRecommendationProfile(),
@@ -216,6 +225,15 @@ export default function Digest() {
     if (action === "down") {
       setHidden((current) => new Set(current).add(item.item_id));
     }
+  };
+
+  const updateConsumption = async (
+    item: DigestItem,
+    action: "bookmark" | "unbookmark" | "progress" | "completed",
+    progress?: number,
+  ) => {
+    await digestApi.recordConsumption(item, action, progress);
+    setConsumption(await digestApi.listConsumption());
   };
 
   const saveProfile = async (
@@ -495,7 +513,7 @@ export default function Digest() {
               key={item.item_id}
               item={item}
               onFeedback={onFeedback}
-              onOpen={() => setViewingIndex(position)}
+              onOpen={() => setViewer({ items, index: position })}
             />
           ))}
         </div>
@@ -510,13 +528,37 @@ export default function Digest() {
           }
         />
       )}
-      {viewingIndex !== null && items[viewingIndex] ? (
+      {consumption.length ? (
+        <Panel title="Saved and recently opened">
+          <div className="digest-stack">
+            {consumption.slice(0, 8).map((record) => (
+              <button
+                key={record.item_id}
+                type="button"
+                className="digest-title"
+                onClick={() => setViewer({ items: [record.item], index: 0 })}
+              >
+                {record.item.title}
+                {record.bookmarked ? " · saved" : ""}
+                {record.completed ? " · completed" : record.progress ? ` · ${Math.round(record.progress * 100)}%` : ""}
+              </button>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+      {viewer && viewer.items[viewer.index] ? (
         <DigestViewer
-          items={items}
-          index={viewingIndex}
-          onIndexChange={setViewingIndex}
-          onClose={() => setViewingIndex(null)}
+          items={viewer.items}
+          index={viewer.index}
+          onIndexChange={(index) => setViewer((current) => current ? { ...current, index } : null)}
+          onClose={() => setViewer(null)}
           onFeedback={onFeedback}
+          bookmarked={Boolean(consumption.find((record) => record.item_id === viewer.items[viewer.index].item_id)?.bookmarked)}
+          initialProgress={consumption.find((record) => record.item_id === viewer.items[viewer.index].item_id)?.progress ?? 0}
+          onBookmark={(item, bookmarked) => updateConsumption(item, bookmarked ? "bookmark" : "unbookmark")}
+          onProgress={(item, progress) => {
+            void updateConsumption(item, progress >= 0.95 ? "completed" : "progress", progress);
+          }}
           onSteer={async (text) => {
             await digestApi.steer(text);
             setNotice("Got it — Ryn will use that from the next refresh.");

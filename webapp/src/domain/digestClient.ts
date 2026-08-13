@@ -72,6 +72,18 @@ export interface Digest {
   sources: DigestSourceHealth[];
 }
 
+export interface ConsumptionRecord {
+  item_id: string;
+  item: DigestItem;
+  first_opened_unix: number;
+  last_opened_unix: number;
+  last_activity_unix: number;
+  open_count: number;
+  bookmarked: boolean;
+  progress: number;
+  completed: boolean;
+}
+
 export interface Watcher {
   id: string;
   url: string;
@@ -182,6 +194,16 @@ export const digestApi = {
     }),
   readArticle: (url: string) =>
     requestJson<ReaderArticle>(`/reader?url=${encodeURIComponent(url)}`),
+  listConsumption: () => requestJson<ConsumptionRecord[]>("/consumption"),
+  recordConsumption: (
+    item: DigestItem,
+    action: "opened" | "bookmark" | "unbookmark" | "progress" | "completed",
+    progress?: number,
+  ) => requestJson<ConsumptionRecord>("/consumption", {
+    method: "POST",
+    body: JSON.stringify({ item, action, progress }),
+  }),
+  clearConsumption: () => requestJson<{ ok: boolean }>("/consumption", { method: "DELETE" }),
   getSteering: () => requestJson<Steering>("/digest/steer"),
   steer: (text: string) =>
     requestJson<Steering>("/digest/steer", { method: "POST", body: JSON.stringify({ text }) }),
