@@ -19,6 +19,8 @@ pip install -q "$ROOT" pyinstaller
 
 mkdir -p "$OUT"
 pyinstaller --onefile --noconfirm --clean \
+  --codesign-identity - \
+  --osx-entitlements-file "$SRC_TAURI/sidecar/rynmesh-peer.entitlements.plist" \
   --name rynmesh-peer \
   --collect-submodules uvicorn \
   --collect-submodules rynmesh \

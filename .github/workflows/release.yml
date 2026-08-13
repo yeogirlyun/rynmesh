@@ -93,6 +93,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           test -x "$app/Contents/MacOS/rynmesh-peer"
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "${GITHUB_REF_NAME#v}"
+          ./webapp/src-tauri/scripts/verify-sidecar.sh "$app/Contents/MacOS/rynmesh-peer"
       - name: Upload desktop artifact to release
         env:
           GH_TOKEN: ${{ github.token }}

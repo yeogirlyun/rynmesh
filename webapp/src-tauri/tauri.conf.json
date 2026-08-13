@@ -30,7 +30,8 @@
     "targets": "all",
     "externalBin": ["binaries/rynmesh-peer"],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "sidecar/rynmesh-peer.entitlements.plist"
     },
     "icon": [
       "icons/32x32.png",

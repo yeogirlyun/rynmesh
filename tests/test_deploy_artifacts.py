@@ -139,6 +139,20 @@ def test_download_installer_marks_managed_desktop_daemon():
     assert "Environment=RYNMESH_DESKTOP_MODE=1" in text
 
 
+def test_desktop_sidecar_is_signed_and_executed_during_verification():
+    build_script = (REPO / "webapp" / "src-tauri" / "scripts" / "build-sidecar.sh").read_text()
+    verifier = (REPO / "webapp" / "src-tauri" / "scripts" / "verify-sidecar.sh").read_text()
+    release_workflow = (REPO / ".github" / "workflows" / "release.yml").read_text()
+    tauri_config = (REPO / "webapp" / "src-tauri" / "tauri.conf.json").read_text()
+
+    assert "--codesign-identity -" in build_script
+    assert "--osx-entitlements-file" in build_script
+    assert "/health" in verifier
+    assert "grep -q 'peer_id'" in verifier
+    assert "verify-sidecar.sh" in release_workflow
+    assert "rynmesh-peer.entitlements.plist" in tauri_config
+
+
 def test_verify_mesh_syntax_and_expected_nodes():
     p = REPO / "scripts" / "verify_mesh.sh"
     assert p.exists() and (p.stat().st_mode & 0o111), "verify_mesh.sh missing or not executable"

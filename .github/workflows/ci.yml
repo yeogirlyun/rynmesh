@@ -84,5 +84,9 @@ jobs:
       - run: npm ci
       - name: Build self-contained node sidecar
         run: ./src-tauri/scripts/build-sidecar.sh
+      - name: Start bundled node sidecar
+        run: |
+          sidecar="$(find src-tauri/binaries -type f -name 'rynmesh-peer-*' -print -quit)"
+          ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
       - name: Compile desktop shell
         run: cargo check --manifest-path src-tauri/Cargo.toml
