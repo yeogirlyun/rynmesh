@@ -154,8 +154,11 @@ request remains In progress or In review.
    ```bash
    ./.venv/bin/python -m pytest tests/ -q
    ./.venv/bin/python -m ruff check rynmesh/ tests/
-   cd webapp && npm run build
+   cd webapp && npm test && npm run build
    ```
+
+   During webapp development, use `npm run test:watch` from `webapp/` to rerun
+   the relevant component and interaction tests as files change.
 4. **Open a PR** against `main` with what changed and why, plus how you verified
    it. Screenshots for UI work.
 5. **CI runs backend, webapp, packaged-node, and desktop checks.** Green CI plus
