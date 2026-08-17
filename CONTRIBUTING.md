@@ -11,7 +11,7 @@ building it.** Everyone who works on Rynmesh wears both hats.
 
 | Hat | Entry point | What you get |
 |---|---|---|
-| **User** (dogfooding) | `curl -fsSL https://www.rynmesh.ai/download/install.sh \| sh` | The released app in `~/.rynmesh/app`, updated by re-running the same command. Untouched by your working tree. |
+| **User** (dogfooding) | Install the DMG or `install.sh` from the latest GitHub release | The released app or package, independent of your working tree. |
 | **Contributor** | `git clone` + `./scripts/dev_setup.sh` | A `.venv`, an editable install, webapp deps, and a green test suite. |
 
 Run both. The installed app is how you notice what's actually broken for a real
@@ -50,6 +50,63 @@ The second form matters. In dev the UI is served by Vite; in a release the node
 serves it. Anything that depends on the dev proxy will look fine in dev and
 break for users — always smoke-test the packaged form before opening a PR.
 
+## How work is tracked
+
+Rynmesh uses GitHub's open-source workflow rather than a separate private
+project-management system:
+
+- **Discussions** are for questions, early ideas, and proposals that do not yet
+  have an agreed implementation boundary.
+- **Issues** are the executable backlog. An accepted issue states the user
+  problem, scope, acceptance criteria, risks, and verification requirements.
+- **Milestones** group issues and pull requests by product outcome or release.
+- **GitHub Projects** provides the cross-milestone board for Backlog, Ready, In
+  progress, In review, and Done. The issue and pull request remain the source of
+  truth; the board is a view of that work.
+- **Pull requests** are where implementation is reviewed and incorporated.
+  Decisions that affect future contributors belong in the linked issue or PR,
+  not only in private chat.
+- **Releases** are immutable, tested snapshots from `main`.
+
+The current accepted backlog is the
+[P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
+Issue [#15](https://github.com/yeogirlyun/rynmesh/issues/15) is the recommended
+first contribution because it establishes the webapp safety net needed by the
+user-facing work that follows.
+
+The normal issue lifecycle is:
+
+```text
+proposal -> triage -> ready -> in progress -> in review -> done
+```
+
+Maintainers triage open issues regularly. During triage they confirm the
+milestone, priority, area, size, acceptance criteria, and whether design review
+is required. Large work should be split into independently testable issues
+before implementation begins.
+
+### Claiming work
+
+1. Choose an unassigned issue labeled `good first issue` or `help wanted`.
+2. Comment that you want to work on it and describe your intended approach.
+3. Wait for a maintainer to confirm the scope before investing in substantial
+   work. This prevents two contributors from unknowingly implementing the same
+   change or building against a rejected design.
+4. A contributor who cannot continue should comment and unassign themselves so
+   the issue returns to Ready.
+
+`good first issue` means the boundaries and expected tests are already known;
+it does not mean tests or review are optional. Issues involving cryptography,
+node identity, authentication, credit issuance, registry trust, VPN credential
+sharing, or transferable credits require an approved design issue first.
+
+### Definition of done
+
+An issue is done only when its acceptance criteria are met, relevant automated
+tests pass, user-visible behavior and existing docs agree, CI is green, and the
+pull request is reviewed and merged. A draft, local experiment, or open pull
+request remains In progress or In review.
+
 ## The loop
 
 ```
@@ -66,15 +123,16 @@ break for users — always smoke-test the packaged form before opening a PR.
 1. **Branch** off `main` — `feat/digest-scheduling`, `fix/watcher-dedupe`.
 2. **Write a test first** where it's practical. Every bug fix should come with a
    test that fails before it and passes after.
-3. **Keep the checks green** before pushing:
+3. **Keep the relevant checks green** before pushing:
    ```bash
    ./.venv/bin/python -m pytest tests/ -q
    ./.venv/bin/python -m ruff check rynmesh/ tests/
-   cd webapp && npx tsc -b
+   cd webapp && npm run build
    ```
 4. **Open a PR** against `main` with what changed and why, plus how you verified
    it. Screenshots for UI work.
-5. **CI runs the same three checks.** Green CI plus one review approval merges.
+5. **CI runs backend, webapp, packaged-node, and desktop checks.** Green CI plus
+   one review approval merges.
 6. **Releases are cut from `main`** by a maintainer (see below).
 
 Direct pushes to `main` are for maintainers doing releases and trivial fixes.
@@ -116,6 +174,10 @@ curl -fsSL https://github.com/yeogirlyun/rynmesh/releases/latest/download/instal
 - **Tests are the contract.** Never make a red test pass by weakening its
   assertion; decide whether the code or the test encodes the right behavior and
   fix that one.
+- **One issue, one focused pull request.** Do not mix dependency upgrades,
+  refactors, and unrelated behavior changes into a feature PR.
+- **Document current behavior, not aspiration.** Planned capabilities belong in
+  `docs/PRODUCT_MILESTONES.md` and must be labeled as planned.
 - **Match the surrounding code.** Comment density, naming, and idiom included.
 
 ## Where things live

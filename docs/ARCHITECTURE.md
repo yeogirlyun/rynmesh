@@ -26,8 +26,10 @@ Product DNA: Rynmesh is local-node infrastructure with a human control surface. 
   layer (see §Censorship-Resistant Transport). NAT traversal and libp2p are
   out of scope for the current alpha.
 - The current registry implementation is a coordination plane, not a trust authority.
-- The current safety scanner is intentionally minimal and must be expanded before public operation.
-- The current repo does not yet include the webapp frontend or local webapp control API.
+- The current safety scanner is intentionally minimal and must be expanded before operating an
+  unrestricted public network of untrusted peers.
+- The current desktop release targets macOS. Windows and Linux packaging, Apple notarization,
+  and broader field validation remain release-engineering work.
 
 ## System Overview
 
@@ -84,7 +86,9 @@ Runtime boundary: the "Rynmesh server" users run should be described as the Ryn 
 
 Modules today: `rynmesh.store`, `rynmesh.peer_http`, `rynmesh.mcp_server`
 
-Target product role: the Ryn node daemon is the user's local authority and network gateway. It should expose a local control API for the webapp, expose peer HTTP APIs for other nodes, and support MCP tools for AI operators.
+Current product role: the Ryn node daemon is the user's local authority and network gateway. It
+exposes a loopback-protected local control API for the webapp, peer HTTP APIs for other nodes,
+and MCP tools for AI operators.
 
 The node daemon owns:
 
@@ -104,11 +108,12 @@ All user-facing operations should route through this daemon. This gives Rynmesh 
 
 ### Ryn Webapp
 
-Target module: not yet implemented.
+Current module: `webapp/`, built with React, TypeScript, and Vite and packaged in the node and
+Tauri desktop application.
 
 The Ryn webapp is the user's local GUI for the Ryn node. It should not contact random peers or registries directly. It calls the local node and renders node-verified state.
 
-Expected first screens:
+Current screens include:
 
 - Home: node, registry, peer, and recommendation status
 - Explore: available local, fetched, and peer-visible content
@@ -121,9 +126,14 @@ Expected first screens:
 
 ### AI Curator
 
-Target module: not yet implemented.
+Current modules: `rynmesh.services.model_provider`, `rynmesh.services.ask`, and
+`rynmesh.services.digest`.
 
-The AI curator is a model adapter selected by the user. It can use a cloud or local model. It reviews bounded evidence supplied by the node and returns recommendations with reasons. It is a recommender and reviewer, not a network authority.
+The AI curator is an optional model adapter selected by the user. Ollama provides the local
+backend; Anthropic is supported when the owner supplies credentials and explicitly allows cloud
+model use. The zero-configuration recommender remains useful with no model. When enabled, the
+curator reviews bounded evidence supplied by the node and returns summaries or answers. It is a
+reviewer, not a network authority.
 
 Allowed without high-risk confirmation:
 
@@ -254,11 +264,14 @@ The `clip` tools remain as video-compatible aliases. Agent integrations should p
 
 ### Local Webapp Control API
 
-Target module: not yet implemented.
+Current module: `/api/local/*` routes in `rynmesh.peer_http`, consumed through typed clients in
+`webapp/src/domain/`.
 
-The webapp needs a local control API that is distinct from the peer HTTP API. The peer HTTP API is for other nodes. The local control API is for the user's browser/webapp and should include authentication or local-origin protections before public release.
+The local control API is distinct from the peer HTTP API. It is restricted to loopback callers
+by default and supports a per-launch local token for tunneled or desktop use. The peer HTTP API
+is for other nodes; the local API is for the owner's webapp and tools.
 
-The local control API should expose node-mediated operations:
+The local control API exposes node-mediated operations including:
 
 - node status and configuration
 - registry status and peer discovery
@@ -729,15 +742,17 @@ Implemented since (this iteration):
   in `sim/FINDINGS.md` (F3: concentration scales up — top 1% holds 64% of
   trust at 1K nodes, 77% at 10K under default parameters).
 
-Specified but not yet implemented:
+Remaining architecture work:
 
-- AI curator/model-provider adapter (the recommender MVP uses a
-  weighted-feature BaselineRanker; a learned model or the upstream
-  `phoenix/run_pipeline.py` invocation can swap in via the `Ranker` seam)
-- recommendation evidence packet schema
+- consolidation of the Daily Digest and legacy recommendation contracts into
+  one user-facing ranking and feedback path
+- node-mediated or explicitly consented loading for third-party media embedded
+  by the content viewer
 - sublinear / saturating trust → distribution-weight transform (vision Q14)
 - newcomer reserved-discovery-bandwidth carve-out (vision Q2)
 - credit-weight validation curve and collusion-detection (vision Q2)
+- stronger safety packs, quarantine, moderation evidence, and appeal metadata
+- safe friend invitations, revocation, and multi-user egress credentials
 
 ## Companion Documents
 
@@ -754,28 +769,27 @@ Specified but not yet implemented:
 - `rynnet/FINDINGS.md` — testbed findings (F1, F2).
 - `sim/FINDINGS.md` — scale-simulator findings (F3 concentration scales).
 
-## Phase 2 Plan
+## Next Architecture Priorities
 
-Phase 2 should mature Rynmesh from a local alpha into a credible private network:
+The current product roadmap is maintained in `PRODUCT_MILESTONES.md`. The next
+architecture work should strengthen the implemented personal assistant before
+expanding the trust boundary:
 
-- Build the first Ryn webapp around the local Ryn node.
-- Add a local webapp control API with local-origin/auth protections.
-- Add AI curator adapters for local and cloud models.
-- Add recommendation evidence packets with citations to manifests, previews, provenance, safety receipts, and credits.
-- Build the first `rynmesh.ai` registry service.
-- Add authenticated registry writes and signed registry responses.
-- Add registry tiers and registry reputation.
-- Add stronger safety packs and scanner receipts.
-- Add peer bans, quarantine lists, and appeal metadata.
-- Add proof-of-availability and proof-of-delivery events.
-- Add anti-Sybil controls so node creation alone cannot be farmed.
-- Add category-specific credit scoreboards.
-- Add policy-pluggable feed ranking.
-- Add user preference profiles for ranking and recommendation.
-- Add NAT traversal or libp2p-style transport (censorship-resistance layer is
+- protect the webapp critical path with deterministic interaction tests
+- consolidate recommendation state, ranking, and feedback contracts
+- make discovery-source failures and recovery inspectable
+- complete content-viewer format, accessibility, and network-privacy behavior
+- design and verify invite, revocation, and friend-attribution semantics
+- add authenticated registry writes, registry tiers, and registry reputation
+- add stronger safety packs, peer quarantine, and appeal metadata
+- add proof-of-availability and proof-of-delivery events
+- add anti-Sybil controls so node creation alone cannot be farmed
+- add category-specific credit scoreboards
+- extend policy-pluggable ranking beyond the current local Ranker seam
+- add NAT traversal or libp2p-style transport (censorship-resistance layer is
   now pluggable; the next transport-layer step is WebRTC/Snowflake).
-- Add encrypted/private swarm support.
-- Add observability for node uptime, transfer success, and safety decisions.
+- add encrypted/private swarm support
+- extend observability for node uptime, transfer success, and safety decisions
 
 ## Future Token Path
 

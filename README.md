@@ -21,6 +21,26 @@ The node, web interface, recommendation agent, peer protocol, registry, and comm
 
 Rynmesh is alpha software. APIs and storage formats may change before 1.0.
 
+## Current boundaries
+
+- Desktop installers are currently available for macOS on Apple Silicon and
+  Intel. Windows and Linux packaging is planned.
+- macOS community builds are not yet Apple-notarized.
+- Public-source recommendations work without peers, accounts, preferences, or
+  a model. AI-generated briefings and Search & Ask require a reachable local
+  Ollama model or explicit opt-in to a configured cloud provider.
+- Friend invitations, friend-attributed recommendations, multi-user egress,
+  and budgeted agent-to-agent services are planned milestones.
+- The safety scanner is an alpha implementation; operating an unrestricted
+  network of untrusted peers requires the additional hardening described in
+  [Product milestones](docs/PRODUCT_MILESTONES.md).
+
+For an implementation inventory and clearly separated contribution areas, see
+[Product milestones](docs/PRODUCT_MILESTONES.md). Work that is ready to be
+claimed is tracked in [GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues),
+not inferred from aspirational design documents. The current accepted backlog
+is grouped in the [P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
+
 ## Install from GitHub
 
 ### macOS desktop
@@ -114,6 +134,8 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 ## Community
 
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+- Choose accepted work from [GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues)
+  and comment before starting substantial implementation.
 - Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Use GitHub Issues for reproducible bugs and focused feature requests.
 - Use GitHub Discussions for questions and broader design ideas.

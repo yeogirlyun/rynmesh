@@ -22,7 +22,11 @@ Product language should prefer "Ryn node" when speaking to users and "Rynmesh no
 
 ### Ryn Node Daemon
 
-The long-running local server process for a Ryn node. In the current alpha, this role is mostly represented by `rynmesh-peer` plus the local store and peer HTTP API. In the webapp product, the daemon should expose a local control API for the webapp and should continue to expose peer APIs for other nodes.
+The long-running local server process for a Ryn node. In the current alpha,
+`rynmesh-peer` owns the local store, background discovery, the loopback-protected
+`/api/local/*` control API, and the network-facing peer API. The Tauri desktop
+application bundles and supervises this daemon; source installations can run it
+directly.
 
 Responsibilities:
 
@@ -467,33 +471,29 @@ Rules:
 - Local-only mode must prevent cloud model calls.
 - Peer queries may reveal interest; the webapp should disclose this before broad network searches.
 
-## Implementation Notes For The First Webapp
+## Current Implementation Status
 
-The current repo already has the protocol primitives for:
+The current repository implements the first webapp, its local control API,
+background public discovery, recommendation ranking and evidence packets,
+preference and feedback storage, Search & Ask with optional model providers,
+publish approval, content consumption history, MCP tools, peer discovery and
+messaging, content publish/fetch, provenance validation, identity assessment,
+and credit scoring.
 
-- local store
-- peer HTTP API
-- MCP tools
-- registry discovery
-- content publish/fetch/list/rank
-- provenance chain validation
-- identity tier assessment
-- credit scoring
+Remaining product and hardening work includes:
 
-Missing or future work:
+- automated interaction coverage for the React critical path
+- consolidation of the Daily Digest and legacy recommendation contracts
+- clearer per-source failure diagnosis and recovery
+- explainable and individually reversible recommendation learning
+- content-viewer accessibility, format coverage, and third-party media privacy
+- peer quarantine and reporting UX
+- Windows and Linux desktop distribution and Apple notarization
+- safe friend invitations, revocation, and friend-attributed recommendations
 
-- local webapp frontend
-- local webapp control API
-- model-provider adapter for AI curation
-- recommendation evidence packet schema
-- user preference/ranking policy storage
-- publish approval UI
-- persistent search/recommendation history
-- peer quarantine/report UX
+## First-Webapp Success Criteria
 
-## Success Criteria
-
-The first webapp is successful when a user can:
+The implemented first webapp is expected to let a user:
 
 1. Start a local Ryn node.
 2. Open the webapp.

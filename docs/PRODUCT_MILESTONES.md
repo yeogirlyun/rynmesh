@@ -1,172 +1,169 @@
-# RynMesh Product Milestones — From First Launchable Product to the Full Network
+# Rynmesh Product Milestones
 
-Status: proposal (2026-07-30). Companion to `RYNMESH_VISION.md` §7 (M0–M6). Where VISION.md
-describes the *protocol* milestones, this document describes the *product* milestones: what we
-ship, to whom, and why they would use it — starting from what is actually working in the repo
-today.
+Status: active roadmap, reviewed 2026-08-16. This document describes the
+user-facing product milestones and the contribution areas that move them
+forward. Protocol-level goals and safety gates remain in
+[`RYNMESH_VISION.md`](RYNMESH_VISION.md).
 
----
+Rynmesh is alpha software. “Implemented” below means the behavior exists in
+the repository and is covered by the current release process; it does not mean
+the behavior has completed production hardening or broad field validation.
 
-## 1. Where we actually are (honest inventory)
+## Current release: P1 Ryn Companion
 
-**Strong and working today:**
-- Node daemon (`rynmesh-peer`): identity (Ed25519), content store/publish, signed manifests,
-  provenance, credits-as-reputation ledger, registry with fallback chains, censorship-resistant
-  transport ladder, Nebula overlay.
-- **VPN egress** — working end-to-end, verified from mainland China, 3 transports, launcher in
-  the webapp. (Single-tenant only: `FUTURE_WORK_EGRESS_MULTITENANT.md`.)
-- **Peer messaging** — E2E-encrypted 1:1 chat with media, just merged and verified.
-- **Desktop app** — Tauri `Ryn.app` with tray, sidecar daemon, auto-update with rollback.
-- **MCP server** — 31 tools; any MCP-capable agent can already drive a node.
+The personal-assistant milestone is implemented and available in the public
+`v0.6.2` release for macOS on Apple Silicon and Intel.
 
-**Built but not wired (the biggest cheap wins):**
-- `recommender.py` — full sourcing→ranking→filtering pipeline, tested, imported *only by tests*.
-  `POST /api/local/recommendations` returns a hard-coded `[]`.
-- `eigentrust.py` — tested library, used only by the simulator.
+### Implemented
 
-**Vision items with no code:** autonomous agent loop, model adapters (local or cloud), services
-primitive (M3), credit sinks/issuance epochs, anti-Sybil, Avaryn as a real external trust root
-(receipts are currently self-minted), any token/coin (correctly absent).
+- A self-contained Tauri desktop application starts and monitors its bundled
+  Ryn node daemon. A Python, Node.js, Ollama, account, API key, registry, or
+  connected peer is not required for the default experience.
+- Background discovery starts automatically from a built-in public catalog.
+  It covers YouTube, Reddit, research, technology and world news, podcasts,
+  public-domain audiobooks and books, images, and comics. Sources are refreshed
+  independently and cached content remains available during temporary source
+  failures.
+- The For You feed ranks real public content, reports discovery health and the
+  next refresh, and displays unread recommendation notifications.
+- The local recommendation profile learns from topic and platform choices,
+  written direction, opening content, More, Less, Hide, and source feedback.
+- The content viewer supports articles, YouTube video, feed-provided audio, and
+  images, with original-source links for unsupported or failed rendering.
+- Reading history, bookmarks, progress, read-later links, and page watchers are
+  stored locally and can be exported or erased.
+- Search & Ask, digest briefings, and item summaries use an optional
+  `ModelProvider`. Ollama is supported locally; Anthropic is available only
+  after explicit cloud-model permission and owner-supplied credentials. The
+  recommendation feed itself does not require a model.
+- Recommendation evidence packets identify the reviewed material, ranking
+  signals, review depth, safety status, provenance status, and limitations.
+- The local control API, webapp, MCP tools, peer discovery, encrypted peer
+  messaging, signed content publication and fetching, provenance validation,
+  safety receipts, and non-transferable credit ledger are implemented.
+- The release pipeline produces a wheel, source archive, checksums, installer,
+  and native macOS DMGs. CI verifies the backend, web build, packaged-node UI,
+  and both desktop architectures.
 
-**Known defect to fix early:** F2 (`rynnet/FINDINGS.md`) — `discover_peers` doesn't dedupe by
-`peer_id`; double registration double-counts content. Cheap amplification vector.
+### P1 hardening still needed
 
-**The strategic problem:** the vision is a network, and networks have a cold-start problem.
-A content mesh with 0 users has no content, so "agents curating mesh content" delivers nothing
-on day 1. The first product must be valuable **single-player**, become more valuable with 2–5
-friends, and only then depend on network effects.
+These are active contribution areas, not claims that the personal assistant is
+missing entirely:
 
----
+1. **Webapp regression tests.** The Python backend has broad automated
+   coverage, while the React critical path currently relies on typechecking,
+   production builds, and manual use. Add deterministic component and
+   interaction tests for first launch, discovery health, preferences,
+   feedback, notifications, and the content viewer.
+2. **Recommendation-path consolidation.** Home and For You still span the
+   Daily Digest and older recommendation contracts. Converge on one contract,
+   one feedback vocabulary, and one source of profile state; remove the
+   dormant Recommendations screen after migration.
+3. **Source observability and recovery.** Make per-source health, last success,
+   cache use, failure reasons, and retries understandable and actionable.
+4. **Learning transparency.** Show what positive and negative signals Ryn has
+   learned, why the ranking changed, and allow individual feedback actions to
+   be undone.
+5. **Viewer completeness and privacy.** Improve accessibility, error handling,
+   PDF and generic-document support, media fallbacks, and the policy for
+   node-mediated versus direct third-party media requests.
+6. **Desktop distribution.** Add Windows and Linux packaging. Add Apple
+   Developer ID signing and notarization when the project has the required
+   maintainer credentials.
+7. **Safety hardening.** The current keyword scanner is an alpha protocol
+   implementation. Stronger safety packs, evidence retention, quarantine, and
+   moderation/appeal behavior are required before operating an open network of
+   untrusted peers.
 
-## 2. The wedge: what we launch first
+P1 success is measured with voluntary, privacy-preserving evidence: successful
+installation, reliable first recommendations, repeat feed use, feedback use,
+and actionable failure reports. Rynmesh does not require centralized behavioral
+telemetry to work.
 
-**P1 — "Ryn: your personal agent, on your machine" (the launchable first product)**
+## P2: Friend Mesh
 
-One download. Inside:
+Goal: make a group of two to five trusted nodes more useful than one node while
+preserving local control.
 
-1. **The Daily Digest (the hero feature).** The node's agent reads sources *you* configure —
-   RSS feeds, YouTube channels, subreddits, newsletters, arbitrary URLs — plus anything your
-   mesh peers publish, ranks it with the existing recommender pipeline, and presents a
-   receipt-backed digest each morning: every item carries *why it was picked* (source, score
-   features, your feedback history). This is exactly the vision's step 1 ("agent collects
-   content from various sources and presents it to the user") — and it works with zero other
-   users because the open web is the initial source set.
-2. **Search & Ask** — wired to a real model via a pluggable adapter (see P1 scope).
-3. **VPN egress** — the already-working utility. This is the feature that keeps the node
-   *installed and running 24/7*, which the agent needs anyway. For users in censored regions it
-   is the reason to install at all.
-4. **Peer chat** — already shipped; the social seed.
+Implemented foundations:
 
-Positioning: *"A private AI that reads the internet for you. Runs on your machine. No feed
-algorithm, no ads, no platform."* The anti-feed framing is the emotional hook; the digest is
-the daily-return habit; egress is the utility anchor.
+- signed peer identity and registry-assisted discovery
+- encrypted direct messages and small attachments
+- signed publication and verified peer fetches
+- credit and serve-receipt primitives
 
-Why this wedge and not the alternatives:
-- *Messaging-first*: hopeless against Signal/WhatsApp; keep it as a supporting feature.
-- *Publishing-first*: cold start — nobody to publish to.
-- *VPN-first*: real demand but legally narrow and commoditized; great anchor feature, weak
-  identity for the whole product.
-- *Digest-first* is the only wedge that is (a) single-player-valuable, (b) on the direct path
-  to the vision (the same recommender later ranks mesh content), and (c) mostly built already.
+Planned product work:
 
----
+1. One-click invite links and QR joining with explicit network and endpoint
+   review before acceptance.
+2. Friend-attributed content ranked inside For You, with an inspectable record
+   of the publisher and serving node.
+3. Reliable small-mesh setup, connection diagnosis, revocation, and recovery.
+4. Safe multi-user egress sharing with per-user, short-lived credentials.
+5. A visible contribution history explaining how non-transferable reputation
+   was earned. Credits remain reputation, not money.
 
-## 3. Milestone ladder
+P2 gate: the invite and revocation paths are safe for non-technical users, and
+friend-origin content can be distinguished, verified, muted, and removed.
 
-### P1 — Ryn Companion (launch to first outside users)
-*Goal: 1 download → daily habit for a single user. Private mesh / invite-only TestFlight-style.*
+## P3: Working Agent and Services
 
-**Progress (2026-07-30):** shipped — recommender wiring (item 1), the Daily Digest
-service (RSS/YouTube/Reddit ingestion, feedback loop, exploration slots), the
-ModelProvider adapter (item 2: Ollama local + BYO Anthropic key) powering digest
-briefings, per-item AI summaries, and a real Search & Ask, plus read-it-later,
-page watchers, and the MCP agent gateway (digest/read-later/watcher/messaging
-tools). Remaining below: publish-flow completion (4), F2 fix (5), onboarding (6),
-and a background refresh schedule.
+Goal: let an owner-approved agent perform useful work across nodes within clear
+limits.
 
-Scope (roughly ordered; items 1–3 are the critical path):
-1. **Wire the recommender.** Make `/api/local/recommendations` call `recommender.py` for real.
-   Recommendations screen renders real output. (The single highest-leverage change in the repo.)
-2. **Model adapter seam.** One `ModelProvider` interface, two implementations:
-   local (Ollama) and bring-your-own-key (Anthropic/OpenAI). Powers Search & Ask, digest
-   summarization, and later the agent loop. No bundled model yet (defer FR-7.1).
-3. **Source ingestion + Daily Digest job.** Config for RSS/YouTube/Reddit/URL sources; a
-   scheduled fetch→rank→summarize job; digest presented in Recommendations with receipts;
-   thumbs up/down feeding back into ranker features.
-4. **Finish the publish flow** (real safety outcome + manifest hash in `prepare`, not stubs).
-5. **Fix F2** (discover_peers dedupe by peer_id).
-6. **Onboarding polish**: first-run wizard (name the node, pick sources, optional model key),
-   signed DMG, auto-update already done.
+Planned work:
 
-Explicitly *out*: autonomous spending agent, services primitive, any economy work, Avaryn
-external receipts (keep self-minted, labeled "provenance recorded locally").
+1. A budgeted agent loop with permitted action types, per-period limits,
+   confirmations, and a complete local audit trail.
+2. A general service manifest and invocation protocol based on the existing
+   work-order path, with metering and result verification.
+3. Useful initial services such as local model generation, media transcoding,
+   and network egress.
+4. Agent-to-agent commissioning within the owner’s approval envelope.
+5. Credit debits and credits for verified service work. Credits remain
+   non-transferable during this milestone.
 
-Success gate: ≥20 outside users; ≥40% open the digest 3+ days/week in week 4.
+## P4: Open-network hardening
 
-### P2 — Friend Mesh (the invite loop)
-*Goal: each user pulls in 2–5 trusted peers; mesh content enters the digest.*
+Goal: become safe enough to consider interaction with nodes that are not
+personally trusted.
 
-1. **One-click invite.** An invite bundle (network key + bootstrap registry + inviter endpoint)
-   as a link/QR; accepting joins the private mesh and opens a chat with the inviter.
-2. **Mesh as a digest source.** Friends' published clips/posts ranked alongside web sources;
-   "your friend's node served this" receipts visible.
-3. **Multi-tenant egress** (per `FUTURE_WORK_EGRESS_MULTITENANT.md`: provider-issued ephemeral
-   session credentials). Now "share your exit with friends" is safe — the viral utility:
-   one friend abroad = VPN for the whole group.
-4. **Credits become visible.** The existing ledger surfaces: "your node earned N serving
-   peers this week." Still non-transferable reputation — but now it's *felt*.
-5. Serve-receipt propagation on by default (`RYNMESH_PROPAGATE_SERVE_RECEIPTS`).
+Planned work includes sublinear trust weighting, anti-Sybil defenses,
+collusion and brigading analysis, EigenTrust integration, newcomer discovery
+allocation, authenticated registry writes, peer quarantine, stronger safety
+packs, moderation and appeals, and optional third-party attestations.
 
-Success gate: median user has ≥2 active peers; ≥25% of digest items are mesh-origin in
-established meshes.
+Public network operation remains gated by the safety, legal, and accountable
+stewardship requirements in `RYNMESH_VISION.md`. Publishing the source code and
+desktop application does not mean an unrestricted public peer network is ready.
 
-### P3 — Working Agent + Services Primitive (VISION M2 + M3)
-*Goal: the agent acts, not just curates; nodes sell capabilities to each other.*
+## P5: Economy maturation
 
-1. **Budgeted agent loop**: background scheduler with an approval envelope (credits/day,
-   actions allowed), full audit log in the UI. Conservative-active defaults per VISION M1.
-2. **`RYNMESH_SERVICES.md` + service manifest**: generalize the Signal50 work-order path into
-   a real primitive — manifest, invocation, metering, result verification. First real services:
-   `net.egress` (retrofit), `llm.generate` (Ollama-backed worker replacing the stub),
-   `media.transcode`.
-3. **Credits as metering**: service invocations debit/credit the ledger between nodes
-   (still non-transferable; this is the spend path that makes credits an economy rather than
-   a scoreboard — `work_order_completed` weight stops being 0.0).
-4. Agent-to-agent: your agent can commission a friend's node ("summarize this 2-hour video on
-   your GPU") within its budget.
+Only after sustained demand for real node services should the project evaluate
+service pricing, issuance epochs, decay, or transferable credits. Any
+transferability requires anti-abuse maturity and legal review. The roadmap does
+not promise a token, monetary value, or future redemption.
 
-### P4 — Open Network Hardening (VISION M4)
-*Goal: safe to let strangers in.*
+## Choosing a contribution
 
-- Anti-Sybil: port sim finding F4 into `credits.py` (sublinear credit→weight saturation),
-  newcomer discovery carve-out for real, wire EigenTrust into the credit/ranking path.
-- Registry tiers + authenticated writes; proof-of-availability emitter; peer quarantine.
-- Safety packs beyond the keyword scanner; moderation/appeals workflow.
-- Avaryn: decided 2026-07-30 (see `DECISION_AVARYN_SEPARATION.md`) — rynmesh is fully
-  self-contained MIT with a generic manifest `attestations` seam; Avaryn returns as an
-  *optional* premium attestation/service provider, earning trust weight like any issuer.
-- Public onboarding (no invite needed) only after this milestone — per VISION's own gate
-  (M4 + M6 together).
+[GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues) is the executable
+backlog; this roadmap provides direction but does not reserve work. The current
+accepted work is grouped in the
+[P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
+Contributors should choose an unassigned issue labeled `good first issue` or
+`help wanted`, comment before beginning substantial work, and open a focused
+pull request linked to that issue.
 
-### P5 — Economy Maturation → Credit Transferability (VISION M5 + M6)
-*Goal: credits become worth something — carefully.*
+Recommended order for new contributors:
 
-- Sinks and pricing, issuance epochs/decay, category scoreboards.
-- Only after sustained real service demand: revisit transferable credit ("Ryn credit as
-  money") behind the legal/regulatory review VISION §4 already mandates. Sequencing rule:
-  **utility first, transferability last.** A token before real usage attracts speculators and
-  regulators, not users.
+1. Webapp critical-path test foundation.
+2. Source-health details and recovery UX.
+3. Recommendation learning explanation and undo.
+4. Recommendation-contract consolidation.
+5. Content-viewer format, accessibility, and privacy hardening.
+6. Linux and Windows desktop packaging.
 
----
-
-## 4. What to start on Monday
-
-The immediate work, in order:
-
-1. Wire `/api/local/recommendations` → `recommender.py` (small, unblocks the whole P1 UI).
-2. `ModelProvider` adapter + Ollama backend + BYO-key backend; connect Search & Ask.
-3. Source-ingestion module (start with RSS only) + digest scheduler + digest UI state.
-4. F2 dedupe fix + publish-prepare completion.
-5. First-run onboarding wizard in the webapp.
-
-Each item is independently shippable and testable on the existing 6-node private mesh.
+Cryptography, node identity, authentication, credit issuance, registry trust,
+VPN credential sharing, and transferable-credit design require a maintainer
+design issue before implementation because mistakes can cross security and
+compatibility boundaries.

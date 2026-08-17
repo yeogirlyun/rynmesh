@@ -18,6 +18,32 @@ body:
     validations:
       required: true
   - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable conditions that would make this issue complete.
+      placeholder: |
+        - [ ] First observable outcome
+        - [ ] Relevant automated test or verification
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area
+      options:
+        - Recommendations and discovery
+        - Content viewer
+        - Local AI and Search & Ask
+        - Desktop and packaging
+        - Peer mesh and messaging
+        - Publishing, provenance, and safety
+        - Credits and services
+        - Contributor experience and documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
