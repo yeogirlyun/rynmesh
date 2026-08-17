@@ -148,15 +148,16 @@ Ollama, Anthropic, or any other live service.
 
 The executable backlog is the
 [P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
-Comment on an unassigned issue with:
+Choose an available item in the
+[contribution center](https://www.rynmesh.ai/contribute/) and comment `/claim`
+on its GitHub issue. The bot grants one primary seven-day reservation per
+issue. Design-, privacy-, and large-scope work remains approval-pending until a
+maintainer comments `/approve`; do not begin that implementation earlier.
 
-- that you want to work on it
-- a short description of the intended approach
-- any proposed dependency or contract change
-- the tests you expect to add
-
-Wait for scope confirmation before substantial implementation. One issue
-should normally produce one focused pull request.
+Post the intended approach and expected tests after claiming, then open a draft
+pull request or progress update within the reservation. Use `/extend` when more
+time is needed and `/release` if plans change. One issue should normally
+produce one focused pull request.
 
 ### Recommended first assignment
 

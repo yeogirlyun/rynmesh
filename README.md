@@ -6,6 +6,10 @@
 
 Rynmesh is an open-source, local-first personal AI assistant and verifiable content mesh. A Ryn node can discover and rank public content, learn from local feedback, publish signed content, discover peers, and exchange content with provenance and safety receipts.
 
+Visit [rynmesh.ai](https://www.rynmesh.ai) for the product overview, verified
+downloads, current milestone status, and the live
+[contribution center](https://www.rynmesh.ai/contribute/).
+
 The node, web interface, recommendation agent, peer protocol, registry, and command-line tools are all included under the MIT license. No account, API key, proprietary service, or preference setup is required for the default experience.
 
 ## What works today
@@ -135,8 +139,9 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 
 - Start with the [First Contributor Starter Guide](docs/FIRST_CONTRIBUTOR_GUIDE.md).
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
-- Choose accepted work from [GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues)
-  and comment before starting substantial implementation.
+- Choose accepted work from the
+  [contribution center](https://www.rynmesh.ai/contribute/) and comment
+  `/claim` on the linked GitHub issue before implementation.
 - Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Use GitHub Issues for reproducible bugs and focused feature requests.
 - Use GitHub Discussions for questions and broader design ideas.

@@ -1,0 +1,42 @@
+name: Contribution reservations
+
+on:
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  command:
+    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    concurrency:
+      group: contribution-claim-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const bot = require('./.github/scripts/contribution-claims.cjs');
+            await bot.handleComment({ github, context, core });
+
+  expiry:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: contribution-reservation-expiry
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const bot = require('./.github/scripts/contribution-claims.cjs');
+            await bot.expireReservations({ github, context, core });

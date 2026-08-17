@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contribution center — RynMesh</title>
+  <meta name="description" content="Browse accepted RynMesh engineering work, reserve one item exclusively, and follow the contributor verification path.">
+  <link rel="canonical" href="https://www.rynmesh.ai/contribute/">
+  <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/site.css?v=20260817b"><script src="/assets/site.js?v=20260817b" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header"><div class="nav-wrap"><a class="brand" href="/"><img src="/assets/brand/mark-3d-green.svg" alt=""><span class="brand-name">Ryn<span>Mesh</span></span></a><nav class="main-nav" data-main-nav><a href="/features/">Features</a><a href="/status/">Project status</a><a href="/contribute/" aria-current="page">Contribute</a><a href="https://github.com/yeogirlyun/rynmesh/tree/main/docs">Documentation</a></nav><button class="menu-button" type="button" data-menu-button aria-expanded="false" aria-label="Open navigation">☰</button><div class="nav-actions"><a class="button button-secondary" href="/contribute/start/">Contributor setup</a><a class="button button-primary" href="https://github.com/yeogirlyun/rynmesh/discussions">Ask the community</a></div></div></header>
+  <main id="main">
+    <header class="page-hero"><div class="shell"><p class="eyebrow">Open engineering coordination</p><h1>Help build RynMesh.</h1><p class="lede">Choose maintainer-accepted work from the live GitHub backlog. Reserve one item with <code>/claim</code>, publish progress through a draft pull request, and let CI verify the result.</p><div class="hero-actions"><a class="button button-primary" href="/contribute/start/">Set up a checkout</a><a class="button button-secondary" href="https://github.com/yeogirlyun/rynmesh/issues/new/choose">Propose an improvement</a><a class="button button-quiet" href="https://github.com/yeogirlyun/rynmesh/discussions">Ask a question</a></div></div></header>
+    <section class="section-tight"><div class="shell">
+      <div class="callout"><h3>GitHub remains the source of truth</h3><p>This page reads public issues and reservation markers. Claims, discussion, branches, pull requests, review, and CI stay auditable in the repository instead of being copied into a second tracker.</p></div>
+    </div></section>
+    <section class="section-tight"><div class="shell">
+      <div class="section-head"><div><p class="eyebrow">Accepted backlog</p><h2>Choose work that fits.</h2><p data-work-count>Loading accepted work</p></div><a class="button button-secondary" href="https://github.com/yeogirlyun/rynmesh/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22">Open GitHub view ↗</a></div>
+      <div class="filters"><label class="search-field"><span class="eyebrow">Search work</span><input class="field" data-work-search type="search" placeholder="Issue, feature, skill, or keyword"></label><label><span class="eyebrow">Status</span><select class="select" data-status-filter><option value="all">All statuses</option><option value="available">Available</option><option value="claim-requested">Approval requested</option><option value="reserved">Reserved</option><option value="in-progress">In progress</option><option value="in-review">In review</option><option value="blocked">Blocked</option></select></label></div>
+      <div class="work-layout">
+        <aside class="filter-panel" aria-label="Filter contribution work"><h2>Areas</h2>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="good first issue">Good first issue</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="python">Python</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="webapp">Web application</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="desktop">Desktop</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="recommendations">Recommendations</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="privacy">Privacy</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="size:small">Small</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="size:medium">Medium</label>
+          <label class="filter-option"><input type="checkbox" data-label-filter value="size:large">Large</label>
+        </aside>
+        <div class="work-grid" data-work-list aria-live="polite"></div>
+      </div>
+    </div></section>
+    <section class="section section-line"><div class="shell"><div class="section-head"><div><p class="eyebrow">Reservation protocol</p><h2>One primary contributor. Public collaboration.</h2></div></div><div class="card-grid">
+      <article class="card"><div class="card-icon">01</div><h3>Comment <code>/claim</code></h3><p>The bot processes commands serially per issue. The first valid claim becomes the primary reservation.</p></article>
+      <article class="card"><div class="card-icon">02</div><h3>Show progress in seven days</h3><p>Post an update or open a linked draft pull request. Inactive reservations return to the available pool.</p></article>
+      <article class="card"><div class="card-icon">03</div><h3>Release when plans change</h3><p>The current contributor can comment <code>/release</code>. Other engineers can still offer focused help without taking ownership.</p></article>
+    </div></div></section>
+  </main>
+  <footer class="site-footer"><div class="footer-wrap"><p>Contributor actions are recorded publicly on GitHub.</p><nav class="footer-links"><a href="/contribute/start/">Setup</a><a href="https://github.com/yeogirlyun/rynmesh/blob/main/CONTRIBUTING.md">Contributing</a><a href="https://github.com/yeogirlyun/rynmesh/blob/main/CODE_OF_CONDUCT.md">Code of conduct</a></nav></div></footer>
+</body></html>

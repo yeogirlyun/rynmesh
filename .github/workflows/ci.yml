@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  contribution-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Test exclusive reservation state machine
+        run: node --test .github/scripts/contribution-claims.test.cjs
+
   backend:
     runs-on: ubuntu-latest
     steps:

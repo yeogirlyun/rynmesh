@@ -106,13 +106,21 @@ before implementation begins.
 
 ### Claiming work
 
-1. Choose an unassigned issue labeled `good first issue` or `help wanted`.
-2. Comment that you want to work on it and describe your intended approach.
-3. Wait for a maintainer to confirm the scope before investing in substantial
-   work. This prevents two contributors from unknowingly implementing the same
-   change or building against a rejected design.
-4. A contributor who cannot continue should comment and unassign themselves so
-   the issue returns to Ready.
+1. Choose an available issue labeled `good first issue` or `help wanted` from
+   the [contribution center](https://www.rynmesh.ai/contribute/).
+2. Comment `/claim` on the issue. The contribution workflow serializes claim
+   commands per issue so only one primary contributor receives the reservation.
+3. Ordinary accepted work is reserved immediately for seven days. Issues
+   labeled `needs design`, `privacy`, or `size:large` are locked against a
+   duplicate claim but remain approval-pending until a maintainer comments
+   `/approve`.
+4. Post progress or open a linked draft pull request during the reservation.
+   Comment `/extend` when more time is needed or `/release` when plans change.
+   Inactive reservations expire and return to Available automatically.
+
+Other engineers may still ask questions or offer focused collaboration on a
+reserved item. The reservation identifies the primary implementation owner; it
+does not close public discussion.
 
 `good first issue` means the boundaries and expected tests are already known;
 it does not mean tests or review are optional. Issues involving cryptography,

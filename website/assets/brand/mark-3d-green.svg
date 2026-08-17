@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="538" viewBox="-2 -2 104 109" aria-label="Ryn mark · green">
+  <defs>
+    <linearGradient id="body-green" x1="0.18" y1="0.05" x2="0.85" y2="0.95">
+      <stop offset="0%" stop-color="#5CECB1" stop-opacity="0.92"></stop>
+      <stop offset="22%" stop-color="#00D084"></stop>
+      <stop offset="65%" stop-color="#00D084"></stop>
+      <stop offset="100%" stop-color="#007048"></stop>
+    </linearGradient>
+    <radialGradient id="gloss-green" cx="0.42" cy="0.22" r="0.55" fx="0.36" fy="0.18">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.55"></stop>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.08"></stop>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+    </radialGradient>
+    <linearGradient id="bevel-green" x1="0" y1="0.7" x2="0" y2="1">
+      <stop offset="0%" stop-color="#003E27" stop-opacity="0"></stop>
+      <stop offset="100%" stop-color="#003E27" stop-opacity="0.42"></stop>
+    </linearGradient>
+    <linearGradient id="notch-green" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#003E27" stop-opacity="0.5"></stop>
+      <stop offset="100%" stop-color="#003E27" stop-opacity="0"></stop>
+    </linearGradient>
+    <clipPath id="clip-green"><path d="M50 8 L86 28 L86 42 L62 50 L86 58 L86 72 L50 92 L14 72 L14 28 Z"></path></clipPath>
+  </defs>
+  <path d="M50 8 L86 28 L86 42 L62 50 L86 58 L86 72 L50 92 L14 72 L14 28 Z" fill="url(#body-green)"></path>
+  <g clip-path="url(#clip-green)">
+    <ellipse cx="38" cy="22" rx="52" ry="22" fill="url(#gloss-green)"></ellipse>
+    <rect x="-4" y="58" width="108" height="40" fill="url(#bevel-green)"></rect>
+    <path d="M86 42 L62 50 L86 58 L86 60 L60 50 L86 40 Z" fill="url(#notch-green)"></path>
+    <rect x="30" y="0" width="14" height="100" fill="#FFFFFF" opacity="0.04"></rect>
+  </g>
+  <path d="M14 28 L50 8 L86 28" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path>
+  <path d="M86 42 L62 50" fill="none" stroke="#FFFFFF" stroke-opacity="0.32" stroke-width="1.2" stroke-linecap="round"></path>
+  <path d="M14 72 L50 92 L86 72" fill="none" stroke="#003E27" stroke-opacity="0.55" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
