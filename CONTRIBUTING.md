@@ -4,6 +4,20 @@ Rynmesh is MIT-licensed with no proprietary dependencies. This document is the
 working agreement: how code gets from an idea to something running on a user's
 machine.
 
+## Canonical repository
+
+[`yeogirlyun/rynmesh`](https://github.com/yeogirlyun/rynmesh) is the source of
+truth for open-source product code, accepted issues, pull-request review, and
+releases. A maintainer-only repository may hold private operational material,
+credentials, or non-product notes, but it must not be required to build, test,
+or release Rynmesh and it must not replace public `main` as the product history.
+
+Changes to open-source code must be incorporated through the public repository.
+An external pull request merged into public `main` must be preserved by any
+internal synchronization process; a later mirror must never overwrite accepted
+public work. Private infrastructure details should connect through documented
+configuration seams rather than being copied into this repository.
+
 ## Two hats, two entry points
 
 The single most common mix-up: **rynmesh.ai is for using Ryn, GitHub is for
