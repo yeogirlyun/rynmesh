@@ -133,6 +133,7 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 
 ## Community
 
+- Start with the [First Contributor Starter Guide](docs/FIRST_CONTRIBUTOR_GUIDE.md).
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
 - Choose accepted work from [GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues)
   and comment before starting substantial implementation.

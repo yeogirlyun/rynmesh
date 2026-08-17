@@ -4,6 +4,11 @@ Rynmesh is MIT-licensed with no proprietary dependencies. This document is the
 working agreement: how code gets from an idea to something running on a user's
 machine.
 
+New contributors should begin with the
+[`First Contributor Starter Guide`](docs/FIRST_CONTRIBUTOR_GUIDE.md) for the
+project overview, isolated development setup, first assignments, and
+pre-submission checklist.
+
 ## Canonical repository
 
 [`yeogirlyun/rynmesh`](https://github.com/yeogirlyun/rynmesh) is the source of
