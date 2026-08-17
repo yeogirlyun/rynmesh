@@ -107,6 +107,16 @@ def test_current_source_version_is_presented_accurately() -> None:
     assert f"v{__version__}" in home
 
 
+def test_warm_ivory_palette_is_the_site_default() -> None:
+    stylesheet = (WEBSITE / "assets/site.css").read_text(encoding="utf-8").lower()
+    assert "color-scheme: light" in stylesheet
+    assert "--bg: #f8f7f1" in stylesheet
+    assert "--surface: #ffffff" in stylesheet
+    assert "--ink: #1d2922" in stylesheet
+    assert "--muted: #68736b" in stylesheet
+    assert "--green: #19734b" in stylesheet
+
+
 def test_public_pages_are_indexable() -> None:
     for page in html_pages():
         if page == WEBSITE / "contribute/task/index.html":
