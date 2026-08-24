@@ -1,6 +1,6 @@
 # Local LLM P0 acceptance evidence
 
-Validated on 2026-08-24 in branch `codex/local-llm-dual-node`. “Pass” below
+Validated on 2026-08-24 in branch `feature/local-llm-dual-node`. “Pass” below
 means an implementation plus automated or recorded runtime evidence exists.
 The deterministic adapter is used only for repeatable protocol automation;
 non-mock evidence is recorded separately in `REAL_LLM_VALIDATION.md`.
@@ -83,7 +83,7 @@ check fails.
 
 ## Current review checkpoint
 
-- Branch: `codex/local-llm-dual-node`.
+- Branch: `feature/local-llm-dual-node`.
 - Strict public transport is fail-closed: public ICE candidates only; no host
   candidate and no task-relay fallback.
 - The physical remote Consumer discovered the Provider and created orders, but
