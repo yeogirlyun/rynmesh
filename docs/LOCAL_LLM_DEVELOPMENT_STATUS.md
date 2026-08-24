@@ -9,11 +9,12 @@ on the local-LLM service package and dual-node order flow.
 
 - Active branch: `feature/local-llm-dual-node`.
 - Base commit: `f631682` from `test/issue-15-for-you`.
-- Main implementation checkpoint: `2ea25db`.
+- Main implementation checkpoint: `74ca0ca` (with build/protocol hardening in
+  `a6e1567`).
 - Status: work in progress. Do **not** claim final P0 completion.
-- The isolated Compose and local real-model paths pass. The additional strict
-  public-internet NAT-hole-punch test between the physical Windows Consumer and
-  Provider is still pending.
+- Isolated Compose direct/relay, local real-model, async-order and cancellation
+  paths pass. The additional strict public-internet NAT-hole-punch test between
+  the physical Windows Consumer and Provider is still pending its remote run.
 - No private network key, model path, API key, prompt, or model response belongs
   in Git, Registry records, control-plane logs, or ordinary node logs.
 
@@ -72,18 +73,26 @@ inference; this is not confidential computing.
   settle or release is idempotent and billing records contain no bodies.
 - Startup reconciliation releases stranded Consumer holds after an interrupted
   process.
+- Settlement checkpoints are crash-safe and idempotent; the Provider retries
+  body-free settlement acknowledgement through the Registry when necessary.
 
 ### P2P and Webapp
 
 - ICE/UDP node-to-node exchange with encrypted task envelopes.
 - `RYNMESH_P2P_REQUIRE_PUBLIC=1` filters out host/private candidates.
 - Packaged public Consumer forces strict P2P and removes task-relay fallback.
-- Webapp Services page supports publication, discovery, service selection,
-  prompt/max-token input, ordering, result and Task Balance display.
-- Latest source immediately shows `Connecting P2P...`, records Consumer
-  `created -> accepted -> running -> terminal`, exposes a sanitized transport
-  failure reason and refreshes released balance. The rebuilt executable exists
-  locally but has not yet been deployed to the remote Windows machine.
+- Webapp Services page supports all four Provider setup profiles, explicit
+  self-test, manual publish/pause, discovery, service selection, prompt and
+  max-token input, asynchronous ordering, progress, cancellation, result and
+  Task Balance display.
+- Consumer history persists body-free metadata only. Prompts are never stored;
+  returned results use encrypted retention choices of 0, 1 hour, 24 hours or 7
+  days and terminal history can be cleared.
+- Latest source immediately returns a task ID, shows queued/connecting/running
+  progress, records `created -> accepted -> running -> terminal`, exposes a
+  sanitized failure reason and refreshes released balance. The rebuilt
+  executable and adjacent strict configuration are packaged locally but have
+  not yet run on the remote Windows machine.
 
 ## Key files
 
@@ -104,37 +113,41 @@ inference; this is not confidential computing.
 
 - Focused Python suite:
   `python -m pytest tests/test_llm_package.py tests/test_services.py tests/test_transport.py -q`
-  -> 31 passed.
-- Webapp: `npm test` -> 17 passed.
+  -> 39 passed.
+- Webapp: `npm test` -> 21 passed.
 - Webapp: `npm run lint` and `npm run build` -> passed.
 - `git diff --check` -> no content errors; Windows reports expected LF/CRLF
   conversion warnings.
-- Full Windows Python suite -> 477 passed, 13 failed, 3 skipped. The remaining
+- Full Windows Python suite -> 485 passed, 13 failed, 3 skipped. The remaining
   failures are Windows locale/POSIX-mode/WSL/subprocess-select categories in
   areas not changed for this feature; see `LOCAL_LLM_P0_EVIDENCE.md`.
 - Real llama.cpp/OpenAI-compatible health remains available on Provider
   loopback and previous real inference evidence is recorded in
   `REAL_LLM_VALIDATION.md`.
 
-## Strict public P2P result and blocker
+## Strict public P2P result and remaining gate
 
 The remote Consumer discovered the local Provider and created a strict order.
 Both sides published only server-reflexive STUN candidates and explicitly
-forbade relay. The current two machines reported the same public egress with
-different UDP mappings; no nominated UDP pair formed before timeout. The order
+forbade relay. In that attempt the two machines reported the same public egress
+with different UDP mappings; no nominated UDP pair formed before timeout. The order
 failed closed, Provider inference did not run, the Consumer hold was released,
 and the relay persisted-file count remained unchanged.
 
-This is not a successful public P2P acceptance. Use a genuinely different
-public egress for one machine (for example a phone hotspot), then rerun. Do not
-enable payload relay to make this acceptance appear successful.
+That historical attempt is not a successful public P2P acceptance. The current
+machines now report different public egress addresses, the real-model Provider
+is published in fail-closed strict mode, and the rebuilt Consumer package is
+ready. The remaining blocker is operational: the existing RDP window belongs
+to a disconnected local Windows session, so it cannot currently be captured or
+controlled for deployment. Do not enable payload relay to make this acceptance
+appear successful.
 
 ## Next actions
 
-1. With owner confirmation, stop the old remote Consumer, copy the rebuilt
-   `dist/RynmeshPublicConsumer.exe`, start it and verify the new progress/error
-   UI plus `available=100.0`, `held=0.0`.
-2. Move one machine to a different public egress and reconnect remote access.
+1. Reconnect the local Windows session that owns the RDP window and keep the
+   remote desktop unlocked.
+2. Copy the prepared Consumer package, confirm execution at action time, start
+   it and verify the new progress/error UI plus `available=100.0`, `held=0.0`.
 3. Submit a real prompt from the remote Consumer.
 4. Record the nominated public ICE pair, `relay_used=false`, Provider real-model
    invocation, returned output, terminal order history, single settlement and

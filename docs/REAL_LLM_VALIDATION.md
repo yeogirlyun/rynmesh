@@ -100,13 +100,22 @@ payload transport and must not be presented as such.
 
 ### 2026-08-25 review checkpoint
 
-- Focused Python tests: 31 passed.
-- Webapp tests: 17 passed; TypeScript/Vite build and typecheck passed.
-- Windows full Python suite: 477 passed, 13 platform-specific failures, 3
+- Focused Python tests: 39 passed.
+- Webapp tests: 21 passed; TypeScript/Vite build and typecheck passed.
+- Windows full Python suite: 485 passed, 13 platform-specific failures, 3
   skipped.
-- The Consumer now has explicit connecting/failure UI and detailed sanitized
-  transport errors in source and in the rebuilt executable. Remote deployment
-  of that executable is still pending owner approval.
+- Deterministic direct and forced-relay Docker runs passed from clean source;
+  the relay persisted ciphertext and contained no fixed plaintext. A host real
+  model run returned a valid completion, settled once and left held balance at
+  zero.
+- Asynchronous real submission returned a task ID in 16 ms and later succeeded.
+  A separate live cancellation reached both nodes in 16 ms, ended both states
+  as cancelled and released the hold.
+- The physical machines now have different public egress addresses. The strict
+  real-model Provider is published and the rebuilt fail-closed Windows Consumer
+  is packaged, but the existing RDP client belongs to a disconnected local
+  Windows session. Remote execution and successful nominated public-pair
+  evidence remain pending.
 
 Reproduce with the commands in `docs/LOCAL_LLM_RUNBOOK.md`. The deterministic
 test profile is never presented as real inference evidence.

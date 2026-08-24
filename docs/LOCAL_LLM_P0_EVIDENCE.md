@@ -6,15 +6,15 @@ The deterministic adapter is used only for repeatable protocol automation;
 non-mock evidence is recorded separately in `REAL_LLM_VALIDATION.md`.
 
 > **Checkpoint status — 2026-08-25:** this branch is reviewable work in
-> progress, not a final P0 sign-off.  The original isolated-Compose and local
-> real-model scenarios below pass, but the subsequently requested strict
-> public-internet NAT-hole-punch acceptance between the physical Windows
-> Consumer and Provider has not succeeded.  Strict mode rejected host
-> candidates, disabled relay fallback, and failed closed after the two STUN
-> mappings proved unable to form a nominated UDP pair.  A different public
-> egress (for example a phone hotspot on one machine) is required for the next
-> acceptance run.  The older encrypted-relay run is retained as security
-> evidence only and is **not** counted as P2P-direct success.
+> progress, not a final P0 sign-off. The isolated-Compose, forced encrypted
+> relay, local real-model, asynchronous submission and live cancellation
+> scenarios below pass. The two physical machines now have different public
+> egress addresses and the strict host Provider is ready, but the rebuilt
+> Windows Consumer has not yet run on the remote machine. Its RDP client is in
+> a disconnected local Windows session, so the final public NAT-hole-punch run
+> and its nominated-candidate evidence remain outstanding. The older
+> encrypted-relay run is retained as security evidence only and is **not**
+> counted as P2P-direct success.
 
 | # | Result | Evidence |
 |---:|:---:|---|
@@ -52,10 +52,12 @@ non-mock evidence is recorded separately in `REAL_LLM_VALIDATION.md`.
 | 32 | Pass | Automated direct and forced-relay E2E both completed publish, discover, order, encrypted inference, result and settlement. |
 | 33 | Pass | `REAL_LLM_VALIDATION.md` records reproducible, desensitized non-mock connection, managed, import and real two-node inference hashes/usage. |
 | 34 | Pass | `down` stops; `clean` removes only the named E2E containers/networks/volumes and never deletes a host model. Managed/import cleanup behavior was separately verified. |
-| 35 | Pass | Current focused LLM/services/transport suite: `31 passed`; Webapp: `17 passed`. Current Windows full suite: `477 passed / 13 failed / 3 skipped`; remaining failures are platform-only categories outside this task. |
-| 36 | Pass | `ruff` passes; TypeScript/Vite production build passes; Vitest 17/17 passes. Linux full pytest from the Windows checkout: 484 pass, 2 pre-existing CRLF shell-syntax failures, 3 skip. |
+| 35 | Pass | Current focused LLM/services/transport suite: `39 passed`; Webapp: `21 passed`. Current Windows full suite: `485 passed / 13 failed / 3 skipped`; remaining failures are platform-only categories outside this task. |
+| 36 | Pass | `ruff` passes; TypeScript/Vite production build passes; Vitest 21/21 passes. Linux full pytest from the earlier Windows checkout checkpoint: 484 pass, 2 pre-existing CRLF shell-syntax failures, 3 skip. |
 | 37 | Pass | README plus design, runbook, real-validation and this evidence file cover all three modes, topology/demo, privacy/payment boundaries and troubleshooting. |
 | 38 | Pass | Work began from clean committed `f631682` in a separate worktree/branch. Diff is limited to the package, node route integration, E2E, docs, entry point, ignore and focused tests; no original-worktree files were read/overwritten. |
+| 39 | Pass | Provider setup is available through API/Webapp for managed llama.cpp, read-only GGUF import, OpenAI-compatible and Ollama profiles. Setup self-tests but remains unpublished until an explicit publish action; pause and persisted settings are covered by tests. |
+| 40 | Pass | Consumer submission returns a task ID without blocking, polls signed state/progress, supports live cancellation, keeps body-free task history, encrypts retained results for 0/1h/24h/7d, never persists prompts, clears terminal history, and reconciles interrupted balance settlement idempotently. |
 
 ## Verification commands
 
@@ -86,13 +88,17 @@ check fails.
 - Branch: `feature/local-llm-dual-node`.
 - Strict public transport is fail-closed: public ICE candidates only; no host
   candidate and no task-relay fallback.
-- The physical remote Consumer discovered the Provider and created orders, but
-  strict UDP nomination timed out. Relay persisted-file count remained
-  unchanged, so no prompt/output payload was silently rerouted through it.
-- A UX fix now immediately shows `Connecting P2P...`, preserves
-  `created -> accepted -> running -> terminal` Consumer history, exposes a
-  sanitized failure reason, and refreshes released Task Balance. It is built
-  and tested but still needs deployment to the remote Windows node.
+- The previous physical remote Consumer discovered the Provider and created
+  orders, but strict UDP nomination timed out while both machines shared one
+  public egress. Relay persisted-file count remained unchanged, so no payload
+  was silently rerouted through it.
+- The machines now have different public egress addresses. A strict host
+  Provider backed by the real local model is published, and a packaged
+  fail-closed Windows Consumer is ready. The remaining gate is to run that
+  package remotely and record the successful nominated public ICE pair.
+- The current UX immediately returns a task ID, shows queued/connecting/running
+  progress, supports cancellation, preserves terminal history, exposes only
+  sanitized errors, and refreshes released Task Balance.
 - This checkpoint must not be described as completed public P2P acceptance.
 
 ## P1 intentionally deferred
