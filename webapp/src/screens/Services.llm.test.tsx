@@ -63,4 +63,46 @@ describe("Services local LLM flow", () => {
     expect(screen.getByText(/Service discovery failed: LLM discovery unavailable/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
   });
+
+  it("configures a local API without publishing it automatically", async () => {
+    const { client, user } = renderServices();
+    const setup = vi.spyOn(client, "setupLLMService");
+    const publish = vi.spyOn(client, "publishLLMService");
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Package ID"));
+    await user.type(screen.getByLabelText("Package ID"), "my-local-api");
+    await user.clear(screen.getByLabelText("Local API URL"));
+    await user.type(screen.getByLabelText("Local API URL"), "http://127.0.0.1:9999");
+    await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
+
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "openai-compatible",
+      package_id: "my-local-api",
+      base_url: "http://127.0.0.1:9999",
+      accept_risk: false,
+    })));
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("polls an asynchronous order and sends cancellation", async () => {
+    const { client, user } = renderServices();
+    let cancelled = false;
+    client.submitLLMOrder = vi.fn(async () => ({ task_id: "task_async", state: "queued" }));
+    client.getLLMOrder = vi.fn(async () => ({
+      task_id: "task_async", state: cancelled ? "cancelled" : "running",
+    }));
+    client.cancelLLMOrder = vi.fn(async () => {
+      cancelled = true;
+      return { task_id: "task_async", state: "cancelled" };
+    });
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Place encrypted order" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel task" }));
+
+    expect(client.cancelLLMOrder).toHaveBeenCalledWith("task_async");
+    expect(await screen.findByText(/cancellation requested/)).toBeInTheDocument();
+    await waitFor(() => expect(client.getLLMOrder).toHaveBeenCalledWith("task_async"), { timeout: 2000 });
+  });
 });

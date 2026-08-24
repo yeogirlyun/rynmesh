@@ -35,6 +35,12 @@ class LifecycleError(RuntimeError):
     pass
 
 
+def _validate_package_id(package_id: str) -> str:
+    if not package_id or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-_." for ch in package_id):
+        raise LifecycleError("package_id must be a non-empty lowercase slug")
+    return package_id
+
+
 def default_root() -> Path:
     return Path(os.environ.get("RYNMESH_LLM_HOME", Path.home() / ".rynmesh" / "llm")).expanduser()
 
@@ -221,6 +227,7 @@ def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
                     port: int = 18080, model_url: str = DEFAULT_MODEL_URL,
                     expected_sha256: str = "", accept_risk: bool = False) -> dict[str, Any]:
+    package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
     report = detect_hardware(base)
     choices = recommend(report)
@@ -260,6 +267,7 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
 def import_gguf(*, source: str | Path, package_id: str, alias: str,
                 root: str | Path | None = None, port: int = 18080,
                 accept_risk: bool = False) -> dict[str, Any]:
+    package_id = _validate_package_id(package_id)
     details = validate_gguf(source, allow_risk=accept_risk)
     _docker()
     subprocess.run([_docker(), "pull", DEFAULT_IMAGE], check=True, timeout=600)
@@ -282,6 +290,7 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
 def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str = "",
                       api_key_env: str = "", adapter: str = "openai_compatible",
                       root: str | Path | None = None, allow_non_loopback: bool = False) -> dict[str, Any]:
+    package_id = _validate_package_id(package_id)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
         public_model_alias=alias, adapter=adapter, runtime="external", base_url=base_url,

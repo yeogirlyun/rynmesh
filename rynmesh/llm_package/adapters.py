@@ -67,6 +67,7 @@ class OpenAICompatibleAdapter:
         self.api_key_env = api_key_env
         self.timeout_s = timeout_s
         self._cancelled: set[str] = set()
+        self._active_responses: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._metrics = AdapterMetrics()
 
@@ -79,7 +80,8 @@ class OpenAICompatibleAdapter:
             headers["Authorization"] = "Bearer " + secret
         return headers
 
-    def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float) -> dict[str, Any]:
+    def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float,
+              *, task_id: str = "") -> dict[str, Any]:
         request = urllib.request.Request(
             self.base_url + path,
             data=json.dumps(payload).encode("utf-8") if payload is not None else None,
@@ -87,7 +89,15 @@ class OpenAICompatibleAdapter:
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout_s) as response:
-                raw = response.read(4 * 1024 * 1024 + 1)
+                if task_id:
+                    with self._lock:
+                        self._active_responses[task_id] = response
+                try:
+                    raw = response.read(4 * 1024 * 1024 + 1)
+                finally:
+                    if task_id:
+                        with self._lock:
+                            self._active_responses.pop(task_id, None)
         except (OSError, urllib.error.HTTPError) as exc:
             raise AdapterError(f"local API request failed ({path}): {exc}") from exc
         if len(raw) > 4 * 1024 * 1024:
@@ -151,7 +161,9 @@ class OpenAICompatibleAdapter:
             result = self._json("/v1/chat/completions", {
                 "model": self.model, "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": int(max_tokens), "stream": False,
-            }, min(float(timeout_s), self.timeout_s))
+            }, min(float(timeout_s), self.timeout_s), task_id=task_id)
+            if task_id in self._cancelled:
+                raise AdapterError("task_cancelled")
             choices = result.get("choices") or []
             text = ""
             if choices and isinstance(choices[0], dict):
@@ -183,7 +195,14 @@ class OpenAICompatibleAdapter:
             self._cancelled.discard(task_id)
 
     def cancel(self, task_id: str) -> bool:
-        self._cancelled.add(task_id)
+        with self._lock:
+            self._cancelled.add(task_id)
+            response = self._active_responses.get(task_id)
+        if response is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
         return True
 
     def metrics(self) -> dict[str, Any]:

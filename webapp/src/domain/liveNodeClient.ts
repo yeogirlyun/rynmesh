@@ -67,9 +67,27 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
         method: "POST",
         body: JSON.stringify(req ?? {}),
       }),
+    pauseLLMService: () => requestJson(`${baseUrl}/llm/services/pause`, { method: "POST" }),
+    setupLLMService: (req) =>
+      requestJson(`${baseUrl}/llm/setup`, { method: "POST", body: JSON.stringify(req) }),
     getTaskBalance: () => requestJson(`${baseUrl}/task-balance`),
     submitLLMOrder: (req) =>
-      requestJson(`${baseUrl}/llm/orders`, { method: "POST", body: JSON.stringify(req) }),
+      requestJson(`${baseUrl}/llm/orders/async`, { method: "POST", body: JSON.stringify(req) }),
+    getLLMOrder: (taskId) =>
+      requestJson(`${baseUrl}/llm/orders/${encodeURIComponent(taskId)}`),
+    cancelLLMOrder: (taskId) =>
+      requestJson(`${baseUrl}/llm/orders/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }),
+    listLLMOrders: async () => {
+      const payload = await requestJson<{ orders: import("./nodeClient").LLMOrderResult[] }>(`${baseUrl}/llm/orders`);
+      return payload.orders;
+    },
+    getLLMPrivacy: () => requestJson(`${baseUrl}/llm/privacy`),
+    updateLLMPrivacy: (resultRetentionSeconds) =>
+      requestJson(`${baseUrl}/llm/privacy`, {
+        method: "PUT",
+        body: JSON.stringify({ result_retention_seconds: resultRetentionSeconds }),
+      }),
+    clearLLMOrders: () => requestJson(`${baseUrl}/llm/orders`, { method: "DELETE" }),
     discoverPeers: (req) =>
       requestJson(`${baseUrl}/peers/discover`, { method: "POST", body: JSON.stringify(req ?? {}) }),
     listPeers: (filters?: PeerFilters) => requestJson(`${baseUrl}/peers${qs(filters)}`),

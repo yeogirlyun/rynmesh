@@ -1073,6 +1073,14 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { ok: true };
     },
+    async pauseLLMService() {
+      await delay();
+      return { configured: true, online: false, publication_enabled: false };
+    },
+    async setupLLMService() {
+      await delay();
+      return { configured: true, publication_enabled: false };
+    },
     async getTaskBalance() {
       await delay();
       return { currency: "DEV_TASK_BALANCE", available: 100, held: 0, earned: 0 };
@@ -1091,6 +1099,36 @@ export function makeFixtureNodeClient(): NodeClient {
         transport: req.transport === "relay" ? "encrypted_relay"
           : req.transport === "p2p" ? "ice_udp_direct" : "peer_http_direct",
       };
+    },
+    async getLLMOrder(taskId) {
+      await delay();
+      return { task_id: taskId, state: "succeeded", output: "Fixture completed response" };
+    },
+    async cancelLLMOrder(taskId) {
+      await delay();
+      return { task_id: taskId, state: "cancelled" };
+    },
+    async listLLMOrders() {
+      await delay();
+      return [];
+    },
+    async getLLMPrivacy() {
+      await delay();
+      return {
+        result_retention_seconds: 3600 as const, plaintext_persisted: false,
+        stored_results_encrypted: true, compute_node_sees_plaintext: true,
+      };
+    },
+    async updateLLMPrivacy(resultRetentionSeconds) {
+      await delay();
+      return {
+        result_retention_seconds: resultRetentionSeconds, plaintext_persisted: false,
+        stored_results_encrypted: true, compute_node_sees_plaintext: true,
+      };
+    },
+    async clearLLMOrders() {
+      await delay();
+      return { ok: true, removed: 0 };
     },
     async discoverPeers() {
       await delay();

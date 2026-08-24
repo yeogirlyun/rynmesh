@@ -59,12 +59,21 @@ export interface LLMOrderResult {
   duration_ms?: number;
   amount?: number;
   error_code?: string;
+  created_at?: string;
+  updated_at?: string;
   transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
     peer_public_mapping_nominated?: boolean;
   };
+}
+
+export interface LLMPrivacySettings {
+  result_retention_seconds: 0 | 3600 | 86400 | 604800;
+  plaintext_persisted: boolean;
+  stored_results_encrypted: boolean;
+  compute_node_sees_plaintext: boolean;
 }
 
 export interface TaskBalanceSummary {
@@ -80,6 +89,22 @@ export interface LLMProviderStatus {
   service?: LLMServiceRecord["service"];
   capacity?: { available?: number; max_concurrent?: number; running?: number; queue_limit?: number };
   health?: Record<string, unknown>;
+  publication_enabled?: boolean;
+  accepting_orders?: boolean;
+  network_id?: string;
+}
+
+export interface LLMSetupRequest {
+  mode: "managed" | "import-gguf" | "openai-compatible" | "ollama";
+  package_id: string;
+  alias: string;
+  port?: number;
+  model_path?: string;
+  base_url?: string;
+  model?: string;
+  api_key_env?: string;
+  allow_non_loopback?: boolean;
+  accept_risk?: boolean;
 }
 
 export interface NodeClient {
@@ -99,6 +124,8 @@ export interface NodeClient {
   listLLMServices(networkId?: string): Promise<LLMServiceRecord[]>;
   getLLMServiceStatus(): Promise<LLMProviderStatus>;
   publishLLMService(req?: { network_id?: string; benchmark?: boolean }): Promise<Record<string, unknown>>;
+  pauseLLMService(): Promise<LLMProviderStatus>;
+  setupLLMService(req: LLMSetupRequest): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
     network_id?: string;
@@ -108,6 +135,12 @@ export interface NodeClient {
     max_tokens: number;
     transport?: "auto" | "direct" | "p2p" | "relay";
   }): Promise<LLMOrderResult>;
+  getLLMOrder(taskId: string): Promise<LLMOrderResult>;
+  cancelLLMOrder(taskId: string): Promise<LLMOrderResult>;
+  listLLMOrders(): Promise<LLMOrderResult[]>;
+  getLLMPrivacy(): Promise<LLMPrivacySettings>;
+  updateLLMPrivacy(retentionSeconds: LLMPrivacySettings["result_retention_seconds"]): Promise<LLMPrivacySettings>;
+  clearLLMOrders(): Promise<{ ok: boolean; removed: number }>;
   discoverPeers(req?: { network?: string }): Promise<Peer[]>;
   listPeers(filters?: PeerFilters): Promise<Peer[]>;
   listContent(filters?: ContentFilters): Promise<ContentItem[]>;

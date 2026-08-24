@@ -162,6 +162,26 @@ class TaskOrderStore:
             self._write(record)
             return record
 
+    def checkpoint(self, *, task_id: str, metadata: dict[str, Any],
+                   encrypted_response: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Persist body-free progress without changing the task state."""
+        with self._lock:
+            record = self.get(task_id)
+            if record is None:
+                raise TaskProtocolError("task must exist before checkpointing")
+            now = datetime.now(timezone.utc).isoformat()
+            event = {"state": str(record.get("state") or "created"), "at": now,
+                     "checkpoint": True, **dict(metadata)}
+            forbidden = {"prompt", "response", "text", "messages", "context", "api_key", "model_path"}
+            if forbidden.intersection(event):
+                raise TaskProtocolError("task metadata contains a forbidden body/secret field")
+            record["updated_at"] = now
+            record.setdefault("history", []).append(event)
+            if encrypted_response is not None:
+                record["encrypted_response"] = encrypted_response
+            self._write(record)
+            return record
+
     def list(self) -> list[dict[str, Any]]:
         records = []
         for path in sorted(self.root.glob("*.json")):
@@ -169,6 +189,41 @@ class TaskOrderStore:
             if record:
                 records.append({k: v for k, v in record.items() if k != "encrypted_response"})
         return records
+
+    def purge_encrypted_response(self, task_id: str) -> bool:
+        with self._lock:
+            record = self.get(task_id)
+            if record is None or "encrypted_response" not in record:
+                return False
+            record.pop("encrypted_response", None)
+            record["response_purged_at"] = datetime.now(timezone.utc).isoformat()
+            self._write(record)
+            return True
+
+    def delete(self, task_id: str) -> bool:
+        with self._lock:
+            path = self._path(task_id)
+            if not path.exists():
+                return False
+            path.unlink()
+            return True
+
+    def purge_expired_responses(self) -> int:
+        purged = 0
+        now = datetime.now(timezone.utc)
+        for record in self.list():
+            expires_at = next(
+                (item.get("response_expires_at") for item in reversed(record.get("history") or [])
+                 if item.get("response_expires_at")),
+                "",
+            )
+            if expires_at:
+                try:
+                    if _parse_time(str(expires_at)) <= now:
+                        purged += int(self.purge_encrypted_response(str(record["task_id"])))
+                except (TypeError, ValueError):
+                    purged += int(self.purge_encrypted_response(str(record["task_id"])))
+        return purged
 
     def _path(self, task_id: str) -> Path:
         if not task_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in task_id):

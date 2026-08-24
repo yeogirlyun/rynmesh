@@ -21,6 +21,7 @@ LLM_CONTROL_PARAMS = {
     "rynmesh.llm.private.infer.v1.p2p_offer": {"session_id", "ice_signal", "timeout_seconds"},
     "rynmesh.llm.private.infer.v1.relay": {"encrypted_task_ref"},
     "rynmesh.llm.private.infer.v1.settlement": {"signed_settlement"},
+    "rynmesh.llm.private.infer.v1.cancel": {"signed_cancel"},
 }
 
 

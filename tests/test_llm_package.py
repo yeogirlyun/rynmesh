@@ -3,14 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from rynmesh.crypto import SignatureError, sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
-from rynmesh.llm_package.lifecycle import LifecycleError, validate_gguf
+from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
 from rynmesh.llm_package.manifest import LLMPackageManifest, fingerprint_file
 from rynmesh.llm_package.p2p import (
     P2PError,
@@ -25,6 +29,7 @@ from rynmesh.llm_package.routes import (
     ProviderService,
     _open_provider_response,
     _recover_consumer_orders,
+    install_llm_routes,
 )
 from rynmesh.llm_package.task_balance import TaskBalanceError, TaskBalanceLedger
 from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
@@ -52,7 +57,9 @@ class _OpenAIHandler(BaseHTTPRequestHandler):
         size = int(self.headers.get("content-length", "0"))
         body = json.loads(self.rfile.read(size))
         type(self).calls += 1
-        assert body["stream"] is False
+        if body["stream"] is True:
+            self._send({"choices": [{"delta": {"content": "stream supported"}}]})
+            return
         self._send({
             "choices": [{"message": {"content": "test adapter completion"}}],
             "usage": {"prompt_tokens": 4, "completion_tokens": 3},
@@ -96,6 +103,106 @@ def test_openai_adapter_blocks_non_loopback_by_default():
     with pytest.raises(AdapterError, match="non-loopback"):
         validate_local_url("http://192.0.2.10:8080")
     assert validate_local_url("http://192.0.2.10:8080", allow_non_loopback=True)
+
+
+def test_lifecycle_rejects_package_path_traversal_before_writing(tmp_path, openai_server):
+    with pytest.raises(LifecycleError, match="lowercase slug"):
+        connect_local_api(
+            base_url=openai_server, package_id="../../outside", alias="safe-alias",
+            root=tmp_path / "llm",
+        )
+    assert not (tmp_path / "outside").exists()
+
+
+def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, openai_server):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+
+    with TestClient(app) as client:
+        setup = client.post("/api/local/llm/setup", json={
+            "mode": "openai-compatible", "package_id": "configured-api",
+            "alias": "public-safe-alias", "base_url": openai_server,
+            "model": "test-real-api",
+        })
+        assert setup.status_code == 200
+        setup_body = setup.json()
+        assert setup_body["configured"] is True
+        assert setup_body["publication_enabled"] is False
+        assert "output_preview" not in setup_body["setup"]["self_test"]
+
+        offline = client.get("/api/local/llm/service/status").json()
+        assert offline["configured"] is True
+        assert offline["online"] is False
+        assert offline["accepting_orders"] is False
+
+        published = client.post("/api/local/llm/services/publish", json={
+            "network_id": "provider-test", "benchmark": False,
+        })
+        assert published.status_code == 200
+        assert published.json()["record"]["metadata"]["llm_service"]["online"] is True
+
+        online = client.get("/api/local/llm/service/status").json()
+        assert online["online"] is True
+        assert online["publication_enabled"] is True
+        assert online["network_id"] == "provider-test"
+
+        paused = client.post("/api/local/llm/services/pause").json()
+        assert paused["online"] is False
+        assert paused["accepting_orders"] is False
+        assert paused["publication_enabled"] is False
+
+        started = time.monotonic()
+        accepted = client.post("/api/local/llm/orders/async", json={
+            "provider_peer_id": "missing-provider", "service_id": "missing-service",
+            "prompt": "private prompt that must not be stored", "max_tokens": 8,
+        })
+        assert accepted.status_code == 200
+        assert time.monotonic() - started < 2
+        task_id = accepted.json()["task_id"]
+        deadline = time.monotonic() + 3
+        status = {}
+        while time.monotonic() < deadline:
+            status = client.get(f"/api/local/llm/orders/{task_id}").json()
+            if status.get("state") in {"failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        assert status["state"] == "failed"
+        assert "private prompt" not in json.dumps(status)
+
+        privacy = client.put("/api/local/llm/privacy", json={
+            "result_retention_seconds": 0,
+        })
+        assert privacy.status_code == 200
+        assert privacy.json()["result_retention_seconds"] == 0
+        assert privacy.json()["plaintext_persisted"] is False
+
+        history_store = TaskOrderStore(home / "llm" / "consumer-orders")
+        history_store.claim(task_id="history_cleanup", bindings={"request": "test"})
+        history_store.transition(task_id="history_cleanup", state="accepted")
+        history_store.transition(task_id="history_cleanup", state="running")
+        history_store.transition(
+            task_id="history_cleanup", state="succeeded",
+            encrypted_response={"ciphertext": "encrypted-only"},
+        )
+        privacy = client.put("/api/local/llm/privacy", json={
+            "result_retention_seconds": 0,
+        })
+        assert privacy.status_code == 200
+        assert "encrypted_response" not in history_store.get("history_cleanup")
+        cleared = client.delete("/api/local/llm/orders").json()
+        assert cleared["removed"] >= 1
+        assert history_store.get("history_cleanup") is None
+
+    settings = json.loads((home / "llm" / "provider-settings.json").read_text(encoding="utf-8"))
+    assert Path(settings["manifest"]).parts[-2:] == ("configured-api", "manifest.json")
+    assert settings["publication_enabled"] is False
+    assert settings["network_id"] == "provider-test"
 
 
 def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):
@@ -285,6 +392,36 @@ def test_restart_recovery_fails_interrupted_order_and_releases_hold(tmp_path):
     assert releases[0]["reason"] == "consumer_restart_recovery"
 
 
+def test_restart_recovery_completes_received_result_settlement(tmp_path):
+    orders = TaskOrderStore(tmp_path / "orders")
+    balance = TaskBalanceLedger(tmp_path / "balance.json")
+    orders.claim(task_id="task_received", bindings={
+        "provider_peer_id": "provider-peer", "service_id": "private-service",
+        "idempotency_key": "task_received", "request_fingerprint": "fingerprint",
+    })
+    orders.transition(task_id="task_received", state="accepted")
+    orders.transition(task_id="task_received", state="running")
+    orders.checkpoint(task_id="task_received", metadata={
+        "settlement_pending": True, "provider_peer_id": "provider-peer",
+        "service_id": "private-service", "network_id": "rynmesh-main",
+        "amount": 0.1, "input_tokens": 4, "output_tokens": 2, "duration_ms": 7,
+    })
+    balance.hold(
+        task_id="task_received", amount=0.25, service_id="private-service",
+        provider_peer_id="provider-peer", idempotency_key="task_received",
+        request_fingerprint="fingerprint",
+    )
+
+    _recover_consumer_orders(orders, balance)
+    _recover_consumer_orders(orders, balance)
+
+    assert orders.get("task_received")["state"] == "succeeded"
+    assert balance.summary()["held"] == 0.0
+    assert balance.summary()["available"] == 99.9
+    settlements = [event for event in balance.events() if event["kind"] == "settle"]
+    assert len(settlements) == 1
+
+
 class _FakeAdapter:
     def __init__(self):
         self.calls = 0
@@ -401,6 +538,58 @@ def test_provider_concurrent_duplicate_executes_once(tmp_path):
     assert adapter.calls == 1
     assert len(responses) == 2 and responses[0] == responses[1]
     assert service.task_store.get("task_concurrent")["state"] == "succeeded"
+
+
+def test_signed_cancel_reaches_running_provider_and_rejects_other_identity(tmp_path):
+    net = tmp_path / "net"
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
+    consumer = RynmeshStore(home=tmp_path / "consumer", network_dir=net)
+    attacker = RynmeshStore(home=tmp_path / "attacker", network_dir=net)
+    provider_msg = peer_box.load_or_create_messaging_key(tmp_path / "provider-msg")
+    consumer_msg = peer_box.load_or_create_messaging_key(tmp_path / "consumer-msg")
+    adapter = _BlockingAdapter()
+    service = ProviderService(
+        manifest=LLMPackageManifest(
+            package_id="svc", mode="openai_compatible", public_model_alias="alias",
+            base_url="http://127.0.0.1:1", timeout_seconds=2,
+        ),
+        adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+    )
+    request = seal_task(
+        body={"task_id": "task_cancel_running", "idempotency_key": "cancel-running",
+              "service_id": "svc", "prompt": "private", "max_tokens": 8, "max_amount": 1,
+              "reply_messaging_pub": peer_box.public_key_b64(consumer_msg)},
+        task_id="task_cancel_running", kind="llm_request", sender_peer_id=consumer.peer_id,
+        recipient_peer_id=provider.peer_id, sender_signing_key=consumer.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(provider_msg), expires_at=_expires(),
+    ).to_dict()
+    responses = []
+    worker = threading.Thread(target=lambda: responses.append(service.handle(request)))
+    worker.start()
+    assert adapter.started.wait(timeout=2)
+
+    def cancellation(sender: RynmeshStore) -> dict:
+        return sign_payload({
+            "kind": "llm_cancel", "task_id": "task_cancel_running",
+            "from_peer_id": sender.peer_id, "to_peer_id": provider.peer_id,
+            "service_id": "svc", "cancel_id": "cancel:task_cancel_running",
+        }, private_key_bytes=sender.private_key_bytes).to_dict()
+
+    with pytest.raises(Exception, match="not the task consumer"):
+        service.cancel_signed(cancellation(attacker))
+    assert service.cancel_signed(cancellation(consumer)) is True
+    assert service.task_store.get("task_cancel_running")["state"] == "cancelled"
+    adapter.release.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    _, result = open_task(
+        responses[0], recipient_peer_id=consumer.peer_id,
+        recipient_messaging_key=consumer_msg, expected_kind="llm_response",
+    )
+    assert result["state"] == "cancelled"
+    assert result["error_code"] == "consumer_cancelled"
+    assert adapter.cancelled == ["task_cancel_running"]
 
 
 def test_consumer_rejects_response_signed_by_another_provider(tmp_path):

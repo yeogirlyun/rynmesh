@@ -2,14 +2,22 @@ import { CloudCog, RefreshCw, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
-import type { LLMOrderResult, LLMProviderStatus, LLMServiceRecord, TaskBalanceSummary } from "../domain/nodeClient";
+import type {
+  LLMOrderResult,
+  LLMPrivacySettings,
+  LLMProviderStatus,
+  LLMServiceRecord,
+  LLMSetupRequest,
+  TaskBalanceSummary,
+} from "../domain/nodeClient";
 import type { JobCapacity, WorkResult } from "../domain/types";
 
 const VEO_CAPABILITY = "signal50.veo_motion.v1";
 const VEO_OPERATION = "signal50.remote_action.complete_flow_video_veo_motion_clips";
+const LLM_TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled", "rejected"]);
 
 export default function Services() {
-  const { client, peers, notify } = useAppContext();
+  const { client, peers, notify, confirm } = useAppContext();
   const [capacities, setCapacities] = useState<JobCapacity[]>([]);
   const [selectedPeerId, setSelectedPeerId] = useState("");
   const [videoId, setVideoId] = useState("");
@@ -29,6 +37,18 @@ export default function Services() {
   const [llmSubmitting, setLlmSubmitting] = useState(false);
   const [llmProgress, setLlmProgress] = useState<{ tone: "info" | "ok" | "danger"; text: string } | null>(null);
   const [llmPublishing, setLlmPublishing] = useState(false);
+  const [llmActiveTaskId, setLlmActiveTaskId] = useState("");
+  const [llmCancelling, setLlmCancelling] = useState(false);
+  const [llmOrders, setLlmOrders] = useState<LLMOrderResult[]>([]);
+  const [llmPrivacy, setLlmPrivacy] = useState<LLMPrivacySettings | null>(null);
+  const [llmConfiguring, setLlmConfiguring] = useState(false);
+  const [llmSetupMode, setLlmSetupMode] = useState<LLMSetupRequest["mode"]>("openai-compatible");
+  const [llmPackageId, setLlmPackageId] = useState("local-small");
+  const [llmAlias, setLlmAlias] = useState("rynmesh-local");
+  const [llmBaseUrl, setLlmBaseUrl] = useState("http://127.0.0.1:8080");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmModelPath, setLlmModelPath] = useState("");
+  const [llmSetupConfirmed, setLlmSetupConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const veoServices = useMemo(
@@ -42,11 +62,13 @@ export default function Services() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [capacityResult, serviceResult, balanceResult, providerResult] = await Promise.allSettled([
+      const [capacityResult, serviceResult, balanceResult, providerResult, ordersResult, privacyResult] = await Promise.allSettled([
         client.listJobCapacities({ capability: VEO_CAPABILITY }),
         client.listLLMServices(llmNetwork),
         client.getTaskBalance(),
         client.getLLMServiceStatus(),
+        client.listLLMOrders(),
+        client.getLLMPrivacy(),
       ]);
       if (capacityResult.status === "fulfilled") {
         setCapacities(capacityResult.value);
@@ -60,6 +82,8 @@ export default function Services() {
       }
       if (balanceResult.status === "fulfilled") setLlmBalance(balanceResult.value);
       if (providerResult.status === "fulfilled") setLlmProvider(providerResult.value);
+      if (ordersResult.status === "fulfilled") setLlmOrders(ordersResult.value);
+      if (privacyResult.status === "fulfilled") setLlmPrivacy(privacyResult.value);
       if (lastOrderId) setResults(await client.listWorkResults({ work_order_id: lastOrderId }));
     } finally {
       setLoading(false);
@@ -103,6 +127,39 @@ export default function Services() {
     }
   };
 
+  const pauseLlm = async () => {
+    setLlmPublishing(true);
+    try {
+      setLlmProvider(await client.pauseLLMService());
+      notify("ok", "Local LLM service paused; new orders will be rejected");
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "LLM service pause failed");
+    } finally {
+      setLlmPublishing(false);
+    }
+  };
+
+  const setupLlm = async () => {
+    setLlmConfiguring(true);
+    try {
+      await client.setupLLMService({
+        mode: llmSetupMode,
+        package_id: llmPackageId.trim(),
+        alias: llmAlias.trim(),
+        base_url: llmBaseUrl.trim(),
+        model: llmModel.trim(),
+        model_path: llmModelPath.trim(),
+        accept_risk: llmSetupConfirmed,
+      });
+      notify("ok", "Local model configured and self-tested; publishing remains off until you enable it");
+      await refresh();
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "Local model setup failed");
+    } finally {
+      setLlmConfiguring(false);
+    }
+  };
+
   const submitLlm = async () => {
     if (!selectedLlm || !llmPrompt.trim()) return;
     setLlmSubmitting(true);
@@ -118,7 +175,7 @@ export default function Services() {
             : "Order accepted locally. The node is selecting an available encrypted transport.",
     });
     try {
-      const result = await client.submitLLMOrder({
+      let result = await client.submitLLMOrder({
         network_id: llmNetwork,
         provider_peer_id: selectedLlm.peer_id,
         service_id: selectedLlm.service.package_id,
@@ -126,8 +183,19 @@ export default function Services() {
         max_tokens: Math.max(1, Number(llmMaxTokens || 64)),
         transport: llmTransport,
       });
+      setLlmActiveTaskId(result.task_id);
+      setLlmPrompt("");
+      while (!LLM_TERMINAL_STATES.has(result.state)) {
+        setLlmProgress({
+          tone: "info",
+          text: `Order ${result.task_id} is ${result.state}; waiting for the Provider node…`,
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        result = await client.getLLMOrder(result.task_id);
+      }
       setLlmResult(result);
       setLlmBalance(await client.getTaskBalance());
+      setLlmOrders(await client.listLLMOrders());
       setLlmProgress({
         tone: result.state === "succeeded" ? "ok" : "danger",
         text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${result.error_code}` : ""}`,
@@ -140,6 +208,53 @@ export default function Services() {
       notify("danger", message);
     } finally {
       setLlmSubmitting(false);
+      setLlmActiveTaskId("");
+    }
+  };
+
+  const cancelLlm = async () => {
+    if (!llmActiveTaskId) return;
+    setLlmCancelling(true);
+    try {
+      const result = await client.cancelLLMOrder(llmActiveTaskId);
+      setLlmResult(result);
+      setLlmProgress({ tone: "info", text: `Order ${result.task_id} cancellation requested` });
+      notify("ok", "Cancellation sent to the Provider node; the reserved balance was released");
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "LLM task cancellation failed");
+    } finally {
+      setLlmCancelling(false);
+    }
+  };
+
+  const updateLlmRetention = async (value: LLMPrivacySettings["result_retention_seconds"]) => {
+    try {
+      setLlmPrivacy(await client.updateLLMPrivacy(value));
+      notify("ok", value ? "Encrypted result retention updated" : "Stored encrypted results purged");
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "Result retention update failed");
+    }
+  };
+
+  const clearLlmHistory = () => {
+    confirm({
+      title: "Clear completed LLM task history?",
+      body: "This permanently removes local task metadata and any retained encrypted results. Running tasks are preserved.",
+      risk: "high",
+      confirmLabel: "Clear task history",
+      onConfirm: async () => {
+        const result = await client.clearLLMOrders();
+        setLlmOrders(await client.listLLMOrders());
+        notify("ok", `${result.removed} local LLM task records removed`);
+      },
+    });
+  };
+
+  const viewLlmOrder = async (taskId: string) => {
+    try {
+      setLlmResult(await client.getLLMOrder(taskId));
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "Task result is unavailable");
     }
   };
 
@@ -177,11 +292,16 @@ export default function Services() {
               <Button
                 variant="primary"
                 icon={CloudCog}
-                disabled={!llmProvider.online || llmPublishing}
+                disabled={llmPublishing}
                 onClick={() => void publishLlm()}
               >
                 {llmPublishing ? "Publishing…" : "Publish / refresh service"}
               </Button>
+              {llmProvider.publication_enabled ? (
+                <Button disabled={llmPublishing} onClick={() => void pauseLlm()}>
+                  {llmPublishing ? "Pausing…" : "Pause new orders"}
+                </Button>
+              ) : null}
               <Chip tone="info">Publishes metadata only — never prompts or model files</Chip>
             </div>
           </div>
@@ -191,6 +311,68 @@ export default function Services() {
             <p>This node can still discover and consume services from another Rynmesh node.</p>
           </div>
         )}
+        <div className="form-stack">
+          <div className="panel-head">
+            <div>
+              <span className="eyebrow">Model setup</span>
+              <h3>{llmProvider?.configured ? "Change local model connection" : "Add a local model"}</h3>
+            </div>
+            <Chip tone="info">Publishing stays off after setup</Chip>
+          </div>
+          <label className="field">
+            <span>Setup mode</span>
+            <select value={llmSetupMode} onChange={(event) => setLlmSetupMode(event.target.value as LLMSetupRequest["mode"])}>
+              <option value="openai-compatible">OpenAI-compatible local API</option>
+              <option value="ollama">Ollama</option>
+              <option value="import-gguf">Import a GGUF file read-only</option>
+              <option value="managed">Automatically install a recommended model</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Package ID</span>
+            <input value={llmPackageId} onChange={(event) => setLlmPackageId(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Public model alias</span>
+            <input value={llmAlias} onChange={(event) => setLlmAlias(event.target.value)} />
+          </label>
+          {llmSetupMode === "openai-compatible" || llmSetupMode === "ollama" ? (
+            <>
+              <label className="field">
+                <span>Local API URL</span>
+                <input value={llmBaseUrl} onChange={(event) => setLlmBaseUrl(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>Model name (optional)</span>
+                <input value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
+              </label>
+            </>
+          ) : null}
+          {llmSetupMode === "import-gguf" ? (
+            <label className="field">
+              <span>GGUF file path</span>
+              <input value={llmModelPath} onChange={(event) => setLlmModelPath(event.target.value)} />
+            </label>
+          ) : null}
+          {llmSetupMode === "managed" || llmSetupMode === "import-gguf" ? (
+            <label className="checkbox-row">
+              <input type="checkbox" checked={llmSetupConfirmed} onChange={(event) => setLlmSetupConfirmed(event.target.checked)} />
+              I understand this prepares a local runtime and may download software or model data.
+            </label>
+          ) : null}
+          <div className="button-row">
+            <Button
+              variant="primary"
+              disabled={llmConfiguring || !llmPackageId.trim() || !llmAlias.trim()
+                || (llmSetupMode === "import-gguf" && !llmModelPath.trim())
+                || ((llmSetupMode === "managed" || llmSetupMode === "import-gguf") && !llmSetupConfirmed)}
+              onClick={() => void setupLlm()}
+            >
+              {llmConfiguring ? "Configuring and self-testing…" : "Configure and run self-test"}
+            </Button>
+            <Chip tone="info">The compute node sees plaintext during inference</Chip>
+          </div>
+        </div>
       </Panel>
 
       <Panel>
@@ -267,13 +449,18 @@ export default function Services() {
               disabled={!selectedLlm || !llmPrompt.trim() || llmSubmitting}
               onClick={() => void submitLlm()}
             >
-              {llmSubmitting ? "Connecting P2P…" : "Place encrypted order"}
+              {llmSubmitting ? "Task running…" : "Place encrypted order"}
             </Button>
+            {llmActiveTaskId ? (
+              <Button disabled={llmCancelling} onClick={() => void cancelLlm()}>
+                {llmCancelling ? "Cancelling…" : "Cancel task"}
+              </Button>
+            ) : null}
             {llmBalance ? <Chip mono>held {llmBalance.held.toFixed(3)}</Chip> : null}
           </div>
           {llmProgress ? (
             <div className="service-result" role="status" aria-live="polite">
-              <Chip tone={llmProgress.tone}>{llmSubmitting ? "connecting" : llmProgress.tone === "ok" ? "complete" : "failed"}</Chip>
+              <Chip tone={llmProgress.tone}>{llmSubmitting ? "running" : llmProgress.tone === "ok" ? "complete" : "failed"}</Chip>
               <span>{llmProgress.text}</span>
             </div>
           ) : null}
@@ -301,6 +488,55 @@ export default function Services() {
           </div>
         </Panel>
       ) : null}
+
+      <Panel>
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">Local task history & privacy</span>
+            <h2>Private LLM orders</h2>
+          </div>
+          <Chip tone="info">Prompt text is never written to task history</Chip>
+        </div>
+        <div className="form-stack">
+          <label className="field">
+            <span>Retain encrypted result bodies</span>
+            <select
+              aria-label="Encrypted result retention"
+              value={llmPrivacy?.result_retention_seconds ?? 3600}
+              onChange={(event) => void updateLlmRetention(Number(event.target.value) as LLMPrivacySettings["result_retention_seconds"])}
+            >
+              <option value={0}>Do not retain after first delivery</option>
+              <option value={3600}>1 hour</option>
+              <option value={86400}>24 hours</option>
+              <option value={604800}>7 days</option>
+            </select>
+          </label>
+          <div className="service-result">
+            <small>
+              Stored result bodies remain end-to-end encrypted. The selected Provider necessarily sees plaintext while computing;
+              this node never persists prompt text.
+            </small>
+          </div>
+          {llmOrders.length ? llmOrders.slice(0, 20).map((order) => (
+            <div className="service-result" key={order.task_id}>
+              <span>{order.state} · {order.task_id}</span>
+              <small>
+                {order.transport || "transport pending"}
+                {order.amount !== undefined ? ` · ${order.amount} DEV_TASK_BALANCE` : ""}
+                {order.updated_at ? ` · ${new Date(order.updated_at).toLocaleString()}` : ""}
+              </small>
+              <Button onClick={() => void viewLlmOrder(order.task_id)}>View retained result</Button>
+            </div>
+          )) : (
+            <div className="empty-state"><p>No local LLM task history yet.</p></div>
+          )}
+          <div className="button-row">
+            <Button variant="danger" disabled={!llmOrders.length} onClick={clearLlmHistory}>
+              Clear completed task history
+            </Button>
+          </div>
+        </div>
+      </Panel>
 
       <Panel className="table-panel">
         <div className="panel-head">
