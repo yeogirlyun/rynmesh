@@ -550,6 +550,10 @@ def _signed_payload_list(
 
 
 def _open_registry_request(req: Request, *, timeout_s: float):
+    from .transport import network_key_header
+
+    for name, value in network_key_header().items():
+        req.add_header(name, value)
     kwargs: dict[str, Any] = {"timeout": timeout_s}
     if str(req.full_url).startswith("https://"):
         kwargs["context"] = _https_context()

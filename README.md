@@ -119,6 +119,34 @@ rynmesh-mcp
 
 See [Architecture](docs/ARCHITECTURE.md), [Product milestones](docs/PRODUCT_MILESTONES.md), and [Contributing](CONTRIBUTING.md) for deeper project context.
 
+## Local LLM service packages
+
+The P0 local LLM package supports a managed llama.cpp + GGUF install, read-only
+GGUF import, and an existing loopback OpenAI-compatible or Ollama service. Start
+with one entry point; it detects hardware and refuses unsafe defaults:
+
+```bash
+rynmesh-llm detect
+rynmesh-llm setup --mode managed --yes
+```
+
+Provider/Consumer task bodies travel as signed end-to-end ciphertext directly
+between Ryn nodes, with a dedicated ciphertext-only relay fallback. The registry
+receives discovery and body-free coordination only. Rynmesh Credits remain
+non-transferable reputation; development Task Balance is a separate simulated
+ledger and is not real money or a production payment system.
+
+Run the isolated two-node automated demonstration with:
+
+```bash
+python scripts/llm_e2e.py run
+python scripts/llm_e2e.py down
+```
+
+See [Local LLM runbook](docs/LOCAL_LLM_RUNBOOK.md),
+[design and boundaries](docs/LOCAL_LLM_SERVICE_MVP.md), and
+[P0 evidence](docs/LOCAL_LLM_P0_EVIDENCE.md).
+
 ## Verify a checkout
 
 ```bash

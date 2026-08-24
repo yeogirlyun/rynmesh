@@ -16,7 +16,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    throw new NodeClientError(`Local Ryn node returned ${response.status}`, response.status);
+    let detail = "";
+    try {
+      const payload = (await response.json()) as { detail?: unknown };
+      if (typeof payload.detail === "string") detail = payload.detail.trim();
+    } catch {
+      // The status code remains useful when the response body is not JSON.
+    }
+    throw new NodeClientError(
+      `Local Ryn node returned ${response.status}${detail ? `: ${detail}` : ""}`,
+      response.status,
+    );
   }
   return (await response.json()) as T;
 }
@@ -45,6 +55,21 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
       );
       return payload.work_results;
     },
+    listLLMServices: async (networkId = "rynmesh-main") => {
+      const payload = await requestJson<{ services: import("./nodeClient").LLMServiceRecord[] }>(
+        `${baseUrl}/llm/services${qs({ network_id: networkId })}`,
+      );
+      return payload.services;
+    },
+    getLLMServiceStatus: () => requestJson(`${baseUrl}/llm/service/status`),
+    publishLLMService: (req) =>
+      requestJson(`${baseUrl}/llm/services/publish`, {
+        method: "POST",
+        body: JSON.stringify(req ?? {}),
+      }),
+    getTaskBalance: () => requestJson(`${baseUrl}/task-balance`),
+    submitLLMOrder: (req) =>
+      requestJson(`${baseUrl}/llm/orders`, { method: "POST", body: JSON.stringify(req) }),
     discoverPeers: (req) =>
       requestJson(`${baseUrl}/peers/discover`, { method: "POST", body: JSON.stringify(req ?? {}) }),
     listPeers: (filters?: PeerFilters) => requestJson(`${baseUrl}/peers${qs(filters)}`),

@@ -216,6 +216,10 @@ def verify_work_order(signed: SignedPayload) -> WorkOrder:
         raise JobError("work_order_capability_required")
     if not order.operation:
         raise JobError("work_order_operation_required")
+    if order.capability.startswith("rynmesh.llm"):
+        forbidden = {"prompt", "messages", "context", "response", "output", "text"}
+        if forbidden.intersection(order.params):
+            raise JobError("llm_plaintext_work_order_forbidden_use_private_task_protocol")
     return order
 
 

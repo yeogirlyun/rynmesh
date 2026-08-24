@@ -13,6 +13,12 @@ release/
 htmlcov/
 .coverage
 .DS_Store
+deploy/llm-e2e/results/*.json
+deploy/llm-e2e/config/public-network.env
+deploy/llm-e2e/windows-consumer/rynmesh-consumer.json
+deploy/llm-e2e/windows-consumer/frpc.toml
+deploy/llm-e2e/windows-consumer/dist/
+deploy/llm-e2e/windows-consumer/build/
 .rynmesh/
 node_modules/
 webapp/node_modules/

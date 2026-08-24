@@ -6,6 +6,8 @@ accept inbound connections. Content still moves directly between peers when
 both endpoints are reachable.
 """
 
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -25,13 +27,24 @@ def create_app(
 ):
     try:
         from fastapi import FastAPI, HTTPException, Request
-        from fastapi.responses import FileResponse
+        from fastapi.responses import FileResponse, JSONResponse
     except ImportError as exc:  # pragma: no cover
         raise ImportError("Rynmesh registry HTTP server requires `fastapi`") from exc
 
     active_registry = registry or FilePeerRegistry(default_registry_root())
     active_relay = relay_store or FileRelayStore(default_registry_root() / "relay")
     app = FastAPI(title="Rynmesh Registry", version="0.1")
+
+    @app.middleware("http")
+    async def _guard_registry_api(request: Request, call_next):
+        """Hide the public coordination/relay surface behind the mesh key."""
+        key = os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
+        path = request.url.path
+        if key and (path == "/health" or path.startswith("/api/v1")):
+            expected = hashlib.sha256(("rynmesh-net-key:" + key).encode("utf-8")).hexdigest()
+            if not hmac.compare_digest(request.headers.get("x-ryn-auth", ""), expected):
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return await call_next(request)
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -349,9 +349,11 @@ class HttpRelayClient:
         normalized_hash = normalize_content_hash(normalized_hash)
         dest = Path(destination).expanduser()
         dest.parent.mkdir(parents=True, exist_ok=True)
+        from .transport import network_key_header
+
         req = Request(
             f"{self.base_url}/api/v1/relay/blobs/{quote(normalized_hash, safe=':')}",
-            headers={"user-agent": RYNMESH_RELAY_USER_AGENT},
+            headers={"user-agent": RYNMESH_RELAY_USER_AGENT, **network_key_header()},
             method="GET",
         )
         digest = hashlib.sha256()
@@ -451,9 +453,11 @@ class HttpRelayClient:
 
     def blob_info(self, content_hash: str) -> dict[str, Any]:
         normalized_hash = normalize_content_hash(content_hash)
+        from .transport import network_key_header
+
         req = Request(
             f"{self.base_url}/api/v1/relay/meta/{quote(normalized_hash, safe=':')}",
-            headers={"user-agent": RYNMESH_RELAY_USER_AGENT},
+            headers={"user-agent": RYNMESH_RELAY_USER_AGENT, **network_key_header()},
             method="GET",
         )
         try:
@@ -488,12 +492,16 @@ class HttpRelayClient:
             kwargs["context"] = _https_context()
         conn = connection_cls(parsed.hostname, parsed.port, **kwargs)
         try:
+            from .transport import network_key_header
+
             conn.putrequest("POST", path, skip_host=True)
             conn.putheader("Host", parsed.netloc)
             conn.putheader("User-Agent", RYNMESH_RELAY_USER_AGENT)
             conn.putheader("Content-Type", media_type or "application/octet-stream")
             conn.putheader("Content-Length", str(source.stat().st_size))
             conn.putheader("X-Rynmesh-Expected-Hash", normalize_content_hash(expected_hash))
+            for name, value in network_key_header().items():
+                conn.putheader(name, value)
             if filename:
                 conn.putheader("X-Rynmesh-Filename", filename)
             if uploader_peer_id:
@@ -652,6 +660,8 @@ class HttpRelayClient:
         return self._post_json("/api/v1/relay/blobs/assemble", payload)
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from .transport import network_key_header
+
         target = f"{self.base_url}{path}"
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         req = Request(
@@ -660,6 +670,7 @@ class HttpRelayClient:
             headers={
                 "content-type": "application/json",
                 "user-agent": RYNMESH_RELAY_USER_AGENT,
+                **network_key_header(),
             },
             method="POST",
         )

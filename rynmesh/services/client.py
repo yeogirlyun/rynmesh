@@ -23,7 +23,6 @@ from rynmesh.store import RynmeshStore
 
 from .embeddings import OPERATION as EMBED_OP
 from .image import OPERATION as IMAGE_OP
-from .llm import OPERATION as LLM_OP
 
 
 def _await_result(
@@ -102,12 +101,11 @@ def request_llm(
     timeout_s: float = 20.0,
     poll_interval_s: float = 0.5,
 ) -> dict[str, Any]:
-    res = _submit_and_await(
-        store, provider_peer_id=provider_peer_id, operation=LLM_OP,
-        params={"prompt": prompt, "max_tokens": max_tokens},
-        network_id=network_id, timeout_s=timeout_s, poll_interval_s=poll_interval_s,
+    del store, provider_peer_id, prompt, max_tokens, network_id, timeout_s, poll_interval_s
+    raise RuntimeError(
+        "legacy plaintext LLM work orders are disabled; submit through the local "
+        "/api/local/llm/orders private task endpoint"
     )
-    return _decode_payload(res)
 
 
 def request_embedding(

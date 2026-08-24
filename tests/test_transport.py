@@ -94,6 +94,30 @@ def test_active_probe_resistance_blocks_anonymous_peer_requests(monkeypatch) -> 
     assert client.get("/api/v1/node", headers={"X-Ryn-Auth": auth}).status_code == 200
 
 
+def test_active_probe_resistance_guards_registry_and_relay(monkeypatch, tmp_path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from rynmesh.registry import FilePeerRegistry
+    from rynmesh.registry_http import create_app
+    from rynmesh.relay import FileRelayStore
+
+    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "registry-secret")
+    client = TestClient(create_app(
+        FilePeerRegistry(tmp_path / "registry"),
+        relay_store=FileRelayStore(tmp_path / "relay"),
+    ))
+    auth = hashlib.sha256(b"rynmesh-net-key:registry-secret").hexdigest()
+
+    assert client.get("/health").status_code == 404
+    assert client.get("/api/v1/jobs/capacity").status_code == 404
+    assert client.post("/api/v1/relay/blobs", content=b"probe").status_code == 404
+    assert client.get("/health", headers={"X-Ryn-Auth": auth}).status_code == 200
+    assert client.get(
+        "/api/v1/jobs/capacity", headers={"X-Ryn-Auth": auth}
+    ).status_code == 200
+
+
 def test_get_transport_selects_fronted_when_sni_or_connect_set(monkeypatch) -> None:
     from rynmesh.transport import FrontedHttpsTransport, StdlibHttpsTransport
 

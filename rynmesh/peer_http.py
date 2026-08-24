@@ -451,6 +451,33 @@ def create_app(store: RynmeshStore | None = None):
                     pass
                 await _asyncio.sleep(900)
 
+        async def _llm_relay_poll():
+            await _asyncio.sleep(1)
+            while True:
+                worker = getattr(lifespan_app.state, "llm_relay_once", None)
+                if worker is not None:
+                    try:
+                        await _asyncio.to_thread(worker)
+                    except Exception:
+                        pass
+                await _asyncio.sleep(1)
+
+        async def _llm_publish_refresh():
+            # LLM discovery records are intentionally short lived. Keep a configured,
+            # healthy provider visible without requiring an operator to republish it.
+            await _asyncio.sleep(1)
+            while True:
+                publisher = getattr(lifespan_app.state, "llm_publish_once", None)
+                if publisher is not None:
+                    try:
+                        await _asyncio.to_thread(publisher)
+                        lifespan_app.state.llm_publication_error = ""
+                    except Exception as exc:
+                        # A registry or runtime outage must not take down the node;
+                        # the Services screen still provides a manual retry.
+                        lifespan_app.state.llm_publication_error = str(exc)
+                await _asyncio.sleep(30)
+
         async def _discover():
             service = getattr(lifespan_app.state, "digest_service", None)
             if service is None or not service.bootstrap_defaults:
@@ -493,15 +520,20 @@ def create_app(store: RynmeshStore | None = None):
         poll_task = _asyncio.create_task(_poll())
         discovery_task = _asyncio.create_task(_discover())
         recap_task = _asyncio.create_task(_recap_daily())
+        llm_relay_task = _asyncio.create_task(_llm_relay_poll())
+        llm_publish_task = _asyncio.create_task(_llm_publish_refresh())
         yield
         confirm_task.cancel()
         poll_task.cancel()
         discovery_task.cancel()
         recap_task.cancel()
+        llm_relay_task.cancel()
+        llm_publish_task.cancel()
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     started_at = time.monotonic()
     app.state.registration_error = ""
+    app.state.llm_publication_error = ""
     app.state.publish_drafts = {}
     app.add_middleware(
         CORSMiddleware,
@@ -2306,6 +2338,20 @@ def create_app(store: RynmeshStore | None = None):
         # '/' which Starlette can't route in a path.
         return _messenger.history(peer_id)
 
+    # Private LLM tasks use discovery metadata from the existing registry, then
+    # send signed end-to-end ciphertext directly between the two Ryn nodes.
+    # The model runtime is never exposed as a peer endpoint.
+    from .llm_package.routes import install_llm_routes as _install_llm_routes
+
+    _install_llm_routes(
+        app,
+        store=active_store,
+        home=active_store.home,
+        messaging_key=_msg_priv,
+        resolve_endpoint=_resolve_endpoint,
+        resolve_pubkey=_resolve_pubkey,
+    )
+
     # ---- bundled web UI -------------------------------------------------
     # A packaged install serves the built webapp from the node itself, so the
     # whole product is one process on one port — no dev server, no npm.
@@ -2349,7 +2395,8 @@ def _mount_webui(app: Any) -> bool:
                 # hand them index.html and let the router resolve them. Missing
                 # assets must still 404 — otherwise a broken <script> src
                 # silently returns HTML and the app fails with a parse error.
-                if exc.status_code == 404 and not path.startswith("assets/"):
+                request_path = str(scope.get("path") or path).lstrip("/")
+                if exc.status_code == 404 and not request_path.startswith("assets/"):
                     return _no_store(FileResponse(directory / "index.html"))
                 raise
             if path in ("", ".", "index.html"):

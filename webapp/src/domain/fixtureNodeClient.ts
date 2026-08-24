@@ -1039,6 +1039,57 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return [];
     },
+    async listLLMServices() {
+      await delay();
+      return [{
+        peer_id: "peer:fixture-llm-provider",
+        node_name: "Fixture LLM provider",
+        online: true,
+        capacity: { available: 1, max_concurrent: 1, running: 0 },
+        benchmark: { latency_ms: 12, tokens_per_second: 42 },
+        service: {
+          package_id: "fixture-local-llm",
+          model_alias: "fixture-private-model",
+          capabilities: ["text-generation"],
+          context_window: 2048,
+          max_output_tokens: 128,
+          pricing: {
+            currency: "DEV_TASK_BALANCE",
+            input_per_1k: 0.001,
+            output_per_1k: 0.002,
+            minimum: 0.001,
+            maximum_per_task: 1,
+          },
+          privacy: { policy_text: "Fixture only; compute node sees plaintext.", compute_node_sees_plaintext: true },
+          risk_labels: ["fixture"],
+        },
+      }];
+    },
+    async getLLMServiceStatus() {
+      await delay();
+      return { configured: false, online: false };
+    },
+    async publishLLMService() {
+      await delay();
+      return { ok: true };
+    },
+    async getTaskBalance() {
+      await delay();
+      return { currency: "DEV_TASK_BALANCE", available: 100, held: 0, earned: 0 };
+    },
+    async submitLLMOrder(req) {
+      await delay();
+      return {
+        task_id: `task_fixture_${Math.random().toString(16).slice(2, 10)}`,
+        state: "succeeded",
+        output: `Fixture response for: ${req.prompt.slice(0, 40)}`,
+        model_alias: "fixture-private-model",
+        input_tokens: 8,
+        output_tokens: 8,
+        duration_ms: 12,
+        amount: 0.001,
+      };
+    },
     async discoverPeers() {
       await delay();
       return PEERS;

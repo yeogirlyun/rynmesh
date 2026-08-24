@@ -506,13 +506,21 @@ class RynmeshStore:
         cleaned_operation = str(operation or "").strip()
         if not cleaned_operation:
             raise ValueError("operation is required")
+        cleaned_params = dict(params or {})
+        if cleaned_capability.startswith("rynmesh.llm"):
+            forbidden = {"prompt", "messages", "context", "response", "output", "text"}
+            if forbidden.intersection(cleaned_params):
+                raise ValueError(
+                    "LLM plaintext cannot enter a registry work order; "
+                    "use the private task protocol"
+                )
         order = WorkOrder(
             work_order_id=new_work_order_id(),
             requester_peer_id=self.peer_id,
             provider_peer_id=provider,
             capability=cleaned_capability,
             operation=cleaned_operation,
-            params=dict(params or {}),
+            params=cleaned_params,
             network_id=network_id,
             input_content_ids=tuple(str(item) for item in (input_content_ids or ()) if str(item)),
             max_credit_cost=float(max_credit_cost or 0.0),
