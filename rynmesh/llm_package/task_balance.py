@@ -46,9 +46,13 @@ class TaskBalanceLedger:
     def summary(self) -> dict[str, Any]:
         with self._lock:
             state = self._read()
-            return {k: state[k] for k in ("version", "development_only", "available", "held", "earned")}
+            return {
+                **{k: state[k] for k in ("version", "development_only", "available", "held", "earned")},
+                "currency": "DEV_TASK_BALANCE",
+            }
 
-    def hold(self, *, task_id: str, amount: float, service_id: str, provider_peer_id: str) -> dict[str, Any]:
+    def hold(self, *, task_id: str, amount: float, service_id: str, provider_peer_id: str,
+             idempotency_key: str = "", request_fingerprint: str = "") -> dict[str, Any]:
         value = _amount(amount)
         if not task_id:
             raise TaskBalanceError("task_id is required")
@@ -56,10 +60,17 @@ class TaskBalanceLedger:
             state = self._read()
             if task_id in state["holds"]:
                 previous = state["holds"][task_id]
+                expected = {
+                    "service_id": str(service_id),
+                    "provider_peer_id": str(provider_peer_id),
+                    "idempotency_key": str(idempotency_key or task_id),
+                    "request_fingerprint": str(request_fingerprint),
+                }
+                actual = {key: str(previous.get(key) or "") for key in expected}
+                if actual != expected or _amount(previous["amount"]) != value:
+                    raise TaskBalanceError("task idempotency conflict")
                 if previous["state"] != "released":
                     return dict(previous)
-                if _amount(previous["amount"]) != value:
-                    raise TaskBalanceError("retry hold amount differs from the original hold")
                 if value > float(state["available"]):
                     raise TaskBalanceError("insufficient development Task Balance")
                 state["available"] = _amount(float(state["available"]) - value)
@@ -74,6 +85,8 @@ class TaskBalanceLedger:
                 raise TaskBalanceError("insufficient development Task Balance")
             record = {"task_id": task_id, "amount": value, "state": "held",
                       "service_id": service_id, "provider_peer_id": provider_peer_id,
+                      "idempotency_key": str(idempotency_key or task_id),
+                      "request_fingerprint": str(request_fingerprint),
                       "created_at": _now()}
             state["available"] = _amount(float(state["available"]) - value)
             state["held"] = _amount(float(state["held"]) + value)

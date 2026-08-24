@@ -49,6 +49,7 @@ services:
       RYNMESH_PEER_ENDPOINT: http://provider:8791
       RYNMESH_LLM_SERVICE_MANIFEST: ${RYNMESH_LLM_MANIFEST:-/config/test-manifest.json}
     ports: ["127.0.0.1:18891:8791"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - provider-data:/data
       - ./config:/config:ro

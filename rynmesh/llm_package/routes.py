@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -51,6 +53,33 @@ def _price(manifest: LLMPackageManifest, input_tokens: int, output_tokens: int) 
 def _estimate_price(manifest: LLMPackageManifest, prompt: str, max_tokens: int) -> float:
     estimated_input = max(1, len(prompt) // 4)
     return _price(manifest, estimated_input, max_tokens)
+
+
+def _request_fingerprint(body: dict[str, Any], secret: bytes) -> str:
+    """Return a local, keyed request digest that cannot be dictionary-probed."""
+    encoded = json.dumps(body, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return "hmac-sha256:" + hmac.new(secret, encoded, hashlib.sha256).hexdigest()
+
+
+def _open_provider_response(
+    encrypted_response: dict[str, Any], *, recipient_peer_id: str,
+    messaging_key: Any, task_id: str, provider_peer_id: str, service_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    outer, result = open_task(
+        encrypted_response, recipient_peer_id=recipient_peer_id,
+        recipient_messaging_key=messaging_key, expected_kind="llm_response",
+    )
+    if outer.get("from_peer_id") != provider_peer_id:
+        raise TaskProtocolError("LLM response signer is not the selected provider")
+    if result.get("service_id") != service_id:
+        raise TaskProtocolError("LLM response service mismatch")
+    state = str(result.get("state") or "")
+    if state not in TERMINAL_STATES:
+        raise TaskProtocolError("LLM response state is not terminal")
+    for name in ("input_tokens", "output_tokens", "duration_ms"):
+        if name in result and int(result[name]) < 0:
+            raise TaskProtocolError(f"LLM response {name} is invalid")
+    return outer, result
 
 
 class ProviderService:
@@ -126,9 +155,32 @@ class ProviderService:
         max_amount = float(body.get("max_amount") or 0)
         if max_amount > self.manifest.pricing.maximum_per_task:
             raise TaskProtocolError("task maximum exceeds provider price limit")
-        metadata = {"consumer_peer_id": outer["from_peer_id"], "service_id": self.manifest.package_id,
-                    "request_hash": SignedPayload.from_dict(signed_request).subject_hash}
-        self.task_store.transition(task_id=task_id, state="created", metadata=metadata)
+        idempotency_key = str(body.get("idempotency_key") or task_id)
+        fingerprint = _request_fingerprint(body, self.store.private_key_bytes)
+        bindings = {
+            "consumer_peer_id": str(outer["from_peer_id"]),
+            "service_id": self.manifest.package_id,
+            "idempotency_key": idempotency_key,
+            "request_fingerprint": fingerprint,
+        }
+        existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
+        if not claimed:
+            encrypted = existing.get("encrypted_response")
+            if existing.get("state") in TERMINAL_STATES and isinstance(encrypted, dict):
+                return dict(encrypted)
+            deadline = time.monotonic() + self.manifest.timeout_seconds + 30
+            while time.monotonic() < deadline:
+                time.sleep(0.05)
+                existing = self.task_store.get(task_id) or {}
+                encrypted = existing.get("encrypted_response")
+                if existing.get("state") in TERMINAL_STATES and isinstance(encrypted, dict):
+                    return dict(encrypted)
+            raise TaskProtocolError("duplicate task is still in progress")
+        metadata = {
+            "consumer_peer_id": outer["from_peer_id"],
+            "service_id": self.manifest.package_id,
+            "request_hash": SignedPayload.from_dict(signed_request).subject_hash,
+        }
         if not self.adapter.health().get("ok"):
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_unhealthy")
         if not self._slots.acquire(blocking=False):
@@ -203,6 +255,13 @@ class ProviderService:
         record = self.task_store.get(task_id)
         if not record or record.get("state") != "succeeded":
             raise TaskProtocolError("settlement task is not succeeded")
+        bindings = dict(record.get("bindings") or {})
+        if bindings.get("consumer_peer_id") != envelope.public_key:
+            raise TaskProtocolError("settlement sender is not the task consumer")
+        if payload.get("service_id") != bindings.get("service_id"):
+            raise TaskProtocolError("settlement service mismatch")
+        if payload.get("settlement_id") != "settle:" + task_id:
+            raise TaskProtocolError("settlement id mismatch")
         final = record["history"][-1]
         amount = float(payload.get("amount") or 0)
         if amount != float(final.get("amount") or 0):
@@ -519,11 +578,49 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=409, detail="estimated task cost exceeds provider maximum")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
+        requested_transport = str(body.get("transport") or "auto").strip().lower()
+        if requested_transport not in {"auto", "direct", "p2p", "relay"}:
+            raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
+        request_fingerprint = _request_fingerprint({
+            "task_id": task_id,
+            "idempotency_key": idempotency_key,
+            "provider_peer_id": provider_peer_id,
+            "service_id": service_id,
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "max_amount": maximum,
+            "transport": requested_transport,
+        }, store.private_key_bytes)
+        bindings = {
+            "provider_peer_id": provider_peer_id,
+            "service_id": service_id,
+            "idempotency_key": idempotency_key,
+            "request_fingerprint": request_fingerprint,
+        }
+        try:
+            existing, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
+        except TaskProtocolError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not claimed:
+            encrypted = existing.get("encrypted_response")
+            if isinstance(encrypted, dict):
+                _, prior_result = _open_provider_response(
+                    encrypted, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
+                    task_id=task_id,
+                    provider_peer_id=provider_peer_id, service_id=service_id,
+                )
+                final = dict((existing.get("history") or [{}])[-1])
+                prior_result["transport"] = str(final.get("transport") or "unknown")
+                prior_result["transport_evidence"] = dict(final.get("transport_evidence") or {})
+                return prior_result
+            raise HTTPException(
+                status_code=409,
+                detail=f"task already exists in state {existing.get('state', 'unknown')}",
+            )
         try:
             balance.hold(task_id=task_id, amount=maximum, service_id=service_id,
-                         provider_peer_id=provider_peer_id)
-            consumer_orders.transition(task_id=task_id, state="created",
-                                       metadata={"provider_peer_id": provider_peer_id, "service_id": service_id})
+                         provider_peer_id=provider_peer_id, idempotency_key=idempotency_key,
+                         request_fingerprint=request_fingerprint)
             consumer_orders.transition(task_id=task_id, state="accepted",
                                        metadata={"provider_peer_id": provider_peer_id, "service_id": service_id})
             recipient_pub = str(selected.get("node_messaging_pub") or "") or resolve_pubkey(provider_peer_id)
@@ -541,9 +638,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
-            transport_mode = os.environ.get("RYNMESH_LLM_TRANSPORT", "auto").strip().lower()
+            configured_transport = os.environ.get("RYNMESH_LLM_TRANSPORT", "auto").strip().lower()
+            transport_mode = requested_transport if configured_transport == "auto" else configured_transport
             if transport_mode not in {"auto", "direct", "p2p", "relay"}:
-                raise TaskProtocolError("RYNMESH_LLM_TRANSPORT must be auto, direct, p2p, or relay")
+                raise TaskProtocolError("LLM transport must be auto, direct, p2p, or relay")
             force_relay = os.environ.get("RYNMESH_LLM_FORCE_RELAY", "").strip().lower() in {
                 "1", "true", "yes",
             }
@@ -676,9 +774,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         request_path.unlink(missing_ok=True)
                     if response_path:
                         response_path.unlink(missing_ok=True)
-            _, result = open_task(
-                encrypted_response, recipient_peer_id=store.peer_id,
-                recipient_messaging_key=messaging_key, expected_kind="llm_response",
+            _, result = _open_provider_response(
+                encrypted_response, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
+                task_id=task_id,
+                provider_peer_id=provider_peer_id, service_id=service_id,
             )
             state = str(result.get("state") or "failed")
             result["transport"] = str(transport_evidence.get("transport") or "unknown")
@@ -701,14 +800,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 metadata={"provider_peer_id": provider_peer_id, "service_id": service_id,
                           "input_tokens": result["input_tokens"], "output_tokens": result["output_tokens"],
                           "duration_ms": result["duration_ms"], "amount": result["amount"],
-                          "transport": result["transport"], "relay_used": transport_evidence.get("relay_used")},
+                          "transport": result["transport"], "relay_used": transport_evidence.get("relay_used"),
+                          "transport_evidence": transport_evidence},
                 encrypted_response=encrypted_response,
                 allow_recovery=True,
             )
             settlement = sign_payload({
                 "kind": "llm_settlement", "task_id": task_id, "from_peer_id": store.peer_id,
                 "to_peer_id": provider_peer_id, "amount": result["amount"],
-                "settlement_id": "settle:" + task_id,
+                "service_id": service_id, "settlement_id": "settle:" + task_id,
             }, private_key_bytes=store.private_key_bytes)
             settlement_delivered = False
             if endpoint and transport_mode in {"auto", "direct"}:

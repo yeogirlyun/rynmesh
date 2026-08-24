@@ -59,6 +59,12 @@ export interface LLMOrderResult {
   duration_ms?: number;
   amount?: number;
   error_code?: string;
+  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport_evidence?: {
+    relay_used?: boolean;
+    public_nat_traversal_required?: boolean;
+    peer_public_mapping_nominated?: boolean;
+  };
 }
 
 export interface TaskBalanceSummary {
@@ -100,6 +106,7 @@ export interface NodeClient {
     service_id: string;
     prompt: string;
     max_tokens: number;
+    transport?: "auto" | "direct" | "p2p" | "relay";
   }): Promise<LLMOrderResult>;
   discoverPeers(req?: { network?: string }): Promise<Peer[]>;
   listPeers(filters?: PeerFilters): Promise<Peer[]>;

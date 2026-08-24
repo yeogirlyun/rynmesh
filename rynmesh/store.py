@@ -27,6 +27,7 @@ from .identity import (
 )
 from .jobs import (
     JobCapacityRecord,
+    JobError,
     WorkOrder,
     WorkResult,
     default_expires_at,
@@ -34,6 +35,7 @@ from .jobs import (
     sign_job_capacity,
     sign_work_order,
     sign_work_result,
+    validate_llm_control_params,
     verify_job_capacity,
     verify_work_order,
     verify_work_result,
@@ -508,12 +510,10 @@ class RynmeshStore:
             raise ValueError("operation is required")
         cleaned_params = dict(params or {})
         if cleaned_capability.startswith("rynmesh.llm"):
-            forbidden = {"prompt", "messages", "context", "response", "output", "text"}
-            if forbidden.intersection(cleaned_params):
-                raise ValueError(
-                    "LLM plaintext cannot enter a registry work order; "
-                    "use the private task protocol"
-                )
+            try:
+                validate_llm_control_params(cleaned_operation, cleaned_params)
+            except JobError as exc:
+                raise ValueError(str(exc)) from exc
         order = WorkOrder(
             work_order_id=new_work_order_id(),
             requester_peer_id=self.peer_id,

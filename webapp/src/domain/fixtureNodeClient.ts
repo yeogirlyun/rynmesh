@@ -1088,6 +1088,8 @@ export function makeFixtureNodeClient(): NodeClient {
         output_tokens: 8,
         duration_ms: 12,
         amount: 0.001,
+        transport: req.transport === "relay" ? "encrypted_relay"
+          : req.transport === "p2p" ? "ice_udp_direct" : "peer_http_direct",
       };
     },
     async discoverPeers() {

@@ -50,6 +50,20 @@ jobs:
       - name: Build
         run: npm run build
 
+  llm-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Deterministic two-node private LLM flow
+        run: python scripts/llm_e2e.py run
+      - name: Clean up isolated E2E stack
+        if: always()
+        run: python scripts/llm_e2e.py down
+
   packaged-node:
     # The release form: the node must serve its own UI with no dev server.
     runs-on: ubuntu-latest

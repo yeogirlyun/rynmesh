@@ -17,10 +17,25 @@ from .crypto import SignatureError, SignedPayload, sign_payload, verify_signed_p
 from .types import now_iso
 
 JOB_STATUS_VALUES = {"open", "accepted", "running", "completed", "failed", "cancelled"}
+LLM_CONTROL_PARAMS = {
+    "rynmesh.llm.private.infer.v1.p2p_offer": {"session_id", "ice_signal", "timeout_seconds"},
+    "rynmesh.llm.private.infer.v1.relay": {"encrypted_task_ref"},
+    "rynmesh.llm.private.infer.v1.settlement": {"signed_settlement"},
+}
 
 
 class JobError(RuntimeError):
     pass
+
+
+def validate_llm_control_params(operation: str, params: dict[str, Any]) -> None:
+    """Allow only the body-free signaling shapes used by the private protocol."""
+    allowed = LLM_CONTROL_PARAMS.get(str(operation))
+    if allowed is None:
+        raise JobError("unsupported LLM control operation; use the private task protocol")
+    unexpected = set(params) - allowed
+    if unexpected:
+        raise JobError("LLM control params are not allowed; task bodies require the private task protocol")
 
 
 @dataclass(frozen=True)
@@ -217,9 +232,7 @@ def verify_work_order(signed: SignedPayload) -> WorkOrder:
     if not order.operation:
         raise JobError("work_order_operation_required")
     if order.capability.startswith("rynmesh.llm"):
-        forbidden = {"prompt", "messages", "context", "response", "output", "text"}
-        if forbidden.intersection(order.params):
-            raise JobError("llm_plaintext_work_order_forbidden_use_private_task_protocol")
+        validate_llm_control_params(order.operation, order.params)
     return order
 
 

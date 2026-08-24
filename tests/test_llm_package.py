@@ -21,7 +21,11 @@ from rynmesh.llm_package.p2p import (
     selected_pair,
     send_json,
 )
-from rynmesh.llm_package.routes import ProviderService, _recover_consumer_orders
+from rynmesh.llm_package.routes import (
+    ProviderService,
+    _open_provider_response,
+    _recover_consumer_orders,
+)
 from rynmesh.llm_package.task_balance import TaskBalanceError, TaskBalanceLedger
 from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
 from rynmesh.services import peer_box
@@ -147,6 +151,37 @@ def test_task_balance_hold_settle_release_and_dedupe(tmp_path):
     assert all("prompt" not in json.dumps(event) for event in ledger.events())
 
 
+def test_task_balance_rejects_task_id_reuse_for_different_request(tmp_path):
+    ledger = TaskBalanceLedger(tmp_path / "task-balance.json", initial_dev_balance=10)
+    ledger.hold(
+        task_id="same", amount=2, service_id="svc", provider_peer_id="provider-a",
+        idempotency_key="key", request_fingerprint="fingerprint-a",
+    )
+    with pytest.raises(TaskBalanceError, match="idempotency conflict"):
+        ledger.hold(
+            task_id="same", amount=2, service_id="svc", provider_peer_id="provider-b",
+            idempotency_key="key", request_fingerprint="fingerprint-b",
+        )
+
+
+def test_task_store_rejects_state_rollback_and_binding_changes(tmp_path):
+    orders = TaskOrderStore(tmp_path / "orders")
+    bindings = {
+        "consumer_peer_id": "consumer", "service_id": "svc",
+        "idempotency_key": "key", "request_fingerprint": "fingerprint",
+    }
+    _, claimed = orders.claim(task_id="bound", bindings=bindings)
+    assert claimed is True
+    _, claimed_again = orders.claim(task_id="bound", bindings=bindings)
+    assert claimed_again is False
+    orders.transition(task_id="bound", state="accepted")
+    orders.transition(task_id="bound", state="running")
+    with pytest.raises(Exception, match="invalid task transition"):
+        orders.transition(task_id="bound", state="accepted")
+    with pytest.raises(Exception, match="idempotency conflict"):
+        orders.claim(task_id="bound", bindings={**bindings, "service_id": "other"})
+
+
 def test_task_envelope_is_ciphertext_and_authenticated(tmp_path):
     sender = RynmeshStore(home=tmp_path / "s", network_dir=tmp_path / "net")
     recipient = RynmeshStore(home=tmp_path / "r", network_dir=tmp_path / "net")
@@ -230,6 +265,7 @@ def test_restart_recovery_fails_interrupted_order_and_releases_hold(tmp_path):
     orders = TaskOrderStore(tmp_path / "orders")
     balance = TaskBalanceLedger(tmp_path / "balance.json")
     orders.transition(task_id="task_interrupted", state="created")
+    orders.transition(task_id="task_interrupted", state="accepted")
     orders.transition(task_id="task_interrupted", state="running")
     balance.hold(
         task_id="task_interrupted",
@@ -262,6 +298,20 @@ class _FakeAdapter:
     def cancel(self, task_id): self.cancelled.append(task_id); return True
     def infer(self, *, prompt, max_tokens, task_id, timeout_s):
         self.calls += 1
+        return {"text": "provider output", "model": "fake-test-only", "input_tokens": 5,
+                "output_tokens": 2, "duration_ms": 7}
+
+
+class _BlockingAdapter(_FakeAdapter):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def infer(self, *, prompt, max_tokens, task_id, timeout_s):
+        self.calls += 1
+        self.started.set()
+        assert self.release.wait(timeout=5)
         return {"text": "provider output", "model": "fake-test-only", "input_tokens": 5,
                 "output_tokens": 2, "duration_ms": 7}
 
@@ -299,12 +349,79 @@ def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     assert "provider output" not in disk
     settlement = sign_payload({
         "kind": "llm_settlement", "task_id": "task_same", "from_peer_id": consumer.peer_id,
-        "to_peer_id": provider.peer_id, "amount": result["amount"], "settlement_id": "settle:task_same",
+        "to_peer_id": provider.peer_id, "amount": result["amount"], "service_id": "svc",
+        "settlement_id": "settle:task_same",
     }, private_key_bytes=consumer.private_key_bytes).to_dict()
+    attacker = RynmeshStore(home=tmp_path / "attacker", network_dir=net)
+    forged = sign_payload({
+        "kind": "llm_settlement", "task_id": "task_same", "from_peer_id": attacker.peer_id,
+        "to_peer_id": provider.peer_id, "amount": result["amount"], "service_id": "svc",
+        "settlement_id": "settle:task_same",
+    }, private_key_bytes=attacker.private_key_bytes).to_dict()
+    with pytest.raises(Exception, match="not the task consumer"):
+        service.settle_earning(forged)
     one = service.settle_earning(settlement)
     two = service.settle_earning(settlement)
     assert one["event_id"] == two["event_id"] == "earning:task_same"
     assert balance.summary()["earned"] == result["amount"]
+
+
+def test_provider_concurrent_duplicate_executes_once(tmp_path):
+    net = tmp_path / "net"
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
+    consumer = RynmeshStore(home=tmp_path / "consumer", network_dir=net)
+    provider_msg = peer_box.load_or_create_messaging_key(tmp_path / "provider-msg")
+    consumer_msg = peer_box.load_or_create_messaging_key(tmp_path / "consumer-msg")
+    adapter = _BlockingAdapter()
+    service = ProviderService(
+        manifest=LLMPackageManifest(
+            package_id="svc", mode="openai_compatible", public_model_alias="alias",
+            base_url="http://127.0.0.1:1", timeout_seconds=2,
+        ),
+        adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+    )
+    request = seal_task(
+        body={"task_id": "task_concurrent", "idempotency_key": "same-request",
+              "service_id": "svc", "prompt": "private", "max_tokens": 8, "max_amount": 1,
+              "reply_messaging_pub": peer_box.public_key_b64(consumer_msg)},
+        task_id="task_concurrent", kind="llm_request", sender_peer_id=consumer.peer_id,
+        recipient_peer_id=provider.peer_id, sender_signing_key=consumer.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(provider_msg), expires_at=_expires(),
+    ).to_dict()
+    responses = []
+    threads = [threading.Thread(target=lambda: responses.append(service.handle(request))) for _ in range(2)]
+    threads[0].start()
+    assert adapter.started.wait(timeout=2)
+    threads[1].start()
+    adapter.release.set()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    assert adapter.calls == 1
+    assert len(responses) == 2 and responses[0] == responses[1]
+    assert service.task_store.get("task_concurrent")["state"] == "succeeded"
+
+
+def test_consumer_rejects_response_signed_by_another_provider(tmp_path):
+    net = tmp_path / "net"
+    expected = RynmeshStore(home=tmp_path / "expected", network_dir=net)
+    rogue = RynmeshStore(home=tmp_path / "rogue", network_dir=net)
+    consumer = RynmeshStore(home=tmp_path / "consumer", network_dir=net)
+    consumer_msg = peer_box.load_or_create_messaging_key(tmp_path / "consumer-msg")
+    response = seal_task(
+        body={"task_id": "task_response", "service_id": "svc", "state": "succeeded",
+              "input_tokens": 1, "output_tokens": 1, "duration_ms": 1, "amount": 0.001,
+              "output": "rogue"},
+        task_id="task_response", kind="llm_response", sender_peer_id=rogue.peer_id,
+        recipient_peer_id=consumer.peer_id, sender_signing_key=rogue.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(consumer_msg), expires_at=_expires(),
+    ).to_dict()
+    with pytest.raises(Exception, match="not the selected provider"):
+        _open_provider_response(
+            response, recipient_peer_id=consumer.peer_id, messaging_key=consumer_msg,
+            task_id="task_response", provider_peer_id=expected.peer_id, service_id="svc",
+        )
 
 
 def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):

@@ -1,8 +1,5 @@
 # Keep the rynnet build context small (context = repo root).
 .git
-webapp/*
-!webapp/dist/
-!webapp/dist/**
 **/node_modules
 **/target
 .venv
@@ -10,8 +7,6 @@ webapp/*
 **/.pytest_cache
 **/.ruff_cache
 dist
-!webapp/dist/
-!webapp/dist/**
 build
 rynnet/runs
 *.tsbuildinfo

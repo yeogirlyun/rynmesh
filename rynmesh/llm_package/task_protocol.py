@@ -16,6 +16,11 @@ from rynmesh.services import peer_box
 TASK_ENVELOPE_VERSION = "rynmesh.llm.e2ee.v1"
 TERMINAL_STATES = {"succeeded", "failed", "timed_out", "cancelled", "rejected"}
 ALL_STATES = {"created", "accepted", "running", *TERMINAL_STATES}
+ALLOWED_TRANSITIONS = {
+    "created": {"accepted", "failed", "timed_out", "cancelled", "rejected"},
+    "accepted": {"running", "failed", "timed_out", "cancelled", "rejected"},
+    "running": {"succeeded", "failed", "timed_out", "cancelled", "rejected"},
+}
 
 
 class TaskProtocolError(RuntimeError):
@@ -92,17 +97,57 @@ class TaskOrderStore:
             raise TaskProtocolError(f"cannot read task record: {exc}") from exc
         return value if isinstance(value, dict) else None
 
+    def claim(self, *, task_id: str, bindings: dict[str, str]) -> tuple[dict[str, Any], bool]:
+        """Atomically create a task or validate an exact idempotent duplicate."""
+        cleaned = {str(key): str(value) for key, value in bindings.items()}
+        if not cleaned or any(not value for value in cleaned.values()):
+            raise TaskProtocolError("task bindings must be non-empty strings")
+        with self._lock:
+            existing = self.get(task_id)
+            if existing is not None:
+                if dict(existing.get("bindings") or {}) != cleaned:
+                    raise TaskProtocolError("task idempotency conflict")
+                return existing, False
+            now = datetime.now(timezone.utc).isoformat()
+            record = {
+                "task_id": task_id,
+                "state": "created",
+                "bindings": cleaned,
+                "created_at": now,
+                "updated_at": now,
+                "history": [{"state": "created", "at": now}],
+            }
+            self._write(record)
+            return record, True
+
     def transition(self, *, task_id: str, state: str, metadata: dict[str, Any] | None = None,
                    encrypted_response: dict[str, Any] | None = None,
                    allow_recovery: bool = False) -> dict[str, Any]:
         if state not in ALL_STATES:
             raise TaskProtocolError("invalid task state")
         with self._lock:
-            record = self.get(task_id) or {"task_id": task_id, "state": "created", "history": []}
+            record = self.get(task_id)
+            if record is None:
+                if state != "created":
+                    raise TaskProtocolError("task must be created before transitioning")
+                now = datetime.now(timezone.utc).isoformat()
+                record = {
+                    "task_id": task_id,
+                    "state": "created",
+                    "created_at": now,
+                    "updated_at": now,
+                    "history": [{"state": "created", "at": now, **dict(metadata or {})}],
+                }
+                self._write(record)
+                return record
             current_state = record.get("state")
             recovery = allow_recovery and current_state in {"failed", "timed_out"} and state == "succeeded"
             if current_state in TERMINAL_STATES and not recovery:
                 return record
+            if state == current_state:
+                return record
+            if not recovery and state not in ALLOWED_TRANSITIONS.get(str(current_state), set()):
+                raise TaskProtocolError(f"invalid task transition: {current_state} -> {state}")
             now = datetime.now(timezone.utc).isoformat()
             event = {"state": state, "at": now, **dict(metadata or {})}
             if recovery:

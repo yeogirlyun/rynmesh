@@ -17,11 +17,12 @@ export default function Services() {
   const [skipExisting, setSkipExisting] = useState(true);
   const [lastOrderId, setLastOrderId] = useState("");
   const [results, setResults] = useState<WorkResult[]>([]);
-  const [llmNetwork, setLlmNetwork] = useState("rynmesh-llm-e2e");
+  const [llmNetwork, setLlmNetwork] = useState("rynmesh-main");
   const [llmServices, setLlmServices] = useState<LLMServiceRecord[]>([]);
   const [selectedLlmPeerId, setSelectedLlmPeerId] = useState("");
   const [llmPrompt, setLlmPrompt] = useState("Explain in one sentence why this request travelled through Rynmesh.");
   const [llmMaxTokens, setLlmMaxTokens] = useState("64");
+  const [llmTransport, setLlmTransport] = useState<"auto" | "direct" | "p2p" | "relay">("auto");
   const [llmResult, setLlmResult] = useState<LLMOrderResult | null>(null);
   const [llmBalance, setLlmBalance] = useState<TaskBalanceSummary | null>(null);
   const [llmProvider, setLlmProvider] = useState<LLMProviderStatus | null>(null);
@@ -40,20 +41,29 @@ export default function Services() {
 
   const refresh = async () => {
     setLoading(true);
-    const [next, nextLlm, nextBalance, nextProvider] = await Promise.all([
-      client.listJobCapacities({ capability: VEO_CAPABILITY }),
-      client.listLLMServices(llmNetwork),
-      client.getTaskBalance(),
-      client.getLLMServiceStatus(),
-    ]);
-    setCapacities(next);
-    setLlmServices(nextLlm);
-    setLlmBalance(nextBalance);
-    setLlmProvider(nextProvider);
-    if (!selectedPeerId && next[0]) setSelectedPeerId(next[0].peer_id);
-    if (!selectedLlmPeerId && nextLlm[0]) setSelectedLlmPeerId(nextLlm[0].peer_id);
-    if (lastOrderId) setResults(await client.listWorkResults({ work_order_id: lastOrderId }));
-    setLoading(false);
+    try {
+      const [capacityResult, serviceResult, balanceResult, providerResult] = await Promise.allSettled([
+        client.listJobCapacities({ capability: VEO_CAPABILITY }),
+        client.listLLMServices(llmNetwork),
+        client.getTaskBalance(),
+        client.getLLMServiceStatus(),
+      ]);
+      if (capacityResult.status === "fulfilled") {
+        setCapacities(capacityResult.value);
+        if (!selectedPeerId && capacityResult.value[0]) setSelectedPeerId(capacityResult.value[0].peer_id);
+      }
+      if (serviceResult.status === "fulfilled") {
+        setLlmServices(serviceResult.value);
+        if (!selectedLlmPeerId && serviceResult.value[0]) setSelectedLlmPeerId(serviceResult.value[0].peer_id);
+      } else {
+        setLlmProgress({ tone: "danger", text: `Service discovery failed: ${serviceResult.reason instanceof Error ? serviceResult.reason.message : "unknown error"}` });
+      }
+      if (balanceResult.status === "fulfilled") setLlmBalance(balanceResult.value);
+      if (providerResult.status === "fulfilled") setLlmProvider(providerResult.value);
+      if (lastOrderId) setResults(await client.listWorkResults({ work_order_id: lastOrderId }));
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -99,7 +109,13 @@ export default function Services() {
     setLlmResult(null);
     setLlmProgress({
       tone: "info",
-      text: "Order accepted locally. Strict public P2P hole punching is in progress; relay fallback is disabled.",
+      text: llmTransport === "p2p"
+        ? "Order accepted locally. Strict P2P connection is in progress; relay fallback is disabled."
+        : llmTransport === "relay"
+          ? "Order accepted locally. End-to-end ciphertext relay delivery is in progress."
+          : llmTransport === "direct"
+            ? "Order accepted locally. A direct Provider node connection is in progress."
+            : "Order accepted locally. The node is selecting an available encrypted transport.",
     });
     try {
       const result = await client.submitLLMOrder({
@@ -108,12 +124,13 @@ export default function Services() {
         service_id: selectedLlm.service.package_id,
         prompt: llmPrompt.trim(),
         max_tokens: Math.max(1, Number(llmMaxTokens || 64)),
+        transport: llmTransport,
       });
       setLlmResult(result);
       setLlmBalance(await client.getTaskBalance());
       setLlmProgress({
         tone: result.state === "succeeded" ? "ok" : "danger",
-        text: `Order ${result.state}${result.error_code ? `: ${result.error_code}` : ""}`,
+        text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${result.error_code}` : ""}`,
       });
       notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
     } catch (error) {
@@ -231,6 +248,18 @@ export default function Services() {
             <span>Maximum output tokens</span>
             <input value={llmMaxTokens} onChange={(event) => setLlmMaxTokens(event.target.value)} inputMode="numeric" />
           </label>
+          <label className="field">
+            <span>Transport policy</span>
+            <select value={llmTransport} onChange={(event) => setLlmTransport(event.target.value as typeof llmTransport)}>
+              <option value="auto">Automatic — direct first, encrypted relay if configured</option>
+              <option value="direct">Direct Provider HTTP only</option>
+              <option value="p2p">Strict ICE/UDP P2P — never relay</option>
+              <option value="relay">End-to-end ciphertext relay</option>
+            </select>
+          </label>
+          <div className="service-result">
+            <small>The Provider necessarily sees plaintext during inference. Registry coordination never receives the prompt or response body.</small>
+          </div>
           <div className="button-row">
             <Button
               variant="primary"
@@ -267,6 +296,7 @@ export default function Services() {
               <Chip mono>{llmResult.input_tokens ?? 0} in / {llmResult.output_tokens ?? 0} out</Chip>
               <Chip mono>{llmResult.duration_ms ?? 0} ms</Chip>
               <Chip mono>{llmResult.amount ?? 0} DEV_TASK_BALANCE</Chip>
+              {llmResult.transport ? <Chip mono>{llmResult.transport}</Chip> : null}
             </div>
           </div>
         </Panel>

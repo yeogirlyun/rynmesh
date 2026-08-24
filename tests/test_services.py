@@ -100,6 +100,19 @@ def test_legacy_llm_work_order_rejects_plaintext(tmp_path) -> None:
             params={"prompt": "must not enter registry", "max_tokens": 16},
         )
 
+    with pytest.raises(ValueError, match="private task protocol"):
+        requester.submit_work_order(
+            provider_peer_id=provider.peer_id,
+            capability="rynmesh.llm.private.v1",
+            operation="rynmesh.llm.private.infer.v1.p2p_offer",
+            params={
+                "session_id": "session",
+                "ice_signal": {"username": "u", "password": "p", "candidates": ["candidate"]},
+                "timeout_seconds": 30,
+                "payload": {"prompt": "nested plaintext must not enter registry"},
+            },
+        )
+
 
 def test_embeddings_worker_end_to_end(tmp_path) -> None:
     provider = _new_store(tmp_path / "p", tmp_path / "net", "p")

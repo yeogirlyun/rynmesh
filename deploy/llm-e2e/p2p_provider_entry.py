@@ -34,7 +34,7 @@ def main() -> int:
         "RYNMESH_PEER_ENDPOINT": "http://127.0.0.1:18894",
         "RYNMESH_HOME": str(provider_home),
         "RYNMESH_LLM_SERVICE_MANIFEST": str(
-            root / "deploy" / "llm-e2e" / "config" / "host-real-manifest.json"
+            root / "deploy" / "llm-e2e" / "config" / "host-native-real-manifest.json"
         ),
         "RYNMESH_AUTO_REGISTER": "1",
         "RYNMESH_LLM_TRANSPORT": "p2p",
