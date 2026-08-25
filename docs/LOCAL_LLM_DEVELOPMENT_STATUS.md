@@ -149,13 +149,21 @@ acceptance. The latest package now fails this condition early with
 `p2p_distinct_public_egress_required`; a genuinely different public exit is the
 remaining environmental prerequisite.
 
+The corrected package `remote-consumer-20260825-142504.zip` was then copied to
+the remote Windows machine and started successfully (processes 13584/13092).
+Its Services page automatically loaded discovery network `rynmesh-llm-e2e`,
+showed both Provider/node/package choices distinctly, and submitted strict task
+`task_8478211f1dc144e4aea515592d9c1294` to the host-native package. In about ten
+seconds it failed with the actionable shared-public-exit guidance. The displayed
+DEV balance remained `100.000` and the hold returned to `0.000`.
+
 ## Next actions
 
 1. Move either Consumer or Provider off the shared company-VPN public exit
    (for example, an approved alternate network); do not disconnect network
    controls without owner approval.
-2. Copy and start the latest prepared Consumer package and verify the configured
-   discovery network plus disambiguated Provider labels.
+2. Place the remote Consumer on an approved alternate outbound network and
+   start the already-verified latest package.
 3. Submit a real prompt from the remote Consumer to the host-native package.
 4. Record the distinct nominated public ICE pair, `relay_used=false`, Provider real-model
    invocation, returned output, terminal order history, single settlement and

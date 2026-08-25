@@ -97,6 +97,12 @@ check fails.
 - A new fail-closed package detects that shared-exit condition early. The
   remaining gate is to place one node on a genuinely different public exit,
   rerun the package remotely and record the nominated public ICE pair.
+- Package `remote-consumer-20260825-142504.zip` was copied and started on the
+  remote machine. It automatically loaded `rynmesh-llm-e2e`, distinctly listed
+  both Provider/node/package options, and failed strict task
+  `task_8478211f1dc144e4aea515592d9c1294` in about ten seconds with actionable
+  shared-public-exit guidance. DEV balance stayed `100.000`; held balance
+  returned to `0.000`.
 - The current UX immediately returns a task ID, shows queued/connecting/running
   progress, supports cancellation, preserves terminal history, exposes only
   sanitized errors, and refreshes released Task Balance.

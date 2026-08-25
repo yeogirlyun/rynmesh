@@ -115,6 +115,16 @@ confirms that the current shared-VPN topology cannot satisfy different-egress
 acceptance. The latest source now detects this before the full ICE timeout and
 reports `p2p_distinct_public_egress_required`.
 
+The resulting package `remote-consumer-20260825-142504.zip` was copied to and
+started on the same remote Windows machine. It automatically populated
+`rynmesh-llm-e2e`, displayed the two Provider/node/package choices distinctly,
+and submitted strict task `task_8478211f1dc144e4aea515592d9c1294` to the
+host-native service. The task failed in about ten seconds with the user-facing
+instruction to disconnect the shared VPN or move one node to another network;
+the DEV balance remained `100.000` and held balance returned to `0.000`. This
+validates the new fail-fast UX, but remains a negative topology test rather than
+a successful public P2P run.
+
 ### 2026-08-25 review checkpoint
 
 - Focused Python tests: 40 passed.
