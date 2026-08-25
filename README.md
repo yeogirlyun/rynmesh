@@ -147,7 +147,9 @@ See [Local LLM runbook](docs/LOCAL_LLM_RUNBOOK.md),
 [design and boundaries](docs/LOCAL_LLM_SERVICE_MVP.md), and
 [P0 evidence](docs/LOCAL_LLM_P0_EVIDENCE.md). Developers and AI agents should
 start with the [current development handoff](docs/LOCAL_LLM_DEVELOPMENT_STATUS.md)
-before continuing this feature.
+before continuing this feature. The user-facing catalog, typed service routes,
+local conversation storage, and extension rules are documented in the
+[Services UI architecture](docs/SERVICES_UI_ARCHITECTURE.md).
 
 ## Verify a checkout
 

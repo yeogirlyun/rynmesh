@@ -122,7 +122,15 @@ Current screens include:
 - Publish: user-approved publishing flow
 - Item Detail: manifest, provenance, safety receipts, credits, and fetch actions
 - Peers: discovered peers and trust/reputation signals
+- Services: a task-first catalog with dedicated Private AI chat, video-rendering,
+  and secure-web connection experiences; advanced package/provider controls
+  remain available at `/services/manage`
 - Settings: registry, trusted roots, model provider, safety policy, ranking policy, storage
+
+The Services route and storage boundaries are specified in
+[`SERVICES_UI_ARCHITECTURE.md`](SERVICES_UI_ARCHITECTURE.md). In particular,
+`/chat` remains direct peer messaging; language-model conversations are nested
+under `/services/private-ai/chat` and use encrypted device-local persistence.
 
 ### AI Curator
 

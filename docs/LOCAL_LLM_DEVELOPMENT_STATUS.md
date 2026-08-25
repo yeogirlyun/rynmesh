@@ -83,13 +83,15 @@ inference; this is not confidential computing.
 - `RYNMESH_P2P_REQUIRE_PUBLIC=1` filters out host/private candidates.
 - Packaged public Consumer forces strict P2P, requires distinct public egress
   mappings for acceptance, and removes task-relay fallback.
-- Webapp Services page supports all four Provider setup profiles, explicit
-  self-test, manual publish/pause, discovery, service selection, prompt and
-  max-token input, asynchronous ordering, progress, cancellation, result and
-  Task Balance display.
-- Consumer history persists body-free metadata only. Prompts are never stored;
-  returned results use encrypted retention choices of 0, 1 hour, 24 hours or 7
-  days and terminal history can be cleared.
+- Webapp Services uses a task-first catalog. Private AI opens a dedicated
+  multi-conversation chat; video rendering and secure web access open lifecycle-
+  specific workflows. Advanced Provider setup, publish/pause, and diagnostics
+  remain available at `/services/manage`.
+- Node-side Consumer order history persists body-free metadata only and never
+  stores prompts. Returned node results use retention choices of 0, 1 hour, 24
+  hours or 7 days. Separately, the browser stores Private AI conversation
+  bodies as AES-GCM ciphertext in IndexedDB and can clear both local conversation
+  history and retained terminal node results.
 - Latest source immediately returns a task ID, shows queued/connecting/running
   progress, records `created -> accepted -> running -> terminal`, exposes a
   sanitized failure reason and refreshes released balance.
@@ -109,11 +111,11 @@ inference; this is not confidential computing.
 | Encryption, P2P and settlement | `task_protocol.py`, `p2p.py`, `task_balance.py` |
 | Node API and order orchestration | `rynmesh/llm_package/routes.py`, `rynmesh/peer_http.py` |
 | Provider publication | `rynmesh/services/llm.py` and related service/store/registry changes |
-| Consumer Webapp | `webapp/src/screens/Services.tsx`, domain client files |
+| Consumer Webapp | `webapp/src/screens/ServicesCatalog.tsx`, `PrivateAIChat.tsx`, `Services.tsx`, domain client files |
 | Isolated E2E | `deploy/llm-e2e/`, `scripts/llm_e2e.py` |
 | Public P2P evidence audit | `scripts/audit_public_p2p.py` |
 | Automated tests | `tests/test_llm_package.py`, `tests/test_services.py`, `tests/test_transport.py` |
-| Detailed design/runbook | `LOCAL_LLM_SERVICE_MVP.md`, `LOCAL_LLM_RUNBOOK.md` |
+| Detailed design/runbook | `LOCAL_LLM_SERVICE_MVP.md`, `LOCAL_LLM_RUNBOOK.md`, `SERVICES_UI_ARCHITECTURE.md` |
 | Acceptance evidence | `LOCAL_LLM_P0_EVIDENCE.md`, `REAL_LLM_VALIDATION.md` |
 
 ## Current verification
@@ -121,7 +123,7 @@ inference; this is not confidential computing.
 - Focused Python suite:
   `python -m pytest tests/test_llm_package.py tests/test_services.py tests/test_transport.py -q`
   -> 40 passed.
-- Webapp: `npm test` -> 24 passed.
+- Webapp: `npm test` -> 38 passed.
 - Webapp: `npm run lint` and `npm run build` -> passed.
 - `git diff --check` -> no content errors; Windows reports expected LF/CRLF
   conversion warnings.
