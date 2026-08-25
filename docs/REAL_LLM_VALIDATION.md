@@ -129,7 +129,7 @@ a successful public P2P run.
 
 - Focused Python tests: 40 passed.
 - Webapp tests: 24 passed; TypeScript/Vite build and typecheck passed.
-- Windows full Python suite: 486 passed, 13 platform-specific failures, 3
+- Windows full Python suite: 488 passed, 13 platform-specific failures, 3
   skipped.
 - Deterministic direct and forced-relay Docker runs passed from clean source;
   the relay persisted ciphertext and contained no fixed plaintext. A host real

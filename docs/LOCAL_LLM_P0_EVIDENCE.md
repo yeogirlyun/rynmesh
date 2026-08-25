@@ -51,7 +51,7 @@ non-mock evidence is recorded separately in `REAL_LLM_VALIDATION.md`.
 | 32 | Pass | Automated direct and forced-relay E2E both completed publish, discover, order, encrypted inference, result and settlement. |
 | 33 | Pass | `REAL_LLM_VALIDATION.md` records reproducible, desensitized non-mock connection, managed, import and real two-node inference hashes/usage. |
 | 34 | Pass | `down` stops; `clean` removes only the named E2E containers/networks/volumes and never deletes a host model. Managed/import cleanup behavior was separately verified. |
-| 35 | Pass | Current focused LLM/services/transport suite: `40 passed`; Webapp: `24 passed`. Current Windows full suite: `486 passed / 13 failed / 3 skipped`; remaining failures are platform-only categories outside this task. |
+| 35 | Pass | Current focused LLM/services/transport suite: `40 passed`; public-P2P audit suite: `2 passed`; Webapp: `24 passed`. Current Windows full suite: `488 passed / 13 failed / 3 skipped`; remaining failures are platform-only categories outside this task. |
 | 36 | Pass | `ruff` passes on every changed Python file; TypeScript/Vite production build passes; Vitest 24/24 passes. Full-repo ruff retains seven pre-existing `sim/` findings. Linux full pytest from the earlier Windows checkout checkpoint: 484 pass, 2 pre-existing CRLF shell-syntax failures, 3 skip. |
 | 37 | Pass | README plus design, runbook, real-validation and this evidence file cover all three modes, topology/demo, privacy/payment boundaries and troubleshooting. |
 | 38 | Pass | Work began from clean committed `f631682` in a separate worktree/branch. Diff is limited to the package, node route integration, E2E, docs, entry point, ignore and focused tests; no original-worktree files were read/overwritten. |

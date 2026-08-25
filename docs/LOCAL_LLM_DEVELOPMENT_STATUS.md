@@ -125,7 +125,7 @@ inference; this is not confidential computing.
 - Webapp: `npm run lint` and `npm run build` -> passed.
 - `git diff --check` -> no content errors; Windows reports expected LF/CRLF
   conversion warnings.
-- Full Windows Python suite -> 486 passed, 13 failed, 3 skipped. The remaining
+- Full Windows Python suite -> 488 passed, 13 failed, 3 skipped. The remaining
   failures are Windows locale/POSIX-mode/WSL/subprocess-select categories in
   areas not changed for this feature; see `LOCAL_LLM_P0_EVIDENCE.md`.
 - Real llama.cpp/OpenAI-compatible health remains available on Provider
