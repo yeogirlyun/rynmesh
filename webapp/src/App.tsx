@@ -30,6 +30,7 @@ import SearchAsk from "./screens/SearchAsk";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Services from "./screens/Services";
+import ServicesCatalog from "./screens/ServicesCatalog";
 import Chat from "./screens/Chat";
 import Settings from "./screens/Settings";
 import UnlockGate from "./screens/components/UnlockGate";
@@ -402,7 +403,8 @@ export function AppRoutes() {
           <Route path="search-ask" element={<SearchAsk />} />
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />
-          <Route path="services" element={<Services />} />
+          <Route path="services" element={<ServicesCatalog />} />
+          <Route path="services/manage" element={<Services />} />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<Settings />} />
         </Route>
