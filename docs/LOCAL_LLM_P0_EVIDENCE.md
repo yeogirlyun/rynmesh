@@ -59,6 +59,7 @@ non-mock evidence is recorded separately in `REAL_LLM_VALIDATION.md`.
 | 40 | Pass | Consumer submission returns a task ID without blocking, polls signed state/progress, supports live cancellation, keeps body-free task history, encrypts retained results for 0/1h/24h/7d, never persists prompts, clears terminal history, and reconciles interrupted balance settlement idempotently. |
 | 41 | Pass | Services initializes discovery from `NodeSettings.network_id`; equal aliases display node and package identity and are selected with a compound peer/package key. A regression test submits the exact second Provider/package. |
 | 42 | Pass | Strict acceptance can require distinct STUN public mappings. Shared-exit attempts fail closed with `p2p_distinct_public_egress_required`, actionable UI guidance, released hold and no relay fallback. |
+| 43 | Pass | `scripts/audit_public_p2p.py` verifies Registry signatures and signer identities, body-free signaling fields, srflx-only candidates, distinct public mappings, accepted/completed states, exact requester/Provider continuity, bidirectional byte evidence and `relay_used=false`; shared-exit evidence is rejected by test. |
 
 ## Verification commands
 

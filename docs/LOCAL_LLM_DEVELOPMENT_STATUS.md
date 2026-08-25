@@ -111,6 +111,7 @@ inference; this is not confidential computing.
 | Provider publication | `rynmesh/services/llm.py` and related service/store/registry changes |
 | Consumer Webapp | `webapp/src/screens/Services.tsx`, domain client files |
 | Isolated E2E | `deploy/llm-e2e/`, `scripts/llm_e2e.py` |
+| Public P2P evidence audit | `scripts/audit_public_p2p.py` |
 | Automated tests | `tests/test_llm_package.py`, `tests/test_services.py`, `tests/test_transport.py` |
 | Detailed design/runbook | `LOCAL_LLM_SERVICE_MVP.md`, `LOCAL_LLM_RUNBOOK.md` |
 | Acceptance evidence | `LOCAL_LLM_P0_EVIDENCE.md`, `REAL_LLM_VALIDATION.md` |
@@ -170,6 +171,7 @@ cd webapp && npm test && npm run lint && npm run build
 python scripts/llm_e2e.py run
 python scripts/llm_e2e.py down
 pyinstaller --noconfirm deploy/llm-e2e/windows-consumer/RynmeshPublicConsumer.spec
+python scripts/audit_public_p2p.py --env-file deploy/llm-e2e/config/public-network.env --work-order-id <id>
 ```
 
 ## Rules for subsequent agents

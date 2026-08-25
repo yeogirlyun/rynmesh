@@ -190,6 +190,22 @@ Identity, order state, logs, and PID files are stored under
 `%LOCALAPPDATA%\RynmeshPublicConsumer`; model files and Provider secrets are
 never copied there.
 
+After a successful strict run, verify the signed Registry evidence from the
+repository root. The command prints only task/peer IDs, public mappings,
+transport flags and byte counts; it never reads a prompt or response body:
+
+```powershell
+.venv\Scripts\python.exe scripts\audit_public_p2p.py `
+  --env-file deploy\llm-e2e\config\public-network.env `
+  --work-order-id <strict-p2p-work-order-id>
+```
+
+The audit must report `ok=true`, distinct Consumer/Provider public mappings,
+`transport=ice_udp_direct`, `relay_used=false`, a nominated public peer mapping
+and positive request/response byte counts. Any failed/cancelled state, invalid
+signature, shared public exit, host candidate or missing evidence fails the
+command.
+
 Stop without deleting volumes:
 
 ```bash
