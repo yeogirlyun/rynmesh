@@ -31,6 +31,9 @@ import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
+import PrivateAIChat from "./screens/PrivateAIChat";
+import VideoRendering from "./screens/VideoRendering";
+import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
 import Settings from "./screens/Settings";
 import UnlockGate from "./screens/components/UnlockGate";
@@ -405,6 +408,9 @@ export function AppRoutes() {
           <Route path="peers" element={<Peers />} />
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
+          <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="services/video-rendering" element={<VideoRendering />} />
+          <Route path="services/secure-web-access" element={<SecureWebAccess />} />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<Settings />} />
         </Route>

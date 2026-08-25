@@ -31,6 +31,22 @@ interface CatalogService {
   href: string;
 }
 
+interface RecentService {
+  id: string;
+  openedAt: number;
+}
+
+const RECENT_STORAGE_KEY = "ryn.services.recent.v1";
+
+function loadRecentServices(): RecentService[] {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(RECENT_STORAGE_KEY) ?? "[]") as RecentService[];
+    return Array.isArray(stored) ? stored.filter((item) => item && typeof item.id === "string" && typeof item.openedAt === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
 const filters: Array<{ id: ServiceCategory; label: string }> = [
   { id: "all", label: "All" },
   { id: "ai", label: "AI" },
@@ -38,12 +54,13 @@ const filters: Array<{ id: ServiceCategory; label: string }> = [
   { id: "network", label: "Network" },
 ];
 
-function llmHref(service: LLMServiceRecord, networkId: string) {
+function llmHref(service: LLMServiceRecord, networkId: string, clientMode: "live" | "fixture") {
   const query = new URLSearchParams({
     peer: service.peer_id,
     service: service.service.package_id,
     network: networkId,
   });
+  if (clientMode === "fixture") query.set("client", "fixture");
   return `/services/private-ai/chat?${query.toString()}`;
 }
 
@@ -60,6 +77,7 @@ export default function ServicesCatalog() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ServiceCategory>("all");
+  const [recent, setRecent] = useState<RecentService[]>(loadRecentServices);
 
   useEffect(() => {
     let active = true;
@@ -97,7 +115,7 @@ export default function ServicesCatalog() {
         action: "Open chat",
         available: Boolean(llm?.online),
         icon: Bot,
-        href: llm ? llmHref(llm, networkId) : "/services/manage#private-ai",
+        href: llm ? llmHref(llm, networkId, client.mode) : "/services/manage#private-ai",
       },
       {
         id: "video-rendering",
@@ -109,7 +127,7 @@ export default function ServicesCatalog() {
         action: "Create video",
         available: Boolean(video),
         icon: Film,
-        href: "/services/manage#video-rendering",
+        href: `/services/video-rendering${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
       {
         id: "secure-web-access",
@@ -121,10 +139,10 @@ export default function ServicesCatalog() {
         action: "Connect",
         available: true,
         icon: ShieldCheck,
-        href: "/settings#web-access",
+        href: `/services/secure-web-access${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
     ];
-  }, [capacities, llmServices, networkId]);
+  }, [capacities, client.mode, llmServices, networkId]);
 
   const visible = services.filter((service) => {
     const matchesCategory = filter === "all" || service.category === filter;
@@ -135,8 +153,19 @@ export default function ServicesCatalog() {
 
   const openService = (service: CatalogService) => {
     if (!service.available && service.id !== "private-ai") return;
+    const next = [{ id: service.id, openedAt: Date.now() }, ...recent.filter((item) => item.id !== service.id)].slice(0, 3);
+    setRecent(next);
+    try {
+      window.localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Recent service shortcuts are optional and never contain private content.
+    }
     navigate(service.href);
   };
+
+  const recentServices = recent
+    .map((item) => ({ item, service: services.find((service) => service.id === item.id) }))
+    .filter((entry): entry is { item: RecentService; service: CatalogService } => Boolean(entry.service));
 
   if (loading) return <LoadingPanel label="Finding available services" />;
 
@@ -217,10 +246,30 @@ export default function ServicesCatalog() {
         </div>
       </section>
 
+      {recentServices.length ? (
+        <section className={styles.recentSection} aria-label="Recently used services">
+          <div className={styles.sectionHeading}>
+            <h2>Recently used</h2>
+          </div>
+          <div className={styles.recentList}>
+            {recentServices.map(({ item, service }) => {
+              const Icon = service.icon;
+              return (
+                <button type="button" key={service.id} className={styles.recentRow} onClick={() => openService(service)}>
+                  <span className={styles.recentIcon}><Icon size={17} /></span>
+                  <span className={styles.recentTitle}>{service.title}</span>
+                  <span className={styles.recentTime}>{new Date(item.openedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                  <ArrowRight size={15} />
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       <footer className={styles.footer}>
         <LockKeyhole size={14} /> Providers and routes are selected automatically
       </footer>
     </div>
   );
 }
-
