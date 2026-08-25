@@ -93,6 +93,25 @@ export interface LLMProviderStatus {
   publication_enabled?: boolean;
   accepting_orders?: boolean;
   network_id?: string;
+  lifecycle?: {
+    package_id?: string;
+    mode?: string;
+    runtime?: { managed?: boolean; installed?: boolean; running?: boolean; status?: string };
+    health?: Record<string, unknown>;
+    error?: string;
+  };
+}
+
+export interface LLMSetupJob {
+  job_id?: string;
+  state: "idle" | "queued" | "running" | "cancelling" | "cancelled" | "failed" | "succeeded";
+  stage: string;
+  progress: number;
+  message?: string;
+  error_code?: string;
+  retryable?: boolean;
+  configured?: boolean;
+  publication_enabled?: boolean;
 }
 
 export interface LLMSetupRequest {
@@ -127,6 +146,13 @@ export interface NodeClient {
   publishLLMService(req?: { network_id?: string; benchmark?: boolean }): Promise<Record<string, unknown>>;
   pauseLLMService(): Promise<LLMProviderStatus>;
   setupLLMService(req: LLMSetupRequest): Promise<Record<string, unknown>>;
+  startLLMSetup(req: LLMSetupRequest): Promise<LLMSetupJob>;
+  getLLMSetupStatus(): Promise<LLMSetupJob>;
+  cancelLLMSetup(jobId: string): Promise<LLMSetupJob>;
+  runLLMServiceAction(
+    action: "start" | "stop" | "restart" | "update" | "self-test" | "uninstall",
+    options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },
+  ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
     network_id?: string;

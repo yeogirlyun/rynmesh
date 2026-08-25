@@ -4,13 +4,16 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
-import type { LLMServiceRecord } from "../domain/nodeClient";
+import type { LLMOrderResult, LLMProviderStatus, LLMServiceRecord, LLMSetupJob } from "../domain/nodeClient";
 import Services from "./Services";
 
 function renderServices(options: {
   configuredNetwork?: string;
   discoveryFailure?: boolean;
   services?: LLMServiceRecord[];
+  providerStatus?: LLMProviderStatus;
+  orders?: LLMOrderResult[];
+  setupStatuses?: LLMSetupJob[];
 } = {}) {
   const client = makeFixtureNodeClient();
   const discover = vi.spyOn(client, "listLLMServices");
@@ -27,6 +30,14 @@ function renderServices(options: {
     });
   } else if (options.services) {
     discover.mockResolvedValue(options.services);
+  }
+  if (options.providerStatus) client.getLLMServiceStatus = vi.fn(async () => options.providerStatus!);
+  if (options.orders) client.listLLMOrders = vi.fn(async () => options.orders!);
+  if (options.setupStatuses) {
+    let index = 0;
+    client.getLLMSetupStatus = vi.fn(async () => (
+      options.setupStatuses![Math.min(index++, options.setupStatuses!.length - 1)]
+    ));
   }
   const submit = vi.spyOn(client, "submitLLMOrder");
   const context: AppOutletContext = {
@@ -125,7 +136,7 @@ describe("Services local LLM flow", () => {
     })));
   });
 
-  it("explains how to recover from a shared public exit", async () => {
+  it("explains that an older different-egress package must be updated", async () => {
     const { client, user } = renderServices();
     client.submitLLMOrder = vi.fn(async () => ({
       task_id: "task_shared_exit",
@@ -136,7 +147,7 @@ describe("Services local LLM flow", () => {
     expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Place encrypted order" }));
 
-    expect(await screen.findByText(/Disconnect the shared VPN or move one node to another network/)).toBeInTheDocument();
+    expect(await screen.findByText(/incorrectly requires different public exits/)).toBeInTheDocument();
   });
 
   it("keeps the Services screen usable when LLM discovery fails", async () => {
@@ -149,7 +160,7 @@ describe("Services local LLM flow", () => {
 
   it("configures a local API without publishing it automatically", async () => {
     const { client, user } = renderServices();
-    const setup = vi.spyOn(client, "setupLLMService");
+    const setup = vi.spyOn(client, "startLLMSetup");
     const publish = vi.spyOn(client, "publishLLMService");
 
     expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
@@ -187,5 +198,67 @@ describe("Services local LLM flow", () => {
     expect(client.cancelLLMOrder).toHaveBeenCalledWith("task_async");
     expect(await screen.findByText(/cancellation requested/)).toBeInTheDocument();
     await waitFor(() => expect(client.getLLMOrder).toHaveBeenCalledWith("task_async"), { timeout: 2000 });
+  });
+
+  it("submits authenticated trusted-network local API settings without secret values", async () => {
+    const { client, user } = renderServices();
+    const setup = vi.spyOn(client, "startLLMSetup");
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("API key environment variable (optional)"), "LOCAL_MODEL_KEY");
+    await user.click(screen.getByRole("checkbox", { name: /trusted non-loopback API address/i }));
+    await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
+
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({
+      api_key_env: "LOCAL_MODEL_KEY",
+      allow_non_loopback: true,
+    })));
+  });
+
+  it("resumes polling a running task discovered after page load", async () => {
+    const running = { task_id: "task_resume_after_reload", state: "running" };
+    const { client } = renderServices({ orders: [running] });
+    client.getLLMOrder = vi.fn(async () => ({
+      task_id: running.task_id,
+      state: "succeeded",
+      output: "resumed result",
+      transport: "ice_udp_direct" as const,
+    }));
+
+    expect(await screen.findByText("resumed result")).toBeInTheDocument();
+    expect(client.getLLMOrder).toHaveBeenCalledWith(running.task_id);
+  });
+
+  it("shows recovered setup progress and Provider lifecycle controls", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    const providerStatus: LLMProviderStatus = {
+      configured: true,
+      online: true,
+      publication_enabled: false,
+      service,
+      lifecycle: { runtime: { managed: true, installed: true, running: true, status: "running" } },
+    };
+    const { client, user } = renderServices({
+      providerStatus,
+      setupStatuses: [
+        { job_id: "setup_resume", state: "running", stage: "download_model", progress: 55, message: "Downloading verified model data" },
+        { job_id: "setup_resume", state: "succeeded", stage: "completed", progress: 100, message: "Local model is ready" },
+      ],
+    });
+    const action = vi.spyOn(client, "runLLMServiceAction");
+
+    expect(await screen.findByText("Local model is ready")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run self-test" }));
+    expect(action).toHaveBeenCalledWith("self-test");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled());
+  });
+
+  it("blocks an order before submission when the Provider is offline", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0];
+    const { submit } = renderServices({ services: [{ ...service, online: false }] });
+
+    expect(await screen.findByText("Provider offline")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
+    expect(submit).not.toHaveBeenCalled();
   });
 });

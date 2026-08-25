@@ -70,6 +70,16 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     pauseLLMService: () => requestJson(`${baseUrl}/llm/services/pause`, { method: "POST" }),
     setupLLMService: (req) =>
       requestJson(`${baseUrl}/llm/setup`, { method: "POST", body: JSON.stringify(req) }),
+    startLLMSetup: (req) =>
+      requestJson(`${baseUrl}/llm/setup/async`, { method: "POST", body: JSON.stringify(req) }),
+    getLLMSetupStatus: () => requestJson(`${baseUrl}/llm/setup/status`),
+    cancelLLMSetup: (jobId) =>
+      requestJson(`${baseUrl}/llm/setup/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+    runLLMServiceAction: (action, options) =>
+      requestJson(`${baseUrl}/llm/service/actions/${encodeURIComponent(action)}`, {
+        method: "POST",
+        body: JSON.stringify(options ?? {}),
+      }),
     getTaskBalance: () => requestJson(`${baseUrl}/task-balance`),
     submitLLMOrder: (req) =>
       requestJson(`${baseUrl}/llm/orders/async`, { method: "POST", body: JSON.stringify(req) }),

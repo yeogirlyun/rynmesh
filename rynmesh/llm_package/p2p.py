@@ -174,12 +174,18 @@ def selected_pair(connection: aioice.Connection) -> dict[str, Any]:
         raise P2PError("TURN/relay candidate was nominated in strict P2P mode")
     if public_nat_traversal_required() and str(getattr(remote, "type", "")) != "srflx":
         raise P2PError("strict public NAT traversal did not nominate the peer's STUN mapping")
+    remote_type = str(getattr(remote, "type", ""))
     return {
         "transport": "ice_udp_direct",
         "relay_used": False,
         "public_nat_traversal_required": public_nat_traversal_required(),
         "distinct_public_egress_required": distinct_public_egress_required(),
-        "peer_public_mapping_nominated": str(getattr(remote, "type", "")) == "srflx",
+        "peer_public_mapping_nominated": remote_type in {"srflx", "prflx"},
+        "path_kind": {
+            "host": "host_direct",
+            "srflx": "server_reflexive",
+            "prflx": "peer_reflexive",
+        }.get(remote_type, "direct_udp"),
         "local": _candidate_summary(local),
         "remote": _candidate_summary(remote),
     }

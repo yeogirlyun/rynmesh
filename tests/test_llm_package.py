@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import rynmesh.llm_package.routes as llm_routes
 from rynmesh.crypto import SignatureError, sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
@@ -116,6 +117,12 @@ def test_lifecycle_rejects_package_path_traversal_before_writing(tmp_path, opena
         )
     assert not (tmp_path / "outside").exists()
 
+    with pytest.raises(LifecycleError, match="environment-variable name"):
+        connect_local_api(
+            base_url=openai_server, package_id="safe-package", alias="safe-alias",
+            api_key_env="secret value pasted here", root=tmp_path / "llm",
+        )
+
 
 def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, openai_server):
     home = tmp_path / "node"
@@ -178,6 +185,13 @@ def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, ope
         assert status["state"] == "failed"
         assert "private prompt" not in json.dumps(status)
 
+        invalid_tokens = client.post("/api/local/llm/orders/async", json={
+            "provider_peer_id": "missing-provider", "service_id": "missing-service",
+            "prompt": "private prompt", "max_tokens": "not-a-number",
+        })
+        assert invalid_tokens.status_code == 400
+        assert invalid_tokens.json()["detail"] == "max_tokens must be a positive integer"
+
         privacy = client.put("/api/local/llm/privacy", json={
             "result_retention_seconds": 0,
         })
@@ -206,6 +220,118 @@ def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, ope
     assert Path(settings["manifest"]).parts[-2:] == ("configured-api", "manifest.json")
     assert settings["publication_enabled"] is False
     assert settings["network_id"] == "provider-test"
+
+
+def test_async_setup_reports_progress_and_exposes_safe_lifecycle_actions(tmp_path, openai_server):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+
+    with TestClient(app) as client:
+        queued = client.post("/api/local/llm/setup/async", json={
+            "mode": "openai-compatible",
+            "package_id": "async-local-api",
+            "alias": "async-safe-alias",
+            "base_url": openai_server,
+            "model": "test-real-api",
+        })
+        assert queued.status_code == 200
+        assert queued.json()["state"] == "queued"
+        deadline = time.monotonic() + 5
+        setup_status = {}
+        while time.monotonic() < deadline:
+            setup_status = client.get("/api/local/llm/setup/status").json()
+            if setup_status.get("state") in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+        assert setup_status["state"] == "succeeded"
+        assert setup_status["progress"] == 100
+        assert "output_preview" not in json.dumps(setup_status)
+
+        provider = client.get("/api/local/llm/service/status").json()
+        assert provider["configured"] is True
+        assert provider["lifecycle"]["runtime"]["managed"] is False
+
+        tested = client.post("/api/local/llm/service/actions/self-test", json={})
+        assert tested.status_code == 200
+        assert tested.json()["result"]["self_test"]["ok"] is True
+        assert "output_preview" not in tested.text
+
+        stopped = client.post("/api/local/llm/service/actions/stop", json={})
+        assert stopped.status_code == 200
+        assert stopped.json()["publication_enabled"] is False
+
+
+def test_async_setup_can_be_cancelled_without_replacing_existing_configuration(
+    tmp_path, monkeypatch,
+):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    started = threading.Event()
+
+    def slow_connect(**kwargs):
+        progress = kwargs["progress"]
+        cancel_check = kwargs["cancel_check"]
+        progress("connect", 20, "Checking the local model API")
+        started.set()
+        while not cancel_check():
+            time.sleep(0.01)
+        raise LifecycleError("setup cancelled")
+
+    monkeypatch.setattr(llm_routes, "connect_local_api", slow_connect)
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+
+    with TestClient(app) as client:
+        queued = client.post("/api/local/llm/setup/async", json={
+            "mode": "openai-compatible", "package_id": "cancelled-api",
+            "alias": "cancelled-alias", "base_url": "http://127.0.0.1:8080",
+        }).json()
+        assert started.wait(timeout=2)
+        cancelling = client.post(f"/api/local/llm/setup/{queued['job_id']}/cancel").json()
+        assert cancelling["state"] == "cancelling"
+        deadline = time.monotonic() + 3
+        final = {}
+        while time.monotonic() < deadline:
+            final = client.get("/api/local/llm/setup/status").json()
+            if final.get("state") == "cancelled":
+                break
+            time.sleep(0.02)
+        assert final["state"] == "cancelled"
+        assert final["retryable"] is True
+        assert not (home / "llm" / "provider-settings.json").exists()
+
+
+def test_interrupted_setup_status_is_recovered_as_retryable_failure(tmp_path):
+    home = tmp_path / "node"
+    job_path = home / "llm" / "setup-job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text(json.dumps({
+        "job_id": "setup_interrupted", "state": "running",
+        "stage": "download_model", "progress": 42,
+    }), encoding="utf-8")
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+
+    with TestClient(app) as client:
+        status = client.get("/api/local/llm/setup/status").json()
+    assert status["state"] == "failed"
+    assert status["error_code"] == "setup_interrupted"
+    assert status["retryable"] is True
 
 
 def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):

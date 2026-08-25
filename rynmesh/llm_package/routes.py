@@ -23,7 +23,33 @@ from rynmesh.store import RynmeshStore
 from rynmesh.transport import network_key_header
 
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
-from .lifecycle import LifecycleError, connect_local_api, import_gguf, install_managed
+from .lifecycle import (
+    LifecycleError,
+    connect_local_api,
+    import_gguf,
+    install_managed,
+)
+from .lifecycle import (
+    restart as restart_runtime,
+)
+from .lifecycle import (
+    self_test as run_self_test,
+)
+from .lifecycle import (
+    start as start_runtime,
+)
+from .lifecycle import (
+    status as runtime_status,
+)
+from .lifecycle import (
+    stop as stop_runtime,
+)
+from .lifecycle import (
+    uninstall as uninstall_runtime,
+)
+from .lifecycle import (
+    update as update_runtime,
+)
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PError, consumer_exchange, provider_exchange
 from .task_balance import TaskBalanceError, TaskBalanceLedger
@@ -56,6 +82,19 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
     return "delivery_or_processing_failed"
 
 
+def _submission_error_code(detail: str) -> str:
+    message = detail.strip().lower()
+    if "insufficient development task balance" in message:
+        return "insufficient_task_balance"
+    if "capacity_exhausted" in message or "provider is busy" in message:
+        return "capacity_exhausted"
+    if "absent, stale, offline, or unhealthy" in message:
+        return "provider_unavailable"
+    if "max_tokens" in message or "required" in message or "context window" in message:
+        return "invalid_order"
+    return "submission_failed"
+
+
 def _expires(seconds: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
@@ -68,8 +107,12 @@ def _price(manifest: LLMPackageManifest, input_tokens: int, output_tokens: int) 
     return round(max(manifest.pricing.minimum, value), 8)
 
 
+def _estimate_input_tokens(prompt: str) -> int:
+    return max(1, (len(prompt) + 3) // 4)
+
+
 def _estimate_price(manifest: LLMPackageManifest, prompt: str, max_tokens: int) -> float:
-    estimated_input = max(1, len(prompt) // 4)
+    estimated_input = _estimate_input_tokens(prompt)
     return _price(manifest, estimated_input, max_tokens)
 
 
@@ -446,7 +489,39 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     pending_cancellations: set[str] = set()
     settings_path = home / "llm" / "provider-settings.json"
     consumer_settings_path = home / "llm" / "consumer-settings.json"
+    setup_job_path = home / "llm" / "setup-job.json"
+    setup_job_lock = threading.Lock()
+    setup_cancel_events: dict[str, threading.Event] = {}
     manager_path = ""
+
+    def write_setup_job(value: dict[str, Any]) -> dict[str, Any]:
+        setup_job_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = setup_job_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(setup_job_path)
+        return value
+
+    def read_setup_job() -> dict[str, Any]:
+        if not setup_job_path.exists():
+            return {"state": "idle", "stage": "idle", "progress": 0}
+        try:
+            value = dict(json.loads(setup_job_path.read_text(encoding="utf-8")) or {})
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {"state": "failed", "stage": "recovery", "progress": 0,
+                    "error_code": "setup_status_unreadable",
+                    "message": "The previous setup status could not be read; retry setup."}
+        return value
+
+    previous_setup_job = read_setup_job()
+    if previous_setup_job.get("state") in {"queued", "running", "cancelling"}:
+        previous_setup_job.update({
+            "state": "failed",
+            "stage": "recovery",
+            "error_code": "setup_interrupted",
+            "message": "Setup was interrupted when the node stopped. Review the model service and retry.",
+            "retryable": True,
+        })
+        write_setup_job(previous_setup_job)
 
     def read_consumer_settings() -> dict[str, Any]:
         defaults = {"result_retention_seconds": 3600}
@@ -512,6 +587,59 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             manager.accepting_orders = bool(settings.get("publication_enabled"))
             manager_path = configured
         return manager
+
+    def configure_llm(
+        body: dict[str, Any],
+        *,
+        progress: Callable[[str, int, str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        mode = str(body.get("mode") or "").strip().lower().replace("_", "-")
+        package_id = str(body.get("package_id") or "local-small")
+        alias = str(body.get("alias") or "rynmesh-local")
+        root = home / "llm"
+        if mode == "managed":
+            return install_managed(
+                package_id=package_id, root=root,
+                port=int(body.get("port") or 18080),
+                accept_risk=bool(body.get("accept_risk", False)),
+                progress=progress, cancel_check=cancel_check,
+            )
+        if mode == "import-gguf":
+            return import_gguf(
+                source=str(body.get("model_path") or ""), package_id=package_id,
+                alias=alias, root=root, port=int(body.get("port") or 18080),
+                accept_risk=bool(body.get("accept_risk", False)),
+                progress=progress, cancel_check=cancel_check,
+            )
+        if mode in {"openai-compatible", "ollama"}:
+            return connect_local_api(
+                base_url=str(body.get("base_url") or "http://127.0.0.1:8080"),
+                package_id=package_id, alias=alias, model=str(body.get("model") or ""),
+                api_key_env=str(body.get("api_key_env") or ""),
+                adapter="ollama" if mode == "ollama" else "openai_compatible",
+                root=root, allow_non_loopback=bool(body.get("allow_non_loopback", False)),
+                progress=progress, cancel_check=cancel_check,
+            )
+        raise LifecycleError("setup mode must be managed, import-gguf, openai-compatible, or ollama")
+
+    def activate_configuration(result: dict[str, Any]) -> dict[str, Any]:
+        configured = str(result["manifest"])
+        settings = read_provider_settings()
+        settings.update({"manifest": configured, "publication_enabled": False})
+        write_provider_settings(settings)
+        current = active_manager(configured)
+        if current is not None:
+            current.accepting_orders = False
+        public_result = json.loads(json.dumps(result))
+        if isinstance(public_result.get("self_test"), dict):
+            public_result["self_test"].pop("output_preview", None)
+        return {
+            "configured": True,
+            "publication_enabled": False,
+            "setup": public_result,
+            "status": current.public_status() if current else {},
+        }
 
     def discover(network_id: str) -> list[dict[str, Any]]:
         values = store.list_job_capacities(
@@ -769,49 +897,174 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.post("/api/local/llm/setup")
     async def local_llm_setup(request: Request) -> dict[str, Any]:
-        body = await request.json()
-        mode = str(body.get("mode") or "").strip().lower().replace("_", "-")
-        package_id = str(body.get("package_id") or "local-small")
-        alias = str(body.get("alias") or "rynmesh-local")
-        root = home / "llm"
+        try:
+            result = await asyncio.to_thread(configure_llm, dict(await request.json()))
+            return activate_configuration(result)
+        except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-        def configure() -> dict[str, Any]:
-            if mode == "managed":
-                return install_managed(
-                    package_id=package_id, root=root,
-                    port=int(body.get("port") or 18080),
-                    accept_risk=bool(body.get("accept_risk", False)),
+    @app.get("/api/local/llm/setup/status")
+    def local_llm_setup_status() -> dict[str, Any]:
+        with setup_job_lock:
+            return dict(read_setup_job())
+
+    @app.post("/api/local/llm/setup/async")
+    async def local_llm_setup_async(request: Request) -> dict[str, Any]:
+        body = dict(await request.json())
+        with setup_job_lock:
+            current_job = read_setup_job()
+            if current_job.get("state") in {"queued", "running", "cancelling"}:
+                raise HTTPException(status_code=409, detail="another local model setup is already running")
+            job_id = "setup_" + uuid.uuid4().hex
+            cancel_event = threading.Event()
+            setup_cancel_events.clear()
+            setup_cancel_events[job_id] = cancel_event
+            job = {
+                "job_id": job_id,
+                "state": "queued",
+                "stage": "queued",
+                "progress": 0,
+                "message": "Local model setup is queued",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            write_setup_job(job)
+
+        def report(stage: str, percent: int, message: str) -> None:
+            with setup_job_lock:
+                latest = read_setup_job()
+                if latest.get("job_id") != job_id:
+                    return
+                latest.update({
+                    "state": "running",
+                    "stage": stage,
+                    "progress": percent,
+                    "message": message,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+                write_setup_job(latest)
+
+        def run_setup() -> None:
+            previous_settings = read_provider_settings()
+            previous_manifest = Path(str(previous_settings.get("manifest") or ""))
+            previous_manifest_bytes = None
+            if previous_manifest.is_file():
+                try:
+                    previous_manifest_bytes = previous_manifest.read_bytes()
+                except OSError:
+                    previous_manifest_bytes = None
+            try:
+                report("starting", 1, "Starting local model setup")
+                result = configure_llm(
+                    body, progress=report, cancel_check=cancel_event.is_set,
                 )
-            if mode == "import-gguf":
-                return import_gguf(
-                    source=str(body.get("model_path") or ""), package_id=package_id,
-                    alias=alias, root=root, port=int(body.get("port") or 18080),
-                    accept_risk=bool(body.get("accept_risk", False)),
-                )
-            if mode in {"openai-compatible", "ollama"}:
-                return connect_local_api(
-                    base_url=str(body.get("base_url") or "http://127.0.0.1:8080"),
-                    package_id=package_id, alias=alias, model=str(body.get("model") or ""),
-                    api_key_env=str(body.get("api_key_env") or ""),
-                    adapter="ollama" if mode == "ollama" else "openai_compatible",
-                    root=root, allow_non_loopback=bool(body.get("allow_non_loopback", False)),
-                )
-            raise LifecycleError("setup mode must be managed, import-gguf, openai-compatible, or ollama")
+                activation = activate_configuration(result)
+                with setup_job_lock:
+                    write_setup_job({
+                        "job_id": job_id,
+                        "state": "succeeded",
+                        "stage": "completed",
+                        "progress": 100,
+                        "message": "Local model configured and self-tested; publishing remains off",
+                        "configured": activation["configured"],
+                        "publication_enabled": False,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
+                cancelled = cancel_event.is_set() or "cancelled" in str(exc).lower()
+                if previous_manifest_bytes is not None:
+                    try:
+                        previous_manifest.parent.mkdir(parents=True, exist_ok=True)
+                        previous_manifest.write_bytes(previous_manifest_bytes)
+                        start_runtime(previous_manifest)
+                    except (LifecycleError, AdapterError, ManifestError, OSError, ValueError):
+                        pass
+                with setup_job_lock:
+                    write_setup_job({
+                        "job_id": job_id,
+                        "state": "cancelled" if cancelled else "failed",
+                        "stage": "cancelled" if cancelled else "failed",
+                        "progress": 0,
+                        "error_code": "setup_cancelled" if cancelled else "setup_failed",
+                        "message": "Setup cancelled; the previous private configuration was restored."
+                        if cancelled else (str(exc).strip() or "Local model setup failed"),
+                        "retryable": True,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+            finally:
+                body.clear()
+                with setup_job_lock:
+                    setup_cancel_events.pop(job_id, None)
+
+        threading.Thread(
+            target=run_setup, name=f"rynmesh-llm-setup-{job_id[-8:]}", daemon=True,
+        ).start()
+        return job
+
+    @app.post("/api/local/llm/setup/{job_id}/cancel")
+    def local_llm_setup_cancel(job_id: str) -> dict[str, Any]:
+        with setup_job_lock:
+            current_job = read_setup_job()
+            if current_job.get("job_id") != job_id:
+                raise HTTPException(status_code=404, detail="setup job not found")
+            if current_job.get("state") not in {"queued", "running", "cancelling"}:
+                return current_job
+            event = setup_cancel_events.get(job_id)
+            if event is None:
+                raise HTTPException(status_code=409, detail="setup worker is no longer running")
+            event.set()
+            current_job.update({
+                "state": "cancelling",
+                "stage": "cancelling",
+                "message": "Cancelling setup safely; existing configuration will be preserved",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+            return write_setup_job(current_job)
+
+    @app.post("/api/local/llm/service/actions/{action}")
+    async def local_llm_service_action(action: str, request: Request) -> dict[str, Any]:
+        nonlocal manager, manager_path
+        settings = read_provider_settings()
+        configured = str(settings.get("manifest") or "")
+        if not configured:
+            raise HTTPException(status_code=400, detail="LLM service manifest is not configured")
+        body = dict(await request.json())
+        allowed = {"start", "stop", "restart", "update", "self-test", "uninstall"}
+        if action not in allowed:
+            raise HTTPException(status_code=404, detail="unsupported local model action")
+        settings["publication_enabled"] = False
+        write_provider_settings(settings)
+        if manager is not None:
+            manager.accepting_orders = False
+
+        def execute() -> dict[str, Any]:
+            if action == "start":
+                return start_runtime(configured)
+            if action == "stop":
+                return stop_runtime(configured)
+            if action == "restart":
+                return restart_runtime(configured)
+            if action == "update":
+                return update_runtime(configured)
+            if action == "self-test":
+                return {"self_test": run_self_test(load_manifest(configured))}
+            return uninstall_runtime(
+                configured,
+                delete_environment=bool(body.get("delete_environment", True)),
+                delete_model=bool(body.get("delete_model", False)),
+                confirm_model_delete=bool(body.get("confirm_model_delete", False)),
+            )
 
         try:
-            result = await asyncio.to_thread(configure)
-            configured = str(result["manifest"])
-            settings = read_provider_settings()
-            settings.update({"manifest": configured, "publication_enabled": False})
-            write_provider_settings(settings)
-            current = active_manager(configured)
-            if current is not None:
-                current.accepting_orders = False
+            result = await asyncio.to_thread(execute)
+            if action in {"stop", "uninstall"} and manager is not None:
+                manager.adapter.shutdown()
+                manager = None
+                manager_path = ""
             public_result = json.loads(json.dumps(result))
             if isinstance(public_result.get("self_test"), dict):
                 public_result["self_test"].pop("output_preview", None)
-            return {"configured": True, "publication_enabled": False,
-                    "setup": public_result, "status": current.public_status() if current else {}}
+            return {"ok": True, "action": action, "result": public_result,
+                    "publication_enabled": False}
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -822,9 +1075,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return {"configured": False, "online": False, "publication_enabled": False}
         settings = read_provider_settings()
         current.accepting_orders = bool(settings.get("publication_enabled"))
+        lifecycle = {}
+        try:
+            lifecycle = runtime_status(str(settings.get("manifest") or ""))
+        except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
+            lifecycle = {"error": str(exc)}
         return {**current.public_status(),
                 "publication_enabled": current.accepting_orders,
-                "network_id": str(settings.get("network_id") or "rynmesh-main")}
+                "network_id": str(settings.get("network_id") or "rynmesh-main"),
+                "lifecycle": lifecycle}
 
     @app.get("/api/local/task-balance")
     def local_task_balance() -> dict[str, Any]:
@@ -884,7 +1143,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         provider_peer_id = str(body.get("provider_peer_id") or "")
         service_id = str(body.get("service_id") or "")
         prompt = str(body.get("prompt") or "")
-        max_tokens = int(body.get("max_tokens") or 64)
+        try:
+            max_tokens = int(body.get("max_tokens") or 64)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+        if max_tokens < 1:
+            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
         if not provider_peer_id or not service_id or not prompt:
             raise HTTPException(status_code=400, detail="provider_peer_id, service_id, and prompt are required")
         selected = next((item for item in discover(network_id)
@@ -892,6 +1156,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                          and dict(item.get("service") or {}).get("package_id") == service_id), None)
         if not selected or not selected.get("online"):
             raise HTTPException(status_code=409, detail="service is absent, stale, offline, or unhealthy")
+        capacity = dict(selected.get("capacity") or {})
+        if capacity.get("available") is not None and int(capacity["available"]) < 1:
+            raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
         manifest = LLMPackageManifest.from_dict({
             "package_id": public_manifest["package_id"], "mode": "openai_compatible",
@@ -907,9 +1174,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "content_rules": public_manifest["content_rules"], "model_fingerprint": public_manifest["model_fingerprint"],
         })
         max_tokens = min(max_tokens, manifest.max_output_tokens)
+        if _estimate_input_tokens(prompt) + max_tokens > manifest.context_window:
+            raise HTTPException(
+                status_code=400,
+                detail="estimated prompt and output exceed the Provider context window",
+            )
         maximum = _estimate_price(manifest, prompt, max_tokens)
         if maximum > manifest.pricing.maximum_per_task:
             raise HTTPException(status_code=409, detail="estimated task cost exceeds provider maximum")
+        if maximum > float(balance.summary().get("available") or 0):
+            raise HTTPException(status_code=409, detail="insufficient development Task Balance")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
         requested_transport = str(body.get("transport") or "auto").strip().lower()
@@ -1244,7 +1518,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             with background_orders_lock:
                 current = background_orders.get(task_id, {})
                 current.update({"task_id": task_id, "state": "failed",
-                                "error_code": "submission_failed", "detail": str(exc.detail)})
+                                "error_code": _submission_error_code(str(exc.detail)),
+                                "detail": str(exc.detail)})
                 background_orders[task_id] = current
         except Exception as exc:
             with background_orders_lock:
@@ -1270,6 +1545,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 status_code=400,
                 detail="provider_peer_id, service_id, and prompt are required",
             )
+        try:
+            max_tokens = int(body.get("max_tokens") or 64)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer") from exc
+        if max_tokens < 1:
+            raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
+        body["max_tokens"] = max_tokens
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         try:
             existing = consumer_orders.get(task_id)

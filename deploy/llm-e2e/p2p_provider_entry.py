@@ -39,8 +39,8 @@ def main() -> int:
         "RYNMESH_AUTO_REGISTER": "1",
         "RYNMESH_LLM_TRANSPORT": "p2p",
         "RYNMESH_P2P_STUN": "stun.l.google.com:19302",
-        "RYNMESH_P2P_REQUIRE_PUBLIC": "1",
-        "RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC": "1",
+        "RYNMESH_P2P_REQUIRE_PUBLIC": "0",
+        "RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC": "0",
         "RYNMESH_LLM_RELAY_URL": "",
     })
     from rynmesh.peer_http import main as peer_main

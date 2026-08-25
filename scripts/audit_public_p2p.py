@@ -1,4 +1,4 @@
-"""Audit a strict public-P2P LLM work order without reading task bodies."""
+"""Audit a strict no-relay P2P LLM work order without reading task bodies."""
 
 from __future__ import annotations
 
@@ -59,17 +59,48 @@ def _verified_payload(value: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _public_hosts(signal: dict[str, Any]) -> set[str]:
-    hosts: set[str] = set()
+def _signal_candidates(signal: dict[str, Any]) -> tuple[list[dict[str, Any]], set[str]]:
+    summaries: list[dict[str, Any]] = []
+    public_hosts: set[str] = set()
     candidates = signal.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         raise AuditError("ICE signal has no candidates")
     for raw in candidates:
         candidate = aioice.Candidate.from_sdp(str(raw))
-        if str(candidate.transport).lower() != "udp" or str(candidate.type) != "srflx":
-            raise AuditError("Strict public acceptance contains a non-srflx UDP candidate")
-        hosts.add(str(candidate.host))
-    return hosts
+        candidate_type = str(candidate.type)
+        transport = str(candidate.transport).lower()
+        if transport != "udp" or candidate_type not in {"host", "srflx"}:
+            raise AuditError("Strict P2P signaling contains a non-direct UDP candidate")
+        summary = {
+            "type": candidate_type,
+            "transport": transport,
+            "host": str(candidate.host),
+            "port": int(candidate.port),
+        }
+        summaries.append(summary)
+        if candidate_type == "srflx":
+            public_hosts.add(str(candidate.host))
+    return summaries, public_hosts
+
+
+def _nominated_candidate(
+    evidence: dict[str, Any],
+    *,
+    key: str,
+    signaled: list[dict[str, Any]],
+) -> dict[str, Any]:
+    value = dict(evidence.get(key) or {})
+    summary = {
+        "type": str(value.get("type") or ""),
+        "transport": str(value.get("transport") or "udp").lower(),
+        "host": str(value.get("host") or ""),
+        "port": int(value.get("port") or 0),
+    }
+    if summary["transport"] != "udp" or summary["type"] not in {"host", "srflx", "prflx"}:
+        raise AuditError(f"Nominated {key} candidate is not a direct UDP candidate")
+    if summary["type"] != "prflx" and summary not in signaled:
+        raise AuditError(f"Nominated {key} candidate was not present in signed signaling")
+    return summary
 
 
 def audit_records(
@@ -95,7 +126,7 @@ def audit_records(
     params = dict(order.get("params") or {})
     if set(params) - {"session_id", "ice_signal", "timeout_seconds"}:
         raise AuditError("Work order contains fields outside the body-free signaling allowlist")
-    offer_hosts = _public_hosts(dict(params.get("ice_signal") or {}))
+    offer_candidates, offer_hosts = _signal_candidates(dict(params.get("ice_signal") or {}))
 
     order_id = str(order.get("work_order_id") or "")
     matching_results = [item for item in results if item.get("work_order_id") == order_id]
@@ -112,26 +143,21 @@ def audit_records(
     accepted_refs = dict(accepted.get("result_refs") or {})
     if accepted_refs.get("relay_allowed") is not False:
         raise AuditError("Provider answer did not explicitly forbid relay")
-    answer_hosts = _public_hosts(dict(accepted_refs.get("ice_signal") or {}))
-    if not any(left != right for left in offer_hosts for right in answer_hosts):
-        raise AuditError("Consumer and Provider do not prove distinct public egress addresses")
+    answer_candidates, answer_hosts = _signal_candidates(dict(accepted_refs.get("ice_signal") or {}))
 
     completed_refs = dict(completed.get("result_refs") or {})
     evidence = dict(completed_refs.get("transport_evidence") or {})
-    expected = {
-        "transport": "ice_udp_direct",
-        "relay_used": False,
-        "public_nat_traversal_required": True,
-        "distinct_public_egress_required": True,
-        "peer_public_mapping_nominated": True,
-    }
+    expected = {"transport": "ice_udp_direct", "relay_used": False}
     for key, value in expected.items():
         if evidence.get(key) != value:
             raise AuditError(f"Transport evidence mismatch for {key}")
     if int(evidence.get("request_bytes") or 0) <= 0 or int(evidence.get("response_bytes") or 0) <= 0:
         raise AuditError("Transport evidence does not prove bidirectional task bytes")
-    if dict(evidence.get("remote") or {}).get("type") != "srflx":
-        raise AuditError("Nominated remote candidate is not a public STUN mapping")
+    nominated_local = _nominated_candidate(evidence, key="local", signaled=answer_candidates)
+    nominated_remote = _nominated_candidate(evidence, key="remote", signaled=offer_candidates)
+    peer_public_mapping_nominated = nominated_remote["type"] in {"srflx", "prflx"}
+    if bool(evidence.get("peer_public_mapping_nominated")) != peer_public_mapping_nominated:
+        raise AuditError("Peer public-mapping evidence does not match the nominated candidate")
     if order.get("provider_peer_id") != accepted.get("provider_peer_id") \
             or order.get("provider_peer_id") != completed.get("provider_peer_id"):
         raise AuditError("Provider identity changed across signed order states")
@@ -148,9 +174,13 @@ def audit_records(
         "provider_peer_id": order.get("provider_peer_id"),
         "consumer_public_mappings": sorted(offer_hosts),
         "provider_public_mappings": sorted(answer_hosts),
+        "shared_public_egress": bool(offer_hosts and offer_hosts == answer_hosts),
         "transport": evidence.get("transport"),
         "relay_used": evidence.get("relay_used"),
         "peer_public_mapping_nominated": evidence.get("peer_public_mapping_nominated"),
+        "path_kind": evidence.get("path_kind"),
+        "nominated_local": nominated_local,
+        "nominated_remote": nominated_remote,
         "request_bytes": evidence.get("request_bytes"),
         "response_bytes": evidence.get("response_bytes"),
         "signed_states": ["open", "accepted", "completed"],

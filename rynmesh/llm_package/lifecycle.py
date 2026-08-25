@@ -11,7 +11,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
 from .adapters import adapter_from_manifest
@@ -33,6 +33,23 @@ GGUF_MAGIC = b"GGUF"
 
 class LifecycleError(RuntimeError):
     pass
+
+
+ProgressCallback = Callable[[str, int, str], None]
+CancelCheck = Callable[[], bool]
+
+
+def _progress(
+    callback: ProgressCallback | None,
+    cancel_check: CancelCheck | None,
+    stage: str,
+    percent: int,
+    message: str,
+) -> None:
+    if cancel_check and cancel_check():
+        raise LifecycleError("setup cancelled")
+    if callback:
+        callback(stage, max(0, min(100, percent)), message)
 
 
 def _validate_package_id(package_id: str) -> str:
@@ -116,7 +133,14 @@ def _remote_digest(url: str) -> str:
     raise LifecycleError("model source did not provide a SHA-256 ETag; refusing an unverified download")
 
 
-def _download(url: str, destination: Path, expected_sha256: str) -> str:
+def _download(
+    url: str,
+    destination: Path,
+    expected_sha256: str,
+    *,
+    progress: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
+) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise LifecycleError("install downloads require an HTTPS URL")
@@ -126,9 +150,20 @@ def _download(url: str, destination: Path, expected_sha256: str) -> str:
     try:
         request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh/0.6"})
         with urllib.request.urlopen(request, timeout=300) as response, temporary.open("wb") as handle:
+            total = int(response.headers.get("content-length") or 0)
+            downloaded = 0
             while chunk := response.read(1024 * 1024):
+                if cancel_check and cancel_check():
+                    raise LifecycleError("setup cancelled")
                 digest.update(chunk)
                 handle.write(chunk)
+                downloaded += len(chunk)
+                percent = 15 + int((downloaded / total) * 45) if total else 35
+                if progress:
+                    progress("download_model", min(60, percent), "Downloading verified model data")
+    except LifecycleError:
+        temporary.unlink(missing_ok=True)
+        raise
     except OSError as exc:
         temporary.unlink(missing_ok=True)
         raise LifecycleError(f"download failed: {exc}") from exc
@@ -138,6 +173,43 @@ def _download(url: str, destination: Path, expected_sha256: str) -> str:
         raise LifecycleError(f"checksum mismatch: expected {expected_sha256}, got {actual}")
     temporary.replace(destination)
     return actual
+
+
+def _docker_pull(
+    image: str,
+    *,
+    progress: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
+    timeout_s: float = 600,
+) -> None:
+    docker = _docker()
+    process = subprocess.Popen(
+        [docker, "pull", image],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + timeout_s
+    try:
+        while process.poll() is None:
+            if cancel_check and cancel_check():
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                raise LifecycleError("setup cancelled")
+            if time.monotonic() >= deadline:
+                process.terminate()
+                raise LifecycleError("downloading the llama.cpp runtime timed out")
+            if progress:
+                progress("pull_runtime", 72, "Preparing the local inference runtime")
+            time.sleep(0.25)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    if process.returncode:
+        raise LifecycleError("unable to download the llama.cpp runtime image")
 
 
 def _docker() -> str:
@@ -226,23 +298,33 @@ def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
 
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
                     port: int = 18080, model_url: str = DEFAULT_MODEL_URL,
-                    expected_sha256: str = "", accept_risk: bool = False) -> dict[str, Any]:
+                    expected_sha256: str = "", accept_risk: bool = False,
+                    progress: ProgressCallback | None = None,
+                    cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
+    _progress(progress, cancel_check, "hardware", 5, "Checking available hardware")
     report = detect_hardware(base)
     choices = recommend(report)
     if not choices[0].get("can_run") and not accept_risk:
         raise LifecycleError(str(choices[0].get("reason")))
+    _progress(progress, cancel_check, "runtime_check", 10, "Checking Docker runtime")
     _docker()
+    _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
     digest = expected_sha256.lower() or _remote_digest(model_url)
     model_dir = base / "models" / package_id
     model_path = model_dir / "model.gguf"
     if not model_path.exists() or fingerprint_file(model_path) != "sha256:" + digest:
-        _download(model_url, model_path, digest)
+        _download(
+            model_url, model_path, digest, progress=progress, cancel_check=cancel_check,
+        )
+    else:
+        _progress(progress, cancel_check, "download_model", 60, "Verified model already present")
     selected = choices[0] if choices[0].get("can_run") else {
         "context_window": 2048, "max_concurrent": 1, "estimated_memory_mb": 1024,
     }
-    subprocess.run([_docker(), "pull", DEFAULT_IMAGE], check=True, timeout=600)
+    _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
+    _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias="rynmesh-qwen2.5-0.5b-q4",
         adapter="openai_compatible", runtime="docker_llama_cpp", model="rynmesh-qwen2.5-0.5b-q4",
@@ -257,20 +339,29 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         lifecycle={"start": "rynmesh-llm start", "stop": "rynmesh-llm stop",
                    "restart": "rynmesh-llm restart", "status": "rynmesh-llm status"},
     )
-    save_manifest(manifest, manifest_path(package_id, base))
+    _progress(progress, cancel_check, "start_runtime", 82, "Starting the local model runtime")
     _run_container(manifest)
+    _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
     wait_healthy(manifest)
+    _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
+    result = self_test(manifest)
+    save_manifest(manifest, manifest_path(package_id, base))
+    _progress(progress, cancel_check, "completed", 100, "Local model is ready")
     return {"manifest": str(manifest_path(package_id, base)), "hardware": report.to_dict(),
-            "recommendation": selected, "self_test": self_test(manifest)}
+            "recommendation": selected, "self_test": result}
 
 
 def import_gguf(*, source: str | Path, package_id: str, alias: str,
                 root: str | Path | None = None, port: int = 18080,
-                accept_risk: bool = False) -> dict[str, Any]:
+                accept_risk: bool = False, progress: ProgressCallback | None = None,
+                cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
+    _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
+    _progress(progress, cancel_check, "runtime_check", 25, "Checking Docker runtime")
     _docker()
-    subprocess.run([_docker(), "pull", DEFAULT_IMAGE], check=True, timeout=600)
+    _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
+    _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
         adapter="openai_compatible", runtime="docker_llama_cpp", model=alias,
@@ -280,17 +371,29 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
         install_source={"kind": "user_owned_read_only_gguf"},
     )
     path = manifest_path(package_id, root)
-    save_manifest(manifest, path)
+    _progress(progress, cancel_check, "start_runtime", 80, "Starting the read-only GGUF runtime")
     _run_container(manifest)
+    _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
     wait_healthy(manifest)
+    _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
+    result = self_test(manifest)
+    save_manifest(manifest, path)
+    _progress(progress, cancel_check, "completed", 100, "Imported model is ready")
     return {"manifest": str(path), "import": {k: v for k, v in details.items() if k != "path"},
-            "self_test": self_test(manifest)}
+            "self_test": result}
 
 
 def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str = "",
                       api_key_env: str = "", adapter: str = "openai_compatible",
-                      root: str | Path | None = None, allow_non_loopback: bool = False) -> dict[str, Any]:
+                      root: str | Path | None = None, allow_non_loopback: bool = False,
+                      progress: ProgressCallback | None = None,
+                      cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
+    if api_key_env and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
+        raise LifecycleError(
+            "API key setting must be an environment-variable name, never the secret value"
+        )
+    _progress(progress, cancel_check, "connect", 20, "Checking the local model API")
     manifest = LLMPackageManifest(
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
         public_model_alias=alias, adapter=adapter, runtime="external", base_url=base_url,
@@ -306,9 +409,11 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
     capabilities = active.capabilities()
     if capabilities.get("streaming") and "streaming" not in manifest.capabilities:
         manifest.capabilities.append("streaming")
+    _progress(progress, cancel_check, "self_test", 75, "Running a real private inference self-test")
     result = self_test(manifest)
     path = manifest_path(package_id, root)
     save_manifest(manifest, path)
+    _progress(progress, cancel_check, "completed", 100, "Local API connection is ready")
     return {"manifest": str(path), "health": health, "capabilities": capabilities,
             "self_test": result}
 

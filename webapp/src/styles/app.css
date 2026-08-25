@@ -1000,6 +1000,28 @@ td small {
   white-space: nowrap;
 }
 
+.service-result > progress {
+  width: 100%;
+  min-width: 160px;
+  accent-color: var(--accent-green);
+}
+
+.llm-output {
+  grid-column: 1 / -1;
+  min-width: 0;
+  max-height: 55vh;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }

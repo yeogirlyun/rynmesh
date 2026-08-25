@@ -81,8 +81,12 @@ def main() -> int:
     # for registry signaling and can never become a payload fallback.
     os.environ["RYNMESH_LLM_TRANSPORT"] = "p2p"
     os.environ["RYNMESH_LLM_FORCE_RELAY"] = "0"
-    os.environ["RYNMESH_P2P_REQUIRE_PUBLIC"] = "1"
-    os.environ["RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC"] = "1"
+    # Same-gateway peers must be able to nominate either a directly routable
+    # host candidate or the gateway's server-reflexive hairpin candidate.  ICE
+    # still forbids TURN/relay candidates; public-address diversity is not a
+    # prerequisite for a direct encrypted UDP path.
+    os.environ["RYNMESH_P2P_REQUIRE_PUBLIC"] = "0"
+    os.environ["RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC"] = "0"
     os.environ.pop("RYNMESH_LLM_RELAY_URL", None)
     local_app_data = Path(os.environ.get("LOCALAPPDATA", base))
     home_name = os.environ.get("RYNMESH_HOME_NAME", "RynmeshPublicConsumer")

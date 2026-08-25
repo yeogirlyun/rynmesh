@@ -1081,6 +1081,22 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { configured: true, publication_enabled: false };
     },
+    async startLLMSetup() {
+      await delay();
+      return { job_id: "setup_fixture", state: "succeeded", stage: "completed", progress: 100 };
+    },
+    async getLLMSetupStatus() {
+      await delay();
+      return { job_id: "setup_fixture", state: "succeeded", stage: "completed", progress: 100 };
+    },
+    async cancelLLMSetup(jobId) {
+      await delay();
+      return { job_id: jobId, state: "cancelled", stage: "cancelled", progress: 0 };
+    },
+    async runLLMServiceAction(action) {
+      await delay();
+      return { ok: true, action };
+    },
     async getTaskBalance() {
       await delay();
       return { currency: "DEV_TASK_BALANCE", available: 100, held: 0, earned: 0 };
