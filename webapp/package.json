@@ -31,6 +31,7 @@
     "@testing-library/user-event": "^14.6.4",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "msw": "^2.15.0",
     "vitest": "^4.1.10"
