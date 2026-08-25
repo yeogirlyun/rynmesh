@@ -170,12 +170,13 @@ and no-console bootstrap. Build it from the repository root, then place the
 result beside `frpc.exe`, a private `frpc.toml`, and a private
 `rynmesh-consumer.json`. Both private configuration files are gitignored.
 
-The bootstrap starts the FRP visitor first, binds the tunneled Registry and
-Relay endpoints to remote loopback, starts the Consumer on remote loopback, and
-opens the Services page. Configure `RYNMESH_LLM_FORCE_RELAY=1`; expose only the
-STCP provider names on the Provider-side FRP client. Do not create a public TCP
-mapping for the Provider peer or model port. The public FRP server transports
-the private tunnel but the LLM Relay receives only end-to-end ciphertext.
+The bootstrap starts the FRP visitor first, binds the tunneled Registry
+signaling endpoint to remote loopback, starts the Consumer on remote loopback,
+and opens the Services page. The acceptance binary forces strict ICE/UDP P2P,
+requires server-reflexive mappings from distinct public egress addresses, and
+removes task-relay fallback. Do not create a public TCP mapping for either Ryn
+peer or the model port. The public FRP server carries discovery and signed ICE
+signaling only; prompt and response ciphertext cross the nominated UDP pair.
 
 The Windows package can be built with:
 

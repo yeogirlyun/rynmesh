@@ -98,11 +98,28 @@ payload transport and must not be presented as such.
 - A different public egress is required for a conclusive strict-P2P acceptance
   run. This item remains pending; it is not a successful validation record.
 
+On 2026-08-25 the newly packaged Consumer was started on the remote Windows
+machine and opened `127.0.0.1:8792`. It discovered both available equal-alias
+services. The first selection exposed that the UI labels did not identify the
+node/package and reached the Docker Provider. A second attempt explicitly
+selected the host-native package; Registry evidence confirmed the host-native
+peer accepted work order `wo_06f00358b3b74b1dab043be63aef0fb4` for Consumer
+task `task_e78b05d691f841179c5a5f7f734e9ef9`.
+
+That exact attempt still reported the same STUN public mapping
+`98.158.108.218` on both sides (different private addresses and UDP ports), so
+no candidate pair was nominated. The Provider produced accepted then failed
+signaling states, never created a real inference order, and the Consumer hold
+returned to zero. This evidence both confirms exact Provider routing and
+confirms that the current shared-VPN topology cannot satisfy different-egress
+acceptance. The latest source now detects this before the full ICE timeout and
+reports `p2p_distinct_public_egress_required`.
+
 ### 2026-08-25 review checkpoint
 
-- Focused Python tests: 39 passed.
-- Webapp tests: 21 passed; TypeScript/Vite build and typecheck passed.
-- Windows full Python suite: 485 passed, 13 platform-specific failures, 3
+- Focused Python tests: 40 passed.
+- Webapp tests: 24 passed; TypeScript/Vite build and typecheck passed.
+- Windows full Python suite: 486 passed, 13 platform-specific failures, 3
   skipped.
 - Deterministic direct and forced-relay Docker runs passed from clean source;
   the relay persisted ciphertext and contained no fixed plaintext. A host real
@@ -111,11 +128,9 @@ payload transport and must not be presented as such.
 - Asynchronous real submission returned a task ID in 16 ms and later succeeded.
   A separate live cancellation reached both nodes in 16 ms, ended both states
   as cancelled and released the hold.
-- The physical machines now have different public egress addresses. The strict
-  real-model Provider is published and the rebuilt fail-closed Windows Consumer
-  is packaged, but the existing RDP client belongs to a disconnected local
-  Windows session. Remote execution and successful nominated public-pair
-  evidence remain pending.
+- Remote execution is proven, but both nodes currently use the same company-VPN
+  public exit. A different approved public egress and successful nominated
+  public-pair evidence remain pending.
 
 Reproduce with the commands in `docs/LOCAL_LLM_RUNBOOK.md`. The deterministic
 test profile is never presented as real inference evidence.

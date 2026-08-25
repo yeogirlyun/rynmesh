@@ -88,6 +88,35 @@ def public_nat_traversal_required() -> bool:
     }
 
 
+def distinct_public_egress_required() -> bool:
+    return os.environ.get("RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _public_mapping_hosts(signal: IceSignal) -> set[str]:
+    hosts: set[str] = set()
+    for value in signal.candidates:
+        candidate = aioice.Candidate.from_sdp(value)
+        if str(getattr(candidate, "type", "")) == "srflx":
+            host = str(getattr(candidate, "host", "")).strip()
+            if host:
+                hosts.add(host)
+    return hosts
+
+
+def validate_distinct_public_egress(local: IceSignal, remote: IceSignal) -> None:
+    """Fail fast when an acceptance run cannot prove two public egresses."""
+    if not distinct_public_egress_required():
+        return
+    local_hosts = _public_mapping_hosts(local)
+    remote_hosts = _public_mapping_hosts(remote)
+    if not local_hosts or not remote_hosts:
+        raise P2PError("distinct public egress validation requires STUN mappings on both peers")
+    if not any(local_host != remote_host for local_host in local_hosts for remote_host in remote_hosts):
+        raise P2PError("strict P2P acceptance requires distinct public egress addresses")
+
+
 async def gather_signal(connection: aioice.Connection) -> IceSignal:
     await connection.gather_candidates()
     local_candidates = list(connection.local_candidates)
@@ -149,6 +178,7 @@ def selected_pair(connection: aioice.Connection) -> dict[str, Any]:
         "transport": "ice_udp_direct",
         "relay_used": False,
         "public_nat_traversal_required": public_nat_traversal_required(),
+        "distinct_public_egress_required": distinct_public_egress_required(),
         "peer_public_mapping_nominated": str(getattr(remote, "type", "")) == "srflx",
         "local": _candidate_summary(local),
         "remote": _candidate_summary(remote),
@@ -255,6 +285,7 @@ async def consumer_exchange(
     try:
         offer = await gather_signal(connection)
         answer = await publish_offer(offer)
+        validate_distinct_public_egress(offer, answer)
         await apply_remote_signal(connection, answer)
         await asyncio.wait_for(connection.connect(), timeout=timeout_s)
         evidence = selected_pair(connection)
@@ -280,6 +311,7 @@ async def provider_exchange(
         answer = await gather_signal(connection)
         await apply_remote_signal(connection, offer)
         publish_answer(answer)
+        validate_distinct_public_egress(answer, offer)
         await asyncio.wait_for(connection.connect(), timeout=timeout_s)
         evidence = selected_pair(connection)
         request, request_bytes = await receive_json(connection, timeout_s=timeout_s)

@@ -3,7 +3,8 @@
 This bootstrap packages the current checkout as a no-console Windows Consumer.
 It reads `rynmesh-consumer.json` next to the executable, stores identity/order
 state under `%LOCALAPPDATA%\RynmeshPublicConsumer`, forces strict ICE/UDP P2P
-with no task-relay fallback, and opens the local Services page. The private network key stays in the
+with distinct public egress validation and no task-relay fallback, and opens
+the local Services page. The private network key stays in the
 separate ignored JSON configuration and is never embedded in the executable.
 
 The Consumer never receives the Provider model URL. Only the Registry signaling

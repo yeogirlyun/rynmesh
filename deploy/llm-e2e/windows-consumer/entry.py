@@ -82,6 +82,7 @@ def main() -> int:
     os.environ["RYNMESH_LLM_TRANSPORT"] = "p2p"
     os.environ["RYNMESH_LLM_FORCE_RELAY"] = "0"
     os.environ["RYNMESH_P2P_REQUIRE_PUBLIC"] = "1"
+    os.environ["RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC"] = "1"
     os.environ.pop("RYNMESH_LLM_RELAY_URL", None)
     local_app_data = Path(os.environ.get("LOCALAPPDATA", base))
     home_name = os.environ.get("RYNMESH_HOME_NAME", "RynmeshPublicConsumer")

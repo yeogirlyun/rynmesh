@@ -25,7 +25,7 @@ from rynmesh.transport import network_key_header
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
 from .lifecycle import LifecycleError, connect_local_api, import_gguf, install_managed
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
-from .p2p import IceSignal, consumer_exchange, provider_exchange
+from .p2p import IceSignal, P2PError, consumer_exchange, provider_exchange
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -37,6 +37,23 @@ from .task_protocol import (
 
 CAPABILITY = "rynmesh.llm.private.v1"
 OPERATION = "rynmesh.llm.private.infer.v1"
+
+
+def _delivery_error_code(exc: Exception, *, transport: str) -> str:
+    message = str(exc).strip().lower()
+    if transport == "p2p" or isinstance(exc, P2PError) or "p2p" in message:
+        if "distinct public egress" in message:
+            return "p2p_distinct_public_egress_required"
+        if "server-reflexive" in message or "stun mapping" in message:
+            return "p2p_public_mapping_unavailable"
+        if "timed out" in message or isinstance(exc, asyncio.TimeoutError):
+            return "p2p_connection_timed_out"
+        return "p2p_transport_failed"
+    if transport == "direct":
+        return "direct_transport_failed"
+    if transport == "relay":
+        return "encrypted_relay_failed"
+    return "delivery_or_processing_failed"
 
 
 def _expires(seconds: float) -> str:
@@ -559,13 +576,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 result_refs={"transport_evidence": evidence},
                 network_id=network_id,
             )
-        except Exception:
+        except Exception as exc:
             store.publish_work_result(
                 work_order_id=task_order_id,
                 requester_peer_id=requester,
                 status="failed",
                 message="strict P2P ICE/UDP connection or task processing failed",
-                result_refs={"transport": "ice_udp_direct", "relay_used": False},
+                result_refs={
+                    "transport": "ice_udp_direct",
+                    "relay_used": False,
+                    "error_code": _delivery_error_code(exc, transport="p2p"),
+                },
                 network_id=network_id,
             )
         finally:
@@ -894,6 +915,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         requested_transport = str(body.get("transport") or "auto").strip().lower()
         if requested_transport not in {"auto", "direct", "p2p", "relay"}:
             raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
+        transport_mode = requested_transport
         request_fingerprint = _request_fingerprint({
             "task_id": task_id,
             "idempotency_key": idempotency_key,
@@ -1181,12 +1203,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
             return result
         except Exception as exc:
+            error_code = _delivery_error_code(exc, transport=transport_mode)
             try:
-                balance.release(task_id=task_id, reason="delivery_or_processing_failed")
+                balance.release(task_id=task_id, reason=error_code)
                 consumer_orders.transition(task_id=task_id, state="failed",
                                            metadata={"provider_peer_id": provider_peer_id,
                                                      "service_id": service_id,
-                                                     "error_code": "delivery_or_processing_failed"})
+                                                     "error_code": error_code})
             except (TaskBalanceError, TaskProtocolError):
                 pass
             reason = str(exc).strip() or type(exc).__name__

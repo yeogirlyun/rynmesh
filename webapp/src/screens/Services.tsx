@@ -1,5 +1,5 @@
 import { CloudCog, RefreshCw, SendHorizontal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
 import type {
@@ -15,6 +15,24 @@ import type { JobCapacity, WorkResult } from "../domain/types";
 const VEO_CAPABILITY = "signal50.veo_motion.v1";
 const VEO_OPERATION = "signal50.remote_action.complete_flow_video_veo_motion_clips";
 const LLM_TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled", "rejected"]);
+const LLM_ERROR_MESSAGES: Record<string, string> = {
+  p2p_distinct_public_egress_required: "Consumer and Provider share one public exit. Disconnect the shared VPN or move one node to another network, then retry.",
+  p2p_public_mapping_unavailable: "A public UDP mapping could not be created. Check outbound UDP and the configured STUN server.",
+  p2p_connection_timed_out: "The direct UDP connection timed out. Check NAT/firewall policy on both nodes.",
+  p2p_transport_failed: "The strict peer-to-peer path failed, and relay fallback is disabled.",
+};
+
+function llmServiceKey(service: LLMServiceRecord): string {
+  return JSON.stringify([service.peer_id, service.service.package_id]);
+}
+
+function shortPeerId(peerId: string): string {
+  return peerId.length > 16 ? `${peerId.slice(0, 8)}…${peerId.slice(-6)}` : peerId;
+}
+
+function llmErrorMessage(errorCode: string): string {
+  return LLM_ERROR_MESSAGES[errorCode] || errorCode;
+}
 
 export default function Services() {
   const { client, peers, notify, confirm } = useAppContext();
@@ -25,9 +43,9 @@ export default function Services() {
   const [skipExisting, setSkipExisting] = useState(true);
   const [lastOrderId, setLastOrderId] = useState("");
   const [results, setResults] = useState<WorkResult[]>([]);
-  const [llmNetwork, setLlmNetwork] = useState("rynmesh-main");
+  const [llmNetwork, setLlmNetwork] = useState("");
   const [llmServices, setLlmServices] = useState<LLMServiceRecord[]>([]);
-  const [selectedLlmPeerId, setSelectedLlmPeerId] = useState("");
+  const [selectedLlmServiceKey, setSelectedLlmServiceKey] = useState("");
   const [llmPrompt, setLlmPrompt] = useState("Explain in one sentence why this request travelled through Rynmesh.");
   const [llmMaxTokens, setLlmMaxTokens] = useState("64");
   const [llmTransport, setLlmTransport] = useState<"auto" | "direct" | "p2p" | "relay">("auto");
@@ -50,21 +68,33 @@ export default function Services() {
   const [llmModelPath, setLlmModelPath] = useState("");
   const [llmSetupConfirmed, setLlmSetupConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const llmNetworkInitialized = useRef(false);
 
   const veoServices = useMemo(
     () => capacities.filter((item) => item.capabilities.includes(VEO_CAPABILITY)),
     [capacities],
   );
   const selectedVeo = veoServices.find((item) => item.peer_id === selectedPeerId) ?? veoServices[0];
-  const selectedLlm = llmServices.find((item) => item.peer_id === selectedLlmPeerId) ?? llmServices[0];
+  const selectedLlm = llmServices.find((item) => llmServiceKey(item) === selectedLlmServiceKey) ?? llmServices[0];
   const peerById = new Map(peers.map((peer) => [peer.id, peer]));
 
   const refresh = async () => {
     setLoading(true);
     try {
+      let discoveryNetwork = llmNetwork.trim();
+      if (!llmNetworkInitialized.current) {
+        try {
+          const settings = await client.getSettings();
+          discoveryNetwork = settings.network_id?.trim() || "rynmesh-main";
+        } catch {
+          discoveryNetwork = "rynmesh-main";
+        }
+        llmNetworkInitialized.current = true;
+        setLlmNetwork(discoveryNetwork);
+      }
       const [capacityResult, serviceResult, balanceResult, providerResult, ordersResult, privacyResult] = await Promise.allSettled([
         client.listJobCapacities({ capability: VEO_CAPABILITY }),
-        client.listLLMServices(llmNetwork),
+        client.listLLMServices(discoveryNetwork || "rynmesh-main"),
         client.getTaskBalance(),
         client.getLLMServiceStatus(),
         client.listLLMOrders(),
@@ -76,7 +106,11 @@ export default function Services() {
       }
       if (serviceResult.status === "fulfilled") {
         setLlmServices(serviceResult.value);
-        if (!selectedLlmPeerId && serviceResult.value[0]) setSelectedLlmPeerId(serviceResult.value[0].peer_id);
+        setSelectedLlmServiceKey((current) => (
+          current && serviceResult.value.some((service) => llmServiceKey(service) === current)
+            ? current
+            : serviceResult.value[0] ? llmServiceKey(serviceResult.value[0]) : ""
+        ));
       } else {
         setLlmProgress({ tone: "danger", text: `Service discovery failed: ${serviceResult.reason instanceof Error ? serviceResult.reason.message : "unknown error"}` });
       }
@@ -198,7 +232,7 @@ export default function Services() {
       setLlmOrders(await client.listLLMOrders());
       setLlmProgress({
         tone: result.state === "succeeded" ? "ok" : "danger",
-        text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${result.error_code}` : ""}`,
+        text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${llmErrorMessage(result.error_code)}` : ""}`,
       });
       notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
     } catch (error) {
@@ -397,12 +431,13 @@ export default function Services() {
           <label className="field">
             <span>Provider service</span>
             <select
-              value={selectedLlmPeerId || selectedLlm?.peer_id || ""}
-              onChange={(event) => setSelectedLlmPeerId(event.target.value)}
+              value={selectedLlmServiceKey || (selectedLlm ? llmServiceKey(selectedLlm) : "")}
+              onChange={(event) => setSelectedLlmServiceKey(event.target.value)}
             >
               {llmServices.map((service) => (
-                <option key={`${service.peer_id}-${service.service.package_id}`} value={service.peer_id}>
-                  {service.service.model_alias} · {service.service.pricing.minimum} {service.service.pricing.currency}
+                <option key={llmServiceKey(service)} value={llmServiceKey(service)}>
+                  {service.service.model_alias} · {service.node_name || shortPeerId(service.peer_id)} · {service.service.package_id}
+                  {` · ${service.service.pricing.minimum} ${service.service.pricing.currency}`}
                 </option>
               ))}
             </select>
@@ -411,7 +446,8 @@ export default function Services() {
             <div className="service-result">
               <Chip tone={selectedLlm.online ? "ok" : "danger"}>{selectedLlm.online ? "online" : "offline"}</Chip>
               <span>
-                Context {selectedLlm.service.context_window} · max output {selectedLlm.service.max_output_tokens}
+                {selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}
+                {` · Context ${selectedLlm.service.context_window} · max output ${selectedLlm.service.max_output_tokens}`}
                 {selectedLlm.capacity ? ` · ${selectedLlm.capacity.available ?? 0}/${selectedLlm.capacity.max_concurrent ?? 0} slots` : ""}
               </span>
               <small>{selectedLlm.service.privacy.policy_text || "Provider compute node sees plaintext."}</small>
@@ -477,7 +513,9 @@ export default function Services() {
             <Chip tone={llmResult.state === "succeeded" ? "ok" : "danger"}>{llmResult.state}</Chip>
           </div>
           <div className="form-stack">
-            <div className="service-result"><span>{llmResult.output || llmResult.error_code || "No output"}</span></div>
+            <div className="service-result">
+              <span>{llmResult.output || (llmResult.error_code ? llmErrorMessage(llmResult.error_code) : "No output")}</span>
+            </div>
             <div className="button-row">
               <Chip mono>{llmResult.task_id}</Chip>
               <Chip mono>{llmResult.input_tokens ?? 0} in / {llmResult.output_tokens ?? 0} out</Chip>

@@ -17,6 +17,7 @@ from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, 
 from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
 from rynmesh.llm_package.manifest import LLMPackageManifest, fingerprint_file
 from rynmesh.llm_package.p2p import (
+    IceSignal,
     P2PError,
     apply_remote_signal,
     gather_signal,
@@ -24,9 +25,11 @@ from rynmesh.llm_package.p2p import (
     receive_json,
     selected_pair,
     send_json,
+    validate_distinct_public_egress,
 )
 from rynmesh.llm_package.routes import (
     ProviderService,
+    _delivery_error_code,
     _open_provider_response,
     _recover_consumer_orders,
     install_llm_routes,
@@ -366,6 +369,39 @@ def test_public_nat_mode_refuses_to_fall_back_to_host_candidate(monkeypatch):
             await connection.close()
 
     asyncio.run(scenario())
+
+
+def test_distinct_public_egress_acceptance_fails_fast_for_shared_mapping(monkeypatch):
+    monkeypatch.setenv("RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC", "1")
+    local = IceSignal(
+        username="local",
+        password="local-password",
+        candidates=(
+            "local 1 udp 1694498815 98.158.108.218 50001 typ srflx raddr 10.0.0.2 rport 50001",
+        ),
+    )
+    same_egress = IceSignal(
+        username="remote",
+        password="remote-password",
+        candidates=(
+            "remote 1 udp 1694498815 98.158.108.218 50002 typ srflx raddr 192.168.1.2 rport 50002",
+        ),
+    )
+    other_egress = IceSignal(
+        username="remote",
+        password="remote-password",
+        candidates=(
+            "remote 1 udp 1694498815 203.0.113.8 50002 typ srflx raddr 192.168.1.2 rport 50002",
+        ),
+    )
+
+    with pytest.raises(P2PError, match="distinct public egress"):
+        validate_distinct_public_egress(local, same_egress)
+    validate_distinct_public_egress(local, other_egress)
+    assert _delivery_error_code(
+        P2PError("strict P2P acceptance requires distinct public egress addresses"),
+        transport="p2p",
+    ) == "p2p_distinct_public_egress_required"
 
 
 def test_restart_recovery_fails_interrupted_order_and_releases_hold(tmp_path):

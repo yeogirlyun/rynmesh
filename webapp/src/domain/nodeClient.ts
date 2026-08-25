@@ -65,6 +65,7 @@ export interface LLMOrderResult {
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
+    distinct_public_egress_required?: boolean;
     peer_public_mapping_nominated?: boolean;
   };
 }

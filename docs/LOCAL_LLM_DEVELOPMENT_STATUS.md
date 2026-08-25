@@ -10,7 +10,8 @@ on the local-LLM service package and dual-node order flow.
 - Active branch: `feature/local-llm-dual-node`.
 - Base commit: `f631682` from `test/issue-15-for-you`.
 - Main implementation checkpoint: `74ca0ca` (with build/protocol hardening in
-  `a6e1567`).
+  `a6e1567`); the latest worktree also contains the remote-run UX and strict
+  egress diagnostics described below.
 - Status: work in progress. Do **not** claim final P0 completion.
 - Isolated Compose direct/relay, local real-model, async-order and cancellation
   paths pass. The additional strict public-internet NAT-hole-punch test between
@@ -80,7 +81,8 @@ inference; this is not confidential computing.
 
 - ICE/UDP node-to-node exchange with encrypted task envelopes.
 - `RYNMESH_P2P_REQUIRE_PUBLIC=1` filters out host/private candidates.
-- Packaged public Consumer forces strict P2P and removes task-relay fallback.
+- Packaged public Consumer forces strict P2P, requires distinct public egress
+  mappings for acceptance, and removes task-relay fallback.
 - Webapp Services page supports all four Provider setup profiles, explicit
   self-test, manual publish/pause, discovery, service selection, prompt and
   max-token input, asynchronous ordering, progress, cancellation, result and
@@ -90,9 +92,13 @@ inference; this is not confidential computing.
   days and terminal history can be cleared.
 - Latest source immediately returns a task ID, shows queued/connecting/running
   progress, records `created -> accepted -> running -> terminal`, exposes a
-  sanitized failure reason and refreshes released balance. The rebuilt
-  executable and adjacent strict configuration are packaged locally but have
-  not yet run on the remote Windows machine.
+  sanitized failure reason and refreshes released balance.
+- Discovery initializes from the node's configured network instead of a
+  hardcoded network. Provider choices include node name and package ID and are
+  keyed by both peer and package, so equal model aliases cannot select the
+  wrong service.
+- Shared-public-exit, missing STUN mapping and UDP timeout failures have stable
+  error codes and actionable Webapp guidance.
 
 ## Key files
 
@@ -113,12 +119,12 @@ inference; this is not confidential computing.
 
 - Focused Python suite:
   `python -m pytest tests/test_llm_package.py tests/test_services.py tests/test_transport.py -q`
-  -> 39 passed.
-- Webapp: `npm test` -> 21 passed.
+  -> 40 passed.
+- Webapp: `npm test` -> 24 passed.
 - Webapp: `npm run lint` and `npm run build` -> passed.
 - `git diff --check` -> no content errors; Windows reports expected LF/CRLF
   conversion warnings.
-- Full Windows Python suite -> 485 passed, 13 failed, 3 skipped. The remaining
+- Full Windows Python suite -> 486 passed, 13 failed, 3 skipped. The remaining
   failures are Windows locale/POSIX-mode/WSL/subprocess-select categories in
   areas not changed for this feature; see `LOCAL_LLM_P0_EVIDENCE.md`.
 - Real llama.cpp/OpenAI-compatible health remains available on Provider
@@ -127,29 +133,30 @@ inference; this is not confidential computing.
 
 ## Strict public P2P result and remaining gate
 
-The remote Consumer discovered the local Provider and created a strict order.
-Both sides published only server-reflexive STUN candidates and explicitly
-forbade relay. In that attempt the two machines reported the same public egress
-with different UDP mappings; no nominated UDP pair formed before timeout. The order
-failed closed, Provider inference did not run, the Consumer hold was released,
-and the relay persisted-file count remained unchanged.
+The new remote Consumer was started successfully and opened its loopback
+Services page. It discovered both the Docker and host-native Providers. Because
+the old labels were identical, the first order selected Docker; the corrected
+second order selected the host-native real-model Provider and was accepted by
+that exact peer. Both peers exchanged only server-reflexive STUN candidates and
+explicitly forbade relay.
 
-That historical attempt is not a successful public P2P acceptance. The current
-machines now report different public egress addresses, the real-model Provider
-is published in fail-closed strict mode, and the rebuilt Consumer package is
-ready. The remaining blocker is operational: the existing RDP window belongs
-to a disconnected local Windows session, so it cannot currently be captured or
-controlled for deployment. Do not enable payload relay to make this acceptance
-appear successful.
+The Consumer and Provider candidates both mapped to `98.158.108.218` through
+the shared company VPN. No nominated UDP pair formed before timeout. The order
+failed closed, Provider inference did not run, the Consumer hold was released,
+and no payload-relay fallback occurred. This is not successful public P2P
+acceptance. The latest package now fails this condition early with
+`p2p_distinct_public_egress_required`; a genuinely different public exit is the
+remaining environmental prerequisite.
 
 ## Next actions
 
-1. Reconnect the local Windows session that owns the RDP window and keep the
-   remote desktop unlocked.
-2. Copy the prepared Consumer package, confirm execution at action time, start
-   it and verify the new progress/error UI plus `available=100.0`, `held=0.0`.
-3. Submit a real prompt from the remote Consumer.
-4. Record the nominated public ICE pair, `relay_used=false`, Provider real-model
+1. Move either Consumer or Provider off the shared company-VPN public exit
+   (for example, an approved alternate network); do not disconnect network
+   controls without owner approval.
+2. Copy and start the latest prepared Consumer package and verify the configured
+   discovery network plus disambiguated Provider labels.
+3. Submit a real prompt from the remote Consumer to the host-native package.
+4. Record the distinct nominated public ICE pair, `relay_used=false`, Provider real-model
    invocation, returned output, terminal order history, single settlement and
    unchanged relay storage count.
 5. Update both evidence documents. Only then reconsider strict public P2P and
