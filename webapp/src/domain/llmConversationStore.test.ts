@@ -22,6 +22,19 @@ function readRawConversation(id: string): Promise<unknown> {
   });
 }
 
+function writeRawConversation(record: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("ryn-private-ai-chat", 1);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction("conversations", "readwrite");
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.objectStore("conversations").put(record);
+    };
+  });
+}
+
 describe("Private AI conversation storage", () => {
   it("encrypts message bodies at rest and restores them", async () => {
     expect(await conversationStorageMode()).toBe("encrypted");
@@ -57,5 +70,30 @@ describe("Private AI conversation storage", () => {
     expect(prompt).toContain("Assistant: A private service network.");
     expect(prompt).toContain("User: Explain more.");
     expect(prompt).not.toContain("temporary error");
+  });
+
+  it("keeps valid history available when one encrypted record is corrupt", async () => {
+    const conversation = createConversation({
+      serviceKey: "peer:recovery::model:test",
+      serviceName: "Recovery model",
+      providerPeerId: "peer:recovery",
+      networkId: "rynmesh-test",
+    });
+    conversation.messages.push({
+      id: "message-valid", role: "user", content: "Valid conversation",
+      createdAt: new Date().toISOString(), status: "complete",
+    });
+    await saveConversation(conversation);
+    await writeRawConversation({
+      id: "corrupt-record",
+      serviceKey: conversation.serviceKey,
+      updatedAt: new Date().toISOString(),
+      iv: "not-valid-base64",
+      ciphertext: "not-valid-ciphertext",
+    });
+
+    const restored = await listConversations(conversation.serviceKey);
+    expect(restored.map((item) => item.id)).toContain(conversation.id);
+    expect(restored.map((item) => item.id)).not.toContain("corrupt-record");
   });
 });

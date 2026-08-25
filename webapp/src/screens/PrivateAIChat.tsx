@@ -36,6 +36,8 @@ const TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled"
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
 
 function serviceKey(service: LLMServiceRecord) {
+  // Aliases are display names and are not unique. Scope history by both the
+  // provider identity and package ID to prevent cross-provider conversation mixups.
   return `${service.peer_id}::${service.service.package_id}`;
 }
 
@@ -231,6 +233,8 @@ export default function PrivateAIChat() {
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
+      // Orders are asynchronous at the node boundary. Keep polling centralized
+      // here so the UI never bypasses node transport, settlement, or cancellation.
       while (!TERMINAL_STATES.has(result.state)) {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
         result = await client.getLLMOrder(result.task_id);

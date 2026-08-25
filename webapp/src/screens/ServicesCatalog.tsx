@@ -39,6 +39,8 @@ interface RecentService {
 const RECENT_STORAGE_KEY = "ryn.services.recent.v1";
 
 function loadRecentServices(): RecentService[] {
+  // This preference contains only public service IDs and timestamps. Prompt,
+  // provider, route, and result data belong to their dedicated storage paths.
   try {
     const stored = JSON.parse(window.localStorage.getItem(RECENT_STORAGE_KEY) ?? "[]") as RecentService[];
     return Array.isArray(stored) ? stored.filter((item) => item && typeof item.id === "string" && typeof item.openedAt === "number") : [];

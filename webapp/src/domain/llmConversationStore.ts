@@ -1,3 +1,11 @@
+/**
+ * Device-local conversation persistence for the Private AI experience.
+ *
+ * Message bodies are encrypted before IndexedDB writes and are never copied to
+ * localStorage. This protects against casual plaintext inspection, but it is
+ * not a secure enclave: code running under the same origin, a compromised
+ * browser profile, or the inference provider can still access plaintext.
+ */
 export type LLMChatRole = "user" | "assistant";
 export type LLMChatMessageStatus = "complete" | "failed" | "cancelled";
 
@@ -42,6 +50,7 @@ const DB_NAME = "ryn-private-ai-chat";
 const DB_VERSION = 1;
 const KEY_STORE = "keys";
 const CONVERSATION_STORE = "conversations";
+// Never fall back to plaintext persistence when Web Crypto or IndexedDB fails.
 const memoryFallback = new Map<string, LLMConversation>();
 let databasePromise: Promise<IDBDatabase> | null = null;
 let keyPromise: Promise<CryptoKey> | null = null;
@@ -95,6 +104,8 @@ async function getEncryptionKey(): Promise<CryptoKey> {
     await readDone;
     if (stored?.key) return stored.key;
 
+    // IndexedDB can structured-clone a non-extractable CryptoKey, so raw key
+    // bytes never need to be serialized into JavaScript strings or storage.
     const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
     const writeTransaction = database.transaction(KEY_STORE, "readwrite");
     const writeDone = transactionDone(writeTransaction);
@@ -169,6 +180,8 @@ export function titleFromPrompt(prompt: string) {
 }
 
 export function buildConversationPrompt(messages: LLMChatMessage[]) {
+  // The order API accepts one prompt rather than a message array. Rebuild the
+  // transcript from successful messages only so failures never become context.
   const complete = messages.filter((message) => message.status === "complete" && message.content.trim());
   if (complete.length <= 1 && complete[0]?.role === "user") return complete[0].content;
   const transcript = complete.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n\n");
@@ -185,6 +198,8 @@ export async function saveConversation(conversation: LLMConversation) {
     transaction.objectStore(CONVERSATION_STORE).put(record);
     await done;
   } catch {
+    // Session memory is the only safe degradation path: private content must
+    // never be persisted unencrypted merely to preserve convenience.
     memoryFallback.set(snapshot.id, snapshot);
   }
 }
@@ -196,7 +211,12 @@ export async function listConversations(serviceKey: string) {
     const done = transactionDone(transaction);
     const records = await requestResult(transaction.objectStore(CONVERSATION_STORE).getAll()) as EncryptedConversationRecord[];
     await done;
-    const decrypted = await Promise.all(records.filter((record) => record.serviceKey === serviceKey).map(decryptConversation));
+    // A partial/corrupt write must not hide every other conversation. Skip only
+    // the records that fail authenticated decryption and keep valid history.
+    const decryptedResults = await Promise.allSettled(
+      records.filter((record) => record.serviceKey === serviceKey).map(decryptConversation),
+    );
+    const decrypted = decryptedResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
     return decrypted.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   } catch {
     return [...memoryFallback.values()]
