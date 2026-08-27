@@ -22,8 +22,10 @@
 
 ## Setup wizard
 
-All modes start from `rynmesh-llm`; users do not write Python, CUDA, Docker, or
-llama-server commands.
+All modes start from `rynmesh-llm`; users do not write Python or provider-specific
+commands. Existing-API modes require a local model server. Managed and GGUF modes
+are optional provider tooling and require Docker Desktop/Engine to be installed
+and running; they are not part of the dependency-free desktop node.
 
 Inspect hardware and conservative recommendations:
 

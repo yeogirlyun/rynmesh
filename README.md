@@ -119,14 +119,18 @@ rynmesh-mcp
 
 See [Architecture](docs/ARCHITECTURE.md), [Product milestones](docs/PRODUCT_MILESTONES.md), and [Contributing](CONTRIBUTING.md) for deeper project context.
 
-## Local LLM service packages
+## Optional local LLM provider packages
 
-The P0 local LLM package supports a managed llama.cpp + GGUF install, read-only
-GGUF import, and an existing loopback OpenAI-compatible or Ollama service. Start
-with one entry point; it detects hardware and refuses unsafe defaults:
+The desktop node and recommendation assistant do not require Docker or a local
+model. Operators who choose to provide private inference can connect an existing
+loopback OpenAI-compatible or Ollama service. An optional Docker-backed mode can
+prepare a pinned llama.cpp runtime and verified GGUF model; Docker must already
+be installed and running:
 
 ```bash
 rynmesh-llm detect
+rynmesh-llm setup --mode openai-compatible --base-url http://127.0.0.1:8080
+# Optional Docker-backed provider:
 rynmesh-llm setup --mode managed --yes
 ```
 

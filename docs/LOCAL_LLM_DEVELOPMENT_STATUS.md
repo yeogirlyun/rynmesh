@@ -18,6 +18,8 @@ on the local-LLM service package and dual-node order flow.
   the physical Windows Consumer and Provider is still pending its remote run.
 - No private network key, model path, API key, prompt, or model response belongs
   in Git, Registry records, control-plane logs, or ordinary node logs.
+- The desktop node remains usable without Docker. Managed/GGUF provider setup is
+  optional and Docker-backed; a bundled native inference runtime is future work.
 
 ## Current topology
 

@@ -80,7 +80,7 @@ services:
     networks: [provider-runtime]
 
   real-llm:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:db8e923e6edc9241ad788979af79543a1e1ba55dbb7d41e62490ef0d0ad3c8e7
     profiles: ["real"]
     command: ["-m", "/models/model.gguf", "--host", "0.0.0.0", "--port", "8080", "-c", "2048", "-np", "1"]
     volumes:

@@ -82,11 +82,17 @@ def verify(mode: str) -> dict[str, Any]:
         if any(item.get("peer_id") == provider_id for item in discovered.get("services", [])):
             break
         time.sleep(1)
+    expected_transport = "encrypted_relay" if mode == "relay-test" else (
+        "ice_udp_direct" if mode == "test" else ""
+    )
+    requested_transport = "relay" if mode == "relay-test" else (
+        "p2p" if mode == "test" else "auto"
+    )
     result = _json("http://127.0.0.1:18892/api/local/llm/orders", {
         "network_id": "rynmesh-llm-e2e", "provider_peer_id": provider_id,
         "service_id": service_id,
         "prompt": "Reply with a short confirmation that the encrypted two-node path works.",
-        "max_tokens": 32,
+        "max_tokens": 32, "transport": requested_transport,
     }, timeout=240)
     consumer_balance = _json("http://127.0.0.1:18892/api/local/task-balance")
     provider_balance: dict[str, Any] = {}
@@ -121,6 +127,13 @@ def verify(mode: str) -> dict[str, Any]:
     }
     if result.get("state") != "succeeded" or not output:
         raise RuntimeError(f"E2E task failed: {report}")
+    if expected_transport and result.get("transport") != expected_transport:
+        raise RuntimeError(
+            f"E2E transport mismatch: expected {expected_transport}, got {result.get('transport')}"
+        )
+    if expected_transport and bool(dict(result.get("transport_evidence") or {}).get("relay_used")) \
+            != (expected_transport == "encrypted_relay"):
+        raise RuntimeError("E2E relay evidence does not match the requested transport")
     results_dir = ROOT / "deploy" / "llm-e2e" / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / (mode + "-result.json")).write_text(

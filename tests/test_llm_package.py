@@ -12,11 +12,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import rynmesh.llm_package.lifecycle as llm_lifecycle
+import rynmesh.llm_package.p2p as llm_p2p
 import rynmesh.llm_package.routes as llm_routes
 from rynmesh.crypto import SignatureError, sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
-from rynmesh.llm_package.manifest import LLMPackageManifest, fingerprint_file
+from rynmesh.llm_package.manifest import (
+    LLMPackageManifest,
+    ManifestError,
+    Pricing,
+    fingerprint_file,
+)
 from rynmesh.llm_package.p2p import (
     IceSignal,
     P2PError,
@@ -36,7 +43,12 @@ from rynmesh.llm_package.routes import (
     install_llm_routes,
 )
 from rynmesh.llm_package.task_balance import TaskBalanceError, TaskBalanceLedger
-from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
+from rynmesh.llm_package.task_protocol import (
+    TaskOrderStore,
+    TaskProtocolError,
+    open_task,
+    seal_task,
+)
 from rynmesh.services import peer_box
 from rynmesh.store import RynmeshStore
 
@@ -122,6 +134,56 @@ def test_lifecycle_rejects_package_path_traversal_before_writing(tmp_path, opena
             base_url=openai_server, package_id="safe-package", alias="safe-alias",
             api_key_env="secret value pasted here", root=tmp_path / "llm",
         )
+
+
+def test_managed_runtime_and_model_are_immutably_pinned():
+    assert "@sha256:" in llm_lifecycle.DEFAULT_IMAGE
+    assert "/resolve/main/" not in llm_lifecycle.DEFAULT_MODEL_URL
+    assert llm_lifecycle.DEFAULT_MODEL_REVISION in llm_lifecycle.DEFAULT_MODEL_URL
+    assert len(llm_lifecycle.DEFAULT_MODEL_SHA256) == 64
+    manifest = LLMPackageManifest(
+        package_id="unsafe", mode="managed", public_model_alias="unsafe",
+        install_source={"runtime_image": "example.invalid/runtime:latest"},
+    )
+    with pytest.raises(LifecycleError, match="pinned by SHA-256"):
+        llm_lifecycle._pinned_runtime_image(manifest)
+    manifest.install_source["runtime_image"] = "ghcr.io/ggml-org/llama.cpp:server"
+    assert llm_lifecycle._pinned_runtime_image(manifest) == llm_lifecycle.DEFAULT_IMAGE
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.001])
+def test_manifest_rejects_unsafe_public_pricing(value):
+    manifest = LLMPackageManifest(
+        package_id="priced", mode="openai_compatible", public_model_alias="priced",
+        base_url="http://127.0.0.1:8080", pricing=Pricing(input_per_1k=value),
+    )
+    with pytest.raises(ManifestError, match="finite and non-negative"):
+        manifest.validate()
+
+
+def test_managed_container_drops_privileges(monkeypatch, tmp_path):
+    model = tmp_path / "model.gguf"
+    model.write_bytes(b"GGUF" + b"0" * 64)
+    manifest = LLMPackageManifest(
+        package_id="safe", mode="managed", public_model_alias="safe",
+        runtime="docker_llama_cpp", model_path=str(model),
+        checksum=fingerprint_file(model), base_url="http://127.0.0.1:18080",
+        install_source={"runtime_image": llm_lifecycle.DEFAULT_IMAGE},
+    )
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(llm_lifecycle, "_docker", lambda: "docker")
+    monkeypatch.setattr(llm_lifecycle.subprocess, "run", fake_run)
+    llm_lifecycle._run_container(manifest)
+    run_command = commands[-1]
+    assert run_command[0:2] == ["docker", "run"]
+    assert run_command[run_command.index("--cap-drop") + 1] == "ALL"
+    assert run_command[run_command.index("--security-opt") + 1] == "no-new-privileges"
+    assert llm_lifecycle.DEFAULT_IMAGE in run_command
 
 
 def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, openai_server):
@@ -640,6 +702,16 @@ def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     first = service.handle(request)
     second = service.handle(request)
     assert first == second and adapter.calls == 1
+    changed = seal_task(
+        body={"task_id": "task_same", "service_id": "svc", "prompt": "CHANGED PROMPT",
+              "max_tokens": 8, "max_amount": 1,
+              "reply_messaging_pub": peer_box.public_key_b64(consumer_msg)},
+        task_id="task_same", kind="llm_request", sender_peer_id=consumer.peer_id,
+        recipient_peer_id=provider.peer_id, sender_signing_key=consumer.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(provider_msg), expires_at=_expires(),
+    ).to_dict()
+    with pytest.raises(TaskProtocolError, match="idempotency conflict"):
+        service.handle(changed)
     _, result = open_task(first, recipient_peer_id=consumer.peer_id,
                           recipient_messaging_key=consumer_msg, expected_kind="llm_response")
     assert result["output"] == "provider output" and result["state"] == "succeeded"
@@ -663,6 +735,103 @@ def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     two = service.settle_earning(settlement)
     assert one["event_id"] == two["event_id"] == "earning:task_same"
     assert balance.summary()["earned"] == result["amount"]
+
+
+def test_provider_bounds_retained_records_and_skips_paused_requests(monkeypatch, tmp_path):
+    monkeypatch.setenv("RYNMESH_LLM_MAX_PROVIDER_RECORDS_PER_PEER", "1")
+    monkeypatch.setenv("RYNMESH_LLM_MAX_PROVIDER_RECORDS", "2")
+    monkeypatch.setenv("RYNMESH_LLM_REQUESTS_PER_MINUTE", "10")
+    net = tmp_path / "net"
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
+    consumer = RynmeshStore(home=tmp_path / "consumer", network_dir=net)
+    provider_msg = peer_box.load_or_create_messaging_key(tmp_path / "provider-msg")
+    consumer_msg = peer_box.load_or_create_messaging_key(tmp_path / "consumer-msg")
+    orders = TaskOrderStore(tmp_path / "orders")
+    service = ProviderService(
+        manifest=LLMPackageManifest(
+            package_id="svc", mode="openai_compatible", public_model_alias="alias",
+            base_url="http://127.0.0.1:1",
+        ),
+        adapter=_FakeAdapter(), store=provider, task_store=orders,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+    )
+
+    def request(task_id: str, prompt: str, reply_key: str | None = None) -> dict:
+        return seal_task(
+            body={"task_id": task_id, "service_id": "svc", "prompt": prompt,
+                  "max_tokens": 8, "max_amount": 1,
+                  "reply_messaging_pub": reply_key or peer_box.public_key_b64(consumer_msg)},
+            task_id=task_id, kind="llm_request", sender_peer_id=consumer.peer_id,
+            recipient_peer_id=provider.peer_id, sender_signing_key=consumer.private_key_bytes,
+            recipient_messaging_pub=peer_box.public_key_b64(provider_msg), expires_at=_expires(),
+        ).to_dict()
+
+    service.handle(request("first", "one"))
+    with pytest.raises(TaskProtocolError, match="peer_task_record_limit"):
+        service.handle(request("second", "two"))
+    assert len(list((tmp_path / "orders").glob("*.json"))) == 1
+
+    service.accepting_orders = False
+    rejected = service.handle(request("paused", "three"))
+    _, result = open_task(
+        rejected, recipient_peer_id=consumer.peer_id,
+        recipient_messaging_key=consumer_msg, expected_kind="llm_response",
+    )
+    assert result["error_code"] == "service_paused"
+    assert len(list((tmp_path / "orders").glob("*.json"))) == 1
+
+    with pytest.raises(TaskProtocolError, match="messaging key is invalid"):
+        service.handle(request("invalid-key", "four", "not-base64"))
+    assert len(list((tmp_path / "orders").glob("*.json"))) == 1
+
+
+def test_task_store_prunes_expired_terminal_records(tmp_path):
+    store = TaskOrderStore(tmp_path / "orders")
+    store.transition(task_id="old", state="created")
+    store.transition(task_id="old", state="failed")
+    path = tmp_path / "orders" / "old.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["updated_at"] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    path.write_text(json.dumps(record), encoding="utf-8")
+    store.transition(task_id="new", state="created")
+    store.transition(task_id="new", state="failed")
+    removed = store.prune_terminal(
+        older_than=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    assert removed == 1
+    assert store.get("old") is None
+    assert store.get("new") is not None
+
+
+class _PacketConnection:
+    def __init__(self, packets):
+        self.packets = iter(packets)
+
+    async def recv(self):
+        return next(self.packets)
+
+
+def _p2p_packet(message_id: bytes, *, sequence: int, total: int, body: bytes = b"x") -> bytes:
+    return llm_p2p._HEADER.pack(
+        llm_p2p._MAGIC, llm_p2p._DATA, message_id, sequence, total, b"d" * 32,
+    ) + body
+
+
+def test_p2p_receiver_rejects_oversized_chunk_declarations():
+    packet = _p2p_packet(
+        b"a" * 16, sequence=0, total=llm_p2p._MAX_CHUNKS + 1,
+    )
+    with pytest.raises(P2PError, match="declaration exceeds safe limits"):
+        asyncio.run(receive_json(_PacketConnection([packet]), timeout_s=1))
+
+
+def test_p2p_receiver_bounds_simultaneous_messages():
+    packets = [
+        _p2p_packet(index.to_bytes(16), sequence=0, total=2)
+        for index in range(llm_p2p._MAX_IN_FLIGHT_MESSAGES + 1)
+    ]
+    with pytest.raises(P2PError, match="too many simultaneous"):
+        asyncio.run(receive_json(_PacketConnection(packets), timeout_s=1))
 
 
 def test_provider_concurrent_duplicate_executes_once(tmp_path):

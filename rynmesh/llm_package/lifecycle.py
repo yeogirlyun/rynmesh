@@ -12,7 +12,7 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from .adapters import adapter_from_manifest
 from .hardware import HardwareReport, detect_hardware, recommend
@@ -23,9 +23,15 @@ from .manifest import (
     save_manifest,
 )
 
-DEFAULT_IMAGE = "ghcr.io/ggml-org/llama.cpp:server"
+DEFAULT_IMAGE = (
+    "ghcr.io/ggml-org/llama.cpp:server@"
+    "sha256:db8e923e6edc9241ad788979af79543a1e1ba55dbb7d41e62490ef0d0ad3c8e7"
+)
+DEFAULT_MODEL_REVISION = "872f8a96064a1242ac3a3359cad77c3042548405"
+DEFAULT_MODEL_SHA256 = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
 DEFAULT_MODEL_URL = (
-    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/"
+    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/"
+    f"{DEFAULT_MODEL_REVISION}/"
     "qwen2.5-0.5b-instruct-q4_k_m.gguf"
 )
 GGUF_MAGIC = b"GGUF"
@@ -95,42 +101,6 @@ def validate_gguf(path: str | Path, *, report: HardwareReport | None = None,
     return {"path": str(source), "format": "GGUF", "size_bytes": size,
             "estimated_memory_mb": estimated_memory, "fits": fits,
             "fingerprint": fingerprint_file(source)}
-
-
-def _remote_digest(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.hostname == "huggingface.co":
-        parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) >= 5 and parts[2] == "resolve":
-            repository = "/".join(parts[:2])
-            revision = parts[3]
-            filename = "/".join(parts[4:])
-            api = (
-                f"https://huggingface.co/api/models/{repository}/tree/"
-                f"{quote(revision, safe='')}?recursive=true&expand=true"
-            )
-            try:
-                with urllib.request.urlopen(api, timeout=30) as response:
-                    entries = json.load(response)
-                match = next(
-                    (entry for entry in entries if entry.get("path") == filename), None
-                )
-                lfs_digest = str(dict(match or {}).get("lfs", {}).get("oid", ""))
-                if re.fullmatch(r"[a-fA-F0-9]{64}", lfs_digest):
-                    return lfs_digest.lower()
-            except (OSError, ValueError, TypeError):
-                pass
-    request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Rynmesh/0.6"})
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            values = [response.headers.get("x-linked-etag", ""), response.headers.get("etag", "")]
-    except OSError as exc:
-        raise LifecycleError(f"cannot obtain model checksum metadata: {exc}") from exc
-    for value in values:
-        cleaned = value.strip().strip('"').removeprefix("W/").strip('"')
-        if re.fullmatch(r"[a-fA-F0-9]{64}", cleaned):
-            return cleaned.lower()
-    raise LifecycleError("model source did not provide a SHA-256 ETag; refusing an unverified download")
 
 
 def _download(
@@ -228,6 +198,17 @@ def _container_name(package_id: str) -> str:
     return "rynmesh-llm-" + re.sub(r"[^a-z0-9_.-]", "-", package_id.lower())
 
 
+def _pinned_runtime_image(manifest: LLMPackageManifest | None = None) -> str:
+    image = str((manifest.install_source if manifest else {}).get("runtime_image") or DEFAULT_IMAGE)
+    if image == "ghcr.io/ggml-org/llama.cpp:server":
+        # Migrate manifests created by the pre-pinning preview to the reviewed
+        # digest without ever pulling or running the mutable legacy tag.
+        return DEFAULT_IMAGE
+    if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image):
+        raise LifecycleError("managed runtime image must be pinned by SHA-256 digest")
+    return image
+
+
 def _docker_state(package_id: str) -> dict[str, Any]:
     docker = shutil.which("docker")
     if not docker:
@@ -256,9 +237,11 @@ def _run_container(manifest: LLMPackageManifest) -> None:
     name = _container_name(manifest.package_id)
     subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30)
     port = int(urlparse(manifest.base_url).port or 8080)
+    runtime_image = _pinned_runtime_image(manifest)
     command = [
         docker, "run", "-d", "--name", name, "--read-only", "--tmpfs", "/tmp:size=128m",
-        "-p", f"127.0.0.1:{port}:8080", "-v", f"{model.parent}:/models:ro", DEFAULT_IMAGE,
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "256",
+        "-p", f"127.0.0.1:{port}:8080", "-v", f"{model.parent}:/models:ro", runtime_image,
         "-m", f"/models/{model.name}", "--host", "0.0.0.0", "--port", "8080",
         "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),
         "-np", str(manifest.max_concurrent),
@@ -298,7 +281,7 @@ def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
 
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
                     port: int = 18080, model_url: str = DEFAULT_MODEL_URL,
-                    expected_sha256: str = "", accept_risk: bool = False,
+                    expected_sha256: str = DEFAULT_MODEL_SHA256, accept_risk: bool = False,
                     progress: ProgressCallback | None = None,
                     cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
@@ -311,7 +294,9 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     _progress(progress, cancel_check, "runtime_check", 10, "Checking Docker runtime")
     _docker()
     _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
-    digest = expected_sha256.lower() or _remote_digest(model_url)
+    digest = expected_sha256.lower()
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise LifecycleError("managed model install requires a pinned SHA-256 digest")
     model_dir = base / "models" / package_id
     model_path = model_dir / "model.gguf"
     if not model_path.exists() or fingerprint_file(model_path) != "sha256:" + digest:
@@ -368,7 +353,7 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
         model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
         hardware_requirements={"estimated_memory_mb": details["estimated_memory_mb"]},
-        install_source={"kind": "user_owned_read_only_gguf"},
+        install_source={"kind": "user_owned_read_only_gguf", "runtime_image": DEFAULT_IMAGE},
     )
     path = manifest_path(package_id, root)
     _progress(progress, cancel_check, "start_runtime", 80, "Starting the read-only GGUF runtime")
@@ -446,7 +431,7 @@ def update(path: str | Path) -> dict[str, Any]:
     if manifest.runtime == "external":
         return {"managed": False, "updated": False, "message": "external runtime is owner-managed",
                 "self_test": self_test(manifest)}
-    subprocess.run([_docker(), "pull", DEFAULT_IMAGE], check=True, timeout=600)
+    subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)], check=True, timeout=600)
     restarted = restart(path)
     return {"managed": True, "updated": True, "runtime": restarted,
             "model_preserved": True, "self_test": self_test(manifest)}

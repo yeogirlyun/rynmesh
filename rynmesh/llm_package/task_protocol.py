@@ -225,6 +225,24 @@ class TaskOrderStore:
                     purged += int(self.purge_encrypted_response(str(record["task_id"])))
         return purged
 
+    def prune_terminal(self, *, older_than: datetime) -> int:
+        """Delete terminal records older than the provider retention boundary."""
+        boundary = older_than.astimezone(timezone.utc)
+        removed = 0
+        with self._lock:
+            for path in sorted(self.root.glob("*.json")):
+                record = self.get(path.stem)
+                if not record or record.get("state") not in TERMINAL_STATES:
+                    continue
+                try:
+                    updated_at = _parse_time(str(record.get("updated_at") or ""))
+                except (TypeError, ValueError):
+                    updated_at = datetime.min.replace(tzinfo=timezone.utc)
+                if updated_at <= boundary:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+        return removed
+
     def _path(self, task_id: str) -> Path:
         if not task_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in task_id):
             raise TaskProtocolError("invalid task id")

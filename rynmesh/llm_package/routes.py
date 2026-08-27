@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -12,10 +13,12 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
@@ -63,6 +66,14 @@ from .task_protocol import (
 
 CAPABILITY = "rynmesh.llm.private.v1"
 OPERATION = "rynmesh.llm.private.infer.v1"
+
+
+def _positive_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
@@ -122,6 +133,15 @@ def _request_fingerprint(body: dict[str, Any], secret: bytes) -> str:
     return "hmac-sha256:" + hmac.new(secret, encoded, hashlib.sha256).hexdigest()
 
 
+def _validate_messaging_pub(value: str) -> None:
+    try:
+        raw = base64.b64decode(value, validate=True)
+        remote = X25519PublicKey.from_public_bytes(raw)
+        X25519PrivateKey.generate().exchange(remote)
+    except (ValueError, TypeError) as exc:
+        raise TaskProtocolError("reply messaging key is invalid") from exc
+
+
 def _open_provider_response(
     encrypted_response: dict[str, Any], *, recipient_peer_id: str,
     messaging_key: Any, task_id: str, provider_peer_id: str, service_id: str,
@@ -157,9 +177,79 @@ class ProviderService:
         self._lock = threading.Lock()
         self._running = 0
         self._pending_cancellations: dict[str, tuple[str, str]] = {}
+        self._admission_lock = threading.Lock()
+        self._request_times: dict[str, deque[float]] = {}
+        self._request_limit_per_minute = _positive_env("RYNMESH_LLM_REQUESTS_PER_MINUTE", 60)
+        self._max_provider_records = _positive_env("RYNMESH_LLM_MAX_PROVIDER_RECORDS", 10_000)
+        self._max_provider_records_per_peer = _positive_env(
+            "RYNMESH_LLM_MAX_PROVIDER_RECORDS_PER_PEER", 1_000,
+        )
+        self._provider_retention_seconds = _positive_env(
+            "RYNMESH_LLM_PROVIDER_RETENTION_SECONDS", 86_400,
+        )
+        self._last_provider_prune = 0.0
+        self._provider_record_count = 0
+        self._provider_records_by_peer: Counter[str] = Counter()
         self.accepting_orders = True
+        self._refresh_provider_record_counts(prune=True)
         if manifest.debug_log_bodies or os.environ.get("RYNMESH_LLM_DEBUG_BODIES", "") == "1":
             print("WARNING: RYNMESH LLM task-body debug logging is enabled; prompts/outputs may be exposed.")
+
+    def _refresh_provider_record_counts(self, *, prune: bool = False) -> None:
+        if prune:
+            boundary = datetime.now(timezone.utc) - timedelta(
+                seconds=self._provider_retention_seconds,
+            )
+            self.task_store.prune_terminal(older_than=boundary)
+        records = self.task_store.list()
+        self._provider_record_count = len(records)
+        self._provider_records_by_peer = Counter(
+            str(dict(record.get("bindings") or {}).get("consumer_peer_id") or "")
+            for record in records
+        )
+        self._provider_records_by_peer.pop("", None)
+        self._last_provider_prune = time.monotonic()
+
+    def _claim_admitted_task(
+        self,
+        *,
+        task_id: str,
+        bindings: dict[str, str],
+    ) -> tuple[dict[str, Any], bool]:
+        consumer_peer_id = bindings["consumer_peer_id"]
+        with self._admission_lock:
+            existing = self.task_store.get(task_id)
+            if existing is not None:
+                return self.task_store.claim(task_id=task_id, bindings=bindings)
+
+            now = time.monotonic()
+            if now - self._last_provider_prune >= 60:
+                self._refresh_provider_record_counts(prune=True)
+                self._request_times = {
+                    peer_id: values
+                    for peer_id, values in self._request_times.items()
+                    if values and now - values[-1] < 60
+                }
+
+            times = self._request_times.setdefault(consumer_peer_id, deque())
+            while times and now - times[0] >= 60:
+                times.popleft()
+            if len(times) >= self._request_limit_per_minute:
+                raise TaskProtocolError("provider_rate_limited")
+            if self._provider_record_count >= self._max_provider_records:
+                raise TaskProtocolError("provider_task_record_limit_reached")
+            if (
+                self._provider_records_by_peer[consumer_peer_id]
+                >= self._max_provider_records_per_peer
+            ):
+                raise TaskProtocolError("provider_peer_task_record_limit_reached")
+
+            record, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
+            if claimed:
+                times.append(now)
+                self._provider_record_count += 1
+                self._provider_records_by_peer[consumer_peer_id] += 1
+            return record, claimed
 
     def public_status(self, *, benchmark: bool = False) -> dict[str, Any]:
         health = self.adapter.health()
@@ -207,9 +297,6 @@ class ProviderService:
             recipient_messaging_key=self.messaging_key, expected_kind="llm_request",
         )
         task_id = str(outer["task_id"])
-        existing = self.task_store.get(task_id)
-        if existing and existing.get("state") in TERMINAL_STATES and existing.get("encrypted_response"):
-            return dict(existing["encrypted_response"])
         if str(body.get("service_id")) != self.manifest.package_id:
             raise TaskProtocolError("requested service is not available")
         prompt = str(body.get("prompt") or "")
@@ -219,6 +306,7 @@ class ProviderService:
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
         reply_pub = str(body.get("reply_messaging_pub") or "")
+        _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
         if max_amount > self.manifest.pricing.maximum_per_task:
             raise TaskProtocolError("task maximum exceeds provider price limit")
@@ -230,7 +318,19 @@ class ProviderService:
             "idempotency_key": idempotency_key,
             "request_fingerprint": fingerprint,
         }
-        existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
+        existing = self.task_store.get(task_id)
+        if existing is not None:
+            existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
+        else:
+            if not self.accepting_orders:
+                return self._sealed_failure(
+                    task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused",
+                )
+            if not self.adapter.health().get("ok"):
+                return self._sealed_failure(
+                    task_id, reply_pub, outer["from_peer_id"], "rejected", "service_unhealthy",
+                )
+            existing, claimed = self._claim_admitted_task(task_id=task_id, bindings=bindings)
         if not claimed:
             encrypted = existing.get("encrypted_response")
             if existing.get("state") in TERMINAL_STATES and isinstance(encrypted, dict):
@@ -255,10 +355,6 @@ class ProviderService:
             "service_id": self.manifest.package_id,
             "request_hash": SignedPayload.from_dict(signed_request).subject_hash,
         }
-        if not self.accepting_orders:
-            return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused")
-        if not self.adapter.health().get("ok"):
-            return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_unhealthy")
         if not self._slots.acquire(blocking=False):
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "capacity_exhausted")
         with self._lock:
@@ -316,18 +412,22 @@ class ProviderService:
 
     def _failure(self, task_id: str, reply_pub: str, consumer_peer_id: str,
                  state: str, code: str) -> dict[str, Any]:
-        response = seal_task(
+        response = self._sealed_failure(task_id, reply_pub, consumer_peer_id, state, code)
+        self.task_store.transition(task_id=task_id, state=state,
+                                   metadata={"consumer_peer_id": consumer_peer_id,
+                                             "service_id": self.manifest.package_id,
+                                             "error_code": code}, encrypted_response=response)
+        return response
+
+    def _sealed_failure(self, task_id: str, reply_pub: str, consumer_peer_id: str,
+                        state: str, code: str) -> dict[str, Any]:
+        return seal_task(
             body={"task_id": task_id, "state": state, "error_code": code,
                   "service_id": self.manifest.package_id},
             task_id=task_id, kind="llm_response", sender_peer_id=self.store.peer_id,
             recipient_peer_id=consumer_peer_id, sender_signing_key=self.store.private_key_bytes,
             recipient_messaging_pub=reply_pub, expires_at=_expires(300),
         ).to_dict()
-        self.task_store.transition(task_id=task_id, state=state,
-                                   metadata={"consumer_peer_id": consumer_peer_id,
-                                             "service_id": self.manifest.package_id,
-                                             "error_code": code}, encrypted_response=response)
-        return response
 
     def settle_earning(self, signed: dict[str, Any]) -> dict[str, Any]:
         envelope = SignedPayload.from_dict(signed)

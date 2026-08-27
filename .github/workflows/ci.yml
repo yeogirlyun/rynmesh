@@ -58,8 +58,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e .
-      - name: Deterministic two-node private LLM flow
+      - name: Deterministic strict P2P private LLM flow
         run: python scripts/llm_e2e.py run
+      - name: Deterministic encrypted-relay private LLM flow
+        run: python scripts/llm_e2e.py relay-run
       - name: Clean up isolated E2E stack
         if: always()
         run: python scripts/llm_e2e.py down

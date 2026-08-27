@@ -31,6 +31,9 @@ _ACK = 2
 _HEADER = struct.Struct("!7sB16sHH32s")
 _CHUNK_BYTES = 900
 _MAX_MESSAGE_BYTES = 4 * 1024 * 1024
+_MAX_CHUNKS = math.ceil(_MAX_MESSAGE_BYTES / _CHUNK_BYTES)
+_MAX_IN_FLIGHT_MESSAGES = 8
+_MAX_BUFFERED_BYTES = _MAX_MESSAGE_BYTES * 2
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,7 @@ async def send_json(connection: aioice.Connection, value: dict[str, Any], *, tim
 async def receive_json(connection: aioice.Connection, *, timeout_s: float) -> tuple[dict[str, Any], int]:
     deadline = time.monotonic() + timeout_s
     messages: dict[bytes, dict[str, Any]] = {}
+    buffered_bytes = 0
     while time.monotonic() < deadline:
         try:
             packet = await asyncio.wait_for(
@@ -259,9 +263,19 @@ async def receive_json(connection: aioice.Connection, *, timeout_s: float) -> tu
             continue
         if kind != _DATA or total < 1 or sequence >= total:
             continue
-        state = messages.setdefault(message_id, {"total": total, "digest": digest, "chunks": {}})
+        if total > _MAX_CHUNKS or len(body) > _CHUNK_BYTES:
+            raise P2PError("P2P message declaration exceeds safe limits")
+        if message_id not in messages:
+            if len(messages) >= _MAX_IN_FLIGHT_MESSAGES:
+                raise P2PError("too many simultaneous P2P messages")
+            messages[message_id] = {"total": total, "digest": digest, "chunks": {}}
+        state = messages[message_id]
         if state["total"] != total or state["digest"] != digest:
             continue
+        if sequence not in state["chunks"]:
+            buffered_bytes += len(body)
+            if buffered_bytes > _MAX_BUFFERED_BYTES:
+                raise P2PError("P2P buffered data exceeds safe limits")
         state["chunks"][sequence] = body
         if len(state["chunks"]) != total:
             continue

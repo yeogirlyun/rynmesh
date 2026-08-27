@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,20 @@ class LLMPackageManifest:
             raise ManifestError("max_output_tokens exceeds context_window")
         if self.max_concurrent < 1 or self.queue_limit < 0 or self.timeout_seconds <= 0:
             raise ManifestError("capacity/timeout limits are invalid")
+        prices = (
+            self.pricing.input_per_1k,
+            self.pricing.output_per_1k,
+            self.pricing.minimum,
+            self.pricing.maximum_per_task,
+        )
+        if self.pricing.currency != "DEV_TASK_BALANCE":
+            raise ManifestError("only the development Task Balance is supported")
+        if any(not math.isfinite(float(value)) or float(value) < 0 for value in prices):
+            raise ManifestError("pricing values must be finite and non-negative")
+        if self.pricing.minimum > self.pricing.maximum_per_task:
+            raise ManifestError("minimum price exceeds maximum_per_task")
+        if self.privacy.retention_seconds < 0:
+            raise ManifestError("privacy retention_seconds must be non-negative")
         if self.mode == "import_gguf" and not self.model_path:
             raise ManifestError("GGUF import requires model_path")
         if self.mode in {"openai_compatible", "ollama"} and not self.base_url:

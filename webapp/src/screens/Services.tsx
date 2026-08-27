@@ -612,7 +612,7 @@ export default function Services() {
               <option value="openai-compatible">OpenAI-compatible local API</option>
               <option value="ollama">Ollama</option>
               <option value="import-gguf">Import a GGUF file read-only</option>
-              <option value="managed">Automatically install a recommended model</option>
+              <option value="managed">Optional managed Docker model</option>
             </select>
           </label>
           <label className="field">
@@ -661,6 +661,12 @@ export default function Services() {
           ) : null}
           {llmSetupMode === "managed" || llmSetupMode === "import-gguf" ? (
             <>
+              <div className="service-result">
+                <small>
+                  Provider setup only: Docker Desktop/Engine must already be installed and running.
+                  The Ryn desktop node and recommendations work without this optional provider runtime.
+                </small>
+              </div>
               <label className="field">
                 <span>Local runtime port</span>
                 <input value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
