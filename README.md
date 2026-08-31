@@ -19,6 +19,7 @@ The node, web interface, recommendation agent, peer protocol, registry, and comm
 - A self-hosted web interface served by the node daemon
 - Signed content manifests, provenance chains, and safety receipts
 - Direct peer HTTP transport with registry-assisted discovery and NAT-safe relay jobs
+- Direct ICE/UDP file transfer with automatic ordinary-peer transit fallback; TURN is not used
 - Content publishing for video, images, audio, documents, slides, datasets, and other files
 - MCP tools for Codex-, Claude-, and other MCP-compatible AI operators
 - Non-transferable Rynmesh Credits for distribution reputation
@@ -110,6 +111,27 @@ rynmesh-registry
 ```
 
 The registry stores signed peer records, work-order mailbox messages, and optional relay blobs. Nodes verify signatures and content hashes locally.
+
+## Three-node P2P peer transit
+
+`rynmesh-transit` sends directly over ICE/UDP when possible and can use another
+ordinary Rynmesh peer as a single encrypted transit hop when the direct route is
+unavailable or degraded. Both legs are host/server-reflexive P2P connections;
+the registry carries signed signaling only, and TURN candidates fail closed.
+
+```bash
+# Peer 3
+rynmesh-transit worker --role target --network-id my-network
+# Peer 2
+rynmesh-transit worker --role transit --network-id my-network
+# Peer 1: direct first, peer 2 on hard failure
+rynmesh-transit send-file-adaptive artifact.bin \
+  --target-peer "<peer-3-id>" --relay-peer "<peer-2-id>" \
+  --network-id my-network
+```
+
+See [the design and acceptance contract](docs/P2P_PEER_TRANSIT.md) and
+[operator runbook](docs/P2P_PEER_TRANSIT_RUNBOOK.md).
 
 ## MCP server
 

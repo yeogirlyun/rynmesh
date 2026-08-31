@@ -66,6 +66,30 @@ jobs:
         if: always()
         run: python scripts/llm_e2e.py down
 
+  peer-transit-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - name: Three-node direct ICE peer-transit acceptance
+        run: |
+          python scripts/run_peer_transit_acceptance.py \
+            --size-mib 8 --concurrent 3 --timeout 120 \
+            --work-root "$RUNNER_TEMP/peer-transit" \
+            --output "$RUNNER_TEMP/peer-transit-report.json" \
+            --evidence "$RUNNER_TEMP/peer-transit-evidence.json"
+          python scripts/audit_peer_transit.py \
+            "$RUNNER_TEMP/peer-transit-evidence.json"
+      - name: Persistent worker soak smoke
+        run: |
+          python scripts/run_peer_transit_soak.py \
+            --duration-seconds 10 --interval-seconds 0.5 --payload-kib 4 \
+            --work-root "$RUNNER_TEMP/peer-transit-soak" \
+            --progress "$RUNNER_TEMP/peer-transit-soak/progress.json"
+
   packaged-node:
     # The release form: the node must serve its own UI with no dev server.
     runs-on: ubuntu-latest

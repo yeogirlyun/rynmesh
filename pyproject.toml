@@ -62,6 +62,7 @@ rynmesh-embeddings-worker = "rynmesh.services.embeddings:main"
 rynmesh-egress-worker = "rynmesh.services.net_egress:main"
 rynmesh-egress = "rynmesh.services.net_egress_client:main"
 rynmesh-llm = "rynmesh.llm_package.cli:main"
+rynmesh-transit = "rynmesh.peer_transit_service:main"
 rynmesh-publish = "rynmesh.tools.publish_release:main"
 rynmesh-vpn = "rynmesh.services.vpn_cli:main"
 

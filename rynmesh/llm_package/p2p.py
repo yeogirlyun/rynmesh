@@ -15,6 +15,7 @@ import os
 import struct
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -34,6 +35,9 @@ _MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 _MAX_CHUNKS = math.ceil(_MAX_MESSAGE_BYTES / _CHUNK_BYTES)
 _MAX_IN_FLIGHT_MESSAGES = 8
 _MAX_BUFFERED_BYTES = _MAX_MESSAGE_BYTES * 2
+_RECENT_MESSAGE_IDS = 128
+_SEND_WINDOW = 32
+_ACK_WAIT_S = 0.25
 
 
 @dataclass(frozen=True)
@@ -335,6 +339,117 @@ async def receive_json(
     raise P2PError("timed out receiving P2P message")
 
 
+async def send_bytes(connection: aioice.Connection, payload: bytes, *, timeout_s: float) -> int:
+    """Reliably send one bounded opaque message over an ICE datagram pair.
+
+    This is intentionally payload-agnostic so the peer-transit layer can
+    forward end-to-end ciphertext without teaching the transit peer how to
+    parse it.  Reliability remains hop-by-hop and bounded by
+    ``_MAX_MESSAGE_BYTES``.
+    """
+
+    message_id, frames = _encode_frames(payload)
+    deadline = time.monotonic() + timeout_s
+    pending = set(range(len(frames)))
+    while pending and time.monotonic() < deadline:
+        window = sorted(pending)[:_SEND_WINDOW]
+        for sequence in window:
+            await connection.send(frames[sequence])
+        ack_deadline = min(deadline, time.monotonic() + _ACK_WAIT_S)
+        while pending.intersection(window) and time.monotonic() < ack_deadline:
+            try:
+                packet = await asyncio.wait_for(
+                    connection.recv(),
+                    timeout=max(0.01, ack_deadline - time.monotonic()),
+                )
+            except asyncio.TimeoutError:
+                break
+            try:
+                kind, received_id, sequence, total, _digest, _body = _decode_header(packet)
+            except P2PError:
+                continue
+            if (
+                kind == _ACK
+                and received_id == message_id
+                and total == len(frames)
+                and sequence in pending
+            ):
+                pending.remove(sequence)
+    if not pending:
+        return len(payload)
+    raise P2PError("timed out waiting for P2P message acknowledgement")
+
+
+async def receive_bytes(connection: aioice.Connection, *, timeout_s: float) -> tuple[bytes, int]:
+    """Receive and acknowledge one bounded opaque ICE message."""
+
+    deadline = time.monotonic() + timeout_s
+    messages: dict[bytes, dict[str, Any]] = {}
+    buffered_bytes = 0
+    recent = getattr(connection, "_rynmesh_recent_message_ids", None)
+    if recent is None:
+        recent = deque(maxlen=_RECENT_MESSAGE_IDS)
+        connection._rynmesh_recent_message_ids = recent
+    while time.monotonic() < deadline:
+        try:
+            packet = await asyncio.wait_for(
+                connection.recv(), timeout=max(0.05, deadline - time.monotonic())
+            )
+        except asyncio.TimeoutError as exc:
+            raise P2PError("timed out receiving P2P message") from exc
+        try:
+            kind, message_id, sequence, total, digest, body = _decode_header(packet)
+        except P2PError:
+            continue
+        if kind != _DATA or total < 1 or sequence >= total:
+            continue
+        if message_id in recent:
+            # A sender may retransmit just before our ACK arrives.  ACK the
+            # already delivered message again but never surface it to the next
+            # application receive call.
+            ack = _HEADER.pack(_MAGIC, _ACK, message_id, sequence, total, digest)
+            await _send_ack(connection, ack)
+            continue
+        if total > _MAX_CHUNKS or len(body) > _CHUNK_BYTES:
+            raise P2PError("P2P message declaration exceeds safe limits")
+        ack = _HEADER.pack(_MAGIC, _ACK, message_id, sequence, total, digest)
+        await _send_ack(connection, ack)
+        if message_id not in messages:
+            if len(messages) >= _MAX_IN_FLIGHT_MESSAGES:
+                raise P2PError("too many simultaneous P2P messages")
+            messages[message_id] = {"total": total, "digest": digest, "chunks": {}}
+        state = messages[message_id]
+        if state["total"] != total or state["digest"] != digest:
+            continue
+        if sequence not in state["chunks"]:
+            buffered_bytes += len(body)
+            if buffered_bytes > _MAX_BUFFERED_BYTES:
+                raise P2PError("P2P buffered data exceeds safe limits")
+        state["chunks"][sequence] = body
+        if len(state["chunks"]) != total:
+            continue
+        payload = b"".join(state["chunks"][index] for index in range(total))
+        if len(payload) > _MAX_MESSAGE_BYTES or hashlib.sha256(payload).digest() != digest:
+            raise P2PError("P2P message integrity check failed")
+        # Duplicate the final acknowledgement because the receiver will now
+        # return to its caller and may switch direction on the same ICE pair.
+        # If the first final ACK is lost, this avoids a needless whole-session
+        # timeout while keeping retransmission selective.
+        for _ in range(2):
+            await _send_ack(connection, ack)
+        recent.append(message_id)
+        return payload, len(payload)
+    raise P2PError("timed out receiving P2P message")
+
+
+async def _send_ack(connection: Any, ack: bytes) -> None:
+    """Send an ACK while preserving receive-only protocol-test doubles."""
+
+    sender = getattr(connection, "send", None)
+    if sender is not None:
+        await sender(ack)
+
+
 async def consumer_exchange(
     *,
     signed_request: dict[str, Any],
@@ -409,3 +524,4 @@ async def provider_exchange(
         return evidence
     finally:
         await _close_connection(connection)
+
