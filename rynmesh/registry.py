@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,6 +52,29 @@ def _peer_slug(peer_id: str) -> str:
     from .store import _hash_hex
 
     return _hash_hex(peer_id)[:16]
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    """Replace one registry record without exposing a partially written JSON file."""
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_name = handle.name
+        Path(temporary_name).replace(path)
+    finally:
+        if temporary_name:
+            Path(temporary_name).unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -192,7 +216,7 @@ class FilePeerRegistry:
     def publish_job_capacity(self, signed_record: SignedPayload) -> dict[str, Any]:
         record = verify_job_capacity(signed_record)
         path = self.job_capacity_dir / f"{_peer_slug(record.peer_id)}.json"
-        path.write_text(json.dumps(signed_record.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        _write_json_atomic(path, signed_record.to_dict())
         return {
             "status": "registered",
             "peer_id": record.peer_id,

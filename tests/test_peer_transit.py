@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from rynmesh import peer_transit_service
 from rynmesh.crypto import SignedPayload
 from rynmesh.llm_package.p2p import (
     apply_remote_signal,
@@ -33,6 +35,8 @@ from rynmesh.peer_transit import (
     verify_session_open,
 )
 from rynmesh.peer_transit_service import (
+    CAPACITY_MAX_AGE_HOURS,
+    DEFAULT_CAPACITY_REFRESH_S,
     PeerTransitWorker,
     send_file_adaptive,
     send_file_direct,
@@ -45,6 +49,37 @@ from scripts.audit_peer_transit import AuditError, audit_peer_transit, audit_soa
 
 def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def test_worker_refreshes_capacity_before_discovery_record_expires(tmp_path, monkeypatch) -> None:
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    worker = PeerTransitWorker(store, role="transit", network_id="refresh-test")
+    assert DEFAULT_CAPACITY_REFRESH_S < CAPACITY_MAX_AGE_HOURS * 3600
+
+    registrations: list[int] = []
+    polls = 0
+    stop = threading.Event()
+
+    def register() -> dict[str, str]:
+        registrations.append(len(registrations) + 1)
+        return {"status": "registered"}
+
+    def serve_once() -> int:
+        nonlocal polls
+        polls += 1
+        if polls == 2:
+            stop.set()
+        return 0
+
+    clock = iter((0.0, 1.0, DEFAULT_CAPACITY_REFRESH_S + 1.0))
+    monkeypatch.setattr(worker, "register", register)
+    monkeypatch.setattr(worker, "serve_once", serve_once)
+    monkeypatch.setattr(peer_transit_service.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(peer_transit_service.time, "sleep", lambda _seconds: None)
+
+    worker.serve_forever(stop_event=stop)
+
+    assert registrations == [1, 2]
 
 
 def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) -> None:

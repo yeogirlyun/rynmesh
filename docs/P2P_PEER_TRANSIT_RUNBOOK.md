@@ -36,6 +36,9 @@ The startup line prints peer 3's Ed25519 peer ID.  Its signed capacity contains
 the X25519 messaging public key; the private key remains beneath
 `RYNMESH_HOME`.
 
+The worker refreshes this signed capacity every 15 minutes; long-running nodes
+do not require manual re-registration.
+
 ## Start the transit peer (peer 2)
 
 ```powershell

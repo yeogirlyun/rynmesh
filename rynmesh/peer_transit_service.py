@@ -54,6 +54,8 @@ ACCEPT_OPERATION = "accept_peer_transit"
 DIRECT_OPERATION = "accept_direct_file"
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_DIRECT_ATTEMPT_TIMEOUT_S = 8.0
+CAPACITY_MAX_AGE_HOURS = 1.0
+DEFAULT_CAPACITY_REFRESH_S = 15 * 60.0
 # Keep a reliable-message burst below typical UDP socket receive buffers.  The
 # lower layer fragments this again into ~900-byte datagrams.
 DEFAULT_CHUNK_BYTES = 64 * 1024
@@ -102,7 +104,7 @@ def _find_capacity(
     capacities = store.list_job_capacities(
         network_id=network_id,
         capability=TRANSIT_CAPABILITY,
-        max_age_hours=1,
+        max_age_hours=CAPACITY_MAX_AGE_HOURS,
     ).get("capacities", [])
     for capacity in capacities:
         metadata = dict(capacity.get("metadata") or {})
@@ -242,6 +244,7 @@ class PeerTransitWorker:
         max_concurrent: int = 8,
         allow_direct: bool = True,
         audit_frame: Any | None = None,
+        capacity_refresh_s: float = DEFAULT_CAPACITY_REFRESH_S,
     ) -> None:
         if role not in {"target", "transit", "both"}:
             raise ValueError("peer transit role must be target, transit, or both")
@@ -255,6 +258,9 @@ class PeerTransitWorker:
         self.max_concurrent = int(max_concurrent)
         self.allow_direct = bool(allow_direct)
         self.audit_frame = audit_frame
+        if capacity_refresh_s <= 0:
+            raise ValueError("peer transit capacity refresh interval must be positive")
+        self.capacity_refresh_s = float(capacity_refresh_s)
 
     def register(self) -> dict[str, Any]:
         roles = ("target", "transit") if self.role == "both" else (self.role,)
@@ -267,12 +273,17 @@ class PeerTransitWorker:
 
     def serve_forever(self, *, poll_interval_s: float = 0.2, stop_event: Any | None = None) -> None:
         self.register()
+        next_capacity_refresh = time.monotonic() + self.capacity_refresh_s
         print(
             f"[{TRANSIT_CAPABILITY}] peer={self.store.peer_id} role={self.role} "
             f"network={self.network_id}"
         )
         while stop_event is None or not stop_event.is_set():
             try:
+                now = time.monotonic()
+                if now >= next_capacity_refresh:
+                    self.register()
+                    next_capacity_refresh = now + self.capacity_refresh_s
                 self.serve_once()
             except KeyboardInterrupt:
                 raise

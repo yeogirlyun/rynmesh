@@ -68,6 +68,7 @@ def run_soak(
     interval_s: float,
     payload_bytes: int,
     timeout_s: float,
+    capacity_refresh_s: float = 15 * 60.0,
     work_root: Path,
     progress_path: Path,
 ) -> dict[str, Any]:
@@ -89,6 +90,7 @@ def run_soak(
         network_id=network_id,
         timeout_s=timeout_s,
         audit_frame=frame_audit,
+        capacity_refresh_s=capacity_refresh_s,
     )
     target_worker = PeerTransitWorker(
         target,
@@ -96,6 +98,7 @@ def run_soak(
         network_id=network_id,
         inbox=work_root / "target-inbox",
         timeout_s=timeout_s,
+        capacity_refresh_s=capacity_refresh_s,
     )
     relay_worker.register()
     target_worker.register()
@@ -216,12 +219,20 @@ def main() -> int:
     parser.add_argument("--interval-seconds", type=float, default=10.0)
     parser.add_argument("--payload-kib", type=int, default=64)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--capacity-refresh-seconds", type=float, default=15 * 60.0)
     parser.add_argument("--work-root", default="")
     parser.add_argument("--progress", default="")
     args = parser.parse_args()
     duration_s = args.duration_seconds if args.duration_seconds is not None else args.duration_hours * 3600.0
-    if duration_s <= 0 or args.interval_seconds < 0 or args.payload_kib < 1:
-        raise SystemExit("duration and payload must be positive; interval must be non-negative")
+    if (
+        duration_s <= 0
+        or args.interval_seconds < 0
+        or args.payload_kib < 1
+        or args.capacity_refresh_seconds <= 0
+    ):
+        raise SystemExit(
+            "duration, payload, and capacity refresh must be positive; interval must be non-negative"
+        )
     work_root = Path(args.work_root).expanduser() if args.work_root else Path(tempfile.mkdtemp(prefix="rynmesh-peer-transit-soak-"))
     progress_path = Path(args.progress).expanduser() if args.progress else work_root / "progress.json"
     report = run_soak(
@@ -229,6 +240,7 @@ def main() -> int:
         interval_s=args.interval_seconds,
         payload_bytes=args.payload_kib * 1024,
         timeout_s=args.timeout,
+        capacity_refresh_s=args.capacity_refresh_seconds,
         work_root=work_root,
         progress_path=progress_path,
     )

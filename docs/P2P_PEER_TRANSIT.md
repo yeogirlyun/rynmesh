@@ -24,6 +24,11 @@ Peer 2 is not a privileged cloud relay.  It advertises a normal signed
 `rynmesh.peer-transit.v1` capacity and may be replaced by any eligible peer
 that can establish both P2P legs.
 
+An online target or transit worker refreshes its signed capacity every 15
+minutes. Discovery treats records older than one hour as stale. A failed
+refresh is retried on the next worker poll, and file-backed capacity records
+are replaced atomically so readers never observe a half-written heartbeat.
+
 ## 2. Terminology
 
 - **direct**: one ICE connection from source to target.
