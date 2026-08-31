@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from rynmesh.crypto import sha256_file
-from typing import Any
 
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
 PACKAGE_VERSION = "0.1.0"

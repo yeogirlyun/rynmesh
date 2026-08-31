@@ -261,7 +261,6 @@ def test_lost_ack_burst_no_longer_deadlocks_the_consumer():
 def test_provider_reacks_retransmitted_request_frames():
     request_payload = json.dumps({"q": 1}, separators=(",", ":")).encode()
     request_id, request_frames = llm_p2p._encode_frames(request_payload)
-    ack = llm_p2p._HEADER.pack(llm_p2p._MAGIC, llm_p2p._ACK, b"r" * 16, 0, 0, b"d" * 32)
 
     async def scenario():
         # Peer retransmits the request (lost ACK), then finally ACKs our response.

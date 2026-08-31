@@ -36,8 +36,8 @@ def sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def sha256_file(path: "Path | str", *, chunk_size: int = 1024 * 1024) -> str:
-    """Chunked 'sha256:<hex>' digest of a file — the one file hasher.
+def sha256_file(path, *, chunk_size: int = 1024 * 1024) -> str:
+    """Chunked 'sha256:<hex>' digest of a file (str or Path) — the one file hasher.
 
     Content manifests and model fingerprints both use this; keeping a single
     implementation means an algorithm migration happens in one place.
