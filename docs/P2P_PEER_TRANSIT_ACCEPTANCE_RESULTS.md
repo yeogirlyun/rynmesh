@@ -16,7 +16,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Complete Python suite | Pass | 525 passed, 3 skipped |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
-| Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel contains both transit modules and `rynmesh-transit` entry point |
+| Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel installed into a clean virtual environment and its `rynmesh-transit --help` entry point loaded both installed transit modules |
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP; `relay_used=false` |
