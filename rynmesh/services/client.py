@@ -3,14 +3,17 @@
 Usage shape (sync, polls for result):
 
     from rynmesh.store import RynmeshStore
-    from rynmesh.services.client import request_llm
+    from rynmesh.services.client import request_embedding
     store = RynmeshStore()
-    out = request_llm(store, provider_peer_id=PROVIDER_PID, prompt="hello",
-                      network_id="rynmesh-home-qa", timeout_s=20)
-    print(out["text"])
+    out = request_embedding(store, provider_peer_id=PROVIDER_PID,
+                             text="hello", network_id="rynmesh-home-qa")
 
 The helpers wrap submit_work_order + list_work_results polling and JSON-
 decode the result payload that the worker emitted into result.message.
+
+Note: request_llm is retired. Plaintext prompts must not ride registry work
+orders; use the encrypted private task protocol via the node API instead
+(POST /api/local/llm/orders — see rynmesh/llm_package/).
 """
 from __future__ import annotations
 

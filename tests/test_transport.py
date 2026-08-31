@@ -109,13 +109,22 @@ def test_active_probe_resistance_guards_registry_and_relay(monkeypatch, tmp_path
     ))
     auth = hashlib.sha256(b"rynmesh-net-key:registry-secret").hexdigest()
 
-    assert client.get("/health").status_code == 404
+    # The coordination surface stays hidden from unauthenticated probes...
     assert client.get("/api/v1/jobs/capacity").status_code == 404
     assert client.post("/api/v1/relay/blobs", content=b"probe").status_code == 404
-    assert client.get("/health", headers={"X-Ryn-Auth": auth}).status_code == 200
     assert client.get(
         "/api/v1/jobs/capacity", headers={"X-Ryn-Auth": auth}
     ).status_code == 200
+    # ...but /health must answer plain probes: load balancers and orchestrator
+    # healthchecks can't compute the derived header, and a 404 there marks a
+    # healthy registry as down and restart-loops it. Unauthenticated callers
+    # get liveness only; the registry identity needs the mesh key.
+    plain = client.get("/health")
+    assert plain.status_code == 200
+    assert "kind" not in plain.json()
+    authed = client.get("/health", headers={"X-Ryn-Auth": auth})
+    assert authed.status_code == 200
+    assert authed.json().get("kind") == "rynmesh-registry"
 
 
 def test_get_transport_selects_fronted_when_sni_or_connect_set(monkeypatch) -> None:

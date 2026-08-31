@@ -543,8 +543,15 @@ def _signed_payload_list(
     for item in records:
         if not isinstance(item, dict):
             continue
-        signed = SignedPayload.from_dict(item)
-        validator(signed)
+        # One non-conforming record must not poison the whole listing: a
+        # single hostile (or legacy) signed order would otherwise abort every
+        # poll until it aged out. FilePeerRegistry already skips bad records;
+        # the HTTP client path gets the same tolerance.
+        try:
+            signed = SignedPayload.from_dict(item)
+            validator(signed)
+        except (KeyError, TypeError, ValueError, JobError):
+            continue
         signed_records.append(signed)
     return signed_records
 

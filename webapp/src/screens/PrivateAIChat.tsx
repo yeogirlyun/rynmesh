@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
 import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
@@ -32,13 +33,15 @@ import {
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
 
-const TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled", "rejected"]);
+const TERMINAL_STATES = LLM_TERMINAL_STATES;
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
 
 function serviceKey(service: LLMServiceRecord) {
   // Aliases are display names and are not unique. Scope history by both the
-  // provider identity and package ID to prevent cross-provider conversation mixups.
-  return `${service.peer_id}::${service.service.package_id}`;
+  // provider identity and package ID to prevent cross-provider conversation
+  // mixups. Shared with Services so the two screens can never diverge on the
+  // identity format (conversation-store keys persist in IndexedDB).
+  return llmServiceRecordKey(service);
 }
 
 function messageId() {
@@ -87,6 +90,16 @@ export default function PrivateAIChat() {
   const [storageMode, setStorageMode] = useState<"encrypted" | "session-only">("encrypted");
   const [helpfulMessages, setHelpfulMessages] = useState<Set<string>>(new Set());
   const messageScrollRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  // Conversations removed while a generation is in flight: the completion
+  // callback must not resurrect them into state or encrypted storage.
+  const deletedIdsRef = useRef<Set<string>>(new Set());
+  // Stop pressed before submitLLMOrder returned a task id.
+  const cancelRequestedRef = useRef(false);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
 
@@ -168,6 +181,7 @@ export default function PrivateAIChat() {
   };
 
   const removeConversation = async (conversationId: string) => {
+    deletedIdsRef.current.add(conversationId);
     await deleteConversation(conversationId);
     const remaining = conversations.filter((conversation) => conversation.id !== conversationId);
     if (remaining.length) {
@@ -221,6 +235,7 @@ export default function PrivateAIChat() {
     setInput("");
     setError("");
     setSending(true);
+    cancelRequestedRef.current = false;
     await replaceConversation(withUser);
 
     try {
@@ -233,12 +248,19 @@ export default function PrivateAIChat() {
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
+      if (cancelRequestedRef.current) {
+        // Stop was pressed while the submit call was still in flight; the
+        // task id only just became known, so deliver the cancellation now.
+        cancelRequestedRef.current = false;
+        await client.cancelLLMOrder(result.task_id).catch(() => null);
+      }
       // Orders are asynchronous at the node boundary. Keep polling centralized
       // here so the UI never bypasses node transport, settlement, or cancellation.
-      while (!TERMINAL_STATES.has(result.state)) {
+      while (mountedRef.current && !TERMINAL_STATES.has(result.state)) {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
         result = await client.getLLMOrder(result.task_id);
       }
+      if (!mountedRef.current) return;
       const success = result.state === "succeeded";
       const assistantMessage: LLMChatMessage = {
         id: messageId(),
@@ -256,6 +278,7 @@ export default function PrivateAIChat() {
         updatedAt: assistantMessage.createdAt,
         messages: [...withUser.messages, assistantMessage],
       };
+      if (deletedIdsRef.current.has(withUser.id)) return;
       await replaceConversation(completed);
       notify(success ? "ok" : "warn", success ? "Private AI response complete" : `Private AI request ${result.state}`);
     } catch (requestError) {
@@ -263,17 +286,28 @@ export default function PrivateAIChat() {
       const failedMessage: LLMChatMessage = {
         id: messageId(), role: "assistant", content: message, createdAt: new Date().toISOString(), status: "failed",
       };
-      await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] });
-      setError(message);
-      notify("danger", message);
+      if (mountedRef.current && !deletedIdsRef.current.has(withUser.id)) {
+        await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] });
+        setError(message);
+        notify("danger", message);
+      }
     } finally {
-      setSending(false);
-      setActiveTaskId("");
+      if (mountedRef.current) {
+        setSending(false);
+        setActiveTaskId("");
+      }
     }
   };
 
   const stopGeneration = async () => {
-    if (!activeTaskId) return;
+    if (!activeTaskId) {
+      // The submit call has not returned a task id yet. Record the intent so
+      // the cancellation is delivered the moment the id exists — otherwise
+      // Stop during a slow submit was a silent no-op and the user paid for a
+      // generation they explicitly stopped.
+      if (sending) cancelRequestedRef.current = true;
+      return;
+    }
     await client.cancelLLMOrder(activeTaskId).catch(() => null);
   };
 

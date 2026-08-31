@@ -31,11 +31,12 @@ def _load_env(path: Path) -> None:
 
 
 def _registry_auth_header() -> dict[str, str]:
-    network_key = os.environ.get("RYNMESH_NETWORK_KEY", "")
-    if not network_key:
-        return {}
-    digest = hashlib.sha256(("rynmesh-net-key:" + network_key).encode()).hexdigest()
-    return {"x-ryn-auth": digest}
+    # transport.network_key_header is the single source of truth for the
+    # header name and derivation; re-deriving it here would silently break
+    # this audit the day the scheme changes.
+    from rynmesh.transport import network_key_header
+
+    return network_key_header()
 
 
 def _json(url: str) -> dict[str, Any]:

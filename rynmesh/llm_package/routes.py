@@ -308,6 +308,10 @@ class ProviderService:
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
+        if max_amount <= 0:
+            # Reject before inference: without a positive hold every completed
+            # generation would fail the price check after burning compute.
+            raise TaskProtocolError("max_amount must be a positive hold")
         if max_amount > self.manifest.pricing.maximum_per_task:
             raise TaskProtocolError("task maximum exceeds provider price limit")
         idempotency_key = str(body.get("idempotency_key") or task_id)
@@ -333,15 +337,28 @@ class ProviderService:
             existing, claimed = self._claim_admitted_task(task_id=task_id, bindings=bindings)
         if not claimed:
             encrypted = existing.get("encrypted_response")
-            if existing.get("state") in TERMINAL_STATES and isinstance(encrypted, dict):
-                return dict(encrypted)
+            if existing.get("state") in TERMINAL_STATES:
+                if isinstance(encrypted, dict):
+                    return dict(encrypted)
+                # Terminal but the stored ciphertext was purged (settlement
+                # cleanup). Answer immediately instead of spinning until the
+                # timeout and then claiming the task was "still in progress".
+                return self._sealed_failure(
+                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                )
             deadline = time.monotonic() + self.manifest.timeout_seconds + 30
             while time.monotonic() < deadline:
-                time.sleep(0.05)
+                # 0.25s keeps duplicate waits from monopolizing the threadpool
+                # with 20Hz disk reads while staying responsive.
+                time.sleep(0.25)
                 existing = self.task_store.get(task_id) or {}
                 encrypted = existing.get("encrypted_response")
-                if existing.get("state") in TERMINAL_STATES and isinstance(encrypted, dict):
-                    return dict(encrypted)
+                if existing.get("state") in TERMINAL_STATES:
+                    if isinstance(encrypted, dict):
+                        return dict(encrypted)
+                    return self._sealed_failure(
+                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                    )
             raise TaskProtocolError("duplicate task is still in progress")
         with self._lock:
             pending_cancel = self._pending_cancellations.pop(task_id, None)
@@ -373,9 +390,15 @@ class ProviderService:
                     "cancelled", "consumer_cancelled",
                 )
             duration_ms = int(result.get("duration_ms") or (time.monotonic() - started) * 1000)
-            amount = _price(self.manifest, int(result["input_tokens"]), int(result["output_tokens"]))
-            if amount > max_amount:
-                return self._failure(task_id, reply_pub, outer["from_peer_id"], "failed", "price_exceeds_hold")
+            # The consumer's hold is an estimate (its client cannot know the
+            # provider tokenizer), so actual usage can price above it — CJK
+            # prompts routinely tokenize 3-4x denser than the chars/4 guess.
+            # The hold is a price ceiling the consumer consented to: bill at
+            # most that ceiling instead of failing after inference already ran.
+            amount = min(
+                _price(self.manifest, int(result["input_tokens"]), int(result["output_tokens"])),
+                max_amount,
+            )
             response_body = {
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
@@ -494,6 +517,115 @@ class ProviderService:
         return self.cancel(task_id)
 
 
+_MAX_PEER_RESPONSE_BYTES = 2 * 1024 * 1024
+
+# A publishing provider refreshes its discovery record every 30 seconds; a
+# record this old means the provider stopped refreshing (crashed or paused).
+_DISCOVERY_STALE_AFTER_S = 180.0
+
+
+def _record_is_stale(updated_at: Any) -> bool:
+    text = str(updated_at or "").strip()
+    if not text:
+        return False  # older records without a timestamp stay orderable
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds() > _DISCOVERY_STALE_AFTER_S
+
+
+def _peer_post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
+    """POST JSON to a peer endpoint with a bounded response read.
+
+    Raw json.load over a peer socket would let a hostile provider stream an
+    unbounded body into memory; every peer response in this module is small.
+    """
+    request = urllib.request.Request(
+        url, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", **network_key_header()}, method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        raw = response.read(_MAX_PEER_RESPONSE_BYTES + 1)
+    if len(raw) > _MAX_PEER_RESPONSE_BYTES:
+        raise TaskProtocolError("peer response exceeds size limit")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise TaskProtocolError("peer response must be a JSON object")
+    return value
+
+
+def _upload_relay_ciphertext(store: RynmeshStore, envelope: dict[str, Any], *,
+                             relay_url: str, filename: str, home: Path) -> str:
+    """Write a ciphertext envelope through the path-based relay API.
+
+    Owns the whole tempfile lifecycle in one place (it exists only because the
+    relay client takes a path); returns the uploaded blob's content hash.
+    """
+    fd, name = tempfile.mkstemp(prefix="rynmesh-llm-request-", suffix=".ciphertext", dir=home)
+    os.close(fd)
+    path = Path(name)
+    try:
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+        uploaded = store.upload_relay_artifact(
+            path, relay_url=relay_url,
+            media_type="application/vnd.rynmesh.llm-ciphertext+json",
+            filename=filename,
+        )
+        return str(uploaded["blob"]["content_hash"])
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _download_relay_ciphertext(store: RynmeshStore, reference: str, *,
+                               relay_url: str, home: Path) -> dict[str, Any]:
+    fd, name = tempfile.mkstemp(prefix="rynmesh-llm-response-", suffix=".ciphertext", dir=home)
+    os.close(fd)
+    path = Path(name)
+    try:
+        store.download_relay_artifact(reference, path, relay_url=relay_url)
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise TaskProtocolError("relayed ciphertext must be a JSON object")
+        return value
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: str,
+                        service_id: str, amount: float, network_id: str,
+                        endpoint: str = "") -> bool:
+    """Sign and deliver the body-free settlement acknowledgement.
+
+    One implementation for the live order path and crash recovery — the two
+    used to hand-build the same envelope separately and had already diverged.
+    """
+    settlement = sign_payload({
+        "kind": "llm_settlement", "task_id": task_id, "from_peer_id": store.peer_id,
+        "to_peer_id": provider_peer_id, "amount": amount, "service_id": service_id,
+        "settlement_id": "settle:" + task_id,
+    }, private_key_bytes=store.private_key_bytes)
+    if endpoint:
+        try:
+            _peer_post_json(endpoint + "/api/peer/llm/settlements",
+                            settlement.to_dict(), timeout_s=15)
+            return True
+        except Exception:
+            pass
+    try:
+        store.submit_work_order(
+            provider_peer_id=provider_peer_id, capability=CAPABILITY,
+            operation=OPERATION + ".settlement",
+            params={"signed_settlement": settlement.to_dict()}, network_id=network_id,
+            idempotency_key="settle:" + task_id, expires_in_hours=1,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _recover_consumer_orders(
     consumer_orders: TaskOrderStore, balance: TaskBalanceLedger,
     store: RynmeshStore | None = None,
@@ -542,25 +674,14 @@ def _recover_consumer_orders(
                     pending.get("provider_peer_id") or bindings.get("provider_peer_id") or ""
                 )
                 service_id = str(pending.get("service_id") or bindings.get("service_id") or "")
-                settlement = sign_payload({
-                    "kind": "llm_settlement", "task_id": task_id,
-                    "from_peer_id": store.peer_id, "to_peer_id": provider_peer_id,
-                    "amount": float(pending.get("amount") or 0), "service_id": service_id,
-                    "settlement_id": "settle:" + task_id,
-                }, private_key_bytes=store.private_key_bytes)
-                try:
-                    store.submit_work_order(
-                        provider_peer_id=provider_peer_id, capability=CAPABILITY,
-                        operation=OPERATION + ".settlement",
-                        params={"signed_settlement": settlement.to_dict()},
-                        network_id=str(pending.get("network_id") or "rynmesh-main"),
-                        idempotency_key="settle:" + task_id, expires_in_hours=1,
-                    )
+                if dispatch_settlement(
+                    store, task_id=task_id, provider_peer_id=provider_peer_id,
+                    service_id=service_id, amount=float(pending.get("amount") or 0),
+                    network_id=str(pending.get("network_id") or "rynmesh-main"),
+                ):
                     consumer_orders.checkpoint(
                         task_id=task_id, metadata={"settlement_dispatched": True},
                     )
-                except Exception:
-                    pass
             continue
         if state not in TERMINAL_STATES:
             consumer_orders.transition(
@@ -582,6 +703,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     balance = TaskBalanceLedger(home / "llm" / "task-balance.json")
     _recover_consumer_orders(consumer_orders, balance, store)
     manager: ProviderService | None = None
+    manager_lock = threading.Lock()
     p2p_sessions: set[str] = set()
     p2p_sessions_lock = threading.Lock()
     background_orders: dict[str, dict[str, Any]] = {}
@@ -673,20 +795,25 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     def active_manager(path: str = "") -> ProviderService | None:
         nonlocal manager, manager_path
-        settings = read_provider_settings()
-        configured = str(path or settings.get("manifest") or "")
-        if manager is not None and configured and configured != manager_path:
-            manager.adapter.shutdown()
-            manager = None
-        if manager is None and configured:
-            manifest = load_manifest(configured)
-            manager = ProviderService(
-                manifest=manifest, adapter=adapter_from_manifest(manifest), store=store,
-                task_store=provider_orders, balance=balance, messaging_key=messaging_key,
-            )
-            manager.accepting_orders = bool(settings.get("publication_enabled"))
-            manager_path = configured
-        return manager
+        # Serialized: this is reached concurrently from async routes, threadpool
+        # sync routes, and both background loops. Without the lock two callers
+        # can build two ProviderServices (doubling max_concurrent against one
+        # runtime) or shut an adapter down while another thread is mid-handle.
+        with manager_lock:
+            settings = read_provider_settings()
+            configured = str(path or settings.get("manifest") or "")
+            if manager is not None and configured and configured != manager_path:
+                manager.adapter.shutdown()
+                manager = None
+            if manager is None and configured:
+                manifest = load_manifest(configured)
+                manager = ProviderService(
+                    manifest=manifest, adapter=adapter_from_manifest(manifest), store=store,
+                    task_store=provider_orders, balance=balance, messaging_key=messaging_key,
+                )
+                manager.accepting_orders = bool(settings.get("publication_enabled"))
+                manager_path = configured
+            return manager
 
     def configure_llm(
         body: dict[str, Any],
@@ -907,25 +1034,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 continue
             if not reference:
                 continue
-            request_path = response_path = None
             try:
-                fd, name = tempfile.mkstemp(prefix="rynmesh-llm-request-", suffix=".ciphertext", dir=home)
-                os.close(fd)
-                request_path = Path(name)
-                store.download_relay_artifact(reference, request_path, relay_url=relay_url)
-                encrypted_response = current.handle(json.loads(request_path.read_text(encoding="utf-8")))
-                fd, name = tempfile.mkstemp(prefix="rynmesh-llm-response-", suffix=".ciphertext", dir=home)
-                os.close(fd)
-                response_path = Path(name)
-                response_path.write_text(json.dumps(encrypted_response), encoding="utf-8")
-                uploaded = store.upload_relay_artifact(
-                    response_path, relay_url=relay_url, media_type="application/vnd.rynmesh.llm-ciphertext+json",
-                    filename=f"{task_order_id}.ciphertext",
+                encrypted_request = _download_relay_ciphertext(
+                    store, reference, relay_url=relay_url, home=home,
+                )
+                encrypted_response = current.handle(encrypted_request)
+                response_ref = _upload_relay_ciphertext(
+                    store, encrypted_response, relay_url=relay_url,
+                    filename=f"{task_order_id}.ciphertext", home=home,
                 )
                 store.publish_work_result(
                     work_order_id=task_order_id, requester_peer_id=requester, status="completed",
                     message="encrypted LLM relay response ready",
-                    result_refs={"encrypted_task_ref": uploaded["blob"]["content_hash"]},
+                    result_refs={"encrypted_task_ref": response_ref},
                     network_id=str(order.get("network_id") or "rynmesh-main"),
                 )
                 processed += 1
@@ -934,11 +1055,6 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     work_order_id=task_order_id, requester_peer_id=requester, status="failed",
                     message="encrypted LLM relay processing failed", network_id=str(order.get("network_id") or "rynmesh-main"),
                 )
-            finally:
-                if request_path:
-                    request_path.unlink(missing_ok=True)
-                if response_path:
-                    response_path.unlink(missing_ok=True)
         return processed
 
     app.state.llm_relay_once = relay_once
@@ -970,7 +1086,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=400, detail="LLM service manifest is not configured")
         current.accepting_orders = True
         try:
-            return current.publish(
+            # publish() runs a health probe and (by default) a real benchmark
+            # inference — seconds of blocking work that must not sit on the
+            # node's event loop.
+            return await asyncio.to_thread(
+                current.publish,
                 network_id=str(settings["network_id"]),
                 benchmark=bool(body.get("benchmark", True)),
             )
@@ -1169,10 +1289,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/local/llm/service/status")
-    def local_llm_service_status() -> dict[str, Any]:
+    def local_llm_service_status(request: Request) -> dict[str, Any]:
+        # Background publication/relay failures are recorded on app.state by
+        # the lifespan loops; without surfacing them here a provider whose
+        # registry publication is failing looks healthy while its discovery
+        # record silently expires.
+        background = {
+            "publication_error": str(getattr(request.app.state, "llm_publication_error", "") or ""),
+            "relay_poll_error": str(getattr(request.app.state, "llm_relay_error", "") or ""),
+        }
         current = active_manager()
         if current is None:
-            return {"configured": False, "online": False, "publication_enabled": False}
+            return {"configured": False, "online": False, "publication_enabled": False,
+                    "background": background}
         settings = read_provider_settings()
         current.accepting_orders = bool(settings.get("publication_enabled"))
         lifecycle = {}
@@ -1183,7 +1312,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {**current.public_status(),
                 "publication_enabled": current.accepting_orders,
                 "network_id": str(settings.get("network_id") or "rynmesh-main"),
-                "lifecycle": lifecycle}
+                "lifecycle": lifecycle,
+                "background": background}
 
     @app.get("/api/local/task-balance")
     def local_task_balance() -> dict[str, Any]:
@@ -1238,7 +1368,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.post("/api/local/llm/orders")
     async def local_llm_order(request: Request) -> dict[str, Any]:
-        body = await request.json()
+        return await execute_order(dict(await request.json()))
+
+    async def execute_order(body: dict[str, Any]) -> dict[str, Any]:
         network_id = str(body.get("network_id") or "rynmesh-main")
         provider_peer_id = str(body.get("provider_peer_id") or "")
         service_id = str(body.get("service_id") or "")
@@ -1251,28 +1383,53 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=400, detail="max_tokens must be a positive integer")
         if not provider_peer_id or not service_id or not prompt:
             raise HTTPException(status_code=400, detail="provider_peer_id, service_id, and prompt are required")
-        selected = next((item for item in discover(network_id)
+        records = await asyncio.to_thread(discover, network_id)
+        selected = next((item for item in records
                          if item.get("peer_id") == provider_peer_id
                          and dict(item.get("service") or {}).get("package_id") == service_id), None)
         if not selected or not selected.get("online"):
             raise HTTPException(status_code=409, detail="service is absent, stale, offline, or unhealthy")
+        if _record_is_stale(selected.get("updated_at")):
+            # The online flag is frozen at publish time and discovery keeps
+            # records for up to an hour; a healthy provider republishes every
+            # 30s, so anything older than a few minutes is a dead provider.
+            raise HTTPException(status_code=409, detail="service discovery record is stale; the provider has stopped refreshing")
         capacity = dict(selected.get("capacity") or {})
         if capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
-        manifest = LLMPackageManifest.from_dict({
-            "package_id": public_manifest["package_id"], "mode": "openai_compatible",
-            "public_model_alias": public_manifest["model_alias"], "base_url": "http://127.0.0.1",
-            "version": public_manifest["version"], "protocol_version": public_manifest["protocol_version"],
-            "adapter": public_manifest["adapter"], "runtime": public_manifest["runtime"],
-            "capabilities": public_manifest["capabilities"], "context_window": public_manifest["context_window"],
-            "max_output_tokens": public_manifest["max_output_tokens"], "max_concurrent": public_manifest["max_concurrent"],
-            "queue_limit": public_manifest["queue_limit"], "timeout_seconds": public_manifest["timeout_seconds"],
-            "hardware_requirements": public_manifest["hardware_requirements"], "pricing": public_manifest["pricing"],
-            "privacy": public_manifest["privacy"], "license_id": public_manifest["license_id"],
-            "license_notice": public_manifest["license_notice"], "risk_labels": public_manifest["risk_labels"],
-            "content_rules": public_manifest["content_rules"], "model_fingerprint": public_manifest["model_fingerprint"],
-        })
+        try:
+            # Only package_id/model_alias/context_window/max_output_tokens/
+            # timeout_seconds/pricing are load-bearing here; the rest are
+            # pass-through with defaults so a cross-version provider record
+            # yields a clean 409 instead of a KeyError 500.
+            manifest = LLMPackageManifest.from_dict({
+                "package_id": public_manifest["package_id"], "mode": "openai_compatible",
+                "public_model_alias": public_manifest["model_alias"], "base_url": "http://127.0.0.1",
+                "version": public_manifest.get("version", "0"),
+                "protocol_version": public_manifest.get("protocol_version", "1"),
+                "adapter": public_manifest.get("adapter", "openai_compatible"),
+                "runtime": public_manifest.get("runtime", ""),
+                "capabilities": public_manifest.get("capabilities", ["chat"]),
+                "context_window": public_manifest["context_window"],
+                "max_output_tokens": public_manifest["max_output_tokens"],
+                "max_concurrent": public_manifest.get("max_concurrent", 1),
+                "queue_limit": public_manifest.get("queue_limit", 0),
+                "timeout_seconds": public_manifest["timeout_seconds"],
+                "hardware_requirements": public_manifest.get("hardware_requirements", {}),
+                "pricing": public_manifest["pricing"],
+                "privacy": public_manifest.get("privacy", {}),
+                "license_id": public_manifest.get("license_id", ""),
+                "license_notice": public_manifest.get("license_notice", ""),
+                "risk_labels": public_manifest.get("risk_labels", []),
+                "content_rules": public_manifest.get("content_rules", []),
+                "model_fingerprint": public_manifest.get("model_fingerprint", ""),
+            })
+        except (KeyError, TypeError, ValueError, ManifestError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="provider discovery record is missing required manifest fields",
+            ) from exc
         max_tokens = min(max_tokens, manifest.max_output_tokens)
         if _estimate_input_tokens(prompt) + max_tokens > manifest.context_window:
             raise HTTPException(
@@ -1313,12 +1470,23 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not claimed:
             encrypted = existing.get("encrypted_response")
             if isinstance(encrypted, dict):
-                _, prior_result = _open_provider_response(
-                    encrypted, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
-                    task_id=task_id,
-                    provider_peer_id=provider_peer_id, service_id=service_id,
-                )
                 final = dict((existing.get("history") or [{}])[-1])
+                try:
+                    _, prior_result = _open_provider_response(
+                        encrypted, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
+                        task_id=task_id,
+                        provider_peer_id=provider_peer_id, service_id=service_id,
+                    )
+                except TaskProtocolError:
+                    # The stored envelope outlived its own expiry (retention is
+                    # longer than envelope lifetime). The order metadata is
+                    # still authoritative; answer with it instead of a 500.
+                    return {"task_id": task_id,
+                            "state": str(existing.get("state") or "unknown"),
+                            "result_expired": True,
+                            "transport": str(final.get("transport") or "unknown"),
+                            "amount": final.get("amount"),
+                            "detail": "stored result envelope has expired"}
                 prior_result["transport"] = str(final.get("transport") or "unknown")
                 prior_result["transport_evidence"] = dict(final.get("transport_evidence") or {})
                 return prior_result
@@ -1431,12 +1599,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
             elif endpoint and transport_mode in {"auto", "direct"}:
                 try:
-                    req = urllib.request.Request(
-                        endpoint + "/api/peer/llm/tasks", data=json.dumps(signed.to_dict()).encode(),
-                        headers={"Content-Type": "application/json", **network_key_header()}, method="POST",
+                    # Blocking I/O for the full inference duration — run it in
+                    # a worker thread so the node's event loop stays live.
+                    encrypted_response = await asyncio.to_thread(
+                        _peer_post_json, endpoint + "/api/peer/llm/tasks",
+                        signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
                     )
-                    with urllib.request.urlopen(req, timeout=manifest.timeout_seconds + 30) as response:
-                        encrypted_response = json.load(response)
                     transport_evidence = {
                         "transport": "peer_http_direct",
                         "relay_used": False,
@@ -1451,21 +1619,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     raise TaskProtocolError("strict P2P path failed; relay fallback is disabled")
                 if not relay_url:
                     raise TaskProtocolError("direct provider path failed and no dedicated LLM relay is configured") from direct_error
-                request_path = response_path = None
-                try:
-                    fd, name = tempfile.mkstemp(prefix="rynmesh-llm-request-", suffix=".ciphertext", dir=home)
-                    os.close(fd)
-                    request_path = Path(name)
-                    request_path.write_text(json.dumps(signed.to_dict()), encoding="utf-8")
-                    uploaded = store.upload_relay_artifact(
-                        request_path, relay_url=relay_url,
-                        media_type="application/vnd.rynmesh.llm-ciphertext+json",
-                        filename=f"{task_id}.ciphertext",
+                def _relay_exchange() -> dict[str, Any]:
+                    reference = _upload_relay_ciphertext(
+                        store, signed.to_dict(), relay_url=relay_url,
+                        filename=f"{task_id}.ciphertext", home=home,
                     )
                     submitted = store.submit_work_order(
                         provider_peer_id=provider_peer_id, capability=CAPABILITY,
                         operation=OPERATION + ".relay",
-                        params={"encrypted_task_ref": uploaded["blob"]["content_hash"]},
+                        params={"encrypted_task_ref": reference},
                         network_id=network_id, idempotency_key=idempotency_key,
                         expires_in_hours=max(1, manifest.timeout_seconds / 3600),
                     )
@@ -1478,24 +1640,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             if terminal.get("status") != "completed":
                                 raise TaskProtocolError("encrypted relay task failed")
                             ref = str(dict(terminal.get("result_refs") or {}).get("encrypted_task_ref") or "")
-                            fd, name = tempfile.mkstemp(prefix="rynmesh-llm-response-", suffix=".ciphertext", dir=home)
-                            os.close(fd)
-                            response_path = Path(name)
-                            store.download_relay_artifact(ref, response_path, relay_url=relay_url)
-                            encrypted_response = json.loads(response_path.read_text(encoding="utf-8"))
-                            transport_evidence = {
-                                "transport": "encrypted_relay",
-                                "relay_used": True,
-                            }
-                            break
+                            return _download_relay_ciphertext(store, ref, relay_url=relay_url, home=home)
                         time.sleep(0.5)
-                    if encrypted_response is None:
-                        raise TaskProtocolError("encrypted relay task timed out")
-                finally:
-                    if request_path:
-                        request_path.unlink(missing_ok=True)
-                    if response_path:
-                        response_path.unlink(missing_ok=True)
+                    raise TaskProtocolError("encrypted relay task timed out")
+
+                # Minutes of registry polling and blob I/O — worker thread, not
+                # the event loop.
+                encrypted_response = await asyncio.to_thread(_relay_exchange)
+                transport_evidence = {
+                    "transport": "encrypted_relay",
+                    "relay_used": True,
+                }
             _, result = _open_provider_response(
                 encrypted_response, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
                 task_id=task_id,
@@ -1542,35 +1697,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 encrypted_response=encrypted_response if retention else None,
                 allow_recovery=True,
             )
-            settlement = sign_payload({
-                "kind": "llm_settlement", "task_id": task_id, "from_peer_id": store.peer_id,
-                "to_peer_id": provider_peer_id, "amount": result["amount"],
-                "service_id": service_id, "settlement_id": "settle:" + task_id,
-            }, private_key_bytes=store.private_key_bytes)
-            settlement_delivered = False
-            if endpoint and transport_mode in {"auto", "direct"}:
-                try:
-                    ack_req = urllib.request.Request(
-                        endpoint + "/api/peer/llm/settlements",
-                        data=json.dumps(settlement.to_dict()).encode(),
-                        headers={"Content-Type": "application/json", **network_key_header()},
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(ack_req, timeout=15):
-                        settlement_delivered = True
-                except Exception:
-                    pass
-            if not settlement_delivered:
-                try:
-                    store.submit_work_order(
-                        provider_peer_id=provider_peer_id, capability=CAPABILITY,
-                        operation=OPERATION + ".settlement",
-                        params={"signed_settlement": settlement.to_dict()}, network_id=network_id,
-                        idempotency_key="settle:" + task_id, expires_in_hours=1,
-                    )
-                    settlement_delivered = True
-                except Exception:
-                    pass
+            settlement_delivered = await asyncio.to_thread(
+                dispatch_settlement, store, task_id=task_id,
+                provider_peer_id=provider_peer_id, service_id=service_id,
+                amount=float(result["amount"]), network_id=network_id,
+                endpoint=endpoint if transport_mode in {"auto", "direct"} else "",
+            )
             if settlement_delivered:
                 consumer_orders.checkpoint(
                     task_id=task_id, metadata={"settlement_dispatched": True},
@@ -1595,45 +1727,45 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             prompt = ""
 
     def run_background_order(body: dict[str, Any], task_id: str) -> None:
-        raw = json.dumps(body).encode("utf-8")
-
-        async def receive() -> dict[str, Any]:
-            return {"type": "http.request", "body": raw, "more_body": False}
-
-        async def execute() -> dict[str, Any]:
-            request = Request({
-                "type": "http", "http_version": "1.1", "method": "POST",
-                "scheme": "http", "path": "/api/local/llm/orders",
-                "raw_path": b"/api/local/llm/orders", "query_string": b"",
-                "headers": [], "client": ("127.0.0.1", 0), "server": ("127.0.0.1", 0),
-            }, receive)
-            return await local_llm_order(request)
-
         try:
-            completed = asyncio.run(execute())
+            completed = asyncio.run(execute_order(body))
             if response_retention() == 0:
                 with background_orders_lock:
-                    background_orders[task_id] = {**completed, "ephemeral": True}
+                    background_orders[task_id] = {**completed, "ephemeral": True,
+                                                  "_recorded_at": time.time()}
         except HTTPException as exc:
             with background_orders_lock:
                 current = background_orders.get(task_id, {})
                 current.update({"task_id": task_id, "state": "failed",
                                 "error_code": _submission_error_code(str(exc.detail)),
-                                "detail": str(exc.detail)})
+                                "detail": str(exc.detail), "_recorded_at": time.time()})
                 background_orders[task_id] = current
         except Exception as exc:
             with background_orders_lock:
                 current = background_orders.get(task_id, {})
                 current.update({"task_id": task_id, "state": "failed",
                                 "error_code": "background_worker_failed",
-                                "detail": str(exc).strip() or type(exc).__name__})
+                                "detail": str(exc).strip() or type(exc).__name__,
+                                "_recorded_at": time.time()})
                 background_orders[task_id] = current
         finally:
             body["prompt"] = ""
-            raw = b""
             if consumer_orders.get(task_id) is not None and response_retention() != 0:
                 with background_orders_lock:
                     background_orders.pop(task_id, None)
+
+    def _public_background(entry: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in entry.items() if not k.startswith("_")}
+
+    def _prune_background_orders() -> None:
+        """Drop stale terminal entries; without this, rejected submissions and
+        retention=0 results (each keyed by a fresh task uuid) accumulate for
+        the process lifetime. Caller holds background_orders_lock."""
+        cutoff = time.time() - 900
+        for key in [k for k, v in background_orders.items()
+                    if isinstance(v, dict) and float(v.get("_recorded_at") or 0) < cutoff
+                    and "_recorded_at" in v]:
+            background_orders.pop(key, None)
 
     @app.post("/api/local/llm/orders/async")
     async def local_llm_order_async(request: Request) -> dict[str, Any]:
@@ -1658,9 +1790,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except TaskProtocolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         with background_orders_lock:
+            _prune_background_orders()
             pending = background_orders.get(task_id)
             if pending is not None:
-                return dict(pending)
+                return _public_background(pending)
             if existing is not None:
                 return {"task_id": task_id, "state": str(existing.get("state") or "unknown")}
             background_orders[task_id] = {"task_id": task_id, "state": "queued"}
@@ -1682,7 +1815,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 pending = background_orders.get(task_id)
             if pending is None:
                 raise HTTPException(status_code=404, detail="task not found")
-            return dict(pending)
+            return _public_background(pending)
         final = dict((record.get("history") or [{}])[-1])
         result: dict[str, Any] = {
             "task_id": task_id,
@@ -1694,7 +1827,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if ephemeral and ephemeral.get("ephemeral"):
                 background_orders.pop(task_id, None)
         if ephemeral and ephemeral.get("ephemeral"):
-            return {key: value for key, value in ephemeral.items() if key != "ephemeral"}
+            return {key: value for key, value in _public_background(ephemeral).items()
+                    if key != "ephemeral"}
         encrypted = record.get("encrypted_response")
         bindings = dict(record.get("bindings") or {})
         if isinstance(encrypted, dict):
@@ -1744,14 +1878,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             endpoint = resolve_endpoint(provider_peer_id)
             if endpoint:
                 try:
-                    cancel_request = urllib.request.Request(
-                        endpoint + "/api/peer/llm/cancellations",
-                        data=json.dumps(signed_cancel.to_dict()).encode(),
-                        headers={"Content-Type": "application/json", **network_key_header()},
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(cancel_request, timeout=5):
-                        delivered = True
+                    _peer_post_json(endpoint + "/api/peer/llm/cancellations",
+                                    signed_cancel.to_dict(), timeout_s=5)
+                    delivered = True
                 except Exception:
                     pass
             if not delivered and provider_peer_id and service_id:

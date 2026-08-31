@@ -452,15 +452,25 @@ def create_app(store: RynmeshStore | None = None):
                 await _asyncio.sleep(900)
 
         async def _llm_relay_poll():
+            # Poll fast while orders are flowing, back off when idle or when no
+            # provider is configured, and surface persistent failures instead of
+            # silently dropping them (a provider that cannot poll is offline in
+            # every way that matters, yet used to look healthy).
             await _asyncio.sleep(1)
+            interval = 1.0
             while True:
                 worker = getattr(lifespan_app.state, "llm_relay_once", None)
-                if worker is not None:
-                    try:
-                        await _asyncio.to_thread(worker)
-                    except Exception:
-                        pass
-                await _asyncio.sleep(1)
+                if worker is None:
+                    await _asyncio.sleep(5)
+                    continue
+                try:
+                    processed = await _asyncio.to_thread(worker)
+                    lifespan_app.state.llm_relay_error = ""
+                    interval = 1.0 if processed else min(interval * 1.5, 10.0)
+                except Exception as exc:
+                    lifespan_app.state.llm_relay_error = str(exc)
+                    interval = min(max(interval, 1.0) * 2, 30.0)
+                await _asyncio.sleep(interval)
 
         async def _llm_publish_refresh():
             # LLM discovery records are intentionally short lived. Keep a configured,

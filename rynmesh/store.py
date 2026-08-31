@@ -35,7 +35,7 @@ from .jobs import (
     sign_job_capacity,
     sign_work_order,
     sign_work_result,
-    validate_llm_control_params,
+    validate_capability_params,
     verify_job_capacity,
     verify_work_order,
     verify_work_result,
@@ -295,6 +295,10 @@ class RynmeshStore:
             sorted(env_root_set | set(trusted_root_peer_ids or ()))
         )
         self.registry = default_peer_registry(self.network_dir)
+        # What this process has already advertised per network, so concurrent
+        # services on one node merge into the single per-peer capacity record
+        # instead of overwriting each other. See register_job_capacity.
+        self._advertised_capacity: dict[str, dict[str, Any]] = {}
         self.credit_ledger = FileCreditLedger(
             self.network_dir / "credits",
             tier_resolver=self._resolve_identity_tier,
@@ -434,16 +438,28 @@ class RynmeshStore:
         cleaned_capabilities = tuple(str(item).strip() for item in capabilities if str(item).strip())
         if not cleaned_capabilities:
             raise ValueError("capabilities are required")
+        # The registry stores ONE capacity record per peer, replaced wholesale.
+        # Multiple services on one node (LLM provider, video, egress) each
+        # register their own capability list, and the LLM provider republishes
+        # every 30s — without merging, every publication wipes the others'
+        # capabilities out of discovery. Merge against what this process has
+        # already advertised: capabilities union, metadata/price update.
+        merged = self._advertised_capacity.setdefault(network_id, {
+            "capabilities": set(), "price_credits": {}, "metadata": {},
+        })
+        merged["capabilities"].update(cleaned_capabilities)
+        merged["price_credits"].update(dict(price_credits or {}))
+        merged["metadata"].update(dict(metadata or {}))
         record = JobCapacityRecord(
             peer_id=self.peer_id,
             node_name=self.node_name,
-            capabilities=cleaned_capabilities,
+            capabilities=tuple(sorted(merged["capabilities"])),
             network_id=network_id,
             capacity_units=max(1, int(capacity_units or 1)),
             max_concurrent=max(1, int(max_concurrent or 1)),
-            price_credits=dict(price_credits or {}),
+            price_credits=dict(merged["price_credits"]),
             polling_interval_sec=max(1, int(polling_interval_sec or 30)),
-            metadata=dict(metadata or {}),
+            metadata=dict(merged["metadata"]),
         )
         signed = sign_job_capacity(record, private_key_bytes=self.private_key_bytes)
         result = self.registry.publish_job_capacity(signed)
@@ -509,11 +525,10 @@ class RynmeshStore:
         if not cleaned_operation:
             raise ValueError("operation is required")
         cleaned_params = dict(params or {})
-        if cleaned_capability.startswith("rynmesh.llm"):
-            try:
-                validate_llm_control_params(cleaned_operation, cleaned_params)
-            except JobError as exc:
-                raise ValueError(str(exc)) from exc
+        try:
+            validate_capability_params(cleaned_capability, cleaned_operation, cleaned_params)
+        except JobError as exc:
+            raise ValueError(str(exc)) from exc
         order = WorkOrder(
             work_order_id=new_work_order_id(),
             requester_peer_id=self.peer_id,

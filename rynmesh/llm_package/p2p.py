@@ -225,7 +225,27 @@ def _decode_header(packet: bytes) -> tuple[int, bytes, int, int, bytes, bytes]:
     return kind, message_id, sequence, total, digest, packet[_HEADER.size:]
 
 
-async def send_json(connection: aioice.Connection, value: dict[str, Any], *, timeout_s: float) -> int:
+async def send_json(
+    connection: aioice.Connection,
+    value: dict[str, Any],
+    *,
+    timeout_s: float,
+    reack_message_id: bytes | None = None,
+    pending_out: list[bytes] | None = None,
+) -> int:
+    """Send one framed message and wait for its ACK.
+
+    ACKs are datagrams and can all be lost in one congestion event, which used
+    to deadlock both peers until timeout: the sender kept retransmitting while
+    discarding the peer's next message. Two recovery paths close that hole:
+
+    - ``reack_message_id``: an incoming DATA frame for this already-assembled
+      message means the peer never got our ACK — answer it again.
+    - ``pending_out``: an incoming DATA frame for a *new* message implies our
+      message was delivered (this strict request/response protocol has no
+      unsolicited traffic); the frame is buffered for receive_json and the
+      send counts as acknowledged.
+    """
     payload = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
     message_id, frames = _encode_frames(payload)
     deadline = time.monotonic() + timeout_s
@@ -238,25 +258,43 @@ async def send_json(connection: aioice.Connection, value: dict[str, Any], *, tim
         except asyncio.TimeoutError:
             continue
         try:
-            kind, received_id, _sequence, _total, _digest, _body = _decode_header(packet)
+            kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
         except P2PError:
             continue
         if kind == _ACK and received_id == message_id:
             return len(payload)
+        if kind == _DATA and reack_message_id is not None and received_id == reack_message_id:
+            ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
+            for _ in range(3):
+                await connection.send(ack)
+            continue
+        if kind == _DATA and pending_out is not None and received_id != message_id:
+            pending_out.append(packet)
+            return len(payload)
     raise P2PError("timed out waiting for P2P message acknowledgement")
 
 
-async def receive_json(connection: aioice.Connection, *, timeout_s: float) -> tuple[dict[str, Any], int]:
+async def receive_json(
+    connection: aioice.Connection,
+    *,
+    timeout_s: float,
+    initial_packets: list[bytes] | None = None,
+    message_id_out: list[bytes] | None = None,
+) -> tuple[dict[str, Any], int]:
     deadline = time.monotonic() + timeout_s
     messages: dict[bytes, dict[str, Any]] = {}
     buffered_bytes = 0
+    backlog = list(initial_packets or [])
     while time.monotonic() < deadline:
-        try:
-            packet = await asyncio.wait_for(
-                connection.recv(), timeout=max(0.05, deadline - time.monotonic())
-            )
-        except asyncio.TimeoutError as exc:
-            raise P2PError("timed out receiving P2P message") from exc
+        if backlog:
+            packet = backlog.pop(0)
+        else:
+            try:
+                packet = await asyncio.wait_for(
+                    connection.recv(), timeout=max(0.05, deadline - time.monotonic())
+                )
+            except asyncio.TimeoutError as exc:
+                raise P2PError("timed out receiving P2P message") from exc
         try:
             kind, message_id, sequence, total, digest, body = _decode_header(packet)
         except P2PError:
@@ -291,6 +329,8 @@ async def receive_json(connection: aioice.Connection, *, timeout_s: float) -> tu
             raise P2PError("P2P message is not valid JSON") from exc
         if not isinstance(value, dict):
             raise P2PError("P2P message must be a JSON object")
+        if message_id_out is not None:
+            message_id_out.append(message_id)
         return value, len(payload)
     raise P2PError("timed out receiving P2P message")
 
@@ -309,11 +349,33 @@ async def consumer_exchange(
         await apply_remote_signal(connection, answer)
         await asyncio.wait_for(connection.connect(), timeout=timeout_s)
         evidence = selected_pair(connection)
+        pending: list[bytes] = []
         evidence["request_bytes"] = await send_json(
-            connection, signed_request, timeout_s=timeout_s
+            connection, signed_request, timeout_s=timeout_s, pending_out=pending
         )
-        response, response_bytes = await receive_json(connection, timeout_s=timeout_s)
+        response_id: list[bytes] = []
+        response, response_bytes = await receive_json(
+            connection, timeout_s=timeout_s,
+            initial_packets=pending, message_id_out=response_id,
+        )
         evidence["response_bytes"] = response_bytes
+        # Linger briefly re-ACKing response retransmits: if our assembly ACKs
+        # were all lost, the provider is still resending and would otherwise
+        # time out and misrecord the exchange as failed.
+        linger_until = time.monotonic() + 0.5
+        while time.monotonic() < linger_until:
+            try:
+                packet = await asyncio.wait_for(connection.recv(), timeout=0.1)
+            except (asyncio.TimeoutError, Exception):
+                break
+            try:
+                kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
+            except P2PError:
+                continue
+            if kind == _DATA and response_id and received_id == response_id[0]:
+                ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
+                for _ in range(3):
+                    await connection.send(ack)
         return response, evidence
     finally:
         await _close_connection(connection)
@@ -334,11 +396,15 @@ async def provider_exchange(
         validate_distinct_public_egress(answer, offer)
         await asyncio.wait_for(connection.connect(), timeout=timeout_s)
         evidence = selected_pair(connection)
-        request, request_bytes = await receive_json(connection, timeout_s=timeout_s)
+        request_id: list[bytes] = []
+        request, request_bytes = await receive_json(
+            connection, timeout_s=timeout_s, message_id_out=request_id,
+        )
         response = await asyncio.to_thread(handle_request, request)
         evidence["request_bytes"] = request_bytes
         evidence["response_bytes"] = await send_json(
-            connection, response, timeout_s=timeout_s
+            connection, response, timeout_s=timeout_s,
+            reack_message_id=request_id[0] if request_id else None,
         )
         return evidence
     finally:

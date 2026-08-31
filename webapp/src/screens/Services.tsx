@@ -11,11 +11,11 @@ import type {
   LLMSetupRequest,
   TaskBalanceSummary,
 } from "../domain/nodeClient";
+import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
 import type { JobCapacity, WorkResult } from "../domain/types";
 
 const VEO_CAPABILITY = "signal50.veo_motion.v1";
 const VEO_OPERATION = "signal50.remote_action.complete_flow_video_veo_motion_clips";
-const LLM_TERMINAL_STATES = new Set(["succeeded", "failed", "timed_out", "cancelled", "rejected"]);
 const LLM_ERROR_MESSAGES: Record<string, string> = {
   p2p_distinct_public_egress_required: "This older strict-P2P package incorrectly requires different public exits. Update both nodes and retry on the current network.",
   p2p_public_mapping_unavailable: "A public UDP mapping could not be created. Check outbound UDP and the configured STUN server.",
@@ -29,7 +29,7 @@ const LLM_ERROR_MESSAGES: Record<string, string> = {
 };
 
 function llmServiceKey(service: LLMServiceRecord): string {
-  return JSON.stringify([service.peer_id, service.service.package_id]);
+  return llmServiceRecordKey(service);
 }
 
 function shortPeerId(peerId: string): string {
@@ -194,10 +194,17 @@ export default function Services() {
     }
   };
 
+  // The interval must call the latest refresh closure: the mount-time one
+  // captures llmNetwork="" and selectedPeerId="" forever, so every silent
+  // tick would re-discover on the wrong network and flip the user's provider
+  // selection back to the first entry.
+  const refreshRef = useRef<(silent?: boolean) => Promise<void>>();
+  refreshRef.current = refresh;
+
   useEffect(() => {
     mountedRef.current = true;
     void refresh();
-    const timer = window.setInterval(() => void refresh(true), 15_000);
+    const timer = window.setInterval(() => void refreshRef.current?.(true), 15_000);
     return () => {
       mountedRef.current = false;
       window.clearInterval(timer);
@@ -264,6 +271,24 @@ export default function Services() {
     }
   }
 
+  async function applyTerminalResult(result: LLMOrderResult) {
+    setLlmResult(result);
+    // The result panel renders the full mapped error text; the progress line
+    // only carries the state so the message never appears twice.
+    setLlmProgress({
+      tone: result.state === "succeeded" ? "ok" : "danger",
+      text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}`,
+    });
+    notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
+    try {
+      setLlmBalance(await client.getTaskBalance());
+      setLlmOrders(await client.listLLMOrders());
+    } catch {
+      // Best-effort refresh; the periodic refresh catches up. Throwing here
+      // used to re-enter the polling loop on a finished order forever.
+    }
+  }
+
   async function trackLlmOrder(taskId: string) {
     if (!taskId || trackedTaskRef.current === taskId) return;
     if (trackedTaskRef.current && trackedTaskRef.current !== taskId) return;
@@ -277,14 +302,7 @@ export default function Services() {
           const result = await client.getLLMOrder(taskId);
           retryCount = 0;
           if (LLM_TERMINAL_STATES.has(result.state)) {
-            setLlmResult(result);
-            setLlmBalance(await client.getTaskBalance());
-            setLlmOrders(await client.listLLMOrders());
-            setLlmProgress({
-              tone: result.state === "succeeded" ? "ok" : "danger",
-              text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${llmErrorMessage(result.error_code)}` : ""}`,
-            });
-            notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
+            await applyTerminalResult(result);
             break;
           }
           setLlmProgress({
@@ -416,14 +434,7 @@ export default function Services() {
       setLlmActiveTaskId(result.task_id);
       setLlmPrompt("");
       if (LLM_TERMINAL_STATES.has(result.state)) {
-        setLlmResult(result);
-        setLlmBalance(await client.getTaskBalance());
-        setLlmOrders(await client.listLLMOrders());
-        setLlmProgress({
-          tone: result.state === "succeeded" ? "ok" : "danger",
-          text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}${result.error_code ? `: ${llmErrorMessage(result.error_code)}` : ""}`,
-        });
-        notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
+        await applyTerminalResult(result);
       } else {
         setLlmSubmitting(false);
         await trackLlmOrder(result.task_id);

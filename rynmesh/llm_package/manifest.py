@@ -7,6 +7,8 @@ import json
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from rynmesh.crypto import sha256_file
 from typing import Any
 
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
@@ -169,8 +171,4 @@ def save_manifest(manifest: LLMPackageManifest, path: str | Path) -> Path:
 
 
 def fingerprint_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with Path(path).expanduser().open("rb") as handle:
-        while chunk := handle.read(chunk_size):
-            digest.update(chunk)
-    return "sha256:" + digest.hexdigest()
+    return sha256_file(path, chunk_size=chunk_size)

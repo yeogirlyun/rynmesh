@@ -36,6 +36,21 @@ def sha256_bytes(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: "Path | str", *, chunk_size: int = 1024 * 1024) -> str:
+    """Chunked 'sha256:<hex>' digest of a file — the one file hasher.
+
+    Content manifests and model fingerprints both use this; keeping a single
+    implementation means an algorithm migration happens in one place.
+    """
+    from pathlib import Path
+
+    digest = hashlib.sha256()
+    with Path(path).expanduser().open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
 def b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
