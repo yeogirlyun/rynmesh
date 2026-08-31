@@ -39,11 +39,57 @@ from rynmesh.peer_transit_service import (
 )
 from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
-from scripts.audit_peer_transit import AuditError, audit_peer_transit
+from scripts import audit_peer_transit as audit_module
+from scripts.audit_peer_transit import AuditError, audit_peer_transit, audit_soak_report
 
 
 def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) -> None:
+    monkeypatch.setattr(
+        audit_module,
+        "audit_peer_transit",
+        lambda value: {"protocol_version": "rynmesh.peer-transit.v1"},
+    )
+    report = {
+        "result": "pass",
+        "completed_duration": True,
+        "duration_target_s": 86400,
+        "elapsed_s": 86401,
+        "sessions_completed": 100,
+        "failures": [],
+        "plaintext_found_on_transit": False,
+        "memory_growth_bytes": 1024,
+        "memory_growth_limit_bytes": 2048,
+        "partial_files": 0,
+        "worker_threads_stopped": True,
+        "transit_frames": 300,
+        "transit_bytes": 4096,
+        "last_evidence": {"session_id": "abc"},
+    }
+    assert audit_soak_report(
+        report,
+        require_duration_s=86400,
+        min_sessions=100,
+    )["ok"] is True
+
+    for key, bad_value, message in (
+        ("result", "running", "complete"),
+        ("failures", [{"error": "boom"}], "failed"),
+        ("plaintext_found_on_transit", True, "plaintext"),
+        ("memory_growth_bytes", 4096, "memory"),
+        ("partial_files", 1, "partial"),
+        ("worker_threads_stopped", False, "threads"),
+    ):
+        tampered = {**report, key: bad_value}
+        with pytest.raises(AuditError, match=message):
+            audit_soak_report(
+                tampered,
+                require_duration_s=86400,
+                min_sessions=100,
+            )
 
 
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:

@@ -91,6 +91,9 @@ jobs:
             --duration-seconds 10 --interval-seconds 0.5 --payload-kib 4 \
             --work-root "$RUNNER_TEMP/peer-transit-soak" \
             --progress "$RUNNER_TEMP/peer-transit-soak/progress.json"
+          python scripts/audit_peer_transit.py --soak-report \
+            --require-duration-seconds 10 --min-sessions 3 \
+            "$RUNNER_TEMP/peer-transit-soak/progress.json"
 
   packaged-node:
     # The release form: the node must serve its own UI with no dev server.

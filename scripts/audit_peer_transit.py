@@ -248,28 +248,88 @@ def audit_acceptance_report(
     }
 
 
+def audit_soak_report(
+    value: dict[str, Any],
+    *,
+    require_duration_s: float,
+    min_sessions: int,
+) -> dict[str, Any]:
+    """Independently enforce a completed persistent-worker soak report."""
+
+    if value.get("result") != "pass" or value.get("completed_duration") is not True:
+        raise AuditError("soak did not complete with a passing result")
+    target_duration = float(_require(value, "duration_target_s"))
+    elapsed = float(_require(value, "elapsed_s"))
+    if target_duration < require_duration_s or elapsed < require_duration_s:
+        raise AuditError("soak duration is below the required gate")
+    sessions = int(_require(value, "sessions_completed"))
+    if sessions < min_sessions:
+        raise AuditError("soak completed too few sessions")
+    failures = _require(value, "failures")
+    if not isinstance(failures, list) or failures:
+        raise AuditError("soak contains failed sessions")
+    if value.get("plaintext_found_on_transit") is not False:
+        raise AuditError("soak found plaintext on the transit peer")
+    memory_growth = int(_require(value, "memory_growth_bytes"))
+    memory_limit = int(_require(value, "memory_growth_limit_bytes"))
+    if memory_growth < 0 or memory_growth > memory_limit:
+        raise AuditError("soak memory growth exceeded its limit")
+    if int(_require(value, "partial_files")) != 0:
+        raise AuditError("soak left partial target files")
+    if value.get("worker_threads_stopped") is not True:
+        raise AuditError("soak worker threads did not stop")
+    if int(_require(value, "transit_frames")) < sessions:
+        raise AuditError("soak transit frame count is inconsistent")
+    if int(_require(value, "transit_bytes")) < sessions:
+        raise AuditError("soak transit byte count is inconsistent")
+    last_evidence = dict(_require(value, "last_evidence"))
+    transit_audit = audit_peer_transit(last_evidence)
+    return {
+        "ok": True,
+        "duration_target_s": target_duration,
+        "elapsed_s": elapsed,
+        "sessions_completed": sessions,
+        "memory_growth_bytes": memory_growth,
+        "memory_growth_limit_bytes": memory_limit,
+        "last_session_id": last_evidence.get("session_id"),
+        "protocol_version": transit_audit["protocol_version"],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", help="peer-transit evidence JSON")
     parser.add_argument("--report", action="store_true", help="audit a full acceptance report")
+    parser.add_argument("--soak-report", action="store_true", help="audit a completed soak report")
     parser.add_argument("--require-one-gib", action="store_true")
     parser.add_argument("--min-concurrent", type=int, default=1)
+    parser.add_argument("--require-duration-seconds", type=float, default=0.0)
+    parser.add_argument("--min-sessions", type=int, default=3)
     parser.add_argument("--output", default="", help="optional audit report path")
     args = parser.parse_args()
-    if args.min_concurrent < 0:
-        raise AuditError("minimum concurrent sessions cannot be negative")
+    if args.min_concurrent < 0 or args.min_sessions < 0:
+        raise AuditError("minimum session counts cannot be negative")
+    if args.require_duration_seconds < 0:
+        raise AuditError("required soak duration cannot be negative")
+    if args.report and args.soak_report:
+        raise AuditError("choose either acceptance-report or soak-report audit")
     value = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise AuditError("evidence root must be a JSON object")
-    report = (
-        audit_acceptance_report(
+    if args.soak_report:
+        report = audit_soak_report(
+            value,
+            require_duration_s=args.require_duration_seconds,
+            min_sessions=args.min_sessions,
+        )
+    elif args.report:
+        report = audit_acceptance_report(
             value,
             require_one_gib=args.require_one_gib,
             min_concurrent=args.min_concurrent,
         )
-        if args.report
-        else audit_peer_transit(value)
-    )
+    else:
+        report = audit_peer_transit(value)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         Path(args.output).write_text(rendered, encoding="utf-8")

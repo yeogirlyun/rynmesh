@@ -144,6 +144,9 @@ python scripts/run_peer_transit_soak.py `
   --duration-hours 24 --interval-seconds 10 --payload-kib 64 `
   --work-root .codex-tmp\peer-transit-soak `
   --progress .codex-tmp\peer-transit-soak\progress.json
+python scripts/audit_peer_transit.py --soak-report `
+  --require-duration-seconds 86400 --min-sessions 3 `
+  .codex-tmp\peer-transit-soak\progress.json
 ```
 
 ## Physical three-network acceptance
