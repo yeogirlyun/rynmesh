@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 525 passed, 3 skipped |
+| Complete Python suite | Pass | 528 passed, 3 skipped |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel installed into a clean virtual environment and its `rynmesh-transit --help` entry point loaded both installed transit modules |
@@ -36,9 +36,16 @@ because the directory contains two one-GiB test artifacts.
 
 ## Running gate
 
-The persistent 24-hour worker soak started at 2026-08-31 18:10 Hong Kong time
-and is scheduled to finish at 2026-09-01 18:10. It writes atomic progress to
-`.codex-tmp/peer-transit-soak-24h/progress.json`. Final acceptance requires:
+The first persistent run correctly failed closed after 3,604 seconds and 360
+successful sessions because the one-hour signed capacity record expired. The
+worker had advertised only at startup. Commit `4e729f8` adds a 15-minute
+capacity heartbeat, atomic capacity-record replacement, and regression plus
+accelerated integration coverage. The pre-fix elapsed time is invalidated.
+
+The replacement 24-hour worker soak started from zero at 2026-08-31 19:18 Hong
+Kong time and is scheduled to finish at 2026-09-01 19:18. It writes atomic
+progress to `.codex-tmp/peer-transit-soak-24h-r2/progress.json`. Final
+acceptance requires:
 
 - the full 86,400-second duration;
 - zero failed sessions and no plaintext marker exposure;
