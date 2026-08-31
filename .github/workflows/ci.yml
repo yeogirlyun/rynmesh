@@ -83,6 +83,8 @@ jobs:
             --evidence "$RUNNER_TEMP/peer-transit-evidence.json"
           python scripts/audit_peer_transit.py \
             "$RUNNER_TEMP/peer-transit-evidence.json"
+          python scripts/audit_peer_transit.py --report --min-concurrent 3 \
+            "$RUNNER_TEMP/peer-transit-report.json"
       - name: Persistent worker soak smoke
         run: |
           python scripts/run_peer_transit_soak.py \

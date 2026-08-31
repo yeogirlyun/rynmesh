@@ -119,6 +119,8 @@ python scripts/run_peer_transit_acceptance.py `
   --output .codex-tmp\peer-transit-report.json `
   --evidence .codex-tmp\peer-transit-evidence.json
 python scripts/audit_peer_transit.py .codex-tmp\peer-transit-evidence.json
+python scripts/audit_peer_transit.py --report --min-concurrent 3 `
+  .codex-tmp\peer-transit-report.json
 ```
 
 Full resource gate:
@@ -128,6 +130,8 @@ python scripts/run_peer_transit_acceptance.py `
   --size-mib 1024 --concurrent 20 --timeout 1800 `
   --output .codex-tmp\peer-transit-full-report.json `
   --evidence .codex-tmp\peer-transit-full-evidence.json
+python scripts/audit_peer_transit.py --report --require-one-gib `
+  --min-concurrent 20 .codex-tmp\peer-transit-full-report.json
 ```
 
 Run the 24-hour persistent-worker soak separately. It keeps the same three node

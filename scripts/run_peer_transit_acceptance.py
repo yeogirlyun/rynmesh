@@ -42,9 +42,9 @@ from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 
 try:
-    from scripts.audit_peer_transit import audit_peer_transit
+    from scripts.audit_peer_transit import audit_acceptance_report, audit_peer_transit
 except ModuleNotFoundError:  # direct ``python scripts/...`` execution
-    from audit_peer_transit import audit_peer_transit
+    from audit_peer_transit import audit_acceptance_report, audit_peer_transit
 
 MARKER = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
 
@@ -414,7 +414,7 @@ def run_acceptance(
         "target_file_committed": len(delivered) == 1,
         "performance": performance["ok"],
     }
-    return {
+    report = {
         "result": "pass" if all(checks.values()) else "fail",
         "checks": checks,
         "main_evidence": evidence,
@@ -428,6 +428,12 @@ def run_acceptance(
         "registry_plaintext_found": registry_plaintext_found,
         "work_root": str(work_root),
     }
+    report["report_audit"] = audit_acceptance_report(
+        report,
+        require_one_gib=one_gib_required,
+        min_concurrent=concurrent_sessions,
+    )
+    return report
 
 
 def main() -> int:

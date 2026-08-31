@@ -143,15 +143,133 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def audit_acceptance_report(
+    value: dict[str, Any],
+    *,
+    require_one_gib: bool = False,
+    min_concurrent: int = 1,
+) -> dict[str, Any]:
+    """Independently enforce the complete hermetic acceptance report."""
+
+    if value.get("result") != "pass":
+        raise AuditError("acceptance producer did not report pass")
+    required_checks = {
+        "healthy_direct",
+        "two_hop_peer_transit",
+        "automatic_degrade_and_recovery",
+        "actual_hard_failure_fallback",
+        "bounded_transit_unavailability",
+        "no_turn",
+        "registry_has_no_payload_marker",
+        "transit_has_no_plaintext_marker",
+        "target_hash_matches",
+        "target_file_committed",
+        "performance",
+    }
+    checks = dict(_require(value, "checks"))
+    failed_checks = sorted(key for key in required_checks if checks.get(key) is not True)
+    if failed_checks:
+        raise AuditError(f"acceptance checks missing or failed: {', '.join(failed_checks)}")
+
+    main = dict(_require(value, "main_evidence"))
+    transit_audit = audit_peer_transit(main)
+    if value.get("registry_plaintext_found") is not False:
+        raise AuditError("registry plaintext scan did not pass")
+
+    direct_socket = dict(_require(value, "direct"))
+    if direct_socket.get("ok") is not True or direct_socket.get("ice_relay_candidate_used") is not False:
+        raise AuditError("healthy direct ICE probe did not pass")
+    _audit_hop(dict(direct_socket.get("source") or {}), "direct.source")
+    _audit_hop(dict(direct_socket.get("target") or {}), "direct.target")
+
+    direct_file = dict(_require(value, "healthy_direct_file"))
+    if direct_file.get("ok") is not True:
+        raise AuditError("healthy direct file transfer did not pass")
+    if direct_file.get("source_sha256") != direct_file.get("target_sha256"):
+        raise AuditError("healthy direct file hashes do not match")
+    if int(direct_file.get("transit_bytes_before", -1)) != int(
+        direct_file.get("transit_bytes_after", -2)
+    ):
+        raise AuditError("transit peer carried bytes during healthy direct transfer")
+    _audit_hop(dict(direct_file.get("source_hop") or {}), "direct_file.source_hop")
+
+    hard_failure = dict(_require(value, "actual_hard_failure"))
+    if (
+        hard_failure.get("ok") is not True
+        or hard_failure.get("selected_path") != "peer_transit"
+        or not str(hard_failure.get("direct_fallback_error") or "")
+        or float(hard_failure.get("elapsed_s", 999)) > 10
+    ):
+        raise AuditError("real direct-failure fallback did not meet the ten-second gate")
+
+    route = dict(_require(value, "route"))
+    reasons = {str(item.get("reason") or "") for item in route.get("events", [])}
+    if route.get("ok") is not True or not {
+        "direct_degraded",
+        "transit_better",
+        "direct_recovery_started",
+        "direct_recovered",
+    } <= reasons:
+        raise AuditError("route degradation/recovery evidence is incomplete")
+
+    unavailable = dict(_require(value, "unavailable"))
+    if unavailable.get("ok") is not True or int(unavailable.get("partial_target_files", -1)) != 0:
+        raise AuditError("transit-unavailable handling is not bounded and atomic")
+
+    performance = dict(_require(value, "performance"))
+    concurrent_completed = int(performance.get("concurrent_completed", 0))
+    if performance.get("concurrency_ok") is not True or concurrent_completed < min_concurrent:
+        raise AuditError("concurrent-session gate did not pass")
+    if performance.get("memory_bounded") is not True:
+        raise AuditError("streaming memory gate did not pass")
+    if float(performance.get("session_established_s", 999)) > 5:
+        raise AuditError("session establishment exceeded five seconds")
+    if float(performance.get("protocol_overhead_ratio", 999)) > 0.15:
+        raise AuditError("protocol overhead exceeded fifteen percent")
+    if performance.get("hard_failure_fallback_within_10s") is not True:
+        raise AuditError("performance report omitted bounded hard-failure fallback")
+    if require_one_gib:
+        if (
+            int(main.get("source_size_bytes", 0)) < 1024**3
+            or performance.get("one_gib_required") is not True
+            or performance.get("one_gib_ok") is not True
+        ):
+            raise AuditError("one-GiB resource gate did not pass")
+
+    return {
+        "ok": True,
+        "protocol_version": transit_audit["protocol_version"],
+        "source_size_bytes": transit_audit["source_size_bytes"],
+        "concurrent_completed": concurrent_completed,
+        "session_established_s": float(performance["session_established_s"]),
+        "protocol_overhead_ratio": float(performance["protocol_overhead_ratio"]),
+        "hard_failure_fallback_s": float(hard_failure["elapsed_s"]),
+        "one_gib_required": bool(require_one_gib),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", help="peer-transit evidence JSON")
+    parser.add_argument("--report", action="store_true", help="audit a full acceptance report")
+    parser.add_argument("--require-one-gib", action="store_true")
+    parser.add_argument("--min-concurrent", type=int, default=1)
     parser.add_argument("--output", default="", help="optional audit report path")
     args = parser.parse_args()
+    if args.min_concurrent < 0:
+        raise AuditError("minimum concurrent sessions cannot be negative")
     value = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise AuditError("evidence root must be a JSON object")
-    report = audit_peer_transit(value)
+    report = (
+        audit_acceptance_report(
+            value,
+            require_one_gib=args.require_one_gib,
+            min_concurrent=args.min_concurrent,
+        )
+        if args.report
+        else audit_peer_transit(value)
+    )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         Path(args.output).write_text(rendered, encoding="utf-8")
@@ -161,4 +279,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

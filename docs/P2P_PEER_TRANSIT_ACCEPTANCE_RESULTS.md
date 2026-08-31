@@ -26,6 +26,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Encryption framing overhead | Pass | 0.0824%, below the 15% gate |
 | Confidentiality | Pass | Plaintext marker absent from transit frames and registry files |
 | Signed evidence audit | Pass | Independent fail-closed auditor accepted the one-GiB evidence |
+| Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
 | Transit unavailable | Pass | Bounded explicit failure, no committed partial target file |
 
 The full resource report and signed evidence are generated locally under
