@@ -111,17 +111,27 @@ friend-origin content can be distinguished, verified, muted, and removed.
 Goal: let an owner-approved agent perform useful work across nodes within clear
 limits.
 
+Status: the first service landed early. The local-LLM package delivers an
+encrypted node-to-node task protocol, provider publication and discovery, a
+task-first Services catalog with a Private AI chat, strict-P2P transport
+checks, and a development-only Task Balance ledger. Strict public-internet
+acceptance and the items in `SERVICE_PLATFORM_NEXT.md` remain before this
+graduates from preview.
+
 Planned work:
 
 1. A budgeted agent loop with permitted action types, per-period limits,
    confirmations, and a complete local audit trail.
 2. A general service manifest and invocation protocol based on the existing
-   work-order path, with metering and result verification.
-3. Useful initial services such as local model generation, media transcoding,
-   and network egress.
+   work-order path, with metering and result verification. The LLM package is
+   the reference implementation; the service-experience framework in
+   `SERVICE_PLATFORM_NEXT.md` generalizes its seams.
+3. Useful initial services such as local model generation (shipped as the
+   Private AI preview), media transcoding, and network egress.
 4. Agent-to-agent commissioning within the owner’s approval envelope.
 5. Credit debits and credits for verified service work. Credits remain
-   non-transferable during this milestone.
+   non-transferable during this milestone; the development Task Balance is
+   folded into the credit ledger as part of this item.
 
 ## P4: Open-network hardening
 
