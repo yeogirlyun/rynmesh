@@ -361,13 +361,29 @@ def audit_acceptance_report(
     _audit_hop(dict(direct_file.get("source_hop") or {}), "direct_file.source_hop")
 
     hard_failure = dict(_require(value, "actual_hard_failure"))
+    hard_failure_evidence = dict(_require(hard_failure, "evidence"))
+    hard_failure_audit = audit_peer_transit(hard_failure_evidence)
     if (
         hard_failure.get("ok") is not True
         or hard_failure.get("selected_path") != "peer_transit"
         or not str(hard_failure.get("direct_fallback_error") or "")
         or float(hard_failure.get("elapsed_s", 999)) > 10
+        or hard_failure_evidence.get("path_mode") != "peer_transit"
+        or hard_failure_evidence.get("selected_path") != "peer_transit"
+        or hard_failure_evidence.get("direct_fallback_error")
+        != hard_failure.get("direct_fallback_error")
+        or float(hard_failure_evidence.get("direct_attempt_timeout_s", 999)) > 8
+        or hard_failure_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or hard_failure_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
+        or hard_failure_audit["target_peer_id"] != transit_audit["target_peer_id"]
     ):
         raise AuditError("real direct-failure fallback did not meet the ten-second gate")
+    hard_reasons = [
+        str(item.get("reason") or "")
+        for item in hard_failure_evidence.get("route_events", [])
+    ]
+    if hard_reasons != ["direct_degraded", "hard_failure"]:
+        raise AuditError("real direct-failure route evidence is incomplete")
 
     route = dict(_require(value, "route"))
     _audit_route_report(route)

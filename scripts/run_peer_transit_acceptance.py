@@ -546,6 +546,7 @@ def run_acceptance(
             "selected_path": hard_failure_evidence.get("path_mode"),
             "direct_fallback_error": hard_failure_evidence.get("direct_fallback_error"),
             "route_events": hard_failure_evidence.get("route_events"),
+            "evidence": hard_failure_evidence,
         }
     finally:
         tracemalloc.stop()
