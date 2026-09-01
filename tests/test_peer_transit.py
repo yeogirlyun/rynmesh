@@ -322,22 +322,68 @@ def test_worker_refreshes_capacity_before_discovery_record_expires(tmp_path, mon
         registrations.append(len(registrations) + 1)
         return {"status": "registered"}
 
-    def serve_once() -> int:
+    def pending_orders() -> list[dict[str, object]]:
         nonlocal polls
         polls += 1
         if polls == 2:
             stop.set()
-        return 0
+        return []
 
     clock = iter((0.0, 1.0, DEFAULT_CAPACITY_REFRESH_S + 1.0))
     monkeypatch.setattr(worker, "register", register)
-    monkeypatch.setattr(worker, "serve_once", serve_once)
+    monkeypatch.setattr(worker, "_pending_orders", pending_orders)
     monkeypatch.setattr(peer_transit_service.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(peer_transit_service.time, "sleep", lambda _seconds: None)
 
-    worker.serve_forever(stop_event=stop)
+    worker.serve_forever(poll_interval_s=0, stop_event=stop)
 
     assert registrations == [1, 2]
+
+
+def test_worker_honors_max_concurrent_and_deduplicates_in_flight_orders(
+    tmp_path, monkeypatch
+) -> None:
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    worker = PeerTransitWorker(
+        store,
+        role="transit",
+        network_id="bounded-concurrency",
+        max_concurrent=3,
+    )
+    orders = [
+        {
+            "work_order_id": f"order-{index}",
+            "operation": peer_transit_service.OPEN_OPERATION,
+            "params": {"signed_session_open": {"payload": {"session_id": f"session-{index}"}}},
+        }
+        for index in range(3)
+    ]
+    stop = threading.Event()
+    barrier = threading.Barrier(3)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+    called: list[str] = []
+
+    def run_order(order, _handler) -> None:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            called.append(str(order["work_order_id"]))
+        barrier.wait(timeout=2)
+        stop.set()
+        with lock:
+            active -= 1
+
+    monkeypatch.setattr(worker, "register", lambda: {"status": "registered"})
+    monkeypatch.setattr(worker, "_pending_orders", lambda: list(orders))
+    monkeypatch.setattr(worker, "_run_order", run_order)
+
+    worker.serve_forever(poll_interval_s=0.001, stop_event=stop)
+
+    assert peak == 3
+    assert active == 0
+    assert sorted(called) == ["order-0", "order-1", "order-2"]
 
 
 def test_capacity_discovery_retries_atomic_refresh_read_window(tmp_path, monkeypatch) -> None:

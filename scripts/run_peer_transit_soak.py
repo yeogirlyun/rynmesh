@@ -30,15 +30,25 @@ MAX_MEMORY_GROWTH_BYTES = 32 * 1024 * 1024
 
 class _FrameAudit:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.frames = 0
         self.bytes = 0
         self.plaintext_found = False
 
     def __call__(self, frame: bytes) -> None:
-        self.frames += 1
-        self.bytes += len(frame)
-        if MARKER in frame:
-            self.plaintext_found = True
+        with self._lock:
+            self.frames += 1
+            self.bytes += len(frame)
+            if MARKER in frame:
+                self.plaintext_found = True
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "frames": self.frames,
+                "bytes": self.bytes,
+                "plaintext_found": self.plaintext_found,
+            }
 
 
 def _utc_now() -> str:
@@ -131,6 +141,7 @@ def run_soak(
     def snapshot(status: str) -> dict[str, Any]:
         current_memory, peak_memory = tracemalloc.get_traced_memory()
         memory_growth = 0 if baseline_memory is None else max(0, current_memory - baseline_memory)
+        frame_snapshot = frame_audit.snapshot()
         return {
             "result": status,
             "pid": os.getpid(),
@@ -150,9 +161,9 @@ def run_soak(
             "memory_growth_limit_bytes": MAX_MEMORY_GROWTH_BYTES,
             "active_threads": threading.active_count(),
             "baseline_threads": baseline_threads,
-            "transit_frames": frame_audit.frames,
-            "transit_bytes": frame_audit.bytes,
-            "plaintext_found_on_transit": frame_audit.plaintext_found,
+            "transit_frames": frame_snapshot["frames"],
+            "transit_bytes": frame_snapshot["bytes"],
+            "plaintext_found_on_transit": frame_snapshot["plaintext_found"],
             "last_session_id": None if last_evidence is None else last_evidence.get("session_id"),
         }
 
@@ -169,7 +180,7 @@ def run_soak(
                     network_id=network_id,
                     timeout_s=timeout_s,
                 )
-                evidence["plaintext_found_on_transit"] = frame_audit.plaintext_found
+                evidence["plaintext_found_on_transit"] = frame_audit.snapshot()["plaintext_found"]
                 audit_peer_transit(evidence)
                 last_evidence = evidence
                 sessions += 1
@@ -202,7 +213,7 @@ def run_soak(
         completed_duration
         and sessions >= 3
         and not failures
-        and not frame_audit.plaintext_found
+        and not frame_audit.snapshot()["plaintext_found"]
         and memory_growth <= MAX_MEMORY_GROWTH_BYTES
         and partial_files == 0
         and not relay_thread.is_alive()

@@ -232,9 +232,11 @@ def _audit_concurrent_timeline(
     *,
     expected_session_ids: set[str],
     min_concurrent: int,
+    reported_peak_key: str = "peak_concurrent_observed",
+    timeline_name: str = "concurrent_timeline",
 ) -> int:
     if not isinstance(timeline, list) or len(timeline) != len(expected_session_ids):
-        raise AuditError("concurrent timeline is incomplete")
+        raise AuditError(f"{timeline_name} is incomplete")
     observed_ids: set[str] = set()
     events: list[tuple[float, int]] = []
     maximum_end = 0.0
@@ -243,10 +245,10 @@ def _audit_concurrent_timeline(
             raise AuditError("concurrent timeline item is malformed")
         session_id = str(_require(raw_item, "session_id"))
         started = _finite_float(
-            _require(raw_item, "started_s"), f"concurrent_timeline[{index}].started_s"
+            _require(raw_item, "started_s"), f"{timeline_name}[{index}].started_s"
         )
         ended = _finite_float(
-            _require(raw_item, "ended_s"), f"concurrent_timeline[{index}].ended_s"
+            _require(raw_item, "ended_s"), f"{timeline_name}[{index}].ended_s"
         )
         if not session_id or session_id in observed_ids or started < 0 or ended <= started:
             raise AuditError("concurrent timeline item is invalid")
@@ -260,7 +262,7 @@ def _audit_concurrent_timeline(
     for _at, delta in sorted(events, key=lambda item: (item[0], -item[1])):
         active += delta
         peak = max(peak, active)
-    reported_peak = int(_require(performance, "peak_concurrent_observed"))
+    reported_peak = int(_require(performance, reported_peak_key))
     elapsed = _finite_float(
         _require(performance, "concurrent_elapsed_s"), "performance.concurrent_elapsed_s"
     )
@@ -727,6 +729,8 @@ def audit_acceptance_report(
         raise AuditError("established data plane did not survive control-plane blackout")
 
     performance = dict(_require(value, "performance"))
+    if performance.get("concurrency_observation") != "relay_and_target_worker_handlers":
+        raise AuditError("concurrency was not observed inside both worker handlers")
     concurrent_completed = int(performance.get("concurrent_completed", 0))
     concurrent_session_ids = _audit_concurrent_sessions(
         performance,
@@ -739,6 +743,14 @@ def audit_acceptance_report(
         _require(value, "concurrent_timeline"),
         expected_session_ids=concurrent_session_ids,
         min_concurrent=min_concurrent,
+    )
+    peak_target_concurrent = _audit_concurrent_timeline(
+        performance,
+        _require(value, "target_concurrent_timeline"),
+        expected_session_ids=concurrent_session_ids,
+        min_concurrent=min_concurrent,
+        reported_peak_key="peak_target_concurrent_observed",
+        timeline_name="target_concurrent_timeline",
     )
     peak_memory, peak_memory_limit = _audit_memory_gate(performance)
     session_established = _finite_float(
@@ -764,6 +776,7 @@ def audit_acceptance_report(
         "concurrent_completed": concurrent_completed,
         "concurrent_unique_sessions": len(concurrent_session_ids),
         "peak_concurrent_observed": peak_concurrent,
+        "peak_target_concurrent_observed": peak_target_concurrent,
         "session_established_s": session_established,
         "protocol_overhead_ratio": protocol_overhead_ratio,
         "hard_failure_fallback_s": hard_failure_elapsed,

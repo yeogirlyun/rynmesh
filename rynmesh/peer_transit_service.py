@@ -15,6 +15,7 @@ import json
 import os
 import time
 from collections.abc import Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,7 @@ CAPACITY_MAX_AGE_HOURS = 1.0
 DEFAULT_CAPACITY_REFRESH_S = 15 * 60.0
 CAPACITY_LOOKUP_ATTEMPTS = 5
 CAPACITY_LOOKUP_RETRY_S = 0.05
+WORKER_ERROR_LOG_INTERVAL_S = 30.0
 # Keep a reliable-message burst below typical UDP socket receive buffers.  The
 # lower layer fragments this again into ~900-byte datagrams.
 DEFAULT_CHUNK_BYTES = 64 * 1024
@@ -277,6 +279,7 @@ class PeerTransitWorker:
         max_concurrent: int = 8,
         allow_direct: bool = True,
         audit_frame: Any | None = None,
+        audit_session: Any | None = None,
         capacity_refresh_s: float = DEFAULT_CAPACITY_REFRESH_S,
     ) -> None:
         if role not in {"target", "transit", "both"}:
@@ -291,6 +294,7 @@ class PeerTransitWorker:
         self.max_concurrent = int(max_concurrent)
         self.allow_direct = bool(allow_direct)
         self.audit_frame = audit_frame
+        self.audit_session = audit_session
         if capacity_refresh_s <= 0:
             raise ValueError("peer transit capacity refresh interval must be positive")
         self.capacity_refresh_s = float(capacity_refresh_s)
@@ -311,39 +315,100 @@ class PeerTransitWorker:
             f"[{TRANSIT_CAPABILITY}] peer={self.store.peer_id} role={self.role} "
             f"network={self.network_id}"
         )
-        while stop_event is None or not stop_event.is_set():
-            try:
-                now = time.monotonic()
-                if now >= next_capacity_refresh:
-                    self.register()
-                    next_capacity_refresh = now + self.capacity_refresh_s
-                self.serve_once()
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                print(f"[{TRANSIT_CAPABILITY}] worker error: {exc}")
-            time.sleep(poll_interval_s)
+        in_flight: dict[str, Future[None]] = {}
+        last_error_message = ""
+        last_error_logged_at = float("-inf")
+        with ThreadPoolExecutor(
+            max_workers=self.max_concurrent,
+            thread_name_prefix=f"rynmesh-{self.role}",
+        ) as pool:
+            while stop_event is None or not stop_event.is_set():
+                try:
+                    for order_id, future in list(in_flight.items()):
+                        if not future.done():
+                            continue
+                        try:
+                            future.result()
+                        finally:
+                            del in_flight[order_id]
+                    now = time.monotonic()
+                    if now >= next_capacity_refresh:
+                        self.register()
+                        next_capacity_refresh = now + self.capacity_refresh_s
+                    available = self.max_concurrent - len(in_flight)
+                    if available > 0:
+                        for order in self._pending_orders():
+                            order_id = str(order.get("work_order_id") or "")
+                            handler = self._handler_for_order(order)
+                            if not order_id or handler is None or order_id in in_flight:
+                                continue
+                            in_flight[order_id] = pool.submit(self._run_order, order, handler)
+                            available -= 1
+                            if available == 0:
+                                break
+                except KeyboardInterrupt:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    message = f"{type(exc).__name__}: {exc}"
+                    error_at = time.monotonic()
+                    if (
+                        message != last_error_message
+                        or error_at - last_error_logged_at >= WORKER_ERROR_LOG_INTERVAL_S
+                    ):
+                        print(f"[{TRANSIT_CAPABILITY}] worker error: {message}")
+                        last_error_message = message
+                        last_error_logged_at = error_at
+                if stop_event is None:
+                    time.sleep(poll_interval_s)
+                else:
+                    stop_event.wait(poll_interval_s)
 
-    def serve_once(self) -> int:
-        orders = self.store.poll_work_orders(
+    def _pending_orders(self) -> list[dict[str, Any]]:
+        return self.store.poll_work_orders(
             network_id=self.network_id,
             capability=TRANSIT_CAPABILITY,
         ).get("work_orders", [])
+
+    def _handler_for_order(self, order: dict[str, Any]) -> Any | None:
+        operation = str(order.get("operation") or "")
+        if operation == OPEN_OPERATION and self.role in {"transit", "both"}:
+            return self._serve_transit
+        if operation in {ACCEPT_OPERATION, DIRECT_OPERATION} and self.role in {
+            "target",
+            "both",
+        }:
+            return self._serve_target
+        return None
+
+    def serve_once(self) -> int:
         processed = 0
-        for order in orders:
-            operation = str(order.get("operation") or "")
-            if operation == OPEN_OPERATION and self.role in {"transit", "both"}:
+        for order in self._pending_orders():
+            handler = self._handler_for_order(order)
+            if handler is not None:
                 processed += 1
-                self._run_order(order, self._serve_transit)
-            elif operation in {ACCEPT_OPERATION, DIRECT_OPERATION} and self.role in {
-                "target",
-                "both",
-            }:
-                processed += 1
-                self._run_order(order, self._serve_target)
+                self._run_order(order, handler)
         return processed
 
+    def _emit_session_audit(self, phase: str, order: dict[str, Any]) -> None:
+        if self.audit_session is None:
+            return
+        signed_open = dict((order.get("params") or {}).get("signed_session_open") or {})
+        payload = dict(signed_open.get("payload") or {})
+        event = {
+            "phase": phase,
+            "at_monotonic": time.monotonic(),
+            "work_order_id": str(order.get("work_order_id") or ""),
+            "operation": str(order.get("operation") or ""),
+            "session_id": str(payload.get("session_id") or ""),
+            "role": self.role,
+        }
+        try:
+            self.audit_session(event)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{TRANSIT_CAPABILITY}] session audit error: {exc}")
+
     def _run_order(self, order: dict[str, Any], handler: Any) -> None:
+        self._emit_session_audit("started", order)
         try:
             asyncio.run(handler(order))
         except Exception as exc:
@@ -354,6 +419,8 @@ class PeerTransitWorker:
                 message=f"{type(exc).__name__}: {exc}",
                 network_id=self.network_id,
             )
+        finally:
+            self._emit_session_audit("finished", order)
 
     async def _serve_transit(self, order: dict[str, Any]) -> None:
         params = dict(order.get("params") or {})

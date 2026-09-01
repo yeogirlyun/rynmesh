@@ -66,17 +66,28 @@ def _prepare_work_root(work_root: Path) -> None:
 
 class _FrameAudit:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.frames = 0
         self.bytes = 0
         self.max_frame_bytes = 0
         self.plaintext_found = False
 
     def __call__(self, frame: bytes) -> None:
-        self.frames += 1
-        self.bytes += len(frame)
-        self.max_frame_bytes = max(self.max_frame_bytes, len(frame))
-        if MARKER in frame:
-            self.plaintext_found = True
+        with self._lock:
+            self.frames += 1
+            self.bytes += len(frame)
+            self.max_frame_bytes = max(self.max_frame_bytes, len(frame))
+            if MARKER in frame:
+                self.plaintext_found = True
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "frames": self.frames,
+                "bytes": self.bytes,
+                "max_frame_bytes": self.max_frame_bytes,
+                "plaintext_found": self.plaintext_found,
+            }
 
 
 class _RegistryBlackout:
@@ -475,6 +486,25 @@ def run_acceptance(
         store.registry = registry
     network_id = "peer-transit-acceptance"
     frame_audit = _FrameAudit()
+    worker_trace_lock = threading.Lock()
+    worker_trace: dict[str, dict[str, dict[str, float]]] = {
+        "relay": {},
+        "target": {},
+    }
+
+    def session_auditor(worker_name: str):
+        def record(event: dict[str, Any]) -> None:
+            session_id = str(event.get("session_id") or "")
+            phase = str(event.get("phase") or "")
+            if not session_id or phase not in {"started", "finished"}:
+                return
+            with worker_trace_lock:
+                worker_trace[worker_name].setdefault(session_id, {})[phase] = float(
+                    event["at_monotonic"]
+                )
+
+        return record
+
     relay_worker = PeerTransitWorker(
         relay,
         role="transit",
@@ -482,6 +512,7 @@ def run_acceptance(
         timeout_s=timeout_s,
         max_concurrent=max(8, concurrent_sessions),
         audit_frame=frame_audit,
+        audit_session=session_auditor("relay"),
     )
     target_worker = PeerTransitWorker(
         target,
@@ -491,6 +522,7 @@ def run_acceptance(
         timeout_s=timeout_s,
         max_concurrent=max(8, concurrent_sessions),
         allow_direct=True,
+        audit_session=session_auditor("target"),
     )
     relay_worker.register()
     target_worker.register()
@@ -523,11 +555,12 @@ def run_acceptance(
         )
         main_elapsed = time.monotonic() - started
         _current, peak_memory = tracemalloc.get_traced_memory()
-        evidence["plaintext_found_on_transit"] = frame_audit.plaintext_found
+        frame_snapshot = frame_audit.snapshot()
+        evidence["plaintext_found_on_transit"] = frame_snapshot["plaintext_found"]
         evidence["transit_frame_audit"] = {
-            "frames": frame_audit.frames,
-            "bytes": frame_audit.bytes,
-            "max_frame_bytes": frame_audit.max_frame_bytes,
+            "frames": frame_snapshot["frames"],
+            "bytes": frame_snapshot["bytes"],
+            "max_frame_bytes": frame_snapshot["max_frame_bytes"],
         }
         evidence["elapsed_s"] = main_elapsed
         evidence["peak_python_memory_bytes"] = peak_memory
@@ -540,7 +573,7 @@ def run_acceptance(
             concurrency_files.append(item)
         concurrency_started = time.monotonic()
         concurrent_results: list[dict[str, Any]] = []
-        concurrent_timeline: list[dict[str, Any]] = []
+        caller_concurrent_timeline: list[dict[str, Any]] = []
         if concurrency_files:
             def run_concurrent(index: int, item: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                 started_at = time.monotonic() - concurrency_started
@@ -573,34 +606,61 @@ def run_acceptance(
                     future.result(timeout=timeout_s + 10) for future in futures
                 ]
                 concurrent_results = [item[0] for item in concurrent_pairs]
-                concurrent_timeline = [item[1] for item in concurrent_pairs]
+                caller_concurrent_timeline = [item[1] for item in concurrent_pairs]
         concurrency_elapsed = time.monotonic() - concurrency_started
-        concurrency_events = sorted(
-            [
-                (float(item["started_s"]), 1)
-                for item in concurrent_timeline
+        concurrent_session_ids = {
+            str(result.get("session_id") or "") for result in concurrent_results
+        }
+
+        def worker_timeline(worker_name: str) -> list[dict[str, Any]]:
+            with worker_trace_lock:
+                trace = {
+                    session_id: dict(times)
+                    for session_id, times in worker_trace[worker_name].items()
+                    if session_id in concurrent_session_ids
+                }
+            return [
+                {
+                    "session_id": session_id,
+                    "started_s": times["started"] - concurrency_started,
+                    "ended_s": times["finished"] - concurrency_started,
+                }
+                for session_id, times in sorted(trace.items())
+                if "started" in times and "finished" in times
             ]
-            + [
-                (float(item["ended_s"]), -1)
-                for item in concurrent_timeline
-            ],
-            key=lambda item: (item[0], -item[1]),
-        )
-        active_concurrent = 0
-        peak_concurrent = 0
-        for _at, delta in concurrency_events:
-            active_concurrent += delta
-            peak_concurrent = max(peak_concurrent, active_concurrent)
+
+        def timeline_peak(timeline: list[dict[str, Any]]) -> int:
+            events = sorted(
+                [(float(item["started_s"]), 1) for item in timeline]
+                + [(float(item["ended_s"]), -1) for item in timeline],
+                key=lambda item: (item[0], -item[1]),
+            )
+            active = 0
+            peak = 0
+            for _at, delta in events:
+                active += delta
+                peak = max(peak, active)
+            return peak
+
+        concurrent_timeline = worker_timeline("relay")
+        target_concurrent_timeline = worker_timeline("target")
+        peak_concurrent = timeline_peak(concurrent_timeline)
+        peak_target_concurrent = timeline_peak(target_concurrent_timeline)
         concurrency_ok = all(
             result.get("source_sha256") == result.get("target_sha256")
             and result.get("ice_relay_candidate_used") is False
             for result in concurrent_results
-        ) and peak_concurrent == concurrent_sessions
+        ) and (
+            len(concurrent_timeline) == concurrent_sessions
+            and len(target_concurrent_timeline) == concurrent_sessions
+            and peak_concurrent == concurrent_sessions
+            and peak_target_concurrent == concurrent_sessions
+        )
 
         route = _route_acceptance()
         direct_file = work_root / "healthy-direct.bin"
         _write_payload(direct_file, 64 * 1024)
-        transit_bytes_before_direct = frame_audit.bytes
+        transit_bytes_before_direct = int(frame_audit.snapshot()["bytes"])
         direct_file_started = time.monotonic()
         direct_file_evidence = send_file_direct(
             source,
@@ -610,19 +670,20 @@ def run_acceptance(
             timeout_s=timeout_s,
         )
         direct_file_elapsed = time.monotonic() - direct_file_started
+        transit_bytes_after_direct = int(frame_audit.snapshot()["bytes"])
         healthy_direct_file = {
             "ok": (
                 direct_file_evidence.get("path_mode") == "direct"
                 and direct_file_evidence.get("ice_relay_candidate_used") is False
                 and direct_file_evidence.get("source_sha256")
                 == direct_file_evidence.get("target_sha256")
-                and frame_audit.bytes == transit_bytes_before_direct
+                and transit_bytes_after_direct == transit_bytes_before_direct
             ),
             "elapsed_s": direct_file_elapsed,
             "source_sha256": direct_file_evidence.get("source_sha256"),
             "target_sha256": direct_file_evidence.get("target_sha256"),
             "transit_bytes_before": transit_bytes_before_direct,
-            "transit_bytes_after": frame_audit.bytes,
+            "transit_bytes_after": transit_bytes_after_direct,
             "route_recovered_path": route.get("recovered_path"),
             "source_hop": direct_file_evidence.get("source_hop"),
             "evidence": direct_file_evidence,
@@ -720,8 +781,11 @@ def run_acceptance(
         "concurrent_completed": len(concurrent_results),
         "concurrent_elapsed_s": concurrency_elapsed,
         "peak_concurrent_observed": peak_concurrent,
+        "peak_target_concurrent_observed": peak_target_concurrent,
+        "concurrency_observation": "relay_and_target_worker_handlers",
         "concurrency_ok": concurrency_ok,
     }
+    final_frame_snapshot = frame_audit.snapshot()
     checks = {
         "healthy_direct": direct["ok"] and healthy_direct_file["ok"],
         "two_hop_peer_transit": main_audit["ok"],
@@ -737,7 +801,7 @@ def run_acceptance(
             <= MAX_REGISTRY_CONTROL_RECORD_BYTES
             and registry_control_plane["application_payload_bytes"] == 0
         ),
-        "transit_has_no_plaintext_marker": not frame_audit.plaintext_found,
+        "transit_has_no_plaintext_marker": not final_frame_snapshot["plaintext_found"],
         "target_hash_matches": evidence["source_sha256"] == evidence["target_sha256"],
         "target_file_committed": len(delivered) == 1,
         "performance": performance["ok"],
@@ -755,6 +819,8 @@ def run_acceptance(
         "control_plane_blackout": control_plane_blackout,
         "concurrent_evidence": concurrent_results,
         "concurrent_timeline": concurrent_timeline,
+        "target_concurrent_timeline": target_concurrent_timeline,
+        "caller_concurrent_timeline": caller_concurrent_timeline,
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
         "registry_control_plane": registry_control_plane,

@@ -391,6 +391,59 @@ Both initial 852-byte capacity records were independently discovered and
 Ed25519-verified through the project API. This run starts from zero and includes
 no elapsed time from r9 or any earlier run.
 
+The r10 run was deliberately invalidated at 2026-09-01 19:25:36 Hong Kong time
+after the production-worker concurrency audit found that `max_concurrent` was
+advertised but `serve_forever()` synchronously processed each complete session.
+The old acceptance timeline measured overlapping source callers, so it could
+report a peak of 20 while relay and target workers actually handled one session
+at a time. The preserved snapshot is
+`.codex-tmp/peer-transit-soak-24h-r10/progress.invalidated-worker-concurrency.json`
+with SHA-256
+`F5F4959629D00F865F78AF16AC80EA9031B149766A257E21202541B05AFEA139`.
+It records 281.219 monotonic seconds, 29 successful sessions, zero failures, 87
+frames, 1,919,336 transit bytes, 1,337,879 bytes of traced memory growth, a
+6,184,341-byte traced peak, three worker threads and no plaintext. Both r10
+processes were stopped and verified absent; no r10 duration may be combined
+with its replacement.
+
+The worker now uses a bounded executor sized by `max_concurrent`, deduplicates
+in-flight order IDs and drains active handlers on shutdown. Session audit hooks
+record handler entry/exit inside both relay and target workers. Frame counters
+used by concurrent acceptance are lock-protected, and repeated registry outage
+errors are rate-limited rather than flooding logs. The acceptance producer now
+emits separate relay-worker, target-worker and diagnostic caller timelines;
+the independent auditor requires both worker timelines to contain exactly the
+signed concurrent session IDs and independently recomputes both peaks. It
+rejects old caller-only reports, missing target timelines and forged target
+peaks. The full Python suite passed 572 tests with three skips after the change.
+
+A fresh thread-safe concurrency preflight at
+`.codex-tmp/peer-transit-acceptance-r12-threadsafe-concurrency` transferred
+8,388,608 bytes with matching source/target hashes, 129 request frames, one
+response frame and 8,396,269 bytes per transit direction. All three signed
+sessions overlapped inside relay handlers from 0.062--0.531 s and inside target
+handlers from 0.172--0.531 s, producing independently audited peaks of three on
+both workers. Setup took 0.156 s, the main transfer 8.359 s, hard direct failure
+fell back in 0.531 s, traced memory peaked at 5,518,825 bytes and protocol
+overhead was 0.0831%. All TURN, blackout, unavailable-peer, plaintext,
+control-size and hash gates passed. `report.json` has SHA-256
+`074324F3DBA795050DED790A2DE07E1BAF85A81C521BFE337393D697988A5A1F` and
+`evidence.json` has SHA-256
+`D65891E7E30AB61839BEE49B47165B54F0E223E4FB2323AC27F245B20B0E30A8`.
+
+After adding fail-safe cleanup for a completed worker future, the exact final
+candidate was rerun from the fresh
+`.codex-tmp/peer-transit-acceptance-r13-final-concurrency-preflight` root. It
+again passed with 8,388,608 source bytes, 130 transit frames, 8,396,274 bytes
+per transit direction, three completed signed sessions and independently
+recomputed relay/target worker peaks of three. Setup took 0.203 s, the main
+transfer 8.422 s, hard-failure fallback 0.485 s, peak traced memory was
+5,525,350 bytes and overhead was 0.0831%. Both independent audits passed;
+`report.json` has SHA-256
+`8DB8698D8065F585D93F8C0ACAC5E6B1880A79E30BE50A416C7F37C75181C1B6` and
+`evidence.json` has SHA-256
+`F8AC897AE006D93CB39343F79C97D97BA8C078687CA17767F086C33F6F4B7CED`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

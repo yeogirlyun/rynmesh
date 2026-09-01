@@ -112,14 +112,21 @@ Each node willing to receive peer-transit traffic advertises:
 ```json
 {
   "capabilities": ["rynmesh.peer-transit.v1"],
+  "max_concurrent": 8,
   "metadata": {
     "protocol_version": "rynmesh.peer-transit.v1",
     "roles": ["target", "transit"],
-    "messaging_public_key": "<base64 X25519 public key>",
-    "max_concurrent": 8
+    "messaging_public_key": "<base64 X25519 public key>"
   }
 }
 ```
+
+`max_concurrent` is an enforced worker limit, not descriptive metadata. The
+long-running worker dispatches eligible orders through a bounded executor,
+tracks work-order IDs already in flight so polling cannot duplicate them, and
+waits for active handlers during shutdown. Capacity refresh and discovery stay
+on the worker's control loop while each session owns its own two ICE
+connections.
 
 ### 4.2 Source-to-transit order
 

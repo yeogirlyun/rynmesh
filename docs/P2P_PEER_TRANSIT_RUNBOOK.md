@@ -121,7 +121,10 @@ route manager applies the thresholds and hysteresis above.
 The deterministic test uses real local ICE sockets, disables external STUN,
 creates three independent node identities, transfers ciphertext over two ICE
 legs, scans transit frames and registry files for a unique marker, verifies
-signed work results, exercises route recovery and checks concurrent callers.
+signed work results, exercises route recovery and checks bounded worker
+concurrency. The concurrency gate records handler entry/exit inside both relay
+and target workers and binds those intervals to the same signed session IDs in
+the transfer evidence; overlapping caller wait times alone do not pass.
 The target worker denies the direct operation during the hard-failure case so
 the real adaptive client must fail direct and complete through peer 2 within
 10 seconds; this is not inferred only from the route state machine.
