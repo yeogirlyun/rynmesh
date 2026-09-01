@@ -56,6 +56,8 @@ DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_DIRECT_ATTEMPT_TIMEOUT_S = 8.0
 CAPACITY_MAX_AGE_HOURS = 1.0
 DEFAULT_CAPACITY_REFRESH_S = 15 * 60.0
+CAPACITY_LOOKUP_ATTEMPTS = 5
+CAPACITY_LOOKUP_RETRY_S = 0.05
 # Keep a reliable-message burst below typical UDP socket receive buffers.  The
 # lower layer fragments this again into ~900-byte datagrams.
 DEFAULT_CHUNK_BYTES = 64 * 1024
@@ -101,19 +103,28 @@ def _find_capacity(
     role: str,
     network_id: str,
 ) -> dict[str, Any]:
-    capacities = store.list_job_capacities(
-        network_id=network_id,
-        capability=TRANSIT_CAPABILITY,
-        max_age_hours=CAPACITY_MAX_AGE_HOURS,
-    ).get("capacities", [])
-    for capacity in capacities:
-        metadata = dict(capacity.get("metadata") or {})
-        if (
-            str(capacity.get("peer_id") or "") == peer_id
-            and metadata.get("protocol_version") == PROTOCOL_VERSION
-            and role in (metadata.get("roles") or [])
-        ):
-            return capacity
+    # A file-backed registry refreshes a capacity record with os.replace().  On
+    # Windows, a reader that lands in the replacement window can briefly get a
+    # sharing OSError; FilePeerRegistry deliberately skips an unreadable record
+    # so one lookup can appear empty.  Retry the *discovery read* for a bounded
+    # 200 ms before treating the signed advertisement as absent.  This also
+    # tolerates the same short eventual-consistency window in remote registries.
+    for attempt in range(CAPACITY_LOOKUP_ATTEMPTS):
+        capacities = store.list_job_capacities(
+            network_id=network_id,
+            capability=TRANSIT_CAPABILITY,
+            max_age_hours=CAPACITY_MAX_AGE_HOURS,
+        ).get("capacities", [])
+        for capacity in capacities:
+            metadata = dict(capacity.get("metadata") or {})
+            if (
+                str(capacity.get("peer_id") or "") == peer_id
+                and metadata.get("protocol_version") == PROTOCOL_VERSION
+                and role in (metadata.get("roles") or [])
+            ):
+                return capacity
+        if attempt + 1 < CAPACITY_LOOKUP_ATTEMPTS:
+            time.sleep(CAPACITY_LOOKUP_RETRY_S)
     raise PeerTransitError(f"peer does not advertise {role} transit capacity")
 
 

@@ -82,6 +82,44 @@ def test_worker_refreshes_capacity_before_discovery_record_expires(tmp_path, mon
     assert registrations == [1, 2]
 
 
+def test_capacity_discovery_retries_atomic_refresh_read_window(tmp_path, monkeypatch) -> None:
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    peer_id = "transit-peer"
+    calls = 0
+
+    def list_job_capacities(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"capacities": []}
+        return {
+            "capacities": [
+                {
+                    "peer_id": peer_id,
+                    "metadata": {
+                        "protocol_version": peer_transit_service.PROTOCOL_VERSION,
+                        "roles": ["transit"],
+                    },
+                }
+            ]
+        }
+
+    delays: list[float] = []
+    monkeypatch.setattr(store, "list_job_capacities", list_job_capacities)
+    monkeypatch.setattr(peer_transit_service.time, "sleep", delays.append)
+
+    capacity = peer_transit_service._find_capacity(
+        store,
+        peer_id=peer_id,
+        role="transit",
+        network_id="retry-test",
+    )
+
+    assert capacity["peer_id"] == peer_id
+    assert calls == 2
+    assert delays == [peer_transit_service.CAPACITY_LOOKUP_RETRY_S]
+
+
 def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) -> None:
     monkeypatch.setattr(
         audit_module,
