@@ -455,6 +455,24 @@ measured internal peak of three, deduplicated every order, drained to zero
 active handlers and exposed the session-audit parameter. The installed CLI
 continued to expose adaptive ordinary-peer transit.
 
+The eleventh 24-hour worker soak started from the concurrency-enforcing runtime
+commit `58456e5` with soak-runner blob
+`e1164671aec7b55278420fdf43720d7337317620` at 2026-09-01 19:49:14.695465 Hong
+Kong time and is scheduled to finish at 2026-09-02 19:49:14.695465. It writes
+fresh atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r11/progress.json`; launcher PID 40600 owns
+Python worker PID 35120. At 140.750 monotonic seconds it had completed 15
+sessions with zero failures, accumulated 45 frames and 992,760 transit bytes,
+retained all worker threads, stayed below the 32 MiB post-warm-up memory-growth
+limit, and exposed no plaintext, partial files or stderr. The project registry
+API independently discovered and Ed25519-verified both 852-byte capacity
+records: the ordinary relay advertised the `transit` role and the ordinary
+target advertised the `target` role, each with `max_concurrent=8`. Runtime
+files are required to remain identical to `58456e5`, the soak runner must keep
+the stated blob identity, and `upstream/main` must remain at `b0b17c1`; a
+change to any fixed point invalidates the run. This run starts from zero and
+includes no elapsed time from r10 or any earlier run.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
