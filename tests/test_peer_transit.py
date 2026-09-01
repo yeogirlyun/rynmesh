@@ -174,7 +174,10 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
     monkeypatch.setattr(
         audit_module,
         "audit_peer_transit",
-        lambda value: {"protocol_version": "rynmesh.peer-transit.v1"},
+        lambda value: {
+            "protocol_version": "rynmesh.peer-transit.v1",
+            "source_size_bytes": 32,
+        },
     )
     report = {
         "result": "pass",
@@ -196,7 +199,7 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         report,
         require_duration_s=86400,
         min_sessions=100,
-    )["ok"] is True
+    )["minimum_transit_bytes"] == 3200
 
     for key, bad_value, message in (
         ("result", "running", "complete"),
@@ -205,6 +208,7 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         ("memory_growth_bytes", 4096, "memory"),
         ("partial_files", 1, "partial"),
         ("worker_threads_stopped", False, "threads"),
+        ("transit_bytes", 3199, "byte count"),
     ):
         tampered = {**report, key: bad_value}
         with pytest.raises(AuditError, match=message):

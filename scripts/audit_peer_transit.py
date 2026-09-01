@@ -295,12 +295,15 @@ def audit_soak_report(
         raise AuditError("soak left partial target files")
     if value.get("worker_threads_stopped") is not True:
         raise AuditError("soak worker threads did not stop")
-    if int(_require(value, "transit_frames")) < sessions:
+    transit_frames = int(_require(value, "transit_frames"))
+    transit_bytes = int(_require(value, "transit_bytes"))
+    if transit_frames < sessions:
         raise AuditError("soak transit frame count is inconsistent")
-    if int(_require(value, "transit_bytes")) < sessions:
-        raise AuditError("soak transit byte count is inconsistent")
     last_evidence = dict(_require(value, "last_evidence"))
     transit_audit = audit_peer_transit(last_evidence)
+    minimum_transit_bytes = sessions * int(transit_audit["source_size_bytes"])
+    if transit_bytes < minimum_transit_bytes:
+        raise AuditError("soak transit byte count does not cover completed session payloads")
     return {
         "ok": True,
         "duration_target_s": target_duration,
@@ -308,6 +311,8 @@ def audit_soak_report(
         "sessions_completed": sessions,
         "memory_growth_bytes": memory_growth,
         "memory_growth_limit_bytes": memory_limit,
+        "minimum_transit_bytes": minimum_transit_bytes,
+        "transit_bytes": transit_bytes,
         "last_session_id": last_evidence.get("session_id"),
         "protocol_version": transit_audit["protocol_version"],
     }
