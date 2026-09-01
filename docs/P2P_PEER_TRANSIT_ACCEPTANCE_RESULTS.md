@@ -177,6 +177,14 @@ completed 276 sessions with zero failures, accumulated 828 transit frames and
 clean for plaintext, partial files and stderr. Traced memory growth was
 1,986,235 bytes against the 32 MiB limit.
 
+The fourth r7 refresh crossed the one-hour boundary at 2026-09-01
+16:22:44--16:22:46 Hong Kong time. The two workers replaced their capacity
+records independently, both new records passed Ed25519 verification, and
+sessions continued without a discovery gap during the two-second offset. At
+3,631.0 monotonic seconds the run had completed 363 sessions with zero failures,
+1,089 transit frames and 24,024,429 transit bytes. All three worker threads
+remained alive and traced memory growth was 2,404,944 bytes.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
