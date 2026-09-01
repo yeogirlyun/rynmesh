@@ -137,8 +137,10 @@ wall clock. An NTP or manual clock adjustment could therefore make a nominal
 86,400-second report finish early. The soak runner now uses `time.monotonic()`
 for its loop, elapsed duration, interval remainder and completion decision; the
 independent auditor rejects reports that do not declare this monotonic clock
-source. A seventh run must start from zero on the corrected runner, and no r6
-time may be combined with it.
+source. A black-box regression advances the wall clock by one hour during a
+real short soak and proves that completion still follows the unchanged
+monotonic elapsed time. A seventh run must start from zero on the corrected
+runner, and no r6 time may be combined with it.
 
 The seventh 24-hour worker soak started from commit `2681f0c` with soak-runner
 blob `ab819905e1505073a4081221a385c53e60f41bc1` at 2026-09-01 15:22:41 Hong

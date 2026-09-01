@@ -47,6 +47,7 @@ from rynmesh.peer_transit_service import (
 from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
+from scripts import run_peer_transit_soak as soak_module
 from scripts.audit_peer_transit import (
     AuditError,
     audit_direct_file,
@@ -240,6 +241,46 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
 
     with pytest.raises(AuditError, match="finite"):
         audit_soak_report(report, require_duration_s=float("nan"), min_sessions=100)
+
+
+def test_soak_duration_survives_forward_wall_clock_jump(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+
+    class JumpingWallClock:
+        def __init__(self) -> None:
+            self.first_wall_read = True
+
+        def time(self) -> float:
+            current = time.time()
+            if self.first_wall_read:
+                self.first_wall_read = False
+                return current
+            return current + 3600.0
+
+        @staticmethod
+        def monotonic() -> float:
+            return time.monotonic()
+
+    monkeypatch.setattr(soak_module, "time", JumpingWallClock())
+    report = soak_module.run_soak(
+        duration_s=2.0,
+        interval_s=0.0,
+        payload_bytes=4096,
+        timeout_s=20.0,
+        capacity_refresh_s=0.1,
+        work_root=tmp_path / "jump-soak",
+        progress_path=tmp_path / "jump-soak" / "progress.json",
+    )
+
+    assert report["result"] == "pass"
+    assert report["clock_source"] == "time.monotonic"
+    assert 2.0 <= report["elapsed_s"] < 10.0
+    assert report["wall_elapsed_s"] - report["elapsed_s"] > 3500.0
+    assert audit_soak_report(
+        report,
+        require_duration_s=2.0,
+        min_sessions=3,
+    )["ok"] is True
 
 
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
