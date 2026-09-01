@@ -190,10 +190,73 @@ class FilePeerRegistry:
         self.job_capacity_dir = self.root / "job-capacity"
         self.work_orders_dir = self.root / "work-orders"
         self.work_results_dir = self.root / "work-results"
+        self.open_work_orders_dir = self.root / "open-work-orders"
         self.peers_dir.mkdir(parents=True, exist_ok=True)
         self.job_capacity_dir.mkdir(parents=True, exist_ok=True)
         self.work_orders_dir.mkdir(parents=True, exist_ok=True)
         self.work_results_dir.mkdir(parents=True, exist_ok=True)
+        self.open_work_orders_dir.mkdir(parents=True, exist_ok=True)
+        self._initialize_open_work_order_index()
+
+    @property
+    def _open_index_ready_path(self) -> Path:
+        return self.open_work_orders_dir / ".index-v1-ready.json"
+
+    def _open_order_marker_path(self, *, provider_peer_id: str, order_path: Path) -> Path:
+        return self.open_work_orders_dir / _peer_slug(provider_peer_id) / order_path.name
+
+    def _write_open_order_marker(self, *, provider_peer_id: str, order_path: Path) -> None:
+        marker = self._open_order_marker_path(
+            provider_peer_id=provider_peer_id,
+            order_path=order_path,
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        _write_json_atomic(marker, {"work_order_file": order_path.name})
+
+    def _remove_open_order_marker(self, *, provider_peer_id: str, order_path: Path) -> None:
+        marker = self._open_order_marker_path(
+            provider_peer_id=provider_peer_id,
+            order_path=order_path,
+        )
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError:
+            # A stale marker is safe: the read path verifies the canonical
+            # order and its latest signed result before returning anything.
+            pass
+
+    def _initialize_open_work_order_index(self) -> None:
+        """Build the auxiliary open-order index once for legacy registries.
+
+        The index is an availability/performance hint, never a trust source:
+        every indexed order is read from its canonical file and signature
+        checked before it is returned. Supported writers maintain the index
+        after this one-time migration.
+        """
+
+        ready = self._open_index_ready_path
+        if ready.is_file():
+            return
+        for path in sorted(self.work_orders_dir.glob("*.json")):
+            try:
+                signed = SignedPayload.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                order = verify_work_order(signed)
+            except (OSError, json.JSONDecodeError, KeyError, ValueError, JobError):
+                continue
+            if not order_is_open(order):
+                continue
+            latest_status = self._latest_work_result_status(
+                order.work_order_id,
+                network_id=order.network_id,
+                provider_peer_id=order.provider_peer_id,
+                requester_peer_id=order.requester_peer_id,
+            )
+            if not latest_status:
+                self._write_open_order_marker(
+                    provider_peer_id=order.provider_peer_id,
+                    order_path=path,
+                )
+        _write_json_atomic(ready, {"version": 1})
 
     def publish(self, signed_record: SignedPayload) -> dict[str, Any]:
         record = verify_peer_record(signed_record)
@@ -276,6 +339,22 @@ class FilePeerRegistry:
                 raise RegistryError("work_order_id_conflict") from read_exc
             if existing.to_dict() != signed_order.to_dict():
                 raise RegistryError("work_order_id_conflict") from exc
+        latest_status = self._latest_work_result_status(
+            order.work_order_id,
+            network_id=order.network_id,
+            provider_peer_id=order.provider_peer_id,
+            requester_peer_id=order.requester_peer_id,
+        )
+        if order_is_open(order) and not latest_status:
+            self._write_open_order_marker(
+                provider_peer_id=order.provider_peer_id,
+                order_path=path,
+            )
+        else:
+            self._remove_open_order_marker(
+                provider_peer_id=order.provider_peer_id,
+                order_path=path,
+            )
         return {
             "status": "submitted",
             "work_order_id": order.work_order_id,
@@ -293,11 +372,20 @@ class FilePeerRegistry:
         status: str = "open",
         max_age_hours: float | None = None,
     ) -> list[SignedPayload]:
-        records: list[SignedPayload] = []
         wanted_provider = str(provider_peer_id or "").strip()
         wanted_requester = str(requester_peer_id or "").strip()
         wanted_capability = str(capability or "").strip()
         wanted_status = str(status or "").strip()
+        if wanted_status == "open":
+            return self._list_open_work_orders(
+                network_id=network_id,
+                provider_peer_id=wanted_provider,
+                requester_peer_id=wanted_requester,
+                capability=wanted_capability,
+                max_age_hours=max_age_hours,
+            )
+
+        records: list[SignedPayload] = []
         for path in sorted(self.work_orders_dir.glob("*.json")):
             try:
                 signed = SignedPayload.from_dict(json.loads(path.read_text(encoding="utf-8")))
@@ -330,6 +418,67 @@ class FilePeerRegistry:
             records.append(signed)
         return records
 
+    def _list_open_work_orders(
+        self,
+        *,
+        network_id: str,
+        provider_peer_id: str,
+        requester_peer_id: str,
+        capability: str,
+        max_age_hours: float | None,
+    ) -> list[SignedPayload]:
+        marker_paths = (
+            list(
+                (
+                    self.open_work_orders_dir / _peer_slug(provider_peer_id)
+                ).glob("*.json")
+            )
+            if provider_peer_id
+            else list(self.open_work_orders_dir.glob("*/*.json"))
+        )
+        records: list[SignedPayload] = []
+        for marker_path in sorted(marker_paths, key=lambda item: item.name):
+            order_path = self.work_orders_dir / marker_path.name
+            try:
+                signed = SignedPayload.from_dict(
+                    json.loads(order_path.read_text(encoding="utf-8"))
+                )
+                order = verify_work_order(signed)
+            except (OSError, json.JSONDecodeError, KeyError, ValueError, JobError):
+                marker_path.unlink(missing_ok=True)
+                continue
+            expected_marker = self._open_order_marker_path(
+                provider_peer_id=order.provider_peer_id,
+                order_path=order_path,
+            )
+            if marker_path != expected_marker:
+                marker_path.unlink(missing_ok=True)
+                continue
+            if not order_is_open(order):
+                marker_path.unlink(missing_ok=True)
+                continue
+            latest_status = self._latest_work_result_status(
+                order.work_order_id,
+                network_id=order.network_id,
+                provider_peer_id=order.provider_peer_id,
+                requester_peer_id=order.requester_peer_id,
+            )
+            if latest_status:
+                marker_path.unlink(missing_ok=True)
+                continue
+            if order.network_id != network_id:
+                continue
+            if provider_peer_id and order.provider_peer_id != provider_peer_id:
+                continue
+            if requester_peer_id and order.requester_peer_id != requester_peer_id:
+                continue
+            if capability and order.capability != capability:
+                continue
+            if not record_within_age(order.created_at, max_age_hours=max_age_hours):
+                continue
+            records.append(signed)
+        return records
+
     def publish_work_result(self, signed_result: SignedPayload) -> dict[str, Any]:
         result = verify_work_result(signed_result)
         order_path = self.work_orders_dir / f"{_peer_slug(result.work_order_id)}.json"
@@ -352,7 +501,11 @@ class FilePeerRegistry:
         result_dir = self.work_results_dir / _peer_slug(result.work_order_id)
         result_dir.mkdir(parents=True, exist_ok=True)
         path = result_dir / f"{_peer_slug(signed_result.subject_hash)}.json"
-        path.write_text(json.dumps(signed_result.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        _write_json_atomic(path, signed_result.to_dict())
+        self._remove_open_order_marker(
+            provider_peer_id=order.provider_peer_id,
+            order_path=order_path,
+        )
         return {
             "status": "recorded",
             "work_order_id": result.work_order_id,

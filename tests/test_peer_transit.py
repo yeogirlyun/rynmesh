@@ -334,6 +334,101 @@ def test_registry_rejects_work_order_id_overwrite_and_orphan_result(tmp_path) ->
         )
 
 
+def test_open_work_order_index_does_not_rescan_closed_history(tmp_path, monkeypatch) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    requester = RynmeshStore(home=tmp_path / "requester", network_dir=tmp_path / "requester-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    requester.registry = registry
+    provider.registry = registry
+
+    for index in range(20):
+        submitted = requester.submit_work_order(
+            provider_peer_id=provider.peer_id,
+            capability="index-scaling.test",
+            operation=f"closed-{index}",
+            network_id="index-scaling",
+        )
+        provider.publish_work_result(
+            work_order_id=submitted["work_order_id"],
+            requester_peer_id=requester.peer_id,
+            status="accepted",
+            network_id="index-scaling",
+        )
+    active = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="index-scaling.test",
+        operation="active",
+        network_id="index-scaling",
+    )
+
+    calls = 0
+    real_verify = registry_module.verify_work_order
+
+    def counted_verify(signed):
+        nonlocal calls
+        calls += 1
+        return real_verify(signed)
+
+    monkeypatch.setattr(registry_module, "verify_work_order", counted_verify)
+    visible = provider.poll_work_orders(
+        network_id="index-scaling",
+        capability="index-scaling.test",
+    )["work_orders"]
+
+    assert [item["work_order_id"] for item in visible] == [active["work_order_id"]]
+    assert calls == 1
+
+    provider.publish_work_result(
+        work_order_id=active["work_order_id"],
+        requester_peer_id=requester.peer_id,
+        status="accepted",
+        network_id="index-scaling",
+    )
+    calls = 0
+    assert provider.poll_work_orders(network_id="index-scaling")["work_orders"] == []
+    assert calls == 0
+
+
+def test_open_work_order_index_rebuilds_legacy_registry(tmp_path) -> None:
+    root = tmp_path / "registry"
+    registry = FilePeerRegistry(root)
+    requester = RynmeshStore(home=tmp_path / "requester", network_dir=tmp_path / "requester-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    requester.registry = registry
+    provider.registry = registry
+
+    closed = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="index-rebuild.test",
+        operation="closed",
+        network_id="index-rebuild",
+    )
+    provider.publish_work_result(
+        work_order_id=closed["work_order_id"],
+        requester_peer_id=requester.peer_id,
+        status="completed",
+        network_id="index-rebuild",
+    )
+    active = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="index-rebuild.test",
+        operation="active",
+        network_id="index-rebuild",
+    )
+
+    for path in sorted(registry.open_work_orders_dir.rglob("*.json"), reverse=True):
+        path.unlink()
+    rebuilt = FilePeerRegistry(root)
+    provider.registry = rebuilt
+
+    visible = provider.poll_work_orders(
+        network_id="index-rebuild",
+        capability="index-rebuild.test",
+    )["work_orders"]
+    assert [item["work_order_id"] for item in visible] == [active["work_order_id"]]
+    assert rebuilt._open_index_ready_path.is_file()
+
+
 @pytest.mark.parametrize("provider,requester", [("", "requester"), ("provider", "")])
 def test_result_polling_rejects_incomplete_identity_binding(provider, requester) -> None:
     with pytest.raises(PeerTransitError, match="identity binding is incomplete"):

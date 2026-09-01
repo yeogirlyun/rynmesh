@@ -128,6 +128,17 @@ waits for active handlers during shutdown. Capacity refresh and discovery stay
 on the worker's control loop while each session owns its own two ICE
 connections.
 
+The file-backed registry keeps immutable canonical work orders and results for
+audit, but workers do not rescan that complete history on every poll. An
+auxiliary per-provider `open-work-orders` index contains only availability
+markers for orders that have not produced a signed result. A poll always reads
+and verifies the canonical signed order and checks its latest signed result;
+the marker is never treated as trusted data. Publishing any result removes the
+marker, stale markers are repaired on read, and a versioned one-time rebuild
+recovers registries created before the index existed. This keeps long-running
+poll cost proportional to active work rather than historical session count
+without retaining the history in process memory.
+
 ### 4.2 Source-to-transit order
 
 The source submits a signed work order to peer 2 containing:

@@ -635,6 +635,38 @@ increased by 1,140,634 bytes. Failures and stderr remained zero. This is an
 intermediate resource observation, not a substitute for the final post-run
 shutdown and process-absence checks.
 
+The fourth r12 capacity refresh completed at 2026-09-01
+21:39:55--21:39:56 Hong Kong time, but r12 was intentionally invalidated soon
+afterward when a growing-history benchmark exposed a long-run scalability
+defect. With about 337 completed sessions, twelve cold-history open-order polls
+had relay and target medians of 957.144 ms and 748.606 ms respectively, with a
+relay p95 of 979.557 ms. A separate 20.018-second sample showed worker PID
+49244 consuming 26.578 CPU seconds, or 132.77% of one core, while completing
+only two scheduled sessions. The registry was rereading and Ed25519-verifying
+every immutable historical order and result on every 20 ms worker poll, so the
+cost would continue increasing through a full-day run.
+
+The preserved r12 snapshot is
+`.codex-tmp/peer-transit-soak-24h-r12/progress.invalidated-registry-poll-scaling.json`
+with SHA-256
+`DD899785294C602E5E69CEC965AAA1DD3A4A4E1D60700A8C44F6CED10DDDA11B`.
+It records 3,669.594 monotonic seconds, 367 completed sessions, zero failures,
+1,101 frames, 24,289,528 transit bytes, 2,966,224 bytes of traced memory growth
+and no plaintext. Both r12 PIDs were stopped and verified absent; partial files
+and stderr were zero. None of this duration is eligible for a replacement
+soak.
+
+The replacement runtime preserves canonical signed history but adds a
+versioned, per-provider `open-work-orders` marker index. Every returned item is
+still loaded from the canonical file, signature-verified and checked against
+its latest signed result; markers provide no trust. Results remove their
+marker, stale markers are repaired on read and legacy registries rebuild once.
+On an isolated copy of all 367-session r12 registry data, the legacy rebuild
+took 364.588 ms. One hundred steady-state polls per provider then measured
+relay/target medians of 0.106/0.104 ms and p95 values of 0.119/0.120 ms, with no
+historical objects retained in memory. Two index regressions and the full
+Python suite passed with 576 tests, three skips and no failures.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

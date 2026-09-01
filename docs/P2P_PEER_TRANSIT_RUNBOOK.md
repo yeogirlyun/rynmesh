@@ -178,6 +178,15 @@ python scripts/audit_peer_transit.py --soak-report `
   .codex-tmp\peer-transit-soak\progress.json
 ```
 
+During a long soak, sample the provider's open-order poll latency as the
+registry history grows. File-backed workers must use the per-provider
+`open-work-orders` index: canonical work-order and result JSON remains the
+signed audit source, while the index contains untrusted availability markers
+only. Repeated open polls should remain proportional to currently active work,
+not to all completed sessions. A legacy registry performs one versioned index
+rebuild on first open; do not count that one-time migration as steady-state
+poll latency.
+
 ## Physical three-network acceptance
 
 Run peer 1, peer 2 and peer 3 behind three distinct public egress networks with
@@ -213,6 +222,9 @@ used to claim public-NAT traversal across three real networks.
 - `work_result_order_not_found` or `work_result_order_identity_mismatch`: the
   result is orphaned or was signed by a node other than the order's designated
   provider/requester pair; reject it before it can close the open order.
+- steadily increasing open-order poll latency or CPU while active work remains
+  constant: the active-order index is absent, stale or bypassed; stop the soak,
+  preserve its evidence and repair the registry before restarting from zero.
 - `TURN/relay candidate`: fail closed; remove the TURN configuration.
 - `host must be an IP literal` or `not a usable unicast address`: the signed
   remote ICE signal is malformed or attempts a forbidden network destination.
