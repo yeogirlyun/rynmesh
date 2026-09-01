@@ -124,6 +124,13 @@ completed five sessions with zero failures, established the post-warm-up memory
 baseline, kept all three worker threads alive, published both signed capacity
 records, and exposed neither plaintext markers, partial files nor stderr.
 
+Both r6 workers completed their first production-interval capacity refresh at
+2026-09-01 13:42:44 Hong Kong time. The soak passed the boundary with 101
+completed sessions and zero failures; the refreshed `target` and `transit`
+records were independently discovered and Ed25519-verified through the project
+registry API. The process, three worker threads, memory gate, plaintext scan and
+stderr remained healthy.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
