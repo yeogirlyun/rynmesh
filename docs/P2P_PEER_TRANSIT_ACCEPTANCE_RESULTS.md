@@ -300,6 +300,18 @@ passed. `report.json` has SHA-256
 `evidence.json` has SHA-256
 `791BBF2052EB4386063E8FDA6085F202AACA07C31DE7402D2DB3600FD550F019`.
 
+The r9 candidate also passed an isolated PEP 517 source/wheel build and clean
+dependency installation into `.codex-tmp/venv-peer-transit-r9-start`. The
+274,233-byte wheel has SHA-256
+`2C7C6DC5C9D96213A6A446A9580E94CA39781CB7032160DF0C0CBF199CA87D1C`;
+the 345,893-byte sdist has SHA-256
+`3466595FEFB287203EC07487AAEDD1AE6A669DD3724A0C2CB8E0A9625F900D82`.
+An installed-package black-box check imported protocol
+`rynmesh.peer-transit.v1`, rejected a hostname ICE candidate, ignored a forged
+failure from the wrong provider while accepting the exact provider/requester
+binding, and confirmed that `rynmesh-transit --help` exposes the adaptive
+ordinary-peer path.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
