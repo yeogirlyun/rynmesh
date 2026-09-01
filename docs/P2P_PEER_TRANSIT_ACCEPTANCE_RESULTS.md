@@ -131,7 +131,7 @@ records were independently discovered and Ed25519-verified through the project
 registry API. The process, three worker threads, memory gate, plaintext scan and
 stderr remained healthy.
 
-The sixth run was invalidated after 6,486 seconds and 609 successful sessions
+The sixth run was invalidated after 6,765.169 seconds and 628 successful sessions
 with zero failures because its deadline and elapsed duration were based on the
 wall clock. An NTP or manual clock adjustment could therefore make a nominal
 86,400-second report finish early. The soak runner now uses `time.monotonic()`
