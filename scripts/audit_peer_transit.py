@@ -411,18 +411,26 @@ def audit_acceptance_report(
     _audit_unavailable_gate(unavailable)
 
     blackout = dict(_require(value, "control_plane_blackout"))
+    blackout_evidence = dict(_require(blackout, "evidence"))
+    blackout_audit = audit_peer_transit(blackout_evidence)
+    blackout_elapsed = float(blackout.get("blackout_elapsed_s", 0))
+    blackout_timeout = float(_require(blackout, "transfer_timeout_s"))
     if (
         blackout.get("ok") is not True
         or blackout.get("registry_probe_blocked") is not True
         or int(blackout.get("registry_blocked_calls", 0)) < 1
         or blackout.get("request_completed_during_blackout") is not True
-        or float(blackout.get("blackout_elapsed_s", 0)) <= 0
+        or blackout_elapsed <= 0
+        or blackout_timeout <= 0
+        or blackout_elapsed > blackout_timeout
         or blackout.get("stun_disabled") is not True
         or blackout.get("source_sha256") != blackout.get("target_sha256")
         or blackout.get("ice_relay_candidate_used") is not False
         or int(blackout.get("target_files", 0)) != 1
         or int(blackout.get("partial_target_files", -1)) != 0
         or blackout.get("worker_threads_stopped") is not True
+        or blackout_audit["source_size_bytes"] != int(blackout.get("payload_size_bytes", 0))
+        or blackout_audit["source_sha256"] != blackout.get("source_sha256")
     ):
         raise AuditError("established data plane did not survive control-plane blackout")
 

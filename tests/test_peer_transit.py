@@ -172,6 +172,7 @@ def test_established_data_plane_survives_control_plane_blackout(tmp_path, monkey
     assert result["ice_relay_candidate_used"] is False
     assert result["partial_target_files"] == 0
     assert result["worker_threads_stopped"] is True
+    assert audit_peer_transit(result["evidence"])["source_size_bytes"] == 4 * 1024 * 1024
 
 
 def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) -> None:

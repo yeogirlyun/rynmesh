@@ -387,6 +387,7 @@ def _control_plane_blackout_acceptance(root: Path, *, timeout_s: float) -> dict[
         "registry_blocked_calls": registry.blocked_calls,
         "request_completed_during_blackout": state["request_completed_during_blackout"],
         "blackout_elapsed_s": blackout_elapsed,
+        "transfer_timeout_s": timeout_s,
         "stun_disabled": os.environ.get("RYNMESH_P2P_STUN", "").lower() == "off",
         "source_sha256": evidence.get("source_sha256"),
         "target_sha256": evidence.get("target_sha256"),
@@ -395,6 +396,7 @@ def _control_plane_blackout_acceptance(root: Path, *, timeout_s: float) -> dict[
         "target_files": len(delivered),
         "partial_target_files": partial_files,
         "worker_threads_stopped": workers_stopped,
+        "evidence": evidence,
     }
 
 
