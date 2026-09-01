@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import rynmesh.peer_transit_service as peer_transit_service
 from rynmesh.llm_package.p2p import (
     _close_connection,
     apply_remote_signal,
@@ -62,6 +63,38 @@ class _FrameAudit:
         self.max_frame_bytes = max(self.max_frame_bytes, len(frame))
         if MARKER in frame:
             self.plaintext_found = True
+
+
+class _RegistryBlackout:
+    """Fail registry calls while preserving the same underlying registry."""
+
+    def __init__(self, registry: FilePeerRegistry) -> None:
+        self._registry = registry
+        self.blackout = threading.Event()
+        self.two_hops_ready = threading.Event()
+        self.blocked_calls = 0
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._registry, name)
+        if not callable(attribute):
+            return attribute
+
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if self.blackout.is_set():
+                self.blocked_calls += 1
+                raise OSError("acceptance control-plane blackout")
+            result = attribute(*args, **kwargs)
+            signed_payload = dict(getattr(args[0], "payload", {}) or {}) if args else {}
+            result_refs = dict(signed_payload.get("result_refs") or {})
+            if (
+                name == "publish_work_result"
+                and signed_payload.get("status") == "running"
+                and result_refs.get("path_mode") == "peer_transit"
+            ):
+                self.two_hops_ready.set()
+            return result
+
+        return guarded
 
 
 def _write_payload(path: Path, size_bytes: int, *, marker: bytes = MARKER) -> None:
@@ -182,6 +215,144 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
         "elapsed_s": elapsed,
         "error": error,
         "partial_target_files": len(list((target.home / "transit-inbox").glob("*"))),
+    }
+
+
+def _control_plane_blackout_acceptance(root: Path, *, timeout_s: float) -> dict[str, Any]:
+    """Prove an established two-hop data plane survives registry/STUN isolation."""
+
+    registry = _RegistryBlackout(FilePeerRegistry(root / "blackout-registry"))
+    source = RynmeshStore(home=root / "blackout-source", network_dir=root / "blackout-source-net")
+    relay = RynmeshStore(home=root / "blackout-relay", network_dir=root / "blackout-relay-net")
+    target = RynmeshStore(home=root / "blackout-target", network_dir=root / "blackout-target-net")
+    for store in (source, relay, target):
+        store.registry = registry
+    network_id = "peer-transit-control-plane-blackout"
+    inbox = root / "blackout-target-inbox"
+    relay_worker = PeerTransitWorker(
+        relay,
+        role="transit",
+        network_id=network_id,
+        timeout_s=timeout_s,
+    )
+    target_worker = PeerTransitWorker(
+        target,
+        role="target",
+        network_id=network_id,
+        inbox=inbox,
+        timeout_s=timeout_s,
+    )
+    relay_worker.register()
+    target_worker.register()
+    stop = threading.Event()
+    workers = [
+        threading.Thread(
+            target=relay_worker.serve_forever,
+            kwargs={"poll_interval_s": 0.02, "stop_event": stop},
+            daemon=True,
+        ),
+        threading.Thread(
+            target=target_worker.serve_forever,
+            kwargs={"poll_interval_s": 0.02, "stop_event": stop},
+            daemon=True,
+        ),
+    ]
+    payload = root / "control-plane-blackout.bin"
+    _write_payload(payload, 4 * 1024 * 1024)
+    original_send = peer_transit_service.send_encrypted_stream
+    original_receive = peer_transit_service.receive_encrypted_stream
+    state: dict[str, Any] = {
+        "registry_probe_blocked": False,
+        "request_completed_during_blackout": False,
+        "blackout_started": 0.0,
+        "blackout_ended": 0.0,
+    }
+
+    async def send_with_blackout(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("direction") == "request" and not registry.blackout.is_set():
+            if not registry.two_hops_ready.wait(timeout=timeout_s):
+                raise PeerTransitError("two ICE hops were not ready before control-plane blackout")
+            registry.blackout.set()
+            state["blackout_started"] = time.monotonic()
+            try:
+                registry.list_job_capacities(
+                    network_id=network_id,
+                    capability=peer_transit_service.TRANSIT_CAPABILITY,
+                    max_age_hours=1,
+                )
+            except OSError:
+                state["registry_probe_blocked"] = True
+            else:
+                raise PeerTransitError("registry remained reachable during blackout")
+        return await original_send(*args, **kwargs)
+
+    async def receive_with_blackout(*args: Any, **kwargs: Any) -> Any:
+        result = await original_receive(*args, **kwargs)
+        if kwargs.get("direction") == "request":
+            state["request_completed_during_blackout"] = registry.blackout.is_set()
+            state["blackout_ended"] = time.monotonic()
+            registry.blackout.clear()
+        return result
+
+    peer_transit_service.send_encrypted_stream = send_with_blackout
+    peer_transit_service.receive_encrypted_stream = receive_with_blackout
+    for worker in workers:
+        worker.start()
+    evidence: dict[str, Any] = {}
+    error = ""
+    try:
+        evidence = send_file_via_peer(
+            source,
+            payload,
+            relay_peer_id=relay.peer_id,
+            target_peer_id=target.peer_id,
+            network_id=network_id,
+            timeout_s=timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 - acceptance records the exact failure
+        error = f"{type(exc).__name__}: {exc}"
+    finally:
+        registry.blackout.clear()
+        peer_transit_service.send_encrypted_stream = original_send
+        peer_transit_service.receive_encrypted_stream = original_receive
+        stop.set()
+        for worker in workers:
+            worker.join(timeout=5)
+
+    blackout_elapsed = max(
+        0.0,
+        float(state["blackout_ended"]) - float(state["blackout_started"]),
+    )
+    partial_files = len(list(inbox.glob("*.part")))
+    delivered = list(inbox.glob("*-control-plane-blackout.bin"))
+    workers_stopped = all(not worker.is_alive() for worker in workers)
+    ok = (
+        not error
+        and state["registry_probe_blocked"] is True
+        and state["request_completed_during_blackout"] is True
+        and blackout_elapsed > 0
+        and registry.blocked_calls >= 1
+        and evidence.get("source_sha256") == evidence.get("target_sha256")
+        and evidence.get("ice_relay_candidate_used") is False
+        and len(delivered) == 1
+        and partial_files == 0
+        and workers_stopped
+    )
+    return {
+        "ok": ok,
+        "error": error,
+        "registry_probe_blocked": state["registry_probe_blocked"],
+        "registry_blocked_calls": registry.blocked_calls,
+        "request_completed_during_blackout": state["request_completed_during_blackout"],
+        "blackout_elapsed_s": blackout_elapsed,
+        "stun_disabled": os.environ.get("RYNMESH_P2P_STUN", "").lower() == "off",
+        "source_sha256": evidence.get("source_sha256"),
+        "target_sha256": evidence.get("target_sha256"),
+        "ice_relay_candidate_used": evidence.get("ice_relay_candidate_used"),
+        "payload_size_bytes": payload.stat().st_size,
+        "target_files": len(delivered),
+        "partial_target_files": partial_files,
+        "worker_threads_stopped": workers_stopped,
     }
 
 
@@ -360,6 +531,10 @@ def run_acceptance(
     direct = asyncio.run(_direct_probe())
     route = _route_acceptance()
     unavailable = _relay_unavailable_acceptance(work_root)
+    control_plane_blackout = _control_plane_blackout_acceptance(
+        work_root,
+        timeout_s=timeout_s,
+    )
     delivered = list((work_root / "target-inbox").glob("*-acceptance-payload.bin"))
     one_gib_required = size_bytes >= 1024 ** 3
     one_gib_ok = not one_gib_required or (
@@ -407,6 +582,7 @@ def run_acceptance(
         "automatic_degrade_and_recovery": route["ok"],
         "actual_hard_failure_fallback": actual_hard_failure["ok"],
         "bounded_transit_unavailability": unavailable["ok"],
+        "established_data_plane_survives_control_plane_blackout": control_plane_blackout["ok"],
         "no_turn": evidence["ice_relay_candidate_used"] is False,
         "registry_has_no_payload_marker": not registry_plaintext_found,
         "transit_has_no_plaintext_marker": not frame_audit.plaintext_found,
@@ -424,6 +600,7 @@ def run_acceptance(
         "route": route,
         "actual_hard_failure": actual_hard_failure,
         "unavailable": unavailable,
+        "control_plane_blackout": control_plane_blackout,
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
         "work_root": str(work_root),

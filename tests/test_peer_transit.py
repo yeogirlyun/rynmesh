@@ -6,11 +6,13 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from rynmesh import peer_transit_service
+from rynmesh import registry as registry_module
 from rynmesh.crypto import SignedPayload
 from rynmesh.llm_package.p2p import (
     apply_remote_signal,
@@ -45,6 +47,7 @@ from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
 from scripts.audit_peer_transit import AuditError, audit_peer_transit, audit_soak_report
+from scripts.run_peer_transit_acceptance import _control_plane_blackout_acceptance
 
 
 def _future(seconds: float = 300) -> str:
@@ -118,6 +121,53 @@ def test_capacity_discovery_retries_atomic_refresh_read_window(tmp_path, monkeyp
     assert capacity["peer_id"] == peer_id
     assert calls == 2
     assert delays == [peer_transit_service.CAPACITY_LOOKUP_RETRY_S]
+
+
+def test_capacity_publish_retries_windows_atomic_replace_sharing_violation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    worker = PeerTransitWorker(store, role="transit", network_id="replace-retry-test")
+    original_replace = Path.replace
+    attempts = 0
+
+    def transient_replace(path: Path, target: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("simulated Windows sharing violation")
+        return original_replace(path, target)
+
+    delays: list[float] = []
+    monkeypatch.setattr(Path, "replace", transient_replace)
+    monkeypatch.setattr(registry_module.time, "sleep", delays.append)
+
+    worker.register()
+
+    capacities = store.list_job_capacities(
+        network_id="replace-retry-test",
+        capability=peer_transit_service.TRANSIT_CAPABILITY,
+    )["capacities"]
+    assert attempts == 2
+    assert delays == [registry_module.ATOMIC_REPLACE_RETRY_S]
+    assert [capacity["peer_id"] for capacity in capacities] == [store.peer_id]
+
+
+def test_established_data_plane_survives_control_plane_blackout(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+
+    result = _control_plane_blackout_acceptance(tmp_path, timeout_s=30)
+
+    assert result["ok"] is True
+    assert result["registry_probe_blocked"] is True
+    assert result["registry_blocked_calls"] >= 1
+    assert result["request_completed_during_blackout"] is True
+    assert result["blackout_elapsed_s"] > 0
+    assert result["source_sha256"] == result["target_sha256"]
+    assert result["ice_relay_candidate_used"] is False
+    assert result["partial_target_files"] == 0
+    assert result["worker_threads_stopped"] is True
 
 
 def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) -> None:

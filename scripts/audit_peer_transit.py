@@ -159,6 +159,7 @@ def audit_acceptance_report(
         "automatic_degrade_and_recovery",
         "actual_hard_failure_fallback",
         "bounded_transit_unavailability",
+        "established_data_plane_survives_control_plane_blackout",
         "no_turn",
         "registry_has_no_payload_marker",
         "transit_has_no_plaintext_marker",
@@ -215,6 +216,22 @@ def audit_acceptance_report(
     unavailable = dict(_require(value, "unavailable"))
     if unavailable.get("ok") is not True or int(unavailable.get("partial_target_files", -1)) != 0:
         raise AuditError("transit-unavailable handling is not bounded and atomic")
+
+    blackout = dict(_require(value, "control_plane_blackout"))
+    if (
+        blackout.get("ok") is not True
+        or blackout.get("registry_probe_blocked") is not True
+        or int(blackout.get("registry_blocked_calls", 0)) < 1
+        or blackout.get("request_completed_during_blackout") is not True
+        or float(blackout.get("blackout_elapsed_s", 0)) <= 0
+        or blackout.get("stun_disabled") is not True
+        or blackout.get("source_sha256") != blackout.get("target_sha256")
+        or blackout.get("ice_relay_candidate_used") is not False
+        or int(blackout.get("target_files", 0)) != 1
+        or int(blackout.get("partial_target_files", -1)) != 0
+        or blackout.get("worker_threads_stopped") is not True
+    ):
+        raise AuditError("established data plane did not survive control-plane blackout")
 
     performance = dict(_require(value, "performance"))
     concurrent_completed = int(performance.get("concurrent_completed", 0))

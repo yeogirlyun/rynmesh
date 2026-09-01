@@ -11,6 +11,7 @@ import json
 import os
 import ssl
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,6 +43,8 @@ BLOCKED_REGISTRY_HOSTS = {
     "metadata.google.internal",
     "metadata",
 }
+ATOMIC_REPLACE_ATTEMPTS = 5
+ATOMIC_REPLACE_RETRY_S = 0.05
 
 
 def default_registry_dir(network_dir: Path) -> Path:
@@ -71,7 +74,17 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
             temporary_name = handle.name
-        Path(temporary_name).replace(path)
+        for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
+            try:
+                Path(temporary_name).replace(path)
+                break
+            except PermissionError:
+                # Windows can deny os.replace briefly while another process
+                # has the destination open for reading. Keep the temporary
+                # file and retry for at most 200 ms before failing closed.
+                if attempt + 1 >= ATOMIC_REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(ATOMIC_REPLACE_RETRY_S)
     finally:
         if temporary_name:
             Path(temporary_name).unlink(missing_ok=True)
