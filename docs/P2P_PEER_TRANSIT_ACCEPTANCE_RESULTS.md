@@ -16,7 +16,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Complete Python suite | Pass | 565 passed, 3 skipped on the hostname-safe candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
-| Python sdist and wheel | Pass | The current candidate built a 344,270-byte sdist and 273,757-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, both transit modules imported as version 0.6.2 with protocol `rynmesh.peer-transit.v1`, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
+| Python sdist and wheel | Pass | The r8 candidate built a 345,010-byte sdist and 274,036-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, imported protocol `rynmesh.peer-transit.v1`, rejected a hostname candidate in an installed-package black-box check, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
@@ -205,6 +205,18 @@ unspecified, multicast and IPv4 broadcast destinations before they reach the
 ICE agent. The invalidated progress snapshot has SHA-256
 `3639226EE2CF9CB5530538F96D234CDF0AC32F094B9E96CDB455AF004D68E6CB`.
 No r7 duration may be combined with its replacement.
+
+The eighth 24-hour worker soak started from runtime commit `562eee9` with
+soak-runner blob `ab819905e1505073a4081221a385c53e60f41bc1` at 2026-09-01
+17:30:30 Hong Kong time and is scheduled to finish at approximately 2026-09-02
+17:30:30. It writes atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r8/progress.json`. At 20.313 monotonic
+seconds it had completed three sessions with zero failures, established its
+post-warm-up memory baseline, retained all three worker threads, accumulated
+nine transit frames and 198,549 transit bytes, and exposed neither plaintext,
+partial files nor stderr. Both 852-byte signed capacity records were
+independently Ed25519-verified through the project API. This run starts from
+zero and includes no elapsed time from r7.
 
 Final acceptance requires:
 
