@@ -116,6 +116,14 @@ related Ruff, the complete Python suite (547 passed, three skipped), and a new
 8 MiB/three-concurrent real-ICE preflight with both independent auditors. A new
 24-hour run must start from zero on the fixed runtime.
 
+The sixth 24-hour worker soak started from commit `9dd0966` at 2026-09-01
+13:27:44 Hong Kong time and is scheduled to finish at approximately 2026-09-02
+13:27:44. It writes atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r6/progress.json`. Its first 40.4 seconds
+completed five sessions with zero failures, established the post-warm-up memory
+baseline, kept all three worker threads alive, published both signed capacity
+records, and exposed neither plaintext markers, partial files nor stderr.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
