@@ -16,7 +16,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Complete Python suite | Pass | 555 passed, 3 skipped on the current candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
-| Python sdist and wheel | Pass | The current r7 candidate built a 344,141-byte sdist and 273,757-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, both transit modules imported as version 0.6.2 with protocol `rynmesh.peer-transit.v1`, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
+| Python sdist and wheel | Pass | The current candidate built a 344,270-byte sdist and 273,757-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, both transit modules imported as version 0.6.2 with protocol `rynmesh.peer-transit.v1`, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
