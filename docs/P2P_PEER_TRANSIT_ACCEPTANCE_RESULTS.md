@@ -29,6 +29,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Signed evidence audit | Pass | Independent fail-closed auditor accepted the one-GiB evidence |
 | Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
 | Transit unavailable | Pass | Bounded explicit failure, no committed partial target file |
+| Atomic capacity-refresh stress | Pass | 63/63 sessions in 60.956 s while both workers refreshed every 0.1 s; independent soak audit accepted zero failures, bounded memory, clean thread shutdown, no plaintext and no partial files |
 
 The full resource report and signed evidence are generated locally under
 `.codex-tmp/peer-transit-acceptance-full/` and are intentionally not committed
