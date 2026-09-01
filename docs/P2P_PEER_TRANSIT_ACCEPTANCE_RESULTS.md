@@ -455,6 +455,13 @@ measured internal peak of three, deduplicated every order, drained to zero
 active handlers and exposed the session-audit parameter. The installed CLI
 continued to expose adaptive ordinary-peer transit.
 
+The exact worker-concurrency candidate, including completed-future cleanup,
+also passed the full Python regression suite with 572 tests passed, three
+skipped and no failures. Ruff passed for every transit runtime, registry,
+package adapter, acceptance/audit runner and focused test file. The web client
+passed all 38 tests in nine files, TypeScript no-emit checking and a Vite
+production build.
+
 The eleventh 24-hour worker soak started from the concurrency-enforcing runtime
 commit `58456e5` with soak-runner blob
 `e1164671aec7b55278420fdf43720d7337317620` at 2026-09-01 19:49:14.695465 Hong
