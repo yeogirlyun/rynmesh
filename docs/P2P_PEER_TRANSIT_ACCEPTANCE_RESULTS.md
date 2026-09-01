@@ -561,6 +561,15 @@ runner must retain the stated blob and `upstream/main` must remain at `b0b17c1`;
 otherwise r12 is invalidated and restarted from zero. No earlier duration is
 included.
 
+The first r12 production capacity refresh completed at 2026-09-01
+20:54:53--20:54:54 Hong Kong time. Both atomic replacement files remained 852
+bytes, retained `max_concurrent=8` and were independently discovered and
+Ed25519-verified through the project API. At the following checkpoint the soak
+had reached 993.594 monotonic seconds and 100 successful sessions with zero
+failures, 300 frames, 6,618,400 transit bytes, 1,344,711 bytes of traced memory
+growth, all worker threads present, no plaintext, no partial files and empty
+stderr. Monotonic and wall elapsed measurements differed by only 0.008 s.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
