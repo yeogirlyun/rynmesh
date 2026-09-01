@@ -366,6 +366,17 @@ unavailable-relay atomic failure and both independent audits passed.
 `evidence.json` has SHA-256
 `62988EDAE44A5FA1A2393EC72408A89297432DA2582239D18F8565846AFB08ED`.
 
+The r10 candidate passed an isolated PEP 517 build and clean dependency install
+into `.codex-tmp/venv-peer-transit-r10-start`. The 274,569-byte wheel has
+SHA-256
+`72AD504F65CCC1196DD09E843382AADC4DD019C0158A4CE38CBC6CAA218D3A24`;
+the 346,861-byte sdist has SHA-256
+`0B0B0AE7121281B36699B6A79A69E665F88991BD5A469761FC09127A23EDBDB1`.
+An installed-package black-box scenario created three real identities, proved
+that the registry rejects the attacker's signed result while leaving the order
+visible to its designated provider, imported `rynmesh.peer-transit.v1`, and
+confirmed that the installed CLI exposes adaptive ordinary-peer transit.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
