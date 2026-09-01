@@ -21,6 +21,11 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
+from rynmesh.background_workers import (
+    BackgroundWorkerRegistry,
+    BackgroundWorkerSpec,
+    BackoffPolicy,
+)
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
 from rynmesh.transport import network_key_header
@@ -1057,8 +1062,42 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
         return processed
 
-    app.state.llm_relay_once = relay_once
-    app.state.llm_publish_once = publish_once
+    registry = getattr(app.state, "background_workers", None)
+    if registry is None:
+        # Standalone package tests and embedders may install the routes on a
+        # plain FastAPI app. The full node lifespan owns start/stop.
+        registry = BackgroundWorkerRegistry()
+        app.state.background_workers = registry
+    if not isinstance(registry, BackgroundWorkerRegistry):
+        raise TypeError("app.state.background_workers must be a BackgroundWorkerRegistry")
+    registry.register(BackgroundWorkerSpec(
+        name="llm.relay-poll",
+        run_once=lambda: bool(relay_once()),
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(
+            busy_delay_s=1.0,
+            idle_initial_s=1.0,
+            idle_multiplier=1.5,
+            idle_max_s=10.0,
+            error_multiplier=2.0,
+            error_max_s=30.0,
+        ),
+        error_sink=lambda value: setattr(app.state, "llm_relay_error", value),
+    ))
+    registry.register(BackgroundWorkerSpec(
+        name="llm.publish-refresh",
+        run_once=publish_once,
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(
+            busy_delay_s=30.0,
+            idle_initial_s=30.0,
+            idle_multiplier=1.0,
+            idle_max_s=30.0,
+            error_multiplier=2.0,
+            error_max_s=120.0,
+        ),
+        error_sink=lambda value: setattr(app.state, "llm_publication_error", value),
+    ))
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
@@ -1291,9 +1330,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/service/status")
     def local_llm_service_status(request: Request) -> dict[str, Any]:
         # Background publication/relay failures are recorded on app.state by
-        # the lifespan loops; without surfacing them here a provider whose
-        # registry publication is failing looks healthy while its discovery
-        # record silently expires.
+        # the registered worker error sinks. Without surfacing them here, a
+        # provider whose registry publication is failing looks healthy while
+        # its discovery record silently expires.
         background = {
             "publication_error": str(getattr(request.app.state, "llm_publication_error", "") or ""),
             "relay_poll_error": str(getattr(request.app.state, "llm_relay_error", "") or ""),
