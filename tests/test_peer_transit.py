@@ -55,6 +55,7 @@ from scripts.audit_peer_transit import (
 )
 from scripts.run_peer_transit_acceptance import (
     _control_plane_blackout_acceptance,
+    _relay_unavailable_acceptance,
     _route_acceptance,
 )
 
@@ -369,6 +370,9 @@ def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
         "operation_timeout_s": 0.5,
         "maximum_elapsed_s": 2.0,
         "error": "timed out waiting for transit result",
+        "relay_worker_started": True,
+        "relay_worker_stopped_before_request": True,
+        "advertised_capacity_remained": True,
         "committed_target_files": 0,
         "partial_target_files": 0,
     }
@@ -384,6 +388,19 @@ def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
         tampered = {**unavailable, key: value}
         with pytest.raises(AuditError, match=message):
             audit_module._audit_unavailable_gate(tampered)
+
+
+def test_unavailable_acceptance_terminates_advertised_relay(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    unavailable = _relay_unavailable_acceptance(tmp_path)
+
+    assert unavailable["ok"] is True
+    assert unavailable["relay_worker_started"] is True
+    assert unavailable["relay_worker_stopped_before_request"] is True
+    assert unavailable["advertised_capacity_remained"] is True
+    assert unavailable["committed_target_files"] == 0
+    assert unavailable["partial_target_files"] == 0
+    audit_module._audit_unavailable_gate(unavailable)
 
 
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:

@@ -252,6 +252,9 @@ def _audit_unavailable_gate(unavailable: dict[str, Any]) -> None:
     error = str(_require(unavailable, "error"))
     if (
         unavailable.get("ok") is not True
+        or unavailable.get("relay_worker_started") is not True
+        or unavailable.get("relay_worker_stopped_before_request") is not True
+        or unavailable.get("advertised_capacity_remained") is not True
         or operation_timeout <= 0
         or maximum_elapsed < operation_timeout
         or maximum_elapsed > 5

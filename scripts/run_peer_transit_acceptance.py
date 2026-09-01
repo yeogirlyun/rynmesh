@@ -222,11 +222,45 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
     for store in (source, relay, target):
         store.registry = registry
     network_id = "peer-transit-unavailable"
-    advertise_transit_capacity(relay, network_id=network_id, roles=("transit",))
     advertise_transit_capacity(target, network_id=network_id, roles=("target",))
+    operation_timeout_s = 0.5
+    relay_worker = PeerTransitWorker(
+        relay,
+        role="transit",
+        network_id=network_id,
+        timeout_s=operation_timeout_s,
+    )
+    relay_stop = threading.Event()
+    relay_thread = threading.Thread(
+        target=relay_worker.serve_forever,
+        kwargs={"poll_interval_s": 0.01, "stop_event": relay_stop},
+        daemon=True,
+    )
+    relay_thread.start()
+    capacity_deadline = time.monotonic() + 2.0
+    relay_capacity_visible = False
+    while time.monotonic() < capacity_deadline:
+        capacities = relay.list_job_capacities(
+            network_id=network_id,
+            capability=peer_transit_service.TRANSIT_CAPABILITY,
+        ).get("capacities", [])
+        if any(item.get("peer_id") == relay.peer_id for item in capacities):
+            relay_capacity_visible = True
+            break
+        time.sleep(0.01)
+    relay_worker_started = relay_thread.is_alive() and relay_capacity_visible
+    relay_stop.set()
+    relay_thread.join(timeout=2.0)
+    relay_worker_stopped_before_request = not relay_thread.is_alive()
+    advertised_capacity_remained = any(
+        item.get("peer_id") == relay.peer_id
+        for item in relay.list_job_capacities(
+            network_id=network_id,
+            capability=peer_transit_service.TRANSIT_CAPABILITY,
+        ).get("capacities", [])
+    )
     payload = root / "failure-payload.bin"
     _write_payload(payload, 4096)
-    operation_timeout_s = 0.5
     maximum_elapsed_s = 2.0
     started = time.monotonic()
     error = ""
@@ -247,7 +281,10 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
     partial_target_files = len(list(failure_inbox.rglob("*.part")))
     return {
         "ok": (
-            "timed out" in error.lower()
+            relay_worker_started
+            and relay_worker_stopped_before_request
+            and advertised_capacity_remained
+            and "timed out" in error.lower()
             and elapsed <= maximum_elapsed_s
             and committed_target_files == 0
             and partial_target_files == 0
@@ -256,6 +293,9 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
         "operation_timeout_s": operation_timeout_s,
         "maximum_elapsed_s": maximum_elapsed_s,
         "error": error,
+        "relay_worker_started": relay_worker_started,
+        "relay_worker_stopped_before_request": relay_worker_stopped_before_request,
+        "advertised_capacity_remained": advertised_capacity_remained,
         "committed_target_files": committed_target_files,
         "partial_target_files": partial_target_files,
     }
