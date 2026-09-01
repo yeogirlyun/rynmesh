@@ -13,6 +13,8 @@ from rynmesh.crypto import SignedPayload
 from rynmesh.jobs import WorkResult, verify_work_result
 from rynmesh.peer_transit import PROTOCOL_VERSION
 
+MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
+
 
 class AuditError(RuntimeError):
     pass
@@ -267,6 +269,32 @@ def _audit_unavailable_gate(unavailable: dict[str, Any]) -> None:
         raise AuditError("transit-unavailable handling is not bounded and atomic")
 
 
+def _audit_registry_control_plane(control: dict[str, Any]) -> None:
+    raw_sizes = _require(control, "record_sizes_bytes")
+    if not isinstance(raw_sizes, list):
+        raise AuditError("registry control record sizes must be a list")
+    try:
+        sizes = [int(item) for item in raw_sizes]
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise AuditError("registry control record sizes are invalid") from exc
+    if not sizes or any(size <= 0 for size in sizes):
+        raise AuditError("registry control record sizes are invalid")
+    record_count = int(_require(control, "record_count"))
+    max_record = int(_require(control, "max_record_bytes"))
+    total_records = int(_require(control, "total_record_bytes"))
+    configured_max = int(_require(control, "maximum_record_bytes"))
+    if (
+        record_count != len(sizes)
+        or max_record != max(sizes)
+        or total_records != sum(sizes)
+        or configured_max != MAX_REGISTRY_CONTROL_RECORD_BYTES
+        or max_record > configured_max
+        or int(_require(control, "application_payload_bytes")) != 0
+        or control.get("plaintext_marker_found") is not False
+    ):
+        raise AuditError("registry control-plane size or payload audit failed")
+
+
 def _audit_post_recovery_direct_file(
     direct_file: dict[str, Any],
     *,
@@ -498,6 +526,7 @@ def audit_acceptance_report(
         "established_data_plane_survives_control_plane_blackout",
         "no_turn",
         "registry_has_no_payload_marker",
+        "registry_control_sized",
         "transit_has_no_plaintext_marker",
         "target_hash_matches",
         "target_file_committed",
@@ -512,6 +541,7 @@ def audit_acceptance_report(
     transit_audit = audit_peer_transit(main)
     if value.get("registry_plaintext_found") is not False:
         raise AuditError("registry plaintext scan did not pass")
+    _audit_registry_control_plane(dict(_require(value, "registry_control_plane")))
 
     direct_socket = dict(_require(value, "direct"))
     if direct_socket.get("ok") is not True or direct_socket.get("ice_relay_candidate_used") is not False:

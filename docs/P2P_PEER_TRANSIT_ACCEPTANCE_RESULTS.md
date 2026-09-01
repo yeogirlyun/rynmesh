@@ -26,7 +26,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Concurrent callers | Pass | 20/20 completed in 5.875 s without deadlock |
 | Session establishment | Pass | 0.109 s, below the five-second gate |
 | Encryption framing overhead | Pass | 0.0824%, below the 15% gate |
-| Confidentiality | Pass | Plaintext marker absent from transit frames and registry files |
+| Confidentiality | Pass | Plaintext marker absent from transit frames and registry files; the independent report audit recomputes registry record count, maximum and total size from the emitted size list, enforces a fixed 64 KiB per-control-record ceiling, and requires zero application payload bytes |
 | Signed evidence audit | Pass | Independent fail-closed auditor accepted the one-GiB evidence |
 | Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
 | Transit unavailable | Pass | A real advertised peer-2 worker was started, stopped and joined before the request; its still-valid capacity was discovered, the request failed explicitly within the bounded timeout, and no committed or partial target file remained |

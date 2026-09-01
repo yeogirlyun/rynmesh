@@ -49,6 +49,7 @@ except ModuleNotFoundError:  # direct ``python scripts/...`` execution
 
 MARKER = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
 MAX_ACCEPTANCE_PEAK_MEMORY_BYTES = 128 * 1024 * 1024
+MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
 
 
 class _FrameAudit:
@@ -613,10 +614,18 @@ def run_acceptance(
         relay_thread.join(timeout=5)
         target_thread.join(timeout=5)
 
-    registry_plaintext_found = any(
-        MARKER in path.read_bytes()
-        for path in registry_root.rglob("*.json")
-    )
+    registry_records = list(registry_root.rglob("*.json"))
+    registry_record_sizes = [path.stat().st_size for path in registry_records]
+    registry_plaintext_found = any(MARKER in path.read_bytes() for path in registry_records)
+    registry_control_plane = {
+        "record_count": len(registry_record_sizes),
+        "record_sizes_bytes": registry_record_sizes,
+        "max_record_bytes": max(registry_record_sizes, default=0),
+        "total_record_bytes": sum(registry_record_sizes),
+        "maximum_record_bytes": MAX_REGISTRY_CONTROL_RECORD_BYTES,
+        "application_payload_bytes": int(evidence.get("registry_payload_bytes", -1)),
+        "plaintext_marker_found": registry_plaintext_found,
+    }
     direct = asyncio.run(_direct_probe())
     unavailable = _relay_unavailable_acceptance(work_root)
     control_plane_blackout = _control_plane_blackout_acceptance(
@@ -674,6 +683,12 @@ def run_acceptance(
         "established_data_plane_survives_control_plane_blackout": control_plane_blackout["ok"],
         "no_turn": evidence["ice_relay_candidate_used"] is False,
         "registry_has_no_payload_marker": not registry_plaintext_found,
+        "registry_control_sized": (
+            bool(registry_record_sizes)
+            and registry_control_plane["max_record_bytes"]
+            <= MAX_REGISTRY_CONTROL_RECORD_BYTES
+            and registry_control_plane["application_payload_bytes"] == 0
+        ),
         "transit_has_no_plaintext_marker": not frame_audit.plaintext_found,
         "target_hash_matches": evidence["source_sha256"] == evidence["target_sha256"],
         "target_file_committed": len(delivered) == 1,
@@ -693,6 +708,7 @@ def run_acceptance(
         "concurrent_evidence": concurrent_results,
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
+        "registry_control_plane": registry_control_plane,
         "work_root": str(work_root),
     }
     report["report_audit"] = audit_acceptance_report(

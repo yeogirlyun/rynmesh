@@ -403,6 +403,30 @@ def test_unavailable_acceptance_terminates_advertised_relay(tmp_path, monkeypatc
     audit_module._audit_unavailable_gate(unavailable)
 
 
+def test_registry_control_plane_auditor_recomputes_record_sizes() -> None:
+    control = {
+        "record_count": 3,
+        "record_sizes_bytes": [1024, 2048, 4096],
+        "max_record_bytes": 4096,
+        "total_record_bytes": 7168,
+        "maximum_record_bytes": 64 * 1024,
+        "application_payload_bytes": 0,
+        "plaintext_marker_found": False,
+    }
+    audit_module._audit_registry_control_plane(control)
+
+    for key, value in (
+        ("record_count", 2),
+        ("max_record_bytes", 2048),
+        ("total_record_bytes", 7167),
+        ("maximum_record_bytes", 128 * 1024),
+        ("application_payload_bytes", 1),
+        ("plaintext_marker_found", True),
+    ):
+        with pytest.raises(AuditError, match="control-plane"):
+            audit_module._audit_registry_control_plane({**control, key: value})
+
+
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:
     source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "network")
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "network")
