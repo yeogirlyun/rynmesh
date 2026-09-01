@@ -235,6 +235,14 @@ baseline. Private memory remained between approximately 37.3 and 40.5 MiB.
 Completion will repeat this same OS-level comparison rather than reuse any r7
 resource measurements.
 
+The second r8 production refresh completed at 2026-09-01
+18:00:31--18:00:32 Hong Kong time. Both capacity records again passed the
+project's Ed25519 verification, and post-refresh sessions continued without a
+discovery gap. The observed checkpoint had 203 successful sessions, zero
+failures, exactly 609 transit frames and 13,435,149 transit bytes. Traced memory
+growth was 1,876,570 bytes, all three worker threads remained healthy, and the
+plaintext, partial-file and stderr checks stayed clean.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
