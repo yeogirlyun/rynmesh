@@ -686,11 +686,13 @@ def test_concurrent_auditor_requires_unique_signed_session_evidence(monkeypatch)
         "source_peer_id": "source",
         "transit_peer_id": "transit",
         "target_peer_id": "target",
+        "source_size_bytes": 1024 * 1024,
     }
     monkeypatch.setattr(audit_module, "audit_peer_transit", lambda _item: identities)
     performance = {
         "concurrency_ok": True,
         "concurrent_sessions": 3,
+        "concurrent_payload_bytes": 1024 * 1024,
         "concurrent_completed": 3,
     }
     evidence = [{"session_id": value} for value in ("one", "two", "three")]
@@ -706,6 +708,14 @@ def test_concurrent_auditor_requires_unique_signed_session_evidence(monkeypatch)
         audit_module._audit_concurrent_sessions(
             performance,
             duplicate,
+            transit_audit=identities,
+            min_concurrent=3,
+        )
+
+    with pytest.raises(AuditError, match="gate"):
+        audit_module._audit_concurrent_sessions(
+            {**performance, "concurrent_payload_bytes": 64 * 1024},
+            evidence,
             transit_audit=identities,
             min_concurrent=3,
         )

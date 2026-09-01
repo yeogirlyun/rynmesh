@@ -959,6 +959,42 @@ def test_p2p_receiver_bounds_simultaneous_messages():
         asyncio.run(receive_json(_PacketConnection(packets), timeout_s=1))
 
 
+def test_reliable_p2p_send_bounds_each_udp_burst_to_its_window():
+    class Connection:
+        def __init__(self) -> None:
+            self.acks: list[bytes] = []
+            self.sent_since_recv = 0
+            self.peak_burst = 0
+
+        async def send(self, packet: bytes) -> None:
+            kind, message_id, sequence, total, digest, _body = llm_p2p._decode_header(
+                packet
+            )
+            assert kind == llm_p2p._DATA
+            self.sent_since_recv += 1
+            self.peak_burst = max(self.peak_burst, self.sent_since_recv)
+            self.acks.append(
+                llm_p2p._HEADER.pack(
+                    llm_p2p._MAGIC,
+                    llm_p2p._ACK,
+                    message_id,
+                    sequence,
+                    total,
+                    digest,
+                )
+            )
+
+        async def recv(self) -> bytes:
+            self.sent_since_recv = 0
+            return self.acks.pop(0)
+
+    connection = Connection()
+    payload = b"x" * (llm_p2p._CHUNK_BYTES * (llm_p2p._SEND_WINDOW + 2))
+    sent = asyncio.run(llm_p2p.send_bytes(connection, payload, timeout_s=2))
+    assert sent == len(payload)
+    assert connection.peak_burst == llm_p2p._SEND_WINDOW == 8
+
+
 def test_provider_concurrent_duplicate_executes_once(tmp_path):
     net = tmp_path / "net"
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)

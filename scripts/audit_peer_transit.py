@@ -14,6 +14,7 @@ from rynmesh.jobs import WorkResult, verify_work_result
 from rynmesh.peer_transit import PROTOCOL_VERSION
 
 MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
+MIN_CONCURRENT_PROBE_BYTES = 1024 * 1024
 SOAK_PLAINTEXT_MARKER = b"RYNMESH-SOAK-PLAINTEXT-MARKER-2026"
 
 
@@ -199,11 +200,13 @@ def _audit_concurrent_sessions(
 ) -> set[str]:
     concurrent_completed = int(performance.get("concurrent_completed", 0))
     concurrent_requested = int(_require(performance, "concurrent_sessions"))
+    concurrent_payload_bytes = int(_require(performance, "concurrent_payload_bytes"))
     if not isinstance(concurrent_evidence, list):
         raise AuditError("concurrent evidence must be a list")
     if (
         performance.get("concurrency_ok") is not True
         or concurrent_requested < min_concurrent
+        or concurrent_payload_bytes < MIN_CONCURRENT_PROBE_BYTES
         or concurrent_completed != concurrent_requested
         or len(concurrent_evidence) != concurrent_completed
     ):
@@ -217,8 +220,9 @@ def _audit_concurrent_sessions(
             item_audit["source_peer_id"] != transit_audit["source_peer_id"]
             or item_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
             or item_audit["target_peer_id"] != transit_audit["target_peer_id"]
+            or item_audit["source_size_bytes"] != concurrent_payload_bytes
         ):
-            raise AuditError("concurrent session peer identity continuity failed")
+            raise AuditError("concurrent session identity or payload-size continuity failed")
         session_id = str(_require(item, "session_id"))
         if not session_id or session_id in concurrent_session_ids:
             raise AuditError("concurrent session identifiers are missing or duplicated")
@@ -775,6 +779,7 @@ def audit_acceptance_report(
         "source_size_bytes": transit_audit["source_size_bytes"],
         "concurrent_completed": concurrent_completed,
         "concurrent_unique_sessions": len(concurrent_session_ids),
+        "concurrent_payload_bytes": int(performance["concurrent_payload_bytes"]),
         "peak_concurrent_observed": peak_concurrent,
         "peak_target_concurrent_observed": peak_target_concurrent,
         "session_established_s": session_established,

@@ -37,7 +37,9 @@ _MAX_CHUNKS = math.ceil(_MAX_MESSAGE_BYTES / _CHUNK_BYTES)
 _MAX_IN_FLIGHT_MESSAGES = 8
 _MAX_BUFFERED_BYTES = _MAX_MESSAGE_BYTES * 2
 _RECENT_MESSAGE_IDS = 128
-_SEND_WINDOW = 32
+# Keep each connection's burst small enough that 20 concurrent two-hop streams
+# do not starve ICE consent/STUN traffic or overflow the UDP receive queue.
+_SEND_WINDOW = 8
 _ACK_WAIT_S = 0.25
 
 

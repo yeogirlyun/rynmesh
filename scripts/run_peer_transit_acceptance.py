@@ -43,13 +43,14 @@ from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 
 try:
-    from scripts.audit_peer_transit import audit_acceptance_report, audit_peer_transit
+    from scripts.audit_peer_transit import AuditError, audit_acceptance_report, audit_peer_transit
 except ModuleNotFoundError:  # direct ``python scripts/...`` execution
-    from audit_peer_transit import audit_acceptance_report, audit_peer_transit
+    from audit_peer_transit import AuditError, audit_acceptance_report, audit_peer_transit
 
 MARKER = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
 MAX_ACCEPTANCE_PEAK_MEMORY_BYTES = 128 * 1024 * 1024
 MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
+CONCURRENT_PROBE_BYTES = 1024 * 1024
 
 
 def _prepare_work_root(work_root: Path) -> None:
@@ -569,7 +570,11 @@ def run_acceptance(
         concurrency_files: list[Path] = []
         for index in range(concurrent_sessions):
             item = work_root / f"concurrent-{index:02d}.bin"
-            _write_payload(item, 64 * 1024, marker=MARKER + str(index).encode())
+            _write_payload(
+                item,
+                CONCURRENT_PROBE_BYTES,
+                marker=MARKER + str(index).encode(),
+            )
             concurrency_files.append(item)
         concurrency_started = time.monotonic()
         concurrent_results: list[dict[str, Any]] = []
@@ -778,6 +783,7 @@ def run_acceptance(
         "one_gib_required": one_gib_required,
         "one_gib_ok": one_gib_ok,
         "concurrent_sessions": concurrent_sessions,
+        "concurrent_payload_bytes": CONCURRENT_PROBE_BYTES,
         "concurrent_completed": len(concurrent_results),
         "concurrent_elapsed_s": concurrency_elapsed,
         "peak_concurrent_observed": peak_concurrent,
@@ -826,11 +832,18 @@ def run_acceptance(
         "registry_control_plane": registry_control_plane,
         "work_root": str(work_root),
     }
-    report["report_audit"] = audit_acceptance_report(
-        report,
-        require_one_gib=one_gib_required,
-        min_concurrent=concurrent_sessions,
-    )
+    try:
+        report["report_audit"] = audit_acceptance_report(
+            report,
+            require_one_gib=one_gib_required,
+            min_concurrent=concurrent_sessions,
+        )
+    except AuditError as exc:
+        report["result"] = "fail"
+        report["report_audit"] = {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     return report
 
 
