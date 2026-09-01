@@ -152,6 +152,42 @@ def _audit_memory_gate(performance: dict[str, Any]) -> tuple[int, int]:
     return peak_memory, peak_memory_limit
 
 
+def _audit_concurrent_sessions(
+    performance: dict[str, Any],
+    concurrent_evidence: Any,
+    *,
+    transit_audit: dict[str, Any],
+    min_concurrent: int,
+) -> set[str]:
+    concurrent_completed = int(performance.get("concurrent_completed", 0))
+    concurrent_requested = int(_require(performance, "concurrent_sessions"))
+    if not isinstance(concurrent_evidence, list):
+        raise AuditError("concurrent evidence must be a list")
+    if (
+        performance.get("concurrency_ok") is not True
+        or concurrent_requested < min_concurrent
+        or concurrent_completed != concurrent_requested
+        or len(concurrent_evidence) != concurrent_completed
+    ):
+        raise AuditError("concurrent-session gate did not pass")
+    concurrent_session_ids: set[str] = set()
+    for item in concurrent_evidence:
+        if not isinstance(item, dict):
+            raise AuditError("concurrent session evidence is malformed")
+        item_audit = audit_peer_transit(item)
+        if (
+            item_audit["source_peer_id"] != transit_audit["source_peer_id"]
+            or item_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
+            or item_audit["target_peer_id"] != transit_audit["target_peer_id"]
+        ):
+            raise AuditError("concurrent session peer identity continuity failed")
+        session_id = str(_require(item, "session_id"))
+        if not session_id or session_id in concurrent_session_ids:
+            raise AuditError("concurrent session identifiers are missing or duplicated")
+        concurrent_session_ids.add(session_id)
+    return concurrent_session_ids
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -342,8 +378,12 @@ def audit_acceptance_report(
 
     performance = dict(_require(value, "performance"))
     concurrent_completed = int(performance.get("concurrent_completed", 0))
-    if performance.get("concurrency_ok") is not True or concurrent_completed < min_concurrent:
-        raise AuditError("concurrent-session gate did not pass")
+    concurrent_session_ids = _audit_concurrent_sessions(
+        performance,
+        _require(value, "concurrent_evidence"),
+        transit_audit=transit_audit,
+        min_concurrent=min_concurrent,
+    )
     peak_memory, peak_memory_limit = _audit_memory_gate(performance)
     if float(performance.get("session_established_s", 999)) > 5:
         raise AuditError("session establishment exceeded five seconds")
@@ -364,6 +404,7 @@ def audit_acceptance_report(
         "protocol_version": transit_audit["protocol_version"],
         "source_size_bytes": transit_audit["source_size_bytes"],
         "concurrent_completed": concurrent_completed,
+        "concurrent_unique_sessions": len(concurrent_session_ids),
         "session_established_s": float(performance["session_established_s"]),
         "protocol_overhead_ratio": float(performance["protocol_overhead_ratio"]),
         "hard_failure_fallback_s": float(hard_failure["elapsed_s"]),

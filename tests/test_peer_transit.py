@@ -254,6 +254,36 @@ def test_acceptance_memory_auditor_recomputes_numeric_gate() -> None:
         audit_module._audit_memory_gate(forged)
 
 
+def test_concurrent_auditor_requires_unique_signed_session_evidence(monkeypatch) -> None:
+    identities = {
+        "source_peer_id": "source",
+        "transit_peer_id": "transit",
+        "target_peer_id": "target",
+    }
+    monkeypatch.setattr(audit_module, "audit_peer_transit", lambda _item: identities)
+    performance = {
+        "concurrency_ok": True,
+        "concurrent_sessions": 3,
+        "concurrent_completed": 3,
+    }
+    evidence = [{"session_id": value} for value in ("one", "two", "three")]
+    assert audit_module._audit_concurrent_sessions(
+        performance,
+        evidence,
+        transit_audit=identities,
+        min_concurrent=3,
+    ) == {"one", "two", "three"}
+
+    duplicate = [evidence[0], evidence[0], evidence[2]]
+    with pytest.raises(AuditError, match="duplicated"):
+        audit_module._audit_concurrent_sessions(
+            performance,
+            duplicate,
+            transit_audit=identities,
+            min_concurrent=3,
+        )
+
+
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:
     source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "network")
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "network")

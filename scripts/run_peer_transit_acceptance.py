@@ -631,6 +631,7 @@ def run_acceptance(
         "actual_hard_failure": actual_hard_failure,
         "unavailable": unavailable,
         "control_plane_blackout": control_plane_blackout,
+        "concurrent_evidence": concurrent_results,
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
         "work_root": str(work_root),
