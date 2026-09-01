@@ -52,6 +52,18 @@ MAX_ACCEPTANCE_PEAK_MEMORY_BYTES = 128 * 1024 * 1024
 MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
 
 
+def _prepare_work_root(work_root: Path) -> None:
+    """Create an empty evidence root or reject stale mixed-run artifacts."""
+
+    if work_root.exists():
+        if not work_root.is_dir():
+            raise PeerTransitError("acceptance work root is not a directory")
+        if next(work_root.iterdir(), None) is not None:
+            raise PeerTransitError("acceptance work root must be empty")
+        return
+    work_root.mkdir(parents=True)
+
+
 class _FrameAudit:
     def __init__(self) -> None:
         self.frames = 0
@@ -453,7 +465,7 @@ def run_acceptance(
     # external STUN service.  A physical three-network run overrides this with
     # its chosen STUN endpoint to prove server-reflexive mappings.
     os.environ.setdefault("RYNMESH_P2P_STUN", "off")
-    work_root.mkdir(parents=True, exist_ok=True)
+    _prepare_work_root(work_root)
     registry_root = work_root / "registry"
     registry = FilePeerRegistry(registry_root)
     source = RynmeshStore(home=work_root / "source", network_dir=work_root / "source-net")

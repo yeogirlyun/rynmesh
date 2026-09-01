@@ -56,6 +56,7 @@ from scripts.audit_peer_transit import (
 )
 from scripts.run_peer_transit_acceptance import (
     _control_plane_blackout_acceptance,
+    _prepare_work_root,
     _relay_unavailable_acceptance,
     _route_acceptance,
 )
@@ -63,6 +64,27 @@ from scripts.run_peer_transit_acceptance import (
 
 def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def test_acceptance_work_root_must_not_contain_stale_evidence(tmp_path) -> None:
+    missing = tmp_path / "missing"
+    _prepare_work_root(missing)
+    assert missing.is_dir()
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _prepare_work_root(empty)
+
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    (stale / "old-report.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(PeerTransitError, match="must be empty"):
+        _prepare_work_root(stale)
+
+    not_a_directory = tmp_path / "report.json"
+    not_a_directory.write_text("{}", encoding="utf-8")
+    with pytest.raises(PeerTransitError, match="not a directory"):
+        _prepare_work_root(not_a_directory)
 
 
 def test_worker_refreshes_capacity_before_discovery_record_expires(tmp_path, monkeypatch) -> None:
