@@ -559,6 +559,45 @@ def test_public_nat_mode_refuses_to_fall_back_to_host_candidate(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_ice_signal_rejects_turn_relay_candidate_before_connecting():
+    with pytest.raises(P2PError, match="TURN/relay"):
+        IceSignal.from_dict({
+            "username": "remote",
+            "password": "remote-password",
+            "candidates": [
+                "relay 1 udp 1677734910 203.0.113.10 50000 typ relay "
+                "raddr 0.0.0.0 rport 0",
+            ],
+        })
+
+    with pytest.raises(P2PError, match="non-UDP"):
+        IceSignal.from_dict({
+            "username": "remote",
+            "password": "remote-password",
+            "candidates": [
+                "tcp 1 tcp 1518280447 192.0.2.1 9 typ host tcptype active",
+            ],
+        })
+
+    async def scenario():
+        connection = new_connection(controlling=True)
+        signal = IceSignal(
+            username="remote",
+            password="remote-password",
+            candidates=(
+                "relay 1 udp 1677734910 203.0.113.10 50000 typ relay "
+                "raddr 0.0.0.0 rport 0",
+            ),
+        )
+        try:
+            with pytest.raises(P2PError, match="TURN/relay"):
+                await apply_remote_signal(connection, signal)
+        finally:
+            await connection.close()
+
+    asyncio.run(scenario())
+
+
 def test_distinct_public_egress_acceptance_fails_fast_for_shared_mapping(monkeypatch):
     monkeypatch.setenv("RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC", "1")
     local = IceSignal(

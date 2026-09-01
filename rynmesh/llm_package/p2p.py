@@ -40,6 +40,22 @@ _SEND_WINDOW = 32
 _ACK_WAIT_S = 0.25
 
 
+def _direct_candidate_from_sdp(value: str) -> aioice.Candidate:
+    try:
+        candidate = aioice.Candidate.from_sdp(value)
+    except (AttributeError, ValueError) as exc:
+        raise P2PError("invalid ICE candidate") from exc
+    candidate_type = str(getattr(candidate, "type", "")).lower()
+    transport = str(getattr(candidate, "transport", "")).lower()
+    if candidate_type == "relay":
+        raise P2PError("TURN/relay ICE candidate is forbidden in strict P2P mode")
+    if candidate_type not in {"host", "srflx", "prflx"}:
+        raise P2PError(f"non-direct ICE candidate is forbidden: {candidate_type}")
+    if transport != "udp":
+        raise P2PError(f"non-UDP ICE candidate is forbidden: {transport}")
+    return candidate
+
+
 @dataclass(frozen=True)
 class IceSignal:
     username: str
@@ -62,6 +78,8 @@ class IceSignal:
             raise P2PError("incomplete ICE signal")
         if len(candidates) > 64 or any(len(item) > 1024 for item in candidates):
             raise P2PError("ICE candidate list exceeds safe limits")
+        for candidate in candidates:
+            _direct_candidate_from_sdp(candidate)
         return cls(username=username, password=password, candidates=candidates)
 
 
@@ -104,7 +122,7 @@ def distinct_public_egress_required() -> bool:
 def _public_mapping_hosts(signal: IceSignal) -> set[str]:
     hosts: set[str] = set()
     for value in signal.candidates:
-        candidate = aioice.Candidate.from_sdp(value)
+        candidate = _direct_candidate_from_sdp(value)
         if str(getattr(candidate, "type", "")) == "srflx":
             host = str(getattr(candidate, "host", "")).strip()
             if host:
@@ -154,7 +172,7 @@ async def apply_remote_signal(connection: aioice.Connection, signal: IceSignal) 
     connection.remote_username = signal.username
     connection.remote_password = signal.password
     for value in signal.candidates:
-        await connection.add_remote_candidate(aioice.Candidate.from_sdp(value))
+        await connection.add_remote_candidate(_direct_candidate_from_sdp(value))
     await connection.add_remote_candidate(None)
 
 
@@ -524,4 +542,3 @@ async def provider_exchange(
         return evidence
     finally:
         await _close_connection(connection)
-

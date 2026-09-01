@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 546 passed, 3 skipped on the rebased upstream baseline |
+| Complete Python suite | Pass | 547 passed, 3 skipped on the rebased upstream baseline |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel installed into a clean virtual environment and its `rynmesh-transit --help` entry point loaded both installed transit modules |
@@ -100,6 +100,21 @@ Both r5 workers completed their first production-interval capacity refresh at
 sessions with zero failures at the refresh boundary and six more sessions
 immediately afterward. The Python process, three worker threads, memory gate,
 plaintext scan, partial-file scan and stderr all remained healthy.
+
+The fifth run was deliberately stopped at 2026-09-01 13:23 Hong Kong time
+after 9,439 seconds and 762 successful sessions with zero failures. An
+implementation audit proved that a remote `relay` candidate could still be
+parsed and added to the ICE agent before the already-existing nominated-pair
+check rejected it. Application payload could not traverse that candidate, but
+the acceptance contract forbids both signaled and nominated TURN candidates.
+The shared ICE runtime was therefore changed to reject `relay`, non-direct and
+non-UDP candidates both while parsing signed signaling and again while applying
+programmatically constructed signaling. This runtime change invalidates r5.
+
+The replacement candidate passed 23 targeted shared-P2P/peer-transit tests,
+related Ruff, the complete Python suite (547 passed, three skipped), and a new
+8 MiB/three-concurrent real-ICE preflight with both independent auditors. A new
+24-hour run must start from zero on the fixed runtime.
 
 Final acceptance requires:
 
