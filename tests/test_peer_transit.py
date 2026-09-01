@@ -284,6 +284,24 @@ def test_concurrent_auditor_requires_unique_signed_session_evidence(monkeypatch)
         )
 
 
+def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None:
+    performance = {
+        "plaintext_request_bytes": 1_000_000,
+        "encrypted_request_bytes": 1_010_000,
+        "protocol_overhead_ratio": 0.01,
+        "protocol_overhead_within_15_percent": True,
+    }
+    assert audit_module._audit_overhead_gate(performance) == pytest.approx(0.01)
+
+    forged = {
+        **performance,
+        "encrypted_request_bytes": 1_200_000,
+        "protocol_overhead_ratio": 0.01,
+    }
+    with pytest.raises(AuditError, match="overhead"):
+        audit_module._audit_overhead_gate(forged)
+
+
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:
     source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "network")
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "network")

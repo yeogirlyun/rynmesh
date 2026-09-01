@@ -188,6 +188,22 @@ def _audit_concurrent_sessions(
     return concurrent_session_ids
 
 
+def _audit_overhead_gate(performance: dict[str, Any]) -> float:
+    plaintext_bytes = int(_require(performance, "plaintext_request_bytes"))
+    encrypted_bytes = int(_require(performance, "encrypted_request_bytes"))
+    reported_ratio = float(_require(performance, "protocol_overhead_ratio"))
+    if plaintext_bytes <= 0 or encrypted_bytes < plaintext_bytes:
+        raise AuditError("protocol byte counters are inconsistent")
+    computed_ratio = (encrypted_bytes - plaintext_bytes) / plaintext_bytes
+    if (
+        abs(reported_ratio - computed_ratio) > 1e-12
+        or computed_ratio > 0.15
+        or performance.get("protocol_overhead_within_15_percent") is not True
+    ):
+        raise AuditError("protocol overhead exceeded fifteen percent")
+    return computed_ratio
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -387,8 +403,7 @@ def audit_acceptance_report(
     peak_memory, peak_memory_limit = _audit_memory_gate(performance)
     if float(performance.get("session_established_s", 999)) > 5:
         raise AuditError("session establishment exceeded five seconds")
-    if float(performance.get("protocol_overhead_ratio", 999)) > 0.15:
-        raise AuditError("protocol overhead exceeded fifteen percent")
+    protocol_overhead_ratio = _audit_overhead_gate(performance)
     if performance.get("hard_failure_fallback_within_10s") is not True:
         raise AuditError("performance report omitted bounded hard-failure fallback")
     if require_one_gib:
@@ -406,7 +421,7 @@ def audit_acceptance_report(
         "concurrent_completed": concurrent_completed,
         "concurrent_unique_sessions": len(concurrent_session_ids),
         "session_established_s": float(performance["session_established_s"]),
-        "protocol_overhead_ratio": float(performance["protocol_overhead_ratio"]),
+        "protocol_overhead_ratio": protocol_overhead_ratio,
         "hard_failure_fallback_s": float(hard_failure["elapsed_s"]),
         "peak_python_memory_bytes": peak_memory,
         "peak_python_memory_limit_bytes": peak_memory_limit,
