@@ -140,6 +140,18 @@ independent auditor rejects reports that do not declare this monotonic clock
 source. A seventh run must start from zero on the corrected runner, and no r6
 time may be combined with it.
 
+The seventh 24-hour worker soak started from commit `2681f0c` with soak-runner
+blob `ab819905e1505073a4081221a385c53e60f41bc1` at 2026-09-01 15:22:41 Hong
+Kong time and is scheduled to finish at approximately 2026-09-02 15:22:41. It
+writes atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r7/progress.json`. At 120.656 monotonic
+seconds it had completed 13 sessions with zero failures, established its
+post-warm-up memory baseline, retained all three worker threads, accumulated 39
+transit frames, and exposed neither plaintext, partial files nor stderr. Both
+signed capacity records were independently discovered and Ed25519-verified
+through the project registry API. This run starts from zero and does not include
+any elapsed time from r6.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
