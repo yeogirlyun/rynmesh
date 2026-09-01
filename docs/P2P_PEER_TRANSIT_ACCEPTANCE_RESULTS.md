@@ -168,6 +168,15 @@ Ed25519-verified. At 1,855.656 monotonic seconds the run had completed 186
 sessions with zero failures; memory, threads, frame/byte coverage, plaintext,
 partial-file and stderr checks all remained healthy.
 
+The third r7 production refresh completed for both workers at 2026-09-01
+16:07:42--16:07:44 Hong Kong time. Both 852-byte capacity records advertised
+`rynmesh.peer-transit.v1` with `max_concurrent=8` and independently passed the
+project's Ed25519 verification. At 2,757.5 monotonic seconds the run had
+completed 276 sessions with zero failures, accumulated 828 transit frames and
+18,266,508 transit bytes, kept all three worker threads alive, and remained
+clean for plaintext, partial files and stderr. Traced memory growth was
+1,986,235 bytes against the 32 MiB limit.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
