@@ -250,6 +250,16 @@ successful sessions with zero failures, 813 transit frames and 17,935,593
 transit bytes. Memory, worker threads, plaintext, partial-file and stderr gates
 remained healthy across the atomic replacements.
 
+The fourth r8 production refresh completed at 2026-09-01
+18:30:32--18:30:35 Hong Kong time. Both 852-byte capacity records were
+independently discovered and Ed25519-verified through the project registry API;
+each continued to advertise only `rynmesh.peer-transit.v1` with
+`max_concurrent=8`. The post-refresh checkpoint reached 359 successful
+sessions with zero failures, exactly 1,077 transit frames and 23,759,697
+transit bytes. Traced memory growth was 1,813,203 bytes, all three worker
+threads remained healthy, and the plaintext, partial-file and stderr gates
+stayed clean.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
