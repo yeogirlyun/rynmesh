@@ -118,7 +118,9 @@ def run_soak(
     payload = work_root / "soak-payload.bin"
     _write_payload(payload, payload_bytes)
     started_wall = time.time()
-    deadline = started_wall + duration_s
+    started_monotonic = time.monotonic()
+    deadline_wall = started_wall + duration_s
+    deadline_monotonic = started_monotonic + duration_s
     sessions = 0
     failures: list[dict[str, str]] = []
     baseline_memory: int | None = None
@@ -134,9 +136,11 @@ def run_soak(
             "pid": os.getpid(),
             "started_at": datetime.fromtimestamp(started_wall, timezone.utc).isoformat(),
             "updated_at": _utc_now(),
-            "deadline_at": datetime.fromtimestamp(deadline, timezone.utc).isoformat(),
+            "deadline_at": datetime.fromtimestamp(deadline_wall, timezone.utc).isoformat(),
+            "clock_source": "time.monotonic",
             "duration_target_s": duration_s,
-            "elapsed_s": max(0.0, time.time() - started_wall),
+            "elapsed_s": max(0.0, time.monotonic() - started_monotonic),
+            "wall_elapsed_s": max(0.0, time.time() - started_wall),
             "sessions_completed": sessions,
             "failures": failures,
             "current_python_memory_bytes": current_memory,
@@ -154,7 +158,7 @@ def run_soak(
 
     _write_json_atomic(progress_path, snapshot("running"))
     try:
-        while time.time() < deadline:
+        while time.monotonic() < deadline_monotonic:
             iteration_started = time.monotonic()
             try:
                 evidence = send_file_via_peer(
@@ -179,7 +183,12 @@ def run_soak(
             _write_json_atomic(progress_path, snapshot("running"))
             remaining_interval = interval_s - (time.monotonic() - iteration_started)
             if remaining_interval > 0:
-                stop.wait(min(remaining_interval, max(0.0, deadline - time.time())))
+                stop.wait(
+                    min(
+                        remaining_interval,
+                        max(0.0, deadline_monotonic - time.monotonic()),
+                    )
+                )
     finally:
         stop.set()
         relay_thread.join(timeout=5)
@@ -188,7 +197,7 @@ def run_soak(
     current_memory, _peak_memory = tracemalloc.get_traced_memory()
     memory_growth = 0 if baseline_memory is None else max(0, current_memory - baseline_memory)
     partial_files = len(list((work_root / "target-inbox" / ".tmp").glob("*.part")))
-    completed_duration = time.time() >= deadline
+    completed_duration = time.monotonic() >= deadline_monotonic
     passed = (
         completed_duration
         and sessions >= 3

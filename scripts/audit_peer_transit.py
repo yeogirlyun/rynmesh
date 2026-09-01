@@ -737,6 +737,8 @@ def audit_soak_report(
     required_duration = _finite_float(require_duration_s, "required soak duration")
     if required_duration < 0 or min_sessions < 0:
         raise AuditError("soak audit requirements cannot be negative")
+    if value.get("clock_source") != "time.monotonic":
+        raise AuditError("soak duration was not measured with a monotonic clock")
     if value.get("result") != "pass" or value.get("completed_duration") is not True:
         raise AuditError("soak did not complete with a passing result")
     target_duration = _finite_float(_require(value, "duration_target_s"), "duration_target_s")

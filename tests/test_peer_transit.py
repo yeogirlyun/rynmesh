@@ -195,6 +195,7 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
     report = {
         "result": "pass",
         "completed_duration": True,
+        "clock_source": "time.monotonic",
         "duration_target_s": 86400,
         "elapsed_s": 86401,
         "sessions_completed": 100,
@@ -216,6 +217,7 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
 
     for key, bad_value, message in (
         ("result", "running", "complete"),
+        ("clock_source", "time.time", "monotonic"),
         ("duration_target_s", float("nan"), "finite"),
         ("elapsed_s", float("inf"), "finite"),
         ("elapsed_s", 86399, "duration"),
