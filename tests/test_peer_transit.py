@@ -283,6 +283,32 @@ def test_soak_duration_survives_forward_wall_clock_jump(tmp_path, monkeypatch) -
     )["ok"] is True
 
 
+def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) -> None:
+    for name in ("relay", "relay-net", "registry"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "clean.bin").write_bytes(b"encrypted-control-data")
+    (tmp_path / "stdout.log").write_text("worker started\n", encoding="utf-8")
+    (tmp_path / "stderr.log").write_bytes(b"")
+    (tmp_path / "target-inbox" / ".tmp").mkdir(parents=True)
+
+    audit = audit_module._audit_soak_artifacts(tmp_path)
+    assert audit["artifact_files_scanned"] == 5
+    assert audit["artifact_partial_files"] == 0
+    assert audit["stderr_bytes"] == 0
+
+    (tmp_path / "relay" / "leak.bin").write_bytes(
+        b"prefix-" + audit_module.SOAK_PLAINTEXT_MARKER + b"-suffix"
+    )
+    with pytest.raises(AuditError, match="plaintext marker"):
+        audit_module._audit_soak_artifacts(tmp_path)
+    (tmp_path / "relay" / "leak.bin").unlink()
+
+    (tmp_path / "target-inbox" / ".tmp" / "orphan.part").write_bytes(b"partial")
+    with pytest.raises(AuditError, match="partial"):
+        audit_module._audit_soak_artifacts(tmp_path)
+
+
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
     route = _route_acceptance()
     audit_module._audit_route_report(route)

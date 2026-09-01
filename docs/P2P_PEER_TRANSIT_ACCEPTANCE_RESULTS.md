@@ -168,6 +168,9 @@ Final acceptance requires:
 - zero failed sessions and no plaintext marker exposure;
 - cumulative frame and byte counts covering every fixed-size completed session,
   with per-session request/response frame counts bound to signed relay evidence;
+- an independent filesystem scan of peer-2 storage, registry files and
+  stdout/stderr for the unique soak plaintext marker, plus an empty stderr and
+  `.part` scan;
 - no `.part` files after worker shutdown;
 - both worker threads stopped;
 - traced Python memory growth no greater than 32 MiB after warm-up.

@@ -14,6 +14,7 @@ from rynmesh.jobs import WorkResult, verify_work_result
 from rynmesh.peer_transit import PROTOCOL_VERSION
 
 MAX_REGISTRY_CONTROL_RECORD_BYTES = 64 * 1024
+SOAK_PLAINTEXT_MARKER = b"RYNMESH-SOAK-PLAINTEXT-MARKER-2026"
 
 
 class AuditError(RuntimeError):
@@ -341,6 +342,52 @@ def _audit_registry_control_plane(control: dict[str, Any]) -> None:
         or control.get("plaintext_marker_found") is not False
     ):
         raise AuditError("registry control-plane size or payload audit failed")
+
+
+def _contains_marker(path: Path, marker: bytes) -> bool:
+    overlap = max(0, len(marker) - 1)
+    previous = b""
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(64 * 1024)
+            if not chunk:
+                return False
+            combined = previous + chunk
+            if marker in combined:
+                return True
+            previous = combined[-overlap:] if overlap else b""
+
+
+def _audit_soak_artifacts(root: Path) -> dict[str, int]:
+    required_directories = [root / "relay", root / "relay-net", root / "registry"]
+    if any(not path.is_dir() for path in required_directories):
+        raise AuditError("soak artifact directories are incomplete")
+    files = [
+        path
+        for directory in required_directories
+        for path in directory.rglob("*")
+        if path.is_file()
+    ]
+    for log_name in ("stdout.log", "stderr.log"):
+        log_path = root / log_name
+        if log_path.is_file():
+            files.append(log_path)
+    leaked = [path for path in files if _contains_marker(path, SOAK_PLAINTEXT_MARKER)]
+    if leaked:
+        raise AuditError("soak plaintext marker was found in transit artifacts or logs")
+    partial_files = list((root / "target-inbox").rglob("*.part"))
+    if partial_files:
+        raise AuditError("soak artifact scan found partial target files")
+    stderr_path = root / "stderr.log"
+    stderr_bytes = stderr_path.stat().st_size if stderr_path.is_file() else 0
+    if stderr_bytes:
+        raise AuditError("soak stderr log is not empty")
+    return {
+        "artifact_files_scanned": len(files),
+        "artifact_bytes_scanned": sum(path.stat().st_size for path in files),
+        "artifact_partial_files": len(partial_files),
+        "stderr_bytes": stderr_bytes,
+    }
 
 
 def _audit_post_recovery_direct_file(
@@ -731,6 +778,7 @@ def audit_soak_report(
     *,
     require_duration_s: float,
     min_sessions: int,
+    artifact_root: Path | None = None,
 ) -> dict[str, Any]:
     """Independently enforce a completed persistent-worker soak report."""
 
@@ -773,6 +821,11 @@ def audit_soak_report(
     minimum_transit_bytes = sessions * int(transit_audit["source_size_bytes"])
     if transit_bytes < minimum_transit_bytes:
         raise AuditError("soak transit byte count does not cover completed session payloads")
+    artifact_audit = (
+        _audit_soak_artifacts(artifact_root)
+        if artifact_root is not None
+        else {}
+    )
     return {
         "ok": True,
         "duration_target_s": target_duration,
@@ -786,6 +839,7 @@ def audit_soak_report(
         "transit_bytes": transit_bytes,
         "last_session_id": last_evidence.get("session_id"),
         "protocol_version": transit_audit["protocol_version"],
+        **artifact_audit,
     }
 
 
@@ -817,6 +871,7 @@ def main() -> int:
             value,
             require_duration_s=required_soak_duration,
             min_sessions=args.min_sessions,
+            artifact_root=Path(args.evidence).expanduser().resolve().parent,
         )
     elif args.report:
         report = audit_acceptance_report(
