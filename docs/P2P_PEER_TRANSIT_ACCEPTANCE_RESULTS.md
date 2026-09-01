@@ -162,6 +162,12 @@ sessions with zero failures; all 291 expected frames and the minimum payload
 bytes were covered, memory and thread gates remained healthy, and plaintext,
 partial-file and stderr checks remained clean.
 
+The second r7 production refresh completed for both workers at 2026-09-01
+15:52:42 Hong Kong time and was again independently discovered and
+Ed25519-verified. At 1,855.656 monotonic seconds the run had completed 186
+sessions with zero failures; memory, threads, frame/byte coverage, plaintext,
+partial-file and stderr checks all remained healthy.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
