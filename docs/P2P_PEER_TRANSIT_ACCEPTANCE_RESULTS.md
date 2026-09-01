@@ -154,6 +154,14 @@ signed capacity records were independently discovered and Ed25519-verified
 through the project registry API. This run starts from zero and does not include
 any elapsed time from r6.
 
+Both r7 workers completed their first 15-minute production-interval capacity
+refresh at 2026-09-01 15:37:41--15:37:42 Hong Kong time. The project registry
+API independently discovered and Ed25519-verified the refreshed `target` and
+`transit` records. At 962.375 monotonic seconds the run had completed 97
+sessions with zero failures; all 291 expected frames and the minimum payload
+bytes were covered, memory and thread gates remained healthy, and plaintext,
+partial-file and stderr checks remained clean.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
