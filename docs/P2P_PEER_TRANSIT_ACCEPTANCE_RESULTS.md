@@ -227,6 +227,14 @@ successful sessions, zero failures, 288 transit frames and 6,353,568 transit
 bytes, with healthy memory and worker-thread gates and no plaintext, partial
 files or stderr.
 
+An independent 30-second Windows resource sample established an r8-specific
+baseline after more than 150 sessions. Idle samples had 295--296 process
+handles, six OS threads and zero UDP endpoints; active ICE sessions peaked at
+326 handles, eight threads and nine UDP endpoints, then returned to the idle
+baseline. Private memory remained between approximately 37.3 and 40.5 MiB.
+Completion will repeat this same OS-level comparison rather than reuse any r7
+resource measurements.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
