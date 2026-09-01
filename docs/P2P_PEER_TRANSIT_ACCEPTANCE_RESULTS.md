@@ -16,7 +16,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Complete Python suite | Pass | 573 passed, 3 skipped on the UDP-window-eight, one-MiB concurrent-probe candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
-| Python sdist and wheel | Pass | The r8 candidate built a 345,010-byte sdist and 274,036-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, imported protocol `rynmesh.peer-transit.v1`, rejected a hostname candidate in an installed-package black-box check, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
+| Python sdist and wheel | Pass | The `ed83e80` candidate built a 348,389-byte sdist and 275,343-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, rejected a hostname candidate, exposed the adaptive CLI, retained the eight-packet window and reached/drained an installed worker peak of 20 |
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
@@ -518,6 +518,32 @@ observed. `report.json` has SHA-256
 `7D43CC216418127E73CAA8AE2F3868C8ECA843E24C0B5157BEF136D38DC4C41A`.
 The exact candidate passed 573 Python tests with three skips and all relevant
 Ruff checks.
+
+The `ed83e80` package candidate passed an isolated PEP 517 build and clean
+dependency installation into `.codex-tmp/venv-peer-transit-r12-start`. The
+275,343-byte wheel has SHA-256
+`81907F6B9B1CD17238A1F8593106DDB498607B1E2364FEA40CFD7C9945475A3A`;
+the 348,389-byte sdist has SHA-256
+`A757A317BBD5AE5FDDF6FAECB812A3BA55621AD951E7F770741601D03B8A37A8`.
+The installed package imported from its virtual-environment `site-packages`,
+reported the eight-fragment window, rejected hostname signaling, exposed all
+four transit CLI modes and dispatched/drained 20 internal worker handlers with
+a measured peak of 20.
+
+The twelfth 24-hour worker soak started from runtime commit `ed83e80` with
+soak-runner blob `e1164671aec7b55278420fdf43720d7337317620` at
+2026-09-01 20:39:53.368742 Hong Kong time and is scheduled to finish at
+2026-09-02 20:39:53.368742. It writes fresh atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r12/progress.json`; launcher PID 39496 owns
+Python worker PID 49244. At 130.719 monotonic seconds it had completed 14
+sessions with zero failures, accumulated 42 frames and 926,576 transit bytes,
+kept memory growth at 931,934 bytes, retained all worker threads and exposed no
+plaintext, partial files or stderr. The project registry API discovered and
+Ed25519-verified the ordinary relay and target capacity records, both 852 bytes
+with `max_concurrent=8`. Runtime files must remain identical to `ed83e80`, the
+runner must retain the stated blob and `upstream/main` must remain at `b0b17c1`;
+otherwise r12 is invalidated and restarted from zero. No earlier duration is
+included.
 
 Final acceptance requires:
 
