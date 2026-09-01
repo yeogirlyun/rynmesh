@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 531 passed, 3 skipped |
+| Complete Python suite | Pass | 541 passed, 3 skipped on the rebased upstream baseline |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel installed into a clean virtual environment and its `rynmesh-transit --help` entry point loaded both installed transit modules |
@@ -40,7 +40,7 @@ because the directory contains two one-GiB test artifacts.
 
 The first persistent run correctly failed closed after 3,604 seconds and 360
 successful sessions because the one-hour signed capacity record expired. The
-worker had advertised only at startup. Commit `4e729f8` adds a 15-minute
+worker had advertised only at startup. Commit `a8458cd` adds a 15-minute
 capacity heartbeat, atomic capacity-record replacement, and regression plus
 accelerated integration coverage. The pre-fix elapsed time is invalidated.
 
@@ -50,7 +50,7 @@ completed 2,067 successful sessions over 50,861 seconds before failing at
 refreshing its otherwise valid capacity record: on Windows, a reader can
 briefly receive a sharing `OSError` during `os.replace()`, and the registry
 correctly skipped that one unreadable record. Discovery previously treated
-the single empty read as permanent absence. Commit `ef64838` adds a bounded
+the single empty read as permanent absence. Commit `14f347f` adds a bounded
 five-attempt discovery retry (200 ms maximum) and regression coverage. The
 second run is invalidated rather than combined with a later run.
 
@@ -60,23 +60,37 @@ seconds with zero session failures. A subsequent acceptance-contract audit
 added a real post-ICE registry blackout gate. While exercising that gate, an
 immediate duplicate capacity publication exposed the corresponding Windows
 write-side sharing race: `os.replace()` can itself receive a transient
-`PermissionError` when a reader has the destination open. Commit `2fb3033`
+`PermissionError` when a reader has the destination open. Commit `cf45f16`
 adds a bounded five-attempt atomic-replace retry, a regression test, the real
 control-plane blackout scenario, and fail-closed report auditing. Because this
 changes runtime registry code, the third run is invalidated despite its clean
 intermediate result.
 
 The fourth 24-hour worker soak started from zero at 2026-09-01 09:52 Hong Kong
-time and is scheduled to finish at approximately 2026-09-02 09:52. It writes
-atomic progress to `.codex-tmp/peer-transit-soak-24h-r4/progress.json`. Its
-initial checkpoint completed eight sessions with zero failures, all three
-worker threads alive, and no plaintext marker exposure.
+time. It completed 286 sessions over 2,857.924 seconds with zero failures,
+crossed three production-interval capacity refreshes, kept all three worker
+threads alive, stayed within the memory gate, and exposed neither plaintext
+markers nor partial files. A later upstream fetch advanced `upstream/main`
+from `95d5bac` to `b0b17c1` with three LLM-service hardening commits, including
+changes overlapping the shared P2P and registry modules. The fourth run was
+therefore stopped and invalidated; its clean duration is not combined with the
+final run.
 
-The first production-interval refresh completed for both signed capacity
-records at 2026-09-01 10:07:17 Hong Kong time. The soak had completed 90
-sessions with zero failures before the refresh and four further sessions with
-zero failures immediately afterward. The process, all three threads, memory
-gate, plaintext scan, partial-file scan and stderr remained healthy.
+The branch was rebased onto `upstream/main` at `b0b17c1`. The merged candidate
+preserves the upstream request/response lost-ACK recovery and the peer-transit
+opaque-byte selective-ACK transport as separate APIs. Targeted tests for both
+paths passed 19/19, related Ruff passed, and the complete Python suite passed
+541 tests with three skips. An 8 MiB/three-concurrent real-ICE preflight and
+both independent auditors passed, including the post-ICE registry blackout
+gate.
+
+The fifth 24-hour worker soak started from zero at 2026-09-01 10:45:48 Hong
+Kong time and is scheduled to finish at approximately 2026-09-02 10:45:48. It
+writes atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r5/progress.json`. Its first minute completed
+seven sessions with zero failures, both signed capacity records present, all
+three worker threads alive, memory growth of 1,365,176 bytes, no plaintext
+marker exposure, no partial files, and empty stderr.
 
 Final acceptance requires:
 
