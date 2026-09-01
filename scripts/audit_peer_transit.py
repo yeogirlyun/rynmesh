@@ -328,6 +328,62 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def audit_direct_file(value: dict[str, Any]) -> dict[str, Any]:
+    if _require(value, "protocol_version") != PROTOCOL_VERSION:
+        raise AuditError("unexpected direct-file protocol version")
+    source = str(_require(value, "source_peer_id"))
+    target = str(_require(value, "target_peer_id"))
+    if not source or not target or source == target:
+        raise AuditError("direct source and target identities are invalid")
+    if _require(value, "path_mode") != "direct":
+        raise AuditError("direct evidence did not select the direct path")
+    if _require(value, "ice_relay_candidate_used") is not False:
+        raise AuditError("direct evidence contains TURN/ICE relay usage")
+    if int(_require(value, "registry_payload_bytes")) != 0:
+        raise AuditError("registry carried direct application payload bytes")
+    _audit_hop(dict(_require(value, "source_hop")), "direct.source_hop")
+
+    source_hash = str(_require(value, "source_sha256"))
+    target_hash = str(_require(value, "target_sha256"))
+    source_size = int(_require(value, "source_size_bytes"))
+    target_size = int(_require(value, "target_size_bytes"))
+    if (
+        not source_hash.startswith("sha256:")
+        or source_hash != target_hash
+        or source_size < 0
+        or source_size != target_size
+    ):
+        raise AuditError("direct source and target artifact evidence does not match")
+
+    target_result = _verify_flat_result(
+        dict(_require(value, "target_result")),
+        expected_provider=target,
+    )
+    target_refs = dict(target_result.result_refs)
+    if (
+        target_result.status != "completed"
+        or target_result.requester_peer_id != source
+        or target_refs.get("path_mode") != "direct"
+        or target_refs.get("ice_relay_candidate_used") is not False
+        or str(target_refs.get("session_id") or "") != str(_require(value, "session_id"))
+        or str(target_refs.get("sha256") or "") != source_hash
+        or int(target_refs.get("size_bytes", -1)) != source_size
+    ):
+        raise AuditError("signed direct target result is inconsistent")
+    _audit_hop(dict(target_refs.get("hop") or {}), "direct.target_hop")
+    if value.get("result") != "pass":
+        raise AuditError("direct producer did not mark the evidence as passing")
+    return {
+        "ok": True,
+        "protocol_version": PROTOCOL_VERSION,
+        "source_peer_id": source,
+        "target_peer_id": target,
+        "source_sha256": source_hash,
+        "source_size_bytes": source_size,
+        "ice_relay_candidate_used": False,
+    }
+
+
 def audit_acceptance_report(
     value: dict[str, Any],
     *,
@@ -369,6 +425,7 @@ def audit_acceptance_report(
     _audit_hop(dict(direct_socket.get("target") or {}), "direct.target")
 
     direct_file = dict(_require(value, "healthy_direct_file"))
+    direct_file_audit = audit_direct_file(dict(_require(direct_file, "evidence")))
     if direct_file.get("ok") is not True:
         raise AuditError("healthy direct file transfer did not pass")
     if direct_file.get("source_sha256") != direct_file.get("target_sha256"):
@@ -377,6 +434,12 @@ def audit_acceptance_report(
         direct_file.get("transit_bytes_after", -2)
     ):
         raise AuditError("transit peer carried bytes during healthy direct transfer")
+    if (
+        direct_file_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or direct_file_audit["target_peer_id"] != transit_audit["target_peer_id"]
+        or direct_file_audit["source_sha256"] != direct_file.get("source_sha256")
+    ):
+        raise AuditError("healthy direct evidence identity or hash continuity failed")
     _audit_hop(dict(direct_file.get("source_hop") or {}), "direct_file.source_hop")
 
     hard_failure = dict(_require(value, "actual_hard_failure"))

@@ -47,7 +47,12 @@ from rynmesh.peer_transit_service import (
 from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
-from scripts.audit_peer_transit import AuditError, audit_peer_transit, audit_soak_report
+from scripts.audit_peer_transit import (
+    AuditError,
+    audit_direct_file,
+    audit_peer_transit,
+    audit_soak_report,
+)
 from scripts.run_peer_transit_acceptance import (
     _control_plane_blackout_acceptance,
     _route_acceptance,
@@ -777,3 +782,4 @@ def test_direct_file_path_uses_one_non_turn_ice_pair(tmp_path, monkeypatch) -> N
     assert evidence["ice_relay_candidate_used"] is False
     assert evidence["source_hop"]["remote"]["type"] != "relay"
     assert evidence["source_sha256"] == evidence["target_sha256"]
+    assert audit_direct_file(evidence)["source_size_bytes"] == source_file.stat().st_size

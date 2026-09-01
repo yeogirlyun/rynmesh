@@ -534,6 +534,7 @@ def run_acceptance(
             "transit_bytes_before": transit_bytes_before_direct,
             "transit_bytes_after": frame_audit.bytes,
             "source_hop": direct_file_evidence.get("source_hop"),
+            "evidence": direct_file_evidence,
         }
 
         hard_failure_file = work_root / "hard-failure-fallback.bin"
