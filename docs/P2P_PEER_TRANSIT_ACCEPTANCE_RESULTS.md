@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 553 passed, 3 skipped on the current rebased upstream baseline after the monotonic-clock and evidence-auditor regressions |
+| Complete Python suite | Pass | 555 passed, 3 skipped on the current candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | The current r7 candidate built a 344,141-byte sdist and 273,757-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, both transit modules imported as version 0.6.2 with protocol `rynmesh.peer-transit.v1`, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
