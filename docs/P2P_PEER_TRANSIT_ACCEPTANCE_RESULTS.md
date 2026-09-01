@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 529 passed, 3 skipped |
+| Complete Python suite | Pass | 531 passed, 3 skipped |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Isolated PEP 517 build completed; wheel installed into a clean virtual environment and its `rynmesh-transit --help` entry point loaded both installed transit modules |
@@ -30,6 +30,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
 | Transit unavailable | Pass | Bounded explicit failure, no committed partial target file |
 | Atomic capacity-refresh stress | Pass | 63/63 sessions in 60.956 s while both workers refreshed every 0.1 s; independent soak audit accepted zero failures, bounded memory, clean thread shutdown, no plaintext and no partial files |
+| Established data plane without control plane | Pass | Registry access was actively denied for 1.718 s after both ICE legs were nominated; a 4 MiB encrypted request completed during the blackout with matching hashes, no TURN and clean worker shutdown |
 
 The full resource report and signed evidence are generated locally under
 `.codex-tmp/peer-transit-acceptance-full/` and are intentionally not committed
@@ -53,10 +54,22 @@ the single empty read as permanent absence. Commit `ef64838` adds a bounded
 five-attempt discovery retry (200 ms maximum) and regression coverage. The
 second run is invalidated rather than combined with a later run.
 
-The third 24-hour worker soak started from zero at 2026-09-01 09:33 Hong Kong
-time and is scheduled to finish at approximately 2026-09-02 09:33. It writes
-atomic progress to `.codex-tmp/peer-transit-soak-24h-r3/progress.json`. Its
-initial checkpoint completed four sessions with zero failures, all three
+The third run started from zero at 2026-09-01 09:33 Hong Kong time. It crossed
+the first 15-minute refresh boundary and completed 114 sessions over 1,133
+seconds with zero session failures. A subsequent acceptance-contract audit
+added a real post-ICE registry blackout gate. While exercising that gate, an
+immediate duplicate capacity publication exposed the corresponding Windows
+write-side sharing race: `os.replace()` can itself receive a transient
+`PermissionError` when a reader has the destination open. Commit `2fb3033`
+adds a bounded five-attempt atomic-replace retry, a regression test, the real
+control-plane blackout scenario, and fail-closed report auditing. Because this
+changes runtime registry code, the third run is invalidated despite its clean
+intermediate result.
+
+The fourth 24-hour worker soak started from zero at 2026-09-01 09:52 Hong Kong
+time and is scheduled to finish at approximately 2026-09-02 09:52. It writes
+atomic progress to `.codex-tmp/peer-transit-soak-24h-r4/progress.json`. Its
+initial checkpoint completed eight sessions with zero failures, all three
 worker threads alive, and no plaintext marker exposure. Final acceptance
 requires:
 
