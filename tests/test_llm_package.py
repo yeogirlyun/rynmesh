@@ -623,6 +623,67 @@ def test_ice_signal_rejects_turn_relay_candidate_before_connecting():
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("candidate", "error"),
+    [
+        (
+            "host-name 1 udp 2130706431 example.invalid 50000 typ host",
+            "host must be an IP literal",
+        ),
+        (
+            "related-name 1 udp 1694498815 203.0.113.10 50000 typ srflx "
+            "raddr internal.invalid rport 50000",
+            "related host must be an IP literal",
+        ),
+        (
+            "component 2 udp 2130706431 192.0.2.10 50000 typ host",
+            "component must be 1",
+        ),
+        (
+            "zero-port 1 udp 2130706431 192.0.2.10 0 typ host",
+            "port is invalid",
+        ),
+        (
+            "unspecified 1 udp 2130706431 0.0.0.0 50000 typ host",
+            "not a usable unicast address",
+        ),
+        (
+            "multicast 1 udp 2130706431 239.1.2.3 50000 typ host",
+            "not a usable unicast address",
+        ),
+        (
+            "broadcast 1 udp 2130706431 255.255.255.255 50000 typ host",
+            "not a usable unicast address",
+        ),
+    ],
+)
+def test_ice_signal_rejects_non_literal_or_non_unicast_destination(candidate, error):
+    with pytest.raises(P2PError, match=error):
+        IceSignal.from_dict({
+            "username": "strict",
+            "password": "strict-password",
+            "candidates": [candidate],
+        })
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "ipv4 1 udp 2130706431 192.0.2.10 50000 typ host",
+        "ipv6 1 udp 2130706431 2001:db8::10 50000 typ host",
+        "srflx 1 udp 1694498815 203.0.113.10 50000 typ srflx "
+        "raddr 10.0.0.10 rport 50000",
+    ],
+)
+def test_ice_signal_accepts_bounded_ip_literal_candidates(candidate):
+    signal = IceSignal.from_dict({
+        "username": "strict",
+        "password": "strict-password",
+        "candidates": [candidate],
+    })
+    assert signal.candidates == (candidate,)
+
+
 def test_distinct_public_egress_acceptance_fails_fast_for_shared_mapping(monkeypatch):
     monkeypatch.setenv("RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC", "1")
     local = IceSignal(

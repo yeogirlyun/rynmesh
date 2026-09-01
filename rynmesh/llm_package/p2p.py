@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -40,6 +41,21 @@ _SEND_WINDOW = 32
 _ACK_WAIT_S = 0.25
 
 
+def _candidate_ip_literal(value: Any, *, label: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    host = str(value or "").strip().strip("[]")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise P2PError(f"ICE candidate {label} must be an IP literal") from exc
+    if address.is_unspecified or address.is_multicast:
+        raise P2PError(f"ICE candidate {label} is not a usable unicast address")
+    if isinstance(address, ipaddress.IPv4Address) and address == ipaddress.IPv4Address(
+        "255.255.255.255"
+    ):
+        raise P2PError(f"ICE candidate {label} is not a usable unicast address")
+    return address
+
+
 def _direct_candidate_from_sdp(value: str) -> aioice.Candidate:
     try:
         candidate = aioice.Candidate.from_sdp(value)
@@ -53,6 +69,18 @@ def _direct_candidate_from_sdp(value: str) -> aioice.Candidate:
         raise P2PError(f"non-direct ICE candidate is forbidden: {candidate_type}")
     if transport != "udp":
         raise P2PError(f"non-UDP ICE candidate is forbidden: {transport}")
+    if int(getattr(candidate, "component", 0)) != 1:
+        raise P2PError("ICE candidate component must be 1")
+    port = int(getattr(candidate, "port", 0))
+    if port < 1 or port > 65535:
+        raise P2PError("ICE candidate port is invalid")
+    _candidate_ip_literal(getattr(candidate, "host", ""), label="host")
+    related_address = getattr(candidate, "related_address", None)
+    if related_address:
+        _candidate_ip_literal(related_address, label="related host")
+        related_port = int(getattr(candidate, "related_port", 0) or 0)
+        if related_port < 1 or related_port > 65535:
+            raise P2PError("ICE candidate related port is invalid")
     return candidate
 
 

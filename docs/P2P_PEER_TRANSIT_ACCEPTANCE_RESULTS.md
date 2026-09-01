@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 555 passed, 3 skipped on the current candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
+| Complete Python suite | Pass | 565 passed, 3 skipped on the hostname-safe candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | The current candidate built a 344,270-byte sdist and 273,757-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, both transit modules imported as version 0.6.2 with protocol `rynmesh.peer-transit.v1`, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
@@ -192,6 +192,19 @@ to twelve UDP endpoints (three first and last), and 44.9--48.5 MiB of private
 memory. The transient increases aligned with active ICE sessions and returned
 to their between-session baselines. The same OS-level sample will be repeated
 at completion in addition to the runner's traced-memory and worker-thread gates.
+
+The seventh run was invalidated after 7,015.969 monotonic seconds and 640
+successful sessions with zero failures. A security audit showed that the
+underlying SDP parser accepted a hostname as a remote ICE candidate address.
+Although source orders select an authenticated target peer ID rather than a raw
+destination, a malicious signed target signal could still make the transit peer
+resolve or attempt an arbitrary hostname, contradicting the documented abuse
+boundary. The fixed parser requires component 1, valid UDP ports and unicast IP
+literals for both candidate and related addresses; it rejects hostnames,
+unspecified, multicast and IPv4 broadcast destinations before they reach the
+ICE agent. The invalidated progress snapshot has SHA-256
+`3639226EE2CF9CB5530538F96D234CDF0AC32F094B9E96CDB455AF004D68E6CB`.
+No r7 duration may be combined with its replacement.
 
 Final acceptance requires:
 

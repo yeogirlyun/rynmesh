@@ -190,4 +190,6 @@ used to claim public-NAT traversal across three real networks.
 - `timed out waiting for transit result`: the selected peer worker is offline
   or did not advertise the required role.
 - `TURN/relay candidate`: fail closed; remove the TURN configuration.
+- `host must be an IP literal` or `not a usable unicast address`: the signed
+  remote ICE signal is malformed or attempts a forbidden network destination.
 - hash mismatch: target deletes the `.part` file and the release gate fails.

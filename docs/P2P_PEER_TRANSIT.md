@@ -221,6 +221,9 @@ release gate for public NAT traversal.
 - signed remote signaling accepts only `host`, `srflx` or `prflx` UDP
   candidates; `relay`, non-direct and non-UDP candidates are rejected before
   they are added to the ICE agent, and programmatic signals are checked again;
+- candidate and related addresses must be unicast IP literals, component 1 and
+  valid UDP ports; hostnames, unspecified, multicast and IPv4 broadcast
+  destinations are rejected before any DNS lookup or ICE connectivity check;
 - after ICE establishment, registry and STUN access can be blocked while the
   transfer continues;
 - registry traffic remains control-sized and contains no application body;
