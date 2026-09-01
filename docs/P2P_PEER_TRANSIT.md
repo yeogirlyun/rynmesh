@@ -218,6 +218,9 @@ release gate for public NAT traversal.
 
 - no signaled or nominated candidate has ICE type `relay`;
 - TURN server configuration is absent;
+- signed remote signaling accepts only `host`, `srflx` or `prflx` UDP
+  candidates; `relay`, non-direct and non-UDP candidates are rejected before
+  they are added to the ICE agent, and programmatic signals are checked again;
 - after ICE establishment, registry and STUN access can be blocked while the
   transfer continues;
 - registry traffic remains control-sized and contains no application body;
