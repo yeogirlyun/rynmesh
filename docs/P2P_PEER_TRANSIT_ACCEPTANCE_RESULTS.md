@@ -81,9 +81,11 @@ The branch was rebased onto `upstream/main` at `b0b17c1`. The merged candidate
 preserves the upstream request/response lost-ACK recovery and the peer-transit
 opaque-byte selective-ACK transport as separate APIs. Targeted tests for both
 paths passed 19/19, related Ruff passed, and the complete Python suite passed
-541 tests with three skips. An 8 MiB/three-concurrent real-ICE preflight and
-both independent auditors passed, including the post-ICE registry blackout
-gate.
+546 tests with three skips after the evidence-auditor hardening. An 8
+MiB/three-concurrent real-ICE preflight and both independent auditors passed.
+The full-report auditor now re-verifies signed healthy-direct, hard-failure,
+concurrent-session and post-ICE registry-blackout evidence rather than trusting
+producer summary booleans.
 
 The fifth 24-hour worker soak started from zero at 2026-09-01 10:45:48 Hong
 Kong time and is scheduled to finish at approximately 2026-09-02 10:45:48. It
