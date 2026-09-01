@@ -70,8 +70,15 @@ The fourth 24-hour worker soak started from zero at 2026-09-01 09:52 Hong Kong
 time and is scheduled to finish at approximately 2026-09-02 09:52. It writes
 atomic progress to `.codex-tmp/peer-transit-soak-24h-r4/progress.json`. Its
 initial checkpoint completed eight sessions with zero failures, all three
-worker threads alive, and no plaintext marker exposure. Final acceptance
-requires:
+worker threads alive, and no plaintext marker exposure.
+
+The first production-interval refresh completed for both signed capacity
+records at 2026-09-01 10:07:17 Hong Kong time. The soak had completed 90
+sessions with zero failures before the refresh and four further sessions with
+zero failures immediately afterward. The process, all three threads, memory
+gate, plaintext scan, partial-file scan and stderr remained healthy.
+
+Final acceptance requires:
 
 - the full 86,400-second duration;
 - zero failed sessions and no plaintext marker exposure;
