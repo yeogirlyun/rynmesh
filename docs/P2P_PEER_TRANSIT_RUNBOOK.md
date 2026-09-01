@@ -57,6 +57,18 @@ bounded ciphertext frames.
 
 ## Send from peer 1
 
+Configure the source independently on peer 1; do not assume environment values
+from either worker host:
+
+```powershell
+$env:RYNMESH_HOME = "D:\rynmesh\peer-1"
+$env:RYNMESH_NETWORK_ID = "three-node-production"
+$env:RYNMESH_REGISTRY_URL = "https://registry.example.net"
+$env:RYNMESH_P2P_STUN = "stun.example.net:3478"
+$env:RYNMESH_P2P_REQUIRE_PUBLIC = "1"
+$env:RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC = "1"
+```
+
 Direct only:
 
 ```powershell
