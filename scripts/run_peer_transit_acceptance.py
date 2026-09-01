@@ -528,27 +528,62 @@ def run_acceptance(
             concurrency_files.append(item)
         concurrency_started = time.monotonic()
         concurrent_results: list[dict[str, Any]] = []
+        concurrent_timeline: list[dict[str, Any]] = []
         if concurrency_files:
+            def run_concurrent(index: int, item: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+                started_at = time.monotonic() - concurrency_started
+                result = send_file_via_peer(
+                    source,
+                    item,
+                    relay_peer_id=relay.peer_id,
+                    target_peer_id=target.peer_id,
+                    network_id=network_id,
+                    timeout_s=timeout_s,
+                )
+                ended_at = time.monotonic() - concurrency_started
+                return result, {
+                    "index": index,
+                    "session_id": str(result.get("session_id") or ""),
+                    "started_s": started_at,
+                    "ended_s": ended_at,
+                }
+
             with ThreadPoolExecutor(max_workers=concurrent_sessions) as pool:
                 futures = [
                     pool.submit(
-                        send_file_via_peer,
-                        source,
+                        run_concurrent,
+                        index,
                         item,
-                        relay_peer_id=relay.peer_id,
-                        target_peer_id=target.peer_id,
-                        network_id=network_id,
-                        timeout_s=timeout_s,
                     )
-                    for item in concurrency_files
+                    for index, item in enumerate(concurrency_files)
                 ]
-                concurrent_results = [future.result(timeout=timeout_s + 10) for future in futures]
+                concurrent_pairs = [
+                    future.result(timeout=timeout_s + 10) for future in futures
+                ]
+                concurrent_results = [item[0] for item in concurrent_pairs]
+                concurrent_timeline = [item[1] for item in concurrent_pairs]
         concurrency_elapsed = time.monotonic() - concurrency_started
+        concurrency_events = sorted(
+            [
+                (float(item["started_s"]), 1)
+                for item in concurrent_timeline
+            ]
+            + [
+                (float(item["ended_s"]), -1)
+                for item in concurrent_timeline
+            ],
+            key=lambda item: (item[0], -item[1]),
+        )
+        active_concurrent = 0
+        peak_concurrent = 0
+        for _at, delta in concurrency_events:
+            active_concurrent += delta
+            peak_concurrent = max(peak_concurrent, active_concurrent)
         concurrency_ok = all(
             result.get("source_sha256") == result.get("target_sha256")
             and result.get("ice_relay_candidate_used") is False
             for result in concurrent_results
-        )
+        ) and peak_concurrent == concurrent_sessions
 
         route = _route_acceptance()
         direct_file = work_root / "healthy-direct.bin"
@@ -672,6 +707,7 @@ def run_acceptance(
         "concurrent_sessions": concurrent_sessions,
         "concurrent_completed": len(concurrent_results),
         "concurrent_elapsed_s": concurrency_elapsed,
+        "peak_concurrent_observed": peak_concurrent,
         "concurrency_ok": concurrency_ok,
     }
     checks = {
@@ -706,6 +742,7 @@ def run_acceptance(
         "unavailable": unavailable,
         "control_plane_blackout": control_plane_blackout,
         "concurrent_evidence": concurrent_results,
+        "concurrent_timeline": concurrent_timeline,
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
         "registry_control_plane": registry_control_plane,

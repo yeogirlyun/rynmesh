@@ -340,6 +340,37 @@ def test_concurrent_auditor_requires_unique_signed_session_evidence(monkeypatch)
         )
 
 
+def test_concurrent_timeline_auditor_requires_actual_overlap() -> None:
+    performance = {
+        "concurrent_elapsed_s": 1.1,
+        "peak_concurrent_observed": 3,
+    }
+    timeline = [
+        {"session_id": "one", "started_s": 0.0, "ended_s": 1.0},
+        {"session_id": "two", "started_s": 0.1, "ended_s": 0.9},
+        {"session_id": "three", "started_s": 0.2, "ended_s": 0.8},
+    ]
+    assert audit_module._audit_concurrent_timeline(
+        performance,
+        timeline,
+        expected_session_ids={"one", "two", "three"},
+        min_concurrent=3,
+    ) == 3
+
+    sequential = [
+        {"session_id": "one", "started_s": 0.0, "ended_s": 0.2},
+        {"session_id": "two", "started_s": 0.3, "ended_s": 0.5},
+        {"session_id": "three", "started_s": 0.6, "ended_s": 0.8},
+    ]
+    with pytest.raises(AuditError, match="overlap"):
+        audit_module._audit_concurrent_timeline(
+            performance,
+            sequential,
+            expected_session_ids={"one", "two", "three"},
+            min_concurrent=3,
+        )
+
+
 def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None:
     performance = {
         "plaintext_request_bytes": 1_000_000,

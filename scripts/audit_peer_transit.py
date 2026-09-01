@@ -225,6 +225,54 @@ def _audit_concurrent_sessions(
     return concurrent_session_ids
 
 
+def _audit_concurrent_timeline(
+    performance: dict[str, Any],
+    timeline: Any,
+    *,
+    expected_session_ids: set[str],
+    min_concurrent: int,
+) -> int:
+    if not isinstance(timeline, list) or len(timeline) != len(expected_session_ids):
+        raise AuditError("concurrent timeline is incomplete")
+    observed_ids: set[str] = set()
+    events: list[tuple[float, int]] = []
+    maximum_end = 0.0
+    for index, raw_item in enumerate(timeline):
+        if not isinstance(raw_item, dict):
+            raise AuditError("concurrent timeline item is malformed")
+        session_id = str(_require(raw_item, "session_id"))
+        started = _finite_float(
+            _require(raw_item, "started_s"), f"concurrent_timeline[{index}].started_s"
+        )
+        ended = _finite_float(
+            _require(raw_item, "ended_s"), f"concurrent_timeline[{index}].ended_s"
+        )
+        if not session_id or session_id in observed_ids or started < 0 or ended <= started:
+            raise AuditError("concurrent timeline item is invalid")
+        observed_ids.add(session_id)
+        events.extend(((started, 1), (ended, -1)))
+        maximum_end = max(maximum_end, ended)
+    if observed_ids != expected_session_ids:
+        raise AuditError("concurrent timeline session identities do not match evidence")
+    active = 0
+    peak = 0
+    for _at, delta in sorted(events, key=lambda item: (item[0], -item[1])):
+        active += delta
+        peak = max(peak, active)
+    reported_peak = int(_require(performance, "peak_concurrent_observed"))
+    elapsed = _finite_float(
+        _require(performance, "concurrent_elapsed_s"), "performance.concurrent_elapsed_s"
+    )
+    if (
+        peak != reported_peak
+        or peak < min_concurrent
+        or elapsed < maximum_end
+        or active != 0
+    ):
+        raise AuditError("concurrent timeline did not prove the required overlap")
+    return peak
+
+
 def _audit_overhead_gate(performance: dict[str, Any]) -> float:
     plaintext_bytes = int(_require(performance, "plaintext_request_bytes"))
     encrypted_bytes = int(_require(performance, "encrypted_request_bytes"))
@@ -628,6 +676,12 @@ def audit_acceptance_report(
         transit_audit=transit_audit,
         min_concurrent=min_concurrent,
     )
+    peak_concurrent = _audit_concurrent_timeline(
+        performance,
+        _require(value, "concurrent_timeline"),
+        expected_session_ids=concurrent_session_ids,
+        min_concurrent=min_concurrent,
+    )
     peak_memory, peak_memory_limit = _audit_memory_gate(performance)
     session_established = _finite_float(
         performance.get("session_established_s", 999), "performance.session_established_s"
@@ -651,6 +705,7 @@ def audit_acceptance_report(
         "source_size_bytes": transit_audit["source_size_bytes"],
         "concurrent_completed": concurrent_completed,
         "concurrent_unique_sessions": len(concurrent_session_ids),
+        "peak_concurrent_observed": peak_concurrent,
         "session_established_s": session_established,
         "protocol_overhead_ratio": protocol_overhead_ratio,
         "hard_failure_fallback_s": hard_failure_elapsed,

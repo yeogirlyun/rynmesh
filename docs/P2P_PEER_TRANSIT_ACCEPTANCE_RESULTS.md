@@ -23,7 +23,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
 | One GiB streamed transfer | Pass | 1,073,741,824 bytes; source/target SHA-256 equal |
 | Bounded memory | Pass | Peak traced Python memory 5,504,736 bytes during the one-GiB run |
-| Concurrent callers | Pass | 20/20 completed in 5.875 s without deadlock |
+| Concurrent callers | Pass | 20/20 completed in 5.875 s without deadlock; the current report format records each signed session's start/end interval and the independent auditor recomputes peak overlap rather than accepting a completion count as proof of concurrency |
 | Session establishment | Pass | 0.109 s, below the five-second gate |
 | Encryption framing overhead | Pass | 0.0824%, below the 15% gate |
 | Confidentiality | Pass | Plaintext marker absent from transit frames and registry files; the independent report audit recomputes registry record count, maximum and total size from the emitted size list, enforces a fixed 64 KiB per-control-record ceiling, and requires zero application payload bytes |
