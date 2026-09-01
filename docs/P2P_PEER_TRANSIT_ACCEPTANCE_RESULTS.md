@@ -186,6 +186,13 @@ sessions continued without a discovery gap during the two-second offset. At
 1,089 transit frames and 24,024,429 transit bytes. All three worker threads
 remained alive and traced memory growth was 2,404,944 bytes.
 
+An independent 30-second Windows resource sample after 500 sessions observed
+302--326 process handles (304 first, 302 last), seven or eight OS threads, three
+to twelve UDP endpoints (three first and last), and 44.9--48.5 MiB of private
+memory. The transient increases aligned with active ICE sessions and returned
+to their between-session baselines. The same OS-level sample will be repeated
+at completion in addition to the runner's traced-memory and worker-thread gates.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
