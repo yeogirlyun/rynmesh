@@ -243,6 +243,13 @@ failures, exactly 609 transit frames and 13,435,149 transit bytes. Traced memory
 growth was 1,876,570 bytes, all three worker threads remained healthy, and the
 plaintext, partial-file and stderr checks stayed clean.
 
+The third r8 production refresh completed at 2026-09-01
+18:15:32--18:15:33 Hong Kong time. Both new capacity records passed independent
+Ed25519 verification, and the next completed-session checkpoint reached 271
+successful sessions with zero failures, 813 transit frames and 17,935,593
+transit bytes. Memory, worker threads, plaintext, partial-file and stderr gates
+remained healthy across the atomic replacements.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
