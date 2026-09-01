@@ -240,6 +240,20 @@ def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
             audit_module._audit_route_report(tampered)
 
 
+def test_acceptance_memory_auditor_recomputes_numeric_gate() -> None:
+    limit = 128 * 1024 * 1024
+    performance = {
+        "memory_bounded": True,
+        "peak_python_memory_bytes": 5_500_000,
+        "peak_python_memory_limit_bytes": limit,
+    }
+    assert audit_module._audit_memory_gate(performance) == (5_500_000, limit)
+
+    forged = {**performance, "peak_python_memory_bytes": limit + 1}
+    with pytest.raises(AuditError, match="memory"):
+        audit_module._audit_memory_gate(forged)
+
+
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:
     source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "network")
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "network")

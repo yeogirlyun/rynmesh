@@ -48,6 +48,7 @@ except ModuleNotFoundError:  # direct ``python scripts/...`` execution
     from audit_peer_transit import audit_acceptance_report, audit_peer_transit
 
 MARKER = b"RYNMESH-TRANSIT-PLAINTEXT-CHECK-2026"
+MAX_ACCEPTANCE_PEAK_MEMORY_BYTES = 128 * 1024 * 1024
 
 
 class _FrameAudit:
@@ -569,7 +570,7 @@ def run_acceptance(
         evidence["source_size_bytes"] == 1024 ** 3
         and evidence["source_sha256"] == evidence["target_sha256"]
     )
-    memory_bounded = evidence["peak_python_memory_bytes"] < max(128 * 1024 * 1024, size_bytes // 4)
+    memory_bounded = evidence["peak_python_memory_bytes"] <= MAX_ACCEPTANCE_PEAK_MEMORY_BYTES
     encrypted_request_bytes = int(evidence["sent"]["wire_bytes"])
     plaintext_request_bytes = int(evidence["sent"]["plaintext_bytes"])
     protocol_overhead_ratio = (
@@ -596,6 +597,7 @@ def run_acceptance(
         "protocol_overhead_within_15_percent": protocol_overhead_ratio <= 0.15,
         "hard_failure_fallback_within_10s": actual_hard_failure["ok"],
         "peak_python_memory_bytes": evidence["peak_python_memory_bytes"],
+        "peak_python_memory_limit_bytes": MAX_ACCEPTANCE_PEAK_MEMORY_BYTES,
         "memory_bounded": memory_bounded,
         "one_gib_required": one_gib_required,
         "one_gib_ok": one_gib_ok,

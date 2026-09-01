@@ -238,7 +238,8 @@ release gate for public NAT traversal.
   real target-policy failure test must complete through peer 2 within 10
   seconds; a state-machine-only timing assertion is insufficient evidence;
 - a transit session establishes within 5 seconds on a healthy test topology;
-- one GiB streams without hash mismatch or memory proportional to file size;
+- one GiB streams without hash mismatch and with traced Python peak memory no
+  greater than 128 MiB, independent of the transferred file size;
 - 20 concurrent sessions complete without deadlock;
 - a 24-hour soak leaves no live-session or buffer leak;
 - on a healthy local topology, protocol overhead is no more than 15% relative

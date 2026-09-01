@@ -138,6 +138,20 @@ def _audit_route_report(route: dict[str, Any]) -> None:
         raise AuditError("hard-failure route switch exceeded ten seconds")
 
 
+def _audit_memory_gate(performance: dict[str, Any]) -> tuple[int, int]:
+    peak_memory = int(_require(performance, "peak_python_memory_bytes"))
+    peak_memory_limit = int(_require(performance, "peak_python_memory_limit_bytes"))
+    if (
+        performance.get("memory_bounded") is not True
+        or peak_memory < 0
+        or peak_memory_limit <= 0
+        or peak_memory_limit > 128 * 1024 * 1024
+        or peak_memory > peak_memory_limit
+    ):
+        raise AuditError("streaming memory gate did not pass")
+    return peak_memory, peak_memory_limit
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -330,8 +344,7 @@ def audit_acceptance_report(
     concurrent_completed = int(performance.get("concurrent_completed", 0))
     if performance.get("concurrency_ok") is not True or concurrent_completed < min_concurrent:
         raise AuditError("concurrent-session gate did not pass")
-    if performance.get("memory_bounded") is not True:
-        raise AuditError("streaming memory gate did not pass")
+    peak_memory, peak_memory_limit = _audit_memory_gate(performance)
     if float(performance.get("session_established_s", 999)) > 5:
         raise AuditError("session establishment exceeded five seconds")
     if float(performance.get("protocol_overhead_ratio", 999)) > 0.15:
@@ -354,6 +367,8 @@ def audit_acceptance_report(
         "session_established_s": float(performance["session_established_s"]),
         "protocol_overhead_ratio": float(performance["protocol_overhead_ratio"]),
         "hard_failure_fallback_s": float(hard_failure["elapsed_s"]),
+        "peak_python_memory_bytes": peak_memory,
+        "peak_python_memory_limit_bytes": peak_memory_limit,
         "one_gib_required": bool(require_one_gib),
     }
 
