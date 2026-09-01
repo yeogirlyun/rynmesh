@@ -584,6 +584,17 @@ peak; an idle OS sample had zero UDP endpoints and partial files, eight OS
 threads, 302 handles, 39,706,624 private bytes and 56,561,664 working-set bytes.
 Stderr remained empty and no plaintext was observed.
 
+An independent registry replay at the 2,517.187-second checkpoint verified all
+504 persisted work-order signatures and all 1,260 persisted work-result
+signatures rather than trusting the live counter. The 252 completed sessions
+each had exactly one `open_peer_transit` and one `accept_peer_transit` order,
+with five correctly identity-bound result stages per session. The same replay
+verified both capacity signatures through the registry API and scanned 1,772
+relay, relay-network, registry and log files containing 3,330,315 bytes; it
+found no soak plaintext marker, partial file or stderr. Successive live polls
+showed the single open order changing and clearing as sessions advanced, which
+confirms it was the current in-flight session rather than an abandoned order.
+
 An idle operating-system baseline was captured at 1,214.000 monotonic seconds
 after 122 sessions and stored in
 `.codex-tmp/peer-transit-soak-24h-r12/os-resource-baseline.json`. Worker PID
