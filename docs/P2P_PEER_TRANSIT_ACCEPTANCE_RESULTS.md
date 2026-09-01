@@ -595,6 +595,26 @@ found no soak plaintext marker, partial file or stderr. Successive live polls
 showed the single open order changing and clearing as sessions advanced, which
 confirms it was the current in-flight session rather than an abandoned order.
 
+The third scheduled capacity refresh completed at 2026-09-01
+21:24:54--21:24:55 Hong Kong time. The relay record has SHA-256
+`2FF23D9B3F21121A11994779E029635D52DB8CE0F049C001FC104F5CD4DC832B` and the
+target record has SHA-256
+`FB05D3363505320565FA2DF82F2D3FD309BBBC0FF0676FC58358C3DCEE2138E6`.
+Both 852-byte records passed independent API signature verification with their
+expected roles and `max_concurrent=8`. At 2,698.469 monotonic seconds the soak
+had completed 270 sessions with zero failures, 810 frames, 17,869,680 transit
+bytes, 2,268,027 bytes of traced memory growth, no plaintext, no partial files
+and empty stderr. A fresh chunked scan covered 1,905 transit-side files and
+3,581,039 bytes without finding the marker.
+
+The final one-GiB gate was also preflighted without starting it alongside the
+soak: its fresh root
+`.codex-tmp/peer-transit-acceptance-final-r12` did not exist, the D drive had
+124,723,048,448 free bytes, and the Python 3.12.10 environment exposed the
+required one-GiB, 20-concurrent and fail-closed audit flags. The final run must
+still use a never-before-used root and begins only after r12 passes its full
+duration, so this readiness check is not counted as transfer evidence.
+
 An idle operating-system baseline was captured at 1,214.000 monotonic seconds
 after 122 sessions and stored in
 `.codex-tmp/peer-transit-soak-24h-r12/os-resource-baseline.json`. Worker PID
