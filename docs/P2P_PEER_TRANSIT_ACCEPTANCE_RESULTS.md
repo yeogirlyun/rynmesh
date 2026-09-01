@@ -444,6 +444,17 @@ transfer 8.422 s, hard-failure fallback 0.485 s, peak traced memory was
 `evidence.json` has SHA-256
 `F8AC897AE006D93CB39343F79C97D97BA8C078687CA17767F086C33F6F4B7CED`.
 
+The worker-concurrency candidate passed an isolated PEP 517 build and clean
+install into `.codex-tmp/venv-peer-transit-r11-start`. The 275,255-byte wheel
+has SHA-256
+`8C6EE39D34A70B3854D6F4698757D853B9755F69E7122E08924A6668E8F9F162`;
+the 347,883-byte sdist has SHA-256
+`95F5DD30471C048CB6536DCB17E49872AFD0B7C7BD6A80FA741C59492DB10831`.
+An installed-package black-box worker dispatched three distinct orders to a
+measured internal peak of three, deduplicated every order, drained to zero
+active handlers and exposed the session-audit parameter. The installed CLI
+continued to expose adaptive ordinary-peer transit.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
