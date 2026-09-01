@@ -570,6 +570,14 @@ failures, 300 frames, 6,618,400 transit bytes, 1,344,711 bytes of traced memory
 growth, all worker threads present, no plaintext, no partial files and empty
 stderr. Monotonic and wall elapsed measurements differed by only 0.008 s.
 
+An idle operating-system baseline was captured at 1,214.000 monotonic seconds
+after 122 sessions and stored in
+`.codex-tmp/peer-transit-soak-24h-r12/os-resource-baseline.json`. Worker PID
+49244 had 298 handles, eight OS threads, 38,215,680 private bytes and
+53,858,304 working-set bytes; UDP endpoints and partial files had both returned
+to zero. Final shutdown evidence must repeat these fields and explain any
+material growth rather than relying only on traced Python allocations.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
