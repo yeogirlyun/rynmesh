@@ -213,6 +213,10 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
 
     for key, bad_value, message in (
         ("result", "running", "complete"),
+        ("duration_target_s", float("nan"), "finite"),
+        ("elapsed_s", float("inf"), "finite"),
+        ("elapsed_s", 86399, "duration"),
+        ("sessions_completed", 99, "few sessions"),
         ("failures", [{"error": "boom"}], "failed"),
         ("plaintext_found_on_transit", True, "plaintext"),
         ("memory_growth_bytes", 4096, "memory"),
@@ -228,6 +232,9 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
                 min_sessions=100,
             )
 
+    with pytest.raises(AuditError, match="finite"):
+        audit_soak_report(report, require_duration_s=float("nan"), min_sessions=100)
+
 
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
     route = _route_acceptance()
@@ -235,6 +242,7 @@ def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
 
     cases = [
         ("thirty", lambda item: item["events"][1].update(at=31.1)),
+        ("finite", lambda item: item["events"][1].update(at=float("nan"))),
         ("flap", lambda item: item["events"].append(copy.deepcopy(item["events"][-1]))),
         ("probes", lambda item: item.update(recovery_probe_times=[92, 150, 180, 212])),
         ("metrics", lambda item: item["degraded_direct_metrics"].update(loss_ratio=0.14)),
@@ -307,6 +315,11 @@ def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None
     with pytest.raises(AuditError, match="overhead"):
         audit_module._audit_overhead_gate(forged)
 
+    with pytest.raises(AuditError, match="finite"):
+        audit_module._audit_overhead_gate(
+            {**performance, "protocol_overhead_ratio": float("nan")}
+        )
+
 
 def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
     unavailable = {
@@ -320,13 +333,15 @@ def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
     }
     audit_module._audit_unavailable_gate(unavailable)
 
-    for key, value in (
-        ("elapsed_s", 2.01),
-        ("committed_target_files", 1),
-        ("partial_target_files", 1),
+    for key, value, message in (
+        ("elapsed_s", 2.01, "bounded"),
+        ("elapsed_s", float("nan"), "finite"),
+        ("maximum_elapsed_s", float("inf"), "finite"),
+        ("committed_target_files", 1, "bounded"),
+        ("partial_target_files", 1, "bounded"),
     ):
         tampered = {**unavailable, key: value}
-        with pytest.raises(AuditError, match="bounded"):
+        with pytest.raises(AuditError, match=message):
             audit_module._audit_unavailable_gate(tampered)
 
 

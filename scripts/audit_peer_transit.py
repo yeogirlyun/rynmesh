@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,18 @@ def _require(value: dict[str, Any], key: str) -> Any:
     if key not in value:
         raise AuditError(f"missing evidence field: {key}")
     return value[key]
+
+
+def _finite_float(value: Any, label: str) -> float:
+    """Parse an evidence number and reject NaN/Infinity fail-closed."""
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise AuditError(f"{label} is not a finite number") from exc
+    if not math.isfinite(parsed):
+        raise AuditError(f"{label} is not a finite number")
+    return parsed
 
 
 def _audit_candidate(candidate: dict[str, Any], label: str) -> None:
@@ -41,8 +54,8 @@ def _audit_hop(hop: dict[str, Any], label: str) -> None:
 def _path_score(metrics: dict[str, Any], label: str) -> float:
     if metrics.get("reachable") is not True:
         raise AuditError(f"{label} was not reachable")
-    rtt = float(_require(metrics, "rtt_p95_ms"))
-    loss = float(_require(metrics, "loss_ratio"))
+    rtt = _finite_float(_require(metrics, "rtt_p95_ms"), f"{label}.rtt_p95_ms")
+    loss = _finite_float(_require(metrics, "loss_ratio"), f"{label}.loss_ratio")
     failures = int(_require(metrics, "consecutive_failures"))
     if rtt < 0 or not 0 <= loss <= 1 or failures < 0:
         raise AuditError(f"{label} contains invalid path metrics")
@@ -59,13 +72,17 @@ def _audit_route_report(route: dict[str, Any]) -> None:
         raise AuditError("route degradation/recovery result is incomplete")
 
     policy = dict(_require(route, "policy"))
-    degraded_hold = float(_require(policy, "degraded_hold_s"))
-    transit_hold = float(_require(policy, "transit_min_hold_s"))
-    recovery_hold = float(_require(policy, "recovery_hold_s"))
+    degraded_hold = _finite_float(_require(policy, "degraded_hold_s"), "degraded_hold_s")
+    transit_hold = _finite_float(_require(policy, "transit_min_hold_s"), "transit_min_hold_s")
+    recovery_hold = _finite_float(_require(policy, "recovery_hold_s"), "recovery_hold_s")
     recovery_probe_count = int(_require(policy, "recovery_probe_count"))
-    improvement = float(_require(policy, "transit_improvement_ratio"))
-    latency_threshold = float(_require(policy, "latency_threshold_ms"))
-    loss_threshold = float(_require(policy, "loss_threshold"))
+    improvement = _finite_float(
+        _require(policy, "transit_improvement_ratio"), "transit_improvement_ratio"
+    )
+    latency_threshold = _finite_float(
+        _require(policy, "latency_threshold_ms"), "latency_threshold_ms"
+    )
+    loss_threshold = _finite_float(_require(policy, "loss_threshold"), "loss_threshold")
     if (
         degraded_hold < 0
         or degraded_hold > 30
@@ -83,10 +100,16 @@ def _audit_route_report(route: dict[str, Any]) -> None:
     degraded_score = _path_score(degraded, "degraded direct path")
     transit_score = _path_score(transit, "transit path")
     if (
-        float(healthy["rtt_p95_ms"]) > latency_threshold
-        or float(healthy["loss_ratio"]) > loss_threshold
-        or not 250 <= float(degraded["rtt_p95_ms"]) <= 350
-        or not 0.15 <= float(degraded["loss_ratio"]) <= 0.20
+        _finite_float(healthy["rtt_p95_ms"], "healthy_direct_metrics.rtt_p95_ms")
+        > latency_threshold
+        or _finite_float(healthy["loss_ratio"], "healthy_direct_metrics.loss_ratio")
+        > loss_threshold
+        or not 250
+        <= _finite_float(degraded["rtt_p95_ms"], "degraded_direct_metrics.rtt_p95_ms")
+        <= 350
+        or not 0.15
+        <= _finite_float(degraded["loss_ratio"], "degraded_direct_metrics.loss_ratio")
+        <= 0.20
         or transit_score > degraded_score * (1.0 - improvement)
         or healthy_score >= degraded_score
     ):
@@ -105,7 +128,10 @@ def _audit_route_report(route: dict[str, Any]) -> None:
     ]
     if transitions != expected:
         raise AuditError("route transition sequence contains a gap or flap")
-    event_times = [float(_require(item, "at")) for item in events]
+    event_times = [
+        _finite_float(_require(item, "at"), f"route.events[{index}].at")
+        for index, item in enumerate(events)
+    ]
     if event_times != sorted(event_times):
         raise AuditError("route transition times are not monotonic")
     degraded_elapsed = event_times[1] - event_times[0]
@@ -118,7 +144,10 @@ def _audit_route_report(route: dict[str, Any]) -> None:
     if recovery_elapsed < recovery_hold:
         raise AuditError("direct recovery hold was not observed")
 
-    recovery_probes = [float(item) for item in _require(route, "recovery_probe_times")]
+    recovery_probes = [
+        _finite_float(item, f"recovery_probe_times[{index}]")
+        for index, item in enumerate(_require(route, "recovery_probe_times"))
+    ]
     if (
         len(recovery_probes) < recovery_probe_count
         or recovery_probes != sorted(recovery_probes)
@@ -133,7 +162,9 @@ def _audit_route_report(route: dict[str, Any]) -> None:
         "hard_failure",
     ]:
         raise AuditError("hard-failure route transition evidence is incomplete")
-    hard_switch = float(_require(route, "hard_failure_switch_s"))
+    hard_switch = _finite_float(
+        _require(route, "hard_failure_switch_s"), "hard_failure_switch_s"
+    )
     if hard_switch < 0 or hard_switch > 10:
         raise AuditError("hard-failure route switch exceeded ten seconds")
 
@@ -191,7 +222,9 @@ def _audit_concurrent_sessions(
 def _audit_overhead_gate(performance: dict[str, Any]) -> float:
     plaintext_bytes = int(_require(performance, "plaintext_request_bytes"))
     encrypted_bytes = int(_require(performance, "encrypted_request_bytes"))
-    reported_ratio = float(_require(performance, "protocol_overhead_ratio"))
+    reported_ratio = _finite_float(
+        _require(performance, "protocol_overhead_ratio"), "protocol_overhead_ratio"
+    )
     if plaintext_bytes <= 0 or encrypted_bytes < plaintext_bytes:
         raise AuditError("protocol byte counters are inconsistent")
     computed_ratio = (encrypted_bytes - plaintext_bytes) / plaintext_bytes
@@ -205,9 +238,13 @@ def _audit_overhead_gate(performance: dict[str, Any]) -> float:
 
 
 def _audit_unavailable_gate(unavailable: dict[str, Any]) -> None:
-    elapsed = float(_require(unavailable, "elapsed_s"))
-    operation_timeout = float(_require(unavailable, "operation_timeout_s"))
-    maximum_elapsed = float(_require(unavailable, "maximum_elapsed_s"))
+    elapsed = _finite_float(_require(unavailable, "elapsed_s"), "unavailable.elapsed_s")
+    operation_timeout = _finite_float(
+        _require(unavailable, "operation_timeout_s"), "unavailable.operation_timeout_s"
+    )
+    maximum_elapsed = _finite_float(
+        _require(unavailable, "maximum_elapsed_s"), "unavailable.maximum_elapsed_s"
+    )
     error = str(_require(unavailable, "error"))
     if (
         unavailable.get("ok") is not True
@@ -470,16 +507,25 @@ def audit_acceptance_report(
     hard_failure = dict(_require(value, "actual_hard_failure"))
     hard_failure_evidence = dict(_require(hard_failure, "evidence"))
     hard_failure_audit = audit_peer_transit(hard_failure_evidence)
+    hard_failure_elapsed = _finite_float(
+        hard_failure.get("elapsed_s", 999), "actual_hard_failure.elapsed_s"
+    )
+    direct_attempt_timeout = _finite_float(
+        hard_failure_evidence.get("direct_attempt_timeout_s", 999),
+        "actual_hard_failure.evidence.direct_attempt_timeout_s",
+    )
     if (
         hard_failure.get("ok") is not True
         or hard_failure.get("selected_path") != "peer_transit"
         or not str(hard_failure.get("direct_fallback_error") or "")
-        or float(hard_failure.get("elapsed_s", 999)) > 10
+        or hard_failure_elapsed < 0
+        or hard_failure_elapsed > 10
         or hard_failure_evidence.get("path_mode") != "peer_transit"
         or hard_failure_evidence.get("selected_path") != "peer_transit"
         or hard_failure_evidence.get("direct_fallback_error")
         != hard_failure.get("direct_fallback_error")
-        or float(hard_failure_evidence.get("direct_attempt_timeout_s", 999)) > 8
+        or direct_attempt_timeout <= 0
+        or direct_attempt_timeout > 8
         or hard_failure_audit["source_peer_id"] != transit_audit["source_peer_id"]
         or hard_failure_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
         or hard_failure_audit["target_peer_id"] != transit_audit["target_peer_id"]
@@ -501,8 +547,12 @@ def audit_acceptance_report(
     blackout = dict(_require(value, "control_plane_blackout"))
     blackout_evidence = dict(_require(blackout, "evidence"))
     blackout_audit = audit_peer_transit(blackout_evidence)
-    blackout_elapsed = float(blackout.get("blackout_elapsed_s", 0))
-    blackout_timeout = float(_require(blackout, "transfer_timeout_s"))
+    blackout_elapsed = _finite_float(
+        blackout.get("blackout_elapsed_s", 0), "control_plane_blackout.blackout_elapsed_s"
+    )
+    blackout_timeout = _finite_float(
+        _require(blackout, "transfer_timeout_s"), "control_plane_blackout.transfer_timeout_s"
+    )
     if (
         blackout.get("ok") is not True
         or blackout.get("registry_probe_blocked") is not True
@@ -531,7 +581,10 @@ def audit_acceptance_report(
         min_concurrent=min_concurrent,
     )
     peak_memory, peak_memory_limit = _audit_memory_gate(performance)
-    if float(performance.get("session_established_s", 999)) > 5:
+    session_established = _finite_float(
+        performance.get("session_established_s", 999), "performance.session_established_s"
+    )
+    if session_established < 0 or session_established > 5:
         raise AuditError("session establishment exceeded five seconds")
     protocol_overhead_ratio = _audit_overhead_gate(performance)
     if performance.get("hard_failure_fallback_within_10s") is not True:
@@ -550,9 +603,9 @@ def audit_acceptance_report(
         "source_size_bytes": transit_audit["source_size_bytes"],
         "concurrent_completed": concurrent_completed,
         "concurrent_unique_sessions": len(concurrent_session_ids),
-        "session_established_s": float(performance["session_established_s"]),
+        "session_established_s": session_established,
         "protocol_overhead_ratio": protocol_overhead_ratio,
-        "hard_failure_fallback_s": float(hard_failure["elapsed_s"]),
+        "hard_failure_fallback_s": hard_failure_elapsed,
         "peak_python_memory_bytes": peak_memory,
         "peak_python_memory_limit_bytes": peak_memory_limit,
         "one_gib_required": bool(require_one_gib),
@@ -567,11 +620,14 @@ def audit_soak_report(
 ) -> dict[str, Any]:
     """Independently enforce a completed persistent-worker soak report."""
 
+    required_duration = _finite_float(require_duration_s, "required soak duration")
+    if required_duration < 0 or min_sessions < 0:
+        raise AuditError("soak audit requirements cannot be negative")
     if value.get("result") != "pass" or value.get("completed_duration") is not True:
         raise AuditError("soak did not complete with a passing result")
-    target_duration = float(_require(value, "duration_target_s"))
-    elapsed = float(_require(value, "elapsed_s"))
-    if target_duration < require_duration_s or elapsed < require_duration_s:
+    target_duration = _finite_float(_require(value, "duration_target_s"), "duration_target_s")
+    elapsed = _finite_float(_require(value, "elapsed_s"), "elapsed_s")
+    if target_duration < required_duration or elapsed < required_duration:
         raise AuditError("soak duration is below the required gate")
     sessions = int(_require(value, "sessions_completed"))
     if sessions < min_sessions:
@@ -625,7 +681,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.min_concurrent < 0 or args.min_sessions < 0:
         raise AuditError("minimum session counts cannot be negative")
-    if args.require_duration_seconds < 0:
+    required_soak_duration = _finite_float(
+        args.require_duration_seconds, "required soak duration"
+    )
+    if required_soak_duration < 0:
         raise AuditError("required soak duration cannot be negative")
     if args.report and args.soak_report:
         raise AuditError("choose either acceptance-report or soak-report audit")
@@ -635,7 +694,7 @@ def main() -> int:
     if args.soak_report:
         report = audit_soak_report(
             value,
-            require_duration_s=args.require_duration_seconds,
+            require_duration_s=required_soak_duration,
             min_sessions=args.min_sessions,
         )
     elif args.report:
