@@ -29,7 +29,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Signed evidence audit | Pass | Independent fail-closed auditor accepted the one-GiB evidence |
 | Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
 | Transit unavailable | Pass | Bounded explicit failure, no committed partial target file |
-| Atomic capacity-refresh stress | Pass | 63/63 sessions in 60.956 s while both workers refreshed every 0.1 s; independent soak audit accepted zero failures, bounded memory, clean thread shutdown, no plaintext and no partial files |
+| Atomic capacity-refresh stress | Pass | Repeated after the read/write retry fixes: 63/63 sessions in 60.705 s while both workers refreshed every 0.1 s; independent soak audit accepted zero failures, 910,156-byte memory growth, clean thread shutdown, no plaintext and no partial files |
 | Established data plane without control plane | Pass | Registry access was actively denied for 1.718 s after both ICE legs were nominated; a 4 MiB encrypted request completed during the blackout with matching hashes, no TURN and clean worker shutdown |
 
 The full resource report and signed evidence are generated locally under
