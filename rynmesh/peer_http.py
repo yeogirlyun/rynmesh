@@ -261,6 +261,38 @@ class HttpPeerClient:
             raise PeerTransportError("peer_response_not_object")
         return payload
 
+    def post_json(
+        self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+    ) -> dict[str, Any]:
+        """POST one JSON object through the configured bounded Transport."""
+        post = getattr(self.transport, "post_bytes", None)
+        if not callable(post):
+            raise PeerTransportError("peer_transport_post_unsupported")
+        body = json.dumps(
+            payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")
+        try:
+            raw = post(
+                self.endpoint + path,
+                body,
+                timeout_s=self.timeout_s,
+                max_bytes=max_bytes,
+                headers={"Content-Type": "application/json"},
+            )
+        except TransportError as exc:
+            if exc.reason == "too_large":
+                raise PeerTransportError("peer_response_too_large") from exc
+            # Keep plugin exception text out of the public error surface: a
+            # third-party transport may include request/response bytes there.
+            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+        try:
+            value = json.loads(raw.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PeerTransportError("peer_invalid_json") from exc
+        if not isinstance(value, dict):
+            raise PeerTransportError("peer_response_not_object")
+        return value
+
     def _bytes(self, path: str, *, max_bytes: int) -> bytes:
         try:
             return self.transport.get_bytes(

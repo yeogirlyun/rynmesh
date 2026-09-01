@@ -11,7 +11,6 @@ import os
 import tempfile
 import threading
 import time
-import urllib.request
 import uuid
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
@@ -23,7 +22,6 @@ from fastapi import HTTPException, Request
 
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
-from rynmesh.transport import network_key_header
 
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
 from .lifecycle import (
@@ -537,24 +535,17 @@ def _record_is_stale(updated_at: Any) -> bool:
     return (datetime.now(timezone.utc) - stamp).total_seconds() > _DISCOVERY_STALE_AFTER_S
 
 
-def _peer_post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
-    """POST JSON to a peer endpoint with a bounded response read.
+def _peer_post_json(
+    endpoint: str, path: str, payload: dict[str, Any], *, timeout_s: float,
+) -> dict[str, Any]:
+    """POST bounded JSON through the peer client's configured Transport."""
+    # Late import avoids the peer_http -> install_llm_routes import cycle while
+    # retaining one authoritative peer transport/error implementation.
+    from rynmesh.peer_http import HttpPeerClient
 
-    Raw json.load over a peer socket would let a hostile provider stream an
-    unbounded body into memory; every peer response in this module is small.
-    """
-    request = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", **network_key_header()}, method="POST",
+    return HttpPeerClient(endpoint, timeout_s=timeout_s).post_json(
+        path, payload, max_bytes=_MAX_PEER_RESPONSE_BYTES,
     )
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
-        raw = response.read(_MAX_PEER_RESPONSE_BYTES + 1)
-    if len(raw) > _MAX_PEER_RESPONSE_BYTES:
-        raise TaskProtocolError("peer response exceeds size limit")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise TaskProtocolError("peer response must be a JSON object")
-    return value
 
 
 def _upload_relay_ciphertext(store: RynmeshStore, envelope: dict[str, Any], *,
@@ -609,8 +600,9 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
     }, private_key_bytes=store.private_key_bytes)
     if endpoint:
         try:
-            _peer_post_json(endpoint + "/api/peer/llm/settlements",
-                            settlement.to_dict(), timeout_s=15)
+            _peer_post_json(
+                endpoint, "/api/peer/llm/settlements", settlement.to_dict(), timeout_s=15,
+            )
             return True
         except Exception:
             pass
@@ -1602,7 +1594,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
                     encrypted_response = await asyncio.to_thread(
-                        _peer_post_json, endpoint + "/api/peer/llm/tasks",
+                        _peer_post_json, endpoint, "/api/peer/llm/tasks",
                         signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
                     )
                     transport_evidence = {
@@ -1878,8 +1870,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             endpoint = resolve_endpoint(provider_peer_id)
             if endpoint:
                 try:
-                    _peer_post_json(endpoint + "/api/peer/llm/cancellations",
-                                    signed_cancel.to_dict(), timeout_s=5)
+                    _peer_post_json(
+                        endpoint, "/api/peer/llm/cancellations",
+                        signed_cancel.to_dict(), timeout_s=5,
+                    )
                     delivered = True
                 except Exception:
                     pass
