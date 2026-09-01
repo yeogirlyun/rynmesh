@@ -559,6 +559,31 @@ def test_public_nat_mode_refuses_to_fall_back_to_host_candidate(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_strict_p2p_connection_never_passes_turn_configuration(monkeypatch):
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "stun.example.test:3478")
+    monkeypatch.setenv("RYNMESH_P2P_TURN", "turn.example.test:3478")
+    monkeypatch.setenv("RYNMESH_P2P_TURN_USERNAME", "must-be-ignored")
+    monkeypatch.setenv("RYNMESH_P2P_TURN_PASSWORD", "must-be-ignored")
+    captured = {}
+    sentinel = object()
+
+    def fake_connection(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(llm_p2p.aioice, "Connection", fake_connection)
+
+    assert llm_p2p.new_connection(controlling=True) is sentinel
+    assert captured == {
+        "ice_controlling": True,
+        "components": 1,
+        "stun_server": ("stun.example.test", 3478),
+        "use_ipv4": True,
+        "use_ipv6": True,
+    }
+    assert all("turn" not in key.lower() for key in captured)
+
+
 def test_ice_signal_rejects_turn_relay_candidate_before_connecting():
     with pytest.raises(P2PError, match="TURN/relay"):
         IceSignal.from_dict({

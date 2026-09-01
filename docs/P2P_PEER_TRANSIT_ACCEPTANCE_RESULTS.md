@@ -20,7 +20,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
-| Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP; `relay_used=false` |
+| Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
 | One GiB streamed transfer | Pass | 1,073,741,824 bytes; source/target SHA-256 equal |
 | Bounded memory | Pass | Peak traced Python memory 5,504,736 bytes during the one-GiB run |
 | Concurrent callers | Pass | 20/20 completed in 5.875 s without deadlock |
