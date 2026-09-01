@@ -246,6 +246,7 @@ def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
         ("flap", lambda item: item["events"].append(copy.deepcopy(item["events"][-1]))),
         ("probes", lambda item: item.update(recovery_probe_times=[92, 150, 180, 212])),
         ("metrics", lambda item: item["degraded_direct_metrics"].update(loss_ratio=0.14)),
+        ("metrics", lambda item: item["degraded_direct_metrics"].update(jitter_ms=49)),
     ]
     for message, mutate in cases:
         tampered = copy.deepcopy(route)

@@ -99,6 +99,9 @@ def _audit_route_report(route: dict[str, Any]) -> None:
     healthy_score = _path_score(healthy, "healthy direct path")
     degraded_score = _path_score(degraded, "degraded direct path")
     transit_score = _path_score(transit, "transit path")
+    degraded_jitter = _finite_float(
+        _require(degraded, "jitter_ms"), "degraded_direct_metrics.jitter_ms"
+    )
     if (
         _finite_float(healthy["rtt_p95_ms"], "healthy_direct_metrics.rtt_p95_ms")
         > latency_threshold
@@ -107,6 +110,7 @@ def _audit_route_report(route: dict[str, Any]) -> None:
         or not 250
         <= _finite_float(degraded["rtt_p95_ms"], "degraded_direct_metrics.rtt_p95_ms")
         <= 350
+        or not 50 <= degraded_jitter <= 100
         or not 0.15
         <= _finite_float(degraded["loss_ratio"], "degraded_direct_metrics.loss_ratio")
         <= 0.20

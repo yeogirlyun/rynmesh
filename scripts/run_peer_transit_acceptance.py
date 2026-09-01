@@ -200,6 +200,7 @@ def _route_acceptance() -> dict[str, Any]:
         "degraded_direct_metrics": {
             "reachable": degraded.reachable,
             "rtt_p95_ms": degraded.rtt_p95_ms,
+            "jitter_ms": 75.0,
             "loss_ratio": degraded.loss_ratio,
             "consecutive_failures": degraded.consecutive_failures,
         },
