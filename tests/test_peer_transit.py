@@ -302,6 +302,28 @@ def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None
         audit_module._audit_overhead_gate(forged)
 
 
+def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
+    unavailable = {
+        "ok": True,
+        "elapsed_s": 0.55,
+        "operation_timeout_s": 0.5,
+        "maximum_elapsed_s": 2.0,
+        "error": "timed out waiting for transit result",
+        "committed_target_files": 0,
+        "partial_target_files": 0,
+    }
+    audit_module._audit_unavailable_gate(unavailable)
+
+    for key, value in (
+        ("elapsed_s", 2.01),
+        ("committed_target_files", 1),
+        ("partial_target_files", 1),
+    ):
+        tampered = {**unavailable, key: value}
+        with pytest.raises(AuditError, match="bounded"):
+            audit_module._audit_unavailable_gate(tampered)
+
+
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:
     source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "network")
     target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "network")

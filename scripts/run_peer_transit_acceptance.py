@@ -225,6 +225,8 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
     advertise_transit_capacity(target, network_id=network_id, roles=("target",))
     payload = root / "failure-payload.bin"
     _write_payload(payload, 4096)
+    operation_timeout_s = 0.5
+    maximum_elapsed_s = 2.0
     started = time.monotonic()
     error = ""
     try:
@@ -234,16 +236,27 @@ def _relay_unavailable_acceptance(root: Path) -> dict[str, Any]:
             relay_peer_id=relay.peer_id,
             target_peer_id=target.peer_id,
             network_id=network_id,
-            timeout_s=0.5,
+            timeout_s=operation_timeout_s,
         )
     except PeerTransitError as exc:
         error = str(exc)
     elapsed = time.monotonic() - started
+    failure_inbox = target.home / "transit-inbox"
+    committed_target_files = len([path for path in failure_inbox.glob("*") if path.is_file()])
+    partial_target_files = len(list(failure_inbox.rglob("*.part")))
     return {
-        "ok": bool(error) and elapsed < 5,
+        "ok": (
+            "timed out" in error.lower()
+            and elapsed <= maximum_elapsed_s
+            and committed_target_files == 0
+            and partial_target_files == 0
+        ),
         "elapsed_s": elapsed,
+        "operation_timeout_s": operation_timeout_s,
+        "maximum_elapsed_s": maximum_elapsed_s,
         "error": error,
-        "partial_target_files": len(list((target.home / "transit-inbox").glob("*"))),
+        "committed_target_files": committed_target_files,
+        "partial_target_files": partial_target_files,
     }
 
 

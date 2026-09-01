@@ -204,6 +204,25 @@ def _audit_overhead_gate(performance: dict[str, Any]) -> float:
     return computed_ratio
 
 
+def _audit_unavailable_gate(unavailable: dict[str, Any]) -> None:
+    elapsed = float(_require(unavailable, "elapsed_s"))
+    operation_timeout = float(_require(unavailable, "operation_timeout_s"))
+    maximum_elapsed = float(_require(unavailable, "maximum_elapsed_s"))
+    error = str(_require(unavailable, "error"))
+    if (
+        unavailable.get("ok") is not True
+        or operation_timeout <= 0
+        or maximum_elapsed < operation_timeout
+        or maximum_elapsed > 5
+        or elapsed < 0
+        or elapsed > maximum_elapsed
+        or "timed out" not in error.lower()
+        or int(_require(unavailable, "committed_target_files")) != 0
+        or int(_require(unavailable, "partial_target_files")) != 0
+    ):
+        raise AuditError("transit-unavailable handling is not bounded and atomic")
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -389,8 +408,7 @@ def audit_acceptance_report(
     _audit_route_report(route)
 
     unavailable = dict(_require(value, "unavailable"))
-    if unavailable.get("ok") is not True or int(unavailable.get("partial_target_files", -1)) != 0:
-        raise AuditError("transit-unavailable handling is not bounded and atomic")
+    _audit_unavailable_gate(unavailable)
 
     blackout = dict(_require(value, "control_plane_blackout"))
     if (
