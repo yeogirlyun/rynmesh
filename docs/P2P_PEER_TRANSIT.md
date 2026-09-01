@@ -269,6 +269,6 @@ The acceptance tool emits signed or independently derived JSON containing:
 
 `scripts/audit_peer_transit.py` must reject missing evidence, TURN candidates,
 identity discontinuity, byte-count contradictions, plaintext exposure and hash
-mismatch.  The Docker/namespace scenario is a deterministic CI gate; a separate
-physical run with three public egress networks is required before claiming
-public-NAT acceptance.
+mismatch.  The hermetic three-identity, real local-UDP/ICE scenario is the
+deterministic CI gate; a separate physical run with three public egress networks
+is required before claiming public-NAT acceptance.
