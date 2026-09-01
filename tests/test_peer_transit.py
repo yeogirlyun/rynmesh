@@ -255,6 +255,46 @@ def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
             audit_module._audit_route_report(tampered)
 
 
+def test_post_recovery_direct_file_auditor_binds_route_and_counter_stop(monkeypatch) -> None:
+    identities = {
+        "source_peer_id": "source",
+        "target_peer_id": "target",
+        "source_sha256": "sha256:abc",
+    }
+    monkeypatch.setattr(audit_module, "audit_direct_file", lambda _item: identities)
+    hop = {
+        "transport": "ice_udp_direct",
+        "relay_used": False,
+        "local": {"transport": "udp", "type": "host"},
+        "remote": {"transport": "udp", "type": "host"},
+    }
+    evidence = {
+        "ok": True,
+        "route_recovered_path": "direct",
+        "source_sha256": "sha256:abc",
+        "target_sha256": "sha256:abc",
+        "transit_bytes_before": 1234,
+        "transit_bytes_after": 1234,
+        "source_hop": hop,
+        "evidence": {},
+    }
+    assert audit_module._audit_post_recovery_direct_file(
+        evidence,
+        transit_audit=identities,
+    ) == identities
+
+    with pytest.raises(AuditError, match="post-recovery"):
+        audit_module._audit_post_recovery_direct_file(
+            {**evidence, "route_recovered_path": "peer_transit"},
+            transit_audit=identities,
+        )
+    with pytest.raises(AuditError, match="carried bytes"):
+        audit_module._audit_post_recovery_direct_file(
+            {**evidence, "transit_bytes_after": 1235},
+            transit_audit=identities,
+        )
+
+
 def test_acceptance_memory_auditor_recomputes_numeric_gate() -> None:
     limit = 128 * 1024 * 1024
     performance = {

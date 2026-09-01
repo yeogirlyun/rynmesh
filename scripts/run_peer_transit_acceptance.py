@@ -509,6 +509,7 @@ def run_acceptance(
             for result in concurrent_results
         )
 
+        route = _route_acceptance()
         direct_file = work_root / "healthy-direct.bin"
         _write_payload(direct_file, 64 * 1024)
         transit_bytes_before_direct = frame_audit.bytes
@@ -534,6 +535,7 @@ def run_acceptance(
             "target_sha256": direct_file_evidence.get("target_sha256"),
             "transit_bytes_before": transit_bytes_before_direct,
             "transit_bytes_after": frame_audit.bytes,
+            "route_recovered_path": route.get("recovered_path"),
             "source_hop": direct_file_evidence.get("source_hop"),
             "evidence": direct_file_evidence,
         }
@@ -576,7 +578,6 @@ def run_acceptance(
         for path in registry_root.rglob("*.json")
     )
     direct = asyncio.run(_direct_probe())
-    route = _route_acceptance()
     unavailable = _relay_unavailable_acceptance(work_root)
     control_plane_blackout = _control_plane_blackout_acceptance(
         work_root,

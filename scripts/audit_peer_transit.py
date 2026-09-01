@@ -264,6 +264,32 @@ def _audit_unavailable_gate(unavailable: dict[str, Any]) -> None:
         raise AuditError("transit-unavailable handling is not bounded and atomic")
 
 
+def _audit_post_recovery_direct_file(
+    direct_file: dict[str, Any],
+    *,
+    transit_audit: dict[str, Any],
+) -> dict[str, Any]:
+    direct_file_audit = audit_direct_file(dict(_require(direct_file, "evidence")))
+    if direct_file.get("ok") is not True:
+        raise AuditError("healthy direct file transfer did not pass")
+    if direct_file.get("route_recovered_path") != "direct":
+        raise AuditError("post-recovery file transfer was not bound to the direct route")
+    if direct_file.get("source_sha256") != direct_file.get("target_sha256"):
+        raise AuditError("healthy direct file hashes do not match")
+    if int(direct_file.get("transit_bytes_before", -1)) != int(
+        direct_file.get("transit_bytes_after", -2)
+    ):
+        raise AuditError("transit peer carried bytes during healthy direct transfer")
+    if (
+        direct_file_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or direct_file_audit["target_peer_id"] != transit_audit["target_peer_id"]
+        or direct_file_audit["source_sha256"] != direct_file.get("source_sha256")
+    ):
+        raise AuditError("healthy direct evidence identity or hash continuity failed")
+    _audit_hop(dict(direct_file.get("source_hop") or {}), "direct_file.source_hop")
+    return direct_file_audit
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -491,22 +517,7 @@ def audit_acceptance_report(
     _audit_hop(dict(direct_socket.get("target") or {}), "direct.target")
 
     direct_file = dict(_require(value, "healthy_direct_file"))
-    direct_file_audit = audit_direct_file(dict(_require(direct_file, "evidence")))
-    if direct_file.get("ok") is not True:
-        raise AuditError("healthy direct file transfer did not pass")
-    if direct_file.get("source_sha256") != direct_file.get("target_sha256"):
-        raise AuditError("healthy direct file hashes do not match")
-    if int(direct_file.get("transit_bytes_before", -1)) != int(
-        direct_file.get("transit_bytes_after", -2)
-    ):
-        raise AuditError("transit peer carried bytes during healthy direct transfer")
-    if (
-        direct_file_audit["source_peer_id"] != transit_audit["source_peer_id"]
-        or direct_file_audit["target_peer_id"] != transit_audit["target_peer_id"]
-        or direct_file_audit["source_sha256"] != direct_file.get("source_sha256")
-    ):
-        raise AuditError("healthy direct evidence identity or hash continuity failed")
-    _audit_hop(dict(direct_file.get("source_hop") or {}), "direct_file.source_hop")
+    _audit_post_recovery_direct_file(direct_file, transit_audit=transit_audit)
 
     hard_failure = dict(_require(value, "actual_hard_failure"))
     hard_failure_evidence = dict(_require(hard_failure, "evidence"))
