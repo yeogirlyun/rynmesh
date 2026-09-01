@@ -156,6 +156,13 @@ python scripts/audit_peer_transit.py --report --require-one-gib `
   --min-concurrent 20 .codex-tmp\peer-transit-full-report.json
 ```
 
+When a prepared run fails before a complete report can be assembled, the CLI
+writes `result=error`, the exception type/message, traceback and remaining
+partial-file count to `--output`. It does this only when the work root was new
+or empty before launch. A non-empty root is rejected without creating or
+changing any file, so failed attempts remain immutable and the next attempt
+must use a fresh directory.
+
 Run the 24-hour persistent-worker soak separately. It keeps the same three node
 identities alive, repeatedly opens encrypted sessions, deletes delivered test
 payloads, and records memory growth, thread cleanup, partial files and live
@@ -210,3 +217,6 @@ used to claim public-NAT traversal across three real networks.
 - `host must be an IP literal` or `not a usable unicast address`: the signed
   remote ICE signal is malformed or attempts a forbidden network destination.
 - hash mismatch: target deletes the `.part` file and the release gate fails.
+- `result=error`: preserve that entire work root and report, diagnose the
+  recorded exception, and rerun from a new directory; never clear or reuse the
+  failed root.

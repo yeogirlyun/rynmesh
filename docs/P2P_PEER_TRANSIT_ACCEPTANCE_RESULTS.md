@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 573 passed, 3 skipped on the UDP-window-eight, one-MiB concurrent-probe candidate |
+| Complete Python suite | Pass | 574 passed, 3 skipped on the UDP-window-eight, one-MiB concurrent-probe and failure-report candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | The `ed83e80` candidate built a 348,389-byte sdist and 275,343-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, rejected a hostname candidate, exposed the adaptive CLI, retained the eight-packet window and reached/drained an installed worker peak of 20 |
@@ -516,8 +516,24 @@ observed. `report.json` has SHA-256
 `8C21974F15C9CF138FAB2FFA5AC7BA5424B82A0823EECB72F5A6F6EC287B5D7D` and
 `evidence.json` has SHA-256
 `7D43CC216418127E73CAA8AE2F3868C8ECA843E24C0B5157BEF136D38DC4C41A`.
-The exact candidate passed 573 Python tests with three skips and all relevant
+The exact candidate passed 574 Python tests with three skips and all relevant
 Ruff checks.
+
+An independent repeat at
+`.codex-tmp/peer-transit-acceptance-r19-20worker-window8-repeat` also passed.
+Its 8,388,608-byte main transfer completed in 9.000 s; all 20 one-MiB sessions
+completed in 27.016 s and the independently audited relay and target worker
+peaks were again 20. Hard-failure fallback took 1.297 s and traced memory
+peaked at 5,521,176 bytes. `report.json` has SHA-256
+`E4DC87DB32A47DD851C73D904DB36218562A7F0A5B248A2D3B7E6A26B26ECA61` and
+`evidence.json` has SHA-256
+`9970C11F4B1CAE308EE091AFAB00FAF6084EDA40D621C7926F443B99A127A665`.
+
+The acceptance CLI now preserves a structured `result=error` report when an
+operational exception interrupts a run after a fresh work root was prepared.
+It records the exception, traceback and remaining partial-file count. A
+regression also proves that a pre-existing non-empty root is rejected without
+writing the requested report or changing its sentinel evidence.
 
 The `ed83e80` package candidate passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r12-start`. The
