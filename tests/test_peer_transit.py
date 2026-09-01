@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +50,7 @@ from rynmesh.peer_transit_service import (
 from rynmesh.registry import FilePeerRegistry, RegistryError
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
+from scripts import run_peer_transit_acceptance as acceptance_module
 from scripts import run_peer_transit_soak as soak_module
 from scripts.audit_peer_transit import (
     AuditError,
@@ -65,6 +68,63 @@ from scripts.run_peer_transit_acceptance import (
 
 def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def test_acceptance_cli_persists_runtime_failure_without_polluting_stale_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def fail_after_preparation(**kwargs):
+        work_root = kwargs["work_root"]
+        _prepare_work_root(work_root)
+        (work_root / "target-inbox").mkdir()
+        (work_root / "target-inbox" / "failed.part").write_bytes(b"partial")
+        raise ConnectionError("diagnostic connection loss")
+
+    monkeypatch.setattr(acceptance_module, "run_acceptance", fail_after_preparation)
+    fresh = tmp_path / "fresh"
+    report_path = fresh / "report.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_peer_transit_acceptance.py",
+            "--size-mib",
+            "1",
+            "--concurrent",
+            "1",
+            "--work-root",
+            str(fresh),
+            "--output",
+            str(report_path),
+        ],
+    )
+    assert acceptance_module.main() == 1
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["result"] == "error"
+    assert report["error_type"] == "ConnectionError"
+    assert report["partial_files"] == 1
+    assert "diagnostic connection loss" in report["traceback"]
+
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    sentinel = stale / "existing.json"
+    sentinel.write_text("preserve", encoding="utf-8")
+    stale_report = stale / "report.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_peer_transit_acceptance.py",
+            "--work-root",
+            str(stale),
+            "--output",
+            str(stale_report),
+        ],
+    )
+    assert acceptance_module.main() == 1
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert not stale_report.exists()
 
 
 def test_result_polling_binds_provider_and_requester_identity() -> None:

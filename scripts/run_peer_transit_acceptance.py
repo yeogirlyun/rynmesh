@@ -17,6 +17,7 @@ import os
 import tempfile
 import threading
 import time
+import traceback
 import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -863,12 +864,33 @@ def main() -> int:
         if args.work_root
         else Path(tempfile.mkdtemp(prefix="rynmesh-peer-transit-acceptance-"))
     )
-    report = run_acceptance(
-        size_bytes=args.size_mib * 1024 * 1024,
-        concurrent_sessions=args.concurrent,
-        timeout_s=args.timeout,
-        work_root=root,
+    root_was_available = not root.exists() or (
+        root.is_dir() and next(root.iterdir(), None) is None
     )
+    try:
+        report = run_acceptance(
+            size_bytes=args.size_mib * 1024 * 1024,
+            concurrent_sessions=args.concurrent,
+            timeout_s=args.timeout,
+            work_root=root,
+        )
+    except Exception as exc:  # noqa: BLE001 - persist exact acceptance failure
+        report = {
+            "result": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+            "work_root": str(root),
+            "partial_files": (
+                len(list(root.rglob("*.part"))) if root.is_dir() else 0
+            ),
+            "failed_at_unix_s": time.time(),
+        }
+        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        if args.output and root_was_available:
+            Path(args.output).write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 1
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         Path(args.output).write_text(rendered, encoding="utf-8")
