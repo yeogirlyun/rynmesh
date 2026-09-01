@@ -59,6 +59,11 @@ results are signed by the responding node. Every result poll binds the signed
 record to the exact work-order ID, network ID, expected provider peer ID and
 expected requester peer ID before it trusts either a status or an ICE signal;
 a different signed peer cannot race an observed order with a forged result.
+The registry enforces the same binding before storing a result, rejects results
+without an existing order, and creates work-order IDs exclusively so another
+signed requester cannot overwrite an observed order. An order leaves the
+provider's open queue only when a result with the order's exact provider,
+requester, network and ID is present.
 
 ### 3.2 End-to-end encryption
 
@@ -92,6 +97,8 @@ payloads.
 - expired, mismatched, recursively relayed and unsigned sessions are rejected;
 - signed work results from an unexpected provider/requester, order or network
   are ignored before their status or signaling fields are interpreted;
+- work-order IDs are immutable, orphan results are rejected, and a result from
+  an unrelated signed peer cannot hide an order from its intended provider;
 - peer 2 never writes payload frames to disk or application logs.
 
 ## 4. Protocol

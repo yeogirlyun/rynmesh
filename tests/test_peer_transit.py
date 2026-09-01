@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from rynmesh import peer_transit_service
 from rynmesh import registry as registry_module
 from rynmesh.crypto import SignedPayload
+from rynmesh.jobs import WorkOrder, WorkResult, sign_work_order, sign_work_result
 from rynmesh.llm_package.p2p import (
     apply_remote_signal,
     gather_signal,
@@ -44,7 +45,7 @@ from rynmesh.peer_transit_service import (
     send_file_adaptive,
     send_file_direct,
 )
-from rynmesh.registry import FilePeerRegistry
+from rynmesh.registry import FilePeerRegistry, RegistryError
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
 from scripts import run_peer_transit_soak as soak_module
@@ -144,15 +145,23 @@ def test_result_polling_ignores_signed_result_from_wrong_registry_peer(tmp_path)
     for store in (source, provider, attacker):
         store.registry = registry
 
-    attacker.publish_work_result(
-        work_order_id="observed-order-id",
-        requester_peer_id=source.peer_id,
-        status="failed",
-        message="forged failure",
+    submitted = source.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="identity-binding.test",
+        operation="serve",
         network_id="identity-binding",
     )
+    order_id = submitted["work_order_id"]
+    with pytest.raises(RegistryError, match="work_result_order_identity_mismatch"):
+        attacker.publish_work_result(
+            work_order_id=order_id,
+            requester_peer_id=source.peer_id,
+            status="failed",
+            message="forged failure",
+            network_id="identity-binding",
+        )
     provider.publish_work_result(
-        work_order_id="observed-order-id",
+        work_order_id=order_id,
         requester_peer_id=source.peer_id,
         status="accepted",
         message="legitimate result",
@@ -161,7 +170,7 @@ def test_result_polling_ignores_signed_result_from_wrong_registry_peer(tmp_path)
 
     result = peer_transit_service._poll_result(
         source,
-        work_order_id="observed-order-id",
+        work_order_id=order_id,
         network_id="identity-binding",
         expected_provider_peer_id=provider.peer_id,
         expected_requester_peer_id=source.peer_id,
@@ -171,6 +180,98 @@ def test_result_polling_ignores_signed_result_from_wrong_registry_peer(tmp_path)
 
     assert result["provider_peer_id"] == provider.peer_id
     assert result["message"] == "legitimate result"
+
+
+def test_wrong_provider_result_cannot_hide_open_order_from_expected_provider(
+    tmp_path, monkeypatch
+) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    requester = RynmeshStore(home=tmp_path / "requester", network_dir=tmp_path / "requester-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    attacker = RynmeshStore(home=tmp_path / "attacker", network_dir=tmp_path / "attacker-net")
+    for store in (requester, provider, attacker):
+        store.registry = registry
+
+    submitted = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="identity-binding.test",
+        operation="serve",
+        network_id="identity-binding",
+    )
+    order_id = submitted["work_order_id"]
+    forged = sign_work_result(
+        WorkResult(
+            work_order_id=order_id,
+            provider_peer_id=attacker.peer_id,
+            requester_peer_id=requester.peer_id,
+            status="failed",
+            message="forged close",
+            network_id="identity-binding",
+        ),
+        private_key_bytes=attacker.private_key_bytes,
+    )
+    real_list_results = registry.list_work_results
+
+    def noisy_list_results(**kwargs):
+        return [forged, *real_list_results(**kwargs)]
+
+    monkeypatch.setattr(registry, "list_work_results", noisy_list_results)
+
+    still_open = provider.poll_work_orders(network_id="identity-binding")["work_orders"]
+    assert [item["work_order_id"] for item in still_open] == [order_id]
+
+    provider.publish_work_result(
+        work_order_id=order_id,
+        requester_peer_id=requester.peer_id,
+        status="accepted",
+        network_id="identity-binding",
+    )
+    assert provider.poll_work_orders(network_id="identity-binding")["work_orders"] == []
+
+
+def test_registry_rejects_work_order_id_overwrite_and_orphan_result(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    requester = RynmeshStore(home=tmp_path / "requester", network_dir=tmp_path / "requester-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    attacker = RynmeshStore(home=tmp_path / "attacker", network_dir=tmp_path / "attacker-net")
+    for store in (requester, provider, attacker):
+        store.registry = registry
+
+    submitted = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="identity-binding.test",
+        operation="serve",
+        network_id="identity-binding",
+    )
+    original = WorkOrder.from_dict(submitted["order"])
+    repeated = registry.submit_work_order(
+        sign_work_order(original, private_key_bytes=requester.private_key_bytes)
+    )
+    assert repeated["work_order_id"] == submitted["work_order_id"]
+
+    collision = WorkOrder(
+        work_order_id=submitted["work_order_id"],
+        requester_peer_id=attacker.peer_id,
+        provider_peer_id=provider.peer_id,
+        capability="identity-binding.test",
+        operation="serve",
+        network_id="identity-binding",
+    )
+    with pytest.raises(RegistryError, match="work_order_id_conflict"):
+        registry.submit_work_order(
+            sign_work_order(collision, private_key_bytes=attacker.private_key_bytes)
+        )
+
+    visible = provider.poll_work_orders(network_id="identity-binding")["work_orders"]
+    assert [item["requester_peer_id"] for item in visible] == [requester.peer_id]
+
+    with pytest.raises(RegistryError, match="work_result_order_not_found"):
+        provider.publish_work_result(
+            work_order_id="missing-order",
+            requester_peer_id=requester.peer_id,
+            status="failed",
+            network_id="identity-binding",
+        )
 
 
 @pytest.mark.parametrize("provider,requester", [("", "requester"), ("provider", "")])

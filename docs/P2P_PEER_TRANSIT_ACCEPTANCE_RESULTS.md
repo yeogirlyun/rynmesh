@@ -326,6 +326,46 @@ Both initial 852-byte capacity records were independently discovered and
 Ed25519-verified through the project API. This run starts from zero and includes
 no elapsed time from r8.
 
+The r9 run was deliberately invalidated at 2026-09-01 19:05:13 Hong Kong time
+when the follow-up open-queue audit found a second result-binding gap. Although
+the client now ignored a forged result, `FilePeerRegistry.list_work_orders`
+previously considered the latest result from any signed provider when deciding
+whether an order was still open. A registry observer could therefore publish a
+result under its own identity for an observed order ID and hide that order from
+the intended provider. The preserved snapshot is
+`.codex-tmp/peer-transit-soak-24h-r9/progress.invalidated-open-order-result-binding.json`
+with SHA-256
+`EAA7FEA280DB2ADEAB52F3EFD095D076853660D24C90688CD5EDE471E2CBC52D`.
+It records 290.953 monotonic seconds, 30 successful sessions, zero failures, 90
+frames, 1,985,490 transit bytes, 1,393,654 bytes of traced memory growth, a
+6,140,620-byte traced peak, three healthy worker threads and no plaintext.
+Both r9 processes were stopped and verified absent; no r9 duration may be
+combined with its replacement.
+
+The registry fix now creates work-order files exclusively, permits only an
+identical idempotent resubmission, rejects a different signed payload reusing an
+existing order ID, rejects orphan results, and accepts a result only when its
+signed order/network/provider/requester fields match the immutable order. Open
+queue status applies the same four-field binding and checks returned records
+again even if the lower-level result filter is ignored. Adversarial tests cover
+wrong-provider publication, queue hiding, order-ID overwrite and orphan
+results. The full Python suite passed 571 tests with three skips after this
+hardening.
+
+A fresh post-fix r10 preflight at
+`.codex-tmp/peer-transit-acceptance-r10-order-binding` transferred 8,388,608
+bytes with matching source/target hashes, 129 request frames, one response
+frame and 8,396,260 bytes per transit direction. Three concurrent sessions
+overlapped and completed; setup took 0.110 s, the main transfer 7.188 s, hard
+direct failure fell back through the peer in 0.468 s, traced memory peaked at
+5,499,780 bytes and protocol overhead was 0.0831%. TURN rejection, registry
+control sizing, plaintext scans, post-nomination registry/STUN blackout,
+unavailable-relay atomic failure and both independent audits passed.
+`report.json` has SHA-256
+`561D14E965594EDA5BB2436935F18971064B25B2537F647694AD040DEC05B1DD` and
+`evidence.json` has SHA-256
+`62988EDAE44A5FA1A2393EC72408A89297432DA2582239D18F8565846AFB08ED`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

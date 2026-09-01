@@ -194,6 +194,11 @@ used to claim public-NAT traversal across three real networks.
 - `result identity binding is incomplete`: the caller did not supply the exact
   work-order/network/provider/requester binding; fail closed rather than poll a
   broad result set.
+- `work_order_id_conflict`: another signed payload already owns that immutable
+  order ID; preserve both records for investigation and do not overwrite it.
+- `work_result_order_not_found` or `work_result_order_identity_mismatch`: the
+  result is orphaned or was signed by a node other than the order's designated
+  provider/requester pair; reject it before it can close the open order.
 - `TURN/relay candidate`: fail closed; remove the TURN configuration.
 - `host must be an IP literal` or `not a usable unicast address`: the signed
   remote ICE signal is malformed or attempts a forbidden network destination.

@@ -264,7 +264,18 @@ class FilePeerRegistry:
     def submit_work_order(self, signed_order: SignedPayload) -> dict[str, Any]:
         order = verify_work_order(signed_order)
         path = self.work_orders_dir / f"{_peer_slug(order.work_order_id)}.json"
-        path.write_text(json.dumps(signed_order.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        encoded = json.dumps(signed_order.to_dict(), indent=2, sort_keys=True)
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write(encoded)
+        except FileExistsError as exc:
+            try:
+                existing = SignedPayload.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                verify_work_order(existing)
+            except (OSError, json.JSONDecodeError, KeyError, ValueError, JobError) as read_exc:
+                raise RegistryError("work_order_id_conflict") from read_exc
+            if existing.to_dict() != signed_order.to_dict():
+                raise RegistryError("work_order_id_conflict") from exc
         return {
             "status": "submitted",
             "work_order_id": order.work_order_id,
@@ -306,6 +317,8 @@ class FilePeerRegistry:
             latest_status = self._latest_work_result_status(
                 order.work_order_id,
                 network_id=network_id,
+                provider_peer_id=order.provider_peer_id,
+                requester_peer_id=order.requester_peer_id,
             )
             if wanted_status == "open":
                 if not order_is_open(order):
@@ -319,6 +332,23 @@ class FilePeerRegistry:
 
     def publish_work_result(self, signed_result: SignedPayload) -> dict[str, Any]:
         result = verify_work_result(signed_result)
+        order_path = self.work_orders_dir / f"{_peer_slug(result.work_order_id)}.json"
+        try:
+            signed_order = SignedPayload.from_dict(
+                json.loads(order_path.read_text(encoding="utf-8"))
+            )
+            order = verify_work_order(signed_order)
+        except FileNotFoundError as exc:
+            raise RegistryError("work_result_order_not_found") from exc
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, JobError) as exc:
+            raise RegistryError("work_result_order_invalid") from exc
+        if (
+            result.work_order_id != order.work_order_id
+            or result.network_id != order.network_id
+            or result.provider_peer_id != order.provider_peer_id
+            or result.requester_peer_id != order.requester_peer_id
+        ):
+            raise RegistryError("work_result_order_identity_mismatch")
         result_dir = self.work_results_dir / _peer_slug(result.work_order_id)
         result_dir.mkdir(parents=True, exist_ok=True)
         path = result_dir / f"{_peer_slug(signed_result.subject_hash)}.json"
@@ -369,12 +399,31 @@ class FilePeerRegistry:
         records.sort(key=lambda item: item[0])
         return [signed for _, signed in records]
 
-    def _latest_work_result_status(self, work_order_id: str, *, network_id: str) -> str:
+    def _latest_work_result_status(
+        self,
+        work_order_id: str,
+        *,
+        network_id: str,
+        provider_peer_id: str,
+        requester_peer_id: str,
+    ) -> str:
         latest = ""
-        for signed in self.list_work_results(work_order_id=work_order_id, network_id=network_id):
+        for signed in self.list_work_results(
+            work_order_id=work_order_id,
+            network_id=network_id,
+            provider_peer_id=provider_peer_id,
+            requester_peer_id=requester_peer_id,
+        ):
             try:
                 result = verify_work_result(signed)
             except JobError:
+                continue
+            if (
+                result.work_order_id != work_order_id
+                or result.network_id != network_id
+                or result.provider_peer_id != provider_peer_id
+                or result.requester_peer_id != requester_peer_id
+            ):
                 continue
             latest = result.status
         return latest
