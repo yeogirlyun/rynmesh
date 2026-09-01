@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import threading
 import time
@@ -47,7 +48,10 @@ from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
 from scripts.audit_peer_transit import AuditError, audit_peer_transit, audit_soak_report
-from scripts.run_peer_transit_acceptance import _control_plane_blackout_acceptance
+from scripts.run_peer_transit_acceptance import (
+    _control_plane_blackout_acceptance,
+    _route_acceptance,
+)
 
 
 def _future(seconds: float = 300) -> str:
@@ -217,6 +221,23 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
                 require_duration_s=86400,
                 min_sessions=100,
             )
+
+
+def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
+    route = _route_acceptance()
+    audit_module._audit_route_report(route)
+
+    cases = [
+        ("thirty", lambda item: item["events"][1].update(at=31.1)),
+        ("flap", lambda item: item["events"].append(copy.deepcopy(item["events"][-1]))),
+        ("probes", lambda item: item.update(recovery_probe_times=[92, 150, 180, 212])),
+        ("metrics", lambda item: item["degraded_direct_metrics"].update(loss_ratio=0.14)),
+    ]
+    for message, mutate in cases:
+        tampered = copy.deepcopy(route)
+        mutate(tampered)
+        with pytest.raises(AuditError, match=message):
+            audit_module._audit_route_report(tampered)
 
 
 def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) -> None:

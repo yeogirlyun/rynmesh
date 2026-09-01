@@ -38,6 +38,106 @@ def _audit_hop(hop: dict[str, Any], label: str) -> None:
     _audit_candidate(dict(hop.get("remote") or {}), f"{label}.remote")
 
 
+def _path_score(metrics: dict[str, Any], label: str) -> float:
+    if metrics.get("reachable") is not True:
+        raise AuditError(f"{label} was not reachable")
+    rtt = float(_require(metrics, "rtt_p95_ms"))
+    loss = float(_require(metrics, "loss_ratio"))
+    failures = int(_require(metrics, "consecutive_failures"))
+    if rtt < 0 or not 0 <= loss <= 1 or failures < 0:
+        raise AuditError(f"{label} contains invalid path metrics")
+    return rtt + 2000.0 * loss
+
+
+def _audit_route_report(route: dict[str, Any]) -> None:
+    if (
+        route.get("ok") is not True
+        or route.get("degraded_path") != "peer_transit"
+        or route.get("recovered_path") != "direct"
+        or route.get("hard_failure_path") != "peer_transit"
+    ):
+        raise AuditError("route degradation/recovery result is incomplete")
+
+    policy = dict(_require(route, "policy"))
+    degraded_hold = float(_require(policy, "degraded_hold_s"))
+    transit_hold = float(_require(policy, "transit_min_hold_s"))
+    recovery_hold = float(_require(policy, "recovery_hold_s"))
+    recovery_probe_count = int(_require(policy, "recovery_probe_count"))
+    improvement = float(_require(policy, "transit_improvement_ratio"))
+    latency_threshold = float(_require(policy, "latency_threshold_ms"))
+    loss_threshold = float(_require(policy, "loss_threshold"))
+    if (
+        degraded_hold < 0
+        or degraded_hold > 30
+        or transit_hold < 60
+        or recovery_hold < 120
+        or recovery_probe_count < 5
+        or not 0.25 <= improvement <= 1
+    ):
+        raise AuditError("route policy does not meet hysteresis gates")
+
+    healthy = dict(_require(route, "healthy_direct_metrics"))
+    degraded = dict(_require(route, "degraded_direct_metrics"))
+    transit = dict(_require(route, "transit_metrics"))
+    healthy_score = _path_score(healthy, "healthy direct path")
+    degraded_score = _path_score(degraded, "degraded direct path")
+    transit_score = _path_score(transit, "transit path")
+    if (
+        float(healthy["rtt_p95_ms"]) > latency_threshold
+        or float(healthy["loss_ratio"]) > loss_threshold
+        or not 250 <= float(degraded["rtt_p95_ms"]) <= 350
+        or not 0.15 <= float(degraded["loss_ratio"]) <= 0.20
+        or transit_score > degraded_score * (1.0 - improvement)
+        or healthy_score >= degraded_score
+    ):
+        raise AuditError("route quality metrics do not prove degradation and improvement")
+
+    events = [dict(item) for item in _require(route, "events")]
+    expected = [
+        ("direct", "degraded", "direct_degraded"),
+        ("degraded", "peer_transit", "transit_better"),
+        ("peer_transit", "recovering", "direct_recovery_started"),
+        ("recovering", "direct", "direct_recovered"),
+    ]
+    transitions = [
+        (str(item.get("from") or ""), str(item.get("to") or ""), str(item.get("reason") or ""))
+        for item in events
+    ]
+    if transitions != expected:
+        raise AuditError("route transition sequence contains a gap or flap")
+    event_times = [float(_require(item, "at")) for item in events]
+    if event_times != sorted(event_times):
+        raise AuditError("route transition times are not monotonic")
+    degraded_elapsed = event_times[1] - event_times[0]
+    transit_elapsed = event_times[2] - event_times[1]
+    recovery_elapsed = event_times[3] - event_times[2]
+    if not degraded_hold <= degraded_elapsed <= 30.001:
+        raise AuditError("degraded route did not switch within thirty seconds")
+    if transit_elapsed < transit_hold:
+        raise AuditError("transit minimum hold was not observed")
+    if recovery_elapsed < recovery_hold:
+        raise AuditError("direct recovery hold was not observed")
+
+    recovery_probes = [float(item) for item in _require(route, "recovery_probe_times")]
+    if (
+        len(recovery_probes) < recovery_probe_count
+        or recovery_probes != sorted(recovery_probes)
+        or recovery_probes[0] < event_times[2]
+        or recovery_probes[-1] > event_times[3]
+    ):
+        raise AuditError("direct recovery probes are incomplete")
+
+    hard_events = [dict(item) for item in _require(route, "hard_failure_events")]
+    if [str(item.get("reason") or "") for item in hard_events] != [
+        "direct_degraded",
+        "hard_failure",
+    ]:
+        raise AuditError("hard-failure route transition evidence is incomplete")
+    hard_switch = float(_require(route, "hard_failure_switch_s"))
+    if hard_switch < 0 or hard_switch > 10:
+        raise AuditError("hard-failure route switch exceeded ten seconds")
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -204,14 +304,7 @@ def audit_acceptance_report(
         raise AuditError("real direct-failure fallback did not meet the ten-second gate")
 
     route = dict(_require(value, "route"))
-    reasons = {str(item.get("reason") or "") for item in route.get("events", [])}
-    if route.get("ok") is not True or not {
-        "direct_degraded",
-        "transit_better",
-        "direct_recovery_started",
-        "direct_recovered",
-    } <= reasons:
-        raise AuditError("route degradation/recovery evidence is incomplete")
+    _audit_route_report(route)
 
     unavailable = dict(_require(value, "unavailable"))
     if unavailable.get("ok") is not True or int(unavailable.get("partial_target_files", -1)) != 0:

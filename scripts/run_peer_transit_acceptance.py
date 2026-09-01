@@ -138,12 +138,13 @@ async def _direct_probe() -> dict[str, Any]:
 
 
 def _route_acceptance() -> dict[str, Any]:
-    manager = RouteManager(RoutePolicy(
+    policy = RoutePolicy(
         degraded_hold_s=30,
         transit_min_hold_s=60,
         recovery_hold_s=120,
         recovery_probe_count=5,
-    ))
+    )
+    manager = RouteManager(policy)
     healthy = PathMetrics(True, 40, 0)
     degraded = PathMetrics(True, 330, 0.18)
     hard_failed = PathMetrics(False, 0, 1, consecutive_failures=3)
@@ -152,11 +153,9 @@ def _route_acceptance() -> dict[str, Any]:
     manager.update(direct=degraded, transit=transit, now_monotonic=1)
     manager.update(direct=degraded, transit=transit, now_monotonic=31)
     degraded_path = manager.path_mode
-    manager.update(direct=healthy, transit=transit, now_monotonic=92)
-    manager.update(direct=healthy, transit=transit, now_monotonic=150)
-    manager.update(direct=healthy, transit=transit, now_monotonic=180)
-    manager.update(direct=healthy, transit=transit, now_monotonic=211)
-    manager.update(direct=healthy, transit=transit, now_monotonic=212)
+    recovery_probe_times = [92.0, 150.0, 180.0, 211.0, 212.0]
+    for probe_at in recovery_probe_times:
+        manager.update(direct=healthy, transit=transit, now_monotonic=probe_at)
     recovered_path = manager.path_mode
 
     hard_manager = RouteManager()
@@ -181,6 +180,35 @@ def _route_acceptance() -> dict[str, Any]:
         "hard_failure_switch_s": hard_elapsed,
         "events": manager.events,
         "hard_failure_events": hard_manager.events,
+        "policy": {
+            "hard_failure_count": policy.hard_failure_count,
+            "loss_threshold": policy.loss_threshold,
+            "latency_threshold_ms": policy.latency_threshold_ms,
+            "transit_improvement_ratio": policy.transit_improvement_ratio,
+            "degraded_hold_s": policy.degraded_hold_s,
+            "transit_min_hold_s": policy.transit_min_hold_s,
+            "recovery_hold_s": policy.recovery_hold_s,
+            "recovery_probe_count": policy.recovery_probe_count,
+        },
+        "healthy_direct_metrics": {
+            "reachable": healthy.reachable,
+            "rtt_p95_ms": healthy.rtt_p95_ms,
+            "loss_ratio": healthy.loss_ratio,
+            "consecutive_failures": healthy.consecutive_failures,
+        },
+        "degraded_direct_metrics": {
+            "reachable": degraded.reachable,
+            "rtt_p95_ms": degraded.rtt_p95_ms,
+            "loss_ratio": degraded.loss_ratio,
+            "consecutive_failures": degraded.consecutive_failures,
+        },
+        "transit_metrics": {
+            "reachable": transit.reachable,
+            "rtt_p95_ms": transit.rtt_p95_ms,
+            "loss_ratio": transit.loss_ratio,
+            "consecutive_failures": transit.consecutive_failures,
+        },
+        "recovery_probe_times": recovery_probe_times,
     }
 
 
