@@ -303,14 +303,39 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
         dict(_require(value, "target_result")),
         expected_provider=target,
     )
+    signed_relay_refs = dict(relay_result.result_refs)
+    target_refs = dict(target_result.result_refs)
+    session_id = str(_require(value, "session_id"))
+    if signed_relay_refs != relay_refs:
+        raise AuditError("relay evidence does not match the signed relay result")
     if relay_result.status != "completed" or relay_result.requester_peer_id != source:
         raise AuditError("signed relay result has invalid lifecycle bindings")
     if target_result.status != "completed" or target_result.requester_peer_id != transit:
         raise AuditError("signed target result has invalid lifecycle bindings")
-    if str(target_result.result_refs.get("sha256") or "") != source_hash:
-        raise AuditError("signed target result does not attest the source hash")
-    if str(target_result.result_refs.get("session_id") or "") != str(value.get("session_id") or ""):
-        raise AuditError("signed target result session mismatch")
+    if (
+        str(relay_refs.get("protocol_version") or "") != PROTOCOL_VERSION
+        or str(relay_refs.get("session_id") or "") != session_id
+        or str(relay_refs.get("target_work_order_id") or "") != target_result.work_order_id
+    ):
+        raise AuditError("signed relay result session or target-order binding failed")
+    if (
+        str(target_refs.get("protocol_version") or "") != PROTOCOL_VERSION
+        or target_refs.get("path_mode") != "peer_transit"
+        or target_refs.get("ice_relay_candidate_used") is not False
+        or str(target_refs.get("sha256") or "") != source_hash
+        or int(target_refs.get("size_bytes", -1)) != source_size
+        or str(target_refs.get("session_id") or "") != session_id
+    ):
+        raise AuditError("signed target result does not bind the transit artifact")
+    _audit_hop(dict(target_refs.get("hop") or {}), "target_hop")
+    receipt = dict(_require(value, "receipt"))
+    if (
+        str(receipt.get("session_id") or "") != session_id
+        or str(receipt.get("sha256") or "") != source_hash
+        or int(receipt.get("size_bytes", -1)) != source_size
+        or receipt.get("status") != "stored"
+    ):
+        raise AuditError("encrypted target receipt does not match signed evidence")
     if value.get("result") != "pass":
         raise AuditError("producer did not mark the evidence as passing")
 

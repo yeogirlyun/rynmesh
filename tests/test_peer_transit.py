@@ -724,6 +724,11 @@ def test_registry_signaling_carries_no_file_body_and_workers_stream_via_peer(
         audit_peer_transit(tampered)
 
     tampered = __import__("copy").deepcopy(evidence)
+    tampered["relay_evidence"]["transit_rx_bytes"] += 1
+    with pytest.raises(AuditError, match="signed relay"):
+        audit_peer_transit(tampered)
+
+    tampered = __import__("copy").deepcopy(evidence)
     tampered["target_result"]["result_refs"]["sha256"] = "sha256:" + "0" * 64
     with pytest.raises(AuditError, match="signature"):
         audit_peer_transit(tampered)
