@@ -135,6 +135,8 @@ Final acceptance requires:
 
 - the full 86,400-second duration;
 - zero failed sessions and no plaintext marker exposure;
+- cumulative frame and byte counts covering every fixed-size completed session,
+  with per-session request/response frame counts bound to signed relay evidence;
 - no `.part` files after worker shutdown;
 - both worker threads stopped;
 - traced Python memory growth no greater than 32 MiB after warm-up.

@@ -438,7 +438,16 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
     tx_bytes = int(_require(value, "transit_tx_bytes"))
     if rx_bytes < source_size or tx_bytes < source_size:
         raise AuditError("transit byte counters do not cover the source payload")
-    if int(_require(value, "request_frames")) < 1 or int(_require(value, "response_frames")) < 1:
+    request_frames = int(_require(value, "request_frames"))
+    response_frames = int(_require(value, "response_frames"))
+    signed_request_frames = int(_require(relay_refs, "request_frames"))
+    signed_response_frames = int(_require(relay_refs, "response_frames"))
+    if (
+        request_frames < 1
+        or response_frames < 1
+        or request_frames != signed_request_frames
+        or response_frames != signed_response_frames
+    ):
         raise AuditError("transit frame counters are incomplete")
 
     relay_result = _verify_flat_result(
@@ -495,6 +504,8 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
         "source_size_bytes": source_size,
         "transit_rx_bytes": rx_bytes,
         "transit_tx_bytes": tx_bytes,
+        "request_frames": signed_request_frames,
+        "response_frames": signed_response_frames,
         "ice_relay_candidate_used": False,
     }
 
@@ -750,10 +761,13 @@ def audit_soak_report(
         raise AuditError("soak worker threads did not stop")
     transit_frames = int(_require(value, "transit_frames"))
     transit_bytes = int(_require(value, "transit_bytes"))
-    if transit_frames < sessions:
-        raise AuditError("soak transit frame count is inconsistent")
     last_evidence = dict(_require(value, "last_evidence"))
     transit_audit = audit_peer_transit(last_evidence)
+    minimum_transit_frames = sessions * (
+        int(transit_audit["request_frames"]) + int(transit_audit["response_frames"])
+    )
+    if transit_frames < minimum_transit_frames:
+        raise AuditError("soak transit frame count is inconsistent")
     minimum_transit_bytes = sessions * int(transit_audit["source_size_bytes"])
     if transit_bytes < minimum_transit_bytes:
         raise AuditError("soak transit byte count does not cover completed session payloads")
@@ -764,6 +778,8 @@ def audit_soak_report(
         "sessions_completed": sessions,
         "memory_growth_bytes": memory_growth,
         "memory_growth_limit_bytes": memory_limit,
+        "minimum_transit_frames": minimum_transit_frames,
+        "transit_frames": transit_frames,
         "minimum_transit_bytes": minimum_transit_bytes,
         "transit_bytes": transit_bytes,
         "last_session_id": last_evidence.get("session_id"),

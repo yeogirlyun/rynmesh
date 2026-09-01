@@ -188,6 +188,8 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         lambda value: {
             "protocol_version": "rynmesh.peer-transit.v1",
             "source_size_bytes": 32,
+            "request_frames": 2,
+            "response_frames": 1,
         },
     )
     report = {
@@ -223,6 +225,7 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         ("memory_growth_bytes", 4096, "memory"),
         ("partial_files", 1, "partial"),
         ("worker_threads_stopped", False, "threads"),
+        ("transit_frames", 299, "frame count"),
         ("transit_bytes", 3199, "byte count"),
     ):
         tampered = {**report, key: bad_value}
@@ -854,6 +857,11 @@ def test_registry_signaling_carries_no_file_body_and_workers_stream_via_peer(
     tampered = __import__("copy").deepcopy(evidence)
     tampered["relay_evidence"]["transit_rx_bytes"] += 1
     with pytest.raises(AuditError, match="signed relay"):
+        audit_peer_transit(tampered)
+
+    tampered = __import__("copy").deepcopy(evidence)
+    tampered["request_frames"] += 1
+    with pytest.raises(AuditError, match="frame counters"):
         audit_peer_transit(tampered)
 
     tampered = __import__("copy").deepcopy(evidence)
