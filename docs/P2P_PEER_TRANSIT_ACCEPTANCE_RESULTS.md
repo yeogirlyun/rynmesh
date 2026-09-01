@@ -312,6 +312,20 @@ failure from the wrong provider while accepting the exact provider/requester
 binding, and confirmed that `rynmesh-transit --help` exposes the adaptive
 ordinary-peer path.
 
+The ninth 24-hour worker soak started from result-identity-binding runtime
+commit `7dc7528` with soak-runner blob
+`ab819905e1505073a4081221a385c53e60f41bc1` at 2026-09-01 19:00:22 Hong Kong
+time and is scheduled to finish at approximately 2026-09-02 19:00:22. It writes
+fresh atomic progress to
+`.codex-tmp/peer-transit-soak-24h-r9/progress.json`; launcher PID 50716 owns
+Python worker PID 51412. At 20.328 monotonic seconds it had completed three
+sessions with zero failures, established a 559,216-byte post-warm-up traced
+baseline, retained all three worker threads, accumulated exactly nine frames
+and 198,549 transit bytes, and exposed no plaintext, partial files or stderr.
+Both initial 852-byte capacity records were independently discovered and
+Ed25519-verified through the project API. This run starts from zero and includes
+no elapsed time from r8.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
