@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 565 passed, 3 skipped on the hostname-safe candidate after the monotonic-clock, evidence-auditor and clean acceptance-root regressions |
+| Complete Python suite | Pass | 573 passed, 3 skipped on the UDP-window-eight, one-MiB concurrent-probe candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | The r8 candidate built a 345,010-byte sdist and 274,036-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a new virtual environment, imported protocol `rynmesh.peer-transit.v1`, rejected a hostname candidate in an installed-package black-box check, and `rynmesh-transit --help` exposed worker, transit, direct and adaptive commands |
@@ -21,11 +21,11 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
-| One GiB streamed transfer | Pass | 1,073,741,824 bytes; source/target SHA-256 equal |
-| Bounded memory | Pass | Peak traced Python memory 5,504,736 bytes during the one-GiB run |
-| Concurrent callers | Pass | The latest timeline preflight completed 20/20 in 5.937 s with 20 unique signed sessions and an independently recomputed peak overlap of 20; the earlier full-resource run completed 20/20 in 5.875 s, and the final one-GiB run will repeat this combined gate |
-| Session establishment | Pass | 0.109 s, below the five-second gate |
-| Encryption framing overhead | Pass | 0.0824%, below the 15% gate |
+| One GiB streamed transfer | Pending repeat | An earlier runtime passed 1,073,741,824 bytes with matching hashes; commit `ed83e80` must repeat this gate after the fresh 24-hour soak |
+| Bounded memory | Pass / final repeat pending | r18 peak traced Python memory was 5,527,397 bytes; the final one-GiB run must remain below 128 MiB |
+| Concurrent callers | Pass | r18 completed 20/20 one-MiB sessions in 25.812 s; 20 unique signed sessions and independent relay/target production-worker timelines both recomputed a peak of 20 |
+| Session establishment | Pass | 0.187 s in r18, below the five-second gate |
+| Encryption framing overhead | Pass | 0.0830% in r18, below the 15% gate |
 | Confidentiality | Pass | Plaintext marker absent from transit frames and registry files; the independent report audit recomputes registry record count, maximum and total size from the emitted size list, enforces a fixed 64 KiB per-control-record ceiling, and requires zero application payload bytes |
 | Signed evidence audit | Pass | Independent fail-closed auditor accepted the one-GiB evidence |
 | Full-report audit | Pass | Independent auditor enforces direct, fallback, route, resource and concurrency gates |
@@ -479,6 +479,45 @@ files are required to remain identical to `58456e5`, the soak runner must keep
 the stated blob identity, and `upstream/main` must remain at `b0b17c1`; a
 change to any fixed point invalidates the run. This run starts from zero and
 includes no elapsed time from r10 or any earlier run.
+
+The r11 run was deliberately invalidated at 2026-09-01 20:12 Hong Kong time
+after a stronger 20-session preflight replaced the previous 64 KiB concurrency
+payload with one MiB per session. The preserved snapshot is
+`.codex-tmp/peer-transit-soak-24h-r11/progress.invalidated-20-concurrency-stream-instability.json`
+with SHA-256
+`DC7FC6143E8E6BFCF72CA75AEA4C138395BB1839FE60FC81852EFFD392D5CC00`.
+It records 1,355.047 monotonic seconds, 136 successful sessions, zero soak
+failures, 408 frames, 9,001,024 transit bytes, 1,498,585 bytes of traced memory
+growth, a 5,962,610-byte traced peak and no plaintext. Both r11 processes were
+stopped and verified absent; none of this duration may be combined with the
+replacement run.
+
+The first 20-way diagnostic completed all 64 KiB transfers but observed a
+relay-worker peak of 20 and target-worker peak of only 16, proving that such a
+small payload did not reliably exercise target concurrency. Increasing every
+probe to one MiB then exposed UDP burst congestion: the previous 32-fragment
+per-connection window caused connection loss across simultaneous two-hop
+streams. A rejected global four-slot experiment also demonstrated that a
+single-process hermetic test must not make its three logical nodes compete for
+one artificial process-wide pool. All failed roots remain preserved as r14
+through r17 evidence and are not counted as passing runs.
+
+Commit `ed83e80` instead limits each ICE connection to an eight-fragment
+reliable-send window, keeps all 20 sessions independently active, raises the
+audited concurrent payload floor to one MiB and preserves producer failure
+reports when final self-audit rejects a completed report. The fresh r18 run at
+`.codex-tmp/peer-transit-acceptance-r18-20worker-window8-preflight` passed both
+independent audits. Its 8,388,608-byte main transfer completed in 8.984 s with
+130 transit frames and 8,396,292 transit bytes per direction. All 20 one-MiB
+sessions completed in 25.812 s; signed relay and target handler timelines each
+recomputed a peak of 20. Hard direct failure fell back in 1.063 s, traced
+memory peaked at 5,527,397 bytes, hashes matched and no TURN or plaintext was
+observed. `report.json` has SHA-256
+`8C21974F15C9CF138FAB2FFA5AC7BA5424B82A0823EECB72F5A6F6EC287B5D7D` and
+`evidence.json` has SHA-256
+`7D43CC216418127E73CAA8AE2F3868C8ECA843E24C0B5157BEF136D38DC4C41A`.
+The exact candidate passed 573 Python tests with three skips and all relevant
+Ruff checks.
 
 Final acceptance requires:
 

@@ -158,8 +158,11 @@ Once both pairs are nominated:
 5. all three peers emit body-free evidence.
 
 Hop reliability uses bounded chunking, hash validation and acknowledgements.
-Application streams are resumable at a verified chunk boundary; a half-written
-artifact is never committed as complete.
+Each connection sends at most eight unacknowledged UDP fragments per reliable
+message window. This keeps 20 simultaneous two-hop streams from starving ICE
+consent traffic or overflowing a peer's UDP receive queue while preserving
+fair progress across sessions. Application streams are resumable at a verified
+chunk boundary; a half-written artifact is never committed as complete.
 
 ## 5. Route selection
 
@@ -265,7 +268,9 @@ release gate for public NAT traversal.
 - a transit session establishes within 5 seconds on a healthy test topology;
 - one GiB streams without hash mismatch and with traced Python peak memory no
   greater than 128 MiB, independent of the transferred file size;
-- 20 concurrent sessions complete without deadlock;
+- 20 concurrent sessions, each carrying at least one MiB, complete without
+  deadlock or connection loss; relay and target worker-handler timelines must
+  independently prove a peak of 20 for the same signed session IDs;
 - a 24-hour soak leaves no live-session or buffer leak;
 - on a healthy local topology, protocol overhead is no more than 15% relative
   to the same two-hop forwarding path without application encryption.

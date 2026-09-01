@@ -124,7 +124,11 @@ legs, scans transit frames and registry files for a unique marker, verifies
 signed work results, exercises route recovery and checks bounded worker
 concurrency. The concurrency gate records handler entry/exit inside both relay
 and target workers and binds those intervals to the same signed session IDs in
-the transfer evidence; overlapping caller wait times alone do not pass.
+the transfer evidence; overlapping caller wait times alone do not pass. Every
+concurrent probe transfers one MiB, and the independent auditor rejects a
+smaller payload or a signed per-session size mismatch. The reliable UDP sender
+limits each connection to eight unacknowledged fragments per window so 20
+two-hop streams remain fair without starving ICE consent traffic.
 The target worker denies the direct operation during the hard-failure case so
 the real adaptive client must fail direct and complete through peer 2 within
 10 seconds; this is not inferred only from the route state machine.
