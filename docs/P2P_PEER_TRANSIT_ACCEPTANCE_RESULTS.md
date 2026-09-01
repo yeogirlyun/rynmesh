@@ -575,8 +575,10 @@ after 122 sessions and stored in
 `.codex-tmp/peer-transit-soak-24h-r12/os-resource-baseline.json`. Worker PID
 49244 had 298 handles, eight OS threads, 38,215,680 private bytes and
 53,858,304 working-set bytes; UDP endpoints and partial files had both returned
-to zero. Final shutdown evidence must repeat these fields and explain any
-material growth rather than relying only on traced Python allocations.
+to zero. The baseline file has SHA-256
+`809CEB4EEFF8E782BB32BE783FA8BA75A6123E9F2B4950B1F16E78354A197B7B`.
+Final shutdown evidence must verify that hash, repeat these fields and explain
+any material growth rather than relying only on traced Python allocations.
 
 Final acceptance requires:
 
