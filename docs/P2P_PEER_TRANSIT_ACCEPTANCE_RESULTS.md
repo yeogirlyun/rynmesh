@@ -92,6 +92,12 @@ seven sessions with zero failures, both signed capacity records present, all
 three worker threads alive, memory growth of 1,365,176 bytes, no plaintext
 marker exposure, no partial files, and empty stderr.
 
+Both r5 workers completed their first production-interval capacity refresh at
+2026-09-01 11:00:48--11:00:49 Hong Kong time. The soak had completed 90
+sessions with zero failures at the refresh boundary and six more sessions
+immediately afterward. The Python process, three worker threads, memory gate,
+plaintext scan, partial-file scan and stderr all remained healthy.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
