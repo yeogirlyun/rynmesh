@@ -570,6 +570,20 @@ failures, 300 frames, 6,618,400 transit bytes, 1,344,711 bytes of traced memory
 growth, all worker threads present, no plaintext, no partial files and empty
 stderr. Monotonic and wall elapsed measurements differed by only 0.008 s.
 
+The second scheduled capacity refresh completed at 2026-09-01 21:09:54 Hong
+Kong time without interrupting the data plane. The relay record has SHA-256
+`0732D706D0F59D14E39B25BC2ED4C8308E80B6CA0355523195EAC797B8B83400` and the
+target record has SHA-256
+`D5D1ACDEB0C4970A8F3F3A4250E6CB03E0803D0D07CCA6DB7E259AE416A1A4C8`.
+Both signed files remained 852 bytes, retained their `transit` and `target`
+roles respectively, advertised `max_concurrent=8`, and were independently
+parsed and signature-verified. At the subsequent 2,046.656-second checkpoint,
+205 sessions had completed with zero failures, 615 frames and 13,567,720
+transit bytes. Traced memory growth was 1,944,084 bytes with a 6,106,431-byte
+peak; an idle OS sample had zero UDP endpoints and partial files, eight OS
+threads, 302 handles, 39,706,624 private bytes and 56,561,664 working-set bytes.
+Stderr remained empty and no plaintext was observed.
+
 An idle operating-system baseline was captured at 1,214.000 monotonic seconds
 after 122 sessions and stored in
 `.codex-tmp/peer-transit-soak-24h-r12/os-resource-baseline.json`. Worker PID
