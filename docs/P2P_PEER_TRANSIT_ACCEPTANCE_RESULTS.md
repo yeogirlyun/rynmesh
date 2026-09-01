@@ -218,6 +218,15 @@ partial files nor stderr. Both 852-byte signed capacity records were
 independently Ed25519-verified through the project API. This run starts from
 zero and includes no elapsed time from r7.
 
+Both r8 workers completed their first production-interval capacity refresh at
+2026-09-01 17:45:31 Hong Kong time. The two 852-byte replacement records were
+independently Ed25519-verified and continued to advertise
+`rynmesh.peer-transit.v1` with `max_concurrent=8`. Sessions completed across the
+refresh boundary without a discovery gap; the next observed checkpoint had 96
+successful sessions, zero failures, 288 transit frames and 6,353,568 transit
+bytes, with healthy memory and worker-thread gates and no plaintext, partial
+files or stderr.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
