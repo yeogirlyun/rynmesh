@@ -66,6 +66,127 @@ def _future(seconds: float = 300) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
 
+def test_result_polling_binds_provider_and_requester_identity() -> None:
+    calls: list[dict[str, object]] = []
+    legitimate = {
+        "work_order_id": "order-1",
+        "network_id": "network-1",
+        "provider_peer_id": "expected-provider",
+        "requester_peer_id": "expected-requester",
+        "status": "accepted",
+    }
+    forged_provider = {
+        **legitimate,
+        "provider_peer_id": "attacker",
+        "status": "failed",
+        "message": "forged failure",
+    }
+    forged_requester = {
+        **legitimate,
+        "requester_peer_id": "other-requester",
+        "status": "failed",
+        "message": "wrong requester failure",
+    }
+    forged_order = {
+        **legitimate,
+        "work_order_id": "other-order",
+        "status": "failed",
+        "message": "wrong order failure",
+    }
+    forged_network = {
+        **legitimate,
+        "network_id": "other-network",
+        "status": "failed",
+        "message": "wrong network failure",
+    }
+
+    class StubStore:
+        def list_work_results(self, **kwargs):
+            calls.append(kwargs)
+            # Deliberately ignore the supplied filters to prove the caller also
+            # checks the signed identities before trusting a status/result body.
+            return {
+                "work_results": [
+                    legitimate,
+                    forged_provider,
+                    forged_requester,
+                    forged_order,
+                    forged_network,
+                ]
+            }
+
+    result = peer_transit_service._poll_result(
+        StubStore(),
+        work_order_id="order-1",
+        network_id="network-1",
+        expected_provider_peer_id="expected-provider",
+        expected_requester_peer_id="expected-requester",
+        wanted_status="accepted",
+        timeout_s=1,
+    )
+
+    assert result is legitimate
+    assert calls == [
+        {
+            "work_order_id": "order-1",
+            "network_id": "network-1",
+            "provider_peer_id": "expected-provider",
+            "requester_peer_id": "expected-requester",
+        }
+    ]
+
+
+def test_result_polling_ignores_signed_result_from_wrong_registry_peer(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "source-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    attacker = RynmeshStore(home=tmp_path / "attacker", network_dir=tmp_path / "attacker-net")
+    for store in (source, provider, attacker):
+        store.registry = registry
+
+    attacker.publish_work_result(
+        work_order_id="observed-order-id",
+        requester_peer_id=source.peer_id,
+        status="failed",
+        message="forged failure",
+        network_id="identity-binding",
+    )
+    provider.publish_work_result(
+        work_order_id="observed-order-id",
+        requester_peer_id=source.peer_id,
+        status="accepted",
+        message="legitimate result",
+        network_id="identity-binding",
+    )
+
+    result = peer_transit_service._poll_result(
+        source,
+        work_order_id="observed-order-id",
+        network_id="identity-binding",
+        expected_provider_peer_id=provider.peer_id,
+        expected_requester_peer_id=source.peer_id,
+        wanted_status="accepted",
+        timeout_s=1,
+    )
+
+    assert result["provider_peer_id"] == provider.peer_id
+    assert result["message"] == "legitimate result"
+
+
+@pytest.mark.parametrize("provider,requester", [("", "requester"), ("provider", "")])
+def test_result_polling_rejects_incomplete_identity_binding(provider, requester) -> None:
+    with pytest.raises(PeerTransitError, match="identity binding is incomplete"):
+        peer_transit_service._poll_result(
+            object(),
+            work_order_id="order-1",
+            network_id="network-1",
+            expected_provider_peer_id=provider,
+            expected_requester_peer_id=requester,
+            wanted_status="accepted",
+            timeout_s=1,
+        )
+
+
 def test_acceptance_work_root_must_not_contain_stale_evidence(tmp_path) -> None:
     missing = tmp_path / "missing"
     _prepare_work_root(missing)
@@ -232,11 +353,14 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         "transit_bytes": 4096,
         "last_evidence": {"session_id": "abc"},
     }
-    assert audit_soak_report(
-        report,
-        require_duration_s=86400,
-        min_sessions=100,
-    )["minimum_transit_bytes"] == 3200
+    assert (
+        audit_soak_report(
+            report,
+            require_duration_s=86400,
+            min_sessions=100,
+        )["minimum_transit_bytes"]
+        == 3200
+    )
 
     for key, bad_value, message in (
         ("result", "running", "complete"),
@@ -298,11 +422,14 @@ def test_soak_duration_survives_forward_wall_clock_jump(tmp_path, monkeypatch) -
     assert report["clock_source"] == "time.monotonic"
     assert 2.0 <= report["elapsed_s"] < 10.0
     assert report["wall_elapsed_s"] - report["elapsed_s"] > 3500.0
-    assert audit_soak_report(
-        report,
-        require_duration_s=2.0,
-        min_sessions=3,
-    )["ok"] is True
+    assert (
+        audit_soak_report(
+            report,
+            require_duration_s=2.0,
+            min_sessions=3,
+        )["ok"]
+        is True
+    )
 
 
 def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) -> None:
@@ -373,10 +500,13 @@ def test_post_recovery_direct_file_auditor_binds_route_and_counter_stop(monkeypa
         "source_hop": hop,
         "evidence": {},
     }
-    assert audit_module._audit_post_recovery_direct_file(
-        evidence,
-        transit_audit=identities,
-    ) == identities
+    assert (
+        audit_module._audit_post_recovery_direct_file(
+            evidence,
+            transit_audit=identities,
+        )
+        == identities
+    )
 
     with pytest.raises(AuditError, match="post-recovery"):
         audit_module._audit_post_recovery_direct_file(
@@ -444,12 +574,15 @@ def test_concurrent_timeline_auditor_requires_actual_overlap() -> None:
         {"session_id": "two", "started_s": 0.1, "ended_s": 0.9},
         {"session_id": "three", "started_s": 0.2, "ended_s": 0.8},
     ]
-    assert audit_module._audit_concurrent_timeline(
-        performance,
-        timeline,
-        expected_session_ids={"one", "two", "three"},
-        min_concurrent=3,
-    ) == 3
+    assert (
+        audit_module._audit_concurrent_timeline(
+            performance,
+            timeline,
+            expected_session_ids={"one", "two", "three"},
+            min_concurrent=3,
+        )
+        == 3
+    )
 
     sequential = [
         {"session_id": "one", "started_s": 0.0, "ended_s": 0.2},
@@ -483,9 +616,7 @@ def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None
         audit_module._audit_overhead_gate(forged)
 
     with pytest.raises(AuditError, match="finite"):
-        audit_module._audit_overhead_gate(
-            {**performance, "protocol_overhead_ratio": float("nan")}
-        )
+        audit_module._audit_overhead_gate({**performance, "protocol_overhead_ratio": float("nan")})
 
 
 def test_unavailable_auditor_requires_bounded_atomic_failure() -> None:
@@ -571,13 +702,9 @@ def test_signed_session_open_binds_source_target_expiry_and_one_hop(tmp_path) ->
     with pytest.raises(PeerTransitError, match="invalid signed"):
         verify_session_open(forged, expected_target_peer_id=target.peer_id)
 
-    expired = TransitSessionOpen(
-        **{**session.to_dict(), "expires_at": _future(-1)}
-    )
+    expired = TransitSessionOpen(**{**session.to_dict(), "expires_at": _future(-1)})
     with pytest.raises(PeerTransitError, match="expired"):
-        verify_session_open(
-            sign_session_open(expired, source_signing_key=source.private_key_bytes)
-        )
+        verify_session_open(sign_session_open(expired, source_signing_key=source.private_key_bytes))
 
     recursive = TransitSessionOpen(**{**session.to_dict(), "hop_limit": 2})
     with pytest.raises(PeerTransitError, match="hop_limit=1"):
@@ -626,12 +753,14 @@ def test_transit_cipher_is_end_to_end_authenticated_and_replay_safe(tmp_path) ->
 
 
 def test_route_manager_uses_hysteresis_for_degrade_transit_and_recovery() -> None:
-    manager = RouteManager(RoutePolicy(
-        degraded_hold_s=30,
-        transit_min_hold_s=60,
-        recovery_hold_s=120,
-        recovery_probe_count=5,
-    ))
+    manager = RouteManager(
+        RoutePolicy(
+            degraded_hold_s=30,
+            transit_min_hold_s=60,
+            recovery_hold_s=120,
+            recovery_probe_count=5,
+        )
+    )
     healthy = PathMetrics(reachable=True, rtt_p95_ms=40, loss_ratio=0)
     poor = PathMetrics(reachable=True, rtt_p95_ms=320, loss_ratio=0.18)
     transit = PathMetrics(reachable=True, rtt_p95_ms=80, loss_ratio=0.01)
@@ -797,19 +926,23 @@ def test_two_direct_ice_legs_forward_only_ciphertext_without_turn(tmp_path, monk
                 )
                 return received
 
-            relay_task = asyncio.create_task(relay_bidirectional_once(
-                transit_left,
-                transit_right,
-                session_id=session_id,
-                timeout_s=10,
-                audit_frame=captured_frames.append,
-            ))
+            relay_task = asyncio.create_task(
+                relay_bidirectional_once(
+                    transit_left,
+                    transit_right,
+                    session_id=session_id,
+                    timeout_s=10,
+                    audit_frame=captured_frames.append,
+                )
+            )
             target_task = asyncio.create_task(target_side())
             source_sent = await send_encrypted_stream(
                 source_connection,
                 source_cipher,
                 direction="request",
-                chunks=(body[index:index + 128 * 1024] for index in range(0, len(body), 128 * 1024)),
+                chunks=(
+                    body[index : index + 128 * 1024] for index in range(0, len(body), 128 * 1024)
+                ),
                 timeout_s=10,
             )
             await receive_encrypted_stream(

@@ -260,6 +260,46 @@ transit bytes. Traced memory growth was 1,813,203 bytes, all three worker
 threads remained healthy, and the plaintext, partial-file and stderr gates
 stayed clean.
 
+The r8 run was deliberately invalidated at 2026-09-01 18:38:13 Hong Kong time
+after a manual control-plane authentication audit found that result polling
+verified each result signature but did not also constrain the result to the
+work order's expected provider and requester identities. An observer capable of
+publishing to the registry could therefore race an observed order ID with a
+separately signed `accepted` or `failed` result. The preserved snapshot is
+`.codex-tmp/peer-transit-soak-24h-r8/progress.invalidated-result-provider-binding.json`
+with SHA-256
+`CE557274C771679A8239521896D297BD1839E4D6EA79F588173A7C39C8E2FDA8`.
+It records 4,062.891 monotonic seconds, 405 successful sessions, zero failures,
+1,215 frames, 26,804,115 transit bytes, 2,762,014 bytes of traced memory growth,
+a 6,166,427-byte traced peak, all three worker threads and no plaintext
+exposure. Both r8 processes were stopped and verified absent. No r8 elapsed time
+may be combined with its replacement.
+
+The result-polling fix now supplies registry filters and independently compares
+the signed work-order ID, network ID, provider peer ID and requester peer ID
+before interpreting any status or result body. A unit adversarial test feeds a
+filter-ignoring store legitimate and forged-provider, forged-requester,
+wrong-order and wrong-network results; only the exact binding is accepted. A
+second integration test publishes a real Ed25519-signed `failed` result from an
+attacker identity alongside the legitimate provider's signed `accepted` result
+in the file registry and confirms that polling returns only the latter. The
+focused peer-transit/LLM suite passed 74 tests and the full Python suite passed
+569 tests with three skips after the fix.
+
+A fresh post-fix r9 preflight at
+`.codex-tmp/peer-transit-acceptance-r9-result-binding` transferred 8,388,608
+bytes with matching source/target SHA-256, 129 request frames, one response
+frame and 8,396,260 bytes on each transit direction. Three concurrent sessions
+overlapped and completed; setup took 0.157 s, the main transfer 8.5 s, hard
+direct failure fell back through the peer in 0.547 s, traced memory peaked at
+5,495,377 bytes and protocol overhead was 0.0831%. TURN rejection, registry
+control sizing, plaintext scans, post-nomination registry/STUN blackout,
+unavailable-relay atomic failure and both independent evidence/report audits
+passed. `report.json` has SHA-256
+`2A3215FE0C5FC7A87B5A89D0F9B12C68872A44D7E69F317325F396F432658B52` and
+`evidence.json` has SHA-256
+`791BBF2052EB4386063E8FDA6085F202AACA07C31DE7402D2DB3600FD550F019`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

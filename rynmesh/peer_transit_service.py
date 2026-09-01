@@ -133,16 +133,38 @@ def _poll_result(
     *,
     work_order_id: str,
     network_id: str,
+    expected_provider_peer_id: str,
+    expected_requester_peer_id: str,
     wanted_status: str,
     timeout_s: float,
 ) -> dict[str, Any]:
+    expected_order = str(work_order_id or "").strip()
+    expected_network = str(network_id or "").strip()
+    expected_provider = str(expected_provider_peer_id or "").strip()
+    expected_requester = str(expected_requester_peer_id or "").strip()
+    if (
+        not expected_order
+        or not expected_network
+        or not expected_provider
+        or not expected_requester
+    ):
+        raise PeerTransitError("result identity binding is incomplete")
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         results = store.list_work_results(
             work_order_id=work_order_id,
             network_id=network_id,
+            provider_peer_id=expected_provider,
+            requester_peer_id=expected_requester,
         ).get("work_results", [])
         for result in reversed(results):
+            if (
+                str(result.get("work_order_id") or "") != expected_order
+                or str(result.get("network_id") or "") != expected_network
+                or str(result.get("provider_peer_id") or "") != expected_provider
+                or str(result.get("requester_peer_id") or "") != expected_requester
+            ):
+                continue
             status = str(result.get("status") or "")
             if status == "failed":
                 raise PeerTransitError(str(result.get("message") or "peer transit failed"))
@@ -387,6 +409,8 @@ class PeerTransitWorker:
                 self.store,
                 work_order_id=target_order_id,
                 network_id=self.network_id,
+                expected_provider_peer_id=session.target_peer_id,
+                expected_requester_peer_id=self.store.peer_id,
                 wanted_status="accepted",
                 timeout_s=self.timeout_s,
             )
@@ -481,9 +505,7 @@ class PeerTransitWorker:
                 result_refs={
                     "protocol_version": PROTOCOL_VERSION,
                     "session_id": session.session_id,
-                    (
-                        "source_ice_answer" if direct else "relay_ice_answer"
-                    ): answer.to_dict(),
+                    ("source_ice_answer" if direct else "relay_ice_answer"): answer.to_dict(),
                     "path_mode": "direct" if direct else "peer_transit",
                     "ice_relay_candidate_used": False,
                 },
@@ -596,6 +618,8 @@ async def _send_file_async(
             store,
             work_order_id=work_order_id,
             network_id=network_id,
+            expected_provider_peer_id=relay_peer_id,
+            expected_requester_peer_id=store.peer_id,
             wanted_status="accepted",
             timeout_s=timeout_s,
         )
@@ -647,6 +671,8 @@ async def _send_file_async(
             store,
             work_order_id=work_order_id,
             network_id=network_id,
+            expected_provider_peer_id=relay_peer_id,
+            expected_requester_peer_id=store.peer_id,
             wanted_status="completed",
             timeout_s=timeout_s,
         )
@@ -658,6 +684,8 @@ async def _send_file_async(
             store,
             work_order_id=target_work_order_id,
             network_id=network_id,
+            expected_provider_peer_id=target_peer_id,
+            expected_requester_peer_id=relay_peer_id,
             wanted_status="completed",
             timeout_s=timeout_s,
         )
@@ -708,14 +736,16 @@ def send_file_via_peer(
         raise PeerTransitError("transit source file exceeds size policy")
     if relay_peer_id in {store.peer_id, target_peer_id}:
         raise PeerTransitError("transit peer must differ from source and target")
-    return asyncio.run(_send_file_async(
-        store,
-        path=source,
-        relay_peer_id=relay_peer_id,
-        target_peer_id=target_peer_id,
-        network_id=network_id,
-        timeout_s=timeout_s,
-    ))
+    return asyncio.run(
+        _send_file_async(
+            store,
+            path=source,
+            relay_peer_id=relay_peer_id,
+            target_peer_id=target_peer_id,
+            network_id=network_id,
+            timeout_s=timeout_s,
+        )
+    )
 
 
 async def _send_file_direct_async(
@@ -772,6 +802,8 @@ async def _send_file_direct_async(
             store,
             work_order_id=work_order_id,
             network_id=network_id,
+            expected_provider_peer_id=target_peer_id,
+            expected_requester_peer_id=store.peer_id,
             wanted_status="accepted",
             timeout_s=timeout_s,
         )
@@ -818,6 +850,8 @@ async def _send_file_direct_async(
             store,
             work_order_id=work_order_id,
             network_id=network_id,
+            expected_provider_peer_id=target_peer_id,
+            expected_requester_peer_id=store.peer_id,
             wanted_status="completed",
             timeout_s=timeout_s,
         )
@@ -858,13 +892,15 @@ def send_file_direct(
         raise PeerTransitError("direct source file exceeds size policy")
     if target_peer_id == store.peer_id:
         raise PeerTransitError("direct target must differ from source")
-    return asyncio.run(_send_file_direct_async(
-        store,
-        path=source,
-        target_peer_id=target_peer_id,
-        network_id=network_id,
-        timeout_s=timeout_s,
-    ))
+    return asyncio.run(
+        _send_file_direct_async(
+            store,
+            path=source,
+            target_peer_id=target_peer_id,
+            network_id=network_id,
+            timeout_s=timeout_s,
+        )
+    )
 
 
 def send_file_adaptive(
@@ -942,7 +978,9 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     worker = subparsers.add_parser("worker", help="advertise and serve target/transit orders")
     worker.add_argument("--role", choices=("target", "transit", "both"), default="both")
-    worker.add_argument("--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"))
+    worker.add_argument(
+        "--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
+    )
     worker.add_argument("--inbox", default="")
     worker.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     worker.add_argument("--deny-direct", action="store_true")
@@ -957,7 +995,9 @@ def main() -> int:
     direct = subparsers.add_parser("send-file-direct", help="send a file over direct P2P")
     direct.add_argument("path")
     direct.add_argument("--target-peer", required=True)
-    direct.add_argument("--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"))
+    direct.add_argument(
+        "--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
+    )
     direct.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     direct.add_argument("--evidence", default="")
     adaptive = subparsers.add_parser(
@@ -967,7 +1007,9 @@ def main() -> int:
     adaptive.add_argument("path")
     adaptive.add_argument("--relay-peer", required=True)
     adaptive.add_argument("--target-peer", required=True)
-    adaptive.add_argument("--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"))
+    adaptive.add_argument(
+        "--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
+    )
     adaptive.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
     adaptive.add_argument(
         "--direct-timeout",

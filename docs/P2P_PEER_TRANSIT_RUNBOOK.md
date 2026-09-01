@@ -188,7 +188,12 @@ used to claim public-NAT traversal across three real networks.
 - `distinct public egress`: two nodes appear behind the same public address;
   move them to separate networks for strict acceptance.
 - `timed out waiting for transit result`: the selected peer worker is offline
-  or did not advertise the required role.
+  or did not advertise the required role. A signed result from any peer other
+  than the order's expected provider is deliberately ignored rather than used
+  as ICE signaling or accepted as a failure.
+- `result identity binding is incomplete`: the caller did not supply the exact
+  work-order/network/provider/requester binding; fail closed rather than poll a
+  broad result set.
 - `TURN/relay candidate`: fail closed; remove the TURN configuration.
 - `host must be an IP literal` or `not a usable unicast address`: the signed
   remote ICE signal is malformed or attempts a forbidden network destination.
