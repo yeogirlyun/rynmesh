@@ -187,6 +187,13 @@ not to all completed sessions. A legacy registry performs one versioned index
 rebuild on first open; do not count that one-time migration as steady-state
 poll latency.
 
+Both the hermetic report and the completed soak report must contain zeroed
+relay and target `worker_control_errors` (`count=0`, empty `first` and `last`).
+The independent auditor fails closed when the field is absent or nonzero. A
+sharing error while removing an auxiliary open marker may leave the marker for
+the next poll, but it must not escape the retry-safe cleanup path or increment
+the worker error counter.
+
 ## Physical three-network acceptance
 
 Run peer 1, peer 2 and peer 3 behind three distinct public egress networks with
@@ -225,6 +232,8 @@ used to claim public-NAT traversal across three real networks.
 - steadily increasing open-order poll latency or CPU while active work remains
   constant: the active-order index is absent, stale or bypassed; stop the soak,
   preserve its evidence and repair the registry before restarting from zero.
+- nonzero `worker_control_errors`: preserve the root and invalidate the run,
+  even if all file hashes and the producer's other checks passed.
 - `TURN/relay candidate`: fail closed; remove the TURN configuration.
 - `host must be an IP literal` or `not a usable unicast address`: the signed
   remote ICE signal is malformed or attempts a forbidden network destination.

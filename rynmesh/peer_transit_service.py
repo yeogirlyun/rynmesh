@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -298,6 +299,25 @@ class PeerTransitWorker:
         if capacity_refresh_s <= 0:
             raise ValueError("peer transit capacity refresh interval must be positive")
         self.capacity_refresh_s = float(capacity_refresh_s)
+        self._control_error_lock = threading.Lock()
+        self._control_error_count = 0
+        self._first_control_error = ""
+        self._last_control_error = ""
+
+    def control_error_snapshot(self) -> dict[str, Any]:
+        with self._control_error_lock:
+            return {
+                "count": self._control_error_count,
+                "first": self._first_control_error,
+                "last": self._last_control_error,
+            }
+
+    def _record_control_error(self, message: str) -> None:
+        with self._control_error_lock:
+            self._control_error_count += 1
+            if not self._first_control_error:
+                self._first_control_error = message
+            self._last_control_error = message
 
     def register(self) -> dict[str, Any]:
         roles = ("target", "transit") if self.role == "both" else (self.role,)
@@ -350,6 +370,7 @@ class PeerTransitWorker:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     message = f"{type(exc).__name__}: {exc}"
+                    self._record_control_error(message)
                     error_at = time.monotonic()
                     if (
                         message != last_error_message

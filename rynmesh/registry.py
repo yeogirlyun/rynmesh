@@ -218,6 +218,10 @@ class FilePeerRegistry:
             provider_peer_id=provider_peer_id,
             order_path=order_path,
         )
+        self._discard_open_order_marker(marker)
+
+    @staticmethod
+    def _discard_open_order_marker(marker: Path) -> None:
         try:
             marker.unlink(missing_ok=True)
         except OSError:
@@ -445,17 +449,17 @@ class FilePeerRegistry:
                 )
                 order = verify_work_order(signed)
             except (OSError, json.JSONDecodeError, KeyError, ValueError, JobError):
-                marker_path.unlink(missing_ok=True)
+                self._discard_open_order_marker(marker_path)
                 continue
             expected_marker = self._open_order_marker_path(
                 provider_peer_id=order.provider_peer_id,
                 order_path=order_path,
             )
             if marker_path != expected_marker:
-                marker_path.unlink(missing_ok=True)
+                self._discard_open_order_marker(marker_path)
                 continue
             if not order_is_open(order):
-                marker_path.unlink(missing_ok=True)
+                self._discard_open_order_marker(marker_path)
                 continue
             latest_status = self._latest_work_result_status(
                 order.work_order_id,
@@ -464,7 +468,7 @@ class FilePeerRegistry:
                 requester_peer_id=order.requester_peer_id,
             )
             if latest_status:
-                marker_path.unlink(missing_ok=True)
+                self._discard_open_order_marker(marker_path)
                 continue
             if order.network_id != network_id:
                 continue

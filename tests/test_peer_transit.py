@@ -429,6 +429,50 @@ def test_open_work_order_index_rebuilds_legacy_registry(tmp_path) -> None:
     assert rebuilt._open_index_ready_path.is_file()
 
 
+def test_open_work_order_index_retries_windows_marker_delete(tmp_path, monkeypatch) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    requester = RynmeshStore(home=tmp_path / "requester", network_dir=tmp_path / "requester-net")
+    provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "provider-net")
+    requester.registry = registry
+    provider.registry = registry
+    submitted = requester.submit_work_order(
+        provider_peer_id=provider.peer_id,
+        capability="index-delete-race.test",
+        operation="close",
+        network_id="index-delete-race",
+    )
+    provider.publish_work_result(
+        work_order_id=submitted["work_order_id"],
+        requester_peer_id=requester.peer_id,
+        status="accepted",
+        network_id="index-delete-race",
+    )
+    order_path = registry.work_orders_dir / f"{registry_module._peer_slug(submitted['work_order_id'])}.json"
+    marker = registry._open_order_marker_path(
+        provider_peer_id=provider.peer_id,
+        order_path=order_path,
+    )
+    registry._write_open_order_marker(
+        provider_peer_id=provider.peer_id,
+        order_path=order_path,
+    )
+    real_unlink = Path.unlink
+    denied_once = False
+
+    def flaky_unlink(path, *args, **kwargs):
+        nonlocal denied_once
+        if path == marker and not denied_once:
+            denied_once = True
+            raise PermissionError("simulated Windows sharing violation")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+    assert provider.poll_work_orders(network_id="index-delete-race")["work_orders"] == []
+    assert marker.is_file()
+    assert provider.poll_work_orders(network_id="index-delete-race")["work_orders"] == []
+    assert not marker.exists()
+
+
 @pytest.mark.parametrize("provider,requester", [("", "requester"), ("provider", "")])
 def test_result_polling_rejects_incomplete_identity_binding(provider, requester) -> None:
     with pytest.raises(PeerTransitError, match="identity binding is incomplete"):
@@ -541,6 +585,32 @@ def test_worker_honors_max_concurrent_and_deduplicates_in_flight_orders(
     assert sorted(called) == ["order-0", "order-1", "order-2"]
 
 
+def test_worker_records_control_loop_errors(tmp_path, monkeypatch) -> None:
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    worker = PeerTransitWorker(store, role="transit", network_id="control-errors")
+    stop = threading.Event()
+    calls = 0
+
+    def pending_orders():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("transient registry failure")
+        stop.set()
+        return []
+
+    monkeypatch.setattr(worker, "register", lambda: {"status": "registered"})
+    monkeypatch.setattr(worker, "_pending_orders", pending_orders)
+
+    worker.serve_forever(poll_interval_s=0, stop_event=stop)
+
+    assert worker.control_error_snapshot() == {
+        "count": 1,
+        "first": "OSError: transient registry failure",
+        "last": "OSError: transient registry failure",
+    }
+
+
 def test_capacity_discovery_retries_atomic_refresh_read_window(tmp_path, monkeypatch) -> None:
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
     peer_id = "transit-peer"
@@ -651,6 +721,10 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
         "memory_growth_limit_bytes": 2048,
         "partial_files": 0,
         "worker_threads_stopped": True,
+        "worker_control_errors": {
+            "relay": {"count": 0, "first": "", "last": ""},
+            "target": {"count": 0, "first": "", "last": ""},
+        },
         "transit_frames": 300,
         "transit_bytes": 4096,
         "last_evidence": {"session_id": "abc"},
@@ -689,6 +763,15 @@ def test_soak_auditor_fails_closed_on_resource_or_lifecycle_gaps(monkeypatch) ->
 
     with pytest.raises(AuditError, match="finite"):
         audit_soak_report(report, require_duration_s=float("nan"), min_sessions=100)
+
+    control_error = copy.deepcopy(report)
+    control_error["worker_control_errors"]["relay"] = {
+        "count": 1,
+        "first": "PermissionError: busy",
+        "last": "PermissionError: busy",
+    }
+    with pytest.raises(AuditError, match="control loop"):
+        audit_soak_report(control_error, require_duration_s=86400, min_sessions=100)
 
 
 def test_soak_duration_survives_forward_wall_clock_jump(tmp_path, monkeypatch) -> None:

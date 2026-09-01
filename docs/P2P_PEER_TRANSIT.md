@@ -139,6 +139,13 @@ recovers registries created before the index existed. This keeps long-running
 poll cost proportional to active work rather than historical session count
 without retaining the history in process memory.
 
+Marker deletion is retry-safe on Windows: a sharing violation leaves only an
+untrusted stale marker, which the next poll rechecks against the canonical
+signed result and removes. Workers expose a lock-protected control-error
+snapshot. Hermetic acceptance and the persistent soak require zero main
+relay/target control-loop errors, so a transient registry exception cannot be
+hidden behind otherwise successful payload transfers.
+
 ### 4.2 Source-to-transit order
 
 The source submits a signed work order to peer 2 containing:

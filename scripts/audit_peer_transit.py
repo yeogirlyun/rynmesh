@@ -642,12 +642,22 @@ def audit_acceptance_report(
         "transit_has_no_plaintext_marker",
         "target_hash_matches",
         "target_file_committed",
+        "worker_control_loop_clean",
         "performance",
     }
     checks = dict(_require(value, "checks"))
     failed_checks = sorted(key for key in required_checks if checks.get(key) is not True)
     if failed_checks:
         raise AuditError(f"acceptance checks missing or failed: {', '.join(failed_checks)}")
+    worker_errors = dict(_require(value, "worker_control_errors"))
+    for role in ("relay", "target"):
+        role_errors = dict(_require(worker_errors, role))
+        if (
+            int(role_errors.get("count", -1)) != 0
+            or str(role_errors.get("first") or "")
+            or str(role_errors.get("last") or "")
+        ):
+            raise AuditError(f"{role} worker control loop reported an error")
 
     main = dict(_require(value, "main_evidence"))
     transit_audit = audit_peer_transit(main)
@@ -827,6 +837,15 @@ def audit_soak_report(
         raise AuditError("soak left partial target files")
     if value.get("worker_threads_stopped") is not True:
         raise AuditError("soak worker threads did not stop")
+    worker_errors = dict(_require(value, "worker_control_errors"))
+    for role in ("relay", "target"):
+        role_errors = dict(_require(worker_errors, role))
+        if (
+            int(role_errors.get("count", -1)) != 0
+            or str(role_errors.get("first") or "")
+            or str(role_errors.get("last") or "")
+        ):
+            raise AuditError(f"soak {role} worker control loop reported an error")
     transit_frames = int(_require(value, "transit_frames"))
     transit_bytes = int(_require(value, "transit_bytes"))
     last_evidence = dict(_require(value, "last_evidence"))

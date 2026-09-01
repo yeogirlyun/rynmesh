@@ -667,6 +667,31 @@ relay/target medians of 0.106/0.104 ms and p95 values of 0.119/0.120 ms, with no
 historical objects retained in memory. Two index regressions and the full
 Python suite passed with 576 tests, three skips and no failures.
 
+The first indexed-runtime preflight at
+`.codex-tmp/peer-transit-acceptance-r20-open-index-preflight` passed its
+producer and both then-current independent audits. It transferred 8,388,608
+bytes in 7.750 s and completed all 20 one-MiB sessions in 26.610 s with relay
+and target internal peaks of 20. Peak traced memory was 5,533,493 bytes and
+hard-failure fallback took 0.750 s. `report.json` has SHA-256
+`63C62922D2C81E77B01453EFFCDE5CFD58601330ABFD5D33C52D454AE50DA4A3` and
+`evidence.json` has SHA-256
+`6CB8C86607499913116423C4F161FB4A5D9B72E736E106E2E3A1DE882A2FFB25`.
+
+The independent repeat at
+`.codex-tmp/peer-transit-acceptance-r21-open-index-repeat` exposed a Windows
+marker-cleanup race even though its old producer wrote `result=pass`: the main
+worker logged `PermissionError: [WinError 5]` while deleting an
+`open-work-orders` marker. Its report has SHA-256
+`43017B2D9A9341C28C7761DB238A2FDEE0F94659699C3A6FB7A99DEC533C83A2`; the
+preserved invalidation record has SHA-256
+`9AC70DA2C55EE6DFE3A87687EF6EEE7181952A232E4D100BF220B80A60855667`.
+The cleanup now treats a denied deletion as a safe stale-marker retry, and
+workers expose structured control-error counts. Producer reports and both
+auditors require zero errors from the main relay and target. The strengthened
+auditor rejects the old r21 report, and the fixed candidate passes 578 Python
+tests with three skips. Neither r20 nor r21 is accepted as evidence for the
+new fixed point.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

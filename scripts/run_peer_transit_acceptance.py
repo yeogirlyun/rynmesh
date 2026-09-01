@@ -728,6 +728,14 @@ def run_acceptance(
         relay_thread.join(timeout=5)
         target_thread.join(timeout=5)
 
+    worker_control_errors = {
+        "relay": relay_worker.control_error_snapshot(),
+        "target": target_worker.control_error_snapshot(),
+    }
+    worker_control_loop_clean = all(
+        int(item["count"]) == 0 for item in worker_control_errors.values()
+    )
+
     registry_records = list(registry_root.rglob("*.json"))
     registry_record_sizes = [path.stat().st_size for path in registry_records]
     registry_plaintext_found = any(MARKER in path.read_bytes() for path in registry_records)
@@ -811,6 +819,7 @@ def run_acceptance(
         "transit_has_no_plaintext_marker": not final_frame_snapshot["plaintext_found"],
         "target_hash_matches": evidence["source_sha256"] == evidence["target_sha256"],
         "target_file_committed": len(delivered) == 1,
+        "worker_control_loop_clean": worker_control_loop_clean,
         "performance": performance["ok"],
     }
     report = {
@@ -831,6 +840,7 @@ def run_acceptance(
         "performance": performance,
         "registry_plaintext_found": registry_plaintext_found,
         "registry_control_plane": registry_control_plane,
+        "worker_control_errors": worker_control_errors,
         "work_root": str(work_root),
     }
     try:

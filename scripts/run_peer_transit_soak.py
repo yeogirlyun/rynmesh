@@ -165,6 +165,10 @@ def run_soak(
             "transit_bytes": frame_snapshot["bytes"],
             "plaintext_found_on_transit": frame_snapshot["plaintext_found"],
             "last_session_id": None if last_evidence is None else last_evidence.get("session_id"),
+            "worker_control_errors": {
+                "relay": relay_worker.control_error_snapshot(),
+                "target": target_worker.control_error_snapshot(),
+            },
         }
 
     _write_json_atomic(progress_path, snapshot("running"))
@@ -218,6 +222,13 @@ def run_soak(
         and partial_files == 0
         and not relay_thread.is_alive()
         and not target_thread.is_alive()
+        and all(
+            int(item["count"]) == 0
+            for item in (
+                relay_worker.control_error_snapshot(),
+                target_worker.control_error_snapshot(),
+            )
+        )
     )
     report = snapshot("pass" if passed else "fail")
     report.update({
