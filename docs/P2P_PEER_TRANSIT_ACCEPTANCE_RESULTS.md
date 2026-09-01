@@ -625,6 +625,16 @@ to zero. The baseline file has SHA-256
 Final shutdown evidence must verify that hash, repeat these fields and explain
 any material growth rather than relying only on traced Python allocations.
 
+A same-condition idle comparison at 2,969.484 monotonic seconds and 297
+completed sessions found 301 handles, eight OS threads, 43,491,328 private
+bytes, 59,826,176 working-set bytes, zero UDP endpoints and zero partial files.
+Relative to the 1,214-second baseline this is three additional handles, no
+additional OS threads, 5,275,648 additional private bytes and 5,967,872
+additional working-set bytes after 175 more sessions; traced Python growth
+increased by 1,140,634 bytes. Failures and stderr remained zero. This is an
+intermediate resource observation, not a substitute for the final post-run
+shutdown and process-absence checks.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
