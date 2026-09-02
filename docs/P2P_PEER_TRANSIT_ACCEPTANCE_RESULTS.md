@@ -760,6 +760,16 @@ completed 108 sessions with zero failures, zero worker control errors and
 check for the defect that previously reached 132.77% of one core and roughly
 one-second provider polls.
 
+The first scheduled capacity refresh also completed during r13. Both 852-byte
+records were re-signed at 2026-09-02 09:28:46 Hong Kong time, roughly fifteen
+minutes after launch, and the project verification API accepted both with
+capability `rynmesh.peer-transit.v1` and `max_concurrent=8`. Their refreshed
+SHA-256 values are
+`955720B512B26BED2EF5B10528CBD480211B0F6E94C2ECF5470CEE532EA7870A` and
+`610C49C7F8930CB3F2C1872A86A6F2323B6DC44633571D67981443E12DD62CB2`.
+At the following checkpoint r13 had completed 129 sessions with zero failures,
+zero worker control errors and no plaintext exposure.
+
 The `a378bad` package candidate also passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
 276,476-byte wheel has SHA-256
