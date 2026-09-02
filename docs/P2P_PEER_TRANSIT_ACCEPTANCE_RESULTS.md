@@ -1025,16 +1025,19 @@ files; stdout and stderr remained empty.
 
 A completion-contract review found that the independent soak artifact auditor
 scanned `*.part` but did not yet reject the verified-resume runtime's
-`*.resume.json` checkpoint files. Commit `74204e4` strengthens only the final
+`*.resume.json` checkpoint files or fail on leftover open work-order markers.
+Commits `74204e4` and `962cfc6` strengthen only the final
 auditor and its tests; the running data-plane blob
 `a861c194dfa15e5cb0ac7c83632269f44ff6c6e9` and soak-runner blob
 `1f8fe15de836702619911531d2c24b6e7e802a57` are unchanged, so r14 timing
-remains valid. The auditor now fails closed on either artifact type and reports
-their counts separately. Its focused positive/negative tests, Ruff and the
+remains valid. The auditor now fails closed on both artifact types and open
+work-order markers, and reports their counts separately. Its focused
+positive/negative tests, Ruff and the
 complete 583-test/three-skip Python suite passed. The strengthened live artifact
-scan covered 954 files and 1,850,353 bytes with zero plaintext findings,
-partial files, resume checkpoints and stderr bytes. At the following runtime
-checkpoint r14 had completed 145 sessions with zero failures and worker errors.
+scan covered 1,122 files and 2,178,793 bytes with zero plaintext findings,
+partial files, resume checkpoints, open markers and stderr bytes. At the
+following runtime checkpoint r14 had completed 170 sessions with zero failures
+and worker errors.
 
 Final acceptance requires:
 
