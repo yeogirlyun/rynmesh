@@ -1,6 +1,6 @@
 # Issue #28 work plan: route LLM peer POSTs through Transport
 
-Status: implemented; formal acceptance pending CI
+Status: implemented and formally accepted, 2026-09-02
 Issue: https://github.com/yeogirlyun/rynmesh/issues/28
 Recommended order: complete before Private AI streaming work (#23)
 
@@ -315,19 +315,19 @@ command. Do not delete host models or unrelated data.
 
 ## 7. Acceptance criteria
 
-- [ ] `Transport` exposes bounded POST bytes.
-- [ ] Stdlib HTTPS, fronted HTTPS, CDN-WebSocket, and plugin test doubles support
+- [x] `Transport` exposes bounded POST bytes.
+- [x] Stdlib HTTPS, fronted HTTPS, CDN-WebSocket, and plugin test doubles support
       POST without fallback bypasses.
-- [ ] `HttpPeerClient.post_json` provides stable JSON/error behavior.
-- [ ] LLM task, settlement, and cancellation POSTs use `HttpPeerClient` and the
+- [x] `HttpPeerClient.post_json` provides stable JSON/error behavior.
+- [x] LLM task, settlement, and cancellation POSTs use `HttpPeerClient` and the
       active Transport.
-- [ ] The 2 MiB LLM response cap remains enforced.
-- [ ] Network-key, TLS/profile, explicit proxy, and no-redirect behavior apply
+- [x] The 2 MiB LLM response cap remains enforced.
+- [x] Network-key, TLS/profile, explicit proxy, and no-redirect behavior apply
       to POST.
-- [ ] No request/response body is logged or included in errors.
-- [ ] Direct LLM E2E and encrypted Relay E2E remain green.
-- [ ] Focused and complete test suites pass.
-- [ ] Transport documentation describes the new path accurately.
+- [x] No request/response body is logged or included in errors.
+- [x] Direct LLM E2E and encrypted Relay E2E remain green.
+- [x] Focused and complete test suites pass.
+- [x] Transport documentation describes the new path accurately.
 
 Formal execution evidence and the sign-off decision are maintained in
 `docs/acceptance/issue-28/ACCEPTANCE_REPORT.md`. This plan intentionally remains
