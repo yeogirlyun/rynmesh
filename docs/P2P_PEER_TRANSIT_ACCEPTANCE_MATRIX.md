@@ -70,6 +70,17 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   19:58:36.632343 Asia/Hong_Kong with launcher PID 48384 and worker PID 33976;
   it must independently reach 86,400 `time.monotonic` seconds under runtime
   `007b8b8` and the fixed soak-runner blob above.
+- r15 300-session warm idle OS baseline:
+  `8268FC310809D1BAEBD68D1FEA601039C720E65FC59CDE8FCEFFA101B5215155`;
+  it records 314 handles, eight OS threads, 37,273,600 private bytes, a
+  53,854,208-byte working set and 2,049,243 bytes of traced Python memory
+  growth, with zero failures, residuals, plaintext hits, UDP endpoints or log
+  bytes.
+- r15 third refreshed target/transit signed-capacity snapshots:
+  `775D84A18A30D227CAECB1EF333E2C8D614B52BFDC8DC835C73D68B4973924A2` /
+  `23C86EA11A0553B958720901534D4A1BF228E039AE0F711713B67138880C65A4`;
+  both 20:43:36 Asia/Hong_Kong records passed Ed25519 verification with the
+  expected peer IDs, roles, network and `max_concurrent=8`.
 - r14 warm idle OS baseline: `F37A820FB0AFEAFB33D6839DD664B1881AD03C2CFB923C614662144859CAA606`.
 - r14 first refreshed target/transit signed-capacity snapshots:
   `AC1CCB5E27C6D7EA447AA88E00FE9F62346B2B0F70A8C8B23467B85FE85F4DFD` /

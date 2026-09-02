@@ -1189,6 +1189,19 @@ open-order markers, stdout or stderr bytes. It must independently reach 86,400
 monotonic seconds; its expected deadline is 2026-09-03 19:58:36.632343
 Asia/Hong_Kong.
 
+The r15 warm idle baseline was captured between sessions after 300 completed
+sessions and 2,993.203 monotonic seconds. It is preserved at
+`.codex-tmp/peer-transit-soak-24h-r15/os-baseline-warmup.json`, SHA-256
+`8268FC310809D1BAEBD68D1FEA601039C720E65FC59CDE8FCEFFA101B5215155`.
+It records 314 handles, eight OS threads, 37,273,600 private bytes, a
+53,854,208-byte working set and 2,049,243 bytes of traced Python memory growth.
+All failures, worker errors, plaintext findings, UDP endpoints, partial/resume
+files, open markers, stdout and stderr bytes were zero. The third scheduled
+target/transit capacity refresh at 20:43:36 Asia/Hong_Kong also passed Ed25519
+verification. Its immutable snapshot SHA-256 values are
+`775D84A18A30D227CAECB1EF333E2C8D614B52BFDC8DC835C73D68B4973924A2` and
+`23C86EA11A0553B958720901534D4A1BF228E039AE0F711713B67138880C65A4`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
