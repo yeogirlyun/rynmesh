@@ -1,6 +1,6 @@
 # Requirements: Transport-backed Private AI writes (#28)
 
-Status: implemented; formal acceptance pending CI
+Status: implemented and formally accepted
 Last reviewed: 2026-09-02
 
 ## Functional requirements
@@ -59,4 +59,3 @@ Last reviewed: 2026-09-02
 The requirement is accepted only when every requirement above has evidence in
 `docs/acceptance/issue-28/ACCEPTANCE_REPORT.md`, the branch is clean, and the
 repository's required CI jobs pass on the reviewed commit.
-

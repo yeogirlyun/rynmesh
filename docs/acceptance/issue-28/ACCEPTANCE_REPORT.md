@@ -1,9 +1,9 @@
 # Formal acceptance report: Transport-backed Private AI writes (#28)
 
-Decision: pending remote CI
+Decision: ACCEPTED
 Reviewed commit: `933c312c6ef5e3e37799840078c9a1fd84a40e5c`
 Branch: `codex/issue-28-transport-post`
-Acceptance date: pending
+Acceptance date: 2026-09-02
 
 ## Scope under acceptance
 
@@ -55,9 +55,9 @@ failures are pre-existing platform assumptions: POSIX executable/0600 modes,
 an unavailable WSL bash, and `select()` on a Windows subprocess pipe. They do
 not execute changed #28 code. These are not treated as Linux CI evidence.
 
-Formal acceptance therefore remains pending until the reviewed commit passes
-the repository's Ubuntu backend and Docker LLM E2E jobs. The final CI URL and
-job results will be recorded below before this report is signed.
+The Windows-only exclusions above are superseded by the successful Ubuntu
+backend and Docker LLM E2E jobs recorded below. They remain useful portability
+follow-up items but are not acceptance exceptions for issue #28.
 
 ## Acceptance checklist
 
@@ -72,26 +72,28 @@ job results will be recorded below before this report is signed.
 - [x] Private bodies are absent from public errors and acceptance evidence.
 - [x] Direct and encrypted Relay multi-process flows pass.
 - [x] Focused tests and lint pass.
-- [ ] Required remote CI jobs pass on the reviewed commit.
-- [ ] Final reviewer decision and acceptance date are recorded.
+- [x] Required remote CI jobs pass on the reviewed commit.
+- [x] Final reviewer decision and acceptance date are recorded.
 
 ## Remote CI evidence
 
-Pull request: pending
-Reviewed CI commit: pending
+Pull request: https://github.com/yeogirlyun/rynmesh/pull/32
+Reviewed CI commit: `2e074d70cf9cba5a93655241e47b97f7bda08448`
+Workflow run: https://github.com/yeogirlyun/rynmesh/actions/runs/33643713617
 
 | CI job | Result |
 |---|---|
-| contribution-workflow | pending |
-| backend | pending |
-| webapp | pending |
-| llm-e2e | pending |
-| packaged-node | pending |
-| desktop-compile (x86_64) | pending |
-| desktop-compile (aarch64) | pending |
+| contribution-workflow | PASS |
+| backend | PASS |
+| webapp | PASS |
+| llm-e2e | PASS |
+| packaged-node | PASS |
+| desktop-compile (x86_64) | PASS |
+| desktop-compile (aarch64) | PASS |
 
 ## Final decision
 
-Pending. Do not mark issue #28 formally accepted or merge it until all required
-remote jobs are green and this report references the exact reviewed commit.
-
+Accepted. Issue #28 meets its functional, security, privacy, compatibility,
+documentation, focused-test, full-suite, E2E, packaging, and desktop compile
+requirements. It is ready for maintainer review and merge through pull request
+#32. This decision does not accept any explicitly excluded follow-up scope.
