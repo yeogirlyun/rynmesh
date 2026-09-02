@@ -745,6 +745,8 @@ def audit_acceptance_report(
     performance = dict(_require(value, "performance"))
     if performance.get("concurrency_observation") != "relay_and_target_worker_handlers":
         raise AuditError("concurrency was not observed inside both worker handlers")
+    if performance.get("worker_trace_complete") is not True:
+        raise AuditError("worker concurrency trace did not finish")
     concurrent_completed = int(performance.get("concurrent_completed", 0))
     concurrent_session_ids = _audit_concurrent_sessions(
         performance,

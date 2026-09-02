@@ -146,6 +146,12 @@ snapshot. Hermetic acceptance and the persistent soak require zero main
 relay/target control-loop errors, so a transient registry exception cannot be
 hidden behind otherwise successful payload transfers.
 
+Concurrent acceptance waits up to five seconds for `finished` callbacks from
+the exact signed sessions whose client results have already returned. This is
+an observation drain, not a start barrier: it neither delays nor synchronizes
+the data plane. A missing callback still fails the report, preventing a
+millisecond reporting race from silently dropping a real worker timeline.
+
 ### 4.2 Source-to-transit order
 
 The source submits a signed work order to peer 2 containing:

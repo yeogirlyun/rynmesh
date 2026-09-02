@@ -135,6 +135,33 @@ def _write_payload(path: Path, size_bytes: int, *, marker: bytes = MARKER) -> No
             remaining -= len(chunk)
 
 
+def _wait_for_worker_trace(
+    worker_trace: dict[str, dict[str, dict[str, float]]],
+    trace_lock: threading.Lock,
+    session_ids: set[str],
+    *,
+    timeout_s: float,
+) -> bool:
+    """Wait only for completion callbacks from handlers that already returned results."""
+
+    if not session_ids:
+        return True
+    deadline = time.monotonic() + max(0.0, min(5.0, timeout_s))
+    while True:
+        with trace_lock:
+            complete = all(
+                {"started", "finished"} <= set(worker_trace[role].get(session_id, {}))
+                for role in ("relay", "target")
+                for session_id in session_ids
+            )
+        if complete:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
 async def _direct_probe() -> dict[str, Any]:
     source = new_connection(controlling=True)
     target = new_connection(controlling=False)
@@ -617,6 +644,12 @@ def run_acceptance(
         concurrent_session_ids = {
             str(result.get("session_id") or "") for result in concurrent_results
         }
+        worker_trace_complete = _wait_for_worker_trace(
+            worker_trace,
+            worker_trace_lock,
+            concurrent_session_ids,
+            timeout_s=timeout_s,
+        )
 
         def worker_timeline(worker_name: str) -> list[dict[str, Any]]:
             with worker_trace_lock:
@@ -652,7 +685,7 @@ def run_acceptance(
         target_concurrent_timeline = worker_timeline("target")
         peak_concurrent = timeline_peak(concurrent_timeline)
         peak_target_concurrent = timeline_peak(target_concurrent_timeline)
-        concurrency_ok = all(
+        concurrency_ok = worker_trace_complete and all(
             result.get("source_sha256") == result.get("target_sha256")
             and result.get("ice_relay_candidate_used") is False
             for result in concurrent_results
@@ -798,6 +831,7 @@ def run_acceptance(
         "peak_concurrent_observed": peak_concurrent,
         "peak_target_concurrent_observed": peak_target_concurrent,
         "concurrency_observation": "relay_and_target_worker_handlers",
+        "worker_trace_complete": worker_trace_complete,
         "concurrency_ok": concurrency_ok,
     }
     final_frame_snapshot = frame_audit.snapshot()

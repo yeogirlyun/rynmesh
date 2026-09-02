@@ -63,6 +63,7 @@ from scripts.run_peer_transit_acceptance import (
     _prepare_work_root,
     _relay_unavailable_acceptance,
     _route_acceptance,
+    _wait_for_worker_trace,
 )
 
 
@@ -991,6 +992,28 @@ def test_concurrent_timeline_auditor_requires_actual_overlap() -> None:
             expected_session_ids={"one", "two", "three"},
             min_concurrent=3,
         )
+
+
+def test_worker_trace_waits_for_returned_handler_callbacks() -> None:
+    trace_lock = threading.Lock()
+    trace = {
+        "relay": {"session": {"started": 1.0}},
+        "target": {"session": {"started": 1.0, "finished": 2.0}},
+    }
+
+    def finish_relay() -> None:
+        time.sleep(0.02)
+        with trace_lock:
+            trace["relay"]["session"]["finished"] = 2.0
+
+    thread = threading.Thread(target=finish_relay)
+    thread.start()
+    assert _wait_for_worker_trace(trace, trace_lock, {"session"}, timeout_s=1.0) is True
+    thread.join(timeout=1)
+
+    with trace_lock:
+        del trace["relay"]["session"]["finished"]
+    assert _wait_for_worker_trace(trace, trace_lock, {"session"}, timeout_s=0.01) is False
 
 
 def test_acceptance_overhead_auditor_recomputes_ratio_from_byte_counts() -> None:

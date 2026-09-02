@@ -692,6 +692,23 @@ auditor rejects the old r21 report, and the fixed candidate passes 578 Python
 tests with three skips. Neither r20 nor r21 is accepted as evidence for the
 new fixed point.
 
+The next fresh run at
+`.codex-tmp/peer-transit-acceptance-r22-index-worker-error-preflight` proved
+that the strengthened producer fails closed: both main worker error snapshots
+were clean, but it reported `result=fail` because the target timeline measured
+20 while the relay timeline contained only 19 complete entries. The report
+has SHA-256
+`AF263E409B2EEB8718828B5172756826A024D1AD9B8330E7354D48C7F80C8FC8` and
+the main evidence has SHA-256
+`AF5B98ADDFBA1DD7F9DEFB91DB00A0A96A8AB718CF6B4EA58873DAD63AC6F549`.
+Inspection showed that the final client had received its signed relay result
+while that same relay handler's `finished` audit callback had not yet executed;
+the report sampled the trace in that few-millisecond window. The producer now
+waits at most five seconds for callbacks from the already-returned signed
+sessions, without delaying handler starts or creating artificial overlap. Both
+producer and auditor require `worker_trace_complete=true`; the focused suite
+passes 39 tests.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

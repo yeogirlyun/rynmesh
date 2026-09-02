@@ -194,6 +194,11 @@ sharing error while removing an auxiliary open marker may leave the marker for
 the next poll, but it must not escape the retry-safe cleanup path or increment
 the worker error counter.
 
+The 20-way gate also requires `worker_trace_complete=true`. After all client
+results arrive, the producer waits at most five seconds for the corresponding
+relay and target `finished` callbacks before measuring overlap. A timeout is a
+failure; the wait does not hold handlers at a barrier or manufacture overlap.
+
 ## Physical three-network acceptance
 
 Run peer 1, peer 2 and peer 3 behind three distinct public egress networks with
