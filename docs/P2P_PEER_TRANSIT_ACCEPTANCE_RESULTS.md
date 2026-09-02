@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 584 passed, 3 skipped on the fail-closed verified-boundary resume candidate |
+| Complete Python suite | Pass | 587 passed, 3 skipped after adding the independent process-shutdown finalizer |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -1064,6 +1064,28 @@ findings, partial files, resume checkpoints, open markers and stderr bytes. At
 the following runtime checkpoint r14 had completed 195 sessions with zero
 failures and worker errors.
 
+The third signed-capacity refresh completed at 2026-09-02 12:27:10
+Asia/Hong_Kong. Project Ed25519 verification accepted both refreshed records;
+the immutable target/transit snapshot SHA-256 values are
+`DAB5C35F5CB278560FCD95140566C7554744B863A6F0921B88C769C22E96DD99` and
+`8CC54F0AB33A1606F5E7E48F1EEA42CC3B92BFA95191E52EDCCEBF3B5C67CDF9`.
+The 303-session idle checkpoint is
+`D64097F09D6D29634D90F26A1F71EF49F212A5790E2DC55D9C7E2687DCBCB54E`.
+Relative to the 104-session warm baseline, it measured three additional
+handles, one fewer OS thread, 1,654,784 more private bytes and 1,789,952 more
+working-set bytes, with zero UDP endpoints, errors, plaintext findings,
+partial/resume files or open markers.
+
+A further completion audit found that the soak content auditor trusted the
+runner's `worker_threads_stopped` field but could not independently prove that
+the runner PID had exited. `scripts/finalize_peer_transit_soak.py` now rejects
+a live worker (and optional launcher) before and after the strict content scan,
+binds the exact progress-file SHA-256 into its report and records that an absent
+owner process has zero owned UDP endpoints. A live r14 negative check exited 1
+and created no final report. All three new positive/negative tests passed; Ruff
+and the complete Python suite passed 587 tests with three skips. This finalizer
+and test-only change does not alter the running data plane or soak runner.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
@@ -1071,10 +1093,10 @@ Final acceptance requires:
 - cumulative frame and byte counts covering every fixed-size completed session,
   with per-session request/response frame counts bound to signed relay evidence;
 - an independent filesystem scan of peer-2 storage, registry files and
-  stdout/stderr for the unique soak plaintext marker, plus an empty stderr and
-  `.part` scan;
-- no `.part` files after worker shutdown;
-- both worker threads stopped;
+  stdout/stderr for the unique soak plaintext marker, plus empty stderr and
+  zero `.part`, `.resume.json` or open-work-order remnants;
+- both worker threads stopped and an external finalizer proving the worker and
+  launcher processes absent before and after the artifact scan;
 - traced Python memory growth no greater than 32 MiB after warm-up.
 
 This document must be updated with the final session count and memory result

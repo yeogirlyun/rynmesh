@@ -50,6 +50,7 @@ from rynmesh.peer_transit_service import (
 from rynmesh.registry import FilePeerRegistry, RegistryError
 from rynmesh.store import RynmeshStore
 from scripts import audit_peer_transit as audit_module
+from scripts import finalize_peer_transit_soak as finalize_soak_module
 from scripts import run_peer_transit_acceptance as acceptance_module
 from scripts import run_peer_transit_soak as soak_module
 from scripts.audit_peer_transit import (
@@ -875,6 +876,68 @@ def test_soak_artifact_auditor_requires_target_directory_and_logs(tmp_path) -> N
         (missing_logs / name).mkdir(parents=True)
     with pytest.raises(AuditError, match="logs are incomplete"):
         audit_module._audit_soak_artifacts(missing_logs)
+
+
+def test_final_soak_audit_binds_progress_hash_and_absent_processes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    progress = tmp_path / "progress.json"
+    progress.write_text('{"pid": 12345, "result": "pass"}\n', encoding="utf-8")
+    expected_hash = hashlib.sha256(progress.read_bytes()).hexdigest()
+    observed_pids: list[int] = []
+
+    def process_exists(pid: int) -> bool:
+        observed_pids.append(pid)
+        return False
+
+    monkeypatch.setattr(finalize_soak_module, "_process_exists", process_exists)
+    monkeypatch.setattr(
+        finalize_soak_module,
+        "audit_soak_report",
+        lambda value, **kwargs: {
+            "ok": value["result"] == "pass",
+            "artifact_root": str(kwargs["artifact_root"]),
+        },
+    )
+
+    report = finalize_soak_module.finalize_soak(
+        progress,
+        require_duration_s=86400,
+        min_sessions=100,
+        launcher_pid=54321,
+    )
+
+    assert observed_pids == [12345, 54321, 12345, 54321]
+    assert report["progress_sha256"] == expected_hash
+    assert report["worker_process_alive"] is False
+    assert report["launcher_process_alive"] is False
+    assert report["owned_udp_endpoints"] == 0
+    assert report["udp_endpoint_proof"] == "owner_process_absent"
+    assert report["soak_audit"]["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("live_pid", "message"),
+    ((12345, "worker process"), (54321, "launcher process")),
+)
+def test_final_soak_audit_rejects_live_process(
+    tmp_path,
+    monkeypatch,
+    live_pid,
+    message,
+) -> None:
+    progress = tmp_path / "progress.json"
+    progress.write_text('{"pid": 12345, "result": "pass"}\n', encoding="utf-8")
+    monkeypatch.setattr(finalize_soak_module, "_process_exists", lambda pid: pid == live_pid)
+
+    with pytest.raises(AuditError, match=message):
+        finalize_soak_module.finalize_soak(
+            progress,
+            require_duration_s=86400,
+            min_sessions=100,
+            launcher_pid=54321,
+        )
 
 
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:

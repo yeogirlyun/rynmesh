@@ -32,8 +32,9 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - Every acceptance work root is new or empty. Failed roots remain immutable and
   the next attempt uses a new directory.
 - The final soak audit scans peer-2 storage, registry data, stdout/stderr and
-  partial files, then proves worker threads, the process and UDP endpoints are
-  gone.
+  partial files. The independent finalizer binds that result to the exact
+  progress-file hash, rejects live worker/launcher PIDs before and after the
+  scan, and records zero PID-owned UDP endpoints from process absence.
 - Runtime or soak-runner drift, or a changed upstream baseline, invalidates any
   accumulated soak duration and requires a fresh zero-duration run.
 
@@ -44,6 +45,8 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - Strengthened real-impairment acceptance/auditor: `700cc99`.
 - Final fail-closed soak artifact auditor: `6545a5e`
   (blob `8cd8229652568e0f50acfe9bda772c301b4907b8`).
+- Independent soak shutdown finalizer blob:
+  `8bd7c7e47a60ac45979766b365a604a54a6bba99`.
 - r25 report: `1F1E9DAAA1B075A5A629A21A3013E6823CDAD579935DC1A33E801B79B991A7D1`.
 - r26 report: `BA8FF94533F31920DD311A6BC1CAB9CBDF1D59DF4D0D2F2A99B3C6F82656D3A7`.
 - r30 one-GiB report: `C64D64EFF5D76C7D9D14440C4D9A2962503060979B0A2C3547E46A696EB6C220`.

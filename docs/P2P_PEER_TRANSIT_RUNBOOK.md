@@ -199,10 +199,19 @@ python scripts/run_peer_transit_soak.py `
   --duration-hours 24 --interval-seconds 10 --payload-kib 64 `
   --work-root .codex-tmp\peer-transit-soak `
   --progress .codex-tmp\peer-transit-soak\progress.json
-python scripts/audit_peer_transit.py --soak-report `
+python scripts/finalize_peer_transit_soak.py `
+  .codex-tmp\peer-transit-soak\progress.json `
   --require-duration-seconds 86400 --min-sessions 3 `
-  .codex-tmp\peer-transit-soak\progress.json
+  --output .codex-tmp\peer-transit-soak\final-audit.json
 ```
+
+Run the finalizer only after the soak command has returned. It independently
+rejects a still-live worker PID, invokes the strict duration/content/artifact
+audit, rechecks the PID after scanning, and binds the progress-file SHA-256 to
+the final report. Since an absent process cannot own a UDP endpoint, the report
+also records zero worker-owned UDP endpoints with that proof method. If an
+external wrapper launched the worker, pass its PID with `--launcher-pid` so the
+same fail-closed check covers both processes.
 
 During a long soak, sample the provider's open-order poll latency as the
 registry history grows. File-backed workers must use the per-provider
