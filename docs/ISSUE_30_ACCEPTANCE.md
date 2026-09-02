@@ -17,7 +17,7 @@ Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
 no Friend Mesh failure. Linux exact-commit CI remains required.
 
-Integration evidence: the #28-based branch passes 42 Friend/Transport tests,
+Integration evidence: the #28-based branch passes 44 Friend/Transport tests,
 including simulated two-node Join and explicit endpoint-change review.
 
 ## Criteria status
@@ -32,7 +32,7 @@ including simulated two-node Join and explicit endpoint-change review.
 - [x] Signed remote revocation application is idempotent for the exact pair.
 - [ ] Eight protocol decisions reviewed by maintainers before endpoint merge.
 - [x] Outbound Join uses #28 Transport and blocks unsafe resolved addresses.
-- [ ] The Transport pins the validated DNS answer to defeat rebinding TOCTOU.
+- [x] The Transport pins the validated DNS answer while preserving URL SNI/Host.
 - [x] Changed endpoints require a second explicit review.
 - [ ] Friends-only Private AI admission denies before capacity/inference.
 - [ ] Revocation delivery converges after online and offline cases.

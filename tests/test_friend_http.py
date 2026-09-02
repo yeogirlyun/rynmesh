@@ -160,7 +160,9 @@ def test_two_nodes_join_through_transport_and_both_store_active_friendship(
             )
             return response.content
 
-    monkeypatch.setattr("rynmesh.peer_http.get_transport", lambda: BridgeTransport())
+    monkeypatch.setattr(
+        "rynmesh.peer_http.get_pinned_transport", lambda endpoint, address: BridgeTransport()
+    )
     monkeypatch.setattr(
         "rynmesh.friends.socket.getaddrinfo",
         lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 0))],

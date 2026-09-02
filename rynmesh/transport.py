@@ -29,7 +29,7 @@ import hashlib
 import os
 import ssl
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
@@ -451,6 +451,36 @@ class FrontedHttpsTransport:
         finally:
             conn.close()
         return dest
+
+
+def get_pinned_transport(url: str, connect_ip: str) -> FrontedHttpsTransport:
+    """Connect to one validated IP while preserving URL Host/SNI verification.
+
+    Friend invitation endpoints are attacker-controlled. Resolving them before
+    policy checks is insufficient if the socket later resolves the hostname a
+    second time. This transport dials the already-validated address directly,
+    while TLS certificate validation and HTTP routing remain bound to the URL
+    hostname. Explicit outbound proxies are rejected because they own DNS and
+    cannot provide this pinning guarantee through the current seam.
+    """
+
+    import ipaddress
+
+    parts = urlparse(url)
+    host = parts.hostname or ""
+    if parts.scheme not in {"http", "https"} or not host:
+        raise TransportError("pinned endpoint invalid", reason="endpoint_invalid")
+    try:
+        ipaddress.ip_address(connect_ip)
+    except ValueError as exc:
+        raise TransportError("pinned address invalid", reason="endpoint_invalid") from exc
+    profile = resolve_profile()
+    if profile.proxies:
+        raise TransportError(
+            "pinned transport does not support an outbound proxy",
+            reason="pinned_proxy_unsupported",
+        )
+    return FrontedHttpsTransport(replace(profile, connect_host=connect_ip, sni=host))
 
 
 class CdnWebSocketTransport:

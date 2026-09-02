@@ -12,6 +12,7 @@ from rynmesh.transport import (
     StdlibHttpsTransport,
     TransportError,
     TransportProfile,
+    get_pinned_transport,
     get_transport,
     register_transport,
     reset_transport_cache,
@@ -45,6 +46,22 @@ def test_proxy_env_routes_through_proxy(monkeypatch) -> None:
     monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "http://127.0.0.1:9999")
     profile = resolve_profile()
     assert profile.proxies.get("https") == "http://127.0.0.1:9999"
+
+
+def test_pinned_transport_dials_validated_ip_but_keeps_url_sni(monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_TRANSPORT", "direct")
+    monkeypatch.delenv("RYNMESH_HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("RYNMESH_HTTP_PROXY", raising=False)
+    transport = get_pinned_transport("https://friend.example:8791", "8.8.8.8")
+    assert transport.profile.connect_host == "8.8.8.8"
+    assert transport.profile.sni == "friend.example"
+
+
+def test_pinned_transport_rejects_proxy_owned_dns(monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "http://127.0.0.1:9999")
+    with pytest.raises(TransportError) as caught:
+        get_pinned_transport("https://friend.example:8791", "8.8.8.8")
+    assert caught.value.reason == "pinned_proxy_unsupported"
 
 
 def test_network_key_is_sent_as_salted_hash(monkeypatch) -> None:
