@@ -12,6 +12,7 @@ import {
   Square,
   ThumbsUp,
   Trash2,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,6 +40,12 @@ import {
   type LLMConversation,
 } from "../domain/llmConversationStore";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
+import {
+  CONTEXT_SAFETY_MARGIN_TOKENS,
+  buildGroundedConversationPrompt,
+  estimateContextSafetyTokens,
+} from "../domain/groundedContext";
+import { consumeGroundedContextHandoff } from "../domain/groundedContextHandoff";
 import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
@@ -113,6 +120,7 @@ export default function PrivateAIChat() {
     network: searchParams.get("network"),
     peer: searchParams.get("peer"),
     service: searchParams.get("service"),
+    grounding: searchParams.get("grounding"),
   });
 
   useEffect(() => {
@@ -141,29 +149,42 @@ export default function PrivateAIChat() {
   const loadServiceBucket = async (service: LLMServiceRecord, network: string, synchronize = true) => {
     const generation = bucketLoadGateRef.current.begin();
     setSwitching(true);
-    const key = serviceKey(service);
-    let stored = await listConversations(key);
-    if (!stored.length) {
-      const fresh = createConversation({
-        serviceKey: key,
-        serviceName: service.service.model_alias,
-        providerPeerId: service.peer_id,
-        networkId: network,
-      });
-      await saveConversation(fresh);
-      stored = [fresh];
+    try {
+      const key = serviceKey(service);
+      let stored = await listConversations(key);
+      if (!stored.length) {
+        const fresh = createConversation({
+          serviceKey: key,
+          serviceName: service.service.model_alias,
+          providerPeerId: service.peer_id,
+          networkId: network,
+        });
+        await saveConversation(fresh);
+        stored = [fresh];
+      }
+      if (!mountedRef.current || !bucketLoadGateRef.current.isCurrent(generation)) return false;
+      // React batches this commit. Until the target history is ready, the old
+      // service and its messages remain paired; they are never rendered crossed.
+      setSelectedService(service);
+      setConversations(stored);
+      setSelectedId(stored[0].id);
+      setQuery("");
+      setError("");
+      if (synchronize) synchronizeUrl(service, network);
+      return true;
+    } catch {
+      if (mountedRef.current && bucketLoadGateRef.current.isCurrent(generation)) {
+        setError("Unable to open that Provider's encrypted history. The current Provider, history, and draft were preserved.");
+      }
+      return false;
+    } finally {
+      // A stale request must never clear the loading state owned by a newer
+      // provider switch. The latest request always releases it, even if local
+      // encrypted storage rejected a read or write.
+      if (mountedRef.current && bucketLoadGateRef.current.isCurrent(generation)) {
+        setSwitching(false);
+      }
     }
-    if (!mountedRef.current || !bucketLoadGateRef.current.isCurrent(generation)) return false;
-    // React batches this commit. Until the target history is ready, the old
-    // service and its messages remain paired; they are never rendered crossed.
-    setSelectedService(service);
-    setConversations(stored);
-    setSelectedId(stored[0].id);
-    setQuery("");
-    setError("");
-    if (synchronize) synchronizeUrl(service, network);
-    setSwitching(false);
-    return true;
   };
 
   useEffect(() => {
@@ -182,7 +203,35 @@ export default function PrivateAIChat() {
         ?? null;
       setStorageMode(await conversationStorageMode());
       if (selected) {
-        await loadServiceBucket(selected, network);
+        const bucketReady = await loadServiceBucket(selected, network);
+        if (bucketReady && requested.grounding) {
+          const grounding = consumeGroundedContextHandoff(requested.grounding);
+          if (grounding) {
+            const fresh = createConversation({
+              serviceKey: serviceKey(selected),
+              serviceName: selected.service.model_alias,
+              providerPeerId: selected.peer_id,
+              networkId: network,
+            });
+            fresh.title = `Ask: ${grounding.title}`;
+            fresh.grounding = grounding;
+            await saveConversation(fresh);
+            if (active && mountedRef.current) {
+              setConversations((current) => [fresh, ...current.filter((item) => item.id !== fresh.id)]);
+              setSelectedId(fresh.id);
+              setSearchParams((current) => {
+                const next = new URLSearchParams(current);
+                next.delete("grounding");
+                next.set("peer", selected.peer_id);
+                next.set("service", selected.service.package_id);
+                next.set("network", network);
+                return next;
+              }, { replace: true });
+            }
+          } else if (active && mountedRef.current) {
+            setError("This article handoff expired or was already used. Reopen the item and choose Ask about this item again.");
+          }
+        }
       }
       if (active) setLoading(false);
     })();
@@ -231,6 +280,30 @@ export default function PrivateAIChat() {
     }, {});
   }, [conversations, query]);
 
+  const outputCap = selectedService
+    ? Math.min(selectedService.service.max_output_tokens || 256, 256)
+    : 256;
+  const groundingPreview = useMemo(() => {
+    if (!selectedConversation?.grounding || !selectedService) return null;
+    const previewQuestion = input.trim() || "What would you like to know about this article?";
+    const previewMessages: LLMChatMessage[] = [
+      ...selectedConversation.messages,
+      {
+        id: "grounding-preview",
+        role: "user",
+        content: previewQuestion,
+        createdAt: "",
+        status: "complete",
+      },
+    ];
+    return buildGroundedConversationPrompt({
+      grounding: selectedConversation.grounding,
+      messages: previewMessages,
+      contextWindow: selectedService.service.context_window,
+      outputTokens: outputCap,
+    });
+  }, [input, outputCap, selectedConversation, selectedService]);
+
   const replaceConversation = async (conversation: LLMConversation) => {
     setConversations((current) => [
       conversation,
@@ -256,6 +329,17 @@ export default function PrivateAIChat() {
     await replaceConversation(fresh);
     setInput("");
     setError("");
+  };
+
+  const removeGrounding = async () => {
+    if (!selectedConversation?.grounding || sending) return;
+    const updated = {
+      ...selectedConversation,
+      grounding: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await replaceConversation(updated);
+    notify("ok", "Article context removed from this conversation");
   };
 
   const removeConversation = async (conversationId: string) => {
@@ -323,6 +407,32 @@ export default function PrivateAIChat() {
       updatedAt: now,
       messages: [...conversation.messages, userMessage],
     };
+    const maxTokens = Math.min(currentTarget.service.max_output_tokens || 256, 256);
+    let orderPrompt: string;
+    if (withUser.grounding) {
+      const budget = buildGroundedConversationPrompt({
+        grounding: withUser.grounding,
+        messages: withUser.messages,
+        contextWindow: currentTarget.service.context_window,
+        outputTokens: maxTokens,
+      });
+      if (budget.tooSmall) {
+        setError("This Provider's context window is too small for the question and a useful article excerpt. Choose a larger-context Provider or remove the article context.");
+        return;
+      }
+      orderPrompt = budget.prompt;
+    } else {
+      orderPrompt = buildConversationPrompt(withUser.messages);
+      if (
+        estimateContextSafetyTokens(orderPrompt)
+          + maxTokens
+          + CONTEXT_SAFETY_MARGIN_TOKENS
+        > currentTarget.service.context_window
+      ) {
+        setError("This conversation is too long for the selected Provider. Start a new chat or choose a larger-context Provider.");
+        return;
+      }
+    }
     setInput("");
     setError("");
     setSending(true);
@@ -334,8 +444,8 @@ export default function PrivateAIChat() {
         network_id: networkId,
         provider_peer_id: currentTarget.peer_id,
         service_id: currentTarget.service.package_id,
-        prompt: buildConversationPrompt(withUser.messages),
-        max_tokens: Math.min(currentTarget.service.max_output_tokens || 256, 256),
+        prompt: orderPrompt,
+        max_tokens: maxTokens,
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
@@ -371,6 +481,7 @@ export default function PrivateAIChat() {
       };
       if (deletedIdsRef.current.has(withUser.id)) return;
       await replaceConversation(completed);
+      if (!success) setInput((current) => current.trim() ? current : text);
       notify(success ? "ok" : "warn", success ? "Private AI response complete" : `Private AI request ${result.state}`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Private AI request failed";
@@ -379,6 +490,7 @@ export default function PrivateAIChat() {
       };
       if (mountedRef.current && !deletedIdsRef.current.has(withUser.id)) {
         await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] });
+        setInput((current) => current.trim() ? current : text);
         setError(message);
         notify("danger", message);
       }
@@ -574,6 +686,30 @@ export default function PrivateAIChat() {
         </div>
 
         <div className={styles.composerWrap}>
+          {selectedConversation?.grounding ? (
+            <section className={styles.groundingCard} aria-label="Article context">
+              <div>
+                <strong>{selectedConversation.grounding.title}</strong>
+                <span>
+                  {selectedConversation.grounding.sourceTitle}
+                  {selectedConversation.grounding.byline ? ` · ${selectedConversation.grounding.byline}` : ""}
+                </span>
+                <a href={selectedConversation.grounding.sourceUrl} target="_blank" rel="noreferrer noopener">View source</a>
+              </div>
+              <div className={styles.groundingMeta}>
+                {groundingPreview ? (
+                  <span className={groundingPreview.truncated ? styles.groundingTruncated : ""} role="status">
+                    {groundingPreview.truncated
+                      ? `Article shortened for this model: ${groundingPreview.includedCharacters} of ${groundingPreview.originalCharacters} characters (${groundingPreview.includedBlocks}/${groundingPreview.originalBlocks} blocks).`
+                      : `Full article context fits: ${groundingPreview.originalCharacters} characters.`}
+                  </span>
+                ) : null}
+                <button type="button" aria-label="Remove article context" disabled={sending} onClick={() => void removeGrounding()}>
+                  <X size={14} /> Remove
+                </button>
+              </div>
+            </section>
+          ) : null}
           {providerUnavailableMessage ? <div className={styles.unavailableNotice} role="status">{providerUnavailableMessage}</div> : null}
           {error ? <div className={styles.error} role="alert">{error}</div> : null}
           <div className={styles.composer}>
@@ -593,7 +729,7 @@ export default function PrivateAIChat() {
             {sending ? (
               <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
             ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || switching || selectedAvailability !== "ready" || !selectedDiscovered} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
+              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || switching || selectedAvailability !== "ready" || !selectedDiscovered || groundingPreview?.tooSmall === true} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
             )}
           </div>
           <div className={styles.composerMeta}>

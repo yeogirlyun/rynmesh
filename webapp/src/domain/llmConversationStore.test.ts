@@ -58,6 +58,34 @@ describe("Private AI conversation storage", () => {
     expect(restored.find((item) => item.id === conversation.id)?.messages[0].content).toBe(secret);
   });
 
+  it("encrypts grounded article provenance and body in the existing record", async () => {
+    const conversation = createConversation({
+      serviceKey: "peer:grounding::model:test",
+      serviceName: "Grounding model",
+      providerPeerId: "peer:grounding",
+      networkId: "rynmesh-test",
+    });
+    conversation.grounding = {
+      kind: "reader-article",
+      itemId: "UNIQUE_ITEM_25",
+      title: "UNIQUE_TITLE_25",
+      sourceTitle: "UNIQUE_SOURCE_25",
+      sourceUrl: "https://example.test/UNIQUE_URL_25",
+      blocks: [{ tag: "p", text: "UNIQUE_BODY_25" }],
+      wordCount: 2,
+      extractedAt: "2026-09-02T00:00:00Z",
+    };
+    await saveConversation(conversation);
+
+    const raw = JSON.stringify(await readRawConversation(conversation.id));
+    expect(raw).not.toContain("UNIQUE_TITLE_25");
+    expect(raw).not.toContain("UNIQUE_BODY_25");
+    expect(raw).not.toContain("UNIQUE_URL_25");
+    const restored = await listConversations(conversation.serviceKey);
+    expect(restored[0].grounding?.itemId).toBe("UNIQUE_ITEM_25");
+    expect(restored[0].grounding?.blocks[0].text).toBe("UNIQUE_BODY_25");
+  });
+
   it("builds follow-up context without failed messages", () => {
     const messages: LLMChatMessage[] = [
       { id: "1", role: "user", content: "What is Rynmesh?", createdAt: "2026-01-01", status: "complete" },

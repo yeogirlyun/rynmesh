@@ -26,6 +26,7 @@ from rynmesh.store import RynmeshStore
 from rynmesh.transport import network_key_header
 
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
+from .context_safety import context_request_fits
 from .lifecycle import (
     LifecycleError,
     connect_local_api,
@@ -1431,10 +1432,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 detail="provider discovery record is missing required manifest fields",
             ) from exc
         max_tokens = min(max_tokens, manifest.max_output_tokens)
-        if _estimate_input_tokens(prompt) + max_tokens > manifest.context_window:
+        if not context_request_fits(
+            prompt,
+            output_tokens=max_tokens,
+            context_window=manifest.context_window,
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="estimated prompt and output exceed the Provider context window",
+                detail="conservative prompt, output, and safety margin exceed the Provider context window",
             )
         maximum = _estimate_price(manifest, prompt, max_tokens)
         if maximum > manifest.pricing.maximum_per_task:
