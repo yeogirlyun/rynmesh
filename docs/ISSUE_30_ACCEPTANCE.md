@@ -10,9 +10,9 @@ Date: 2026-09-02
 ## Current result
 
 The security/store/public-acceptance foundation is implemented and has focused
-automated evidence. The complete product is not accepted because remote
-revocation delivery, Tauri deep-link handling, privacy lifecycle work,
-exact-commit CI, and two-node physical acceptance remain outstanding.
+automated evidence. The complete product is not accepted because Tauri
+deep-link handling, exact-commit CI, maintainer protocol review, and two-node
+physical acceptance remain outstanding.
 
 The Webapp create/offline-review/Join/list/cancel/revoke and local-QR slice is
 now implemented and automated, but this does not change the overall decision:
@@ -28,9 +28,14 @@ including simulated two-node Join and explicit endpoint-change review.
 After friends-only Private AI integration, the combined focused regression is
 88 passed with Ruff green.
 
-Webapp Join integration passes 8/8 focused tests, 46/46 full Webapp tests,
+Webapp Join/retry integration passes 9/9 focused tests, 47/47 full Webapp tests,
 TypeScript lint, and the production build. Review makes no endpoint contact;
 Join uses the local API, and changing the pasted link invalidates prior review.
+
+Signed remote revocation now records offline delivery, retries after reconnect,
+and converges idempotently. Sanitized privacy export and explicit friendship
+erase are covered by the 47/47 Friend/Transport run and 90/90 combined
+Friend/Transport/LLM regression.
 
 ## Criteria status
 
@@ -47,7 +52,7 @@ Join uses the local API, and changing the pasted link invalidates prior review.
 - [x] The Transport pins the validated DNS answer while preserving URL SNI/Host.
 - [x] Changed endpoints require a second explicit review.
 - [x] Friends-only Private AI admission denies before capacity/inference.
-- [ ] Revocation delivery converges after online and offline cases.
+- [x] Revocation delivery converges after online and offline cases.
 - [ ] Webapp and Tauri create/review/join/QR/deep-link/list/revoke flows complete.
   - [x] Webapp create/list/cancel with explicit endpoint/scope/expiry review.
   - [x] Pasted-link offline review shows signature, fingerprint, network, every endpoint/address class, scope, and expiry.
@@ -56,7 +61,7 @@ Join uses the local API, and changing the pasted link invalidates prior review.
   - [x] Keyboard labels, disabled-state explanation, and create/review focus transfer are tested.
   - [x] Outbound Join and received-relationship persistence are integrated and enabled through the local node.
   - [ ] Tauri deep-link forwarding and physical scan/deep-link acceptance are complete.
-- [ ] Privacy export/erase behavior complete.
+- [x] Privacy export/erase behavior complete.
 - [ ] Full backend/Webapp/Rust/Linux/macOS CI green on the exact commit.
 - [ ] Two clean nodes pass use/revoke/next-order-denied including offline revoke.
 - [ ] Product, development, test, and final acceptance evidence reviewed.

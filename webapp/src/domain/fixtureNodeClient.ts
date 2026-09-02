@@ -1301,7 +1301,14 @@ export function makeFixtureNodeClient(): NodeClient {
       if (!friend) throw new Error("friend_not_found");
       friend.state = "revoked";
       friend.revoked_at = new Date().toISOString();
-      return { ok: true, state: "revoked", revocation_id: "fixture-revocation" };
+      return { ok: true, state: "revoked", revocation_id: "fixture-revocation", delivery: "delivered" };
+    },
+    async retryFriendRevocation(peerId) {
+      await delay();
+      const friend = friends.find((candidate) => candidate.peer_id === peerId);
+      if (!friend || friend.state !== "revoked") throw new Error("revocation_not_found");
+      friend.last_delivery_error = null;
+      return { ok: true, state: "revoked", revocation_id: "fixture-revocation", delivery: "delivered" };
     },
     async listContent(filters) {
       await delay();

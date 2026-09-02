@@ -68,7 +68,6 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
 ## Still required
 
 - outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
-- revocation delivery/reconnect tests;
 - Tauri deep-link integration tests beyond the completed Webapp paste/Join slice;
 - Tauri deep-link tests;
 - full backend/CI and two clean physical nodes, including offline revoke.
@@ -83,6 +82,7 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
 - offline signature/fingerprint/network/scope/expiry/all-endpoint review;
 - enabled outbound Join only after offline review, delegated to the local node;
 - invalidation of the old review whenever the pasted link changes;
+- pending signed-revocation retry without weakening local denial;
 - high-risk local-first revoke and safe delivery status;
 - separation from trust-root actions and blocked local endpoints.
 
@@ -97,10 +97,10 @@ Executed in `codex/issue-30-friend-mesh-ui`:
 
 ```powershell
 npm test -- --run src/domain/friendMesh.test.ts src/domain/liveNodeClient.friendMesh.test.ts src/screens/Peers.friendMesh.test.tsx
-# 3 files passed, 8 tests passed
+# 3 files passed, 9 tests passed
 
 npm test
-# 12 files passed, 46 tests passed
+# 12 files passed, 47 tests passed
 
 npm run lint
 # TypeScript project check passed
@@ -112,4 +112,11 @@ npm run build
 Dependency installation/audit reported 0 vulnerabilities. These results cover
 the Webapp create/review/local-Join slice and exact local-control API bodies;
 they do not satisfy a physical two-node Join, Tauri deep-link, remote revoke,
-privacy lifecycle, or final product acceptance.
+or final product acceptance.
+
+Revocation/privacy integration adds automated evidence that an offline notice
+records a bounded error, the identical signed notice converges and remains
+idempotent after reconnect, a configured mesh key is not required for that
+exact signed route, privacy export excludes credentials, and explicit friend
+erase removes both public and secret stores. Friend/Transport focused tests are
+47/47; the combined Friend/Transport/LLM regression is 90/90.

@@ -439,11 +439,33 @@ export default function FriendMeshPanel({
                     <EndpointList endpoints={friend.reviewed_endpoints} />
                     <small>Revocation delivery: {friend.last_delivery_error ? `retry needed (${friend.last_delivery_error})` : friend.state === "revoked" ? "local denial active; remote delivery is best-effort" : "not applicable"}</small>
                   </div>
-                  <Button
-                    variant="danger"
-                    icon={UserMinus}
-                    disabled={friend.state !== "active" || busy}
-                    onClick={() => confirm({
+                  {friend.state === "revoked" && friend.last_delivery_error ? (
+                    <Button
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setError("");
+                        try {
+                          const result = await client.retryFriendRevocation(friend.peer_id);
+                          notify(result.delivery === "delivered" ? "ok" : "warn", result.delivery === "delivered"
+                            ? "Signed revocation delivered."
+                            : "Friend is still unreachable; local denial remains active.");
+                          await refreshAfterMutation("Delivery was retried, but the friend list could not be refreshed.");
+                        } catch (retryError) {
+                          setError(errorText(retryError));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Retry signed notice
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      icon={UserMinus}
+                      disabled={friend.state !== "active" || busy}
+                      onClick={() => confirm({
                       title: `Revoke ${friend.display_name}?`,
                       body: "Local authorization and its relationship secret are removed first. Remote notification is best-effort and may remain pending while the friend is offline.",
                       risk: "high",
@@ -467,10 +489,11 @@ export default function FriendMeshPanel({
                           setBusy(false);
                         }
                       },
-                    })}
-                  >
-                    Revoke
-                  </Button>
+                      })}
+                    >
+                      Revoke
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>

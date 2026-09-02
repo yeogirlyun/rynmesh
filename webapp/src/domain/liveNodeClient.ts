@@ -144,6 +144,11 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
         method: "POST",
         body: JSON.stringify({ peer_id: peerId, reason_code: reasonCode }),
       }),
+    retryFriendRevocation: (peerId) =>
+      requestJson(`${baseUrl}/friends/revocations/retry`, {
+        method: "POST",
+        body: JSON.stringify({ peer_id: peerId }),
+      }),
     listContent: (filters?: ContentFilters) => requestJson(`${baseUrl}/content${qs(filters)}`),
     getContentItem: (contentId: string) => requestJson(`${baseUrl}/content/${contentId}`),
     getContentBody: (contentId: string) =>

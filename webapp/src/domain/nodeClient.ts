@@ -268,6 +268,13 @@ export interface NodeClient {
     ok: boolean;
     state: "revoked";
     revocation_id: string;
+    delivery: "delivered" | "remote_unreachable";
+  }>;
+  retryFriendRevocation(peerId: string): Promise<{
+    ok: boolean;
+    state: "revoked";
+    revocation_id: string;
+    delivery: "delivered" | "remote_unreachable";
   }>;
   listContent(filters?: ContentFilters): Promise<ContentItem[]>;
   getContentItem(contentId: string): Promise<ContentItem>;

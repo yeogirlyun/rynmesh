@@ -707,8 +707,11 @@ def create_app(store: RynmeshStore | None = None):
         # generic 404, so the server does not reveal that it runs Rynmesh.
         # Opt-in: with no key set, peer APIs stay open (dev/LAN default).
         peer_key = os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
-        friend_accept_path = "/api/peer/friends/accept"
-        if peer_key and path != friend_accept_path and (
+        friend_public_paths = {
+            "/api/peer/friends/accept",
+            "/api/peer/friends/revocations",
+        }
+        if peer_key and path not in friend_public_paths and (
             path.startswith("/api/v1") or path.startswith("/api/peer") or path == "/health"
         ):
             import hashlib
@@ -1461,6 +1464,61 @@ def create_app(store: RynmeshStore | None = None):
         except FriendError as exc:
             raise HTTPException(status_code=404, detail="invite_not_found") from exc
 
+    def deliver_friend_revocation(peer_id: str, signed: SignedPayload) -> str:
+        """Best-effort signed delivery through reviewed, freshly pinned endpoints."""
+
+        import ipaddress
+
+        from .friends import FriendError, resolve_endpoint_for_contact
+
+        try:
+            friend = _friends.friend(peer_id)
+        except FriendError:
+            return "remote_unreachable"
+        delivered = False
+        for endpoint_value in list(friend.get("reviewed_endpoints") or []):
+            endpoint = str(endpoint_value).rstrip("/")
+            try:
+                host = urlparse(endpoint).hostname or ""
+                try:
+                    address = ipaddress.ip_address(host)
+                    allow_private = bool(
+                        address.is_private or address.is_loopback or address.is_link_local
+                    )
+                except ValueError:
+                    # A hostname must never gain private-network access merely
+                    # because DNS changed after the original review.
+                    allow_private = False
+                endpoint, resolved = resolve_endpoint_for_contact(
+                    endpoint, allow_private=allow_private
+                )
+                response = HttpPeerClient(
+                    endpoint,
+                    transport=get_pinned_transport(endpoint, resolved[0]),
+                ).post_json(
+                    "/api/peer/friends/revocations",
+                    signed.to_dict(),
+                    max_bytes=16 * 1024,
+                )
+                delivered = bool(
+                    response.get("ok")
+                    and response.get("revocation_id") == signed.payload.get("revocation_id")
+                )
+                if delivered:
+                    break
+            except (FriendError, PeerTransportError, TransportError, IndexError, ValueError):
+                continue
+        error_code = None if delivered else "remote_unreachable"
+        try:
+            _friends.mark_revocation_delivery(
+                peer_id,
+                revocation_id=str(signed.payload.get("revocation_id", "")),
+                error_code=error_code,
+            )
+        except FriendError:
+            pass
+        return "delivered" if delivered else error_code
+
     @app.post("/api/local/friends/revoke")
     async def local_friend_revoke(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
@@ -1476,9 +1534,32 @@ def create_app(store: RynmeshStore | None = None):
             )
         except FriendError as exc:
             raise HTTPException(status_code=404, detail="friend_not_found") from exc
-        # Local authorization is already removed. Delivery is deliberately
-        # best-effort and is added through the Transport seam in the next slice.
-        return {"ok": True, "state": "revoked", "revocation_id": signed.payload["revocation_id"]}
+        delivery = deliver_friend_revocation(str(body.get("peer_id", "")), signed)
+        return {
+            "ok": True,
+            "state": "revoked",
+            "revocation_id": signed.payload["revocation_id"],
+            "delivery": delivery,
+        }
+
+    @app.post("/api/local/friends/revocations/retry")
+    async def local_friend_revocation_retry(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError
+
+        body = await request.json()
+        peer_id = str(body.get("peer_id", ""))
+        try:
+            friend = _friends.friend(peer_id)
+            signed = SignedPayload.from_dict(dict(friend["revocation"]))
+        except (FriendError, KeyError, TypeError, ValueError):
+            raise HTTPException(status_code=404, detail="revocation_not_found") from None
+        return {
+            "ok": True,
+            "state": "revoked",
+            "revocation_id": signed.payload["revocation_id"],
+            "delivery": deliver_friend_revocation(peer_id, signed),
+        }
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2278,6 +2359,12 @@ def create_app(store: RynmeshStore | None = None):
                 1 for path in app.state.reader_cache.dir.glob("*.json") if path.is_file()
             ),
             "audit_events": len(_audit().list()),
+            "friendship_records": len(_friends.list_friends()),
+            "outstanding_friend_invites": sum(
+                1
+                for invite in _friends.list_invites()
+                if not invite.get("used_at") and not invite.get("cancelled_at")
+            ),
             "cloud_ai_enabled": bool(_settings.get().get("cloud_access", False)),
         }
 
@@ -2294,6 +2381,10 @@ def create_app(store: RynmeshStore | None = None):
             "reading_history": app.state.consumption_store.list(),
             "sources": _digest_service().list_sources(),
             "assistant_audit": _audit().list(),
+            # Public store projections only: no invite bearer secret or
+            # relationship credential can enter a privacy export.
+            "friendships": _friends.list_friends(),
+            "friend_invitations": _friends.list_invites(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
                 "ai_model": stored["ai_model"],
@@ -2308,7 +2399,7 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         requested = body.get("scopes", []) if isinstance(body, dict) else []
         scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit"}
+        allowed = {"history", "profile", "cache", "audit", "friends"}
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
         if "history" in scopes:
@@ -2327,6 +2418,25 @@ def create_app(store: RynmeshStore | None = None):
                 "Personal assistant data erased",
                 details={"scopes": sorted(scopes)},
             )
+        if "friends" in scopes:
+            # Local denial and secret deletion happen before any best-effort
+            # remote notice. The explicit erase then removes the remaining
+            # public records, invites, nonces, and signed notice history.
+            for friend in _friends.list_friends():
+                peer_id = str(friend.get("peer_id", ""))
+                if not peer_id:
+                    continue
+                try:
+                    signed = _friends.revoke(
+                        peer_id,
+                        private_key_bytes=active_store.private_key_bytes,
+                        local_peer_id=active_store.peer_id,
+                        reason_code="privacy_erased",
+                    )
+                    deliver_friend_revocation(peer_id, signed)
+                except Exception:  # noqa: BLE001 - erase must still remove local credentials
+                    continue
+            _friends.erase_all()
         return {"ok": True, "erased": sorted(scopes)}
 
     @app.get("/api/v1/node")
@@ -2516,6 +2626,43 @@ def create_app(store: RynmeshStore | None = None):
             "inviter_x25519_pub": _peer_box.public_key_b64(_msg_priv),
             "confirmed_permissions": verified["permissions"],
             "credential": {"nonce": nonce, "ciphertext": ciphertext},
+        }
+
+    @app.post("/api/peer/friends/revocations")
+    async def peer_friend_revocation(request: FastAPIRequest):
+        """Apply an exact signed relationship revocation without a surviving secret."""
+
+        from fastapi.responses import JSONResponse
+
+        from .friends import FriendError
+
+        generic_not_found = JSONResponse({"detail": "Not Found"}, status_code=404)
+        client_key = "revoke:" + ((request.client.host if request.client else "") or "unknown")
+        current = time.monotonic()
+        recent = [
+            value
+            for value in _friend_accept_attempts.get(client_key, [])
+            if current - value < 60
+        ]
+        if len(recent) >= 8:
+            return generic_not_found
+        recent.append(current)
+        _friend_accept_attempts[client_key] = recent
+        raw = await request.body()
+        if not raw or len(raw) > 16 * 1024:
+            return generic_not_found
+        try:
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise FriendError("revocation_invalid")
+            signed = SignedPayload.from_dict(value)
+            _friends.apply_revocation(signed, local_peer_id=active_store.peer_id)
+        except (FriendError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return generic_not_found
+        return {
+            "ok": True,
+            "state": "revoked",
+            "revocation_id": signed.payload["revocation_id"],
         }
 
     @app.post("/api/local/friends/join")

@@ -87,4 +87,4 @@ rotation, and relationship persistence. If the inviter returns changed signed
 endpoints, the browser requires a second exact approve/reject decision; reject
 deletes the local credential. Editing the invitation or LAN-risk choice clears
 the old review so a different link cannot inherit it. Tauri deep-link forwarding,
-remote revoke convergence, privacy lifecycle work, and physical acceptance remain.
+Tauri deep-link forwarding and physical acceptance remain.
