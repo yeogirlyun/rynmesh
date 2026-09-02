@@ -3,6 +3,8 @@
 This runbook operates `rynmesh.peer-transit.v1`: direct P2P first, then an
 ordinary Rynmesh peer as a single encrypted transit hop.  TURN is not used.
 See `P2P_PEER_TRANSIT.md` for the protocol and release gates.
+See `P2P_PEER_TRANSIT_ACCEPTANCE_MATRIX.md` for the requirement-by-requirement
+evidence status.
 
 ## Prerequisites
 

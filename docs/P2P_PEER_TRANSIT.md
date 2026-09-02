@@ -224,6 +224,8 @@ explicit mode and separate evidence; it must not weaken the existing audit.
 
 Automated evidence is necessary but physical three-network evidence is the
 release gate for public NAT traversal.
+The requirement-to-evidence status is tracked in
+`P2P_PEER_TRANSIT_ACCEPTANCE_MATRIX.md`.
 
 ### A. Healthy direct path
 
