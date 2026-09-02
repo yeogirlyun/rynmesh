@@ -29,6 +29,7 @@ import hashlib
 import os
 import ssl
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -196,6 +197,11 @@ class Transport(Protocol):
         headers: dict[str, str] | None = None,
     ) -> bytes: ...
 
+    def iter_post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
+        max_total_bytes: int, headers: dict[str, str] | None = None,
+    ) -> Iterator[bytes]: ...
+
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
@@ -288,6 +294,38 @@ class StdlibHttpsTransport:
         if len(data) > max_bytes:
             raise TransportError("response too large", reason="too_large")
         return data
+
+    def iter_post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
+        max_total_bytes: int, headers: dict[str, str] | None = None,
+    ) -> Iterator[bytes]:
+        """Yield a bounded POST response without buffering it in memory.
+
+        The response object is owned by the iterator and is closed even when a
+        caller cancels iteration.  Error text is deliberately stable so a
+        remote response body can never be copied into logs by exception
+        formatting.
+        """
+        if max_chunk_bytes < 1 or max_total_bytes < 1:
+            raise TransportError("invalid stream limit", reason="invalid_limit")
+        req = urllib.request.Request(
+            url, data=body, method="POST", headers=self._headers(headers),
+        )
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                total = 0
+                while True:
+                    chunk = resp.read(max_chunk_bytes)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_total_bytes:
+                        raise TransportError("stream response too large", reason="too_large")
+                    yield chunk
+        except TransportError:
+            raise
+        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError("stream request failed", reason="http_error") from exc
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -423,6 +461,33 @@ class FrontedHttpsTransport:
         if len(data) > max_bytes:
             raise TransportError("response too large", reason="too_large")
         return data
+
+    def iter_post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_chunk_bytes: int,
+        max_total_bytes: int, headers: dict[str, str] | None = None,
+    ) -> Iterator[bytes]:
+        """Yield a bounded response over the connect-host/SNI split socket."""
+        import http.client
+
+        if max_chunk_bytes < 1 or max_total_bytes < 1:
+            raise TransportError("invalid stream limit", reason="invalid_limit")
+        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
+        try:
+            total = 0
+            while True:
+                chunk = resp.read(max_chunk_bytes)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_total_bytes:
+                    raise TransportError("stream response too large", reason="too_large")
+                yield chunk
+        except TransportError:
+            raise
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise TransportError("stream request failed", reason="http_error") from exc
+        finally:
+            conn.close()
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,

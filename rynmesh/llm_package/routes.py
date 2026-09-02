@@ -8,17 +8,20 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import tempfile
 import threading
 import time
 import uuid
 from collections import Counter, deque
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
@@ -53,6 +56,14 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PError, consumer_exchange, provider_exchange
+from .stream_protocol import (
+    DEFAULT_MAX_EVENT_BYTES,
+    DEFAULT_MAX_OUTPUT_BYTES,
+    STREAM_PROTOCOL_VERSION,
+    StreamEventBroker,
+    StreamSequenceVerifier,
+    seal_stream_delta,
+)
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -251,6 +262,10 @@ class ProviderService:
 
     def public_status(self, *, benchmark: bool = False) -> dict[str, Any]:
         health = self.adapter.health()
+        try:
+            adapter_capabilities = self.adapter.capabilities() if health.get("ok") else {}
+        except Exception:
+            adapter_capabilities = {}
         result: dict[str, Any] = {
             "configured": True,
             "service": self.manifest.public_dict(),
@@ -259,7 +274,16 @@ class ProviderService:
             "health": {k: v for k, v in health.items() if k not in {"base_url", "path"}},
             "capacity": {"max_concurrent": self.manifest.max_concurrent,
                          "running": self._running, "available": max(0, self.manifest.max_concurrent - self._running),
-                         "queue_limit": self.manifest.queue_limit, "queue_policy": "reject_when_full"},
+                          "queue_limit": self.manifest.queue_limit, "queue_policy": "reject_when_full"},
+            "adapter_capabilities": {
+                "chat_completions": bool(adapter_capabilities.get("chat_completions")),
+                "streaming": bool(adapter_capabilities.get("streaming")),
+                "cancel": str(adapter_capabilities.get("cancel") or "best_effort"),
+            },
+            "delivery_protocols": [
+                "complete-v1",
+                *(["stream-v1"] if adapter_capabilities.get("streaming") else []),
+            ],
         }
         from rynmesh.services import peer_box
 
@@ -430,6 +454,237 @@ class ProviderService:
             with self._lock:
                 self._running -= 1
             self._slots.release()
+
+    def handle_stream(self, signed_request: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Yield sealed stream-v1 deltas followed by one terminal envelope.
+
+        Inference runs on a dedicated thread while this iterator drains a
+        bounded queue.  Closing the iterator signals best-effort adapter
+        cancellation; slow or disconnected network readers cannot cause an
+        unbounded plaintext buffer.
+        """
+        outer, body = open_task(
+            signed_request,
+            recipient_peer_id=self.store.peer_id,
+            recipient_messaging_key=self.messaging_key,
+            expected_kind="llm_request",
+        )
+        task_id = str(outer["task_id"])
+        consumer_peer_id = str(outer["from_peer_id"])
+        if body.get("response_mode") != "stream-v1":
+            raise TaskProtocolError("stream response mode is required")
+        if str(body.get("service_id")) != self.manifest.package_id:
+            raise TaskProtocolError("requested service is not available")
+        prompt = str(body.get("prompt") or "")
+        if not prompt:
+            raise TaskProtocolError("prompt is required")
+        max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
+        if max_tokens < 1:
+            raise TaskProtocolError("max_tokens is invalid")
+        reply_pub = str(body.get("reply_messaging_pub") or "")
+        _validate_messaging_pub(reply_pub)
+        max_amount = float(body.get("max_amount") or 0)
+        if max_amount <= 0 or max_amount > self.manifest.pricing.maximum_per_task:
+            raise TaskProtocolError("stream task maximum is invalid")
+        requested_event_limit = int(body.get("stream_event_max_bytes") or DEFAULT_MAX_EVENT_BYTES)
+        if not 1024 <= requested_event_limit <= DEFAULT_MAX_EVENT_BYTES:
+            raise TaskProtocolError("stream event limit is invalid")
+        # SignedPayload + sealed-task JSON/base64 overhead is substantial; keep
+        # plaintext below half the negotiated wire-frame bound.
+        event_limit = min(128 * 1024, requested_event_limit // 2)
+        infer_stream = getattr(self.adapter, "infer_stream", None)
+        if not callable(infer_stream):
+            yield self._sealed_failure(
+                task_id, reply_pub, consumer_peer_id, "rejected", "stream_not_supported",
+            )
+            return
+
+        idempotency_key = str(body.get("idempotency_key") or task_id)
+        fingerprint = _request_fingerprint(body, self.store.private_key_bytes)
+        bindings = {
+            "consumer_peer_id": consumer_peer_id,
+            "service_id": self.manifest.package_id,
+            "idempotency_key": idempotency_key,
+            "request_fingerprint": fingerprint,
+        }
+        existing = self.task_store.get(task_id)
+        if existing is not None:
+            existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
+        else:
+            if not self.accepting_orders or not self.adapter.health().get("ok"):
+                code = "service_paused" if not self.accepting_orders else "service_unhealthy"
+                yield self._sealed_failure(
+                    task_id, reply_pub, consumer_peer_id, "rejected", code,
+                )
+                return
+            existing, claimed = self._claim_admitted_task(task_id=task_id, bindings=bindings)
+        if not claimed:
+            encrypted = existing.get("encrypted_response")
+            if existing.get("state") in TERMINAL_STATES:
+                yield dict(encrypted) if isinstance(encrypted, dict) else self._sealed_failure(
+                    task_id, reply_pub, consumer_peer_id, "failed", "result_expired",
+                )
+                return
+            deadline = time.monotonic() + self.manifest.timeout_seconds + 30
+            while time.monotonic() < deadline:
+                time.sleep(0.25)
+                current = self.task_store.get(task_id) or {}
+                encrypted = current.get("encrypted_response")
+                if current.get("state") in TERMINAL_STATES:
+                    yield dict(encrypted) if isinstance(encrypted, dict) else self._sealed_failure(
+                        task_id, reply_pub, consumer_peer_id, "failed", "result_expired",
+                    )
+                    return
+            raise TaskProtocolError("duplicate stream task is still in progress")
+
+        if not self._slots.acquire(blocking=False):
+            yield self._failure(
+                task_id, reply_pub, consumer_peer_id, "rejected", "capacity_exhausted",
+            )
+            return
+        with self._lock:
+            self._running += 1
+        metadata = {
+            "consumer_peer_id": consumer_peer_id,
+            "service_id": self.manifest.package_id,
+            "request_hash": SignedPayload.from_dict(signed_request).subject_hash,
+            "stream_protocol": STREAM_PROTOCOL_VERSION,
+        }
+        self.task_store.transition(task_id=task_id, state="accepted", metadata=metadata)
+        self.task_store.transition(task_id=task_id, state="running", metadata=metadata)
+
+        events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=32)
+        disconnected = threading.Event()
+
+        def publish(kind: str, value: Any) -> None:
+            while not disconnected.is_set():
+                try:
+                    events.put((kind, value), timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
+            raise AdapterError("task_cancelled")
+
+        def worker() -> None:
+            sequence = 0
+            output_bytes = 0
+            started = time.monotonic()
+
+            def on_delta(delta: str) -> None:
+                nonlocal sequence, output_bytes
+                encoded_size = len(delta.encode("utf-8"))
+                if encoded_size > event_limit:
+                    raise AdapterError("stream delta exceeded negotiated event limit")
+                output_bytes += encoded_size
+                if output_bytes > DEFAULT_MAX_OUTPUT_BYTES:
+                    raise AdapterError("stream output exceeded provider limit")
+                envelope = seal_stream_delta(
+                    task_id=task_id,
+                    service_id=self.manifest.package_id,
+                    sequence=sequence,
+                    delta=delta,
+                    sender_peer_id=self.store.peer_id,
+                    recipient_peer_id=consumer_peer_id,
+                    sender_signing_key=self.store.private_key_bytes,
+                    recipient_messaging_pub=reply_pub,
+                    expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                )
+                publish("delta", envelope)
+                sequence += 1
+
+            try:
+                result = infer_stream(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    task_id=task_id,
+                    timeout_s=self.manifest.timeout_seconds,
+                    on_delta=on_delta,
+                )
+                if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
+                    terminal = self._failure(
+                        task_id, reply_pub, consumer_peer_id, "cancelled", "consumer_cancelled",
+                    )
+                else:
+                    duration_ms = int(result.get("duration_ms") or (time.monotonic() - started) * 1000)
+                    amount = min(
+                        _price(
+                            self.manifest,
+                            int(result["input_tokens"]),
+                            int(result["output_tokens"]),
+                        ),
+                        max_amount,
+                    )
+                    response_body = {
+                        "task_id": task_id,
+                        "state": "succeeded",
+                        "service_id": self.manifest.package_id,
+                        "model_alias": self.manifest.public_model_alias,
+                        "output": str(result["text"]),
+                        "input_tokens": int(result["input_tokens"]),
+                        "output_tokens": int(result["output_tokens"]),
+                        "duration_ms": duration_ms,
+                        "amount": amount,
+                        "currency": "DEV_TASK_BALANCE",
+                    }
+                    terminal = seal_task(
+                        body=response_body,
+                        task_id=task_id,
+                        kind="llm_response",
+                        sender_peer_id=self.store.peer_id,
+                        recipient_peer_id=consumer_peer_id,
+                        sender_signing_key=self.store.private_key_bytes,
+                        recipient_messaging_pub=reply_pub,
+                        expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                    ).to_dict()
+                    self.task_store.transition(
+                        task_id=task_id,
+                        state="succeeded",
+                        metadata={
+                            **metadata,
+                            "input_tokens": response_body["input_tokens"],
+                            "output_tokens": response_body["output_tokens"],
+                            "duration_ms": duration_ms,
+                            "amount": amount,
+                            "stream_events": sequence,
+                        },
+                        encrypted_response=terminal,
+                    )
+                publish("terminal", terminal)
+            except Exception as exc:
+                message = str(exc).lower()
+                state = "cancelled" if "task_cancelled" in message else (
+                    "timed_out" if "timed out" in message else "failed"
+                )
+                code = "consumer_cancelled" if state == "cancelled" else (
+                    "inference_timeout" if state == "timed_out" else "stream_failed"
+                )
+                terminal = self._failure(task_id, reply_pub, consumer_peer_id, state, code)
+                try:
+                    publish("terminal", terminal)
+                except AdapterError:
+                    pass
+            finally:
+                with self._lock:
+                    self._running -= 1
+                self._slots.release()
+
+        thread = threading.Thread(target=worker, name=f"llm-stream-{task_id[:12]}", daemon=True)
+        thread.start()
+        try:
+            while True:
+                kind, envelope = events.get(timeout=self.manifest.timeout_seconds + 30)
+                yield envelope
+                if kind == "terminal":
+                    return
+        except queue.Empty:
+            self.adapter.cancel(task_id)
+            yield self._failure(
+                task_id, reply_pub, consumer_peer_id, "timed_out", "stream_idle_timeout",
+            )
+        finally:
+            disconnected.set()
+            if thread.is_alive():
+                self.adapter.cancel(task_id)
 
     def _failure(self, task_id: str, reply_pub: str, consumer_peer_id: str,
                  state: str, code: str) -> dict[str, Any]:
@@ -700,6 +955,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     p2p_sessions_lock = threading.Lock()
     background_orders: dict[str, dict[str, Any]] = {}
     background_orders_lock = threading.Lock()
+    stream_broker = StreamEventBroker(max_tasks=32, max_events_per_task=256)
     pending_cancellations: set[str] = set()
     settings_path = home / "llm" / "provider-settings.json"
     consumer_settings_path = home / "llm" / "consumer-settings.json"
@@ -1390,6 +1646,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
+        response_mode = str(body.get("response_mode") or "complete-v1").strip().lower()
+        if response_mode not in {"complete-v1", "stream-v1"}:
+            raise HTTPException(status_code=400, detail="response_mode must be complete-v1 or stream-v1")
+        stream_direct = (
+            response_mode == "stream-v1"
+            and "stream-v1" in list(selected.get("delivery_protocols") or [])
+        )
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are
@@ -1448,6 +1711,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
+            "response_mode": "stream-v1" if stream_direct else "complete-v1",
         }, store.private_key_bytes)
         bindings = {
             "provider_peer_id": provider_peer_id,
@@ -1507,9 +1771,23 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             recipient_pub = str(selected.get("node_messaging_pub") or "") or resolve_pubkey(provider_peer_id)
             from rynmesh.services import peer_box
             signed = seal_task(
-                body={"task_id": task_id, "idempotency_key": idempotency_key,
-                      "service_id": service_id, "prompt": prompt, "max_tokens": max_tokens,
-                      "max_amount": maximum, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
+                body={
+                    "task_id": task_id,
+                    "idempotency_key": idempotency_key,
+                    "service_id": service_id,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "max_amount": maximum,
+                    "reply_messaging_pub": peer_box.public_key_b64(messaging_key),
+                    **(
+                        {
+                            "response_mode": "stream-v1",
+                            "stream_event_max_bytes": DEFAULT_MAX_EVENT_BYTES,
+                        }
+                        if stream_direct
+                        else {}
+                    ),
+                },
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,
                 recipient_messaging_pub=recipient_pub,
@@ -1538,6 +1816,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "transport": transport_mode,
                 },
             )
+            stream_broker.publish(task_id, {"event": "state", "state": "running"})
             if transport_mode == "p2p":
                 p2p_work_order_id = ""
 
@@ -1593,16 +1872,66 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 try:
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
-                    encrypted_response = await asyncio.to_thread(
-                        _peer_post_json, endpoint, "/api/peer/llm/tasks",
-                        signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
-                    )
+                    if stream_direct:
+                        def _consume_direct_stream() -> dict[str, Any]:
+                            from rynmesh.peer_http import HttpPeerClient
+
+                            client = HttpPeerClient(
+                                endpoint, timeout_s=manifest.timeout_seconds + 30,
+                            )
+                            verifier = StreamSequenceVerifier(
+                                task_id=task_id,
+                                service_id=service_id,
+                                provider_peer_id=provider_peer_id,
+                                recipient_peer_id=store.peer_id,
+                                recipient_messaging_key=messaging_key,
+                                max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
+                                max_output_bytes=DEFAULT_MAX_OUTPUT_BYTES,
+                            )
+                            terminal: dict[str, Any] | None = None
+                            for envelope in client.iter_post_ndjson(
+                                "/api/peer/llm/tasks/stream",
+                                signed.to_dict(),
+                                max_event_bytes=DEFAULT_MAX_EVENT_BYTES,
+                                max_total_bytes=16 * 1024 * 1024,
+                            ):
+                                try:
+                                    kind = str(SignedPayload.from_dict(envelope).payload.get("kind") or "")
+                                except Exception:
+                                    raise TaskProtocolError("stream envelope is invalid") from None
+                                if kind == "llm_stream_delta":
+                                    delta = verifier.accept_delta(envelope)
+                                    stream_broker.publish(
+                                        task_id,
+                                        {"event": "delta", **delta},
+                                    )
+                                elif kind == "llm_response":
+                                    verifier.accept_terminal(envelope)
+                                    terminal = envelope
+                                else:
+                                    raise TaskProtocolError("stream envelope kind is invalid")
+                            if terminal is None or not verifier.terminal:
+                                raise TaskProtocolError("stream ended without a terminal response")
+                            return terminal
+
+                        encrypted_response = await asyncio.to_thread(_consume_direct_stream)
+                    else:
+                        encrypted_response = await asyncio.to_thread(
+                            _peer_post_json, endpoint, "/api/peer/llm/tasks",
+                            signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
+                        )
                     transport_evidence = {
                         "transport": "peer_http_direct",
                         "relay_used": False,
+                        "stream_protocol": STREAM_PROTOCOL_VERSION if stream_direct else "",
                     }
                 except Exception as exc:
                     direct_error = exc
+                    if stream_direct:
+                        stream_broker.publish(
+                            task_id,
+                            {"event": "state", "state": "recovering"},
+                        )
             if encrypted_response is None and transport_mode == "direct":
                 raise TaskProtocolError("strict direct provider path failed") from direct_error
             if encrypted_response is None:
@@ -1662,6 +1991,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                               "response_expires_at": _expires(retention) if retention else ""},
                     encrypted_response=encrypted_response if retention else None,
                 )
+                stream_broker.publish(
+                    task_id,
+                    {
+                        "event": "error",
+                        "state": state,
+                        "error_code": str(result.get("error_code") or state),
+                    },
+                )
                 return result
             retention = response_retention()
             settlement_metadata = {
@@ -1699,6 +2036,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 consumer_orders.checkpoint(
                     task_id=task_id, metadata={"settlement_dispatched": True},
                 )
+            stream_broker.publish(task_id, {"event": "complete", **result})
             return result
         except Exception as exc:
             error_code = _delivery_error_code(exc, transport=transport_mode)
@@ -1710,6 +2048,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                                      "error_code": error_code})
             except (TaskBalanceError, TaskProtocolError):
                 pass
+            stream_broker.publish(
+                task_id,
+                {"event": "error", "state": "failed", "error_code": error_code},
+            )
             reason = str(exc).strip() or type(exc).__name__
             raise HTTPException(
                 status_code=502,
@@ -1789,12 +2131,60 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if existing is not None:
                 return {"task_id": task_id, "state": str(existing.get("state") or "unknown")}
             background_orders[task_id] = {"task_id": task_id, "state": "queued"}
+            stream_broker.publish(task_id, {"event": "state", "state": "queued"})
         body["task_id"] = task_id
         threading.Thread(
             target=run_background_order, args=(body, task_id),
             name=f"rynmesh-llm-consumer-{task_id[-8:]}", daemon=True,
         ).start()
         return {"task_id": task_id, "state": "queued"}
+
+    @app.get("/api/local/llm/orders/{task_id}/events")
+    async def local_llm_order_events(task_id: str, after_sequence: int = -1) -> StreamingResponse:
+        try:
+            record = consumer_orders.get(task_id)
+        except TaskProtocolError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with background_orders_lock:
+            pending = background_orders.get(task_id)
+        if record is None and pending is None and not stream_broker.replay(task_id):
+            raise HTTPException(status_code=404, detail="task not found")
+
+        async def sse() -> Any:
+            cursor = after_sequence
+            sent_non_delta = 0
+            idle_deadline = time.monotonic() + 30
+            while True:
+                events = stream_broker.replay(task_id, after_sequence=cursor)
+                unsent: list[dict[str, Any]] = []
+                non_delta_seen = 0
+                for event in events:
+                    if event.get("event") == "delta":
+                        if int(event.get("sequence", -1)) > cursor:
+                            unsent.append(event)
+                    else:
+                        if non_delta_seen >= sent_non_delta:
+                            unsent.append(event)
+                        non_delta_seen += 1
+                sent_non_delta = max(sent_non_delta, non_delta_seen)
+                for event in unsent:
+                    if event.get("event") == "delta":
+                        cursor = max(cursor, int(event.get("sequence", -1)))
+                    payload = json.dumps(
+                        {key: value for key, value in event.items() if key != "event"},
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    )
+                    yield f"event: {event['event']}\ndata: {payload}\n\n"
+                    idle_deadline = time.monotonic() + 30
+                    if event.get("event") in {"complete", "error"}:
+                        return
+                if time.monotonic() >= idle_deadline:
+                    yield "event: heartbeat\ndata: {}\n\n"
+                    idle_deadline = time.monotonic() + 30
+                await asyncio.sleep(0.2)
+
+        return StreamingResponse(sse(), media_type="text/event-stream")
 
     @app.get("/api/local/llm/orders/{task_id}")
     def local_llm_order_status(task_id: str) -> dict[str, Any]:
@@ -1899,6 +2289,31 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return await asyncio.to_thread(current.handle, body)
         except TaskProtocolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/peer/llm/tasks/stream")
+    async def peer_llm_task_stream(request: Request) -> StreamingResponse:
+        current = active_manager()
+        if current is None:
+            raise HTTPException(status_code=503, detail="LLM service not configured")
+        body = await request.json()
+
+        def ndjson() -> Iterator[bytes]:
+            source = current.handle_stream(body)
+            try:
+                for envelope in source:
+                    yield (
+                        json.dumps(
+                            envelope,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+            finally:
+                source.close()
+
+        return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
     @app.post("/api/peer/llm/settlements")
     async def peer_llm_settlement(request: Request) -> dict[str, Any]:
