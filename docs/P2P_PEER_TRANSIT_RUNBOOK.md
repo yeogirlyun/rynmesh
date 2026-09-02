@@ -214,7 +214,9 @@ process while allowing a PID reused after the final report timestamp. Since a
 stopped original process cannot own a UDP endpoint, the report also records
 zero worker-owned UDP endpoints with that proof method. If an external wrapper
 launched the worker, pass its PID with `--launcher-pid` so the same fail-closed
-check covers both processes.
+check covers both processes. The output path must be new: the finalizer rejects
+an existing report and refuses to use the soak progress file as output, so a
+rerun cannot rewrite either side of the evidence binding.
 
 During a long soak, sample the provider's open-order poll latency as the
 registry history grows. File-backed workers must use the per-provider

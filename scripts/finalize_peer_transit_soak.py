@@ -211,6 +211,20 @@ def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _new_output_path(progress_path: Path, requested: str) -> Path:
+    progress_path = progress_path.expanduser().resolve()
+    output = (
+        Path(requested).expanduser().resolve()
+        if requested
+        else progress_path.parent / "final-audit.json"
+    )
+    if output == progress_path:
+        raise AuditError("final audit output must not overwrite soak progress")
+    if output.exists():
+        raise AuditError("final audit output already exists")
+    return output
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("progress", help="completed soak progress JSON")
@@ -223,7 +237,8 @@ def main() -> int:
     if args.require_duration_seconds < 0 or args.min_sessions < 0:
         raise AuditError("final soak audit requirements cannot be negative")
 
-    progress_path = Path(args.progress)
+    progress_path = Path(args.progress).expanduser().resolve()
+    output = _new_output_path(progress_path, args.output)
     report = finalize_soak(
         progress_path,
         require_duration_s=args.require_duration_seconds,
@@ -232,7 +247,6 @@ def main() -> int:
         shutdown_wait_s=args.shutdown_wait_seconds,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
-    output = Path(args.output) if args.output else progress_path.parent / "final-audit.json"
     _write_json_atomic(output, report)
     print(rendered, end="")
     return 0

@@ -994,6 +994,23 @@ def test_final_soak_audit_distinguishes_reused_pid(monkeypatch) -> None:
     )
 
 
+def test_final_soak_audit_requires_new_output_path(tmp_path) -> None:
+    progress = tmp_path / "progress.json"
+    progress.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(AuditError, match="must not overwrite"):
+        finalize_soak_module._new_output_path(progress, str(progress))
+
+    existing = tmp_path / "final-audit.json"
+    existing.write_text("immutable\n", encoding="utf-8")
+    with pytest.raises(AuditError, match="already exists"):
+        finalize_soak_module._new_output_path(progress, str(existing))
+    assert existing.read_text(encoding="utf-8") == "immutable\n"
+
+    fresh = tmp_path / "new-final-audit.json"
+    assert finalize_soak_module._new_output_path(progress, str(fresh)) == fresh.resolve()
+
+
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
     route = _route_acceptance()
     audit_module._audit_route_report(route)

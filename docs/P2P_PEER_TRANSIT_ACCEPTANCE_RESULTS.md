@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 588 passed, 3 skipped after the cross-process shutdown-finalizer integration fix |
+| Complete Python suite | Pass | 589 passed, 3 skipped after immutable final-audit output enforcement |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -1133,6 +1133,17 @@ file. CIM command-line and creation-time inspection bound both PIDs to the r14
 command rather than trusting numbers alone. The immutable negative-evidence
 SHA-256 is
 `12A1D78DEFDB4CF58A1A6B22113023076948AD44BEE260E41BDF996FF47A5FBA`.
+
+Final-audit output is now immutable: the CLI resolves its output before
+auditing, rejects the progress path itself and rejects any existing output
+instead of atomically replacing it. A new r2 cross-process soak completed four
+sessions over 2.281 seconds and finalized successfully; both a repeated write
+to its final report and an attempted write onto its progress file exited 1,
+with both hashes unchanged. The r2 progress/final-audit SHA-256 values are
+`B2C9072EDCDF0D56D2D766E97DFF33D4BB6A8F256045B60F4512769A0E2BFF00` and
+`9F52E94990ED2A8565173587A3C19C26C1D7153499D15FD21041C644E300BC41`.
+The focused suite passed 49 tests, and full Ruff plus 589 Python tests passed
+with three skips. This finalizer/test-only change leaves r14 timing valid.
 
 Final acceptance requires:
 
