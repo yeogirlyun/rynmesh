@@ -69,6 +69,45 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
 
 - outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
 - revocation delivery/reconnect tests;
-- Webapp unit, type, lint, build, accessibility, and no-network QR tests;
+- Webapp outbound-Join and Tauri integration tests beyond the completed safety/review slice;
 - Tauri deep-link tests;
 - full backend/CI and two clean physical nodes, including offline revoke.
+
+## Webapp slice matrix
+
+`webapp/src/screens/Peers.friendMesh.test.tsx` covers:
+
+- explicit endpoint, permission, expiry, and reachability acknowledgement;
+- local QR creation, raw-link session boundary, invitation listing/cancellation;
+- focus transfer after create and review;
+- offline signature/fingerprint/network/scope/expiry/all-endpoint review;
+- disabled, truthfully explained outbound Join;
+- high-risk local-first revoke and safe delivery status;
+- separation from trust-root actions and blocked local endpoints.
+
+`webapp/src/domain/friendMesh.test.ts` asserts address classification and proves
+QR creation makes zero `fetch` calls. `liveNodeClient.friendMesh.test.ts` asserts
+all Friend Mesh browser operations remain under `/api/local` with encoded route
+IDs and exact request bodies.
+
+## Webapp evidence on 2026-09-02
+
+Executed in `codex/issue-30-friend-mesh-ui`:
+
+```powershell
+npm test -- --run src/domain/friendMesh.test.ts src/domain/liveNodeClient.friendMesh.test.ts src/screens/Peers.friendMesh.test.tsx
+# 3 files passed, 7 tests passed
+
+npm test
+# 12 files passed, 45 tests passed
+
+npm run lint
+# TypeScript project check passed
+
+npm run build
+# TypeScript and Vite production build passed; 1770 modules transformed
+```
+
+Dependency installation/audit reported 0 vulnerabilities. These results accept
+only the Webapp safety/review slice; they do not satisfy physical Join, Tauri
+deep-link, service ACL, or two-node acceptance.

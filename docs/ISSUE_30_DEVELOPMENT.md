@@ -1,6 +1,6 @@
 # Issue #30 development design
 
-Status: core security slice implemented; end-user flow and service ACL pending
+Status: core security, outbound Join, service ACL, and Webapp safety/review slices implemented
 
 ## Architecture
 
@@ -65,15 +65,38 @@ every new task is denied immediately after local revocation.
 Offline parsing rejects credentials, fragments, unsupported schemes,
 localhost, link-local, multicast, unspecified, and metadata literals. Private
 IP literals require explicit LAN review. Hostnames require a second
-resolve-and-pin check at outbound Join; that transport integration is pending.
+resolve-and-pin check at outbound Join; the pinned Transport preserves the
+original hostname for TLS SNI/certificate and HTTP Host validation.
 
 ## Remaining implementation slices
 
 1. Add signed best-effort remote revocation delivery and retry status.
-2. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
+2. Connect the completed Webapp review to the local outbound Join API.
 3. Add Tauri `rynmesh://` forwarding and paste fallback.
 4. Include sanitized friend records in privacy export and revoke/delete in erase.
 5. Run two-node and accessibility acceptance.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.
+
+## Webapp implementation slice
+
+`FriendMeshPanel` is mounted in Peers but keeps friendship language and actions
+separate from the existing identity trust-root drawer. `NodeClient` now exposes
+the six local-control API operations for friends/invites in live and fixture
+modes. No browser call is made to a peer or QR service.
+
+Endpoint classification is a display/risk aid only. The local node remains the
+authority for signed offline verification and endpoint policy. Hostnames are
+shown as unresolved, private literals require explicit review, and local,
+link-local, unsupported, or invalid endpoints prevent invitation creation.
+Review never decodes or trusts the bearer link in browser code.
+
+QR matrices come from exact dependency `qrcode@1.5.4`, locked in
+`package-lock.json`, and are rendered into an SVG data URL locally. The SVG path
+contains only matrix coordinates; link contents are not interpolated into SVG
+markup. `@types/qrcode@1.5.5` is also pinned exactly.
+
+Keyboard users receive native labeled form controls, disabled-state guidance,
+and focus transfer to the created/reviewed result heading. Join is rendered
+disabled with an explanatory description until outbound Join is real.

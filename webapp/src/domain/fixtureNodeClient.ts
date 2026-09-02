@@ -1,4 +1,9 @@
-import type { NodeClient } from "./nodeClient";
+import type {
+  FriendInviteRecord,
+  FriendInviteReview,
+  FriendRecord,
+  NodeClient,
+} from "./nodeClient";
 import type {
   ActivityEvent,
   ContentFilters,
@@ -969,6 +974,25 @@ export function makeFixtureNodeClient(): NodeClient {
     connectedAt: null, uptimeSeconds: null,
   };
   let _autoUpdate = true;
+  const friendInvites: FriendInviteRecord[] = [];
+  const friends: FriendRecord[] = [
+    {
+      peer_id: "peer-friend-fixture",
+      display_name: "Garden Studio",
+      network_id: "rynmesh-main",
+      reviewed_endpoints: ["https://garden.example:8791"],
+      granted_permissions: ["private-ai.use"],
+      received_permissions: [],
+      state: "active",
+      created_at: "2026-09-01T09:00:00Z",
+      accepted_at: "2026-09-01T09:00:00Z",
+      last_contact_at: "2026-09-02T08:40:00Z",
+      revoked_at: null,
+      last_delivery_error: null,
+      source_invite_id: "invite_fixture_accepted",
+    },
+  ];
+  const inviteReviews = new Map<string, FriendInviteReview>();
 
   return {
     mode: "fixture",
@@ -1172,6 +1196,68 @@ export function makeFixtureNodeClient(): NodeClient {
     async listPeers(filters) {
       await delay();
       return filterPeers(filters);
+    },
+    async listFriends() {
+      await delay();
+      return friends.map((friend) => ({ ...friend }));
+    },
+    async listFriendInvites() {
+      await delay();
+      return friendInvites.map((invite) => ({ ...invite }));
+    },
+    async createFriendInvite(req) {
+      await delay();
+      const now = new Date();
+      const inviteId = `invite_fixture_${friendInvites.length + 1}`;
+      const invite: FriendInviteRecord = {
+        version: "rynmesh.friend-invite.v1",
+        invite_id: inviteId,
+        issued_at: now.toISOString(),
+        expires_at: new Date(now.getTime() + req.ttl_seconds * 1000).toISOString(),
+        network_id: req.network_id ?? "rynmesh-main",
+        used_at: null,
+        cancelled_at: null,
+        accepted_peer_id: null,
+        permissions: [...req.permissions],
+        endpoints: [...req.endpoints],
+      };
+      const link = `rynmesh://join/fixture-${inviteId}`;
+      friendInvites.unshift(invite);
+      inviteReviews.set(link, {
+        version: invite.version,
+        invite_id: inviteId,
+        inviter_peer_id: "peer:7d2b9c4f-self",
+        node_name: settings.node_name,
+        network_id: invite.network_id,
+        endpoints: [...invite.endpoints],
+        permissions: [...invite.permissions],
+        issued_at: invite.issued_at,
+        expires_at: invite.expires_at,
+        verified_fingerprint: "peer:7d2b9c4f-self",
+        signed_payload_hash: "fixture-signed-payload-hash",
+      });
+      return { invite: { ...invite }, link };
+    },
+    async reviewFriendInvite(req) {
+      await delay();
+      const review = inviteReviews.get(req.link);
+      if (!review) throw new Error("invite_link_invalid");
+      return { ...review, endpoints: [...review.endpoints], permissions: [...review.permissions] };
+    },
+    async cancelFriendInvite(inviteId) {
+      await delay();
+      const invite = friendInvites.find((candidate) => candidate.invite_id === inviteId);
+      if (!invite) throw new Error("invite_not_found");
+      invite.cancelled_at = new Date().toISOString();
+      return { ...invite };
+    },
+    async revokeFriend(peerId) {
+      await delay();
+      const friend = friends.find((candidate) => candidate.peer_id === peerId);
+      if (!friend) throw new Error("friend_not_found");
+      friend.state = "revoked";
+      friend.revoked_at = new Date().toISOString();
+      return { ok: true, state: "revoked", revocation_id: "fixture-revocation" };
     },
     async listContent(filters) {
       await delay();

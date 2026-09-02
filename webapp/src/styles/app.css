@@ -1825,6 +1825,175 @@ td small {
   min-width: 260px;
 }
 
+.friend-mesh {
+  display: grid;
+  gap: var(--sp-7);
+  padding: 16px;
+  border: 1px solid var(--accent-blue-border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent-blue-soft) 40%, var(--bg-primary));
+}
+
+.friend-mesh-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-7);
+}
+
+.friend-mesh-heading h2,
+.friend-mesh h3 {
+  margin: 0;
+}
+
+.friend-mesh-heading p,
+.friend-help {
+  margin: 5px 0 0;
+}
+
+.friend-mesh-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-7);
+}
+
+.friend-mesh .panel > h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+}
+
+.friend-error,
+.friend-warning,
+.friend-boundary {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-amber-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-amber-soft);
+  color: var(--text-primary);
+}
+
+.friend-error {
+  border-color: var(--accent-red-border);
+  background: var(--accent-red-soft);
+}
+
+.friend-boundary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.friend-permissions {
+  display: grid;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.friend-permissions label,
+.friend-risk-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.friend-permissions input,
+.friend-risk-check input {
+  width: auto;
+  min-height: auto;
+  margin-top: 3px;
+}
+
+.friend-endpoint-list,
+.friend-record-list {
+  display: grid;
+  gap: var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.friend-endpoint-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.friend-endpoint-list code {
+  overflow-wrap: anywhere;
+}
+
+.friend-created,
+.friend-review {
+  display: grid;
+  gap: var(--sp-5);
+  margin-top: var(--sp-7);
+  padding-top: var(--sp-7);
+  border-top: 1px solid var(--border-color);
+}
+
+.friend-qr {
+  width: min(240px, 100%);
+  aspect-ratio: 1;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: white;
+}
+
+.friend-review-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--sp-4) var(--sp-6);
+  margin: 0;
+}
+
+.friend-review-grid dt {
+  color: var(--text-muted);
+  font-weight: 800;
+}
+
+.friend-review-grid dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.friend-record-list > li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.friend-record-list > li:last-child {
+  border-bottom: 0;
+}
+
+.friend-record-list > li > div,
+.friend-record-list small {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+@media (max-width: 900px) {
+  .friend-mesh-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .friend-mesh-heading {
+    flex-direction: column;
+  }
+}
+
 .number-cell {
   text-align: right;
 }
