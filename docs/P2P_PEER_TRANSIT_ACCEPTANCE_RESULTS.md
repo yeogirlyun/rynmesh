@@ -1217,6 +1217,20 @@ Ed25519 verification; the snapshot SHA-256 values are
 `5B76CDE8F4526A24517517A54C4B50C6D263DFCA052D49D4C32F70F4669B4D2C` and
 `28734EC0AD89961B3AFEA5A516E231BB20F26FFEDA4F743BA59EEEC18346A00C`.
 
+r15 later terminated unexpectedly: launcher PID 48384 and worker PID 33976
+were both absent while `progress.json` still reported `running`. Its last
+durable update contained 877 completed sessions, 8,767.844 monotonic seconds,
+zero session/control failures and zero plaintext findings. The independent
+post-exit scan found zero owned UDP endpoints, partial/resume files, open
+markers or stdout/stderr bytes across 6,163 artifacts. The stopped progress
+SHA-256 is
+`01354CB238E30265FB3DEEC227D2015442902CA48290AD599A55E7B6F73F699F` and the
+unexpected-exit confirmation SHA-256 is
+`45ADC977379E60A8772D23856EBA471D6845732C9423BE61A2A1D9768F8B9F8D`.
+The process exit reason is not present in the runner evidence, so no unsupported
+cause is claimed. r15 did not reach the duration gate and none of its elapsed
+time is accepted.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

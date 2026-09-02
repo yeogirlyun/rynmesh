@@ -68,8 +68,10 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   found. None of its accumulated duration is accepted or reused by r15.
 - r15 replacement soak: started from a new directory at 2026-09-02
   19:58:36.632343 Asia/Hong_Kong with launcher PID 48384 and worker PID 33976;
-  it must independently reach 86,400 `time.monotonic` seconds under runtime
-  `007b8b8` and the fixed soak-runner blob above.
+  both processes exited unexpectedly while progress still reported `running`
+  at 877 sessions and 8,767.844 monotonic seconds. The interruption evidence is
+  `45ADC977379E60A8772D23856EBA471D6845732C9423BE61A2A1D9768F8B9F8D`;
+  neither its elapsed time nor its checkpoints count toward the 24-hour gate.
 - r15 300-session warm idle OS baseline:
   `8268FC310809D1BAEBD68D1FEA601039C720E65FC59CDE8FCEFFA101B5215155`;
   it records 314 handles, eight OS threads, 37,273,600 private bytes, a
