@@ -106,7 +106,7 @@ function DigestCard({
               />
             </div>
           </div>
-          <EvidenceDetails packet={item.evidence_packet} />
+          {item.evidence_packet ? <EvidenceDetails packet={item.evidence_packet} /> : null}
         </div>
       </div>
     </Panel>

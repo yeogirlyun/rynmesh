@@ -1,3 +1,5 @@
+import type { GroundedArticleContext } from "./groundedContext";
+
 /**
  * Device-local conversation persistence for the Private AI experience.
  *
@@ -31,6 +33,7 @@ export interface LLMConversation {
   createdAt: string;
   updatedAt: string;
   messages: LLMChatMessage[];
+  grounding?: GroundedArticleContext;
 }
 
 interface EncryptedConversationRecord {

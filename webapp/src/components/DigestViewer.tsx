@@ -10,7 +10,9 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { digestApi, type DigestItem, type ReaderArticle } from "../domain/digestClient";
+import { createGroundedContextHandoff } from "../domain/groundedContextHandoff";
 import { Button, Chip, EvidenceDetails } from "./ui";
 
 export type ViewerAction = "up" | "down" | "opened" | "more_like_this";
@@ -62,6 +64,7 @@ export default function DigestViewer({
   onProgress: (item: DigestItem, progress: number) => void;
   initialProgress: number;
 }) {
+  const navigate = useNavigate();
   const item = items[index];
   const [article, setArticle] = useState<ReaderArticle | null>(null);
   const [readerState, setReaderState] = useState<"idle" | "loading" | "failed">("idle");
@@ -183,6 +186,22 @@ export default function DigestViewer({
     onProgress(item, normalized);
   };
 
+  const askAboutItem = () => {
+    if (!article?.blocks.some((block) => block.text.trim())) return;
+    const grounding = createGroundedContextHandoff({
+      kind: "reader-article",
+      itemId: item.item_id,
+      title: article.title.trim() || item.title,
+      sourceTitle: item.source_title,
+      sourceUrl: article.url || item.link,
+      byline: article.byline || undefined,
+      blocks: article.blocks.map((block) => ({ tag: block.tag, text: block.text })),
+      wordCount: article.word_count,
+      extractedAt: new Date().toISOString(),
+    });
+    navigate(`/services/private-ai/chat?grounding=${encodeURIComponent(grounding)}`);
+  };
+
   return (
     <div
       className="viewer-backdrop"
@@ -279,7 +298,7 @@ export default function DigestViewer({
             </div>
           ) : null}
 
-          <EvidenceDetails packet={item.evidence_packet} />
+          {item.evidence_packet ? <EvidenceDetails packet={item.evidence_packet} /> : null}
 
           {isArticle ? (
             <div className="viewer-article">
@@ -315,6 +334,16 @@ export default function DigestViewer({
 
         <footer className="viewer-foot">
           <div className="viewer-rate">
+            {isArticle ? (
+              <Button
+                icon={Sparkles}
+                variant="primary"
+                disabled={readerState === "loading" || !article?.blocks.some((block) => block.text.trim())}
+                onClick={askAboutItem}
+              >
+                {readerState === "loading" ? "Preparing article…" : "Ask about this item"}
+              </Button>
+            ) : null}
             <Button
               icon={ThumbsUp}
               variant={rated === "up" ? "primary" : "standard"}
@@ -343,6 +372,9 @@ export default function DigestViewer({
             <a className="viewer-original" href={item.link} target="_blank" rel="noreferrer noopener">
               <ExternalLink size={13} /> Original
             </a>
+            {isArticle && readerState === "failed" ? (
+              <span className="viewer-ask-unavailable">Grounded asking is unavailable because no readable article text was extracted.</span>
+            ) : null}
           </div>
 
           <div className="viewer-steer">

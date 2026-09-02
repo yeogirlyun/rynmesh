@@ -12,6 +12,7 @@ import type {
   TaskBalanceSummary,
 } from "../domain/nodeClient";
 import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
+import { CONTEXT_SAFETY_MARGIN_TOKENS, estimateContextSafetyTokens } from "../domain/groundedContext";
 import type { JobCapacity, WorkResult } from "../domain/types";
 
 const VEO_CAPABILITY = "signal50.veo_motion.v1";
@@ -109,6 +110,7 @@ export default function Services() {
   const maxTokensValid = Number.isInteger(parsedMaxTokens) && parsedMaxTokens > 0
     && (!selectedLlm || parsedMaxTokens <= selectedLlm.service.max_output_tokens);
   const estimatedInputTokens = Math.max(1, Math.ceil(llmPrompt.trim().length / 4));
+  const contextSafetyTokens = estimateContextSafetyTokens(llmPrompt.trim());
   const estimatedAmount = selectedLlm
     ? Math.max(
         selectedLlm.service.pricing.minimum,
@@ -120,7 +122,7 @@ export default function Services() {
   const priceWithinProviderLimit = !selectedLlm
     || estimatedAmount <= selectedLlm.service.pricing.maximum_per_task;
   const contextWithinProviderLimit = !selectedLlm || !maxTokensValid
-    || estimatedInputTokens + parsedMaxTokens <= selectedLlm.service.context_window;
+    || contextSafetyTokens + parsedMaxTokens + CONTEXT_SAFETY_MARGIN_TOKENS <= selectedLlm.service.context_window;
   const providerAvailable = Boolean(selectedLlm?.online)
     && (selectedLlm?.capacity?.available === undefined || selectedLlm.capacity.available > 0);
   const balanceAvailable = !llmBalance || llmBalance.available >= estimatedAmount;

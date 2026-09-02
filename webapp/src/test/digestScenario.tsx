@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse, type HttpHandler } from "msw";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import type {
@@ -39,6 +39,11 @@ interface DigestScenarioOptions {
 }
 
 type ProfilePatch = Partial<Pick<RecommendationProfile, "direction" | "topics" | "platforms">>;
+
+function PrivateAIHandoffProbe() {
+  const location = useLocation();
+  return <output aria-label="Private AI handoff location">{location.search}</output>;
+}
 
 export function createDigestScenario(options: DigestScenarioOptions = {}) {
   let digest = options.digest ?? makeDigest();
@@ -162,6 +167,7 @@ export function renderDigest(options: DigestScenarioOptions = {}) {
       <Routes>
         <Route element={<Outlet context={context} />}>
           <Route index element={<DigestScreen />} />
+          <Route path="/services/private-ai/chat" element={<PrivateAIHandoffProbe />} />
         </Route>
       </Routes>
     </MemoryRouter>,
