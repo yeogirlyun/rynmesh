@@ -861,6 +861,22 @@ def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) ->
         audit_module._audit_soak_artifacts(tmp_path)
 
 
+def test_soak_artifact_auditor_requires_target_directory_and_logs(tmp_path) -> None:
+    missing_target = tmp_path / "missing-target"
+    for name in ("relay", "relay-net", "registry"):
+        (missing_target / name).mkdir(parents=True)
+    (missing_target / "stdout.log").write_bytes(b"")
+    (missing_target / "stderr.log").write_bytes(b"")
+    with pytest.raises(AuditError, match="directories are incomplete"):
+        audit_module._audit_soak_artifacts(missing_target)
+
+    missing_logs = tmp_path / "missing-logs"
+    for name in ("relay", "relay-net", "registry", "target-inbox"):
+        (missing_logs / name).mkdir(parents=True)
+    with pytest.raises(AuditError, match="logs are incomplete"):
+        audit_module._audit_soak_artifacts(missing_logs)
+
+
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
     route = _route_acceptance()
     audit_module._audit_route_report(route)

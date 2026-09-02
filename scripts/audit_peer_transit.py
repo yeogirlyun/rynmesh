@@ -366,19 +366,24 @@ def _contains_marker(path: Path, marker: bytes) -> bool:
 
 
 def _audit_soak_artifacts(root: Path) -> dict[str, int]:
-    required_directories = [root / "relay", root / "relay-net", root / "registry"]
+    required_directories = [
+        root / "relay",
+        root / "relay-net",
+        root / "registry",
+        root / "target-inbox",
+    ]
     if any(not path.is_dir() for path in required_directories):
         raise AuditError("soak artifact directories are incomplete")
+    required_logs = [root / "stdout.log", root / "stderr.log"]
+    if any(not path.is_file() for path in required_logs):
+        raise AuditError("soak artifact logs are incomplete")
     files = [
         path
-        for directory in required_directories
+        for directory in required_directories[:3]
         for path in directory.rglob("*")
         if path.is_file()
     ]
-    for log_name in ("stdout.log", "stderr.log"):
-        log_path = root / log_name
-        if log_path.is_file():
-            files.append(log_path)
+    files.extend(required_logs)
     leaked = [path for path in files if _contains_marker(path, SOAK_PLAINTEXT_MARKER)]
     if leaked:
         raise AuditError("soak plaintext marker was found in transit artifacts or logs")
@@ -392,7 +397,7 @@ def _audit_soak_artifacts(root: Path) -> dict[str, int]:
     if open_markers:
         raise AuditError("soak artifact scan found open work-order markers")
     stderr_path = root / "stderr.log"
-    stderr_bytes = stderr_path.stat().st_size if stderr_path.is_file() else 0
+    stderr_bytes = stderr_path.stat().st_size
     if stderr_bytes:
         raise AuditError("soak stderr log is not empty")
     return {
