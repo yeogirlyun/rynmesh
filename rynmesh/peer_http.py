@@ -2416,6 +2416,149 @@ def create_app(store: RynmeshStore | None = None):
             "credential": {"nonce": nonce, "ciphertext": ciphertext},
         }
 
+    @app.post("/api/local/friends/join")
+    async def local_friend_join(request: FastAPIRequest) -> dict[str, Any]:
+        """Join through the #28 Transport seam after repeating offline validation."""
+
+        local_control(request)
+        from .crypto import SignedPayload, sign_payload
+        from .friends import (
+            ACCEPT_VERSION,
+            FriendError,
+            validate_endpoint,
+            validate_endpoint_for_contact,
+            verify_invite,
+        )
+        from .registry import verify_peer_record
+
+        body = await request.json()
+        allow_private = bool(body.get("allow_private_endpoints", False))
+        try:
+            reviewed = verify_invite(
+                str(body.get("link", "")), allow_private_endpoints=allow_private
+            )
+            endpoint = str(body.get("endpoint") or reviewed["endpoints"][0]).rstrip("/")
+            if endpoint not in reviewed["endpoints"]:
+                raise FriendError("invite_endpoint_not_signed")
+            validate_endpoint_for_contact(endpoint, allow_private=allow_private)
+            local_endpoints = list(
+                body.get("acceptor_endpoints")
+                or self_peer_record(reviewed["network_id"]).get("endpoints", [])
+            )
+            if not local_endpoints:
+                raise FriendError("friend_acceptor_endpoint_required")
+            local_endpoints = [
+                validate_endpoint(item, allow_private=allow_private) for item in local_endpoints
+            ]
+            from .registry import PeerRecord, sign_peer_record
+
+            acceptor_record = PeerRecord(
+                peer_id=active_store.peer_id,
+                node_name=active_store.node_name,
+                endpoints=tuple(local_endpoints),
+                network_id=reviewed["network_id"],
+                updated_at=_iso_now(),
+                metadata={"friend_acceptance": True},
+            )
+            signed_acceptor_record = sign_peer_record(
+                acceptor_record, private_key_bytes=active_store.private_key_bytes
+            )
+            acceptor_x25519_pub = _peer_box.public_key_b64(_msg_priv)
+            proof = sign_payload(
+                {
+                    "version": ACCEPT_VERSION,
+                    "invite_id": reviewed["invite_id"],
+                    "acceptor_peer_id": active_store.peer_id,
+                    "acceptor_x25519_pub": acceptor_x25519_pub,
+                    "network_id": reviewed["network_id"],
+                    "permissions": reviewed["permissions"],
+                    "signed_at": _iso_now(),
+                    "nonce": uuid.uuid4().hex,
+                },
+                private_key_bytes=active_store.private_key_bytes,
+            )
+            response = HttpPeerClient(endpoint).post_json(
+                "/api/peer/friends/accept",
+                {
+                    "invite_id": reviewed["invite_id"],
+                    "one_time_secret": reviewed["one_time_secret"],
+                    "acceptor_peer_record": signed_acceptor_record.to_dict(),
+                    "acceptor_x25519_pub": acceptor_x25519_pub,
+                    "permissions": reviewed["permissions"],
+                    "proof": proof.to_dict(),
+                },
+                max_bytes=64 * 1024,
+            )
+            if response.get("version") != "rynmesh.friend-accept-response.v1":
+                raise FriendError("friend_accept_response_invalid")
+            inviter_signed = SignedPayload.from_dict(dict(response["inviter_peer_record"]))
+            inviter_record = verify_peer_record(inviter_signed)
+            if (
+                inviter_record.peer_id != reviewed["inviter_peer_id"]
+                or inviter_record.network_id != reviewed["network_id"]
+                or response.get("confirmed_permissions") != reviewed["permissions"]
+            ):
+                raise FriendError("friend_accept_response_binding_invalid")
+            sealed = dict(response["credential"])
+            plaintext = _peer_box.open_sealed(
+                _msg_priv,
+                str(response["inviter_x25519_pub"]),
+                str(sealed["nonce"]),
+                str(sealed["ciphertext"]),
+            )
+            credential = json.loads(plaintext)
+            if (
+                not isinstance(credential, dict)
+                or credential.get("version") != "rynmesh.friend-credential.v1"
+                or credential.get("invite_id") != reviewed["invite_id"]
+                or credential.get("permissions") != reviewed["permissions"]
+            ):
+                raise FriendError("friend_credential_invalid")
+            returned_endpoints = [
+                validate_endpoint(item, allow_private=allow_private)
+                for item in inviter_record.endpoints
+            ]
+            if not returned_endpoints:
+                raise FriendError("friend_inviter_endpoint_required")
+            endpoint_changed = returned_endpoints != reviewed["endpoints"]
+            friend = _friends.register_received_relationship(
+                peer_id=inviter_record.peer_id,
+                relationship_secret=str(credential["relationship_secret"]),
+                display_name=inviter_record.node_name,
+                network_id=inviter_record.network_id,
+                endpoints=returned_endpoints,
+                received_permissions=list(credential["permissions"]),
+                source_invite_id=reviewed["invite_id"],
+                state="pending_endpoint_review" if endpoint_changed else "active",
+            )
+        except (FriendError, PeerTransportError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="friend_join_failed") from None
+        return {
+            "status": friend["state"],
+            "friend": friend,
+            "endpoint_review_required": endpoint_changed,
+            "original_endpoints": reviewed["endpoints"] if endpoint_changed else [],
+            "returned_endpoints": returned_endpoints if endpoint_changed else [],
+        }
+
+    @app.post("/api/local/friends/endpoint-review")
+    async def local_friend_endpoint_review(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError
+
+        body = await request.json()
+        try:
+            if bool(body.get("approve", False)):
+                friend = _friends.activate_pending_relationship(
+                    str(body.get("peer_id", "")),
+                    reviewed_endpoints=list(body.get("endpoints") or []),
+                )
+            else:
+                friend = _friends.reject_pending_relationship(str(body.get("peer_id", "")))
+        except FriendError:
+            raise HTTPException(status_code=404, detail="friend_pending_review_not_found") from None
+        return {"ok": True, "friend": friend}
+
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
             active_store.discover_peers(network_id=control_network_id(), include_self=False) or {}

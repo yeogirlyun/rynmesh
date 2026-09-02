@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 from contextlib import contextmanager
@@ -121,6 +122,39 @@ def validate_endpoint(endpoint: str, *, allow_private: bool = False) -> str:
         raise FriendError("invite_endpoint_blocked")
     if address.is_private and not allow_private:
         raise FriendError("invite_private_endpoint_requires_review")
+    return cleaned
+
+
+def validate_endpoint_for_contact(endpoint: str, *, allow_private: bool = False) -> str:
+    """Resolve a reviewed endpoint immediately before contact and fail closed.
+
+    This rejects mixed public/private DNS answers. The current Transport still
+    performs its own connection resolution, so a future resolver-pinning seam
+    is required before claiming complete DNS-rebinding resistance.
+    """
+
+    import ipaddress
+
+    cleaned = validate_endpoint(endpoint, allow_private=allow_private)
+    hostname = urlparse(cleaned).hostname or ""
+    try:
+        literal = ipaddress.ip_address(hostname.strip("[]"))
+        addresses = {literal}
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0])
+                for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+            }
+        except (OSError, ValueError) as exc:
+            raise FriendError("invite_endpoint_resolution_failed") from exc
+    if not addresses:
+        raise FriendError("invite_endpoint_resolution_failed")
+    for address in addresses:
+        if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+            raise FriendError("invite_endpoint_resolution_blocked")
+        if address.is_private and not allow_private:
+            raise FriendError("invite_endpoint_resolution_blocked")
     return cleaned
 
 
@@ -501,12 +535,15 @@ class FriendshipStore:
         endpoints: list[str],
         received_permissions: list[str],
         source_invite_id: str,
+        state: str = "active",
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if len(_unb64url(relationship_secret)) < 32:
             raise FriendError("relationship_secret_invalid")
         if not set(received_permissions).issubset(ALLOWED_PERMISSIONS):
             raise FriendError("friend_permission_not_allowed")
+        if state not in {"active", "pending_endpoint_review"}:
+            raise FriendError("friend_state_invalid")
         timestamp = _iso(_now_utc(now))
         record = {
             "peer_id": peer_id,
@@ -516,7 +553,7 @@ class FriendshipStore:
             "granted_permissions": [],
             "received_permissions": list(received_permissions),
             "credential_ref": f"friend:{peer_id}",
-            "state": "active",
+            "state": state,
             "created_at": timestamp,
             "accepted_at": timestamp,
             "last_contact_at": timestamp,
@@ -531,6 +568,40 @@ class FriendshipStore:
             secret_data["relationships"][peer_id] = relationship_secret
             self._write(data, secret_data)
         return self._public_friend(record)
+
+    def activate_pending_relationship(
+        self, peer_id: str, *, reviewed_endpoints: list[str], now: datetime | None = None
+    ) -> dict[str, Any]:
+        approved = [validate_endpoint(item, allow_private=True) for item in reviewed_endpoints]
+        with self._locked():
+            data = self._read()
+            record = data["friends"].get(peer_id)
+            if not isinstance(record, dict) or record.get("state") != "pending_endpoint_review":
+                raise FriendError("friend_pending_review_not_found")
+            if approved != list(record.get("reviewed_endpoints") or []):
+                raise FriendError("friend_endpoint_review_mismatch")
+            if not self._read_secrets()["relationships"].get(peer_id):
+                raise FriendError("friend_credential_missing")
+            record["state"] = "active"
+            record["accepted_at"] = _iso(_now_utc(now))
+            self._write(data)
+            return self._public_friend(record)
+
+    def reject_pending_relationship(
+        self, peer_id: str, *, now: datetime | None = None
+    ) -> dict[str, Any]:
+        with self._locked():
+            data = self._read()
+            secret_data = self._read_secrets()
+            record = data["friends"].get(peer_id)
+            if not isinstance(record, dict) or record.get("state") != "pending_endpoint_review":
+                raise FriendError("friend_pending_review_not_found")
+            record["state"] = "revoked"
+            record["revoked_at"] = _iso(_now_utc(now))
+            record["last_delivery_error"] = "endpoint_change_rejected"
+            secret_data["relationships"].pop(peer_id, None)
+            self._write(data, secret_data)
+            return self._public_friend(record)
 
     def is_authorized(self, peer_id: str, permission: str) -> bool:
         with self._locked():

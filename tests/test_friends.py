@@ -18,6 +18,7 @@ from rynmesh.friends import (
     decode_invite,
     encode_invite,
     validate_endpoint,
+    validate_endpoint_for_contact,
     verify_acceptance_request,
     verify_invite,
 )
@@ -302,3 +303,56 @@ def test_store_recovers_a_stale_crash_lock(tmp_path):
     os.utime(store.lock_path, (old, old))
     assert store.list_friends() == []
     assert not store.lock_path.exists()
+
+
+def test_contact_resolution_rejects_private_or_mixed_dns(monkeypatch):
+    def private_answer(*args, **kwargs):
+        return [(2, 1, 6, "", ("10.0.0.8", 0))]
+
+    monkeypatch.setattr("rynmesh.friends.socket.getaddrinfo", private_answer)
+    with pytest.raises(FriendError, match="resolution_blocked"):
+        validate_endpoint_for_contact("https://peer.example:8791")
+    assert validate_endpoint_for_contact(
+        "https://peer.example:8791", allow_private=True
+    ).startswith("https://")
+
+
+def test_pending_endpoint_change_requires_exact_review_or_deletes_secret(tmp_path):
+    store = FriendshipStore(tmp_path / "friends.json")
+    secret = "A" * 43
+    pending = store.register_received_relationship(
+        peer_id="alice",
+        relationship_secret=secret,
+        display_name="Alice",
+        network_id="rynmesh-main",
+        endpoints=["https://changed.example:8791"],
+        received_permissions=["private-ai.use"],
+        source_invite_id="invite-1",
+        state="pending_endpoint_review",
+        now=NOW,
+    )
+    assert pending["state"] == "pending_endpoint_review"
+    with pytest.raises(FriendError, match="endpoint_review_mismatch"):
+        store.activate_pending_relationship(
+            "alice", reviewed_endpoints=["https://other.example:8791"]
+        )
+    active = store.activate_pending_relationship(
+        "alice", reviewed_endpoints=["https://changed.example:8791"]
+    )
+    assert active["state"] == "active"
+
+    second = FriendshipStore(tmp_path / "second.json")
+    second.register_received_relationship(
+        peer_id="alice",
+        relationship_secret=secret,
+        display_name="Alice",
+        network_id="rynmesh-main",
+        endpoints=["https://changed.example:8791"],
+        received_permissions=["private-ai.use"],
+        source_invite_id="invite-2",
+        state="pending_endpoint_review",
+        now=NOW,
+    )
+    rejected = second.reject_pending_relationship("alice", now=NOW)
+    assert rejected["state"] == "revoked"
+    assert "alice" not in second.secrets_path.read_text(encoding="utf-8")
