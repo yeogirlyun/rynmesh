@@ -42,6 +42,14 @@ HTTP Host routing, closing the resolution/connection TOCTOU window. Join fails
 closed when an outbound proxy owns DNS because that path cannot yet prove the
 same pinning guarantee.
 
+The Private AI integration persists an explicit `network`/`friends` publication
+policy and advertises only that policy, never friend IDs. In `friends` mode the
+HTTP route requires the per-friend body/path/timestamp/nonce HMAC even when a
+mesh network key is present, and `ProviderService` independently checks the
+signed Consumer peer against `private-ai.use` before capacity acquisition or
+inference. A task already claimed before revocation keeps its idempotent result;
+every new task is denied immediately after local revocation.
+
 ## Secret boundaries
 
 - The raw invite secret appears only in the signed link and in the acceptance
@@ -61,13 +69,11 @@ resolve-and-pin check at outbound Join; that transport integration is pending.
 
 ## Remaining implementation slices
 
-1. Add friend-auth middleware only to explicitly allowed peer/service routes.
-2. Add signed best-effort remote revocation delivery and retry status.
-3. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
-4. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
-5. Add Tauri `rynmesh://` forwarding and paste fallback.
-6. Include sanitized friend records in privacy export and revoke/delete in erase.
-7. Run two-node and accessibility acceptance.
+1. Add signed best-effort remote revocation delivery and retry status.
+2. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
+3. Add Tauri `rynmesh://` forwarding and paste fallback.
+4. Include sanitized friend records in privacy export and revoke/delete in erase.
+5. Run two-node and accessibility acceptance.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.

@@ -262,7 +262,12 @@ class HttpPeerClient:
         return payload
 
     def post_json(
-        self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        max_bytes: int = MAX_JSON_BYTES,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST one JSON object through the configured bounded Transport."""
         post = getattr(self.transport, "post_bytes", None)
@@ -277,7 +282,7 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json", **(headers or {})},
             )
         except TransportError as exc:
             if exc.reason == "too_large":
@@ -639,7 +644,30 @@ def create_app(store: RynmeshStore | None = None):
 
             expected = hashlib.sha256(("rynmesh-net-key:" + peer_key).encode("utf-8")).hexdigest()
             if not hmac.compare_digest(request.headers.get("x-ryn-auth", ""), expected):
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
+                friend_authorized = False
+                if path == "/api/peer/llm/tasks":
+                    try:
+                        raw = await request.body()
+                        if len(raw) > MAX_JSON_BYTES:
+                            raise ValueError
+                        envelope = json.loads(raw)
+                        claimed_peer_id = str(
+                            dict(dict(envelope).get("payload") or {})["from_peer_id"]
+                        )
+                        _friends.verify_auth_headers(
+                            request.headers,
+                            method=request.method,
+                            path=path,
+                            body=raw,
+                            application_peer_id=claimed_peer_id,
+                            required_permission="private-ai.use",
+                        )
+                        request.state.friend_peer_id = claimed_peer_id
+                        friend_authorized = True
+                    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                        friend_authorized = False
+                if not friend_authorized:
+                    return JSONResponse({"detail": "Not Found"}, status_code=404)
 
         # /api/local is the private control surface. Peer APIs (/api/v1,
         # /health) stay open for P2P and the peer server may bind 0.0.0.0, so
@@ -2706,6 +2734,7 @@ def create_app(store: RynmeshStore | None = None):
         messaging_key=_msg_priv,
         resolve_endpoint=_resolve_endpoint,
         resolve_pubkey=_resolve_pubkey,
+        friend_store=_friends,
     )
 
     # ---- bundled web UI -------------------------------------------------

@@ -164,13 +164,16 @@ def _open_provider_response(
 class ProviderService:
     def __init__(self, *, manifest: LLMPackageManifest, adapter: LLMAdapter,
                  store: RynmeshStore, task_store: TaskOrderStore,
-                 balance: TaskBalanceLedger, messaging_key: Any) -> None:
+                 balance: TaskBalanceLedger, messaging_key: Any,
+                 friend_store: Any = None, access_policy: str = "network") -> None:
         self.manifest = manifest
         self.adapter = adapter
         self.store = store
         self.task_store = task_store
         self.balance = balance
         self.messaging_key = messaging_key
+        self.friend_store = friend_store
+        self.access_policy = access_policy if access_policy in {"network", "friends"} else "network"
         self._slots = threading.BoundedSemaphore(manifest.max_concurrent)
         self._lock = threading.Lock()
         self._running = 0
@@ -260,6 +263,7 @@ class ProviderService:
             "capacity": {"max_concurrent": self.manifest.max_concurrent,
                          "running": self._running, "available": max(0, self.manifest.max_concurrent - self._running),
                          "queue_limit": self.manifest.queue_limit, "queue_policy": "reject_when_full"},
+            "access_policy": self.access_policy,
         }
         from rynmesh.services import peer_box
 
@@ -324,6 +328,19 @@ class ProviderService:
         if existing is not None:
             existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
         else:
+            if self.access_policy == "friends" and (
+                self.friend_store is None
+                or not self.friend_store.is_authorized(
+                    str(outer["from_peer_id"]), "private-ai.use"
+                )
+            ):
+                return self._sealed_failure(
+                    task_id,
+                    reply_pub,
+                    outer["from_peer_id"],
+                    "rejected",
+                    "not_authorized",
+                )
             if not self.accepting_orders:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused",
@@ -536,15 +553,40 @@ def _record_is_stale(updated_at: Any) -> bool:
 
 
 def _peer_post_json(
-    endpoint: str, path: str, payload: dict[str, Any], *, timeout_s: float,
+    endpoint: str,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    timeout_s: float,
+    friend_store: Any = None,
+    friend_peer_id: str = "",
+    friend_sender_peer_id: str = "",
 ) -> dict[str, Any]:
     """POST bounded JSON through the peer client's configured Transport."""
     # Late import avoids the peer_http -> install_llm_routes import cycle while
     # retaining one authoritative peer transport/error implementation.
     from rynmesh.peer_http import HttpPeerClient
 
+    headers: dict[str, str] = {}
+    if friend_store is not None and friend_peer_id:
+        encoded = json.dumps(
+            payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+        ).encode("utf-8")
+        try:
+            headers = friend_store.make_auth_headers(
+                friend_peer_id,
+                sender_peer_id=friend_sender_peer_id or None,
+                method="POST",
+                path=path,
+                body=encoded,
+            )
+        except ValueError:
+            headers = {}
     return HttpPeerClient(endpoint, timeout_s=timeout_s).post_json(
-        path, payload, max_bytes=_MAX_PEER_RESPONSE_BYTES,
+        path,
+        payload,
+        max_bytes=_MAX_PEER_RESPONSE_BYTES,
+        headers=headers,
     )
 
 
@@ -689,7 +731,8 @@ def _recover_consumer_orders(
 
 
 def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_key: Any,
-                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
+                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str],
+                       friend_store: Any = None) -> None:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
     balance = TaskBalanceLedger(home / "llm" / "task-balance.json")
@@ -764,6 +807,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "manifest": configured,
             "publication_enabled": bool(configured),
             "network_id": os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"),
+            "access_policy": os.environ.get("RYNMESH_LLM_ACCESS_POLICY", "network"),
         }
         if not settings_path.exists():
             return defaults
@@ -802,6 +846,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 manager = ProviderService(
                     manifest=manifest, adapter=adapter_from_manifest(manifest), store=store,
                     task_store=provider_orders, balance=balance, messaging_key=messaging_key,
+                    friend_store=friend_store,
+                    access_policy=str(settings.get("access_policy") or "network"),
                 )
                 manager.accepting_orders = bool(settings.get("publication_enabled"))
                 manager_path = configured
@@ -1067,16 +1113,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         body = await request.json()
         settings = read_provider_settings()
         configured = str(body.get("manifest") or settings.get("manifest") or "")
+        access_policy = str(body.get("access_policy") or settings.get("access_policy") or "network")
+        if access_policy not in {"network", "friends"}:
+            raise HTTPException(status_code=400, detail="unsupported LLM access policy")
         settings.update({
             "manifest": configured,
             "publication_enabled": True,
             "network_id": str(body.get("network_id") or settings.get("network_id") or "rynmesh-main"),
+            "access_policy": access_policy,
         })
         write_provider_settings(settings)
         current = active_manager(configured)
         if current is None:
             raise HTTPException(status_code=400, detail="LLM service manifest is not configured")
         current.accepting_orders = True
+        current.access_policy = access_policy
         try:
             # publish() runs a health probe and (by default) a real benchmark
             # inference — seconds of blocking work that must not sit on the
@@ -1296,6 +1347,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "background": background}
         settings = read_provider_settings()
         current.accepting_orders = bool(settings.get("publication_enabled"))
+        current.access_policy = str(settings.get("access_policy") or "network")
         lifecycle = {}
         try:
             lifecycle = runtime_status(str(settings.get("manifest") or ""))
@@ -1596,6 +1648,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     encrypted_response = await asyncio.to_thread(
                         _peer_post_json, endpoint, "/api/peer/llm/tasks",
                         signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
+                        **(
+                            {
+                                "friend_store": friend_store,
+                                "friend_peer_id": provider_peer_id,
+                                "friend_sender_peer_id": store.peer_id,
+                            }
+                            if friend_store is not None
+                            else {}
+                        ),
                     )
                     transport_evidence = {
                         "transport": "peer_http_direct",
@@ -1873,6 +1934,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     _peer_post_json(
                         endpoint, "/api/peer/llm/cancellations",
                         signed_cancel.to_dict(), timeout_s=5,
+                        **(
+                            {
+                                "friend_store": friend_store,
+                                "friend_peer_id": provider_peer_id,
+                                "friend_sender_peer_id": store.peer_id,
+                            }
+                            if friend_store is not None
+                            else {}
+                        ),
                     )
                     delivered = True
                 except Exception:
@@ -1895,8 +1965,31 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if current is None:
             raise HTTPException(status_code=503, detail="LLM service not configured")
         try:
-            body = await request.json()
+            raw = await request.body()
+            if len(raw) > _MAX_PEER_RESPONSE_BYTES:
+                raise TaskProtocolError("LLM request is too large")
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                raise TaskProtocolError("LLM request must be an object")
+            if current.access_policy == "friends":
+                if friend_store is None:
+                    raise TaskProtocolError("friend authorization unavailable")
+                try:
+                    claimed_peer_id = str(dict(body.get("payload") or {})["from_peer_id"])
+                    if getattr(request.state, "friend_peer_id", "") != claimed_peer_id:
+                        friend_store.verify_auth_headers(
+                            request.headers,
+                            method="POST",
+                            path="/api/peer/llm/tasks",
+                            body=raw,
+                            application_peer_id=claimed_peer_id,
+                            required_permission="private-ai.use",
+                        )
+                except (KeyError, TypeError, ValueError):
+                    raise HTTPException(status_code=404, detail="Not Found") from None
             return await asyncio.to_thread(current.handle, body)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="invalid request") from None
         except TaskProtocolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -635,8 +635,9 @@ class FriendshipStore:
 
     def make_auth_headers(
         self,
-        peer_id: str,
+        friend_peer_id: str,
         *,
+        sender_peer_id: str | None = None,
         method: str,
         path: str,
         body: bytes = b"",
@@ -646,12 +647,13 @@ class FriendshipStore:
         timestamp = str(int(_now_utc(now).timestamp()))
         active_nonce = nonce or _b64url(os.urandom(18))
         with self._locked():
-            record = self._read()["friends"].get(peer_id)
-            secret = self._read_secrets()["relationships"].get(peer_id)
+            record = self._read()["friends"].get(friend_peer_id)
+            secret = self._read_secrets()["relationships"].get(friend_peer_id)
         if not isinstance(record, dict) or record.get("state") != "active" or not secret:
             raise FriendError("friend_not_authorized")
+        authenticated_peer_id = str(sender_peer_id or friend_peer_id)
         message, digest = self._auth_message(
-            peer_id=peer_id,
+            peer_id=authenticated_peer_id,
             method=method,
             path=path,
             timestamp=timestamp,
@@ -661,7 +663,7 @@ class FriendshipStore:
         mac = _b64url(hmac.new(_unb64url(secret), message, hashlib.sha256).digest())
         return {
             "Authorization": f"{AUTH_SCHEME} v1={mac}",
-            "X-Rynmesh-Friend-Peer": peer_id,
+            "X-Rynmesh-Friend-Peer": authenticated_peer_id,
             "X-Rynmesh-Friend-Timestamp": timestamp,
             "X-Rynmesh-Friend-Nonce": active_nonce,
             "X-Rynmesh-Body-SHA256": digest,

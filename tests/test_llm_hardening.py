@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 import rynmesh.llm_package.p2p as llm_p2p
 from rynmesh.crypto import sign_payload
+from rynmesh.friends import FriendshipStore, verify_invite
 from rynmesh.jobs import JobError, validate_llm_control_params, verify_work_order
 from rynmesh.llm_package.manifest import LLMPackageManifest
 from rynmesh.llm_package.p2p import receive_json, send_json
@@ -189,6 +190,70 @@ def test_missing_hold_is_rejected_before_inference(tmp_path):
     with pytest.raises(TaskProtocolError, match="positive hold"):
         service.handle(_request(consumer, provider, p_msg, c_msg, max_amount=0))
     assert adapter.calls == 0
+
+
+def test_friends_only_provider_denies_before_capacity_or_inference_and_revoke_is_immediate(
+    tmp_path,
+):
+    class _CountingAdapter(_DenseTokenizerAdapter):
+        calls = 0
+
+        def infer(self, **kwargs):
+            type(self).calls += 1
+            return super().infer(**kwargs)
+
+    adapter = _CountingAdapter()
+    service, provider, consumer, p_msg, c_msg = _provider(tmp_path, adapter)
+    friends = FriendshipStore(tmp_path / "provider-friends.json")
+    invite = friends.create_invite(
+        private_key_bytes=provider.private_key_bytes,
+        node_name="Provider",
+        network_id="rynmesh-main",
+        endpoints=["https://provider.example:8791"],
+        permissions=["private-ai.use"],
+    )
+    reviewed = verify_invite(invite["link"])
+    friends.consume_invite(
+        invite_id=reviewed["invite_id"],
+        one_time_secret=reviewed["one_time_secret"],
+        acceptor_peer_id=consumer.peer_id,
+        display_name="Consumer",
+        network_id="rynmesh-main",
+        endpoints=["https://consumer.example:8791"],
+        permissions=["private-ai.use"],
+    )
+    service.friend_store = friends
+    service.access_policy = "friends"
+    assert service.public_status()["access_policy"] == "friends"
+
+    stranger = RynmeshStore(home=tmp_path / "stranger", network_dir=tmp_path / "net")
+    stranger_msg = peer_box.load_or_create_messaging_key(tmp_path / "stranger-msg")
+    denied = service.handle(_request(stranger, provider, p_msg, stranger_msg, task_id="stranger"))
+    _, denied_result = open_task(
+        denied,
+        recipient_peer_id=stranger.peer_id,
+        recipient_messaging_key=stranger_msg,
+        expected_kind="llm_response",
+    )
+    assert denied_result["error_code"] == "not_authorized"
+    assert adapter.calls == 0
+
+    service.handle(_request(consumer, provider, p_msg, c_msg, task_id="authorized"))
+    assert adapter.calls == 1
+    friends.revoke(
+        consumer.peer_id,
+        private_key_bytes=provider.private_key_bytes,
+        local_peer_id=provider.peer_id,
+    )
+    revoked = service.handle(_request(consumer, provider, p_msg, c_msg, task_id="after-revoke"))
+    _, revoked_result = open_task(
+        revoked,
+        recipient_peer_id=consumer.peer_id,
+        recipient_messaging_key=c_msg,
+        expected_kind="llm_response",
+    )
+    assert revoked_result["error_code"] == "not_authorized"
+    assert adapter.calls == 1
 
 
 def test_duplicate_of_a_purged_result_answers_immediately(tmp_path):

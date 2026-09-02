@@ -19,6 +19,8 @@ no Friend Mesh failure. Linux exact-commit CI remains required.
 
 Integration evidence: the #28-based branch passes 44 Friend/Transport tests,
 including simulated two-node Join and explicit endpoint-change review.
+After friends-only Private AI integration, the combined focused regression is
+88 passed with Ruff green.
 
 ## Criteria status
 
@@ -34,7 +36,7 @@ including simulated two-node Join and explicit endpoint-change review.
 - [x] Outbound Join uses #28 Transport and blocks unsafe resolved addresses.
 - [x] The Transport pins the validated DNS answer while preserving URL SNI/Host.
 - [x] Changed endpoints require a second explicit review.
-- [ ] Friends-only Private AI admission denies before capacity/inference.
+- [x] Friends-only Private AI admission denies before capacity/inference.
 - [ ] Revocation delivery converges after online and offline cases.
 - [ ] Webapp and Tauri create/review/join/QR/deep-link/list/revoke flows complete.
 - [ ] Privacy export/erase behavior complete.

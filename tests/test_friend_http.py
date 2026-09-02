@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi.testclient import TestClient
 
 from rynmesh.crypto import SignedPayload, public_key_from_private, sign_payload
-from rynmesh.friends import ACCEPT_VERSION, verify_invite
+from rynmesh.friends import ACCEPT_VERSION, FriendshipStore, verify_invite
 from rynmesh.peer_http import create_app
 from rynmesh.registry import PeerRecord, sign_peer_record, verify_peer_record
 from rynmesh.services.peer_box import open_sealed, public_key_b64
@@ -183,3 +183,63 @@ def test_two_nodes_join_through_transport_and_both_store_active_friendship(
     assert joined.json()["endpoint_review_required"] is False
     assert acceptor_client.get("/api/local/friends").json()[0]["peer_id"] == provider_store.peer_id
     assert provider_client.get("/api/local/friends").json()[0]["peer_id"] == acceptor_store.peer_id
+
+
+def test_friend_hmac_is_network_key_alternative_and_replay_is_hidden(tmp_path, monkeypatch):
+    provider_home = tmp_path / "provider"
+    consumer_home = tmp_path / "consumer"
+    monkeypatch.setenv("RYNMESH_HOME", str(provider_home))
+    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "provider-mesh-key")
+    provider_store = RynmeshStore(home=provider_home, network_dir=tmp_path / "network")
+    consumer_store = RynmeshStore(home=consumer_home, network_dir=tmp_path / "network")
+    provider_friends = FriendshipStore(provider_home / "friends.json")
+    link = provider_friends.create_invite(
+        private_key_bytes=provider_store.private_key_bytes,
+        node_name="Provider",
+        network_id="rynmesh-main",
+        endpoints=["https://provider.example:8791"],
+    )["link"]
+    reviewed = verify_invite(link)
+    accepted = provider_friends.consume_invite(
+        invite_id=reviewed["invite_id"],
+        one_time_secret=reviewed["one_time_secret"],
+        acceptor_peer_id=consumer_store.peer_id,
+        display_name="Consumer",
+        network_id="rynmesh-main",
+        endpoints=["https://consumer.example:8791"],
+        permissions=["private-ai.use"],
+    )
+    consumer_friends = FriendshipStore(consumer_home / "friends.json")
+    consumer_friends.register_received_relationship(
+        peer_id=provider_store.peer_id,
+        relationship_secret=accepted["relationship_secret"],
+        display_name="Provider",
+        network_id="rynmesh-main",
+        endpoints=["https://provider.example:8791"],
+        received_permissions=["private-ai.use"],
+        source_invite_id=reviewed["invite_id"],
+    )
+    provider_client = TestClient(create_app(provider_store))
+    envelope = {"payload": {"from_peer_id": consumer_store.peer_id}}
+    encoded = json.dumps(
+        envelope, separators=(",", ":"), sort_keys=True, ensure_ascii=False
+    ).encode("utf-8")
+    headers = consumer_friends.make_auth_headers(
+        provider_store.peer_id,
+        sender_peer_id=consumer_store.peer_id,
+        method="POST",
+        path="/api/peer/llm/tasks",
+        body=encoded,
+        nonce="friend-http-nonce",
+    )
+    headers["content-type"] = "application/json"
+
+    assert provider_client.post("/api/peer/llm/tasks", content=encoded).status_code == 404
+    # Authentication passes the outer active-probe gate; the unconfigured LLM
+    # route then returns its normal 503 without inspecting a plaintext prompt.
+    assert provider_client.post(
+        "/api/peer/llm/tasks", content=encoded, headers=headers
+    ).status_code == 503
+    assert provider_client.post(
+        "/api/peer/llm/tasks", content=encoded, headers=headers
+    ).status_code == 404
