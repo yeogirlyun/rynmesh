@@ -25,6 +25,7 @@ Status: core security slice passing locally; full Issue matrix pending
 - encrypted credential rotation/decryption by only the acceptor;
 - no raw invite/relationship secret in public state;
 - generic 404 on replay/wrong secret;
+- invalid/low-order X25519 response keys cannot consume an invitation;
 - network-key protection remaining active on other peer routes.
 
 ## Commands
@@ -39,7 +40,7 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 
 ## Evidence on 2026-09-02
 
-- Friend-focused tests: 8 passed on the exact core-slice commit candidate.
+- Friend-focused tests: 9 passed after the X25519 pre-consumption regression fix.
 - Ruff on changed Python files: passed before documentation.
 - Related auth/messaging/LLM run: 35 passed and one Windows-only pre-existing
   POSIX-mode assertion failed (`0o666` vs `0o600`). This is not counted as a

@@ -2422,24 +2422,27 @@ def create_app(store: RynmeshStore | None = None):
         if not raw or len(raw) > 64 * 1024:
             return generic_not_found
         try:
+            import base64 as _base64
+
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise FriendError("friend_acceptance_invalid")
             verified = verify_acceptance_request(body)
-            accepted = _friends.consume_invite(
-                invite_id=str(body.get("invite_id", "")),
-                one_time_secret=str(body.get("one_time_secret", "")),
-                acceptor_peer_id=verified["peer_id"],
-                display_name=verified["display_name"],
-                network_id=verified["network_id"],
-                endpoints=verified["endpoints"],
-                permissions=verified["permissions"],
+            rotated_secret = _base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+            pending_invite = next(
+                (
+                    item
+                    for item in _friends.list_invites()
+                    if item.get("invite_id") == str(body.get("invite_id", ""))
+                ),
+                None,
             )
-            local = self_peer_record(verified["network_id"])
+            if not pending_invite:
+                raise FriendError("invite_not_found")
             inviter_record = PeerRecord(
                 peer_id=active_store.peer_id,
                 node_name=active_store.node_name,
-                endpoints=tuple(local.get("endpoints") or ()),
+                endpoints=tuple(pending_invite.get("endpoints") or ()),
                 network_id=verified["network_id"],
                 updated_at=_iso_now(),
                 metadata={"friend_acceptance": True},
@@ -2451,7 +2454,7 @@ def create_app(store: RynmeshStore | None = None):
                 {
                     "version": "rynmesh.friend-credential.v1",
                     "invite_id": str(body["invite_id"]),
-                    "relationship_secret": accepted["relationship_secret"],
+                    "relationship_secret": rotated_secret,
                     "permissions": verified["permissions"],
                     "issued_at": _iso_now(),
                 },
@@ -2459,6 +2462,18 @@ def create_app(store: RynmeshStore | None = None):
             ).encode("utf-8")
             nonce, ciphertext = _peer_box.seal(
                 _msg_priv, verified["x25519_pub"], credential
+            )
+            # Only consume after every response component can be produced.
+            # A malformed/low-order X25519 key therefore cannot burn an invite.
+            _friends.consume_invite(
+                invite_id=str(body.get("invite_id", "")),
+                one_time_secret=str(body.get("one_time_secret", "")),
+                acceptor_peer_id=verified["peer_id"],
+                display_name=verified["display_name"],
+                network_id=verified["network_id"],
+                endpoints=verified["endpoints"],
+                permissions=verified["permissions"],
+                relationship_secret=rotated_secret,
             )
         except (FriendError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             return generic_not_found
