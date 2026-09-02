@@ -988,6 +988,16 @@ and `AE86835B46A1DBBA99A97B998B2C15AFFB2367ECE84C2068FBB221633A1363D1`.
 The r14 duration begins at zero and must independently reach 86,400 monotonic
 seconds; no r13 duration is carried forward.
 
+At the early long-history checkpoint, 100 independently verified open-order
+polls for the target measured 0.227 ms median, 0.293 ms p95 and 0.541 ms
+maximum. The same sample for the transit provider measured 0.233 ms median,
+0.303 ms p95 and 0.540 ms maximum. Both providers returned zero open orders.
+A simultaneous 20.031-second operating-system sample of actual worker PID
+48864 consumed 0.719 CPU seconds, or 3.59% of one core, while the soak
+continued. The live sample recorded 348 handles, 11 OS threads, 38,633,472
+private bytes and a 54,857,728-byte working set; these are active-sample values,
+not the later warm idle baseline used for final leak comparison.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
