@@ -16,14 +16,14 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Complete Python suite | Pass | 583 passed, 3 skipped on the verified-boundary resume candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
-| Python sdist and wheel | Pass | The `ed83e80` candidate built a 348,389-byte sdist and 275,343-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, rejected a hostname candidate, exposed the adaptive CLI, retained the eight-packet window and reached/drained an installed worker peak of 20 |
+| Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
 | Healthy direct file path | Pass | Source/target SHA-256 equal; transit byte counter unchanged |
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
-| One GiB streamed transfer | Pending repeat | An earlier runtime passed 1,073,741,824 bytes with matching hashes; runtime `ded37d2` must repeat the combined 1-GiB/20-session gate |
-| Bounded memory | Pass / final repeat pending | r18 peak traced Python memory was 5,527,397 bytes; the final one-GiB run must remain below 128 MiB |
-| Concurrent callers | Pass | r18 completed 20/20 one-MiB sessions in 25.812 s; 20 unique signed sessions and independent relay/target production-worker timelines both recomputed a peak of 20 |
+| One GiB streamed transfer | Pass / final repeat pending | r33 on runtime `ded37d2` passed 1,073,741,824 bytes in 16 verified segments with matching hashes; repeat once after the 24-hour soak |
+| Bounded memory | Pass / final repeat pending | r33 peak traced Python memory was 7,560,392 bytes, below 128 MiB; repeat once after the soak |
+| Concurrent callers | Pass | r33 completed 20/20 one-MiB sessions in 27.390 s; 20 unique signed sessions and independent relay/target production-worker timelines both recomputed a peak of 20 |
 | Session establishment | Pass | 0.187 s in r18, below the five-second gate |
 | Encryption framing overhead | Pass | 0.0830% in r18, below the 15% gate |
 | Confidentiality | Pass | Plaintext marker absent from transit frames and registry files; the independent report audit recomputes registry record count, maximum and total size from the emitted size list, enforces a fixed 64 KiB per-control-record ceiling, and requires zero application payload bytes |
@@ -940,6 +940,53 @@ respectively
 `173584310D273EA981D74D77F8FB22801FC43D59208EBA6C81A4FC40FC925AE7`,
 `65ABAA6BD6B82111F9E9FD37F6932F9528FEBF1033D886C35C3B9E2CFE7FB405`
 and `B961618F4398CB68378CC14AD2A60F8FBB877F479906CD4CDFFBC19FA0CF2081`.
+
+The r33 combined resource run at
+`.codex-tmp/peer-transit-acceptance-r33-resume-one-gib-20` passed on runtime
+`ded37d2`. It transferred exactly 1,073,741,824 bytes in 1,009.593 seconds
+through 16 fresh signed 64 MiB sessions. Source and target SHA-256 values both
+equal `sha256:42883761a2b0e92db2215b2c7d04f44597d7bab18ea7071df57928ae8bda980e`.
+Peak traced Python memory was 7,560,392 bytes, protocol overhead was 0.082476%,
+and all 20 one-MiB concurrent sessions completed in 27.390 seconds with both
+production-worker peaks equal to 20 and a complete trace. Real direct shaping
+attempted 342 datagrams and dropped 61 (17.836%); the impaired direct file took
+6.860 seconds and the following adaptive peer-transit request took 0.640
+seconds. Hard-failure fallback took 0.735 seconds. The forced-resume subgate
+recorded one failed session and four fresh successful sessions at exact
+boundaries 65,536, 131,072, 196,608 and 200,704. All sixteen report checks,
+both worker control-error gates and both independent audits passed, with zero
+`.part` or `.resume.json` files. Report, evidence, report-audit, evidence-audit
+and console SHA-256 values are respectively
+`72AE22BB25431E70CBD741BFBDE0D5DA6864F1BA1FA60E83BE2B52FBC738FEC4`,
+`C460B4D5A732CA4023CE94C1EE4CA671F5E7A9C2CC4B6D05D01554F9C0C9625B`,
+`44391ADA90B94383FB2358977CDD6788EE10E0C494DA789F844FDDC0C08CE328`,
+`ADDF37071EA398EF7B8AFC12F27A9FEBEBE369637FBF7DC4C12AE5C67570EA84`
+and `659E2C1CE380B52C06C18D1717E1E73A9B7BC409AED8F8092EAB21EC8D87F253`.
+
+Candidate `180f454` then passed an isolated PEP 517 build. The 280,748-byte
+wheel has SHA-256
+`A5EE27BC86D10BD7780BB46BEE04EF0FC97EFCCEB8F305EFB0AC0C277F62329F`
+and the 357,062-byte sdist has SHA-256
+`F232FE7E715F5DA4CDB175E475AF0AE69230FC4C68065D22F44EFD5B474955DE`.
+A fresh virtual environment installed the wheel and all dependencies; from
+outside the source tree, both imported modules resolved beneath
+`site-packages`, all four transit CLI modes were present, all three send modes
+exposed both resume flags, and the installed defaults remained 67,108,864 bytes
+and three attempts. The unchanged web application separately passed 38 tests,
+TypeScript checking and its Vite production build.
+
+The replacement r14 soak started from an empty directory at 2026-09-02
+11:42:10.701704 Asia/Hong_Kong. It runs from data-plane fixed point `ded37d2`,
+soak-runner blob `1f8fe15de836702619911531d2c24b6e7e802a57`, and upstream baseline
+`b0b17c1c60ec9506643326aa1c2cdba012e90c38`. Launcher PID 52188 owns actual
+Python worker PID 48864. At 130.593 monotonic seconds it had completed 14
+sessions with zero failures, 42 frames, 936,516 transit bytes, 1,177,797 bytes
+of traced growth, zero worker control errors, no plaintext finding and empty
+stdout/stderr. Its initial 852-byte target and relay signed-capacity files have
+SHA-256 `035F12330E52456291E6E1DEF624A3CA6C2D076361A1A72A44795DCEB326F32C`
+and `AE86835B46A1DBBA99A97B998B2C15AFFB2367ECE84C2068FBB221633A1363D1`.
+The r14 duration begins at zero and must independently reach 86,400 monotonic
+seconds; no r13 duration is carried forward.
 
 Final acceptance requires:
 
