@@ -141,29 +141,42 @@ export default function PrivateAIChat() {
   const loadServiceBucket = async (service: LLMServiceRecord, network: string, synchronize = true) => {
     const generation = bucketLoadGateRef.current.begin();
     setSwitching(true);
-    const key = serviceKey(service);
-    let stored = await listConversations(key);
-    if (!stored.length) {
-      const fresh = createConversation({
-        serviceKey: key,
-        serviceName: service.service.model_alias,
-        providerPeerId: service.peer_id,
-        networkId: network,
-      });
-      await saveConversation(fresh);
-      stored = [fresh];
+    try {
+      const key = serviceKey(service);
+      let stored = await listConversations(key);
+      if (!stored.length) {
+        const fresh = createConversation({
+          serviceKey: key,
+          serviceName: service.service.model_alias,
+          providerPeerId: service.peer_id,
+          networkId: network,
+        });
+        await saveConversation(fresh);
+        stored = [fresh];
+      }
+      if (!mountedRef.current || !bucketLoadGateRef.current.isCurrent(generation)) return false;
+      // React batches this commit. Until the target history is ready, the old
+      // service and its messages remain paired; they are never rendered crossed.
+      setSelectedService(service);
+      setConversations(stored);
+      setSelectedId(stored[0].id);
+      setQuery("");
+      setError("");
+      if (synchronize) synchronizeUrl(service, network);
+      return true;
+    } catch {
+      if (mountedRef.current && bucketLoadGateRef.current.isCurrent(generation)) {
+        setError("Unable to open that Provider's encrypted history. The current Provider, history, and draft were preserved.");
+      }
+      return false;
+    } finally {
+      // A stale request must never clear the loading state owned by a newer
+      // provider switch. The latest request always releases it, even if local
+      // encrypted storage rejected a read or write.
+      if (mountedRef.current && bucketLoadGateRef.current.isCurrent(generation)) {
+        setSwitching(false);
+      }
     }
-    if (!mountedRef.current || !bucketLoadGateRef.current.isCurrent(generation)) return false;
-    // React batches this commit. Until the target history is ready, the old
-    // service and its messages remain paired; they are never rendered crossed.
-    setSelectedService(service);
-    setConversations(stored);
-    setSelectedId(stored[0].id);
-    setQuery("");
-    setError("");
-    if (synchronize) synchronizeUrl(service, network);
-    setSwitching(false);
-    return true;
   };
 
   useEffect(() => {

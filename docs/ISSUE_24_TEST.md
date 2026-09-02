@@ -15,7 +15,8 @@
 9. offline 服务可查看历史但不能提交；
 10. busy 服务可由 URL 恢复且不能提交；
 11. 发现结果删除当前服务后标记 disappeared，历史不清除；
-12. 最新请求 gate 拒绝较慢的旧异步读取。
+12. 最新请求 gate 拒绝较慢的旧异步读取；
+13. 加密存储读取失败后释放 switching，并保留原 Provider、历史和草稿。
 
 `llmConversationStore.test.ts` 随全量测试继续覆盖 AES-GCM 加密写入、复合键过滤和损坏记录恢复。
 

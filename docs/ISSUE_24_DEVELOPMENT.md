@@ -24,6 +24,9 @@
 4. 仅当组件仍挂载且 token 仍为最新时，批量更新 service、conversations、selected ID；
 5. 使用 React Router `replace` 更新 URL，保留未知 query 参数。
 
+读取或首次加密保存失败时，事务捕获异常并保留原 Provider、历史与草稿。`finally` 只允许最新
+generation 释放 switching，避免失败永久锁住选择器，也避免旧请求清除新请求的加载状态。
+
 目标历史准备好之前继续显示旧 Provider 和旧历史，因此不会出现 A 标题配 B 消息或反向串线。
 
 ### 发现刷新
