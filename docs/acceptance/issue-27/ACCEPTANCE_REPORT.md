@@ -1,9 +1,9 @@
 # Formal acceptance report: service background-worker registry (#27)
 
-Decision: pending remote CI
+Decision: ACCEPTED
 Reviewed commit: `18b17bcb48e1a14f20e45649425174809ff2d780`
 Branch: `codex/issue-27-background-worker-registry`
-Acceptance date: pending
+Acceptance date: 2026-09-02
 
 ## Scope under acceptance
 
@@ -58,9 +58,9 @@ unavailable WSL bash, and `select()` on a Windows subprocess pipe. One unrelated
 Signal50 atomic-replace stress test was flaky under Windows and passed when
 rerun alone. None exercises the changed registry or LLM scheduler code.
 
-Formal acceptance remains pending until the reviewed commit passes the
-repository's Ubuntu backend and Docker LLM E2E jobs. The final CI URL and job
-results will be recorded below before sign-off.
+The Windows-only exclusions above are superseded by the successful Ubuntu
+backend and Docker LLM E2E jobs recorded below. They remain useful portability
+follow-up items but are not acceptance exceptions for issue #27.
 
 ## Acceptance checklist
 
@@ -76,26 +76,28 @@ results will be recorded below before sign-off.
 - [x] Status/errors exclude service-private bodies and configuration details.
 - [x] Strict P2P and encrypted Relay multi-process flows pass.
 - [x] Focused tests and lint pass.
-- [ ] Required remote CI jobs pass on the reviewed commit.
-- [ ] Final reviewer decision and acceptance date are recorded.
+- [x] Required remote CI jobs pass on the reviewed commit.
+- [x] Final reviewer decision and acceptance date are recorded.
 
 ## Remote CI evidence
 
-Pull request: pending
-Reviewed CI commit: pending
+Pull request: https://github.com/yeogirlyun/rynmesh/pull/33
+Reviewed CI commit: `d78a56cd837984cb34e32b05f2a98f041b9a2239`
+Workflow run: https://github.com/yeogirlyun/rynmesh/actions/runs/33643742045
 
 | CI job | Result |
 |---|---|
-| contribution-workflow | pending |
-| backend | pending |
-| webapp | pending |
-| llm-e2e | pending |
-| packaged-node | pending |
-| desktop-compile (x86_64) | pending |
-| desktop-compile (aarch64) | pending |
+| contribution-workflow | PASS |
+| backend | PASS |
+| webapp | PASS |
+| llm-e2e | PASS |
+| packaged-node | PASS |
+| desktop-compile (x86_64) | PASS |
+| desktop-compile (aarch64) | PASS |
 
 ## Final decision
 
-Pending. Do not mark issue #27 formally accepted or merge it until all required
-remote jobs are green and this report references the exact reviewed commit.
-
+Accepted. Issue #27 meets its functional, reliability, privacy, compatibility,
+documentation, focused-test, full-suite, E2E, packaging, and desktop compile
+requirements. It is ready for maintainer review and merge through pull request
+#33. This decision does not accept any explicitly excluded follow-up scope.

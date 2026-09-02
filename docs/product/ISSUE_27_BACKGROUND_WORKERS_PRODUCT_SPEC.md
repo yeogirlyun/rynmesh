@@ -1,6 +1,6 @@
 # Product specification: service background-worker registry (#27)
 
-Status: implemented; formal acceptance pending CI
+Status: implemented and formally accepted
 Owner: Rynmesh maintainers
 Last reviewed: 2026-09-02
 
@@ -84,4 +84,3 @@ coherent change. Old and new schedulers must never run simultaneously.
 - Development plan: `docs/ISSUE_27_BACKGROUND_WORKER_REGISTRY_WORK_PLAN.md`
 - Acceptance report: `docs/acceptance/issue-27/ACCEPTANCE_REPORT.md`
 - Service platform roadmap: `docs/SERVICE_PLATFORM_NEXT.md`
-

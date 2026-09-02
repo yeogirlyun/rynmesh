@@ -1,6 +1,6 @@
 # Issue #27 work plan: service background-worker registry
 
-Status: implemented; formal acceptance pending CI
+Status: implemented and formally accepted, 2026-09-02
 Issue: https://github.com/yeogirlyun/rynmesh/issues/27
 Recommended order: implement after or independently from #28
 
@@ -334,19 +334,19 @@ sufficient if worker tasks leak.
 
 ## 10. Acceptance criteria
 
-- [ ] A documented `BackgroundWorkerRegistry` and validated worker spec exist.
-- [ ] Service packages can register workers without editing node lifespan code.
-- [ ] Sync work does not block the asyncio event loop.
-- [ ] Worker failures are isolated and use bounded backoff.
-- [ ] Shutdown cancels and awaits every registered worker.
-- [ ] LLM Relay polling is registered through the new API.
-- [ ] LLM Provider publication refresh is registered through the new API.
-- [ ] The old LLM-specific lifespan loops and task wiring are removed.
-- [ ] Existing LLM background status fields remain compatible.
-- [ ] No prompt, output, secret, private path, or task envelope enters status or
+- [x] A documented `BackgroundWorkerRegistry` and validated worker spec exist.
+- [x] Service packages can register workers without editing node lifespan code.
+- [x] Sync work does not block the asyncio event loop.
+- [x] Worker failures are isolated and use bounded backoff.
+- [x] Shutdown cancels and awaits every registered worker.
+- [x] LLM Relay polling is registered through the new API.
+- [x] LLM Provider publication refresh is registered through the new API.
+- [x] The old LLM-specific lifespan loops and task wiring are removed.
+- [x] Existing LLM background status fields remain compatible.
+- [x] No prompt, output, secret, private path, or task envelope enters status or
       logs.
-- [ ] Focused tests, complete tests, direct E2E, and Relay E2E pass.
-- [ ] A future service can add a worker by changing only its package installer
+- [x] Focused tests, complete tests, direct E2E, and Relay E2E pass.
+- [x] A future service can add a worker by changing only its package installer
       and tests.
 
 Formal execution evidence and the sign-off decision are maintained in
