@@ -135,3 +135,49 @@ def test_invalid_x25519_key_cannot_consume_the_invite(tmp_path, monkeypatch):
 
     valid = _acceptance_body(link, acceptor_key, valid_messaging_key)
     assert client.post("/api/peer/friends/accept", json=valid).status_code == 200
+
+
+def test_two_nodes_join_through_transport_and_both_store_active_friendship(
+    tmp_path, monkeypatch
+):
+    provider_home = tmp_path / "provider"
+    monkeypatch.setenv("RYNMESH_HOME", str(provider_home))
+    provider_store = RynmeshStore(home=provider_home, network_dir=tmp_path / "provider-network")
+    provider_client = TestClient(create_app(provider_store))
+    link = provider_client.post(
+        "/api/local/friends/invites",
+        json={"endpoints": ["https://alice.example:8791"]},
+    ).json()["link"]
+
+    class BridgeTransport:
+        def post_bytes(self, url, body, *, timeout_s, max_bytes, headers=None):
+            from urllib.parse import urlparse
+
+            response = provider_client.post(
+                urlparse(url).path,
+                content=body,
+                headers=headers or {"content-type": "application/json"},
+            )
+            return response.content
+
+    monkeypatch.setattr("rynmesh.peer_http.get_transport", lambda: BridgeTransport())
+    monkeypatch.setattr(
+        "rynmesh.friends.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 0))],
+    )
+    acceptor_home = tmp_path / "acceptor"
+    monkeypatch.setenv("RYNMESH_HOME", str(acceptor_home))
+    acceptor_store = RynmeshStore(home=acceptor_home, network_dir=tmp_path / "acceptor-network")
+    acceptor_client = TestClient(create_app(acceptor_store))
+    joined = acceptor_client.post(
+        "/api/local/friends/join",
+        json={
+            "link": link,
+            "acceptor_endpoints": ["https://bob.example:8791"],
+        },
+    )
+    assert joined.status_code == 200, joined.text
+    assert joined.json()["status"] == "active"
+    assert joined.json()["endpoint_review_required"] is False
+    assert acceptor_client.get("/api/local/friends").json()[0]["peer_id"] == provider_store.peer_id
+    assert provider_client.get("/api/local/friends").json()[0]["peer_id"] == acceptor_store.peer_id

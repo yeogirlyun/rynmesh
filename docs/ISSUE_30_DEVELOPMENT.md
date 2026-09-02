@@ -30,6 +30,15 @@ invalid or low-order X25519 key therefore returns the generic failure without
 burning the one-use invite; the final consume still chooses exactly one winner
 under a race.
 
+The integration branch additionally adds local outbound Join through #28's
+bounded `Transport.post_json`. It re-verifies the link, resolves and classifies
+all endpoint addresses immediately before contact, signs the acceptor record
+and freshness proof, decrypts the rotated credential locally, and verifies the
+returned inviter identity/network/scope. A changed endpoint is stored only as
+`pending_endpoint_review`; exact approval activates it and rejection deletes
+the credential. The current Transport does not yet pin the checked DNS answer
+to the actual socket, so complete rebinding resistance remains a release gate.
+
 ## Secret boundaries
 
 - The raw invite secret appears only in the signed link and in the acceptance
@@ -49,16 +58,14 @@ resolve-and-pin check at outbound Join; that transport integration is pending.
 
 ## Remaining implementation slices
 
-1. Stack this branch on the accepted #28 Transport POST implementation.
-2. Add outbound Join through `Transport.post_json`, resolve-and-pin protection,
-   endpoint-change second review, and received-relationship persistence.
-3. Add friend-auth middleware only to explicitly allowed peer/service routes.
-4. Add signed best-effort remote revocation delivery and retry status.
-5. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
-6. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
-7. Add Tauri `rynmesh://` forwarding and paste fallback.
-8. Include sanitized friend records in privacy export and revoke/delete in erase.
-9. Run two-node and accessibility acceptance.
+1. Add Transport resolver pinning after the pre-contact DNS classification.
+2. Add friend-auth middleware only to explicitly allowed peer/service routes.
+3. Add signed best-effort remote revocation delivery and retry status.
+4. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
+5. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
+6. Add Tauri `rynmesh://` forwarding and paste fallback.
+7. Include sanitized friend records in privacy export and revoke/delete in erase.
+8. Run two-node and accessibility acceptance.
 
-No merge should describe the Issue as complete before all nine slices and the
+No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.
