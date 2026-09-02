@@ -32,6 +32,10 @@ Status: core security slice passing locally; full Issue matrix pending
 - private or mixed DNS answers fail before contact;
 - changed endpoints remain pending until exact approval, while rejection
   deletes the local credential.
+- friend HMAC is a scoped alternative to the mesh key, and a replay is hidden
+  behind the same generic 404;
+- friends-only Provider denial occurs before capacity/inference for strangers
+  and takes effect on the next task immediately after revoke.
 
 ## Commands
 
@@ -47,7 +51,10 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 
 - Friend/Transport-focused integration run: 44 passed after outbound Join and
   endpoint-review tests (`test_friends.py`, `test_friend_http.py`, and
-  `test_transport.py`).
+`test_transport.py`).
+
+Friend/Transport/LLM regression after ACL integration: 88 passed across the
+focused Friend, Transport, LLM hardening, and full LLM package suites.
 - Ruff on changed Python files: passed before documentation.
 - Related auth/messaging/LLM run: 35 passed and one Windows-only pre-existing
   POSIX-mode assertion failed (`0o666` vs `0o600`). This is not counted as a
@@ -61,7 +68,6 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 ## Still required
 
 - outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
-- per-friend middleware and friends-only LLM admission/capacity tests;
 - revocation delivery/reconnect tests;
 - Webapp unit, type, lint, build, accessibility, and no-network QR tests;
 - Tauri deep-link tests;
