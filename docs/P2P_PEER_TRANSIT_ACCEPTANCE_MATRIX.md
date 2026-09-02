@@ -108,6 +108,20 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   versus warm-up: handles +4, OS threads -1, private bytes +3,956,736 and
   working set -1,597,440; 9,067 files passed all residual/plaintext scans,
   with zero UDP endpoints, stderr, partial/resume files or open markers.
+- r14 twenty-eighth refreshed target/transit signed-capacity snapshots:
+  `2176B98186AFFCD547BE2D330DDCE8F508B56834DF01180741776D82E8355E9E` /
+  `20DA499021B4B3F1B78E06B0A4576313D2FBFCEE4D1A696D5096948A0C5FD05A`;
+  both 18:27:10-11 Asia/Hong_Kong records passed Ed25519 verification.
+- r14 2,507-session indexed open-order scaling checkpoint:
+  `9D58842A2CEBFEAA2F2B4C9DC832A0EB7C6A28E60B1D0C1DC9F7190152BA87B1`;
+  100 polls per provider kept both p95 values below 0.53 ms and worker CPU at
+  7.01% of one core over 20.52 seconds while live sessions exposed at most one
+  open order per provider.
+- r14 2,517-session idle OS/artifact checkpoint:
+  `7731DA42320F82ECFECEB6ED5890B5D6A970D3DBD7E3650C88C5ED8F5322AA21`;
+  versus warm-up: handles +3, OS threads -1, private bytes +6,201,344 and
+  working set -1,769,472; 17,572 files passed all residual/plaintext scans,
+  with zero UDP endpoints, stderr, partial/resume files or open markers.
 - Shutdown-finalizer real integration progress/final-audit SHA-256:
   `ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` /
   `A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`;
