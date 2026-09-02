@@ -36,8 +36,11 @@ all endpoint addresses immediately before contact, signs the acceptor record
 and freshness proof, decrypts the rotated credential locally, and verifies the
 returned inviter identity/network/scope. A changed endpoint is stored only as
 `pending_endpoint_review`; exact approval activates it and rejection deletes
-the credential. The current Transport does not yet pin the checked DNS answer
-to the actual socket, so complete rebinding resistance remains a release gate.
+the credential. `get_pinned_transport` dials the validated address directly
+while retaining the original hostname for TLS SNI/certificate verification and
+HTTP Host routing, closing the resolution/connection TOCTOU window. Join fails
+closed when an outbound proxy owns DNS because that path cannot yet prove the
+same pinning guarantee.
 
 ## Secret boundaries
 
@@ -58,14 +61,13 @@ resolve-and-pin check at outbound Join; that transport integration is pending.
 
 ## Remaining implementation slices
 
-1. Add Transport resolver pinning after the pre-contact DNS classification.
-2. Add friend-auth middleware only to explicitly allowed peer/service routes.
-3. Add signed best-effort remote revocation delivery and retry status.
-4. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
-5. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
-6. Add Tauri `rynmesh://` forwarding and paste fallback.
-7. Include sanitized friend records in privacy export and revoke/delete in erase.
-8. Run two-node and accessibility acceptance.
+1. Add friend-auth middleware only to explicitly allowed peer/service routes.
+2. Add signed best-effort remote revocation delivery and retry status.
+3. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
+4. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
+5. Add Tauri `rynmesh://` forwarding and paste fallback.
+6. Include sanitized friend records in privacy export and revoke/delete in erase.
+7. Run two-node and accessibility acceptance.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.

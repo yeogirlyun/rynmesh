@@ -133,6 +133,17 @@ def validate_endpoint_for_contact(endpoint: str, *, allow_private: bool = False)
     is required before claiming complete DNS-rebinding resistance.
     """
 
+    cleaned, _addresses = resolve_endpoint_for_contact(
+        endpoint, allow_private=allow_private
+    )
+    return cleaned
+
+
+def resolve_endpoint_for_contact(
+    endpoint: str, *, allow_private: bool = False
+) -> tuple[str, tuple[str, ...]]:
+    """Return the reviewed endpoint and the exact safe addresses to pin."""
+
     import ipaddress
 
     cleaned = validate_endpoint(endpoint, allow_private=allow_private)
@@ -155,7 +166,7 @@ def validate_endpoint_for_contact(endpoint: str, *, allow_private: bool = False)
             raise FriendError("invite_endpoint_resolution_blocked")
         if address.is_private and not allow_private:
             raise FriendError("invite_endpoint_resolution_blocked")
-    return cleaned
+    return cleaned, tuple(sorted(str(address) for address in addresses))
 
 
 def encode_invite(signed: SignedPayload) -> str:

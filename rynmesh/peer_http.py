@@ -30,7 +30,7 @@ from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
-from .transport import Transport, TransportError, get_transport
+from .transport import Transport, TransportError, get_pinned_transport, get_transport
 from .types import RYNMESH_VERSION
 
 
@@ -2495,7 +2495,6 @@ def create_app(store: RynmeshStore | None = None):
             ACCEPT_VERSION,
             FriendError,
             validate_endpoint,
-            validate_endpoint_for_contact,
             verify_invite,
         )
         from .registry import verify_peer_record
@@ -2509,7 +2508,11 @@ def create_app(store: RynmeshStore | None = None):
             endpoint = str(body.get("endpoint") or reviewed["endpoints"][0]).rstrip("/")
             if endpoint not in reviewed["endpoints"]:
                 raise FriendError("invite_endpoint_not_signed")
-            validate_endpoint_for_contact(endpoint, allow_private=allow_private)
+            from .friends import resolve_endpoint_for_contact
+
+            endpoint, resolved_addresses = resolve_endpoint_for_contact(
+                endpoint, allow_private=allow_private
+            )
             local_endpoints = list(
                 body.get("acceptor_endpoints")
                 or self_peer_record(reviewed["network_id"]).get("endpoints", [])
@@ -2546,7 +2549,10 @@ def create_app(store: RynmeshStore | None = None):
                 },
                 private_key_bytes=active_store.private_key_bytes,
             )
-            response = HttpPeerClient(endpoint).post_json(
+            response = HttpPeerClient(
+                endpoint,
+                transport=get_pinned_transport(endpoint, resolved_addresses[0]),
+            ).post_json(
                 "/api/peer/friends/accept",
                 {
                     "invite_id": reviewed["invite_id"],

@@ -45,7 +45,7 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 
 ## Evidence on 2026-09-02
 
-- Friend/Transport-focused integration run: 42 passed after outbound Join and
+- Friend/Transport-focused integration run: 44 passed after outbound Join and
   endpoint-review tests (`test_friends.py`, `test_friend_http.py`, and
   `test_transport.py`).
 - Ruff on changed Python files: passed before documentation.
@@ -60,7 +60,7 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 
 ## Still required
 
-- Transport socket pinning against a validated DNS answer and rebinding test;
+- outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
 - per-friend middleware and friends-only LLM admission/capacity tests;
 - revocation delivery/reconnect tests;
 - Webapp unit, type, lint, build, accessibility, and no-network QR tests;
