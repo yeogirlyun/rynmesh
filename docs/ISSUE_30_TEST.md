@@ -44,6 +44,11 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py 
 - Related auth/messaging/LLM run: 35 passed and one Windows-only pre-existing
   POSIX-mode assertion failed (`0o666` vs `0o600`). This is not counted as a
   pass and must be green on Linux CI.
+- Full backend with `PYTHONUTF8=1`: 527 passed, 3 skipped, 8 failed in 62.38s.
+  The failures are the same platform/pre-existing classes independently seen
+  on the #28 baseline: three Windows executable/WSL checks, three POSIX `0600`
+  mode assertions, one existing Windows `os.replace` reader race, and one
+  Windows `select()`-on-pipe limitation. No Friend Mesh test failed.
 
 ## Still required
 
