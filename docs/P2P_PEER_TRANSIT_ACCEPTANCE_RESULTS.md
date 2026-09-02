@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 574 passed, 3 skipped on the UDP-window-eight, one-MiB concurrent-probe and failure-report candidate |
+| Complete Python suite | Pass | 583 passed, 3 skipped on the verified-boundary resume candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | The `ed83e80` candidate built a 348,389-byte sdist and 275,343-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, rejected a hostname candidate, exposed the adaptive CLI, retained the eight-packet window and reached/drained an installed worker peak of 20 |
@@ -21,7 +21,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
-| One GiB streamed transfer | Pending repeat | An earlier runtime passed 1,073,741,824 bytes with matching hashes; commit `ed83e80` must repeat this gate after the fresh 24-hour soak |
+| One GiB streamed transfer | Pending repeat | An earlier runtime passed 1,073,741,824 bytes with matching hashes; runtime `ded37d2` must repeat the combined 1-GiB/20-session gate |
 | Bounded memory | Pass / final repeat pending | r18 peak traced Python memory was 5,527,397 bytes; the final one-GiB run must remain below 128 MiB |
 | Concurrent callers | Pass | r18 completed 20/20 one-MiB sessions in 25.812 s; 20 unique signed sessions and independent relay/target production-worker timelines both recomputed a peak of 20 |
 | Session establishment | Pass | 0.187 s in r18, below the five-second gate |
@@ -887,7 +887,59 @@ are respectively
 `EEECEE6557500AEFDCFADD0FD6E22B4A09BFB2326784F82EB8F5906A20DA9FA9`
 and `4339C6D615DB5809A83C4B1A3DA00B9154EEA221CC9C96751FB8F6E5D6598E54`.
 This isolates the large-file gate but does not replace the required final
-combined one-GiB/20-session run after r13 completes.
+combined one-GiB/20-session run on the verified-resume runtime.
+
+The r13 soak was stopped and invalidated after 4,834.047 monotonic seconds when
+the acceptance-contract audit found that runtime `a378bad` retried fragments
+only while an ICE connection remained live; it did not reconnect and resume an
+application stream after connection loss. The immutable stop snapshot at
+`.codex-tmp/peer-transit-soak-24h-r13/progress.invalidated-resume-contract-gap.json`
+has SHA-256
+`6BDD8C7D2E46C8A33F888FB6F9A6754B93BF93928B9E7F3CF746B8C36DDC0A28`.
+It records 484 sessions, zero failures, 1,452 frames, 32,033,056 bytes,
+2,102,428 bytes of traced memory growth, zero plaintext/error/partial/open-marker
+findings and empty stderr. Launcher PID 16424, worker PID 47884 and their UDP
+endpoints were independently verified absent. Those clean observations remain
+diagnostic evidence, but none of the r13 duration counts toward final acceptance.
+
+Runtime `ded37d2` implements signed verified-boundary resume for both direct and
+peer-transit files. The default 64 MiB segment carries its range, segment hash,
+cumulative-prefix hash, full-file identity and a stable random transfer ID. The
+target fsyncs and atomically checkpoints every verified prefix, truncates an
+unconfirmed tail, serializes writers for one source/transfer, and accepts an
+exact duplicate only idempotently. Each later segment or retry uses a fresh ICE
+session; a file is committed only after its final size and complete SHA-256
+match. The producer and independent auditor both fail closed on discontinuous
+boundaries, session reuse, unsigned or mismatched receipts, duplicate output,
+or leftover `.part`/`.resume.json` state. The focused suite passed 43 tests and
+the complete suite passed 583 tests with three skips; Ruff passed for `rynmesh`,
+`scripts` and `tests`.
+
+The r31 resume preflight at
+`.codex-tmp/peer-transit-acceptance-r31-resume-preflight` deliberately closed
+the source's second ICE session after the first 65,536-byte checkpoint. It
+recorded one failed session, four fresh successful sessions and exact verified
+boundaries 65,536, 131,072, 196,608 and 200,704, then produced one matching
+final file with no partial or checkpoint state. Its report, evidence,
+report-audit and evidence-audit SHA-256 values are respectively
+`7150EFB72F689B7D88B313BC261A8D9D8D2B4735C2DBBBDA85C364EA75A581C9`,
+`1611BC8629CEAD07D44592A242CC9374DC1D24BE09AFADEE14B22ECEDBCFFB9B`,
+`E95C10A9C92E03019CB4F2E8DDDF08611D68DD3AE31005A53D87C8FC8F7C28CC`
+and `9C9D9214EB70420928F8826A5FC4BAD94929ED7763949FC2E7A0470082A33A30`.
+
+The independent r32 default-boundary run at
+`.codex-tmp/peer-transit-acceptance-r32-default-multisegment` transferred 65 MiB
+through two separately signed sessions whose exact boundaries were 67,108,864
+and 68,157,440 bytes. It completed in 63.391 seconds with matching hashes, one
+final file, no partial/checkpoint state, 6,661,483 bytes of peak traced memory
+and 0.0826% protocol overhead; its forced-disconnect resume gate also passed.
+Its report, evidence, report-audit, evidence-audit and console SHA-256 values are
+respectively
+`25B997A0DEFFDD2E9604B7468F132A52FB564DB7CBC081BC20585BDF1543EF67`,
+`66ECD1867F460CDDC7029A4843A42594560C9812A90DEA78BEA85979D0AB0A9B`,
+`173584310D273EA981D74D77F8FB22801FC43D59208EBA6C81A4FC40FC925AE7`,
+`65ABAA6BD6B82111F9E9FD37F6932F9528FEBF1033D886C35C3B9E2CFE7FB405`
+and `B961618F4398CB68378CC14AD2A60F8FBB877F479906CD4CDFFBC19FA0CF2081`.
 
 Final acceptance requires:
 

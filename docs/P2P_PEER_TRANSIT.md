@@ -188,6 +188,24 @@ consent traffic or overflowing a peer's UDP receive queue while preserving
 fair progress across sessions. Application streams are resumable at a verified
 chunk boundary; a half-written artifact is never committed as complete.
 
+Large files are divided into 64 MiB resume segments by default, aligned to the
+64 KiB application chunk size. The source keeps one random `transfer_id` for
+the complete file and signs a manifest for every segment containing its byte
+range, segment SHA-256, cumulative-prefix SHA-256, final-file SHA-256 and source
+identity. The target fsyncs the segment, recomputes the complete prefix, and
+atomically persists a checkpoint before returning a signed receipt. A later
+segment therefore starts only at a boundary independently verified by both
+ends.
+
+Every resumed segment negotiates a fresh ICE session. The source makes at most
+three resume attempts by default and never trusts bytes beyond the last signed
+receipt. The target truncates an unconfirmed tail, serializes writers for the
+same source/transfer pair, and treats an exact duplicate segment as an
+idempotent verification rather than appending it twice. Only a final segment
+whose total size and complete-file hash match is renamed from `.part`; the
+checkpoint is then removed. Evidence records all segment boundaries, fresh
+session IDs, failed attempts and signed target receipts.
+
 ## 5. Route selection
 
 The route manager maintains these states:

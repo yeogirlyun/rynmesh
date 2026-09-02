@@ -76,7 +76,8 @@ Direct only:
 ```powershell
 rynmesh-transit send-file-direct .\artifact.bin `
   --target-peer "<peer-3-id>" --network-id three-node-production `
-  --timeout 180 --evidence .\direct-evidence.json
+  --timeout 180 --resume-segment-mib 64 --max-resume-attempts 3 `
+  --evidence .\direct-evidence.json
 ```
 
 Force peer 2 for a diagnosed bad route:
@@ -85,6 +86,7 @@ Force peer 2 for a diagnosed bad route:
 rynmesh-transit send-file .\artifact.bin `
   --relay-peer "<peer-2-id>" --target-peer "<peer-3-id>" `
   --network-id three-node-production --timeout 180 `
+  --resume-segment-mib 64 --max-resume-attempts 3 `
   --evidence .\transit-evidence.json
 ```
 
@@ -94,6 +96,7 @@ Direct first with automatic hard-failure fallback:
 rynmesh-transit send-file-adaptive .\artifact.bin `
   --relay-peer "<peer-2-id>" --target-peer "<peer-3-id>" `
   --network-id three-node-production --timeout 180 --direct-timeout 8 `
+  --resume-segment-mib 64 --max-resume-attempts 3 `
   --evidence .\adaptive-evidence.json
 ```
 
@@ -118,6 +121,14 @@ The CLI performs bounded hard-failure fallback. Proactive poor-quality routing
 uses rolling `PathMetrics` supplied by the caller or node telemetry loop; the
 route manager applies the thresholds and hysteresis above.
 
+`--resume-segment-mib` controls the independently hashed and acknowledged
+resume boundary; it defaults to 64 MiB and must remain aligned to the 64 KiB
+application chunk. `--max-resume-attempts` defaults to three. A retry keeps the
+same transfer identity but creates a fresh signed ICE session and resumes only
+after the last signed target receipt. The target keeps `.part` and
+`.resume.json` state only while a transfer is incomplete and commits exactly
+one final file after verifying the complete hash.
+
 ## Hermetic acceptance
 
 The deterministic test uses real local ICE sockets, disables external STUN,
@@ -141,6 +152,12 @@ produce one intact target file with no partial artifact. The next real adaptive
 request must select peer 2 without attempting direct, and relay frame counters
 must increase. The independent report auditor recomputes the observed loss from
 attempted/dropped counts and fails closed if any of these fields are absent.
+
+The verified-resume gate completes one positive 64 KiB checkpoint, forcibly
+closes the next source ICE connection, and then requires a fresh signed session
+to continue from exactly that boundary. It rejects duplicate or skipped byte
+ranges, reused session IDs, an incorrect cumulative hash, more than one final
+file, or any remaining `.part`/`.resume.json` state.
 
 Smoke gate:
 
