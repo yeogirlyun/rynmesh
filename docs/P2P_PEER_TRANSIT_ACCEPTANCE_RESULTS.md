@@ -770,6 +770,16 @@ SHA-256 values are
 At the following checkpoint r13 had completed 129 sessions with zero failures,
 zero worker control errors and no plaintext exposure.
 
+The warm idle operating-system baseline is preserved at
+`.codex-tmp/peer-transit-soak-24h-r13/os-baseline-warmup.json`, SHA-256
+`73BF96E6AA16C7350A7888629E55671B7D4D6E4DCCC8E45A178CCC1113EDDDE3`.
+At 134 completed sessions it recorded 309 handles, eight OS threads,
+35,938,304 private bytes and a 52,518,912-byte working set for the persistent
+process. The idle sample had zero UDP endpoints, open markers, partial files
+and stderr bytes, with both worker error snapshots still zero. Final shutdown
+verification must use the same fields and prove that the process no longer
+exists rather than treating a lower resource count as sufficient.
+
 The `a378bad` package candidate also passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
 276,476-byte wheel has SHA-256
