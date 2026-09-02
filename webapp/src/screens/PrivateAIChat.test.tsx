@@ -1,18 +1,58 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { clearConversations } from "../domain/llmConversationStore";
+import type { LLMOrderResult, LLMServiceRecord, NodeClient } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 
 beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
+  await clearConversations("peer:provider-a::package-a");
+  await clearConversations("peer:provider-b::package-b");
 });
 
-function renderChat() {
+function service(overrides: Partial<LLMServiceRecord> & { peer_id: string; packageId: string }): LLMServiceRecord {
+  return {
+    peer_id: overrides.peer_id,
+    node_name: overrides.node_name ?? overrides.peer_id,
+    online: overrides.online ?? true,
+    capacity: overrides.capacity ?? { available: 1, max_concurrent: 1, running: 0 },
+    benchmark: overrides.benchmark,
+    service: {
+      package_id: overrides.packageId,
+      model_alias: overrides.service?.model_alias ?? "shared-model-alias",
+      capabilities: overrides.service?.capabilities ?? ["text-generation"],
+      context_window: overrides.service?.context_window ?? 8192,
+      max_output_tokens: overrides.service?.max_output_tokens ?? 512,
+      pricing: overrides.service?.pricing ?? {
+        currency: "DEV_TASK_BALANCE", input_per_1k: 0.01, output_per_1k: 0.02,
+        minimum: 0.005, maximum_per_task: 2,
+      },
+      privacy: overrides.service?.privacy ?? { compute_node_sees_plaintext: true },
+      risk_labels: overrides.service?.risk_labels,
+    },
+  };
+}
+
+const providerA = service({ peer_id: "peer:provider-a", packageId: "package-a", node_name: "Provider Alpha" });
+const providerB = service({ peer_id: "peer:provider-b", packageId: "package-b", node_name: "Provider Beta" });
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output aria-label="Current location search">{location.search}</output>;
+}
+
+function renderChat(options: {
+  services?: LLMServiceRecord[];
+  initialEntry?: string;
+  configureClient?: (client: NodeClient) => void;
+} = {}) {
   const client = makeFixtureNodeClient();
+  if (options.services) client.listLLMServices = vi.fn(async () => options.services!);
+  options.configureClient?.(client);
   const submit = vi.spyOn(client, "submitLLMOrder");
   const confirm = vi.fn();
   const context: AppOutletContext = {
@@ -26,10 +66,10 @@ function renderChat() {
     peers: [], refreshShell: vi.fn(async () => undefined), confirm, notify: vi.fn(),
   };
   const result = render(
-    <MemoryRouter initialEntries={["/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main"]}>
+    <MemoryRouter initialEntries={[options.initialEntry ?? "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main"]}>
       <Routes>
         <Route element={<Outlet context={context} />}>
-          <Route path="/services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="/services/private-ai/chat" element={<><PrivateAIChat /><LocationProbe /></>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -75,5 +115,113 @@ describe("Private AI chat", () => {
 
     await user.click(screen.getByRole("button", { name: "Clear history" }));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ risk: "high", confirmLabel: "Clear history" }));
+  });
+
+  it("compares equal aliases, switches isolated history, preserves drafts, and submits the exact compound identity", async () => {
+    const { submit, user } = renderChat({
+      services: [providerA, providerB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a&network=rynmesh-main&source=kept",
+    });
+    expect(await screen.findByText("shared-model-alias · Provider Alpha")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    const beta = screen.getByRole("option", { name: /shared-model-alias from Provider Beta package-b/ });
+    expect(beta).toHaveTextContent("8192 context · 512 max output");
+    expect(beta).toHaveTextContent("0.01 in / 0.02 out DEV_TASK_BALANCE per 1k");
+    expect(beta).toHaveTextContent("Package package-b");
+
+    const composer = screen.getByLabelText("Message Private AI");
+    await user.type(composer, "Alpha-only message");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText(/Fixture response for: Alpha-only message/)).toBeInTheDocument();
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider_peer_id: "peer:provider-a", service_id: "package-a",
+    }));
+
+    await user.type(composer, "draft survives provider switch");
+    await user.click(beta);
+    expect(await screen.findByText("shared-model-alias · Provider Beta")).toBeInTheDocument();
+    expect(composer).toHaveValue("draft survives provider switch");
+    expect(screen.queryByText("Alpha-only message")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Current location search")).toHaveTextContent("peer=peer%3Aprovider-b");
+    expect(screen.getByLabelText("Current location search")).toHaveTextContent("service=package-b");
+    expect(screen.getByLabelText("Current location search")).toHaveTextContent("source=kept");
+
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText(/Fixture response for: draft survives provider switch/);
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider_peer_id: "peer:provider-b", service_id: "package-b",
+    }));
+
+    const alpha = screen.getByRole("option", { name: /shared-model-alias from Provider Alpha package-a/ });
+    await user.click(alpha);
+    expect((await screen.findAllByText("Alpha-only message")).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("draft survives provider switch")).not.toBeInTheDocument();
+  });
+
+  it("blocks provider switching for the complete lifetime of an active task", async () => {
+    let finishSubmit!: (result: LLMOrderResult) => void;
+    const pendingSubmit = new Promise<LLMOrderResult>((resolve) => { finishSubmit = resolve; });
+    const { user } = renderChat({
+      services: [providerA, providerB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+      configureClient: (client) => { client.submitLLMOrder = vi.fn(async () => pendingSubmit); },
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    const beta = screen.getByRole("option", { name: /Provider Beta package-b/ });
+    await user.type(screen.getByLabelText("Message Private AI"), "long request");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(beta).toBeDisabled();
+    fireEvent.click(beta);
+    expect(screen.getByText("shared-model-alias · Provider Alpha")).toBeInTheDocument();
+    finishSubmit({ task_id: "task-active", state: "succeeded", output: "done" });
+    expect(await screen.findByText("done")).toBeInTheDocument();
+    await waitFor(() => expect(beta).not.toBeDisabled());
+  });
+
+  it("allows offline history selection but keeps the draft local and submission disabled", async () => {
+    const offlineB = { ...providerB, online: false };
+    const { user } = renderChat({
+      services: [providerA, offlineB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    const composer = screen.getByLabelText("Message Private AI");
+    await user.type(composer, "private offline draft");
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    await user.click(screen.getByRole("option", { name: /Provider Beta package-b/ }));
+    expect(await screen.findByText(/Provider offline — history and draft are preserved/)).toBeInTheDocument();
+    expect(composer).toHaveValue("private offline draft");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
+  it("shows busy capacity distinctly and restores a URL-selected provider", async () => {
+    const busyB = { ...providerB, capacity: { available: 0, max_concurrent: 1, running: 1 } };
+    const { user } = renderChat({
+      services: [providerA, busyB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-b&service=package-b&network=rynmesh-main",
+    });
+    expect(await screen.findByText("shared-model-alias · Provider Beta")).toBeInTheDocument();
+    expect(screen.getByText(/Provider busy — history and draft are preserved/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    expect(screen.getByRole("option", { name: /Provider Beta package-b/ })).toHaveTextContent("busy");
+  });
+
+  it("retains the selected service and encrypted history when discovery later removes it", async () => {
+    let discovered = [providerA, providerB];
+    const { client } = renderChat({
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+      configureClient: (configured) => {
+        configured.listLLMServices = vi.fn(async () => discovered);
+      },
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    discovered = [providerB];
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(await screen.findByText(/Provider disappeared from discovery — history and draft are preserved/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(client.listLLMServices).toHaveBeenCalledTimes(2);
   });
 });

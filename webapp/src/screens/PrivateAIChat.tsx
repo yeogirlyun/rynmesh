@@ -14,7 +14,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
+import {
+  LLM_TERMINAL_STATES,
+  createLatestRequestGate,
+  llmProviderLabel,
+  llmServiceAvailability,
+  llmServicePricingLabel,
+  llmServiceRecordKey,
+  shortPeerId,
+} from "../domain/llmOrders";
 import { useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
@@ -75,7 +83,7 @@ function resultMessage(result: LLMOrderResult) {
 
 export default function PrivateAIChat() {
   const { client, confirm, notify } = useAppContext();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [services, setServices] = useState<LLMServiceRecord[]>([]);
   const [selectedService, setSelectedService] = useState<LLMServiceRecord | null>(null);
   const [networkId, setNetworkId] = useState(searchParams.get("network") || "rynmesh-main");
@@ -84,6 +92,7 @@ export default function PrivateAIChat() {
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [switching, setSwitching] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [error, setError] = useState("");
@@ -96,52 +105,116 @@ export default function PrivateAIChat() {
   const deletedIdsRef = useRef<Set<string>>(new Set());
   // Stop pressed before submitLLMOrder returned a task id.
   const cancelRequestedRef = useRef(false);
+  // Only the newest bucket load may commit. This prevents a slow click on A
+  // from replacing a later click on B with A's encrypted history.
+  const bucketLoadGateRef = useRef(createLatestRequestGate());
+  const selectedServiceRef = useRef<LLMServiceRecord | null>(null);
+  const initialQueryRef = useRef({
+    network: searchParams.get("network"),
+    peer: searchParams.get("peer"),
+    service: searchParams.get("service"),
+  });
 
-  useEffect(() => () => {
-    mountedRef.current = false;
+  useEffect(() => {
+    // React StrictMode mounts effects twice in development. Reset the flag on
+    // every setup so the second (real) pass may still commit async results.
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
   }, []);
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
 
   useEffect(() => {
+    selectedServiceRef.current = selectedService;
+  }, [selectedService]);
+
+  const synchronizeUrl = (service: LLMServiceRecord, network: string) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("peer", service.peer_id);
+      next.set("service", service.service.package_id);
+      next.set("network", network);
+      return next;
+    }, { replace: true });
+  };
+
+  const loadServiceBucket = async (service: LLMServiceRecord, network: string, synchronize = true) => {
+    const generation = bucketLoadGateRef.current.begin();
+    setSwitching(true);
+    const key = serviceKey(service);
+    let stored = await listConversations(key);
+    if (!stored.length) {
+      const fresh = createConversation({
+        serviceKey: key,
+        serviceName: service.service.model_alias,
+        providerPeerId: service.peer_id,
+        networkId: network,
+      });
+      await saveConversation(fresh);
+      stored = [fresh];
+    }
+    if (!mountedRef.current || !bucketLoadGateRef.current.isCurrent(generation)) return false;
+    // React batches this commit. Until the target history is ready, the old
+    // service and its messages remain paired; they are never rendered crossed.
+    setSelectedService(service);
+    setConversations(stored);
+    setSelectedId(stored[0].id);
+    setQuery("");
+    setError("");
+    if (synchronize) synchronizeUrl(service, network);
+    setSwitching(false);
+    return true;
+  };
+
+  useEffect(() => {
     let active = true;
     void (async () => {
       const settings = await client.getSettings().catch(() => null);
-      const network = searchParams.get("network") || settings?.network_id?.trim() || "rynmesh-main";
+      const requested = initialQueryRef.current;
+      const network = requested.network || settings?.network_id?.trim() || "rynmesh-main";
       const discovered = await client.listLLMServices(network).catch(() => []);
       if (!active) return;
       setNetworkId(network);
       setServices(discovered);
-      const requestedPeer = searchParams.get("peer");
-      const requestedService = searchParams.get("service");
-      const selected = discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService)
+      const selected = discovered.find((item) => item.peer_id === requested.peer && item.service.package_id === requested.service)
         ?? discovered.find((item) => item.online)
         ?? discovered[0]
         ?? null;
-      setSelectedService(selected);
       setStorageMode(await conversationStorageMode());
       if (selected) {
-        const key = serviceKey(selected);
-        let stored = await listConversations(key);
-        if (!stored.length) {
-          const fresh = createConversation({
-            serviceKey: key,
-            serviceName: selected.service.model_alias,
-            providerPeerId: selected.peer_id,
-            networkId: network,
-          });
-          await saveConversation(fresh);
-          stored = [fresh];
-        }
-        if (active) {
-          setConversations(stored);
-          setSelectedId(stored[0].id);
-        }
+        await loadServiceBucket(selected, network);
       }
       if (active) setLoading(false);
     })();
     return () => { active = false; };
-  }, [client, searchParams]);
+  }, [client]);
+
+  useEffect(() => {
+    const refresh = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const discovered = await client.listLLMServices(networkId);
+        if (!mountedRef.current) return;
+        setServices(discovered);
+        const selected = selectedServiceRef.current;
+        if (!selected) return;
+        const refreshed = discovered.find((item) => serviceKey(item) === serviceKey(selected));
+        if (refreshed) setSelectedService(refreshed);
+        // If it disappeared, retain the selected snapshot and its local
+        // history. Availability is derived from the current discovery list.
+      } catch {
+        // A failed refresh is not proof that every provider went offline.
+        // Keep the last successful discovery snapshot and try again later.
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [client, networkId]);
 
   useEffect(() => {
     const element = messageScrollRef.current;
@@ -165,6 +238,11 @@ export default function PrivateAIChat() {
     ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
     setSelectedId(conversation.id);
     await saveConversation(conversation);
+  };
+
+  const switchService = async (service: LLMServiceRecord) => {
+    if (sending || switching || serviceKey(service) === (selectedService ? serviceKey(selectedService) : "")) return;
+    await loadServiceBucket(service, networkId);
   };
 
   const newConversation = async () => {
@@ -214,7 +292,7 @@ export default function PrivateAIChat() {
 
   const runPrompt = async (promptText: string) => {
     const text = promptText.trim();
-    if (!text || !selectedService || sending) return;
+    if (!text || !selectedService || sending || switching) return;
     let conversation = selectedConversation;
     if (!conversation) {
       conversation = createConversation({
@@ -223,6 +301,19 @@ export default function PrivateAIChat() {
         providerPeerId: selectedService.peer_id,
         networkId,
       });
+    }
+    const key = serviceKey(selectedService);
+    if (conversation.serviceKey !== key || conversation.providerPeerId !== selectedService.peer_id) {
+      setError("This conversation belongs to a different Provider. Switch back to its Provider before sending.");
+      return;
+    }
+    const currentTarget = services.find((service) => serviceKey(service) === key);
+    const availability = currentTarget ? llmServiceAvailability(currentTarget) : "offline";
+    if (!currentTarget || availability !== "ready") {
+      setError(availability === "busy"
+        ? "This Provider is busy. Your draft and local history are safe; try again when capacity is available."
+        : "This Provider is offline or no longer advertised. Your draft and local history are safe; choose another Provider or wait for it to return.");
+      return;
     }
     const now = new Date().toISOString();
     const userMessage: LLMChatMessage = { id: messageId(), role: "user", content: text, createdAt: now, status: "complete" };
@@ -241,10 +332,10 @@ export default function PrivateAIChat() {
     try {
       let result = await client.submitLLMOrder({
         network_id: networkId,
-        provider_peer_id: selectedService.peer_id,
-        service_id: selectedService.service.package_id,
+        provider_peer_id: currentTarget.peer_id,
+        service_id: currentTarget.service.package_id,
         prompt: buildConversationPrompt(withUser.messages),
-        max_tokens: Math.min(selectedService.service.max_output_tokens || 256, 256),
+        max_tokens: Math.min(currentTarget.service.max_output_tokens || 256, 256),
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
@@ -329,10 +420,20 @@ export default function PrivateAIChat() {
     );
   }
 
+  const selectedKey = serviceKey(selectedService);
+  const selectedDiscovered = services.find((service) => serviceKey(service) === selectedKey);
+  const selectedAvailability = selectedDiscovered ? llmServiceAvailability(selectedDiscovered) : "offline";
+  const selectorServices = selectedDiscovered
+    ? services
+    : [{ ...selectedService, online: false }, ...services];
+  const providerUnavailableMessage = selectedDiscovered
+    ? selectedAvailability === "busy" ? "Provider busy — history and draft are preserved" : selectedAvailability === "offline" ? "Provider offline — history and draft are preserved" : ""
+    : "Provider disappeared from discovery — history and draft are preserved";
+
   return (
     <div className={styles.page}>
       <aside className={styles.history} aria-label="Private AI conversations">
-        <button className={styles.newButton} type="button" onClick={() => void newConversation()}>
+        <button className={styles.newButton} type="button" disabled={switching} onClick={() => void newConversation()}>
           <MessageSquarePlus size={17} /> New chat
         </button>
         <label className={styles.historySearch}>
@@ -369,28 +470,71 @@ export default function PrivateAIChat() {
             <span className={styles.modelIcon}><Bot size={24} /></span>
             <div className={styles.modelCopy}>
               <h1>Private AI</h1>
-              <span>{selectedService.service.model_alias}</span>
+              <span>{selectedService.service.model_alias} · {llmProviderLabel(selectedService)}</span>
               <div className={styles.modelStatus}>
-                <span className={styles.statusBadge}><Check size={11} /> Ready</span>
+                <span className={`${styles.statusBadge} ${selectedAvailability !== "ready" ? styles.statusBadgeUnavailable : ""}`}>
+                  <Check size={11} /> {selectedDiscovered ? selectedAvailability : "disappeared"}
+                </span>
                 <span className={styles.statusBadge}><LockKeyhole size={11} /> Encrypted</span>
               </div>
             </div>
           </div>
-          <details className={styles.details}>
-            <summary className={styles.detailsButton}>Details <ChevronDown size={14} /></summary>
-            <div className={styles.detailsPanel}>
-              <dl>
-                <div><dt>Model</dt><dd>{selectedService.service.model_alias}</dd></div>
-                <div><dt>Provider</dt><dd>{selectedService.node_name || selectedService.peer_id}</dd></div>
-                <div><dt>Service</dt><dd>{selectedService.service.package_id}</dd></div>
-                <div><dt>Network</dt><dd>{networkId}</dd></div>
-                <div><dt>Context</dt><dd>{selectedService.service.context_window} tokens</dd></div>
-              </dl>
-              <p className={styles.privacyCopy}>
-                Requests are encrypted in transit and conversation history is encrypted on this device. The selected provider necessarily sees plaintext while generating a response.
-              </p>
-            </div>
-          </details>
+          <div className={styles.headerActions}>
+            <details className={styles.providerPicker}>
+              <summary className={styles.detailsButton} aria-label="Change Private AI provider" aria-disabled={sending || switching}>
+                {switching ? "Switching…" : "Provider / model"} <ChevronDown size={14} />
+              </summary>
+              <div className={styles.providerPanel} role="listbox" aria-label="Private AI providers">
+                {selectorServices.map((service) => {
+                  const key = serviceKey(service);
+                  const current = key === selectedKey;
+                  const discovered = services.some((item) => serviceKey(item) === key);
+                  const availability = discovered ? llmServiceAvailability(service) : "offline";
+                  return (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={current}
+                      aria-label={`${service.service.model_alias} from ${llmProviderLabel(service)} ${service.service.package_id}`}
+                      className={`${styles.providerOption}${current ? ` ${styles.providerOptionSelected}` : ""}`}
+                      disabled={sending || switching || current}
+                      onClick={() => void switchService(service)}
+                      key={key}
+                    >
+                      <span className={styles.providerOptionTitle}>
+                        <strong>{service.service.model_alias}</strong>
+                        <span className={availability === "ready" ? styles.availabilityReady : styles.availabilityUnavailable}>
+                          {discovered ? availability : "disappeared"}
+                        </span>
+                      </span>
+                      <span>{llmProviderLabel(service)} · <code>{shortPeerId(service.peer_id)}</code></span>
+                      <span>Package <code>{service.service.package_id}</code></span>
+                      <span>{service.service.context_window} context · {service.service.max_output_tokens} max output</span>
+                      <span>{llmServicePricingLabel(service)} · minimum {service.service.pricing.minimum}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </details>
+            <details className={styles.details}>
+              <summary className={styles.detailsButton}>Details <ChevronDown size={14} /></summary>
+              <div className={styles.detailsPanel}>
+                <dl>
+                  <div><dt>Model</dt><dd>{selectedService.service.model_alias}</dd></div>
+                  <div><dt>Provider</dt><dd>{llmProviderLabel(selectedService)} ({selectedService.peer_id})</dd></div>
+                  <div><dt>Service</dt><dd>{selectedService.service.package_id}</dd></div>
+                  <div><dt>Network</dt><dd>{networkId}</dd></div>
+                  <div><dt>Availability</dt><dd>{selectedDiscovered ? selectedAvailability : "disappeared"}</dd></div>
+                  <div><dt>Context</dt><dd>{selectedService.service.context_window} tokens</dd></div>
+                  <div><dt>Max output</dt><dd>{selectedService.service.max_output_tokens} tokens</dd></div>
+                  <div><dt>Price</dt><dd>{llmServicePricingLabel(selectedService)}; minimum {selectedService.service.pricing.minimum}</dd></div>
+                </dl>
+                <p className={styles.privacyCopy}>
+                  Requests are encrypted in transit and conversation history is encrypted on this device. The selected provider necessarily sees plaintext while generating a response.
+                </p>
+              </div>
+            </details>
+          </div>
         </header>
 
         <div className={styles.messages} ref={messageScrollRef}>
@@ -430,13 +574,14 @@ export default function PrivateAIChat() {
         </div>
 
         <div className={styles.composerWrap}>
+          {providerUnavailableMessage ? <div className={styles.unavailableNotice} role="status">{providerUnavailableMessage}</div> : null}
           {error ? <div className={styles.error} role="alert">{error}</div> : null}
           <div className={styles.composer}>
             <textarea
               aria-label="Message Private AI"
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Message Private AI"
+              placeholder={selectedAvailability === "ready" ? "Message Private AI" : "Draft preserved; Provider is unavailable"}
               rows={1}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -448,7 +593,7 @@ export default function PrivateAIChat() {
             {sending ? (
               <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
             ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim()} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
+              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || switching || selectedAvailability !== "ready" || !selectedDiscovered} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
             )}
           </div>
           <div className={styles.composerMeta}>
