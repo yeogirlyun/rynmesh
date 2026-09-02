@@ -360,7 +360,12 @@ class _TargetFileSink:
         slug = _resume_slug(self.source_peer_id, transfer_id)
         self._path = self.tmp_dir / f"{slug}.part"
         self._state_path = self.tmp_dir / f"{slug}.resume.json"
-        self._destination = self.inbox / f"{transfer_id}-{filename}"
+        # Namespace the committed artifact by the authenticated source as well
+        # as the caller-chosen transfer ID. The in-process serialization key
+        # already uses this slug; using it for the destination also prevents
+        # different sources that deliberately reuse a transfer ID and filename
+        # from replacing each other's completed file on POSIX.
+        self._destination = self.inbox / f"{slug}-{filename}"
         state: dict[str, Any] = {}
         if self._state_path.is_file():
             try:

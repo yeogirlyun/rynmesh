@@ -2036,3 +2036,42 @@ def test_direct_resumes_from_verified_boundary_after_ice_disconnect(
     assert not list(inbox.rglob("*.part"))
     assert not list(inbox.rglob("*.resume.json"))
     assert worker._active_resume_transfers == set()
+
+
+def test_target_final_paths_are_namespaced_by_authenticated_source(tmp_path) -> None:
+    inbox = tmp_path / "target-inbox"
+    transfer_id = "0123456789abcdef0123456789abcdef"
+    stored: list[tuple[bytes, dict[str, object]]] = []
+
+    for index, body in enumerate((b"a" * 4096, b"b" * 4096), start=1):
+        digest = "sha256:" + hashlib.sha256(body).hexdigest()
+        sink = peer_transit_service._TargetFileSink(
+            inbox,
+            session_id=f"session-{index}",
+            source_peer_id=f"authenticated-source-{index}",
+            max_file_bytes=1024 * 1024,
+        )
+        manifest = {
+            "kind": "file",
+            "filename": "same-name.bin",
+            "transfer_id": transfer_id,
+            "size_bytes": len(body),
+            "sha256": digest,
+            "offset_bytes": 0,
+            "segment_size_bytes": len(body),
+            "segment_sha256": digest,
+            "prefix_sha256": digest,
+            "final": True,
+        }
+        sink.write(b"M" + json.dumps(manifest).encode("utf-8"))
+        sink.write(b"D" + body)
+        receipt = sink.finish()
+        sink.acknowledge_receipt()
+        stored.append((body, receipt))
+
+    paths = [Path(str(receipt["stored_path"])) for _body, receipt in stored]
+    assert paths[0] != paths[1]
+    assert all(path.parent == inbox for path in paths)
+    assert [path.read_bytes() for path in paths] == [body for body, _receipt in stored]
+    assert not list(inbox.rglob("*.part"))
+    assert not list(inbox.rglob("*.resume.json"))
