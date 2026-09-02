@@ -15,7 +15,7 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 | E. Transit failure | Peer-2 loss produces recovered direct/alternate transit or bounded explicit failure with no partial file | `actual_hard_failure`, `unavailable`, `_audit_unavailable_gate`; adaptive hard-failure tests | Local gate passed twice in r25/r26; hard fallback remained below 1 second |
 | F. No cloud relay | No TURN candidate/configuration, strict UDP/IP candidate validation, control-plane blackout survival, body-free registry | `control_plane_blackout`, `registry_control_plane`, candidate-filter tests, `_audit_hop`, `_audit_registry_control_plane` | Local gate passed twice in r25/r26; packet capture across three public egresses remains external |
 | G. Confidentiality/integrity | No plaintext at peer 2; tamper, replay, forged identity, expiry and recursive hop rejected; no arbitrary application destination | transit frame/registry scans; signed-session, cipher replay/tamper and result-identity tests | Automated security gates passed; r13 continuous scans remain clean |
-| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, r13 soak and final one-GiB report | Preflight and 20-way gates passed; r13 24-hour duration and final one-GiB run are pending |
+| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, r13 soak and final one-GiB report | Isolated 1 GiB r30 and earlier 20-way gates passed; r13 24-hour duration and the final combined 1-GiB/20-way run are pending |
 
 ## Cross-cutting fail-closed checks
 
@@ -40,6 +40,8 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - Strengthened real-impairment acceptance/auditor: `700cc99`.
 - r25 report: `1F1E9DAAA1B075A5A629A21A3013E6823CDAD579935DC1A33E801B79B991A7D1`.
 - r26 report: `BA8FF94533F31920DD311A6BC1CAB9CBDF1D59DF4D0D2F2A99B3C6F82656D3A7`.
+- r30 one-GiB report: `C64D64EFF5D76C7D9D14440C4D9A2962503060979B0A2C3547E46A696EB6C220`.
+- r30 report audit: `D88AAE8178AF609205E599599B21BEAAC548FEC14D2A7341BAAFAA9EED999F53`.
 - Warm OS baseline: `73BF96E6AA16C7350A7888629E55671B7D4D6E4DCCC8E45A178CCC1113EDDDE3`.
 - 233-session OS checkpoint: `3AC7BB613DACA73987A0B321A9084CF743F3A25563341D414A42464F0C422657`.
 

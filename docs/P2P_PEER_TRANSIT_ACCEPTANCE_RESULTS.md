@@ -846,6 +846,37 @@ the report and evidence audit hashes are
 `7AF21E502E28464A461915F17DA217F2AF7D800373F2E49273137B9FFA5638FD`
 and `A5E6B097270B490750503A6C3EFFD44BC20D31F31142E13844CE51CF36E3B64C`.
 
+An early one-GiB preflight, preserved at
+`.codex-tmp/peer-transit-acceptance-r27-one-gib-preflight`, failed after about
+70 seconds when the target-side ICE connection was lost and the source later
+reported `Cannot send data, not connected`. It committed no target or partial
+file. The failed `report.json` has SHA-256
+`BA8D500E8C59EC6728BE9BE25DFDDBFCD3EB0318406295BDC2D238511C69CB60`
+and its console log has SHA-256
+`E406EC85DD1AAC01FA7061A633B7E25F0CA46B8AA3D56E113E02352AAC8FFD65`.
+Because that run did not enable aioice diagnostics, it is retained as a
+negative observation rather than attributed to an unproven cause.
+
+The isolated diagnostic repeat at
+`.codex-tmp/peer-transit-acceptance-r30-one-gib-aioice-debug` passed without a
+runtime change while the r13 soak continued under load. It transferred exactly
+1,073,741,824 bytes in 965.875 seconds through 16,385 authenticated request
+frames. Source and target SHA-256 values both equal
+`sha256:42883761a2b0e92db2215b2c7d04f44597d7bab18ea7071df57928ae8bda980e`.
+Peak traced Python memory was 6,012,557 bytes against the 128 MiB limit and
+protocol overhead was 0.0824%. The aioice log contains zero consent-expiry or
+abnormal connection-loss messages; all 72 `connection_lost(None)` entries are
+normal cleanup of acceptance subtests. Both independent one-GiB audits passed.
+The report, evidence, report-audit, evidence-audit and console SHA-256 values
+are respectively
+`C64D64EFF5D76C7D9D14440C4D9A2962503060979B0A2C3547E46A696EB6C220`,
+`014B36A7396CDD67260A79E0E2692322306A8D6EEBB704B5F690525B2FF0CC24`,
+`D88AAE8178AF609205E599599B21BEAAC548FEC14D2A7341BAAFAA9EED999F53`,
+`EEECEE6557500AEFDCFADD0FD6E22B4A09BFB2326784F82EB8F5906A20DA9FA9`
+and `4339C6D615DB5809A83C4B1A3DA00B9154EEA221CC9C96751FB8F6E5D6598E54`.
+This isolates the large-file gate but does not replace the required final
+combined one-GiB/20-session run after r13 completes.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
