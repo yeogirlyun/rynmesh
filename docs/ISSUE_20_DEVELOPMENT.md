@@ -16,7 +16,8 @@ second desktop application.
   `${XDG_STATE_HOME:-~/.local/state}/rynmesh`;
 - opens Linux logs with `xdg-open`;
 - searches `PATH` itself instead of invoking `/usr/bin/which`;
-- keeps Unix SIGTERM plus bounded kill/wait shutdown behavior;
+- handles Linux SIGTERM/SIGINT through the event-loop watchdog and keeps Unix
+  SIGTERM plus bounded kill/wait behavior for the managed child;
 - accepts an adjacent packaged `rynmesh-peer`, or the exact
   `rynmesh-peer-<current-target-triple>` development binary, never the first
   prefix match from another architecture.

@@ -2,10 +2,31 @@ mod node;
 
 use node::NodeState;
 use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
+
+#[cfg(target_os = "linux")]
+static TERMINATION_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+extern "C" fn request_termination(_signal: libc::c_int) {
+    TERMINATION_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+#[cfg(target_os = "linux")]
+fn install_termination_handler() {
+    unsafe {
+        let _ = libc::signal(
+            libc::SIGTERM,
+            request_termination as libc::sighandler_t,
+        );
+        let _ = libc::signal(libc::SIGINT, request_termination as libc::sighandler_t);
+    }
+}
 
 fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -35,6 +56,9 @@ pub fn run() {
             stopping: AtomicBool::new(false),
         })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            install_termination_handler();
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -100,6 +124,12 @@ pub fn run() {
                 loop {
                     std::thread::sleep(Duration::from_secs(5));
                     let state = watchdog.state::<NodeState>();
+                    #[cfg(target_os = "linux")]
+                    if TERMINATION_REQUESTED.swap(false, Ordering::SeqCst) {
+                        node::stop(state.inner());
+                        watchdog.exit(0);
+                        break;
+                    }
                     if state.stopping.load(std::sync::atomic::Ordering::SeqCst) {
                         break;
                     }
