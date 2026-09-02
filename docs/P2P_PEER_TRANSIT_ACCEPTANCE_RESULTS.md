@@ -1023,6 +1023,20 @@ At the following checkpoint r14 had completed 113 sessions with zero failures,
 worker control errors, plaintext findings, open markers and partial/resume
 files; stdout and stderr remained empty.
 
+The second scheduled r14 capacity refresh completed at 2026-09-02 12:12:10
+Asia/Hong_Kong, preserving the approximately fifteen-minute cadence. Both
+records again passed project signature verification with unchanged peer IDs,
+roles and `max_concurrent=8`. Immutable normalized target and transit snapshots
+have SHA-256
+`11F12CFB97B10C5DA47AE78B2B75F8056C622A32C5B1C0D8B7B03331CEA0B369`
+and `33B45B8BFF444E552DA3244D9C877A16A03970379CD70FB76B36708EA7AB224D`.
+After more than 200 sessions, a second 100-poll sample measured target median
+0.229 ms/p95 0.266 ms and transit median 0.228 ms/p95 0.323 ms, with both
+providers returning zero open orders and maxima below 0.67 ms. A simultaneous
+20.029-second worker sample consumed 1.063 CPU seconds, or 5.30% of one core,
+with 312 handles, eight OS threads, 36,548,608 private bytes and a 53,452,800-
+byte working set. No history-proportional poll or CPU regression is present.
+
 A completion-contract review found that the independent soak artifact auditor
 scanned `*.part` but did not yet reject the verified-resume runtime's
 `*.resume.json` checkpoint files or fail on leftover open work-order markers.
