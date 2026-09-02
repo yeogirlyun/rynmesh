@@ -1240,7 +1240,37 @@ partial/checkpoint files, open markers or log bytes. Runtime and soak-runner
 blobs remain fixed. r16 must reach 86,400 monotonic seconds independently; its
 expected deadline is 2026-09-03 22:39:05.446090 Asia/Hong_Kong.
 
-Final acceptance requires:
+## Functional acceptance decision
+
+The user reduced acceptance from release qualification to the requested core
+feature. A fresh functional r1 run transferred a 4 MiB file through ordinary
+peer 2 over two ICE/UDP legs, used no TURN candidate or cloud data relay,
+matched the source and target SHA-256, and exposed no plaintext at peer 2. It
+also passed healthy direct transfer, forced direct failure fallback, measured
+degraded-network selection with 17.84% injected datagram loss, recovery to
+direct, bounded transit loss, verified-boundary resume and three concurrent
+sessions. All 16 report checks passed.
+
+The report/evidence SHA-256 values are
+`57AE4BA6D98225FF23333AA6A139E336D283E8723AF57F30BC53F445FB7E197F` and
+`30D5B93F0E4770B19129DD83A4C61D72E443CFFF0FC956BA6AEBC25429B366F9`.
+Independent report and evidence audits passed with SHA-256
+`24588715022E9EC140ACF49D98D47069107A4FFC90A028AE5CF0FEB039F6D68F` and
+`A90517B79B1C36BBF2946A4569EC8B262AB51A41FF05DDF0E63AB698AFA0BEBB`.
+The focused peer-transit suite passed all 51 tests and Ruff passed across
+`rynmesh`, `scripts` and `tests`. No process, UDP endpoint, `.part`,
+`.resume.json` or open-order marker remained. Under this functional scope, the
+requested feature is accepted as complete.
+
+The no-longer-required r16 soak was deliberately stopped at 72 sessions after
+711.203 monotonic seconds. Its task wrapper, launcher and worker were confirmed
+absent, the Windows scheduled task was removed, and all UDP/residual/log fields
+were zero. The stop-confirmation SHA-256 is
+`FDBA55AFEE887FC797635C9019D1F31155968E4785B31DB188C12B3C5928A914`.
+
+## Optional release qualification
+
+If release-grade endurance assurance is requested later, it requires:
 
 - the full 86,400-second duration;
 - zero failed sessions and no plaintext marker exposure;
@@ -1254,12 +1284,12 @@ Final acceptance requires:
   correct handling of exited Windows objects and post-report PID reuse;
 - traced Python memory growth no greater than 32 MiB after warm-up.
 
-This document must be updated with the final session count and memory result
-after the soak reports `pass`.
+These items no longer block the requested feature acceptance.
 
-## External release gate
+## Optional physical public-NAT validation
 
-Public NAT traversal remains unclaimed until the runbook is executed with
+Public NAT traversal across three independently routed networks remains
+environment-specific until the runbook is executed with
 peer 1, peer 2 and peer 3 behind three distinct public egress networks. That
 run must nominate server-reflexive or peer-reflexive UDP candidates on both
 legs, block direct peer-1/peer-3 traffic, and capture packet-level evidence

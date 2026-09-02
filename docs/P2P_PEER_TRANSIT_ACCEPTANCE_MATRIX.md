@@ -1,23 +1,24 @@
 # P2P peer-transit acceptance matrix
 
-This matrix maps every section of the acceptance contract in
-`P2P_PEER_TRANSIT.md` to evidence that can independently prove it. A row is
-complete only when its named producer and auditor both pass; a missing field is
-not equivalent to a pass. Public-NAT claims additionally require the physical
-three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
+This matrix separates requested feature acceptance from optional release
+qualification. The feature is complete when rows A-G pass a fresh local
+three-node run, both independent audits pass, and the focused peer-transit test
+suite is green. Row H, a 24-hour soak, 1 GiB/20-way repetition, package gates
+and a physical three-public-network trial are useful release evidence but do
+not block completion of the requested peer-to-peer transit feature.
 
 | Contract | Required behavior | Authoritative automated evidence | Current status |
 |---|---|---|---|
-| A. Healthy direct | One non-TURN UDP pair, direct route, matching hash, zero peer-2 bytes | `healthy_direct_file`, `direct`, `_audit_post_recovery_direct_file`; `test_direct_file_path_uses_one_non_turn_ice_pair` | Local gate passed twice in r25/r26 |
-| B. Direct blocked | Two non-TURN ICE/UDP legs through peer 2, signed identity continuity, matching byte counters and hash | `main_evidence`, `audit_peer_transit`; `test_two_direct_ice_legs_forward_only_ciphertext_without_turn` | Local gate passed twice in r25/r26; distinct-public-egress proof remains external |
-| C. Direct degraded | Real 250-350 ms RTT shaping, 50-100 ms jitter, 15-20% loss, intact retries, adaptive peer-2 selection | `degraded_network`, `_audit_degraded_network_gate`; `test_datagram_impairment_is_deterministic_and_within_contract`, `test_degraded_network_auditor_recomputes_loss_and_binds_real_paths` | r25/r26 each attempted 342 datagrams and dropped 61 (17.84%); both independent audits passed |
-| D. Recovery | Hysteresis-controlled return to direct, no flap, peer-2 counters stop | `route`, `healthy_direct_file`, `_audit_route_report`, `_audit_post_recovery_direct_file`; route-manager tests | Local gate passed twice in r25/r26 |
-| E. Transit failure | Peer-2 loss produces recovered direct/alternate transit or bounded explicit failure with no partial file | `actual_hard_failure`, `unavailable`, `_audit_unavailable_gate`; adaptive hard-failure tests | Local gate passed twice in r25/r26; hard fallback remained below 1 second |
-| F. No cloud relay | No TURN candidate/configuration, strict UDP/IP candidate validation, control-plane blackout survival, body-free registry | `control_plane_blackout`, `registry_control_plane`, candidate-filter tests, `_audit_hop`, `_audit_registry_control_plane` | Local gate passed twice in r25/r26; packet capture across three public egresses remains external |
-| G. Confidentiality/integrity | No plaintext at peer 2; tamper, replay, forged identity, expiry and recursive hop rejected; no arbitrary application destination | transit frame/registry scans; signed-session, cipher replay/tamper and result-identity tests | Automated security gates passed; invalidated r13 scans remained clean through its stop point |
-| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | New-runtime 1 GiB + 20-way r33 passed; r14 was invalidated by the cross-source publication fix; r15 is running from zero and the post-soak repeat is pending |
+| A. Healthy direct | One non-TURN UDP pair, direct route, matching hash, zero peer-2 bytes | `healthy_direct_file`, `direct`, `_audit_post_recovery_direct_file`; `test_direct_file_path_uses_one_non_turn_ice_pair` | Functional r1 passed |
+| B. Direct blocked | Two non-TURN ICE/UDP legs through peer 2, signed identity continuity, matching byte counters and hash | `main_evidence`, `audit_peer_transit`; `test_two_direct_ice_legs_forward_only_ciphertext_without_turn` | Functional r1 passed; physical public-egress proof is optional deployment validation |
+| C. Direct degraded | Real 250-350 ms RTT shaping, 50-100 ms jitter, 15-20% loss, intact retries, adaptive peer-2 selection | `degraded_network`, `_audit_degraded_network_gate`; `test_datagram_impairment_is_deterministic_and_within_contract`, `test_degraded_network_auditor_recomputes_loss_and_binds_real_paths` | Functional r1 passed with 342 attempted and 61 dropped datagrams (17.84%) |
+| D. Recovery | Hysteresis-controlled return to direct, no flap, peer-2 counters stop | `route`, `healthy_direct_file`, `_audit_route_report`, `_audit_post_recovery_direct_file`; route-manager tests | Functional r1 passed |
+| E. Transit failure | Peer-2 loss produces recovered direct/alternate transit or bounded explicit failure with no partial file | `actual_hard_failure`, `unavailable`, `_audit_unavailable_gate`; adaptive hard-failure tests | Functional r1 passed; hard fallback completed in 0.765 s |
+| F. No cloud relay | No TURN candidate/configuration, strict UDP/IP candidate validation, control-plane blackout survival, body-free registry | `control_plane_blackout`, `registry_control_plane`, candidate-filter tests, `_audit_hop`, `_audit_registry_control_plane` | Functional r1 passed: two ordinary-peer ICE/UDP legs, no TURN/cloud data relay |
+| G. Confidentiality/integrity | No plaintext at peer 2; tamper, replay, forged identity, expiry and recursive hop rejected; no arbitrary application destination | transit frame/registry scans; signed-session, cipher replay/tamper and result-identity tests | Functional r1 and 51 focused tests passed; hashes match and no plaintext/residual state was found |
+| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | Optional release qualification; prior r33 1 GiB + 20-way gate passed, 24-hour soak is no longer feature-blocking |
 
-## Cross-cutting fail-closed checks
+## Required functional fail-closed checks
 
 - `worker_control_errors` must exist for the main relay and target and contain
   `count=0`, empty `first`, and empty `last`.
@@ -31,6 +32,9 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   `.resume.json` state. Duplicate delivery must be idempotent.
 - Every acceptance work root is new or empty. Failed roots remain immutable and
   the next attempt uses a new directory.
+
+## Optional endurance checks
+
 - The final soak audit scans peer-2 storage, registry data, stdout/stderr and
   partial files. The independent finalizer binds that result to the exact
   progress-file hash, rejects live worker/launcher PIDs before and after the
@@ -39,6 +43,17 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   accumulated soak duration and requires a fresh zero-duration run.
 
 ## Evidence fixed points
+
+- Functional acceptance r1 report/evidence SHA-256:
+  `57AE4BA6D98225FF23333AA6A139E336D283E8723AF57F30BC53F445FB7E197F` /
+  `30D5B93F0E4770B19129DD83A4C61D72E443CFFF0FC956BA6AEBC25429B366F9`.
+- Functional acceptance r1 independent report/evidence audit SHA-256:
+  `24588715022E9EC140ACF49D98D47069107A4FFC90A028AE5CF0FEB039F6D68F` /
+  `A90517B79B1C36BBF2946A4569EC8B262AB51A41FF05DDF0E63AB698AFA0BEBB`.
+- r16 functional-scope stop confirmation:
+  `FDBA55AFEE887FC797635C9019D1F31155968E4785B31DB188C12B3C5928A914`;
+  all three PIDs were absent, the scheduled task was removed, and UDP,
+  partial/resume and open-marker counts were zero.
 
 - Data-plane runtime with verified-boundary resume and source-namespaced final
   publication: `007b8b8` (blob
@@ -75,8 +90,9 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - r16 replacement soak: started from a new directory at 2026-09-02
   22:39:05.446090 Asia/Hong_Kong under a Windows scheduled-task owner so the
   process lifetime is independent of an individual Codex turn. Task wrapper PID
-  10696 owns virtual-environment launcher PID 24064 and worker PID 50548. r16
-  must independently reach 86,400 `time.monotonic` seconds.
+  10696 owned virtual-environment launcher PID 24064 and worker PID 50548. It
+  was deliberately stopped when the 24-hour gate became optional; the separate
+  stop-confirmation fixed point above proves complete cleanup.
 - r15 300-session warm idle OS baseline:
   `8268FC310809D1BAEBD68D1FEA601039C720E65FC59CDE8FCEFFA101B5215155`;
   it records 314 handles, eight OS threads, 37,273,600 private bytes, a
