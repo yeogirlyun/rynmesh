@@ -485,7 +485,11 @@ class FriendshipStore:
             data["friends"][peer_id] = friend
             secret_data["relationships"][peer_id] = rotated_secret
             self._write(data, secret_data)
-            return {"friend": self._public_friend(friend), "relationship_secret": rotated_secret}
+            return {
+                "friend": self._public_friend(friend),
+                "invite": self._public_invite(record),
+                "relationship_secret": rotated_secret,
+            }
 
     def register_received_relationship(
         self,

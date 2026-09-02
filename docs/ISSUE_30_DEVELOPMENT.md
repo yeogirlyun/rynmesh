@@ -25,6 +25,11 @@ a signed current peer record plus a fresh signed acceptance binding and returns
 the rotated credential encrypted to the acceptor's X25519 key. Other peer
 routes continue to require `RYNMESH_NETWORK_KEY` when configured.
 
+The complete encrypted response is constructed before invite consumption. An
+invalid or low-order X25519 key therefore returns the generic failure without
+burning the one-use invite; the final consume still chooses exactly one winner
+under a race.
+
 ## Secret boundaries
 
 - The raw invite secret appears only in the signed link and in the acceptance
