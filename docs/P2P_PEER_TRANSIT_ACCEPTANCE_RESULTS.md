@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 589 passed, 3 skipped after immutable final-audit output enforcement |
+| Complete Python suite | Pass | 590 passed, 3 skipped after atomic exclusive final-audit publication |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -1144,6 +1144,18 @@ with both hashes unchanged. The r2 progress/final-audit SHA-256 values are
 `9F52E94990ED2A8565173587A3C19C26C1D7153499D15FD21041C644E300BC41`.
 The focused suite passed 49 tests, and full Ruff plus 589 Python tests passed
 with three skips. This finalizer/test-only change leaves r14 timing valid.
+
+The initial nonexistence check alone still had a concurrent time-of-check/time-
+of-use window. Final publication now writes and fsyncs a unique same-directory
+temporary file, then uses a filesystem-exclusive hard link to publish without
+overwrite; the temporary name is removed on both success and failure. In a new
+r3 real soak, two finalizers raced for one output: their exit codes were exactly
+0 and 1, the winner produced one valid report, and zero temporary files
+remained. The r3 progress/final-audit SHA-256 values are
+`A54783800209BB1B638DCB749304B64023F92787319C11B98CE87CB7299D18F7` and
+`FD4812076B470E1683BBA354F1B7D1FFBA59BB3EDD782D727595A43387F1C4BF`.
+The focused suite passed 50 tests; full Ruff and 590 Python tests passed with
+three skips. Data-plane and soak-runner blobs remain unchanged.
 
 Final acceptance requires:
 

@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -204,11 +205,25 @@ def finalize_soak(
     }
 
 
-def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+def _write_json_exclusive_atomic(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise AuditError("final audit output already exists") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _new_output_path(progress_path: Path, requested: str) -> Path:
@@ -247,7 +262,7 @@ def main() -> int:
         shutdown_wait_s=args.shutdown_wait_seconds,
     )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
-    _write_json_atomic(output, report)
+    _write_json_exclusive_atomic(output, report)
     print(rendered, end="")
     return 0
 

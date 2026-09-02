@@ -1011,6 +1011,23 @@ def test_final_soak_audit_requires_new_output_path(tmp_path) -> None:
     assert finalize_soak_module._new_output_path(progress, str(fresh)) == fresh.resolve()
 
 
+def test_final_soak_audit_publish_is_exclusive_and_atomic(tmp_path) -> None:
+    output = tmp_path / "final-audit.json"
+    first = {"ok": True, "revision": 1}
+    finalize_soak_module._write_json_exclusive_atomic(output, first)
+    first_bytes = output.read_bytes()
+    assert json.loads(first_bytes) == first
+
+    with pytest.raises(AuditError, match="already exists"):
+        finalize_soak_module._write_json_exclusive_atomic(
+            output,
+            {"ok": True, "revision": 2},
+        )
+
+    assert output.read_bytes() == first_bytes
+    assert list(tmp_path.glob(".final-audit.json.*.tmp")) == []
+
+
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
     route = _route_acceptance()
     audit_module._audit_route_report(route)
