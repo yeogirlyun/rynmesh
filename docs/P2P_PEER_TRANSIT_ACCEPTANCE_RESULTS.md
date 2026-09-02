@@ -732,6 +732,24 @@ Its `report.json` has SHA-256
 The exact fixed point passes 579 Python tests with three skips and all relevant
 Ruff checks.
 
+The thirteenth 24-hour worker soak started from runtime fixed point `a378bad`
+and soak-runner blob `1f8fe15de836702619911531d2c24b6e7e802a57` at
+2026-09-02 09:13:46.593722 Hong Kong time. It is scheduled to finish at
+2026-09-03 09:13:46.593722 and writes fresh progress to
+`.codex-tmp/peer-transit-soak-24h-r13/progress.json`; launcher PID 16424 owns
+Python worker PID 47884. The initial 852-byte relay and target capacity files
+have SHA-256
+`D94C0E971452613EC34C16531671D0F48F21C482A8204160190E08AC68000361` and
+`7F9C069419C5C8938DDABB7FE4417CD006F3F8E6FCFFAA371228C589CE74959F`
+respectively, and both passed project API signature verification with the
+expected roles and `max_concurrent=8`. At 110.531 monotonic seconds, r13 had
+completed 12 sessions with zero failures, 36 frames, 794,208 transit bytes,
+857,164 bytes of traced memory growth, zero main worker control errors, no
+plaintext, no open markers, no partial files and empty stderr. Fifty
+all-provider open-order polls measured a 0.440 ms median and 0.734 ms p95.
+`upstream/main` remained at `b0b17c1`; any runtime, runner or upstream change
+invalidates r13 and requires another zero-duration start.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
