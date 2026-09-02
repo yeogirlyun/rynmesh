@@ -750,6 +750,21 @@ all-provider open-order polls measured a 0.440 ms median and 0.734 ms p95.
 `upstream/main` remained at `b0b17c1`; any runtime, runner or upstream change
 invalidates r13 and requires another zero-duration start.
 
+The `a378bad` package candidate also passed an isolated PEP 517 build and clean
+dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
+276,476-byte wheel has SHA-256
+`F73C249D066408CF19CC0B6F2AD49D8A1E89AA6C941A7DBFD6974904B19B8D33`; the
+351,184-byte sdist has SHA-256
+`E9A087D817845D142190E9A459543CA7F1D76AE00AA22722A9AB6A5799A4A645`.
+From outside the source tree, the installed module imported from its virtual
+environment `site-packages`, exposed all four transit CLI modes, retained the
+eight-fragment send window, rejected hostname candidates, rejected a result
+from the wrong provider identity, indexed only one active order across ten
+closed historical orders, drained the marker after completion and reported a
+zeroed worker control-error snapshot. The live r13 soak continued through this
+build and install load with zero failures, control errors, partial files and
+stderr.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
