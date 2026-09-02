@@ -1,6 +1,6 @@
 # Issue #28 work plan: route LLM peer POSTs through Transport
 
-Status: implementation-ready plan
+Status: implemented; formal acceptance pending CI
 Issue: https://github.com/yeogirlyun/rynmesh/issues/28
 Recommended order: complete before Private AI streaming work (#23)
 
@@ -328,6 +328,11 @@ command. Do not delete host models or unrelated data.
 - [ ] Direct LLM E2E and encrypted Relay E2E remain green.
 - [ ] Focused and complete test suites pass.
 - [ ] Transport documentation describes the new path accurately.
+
+Formal execution evidence and the sign-off decision are maintained in
+`docs/acceptance/issue-28/ACCEPTANCE_REPORT.md`. This plan intentionally remains
+the implementation design; the acceptance report is the authoritative record
+of what was actually run.
 
 ## 8. Suggested commits
 
