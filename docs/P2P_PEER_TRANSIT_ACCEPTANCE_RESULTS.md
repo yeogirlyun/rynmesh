@@ -1076,6 +1076,16 @@ handles, one fewer OS thread, 1,654,784 more private bytes and 1,789,952 more
 working-set bytes, with zero UDP endpoints, errors, plaintext findings,
 partial/resume files or open markers.
 
+At 443 sessions, a third long-history sample repeated 100 indexed open-order
+polls for each provider. Target median/p95/max were 0.230/0.276/0.540 ms;
+relay median/p95/max were 0.230/0.384/0.495 ms. Both returned zero open orders
+throughout. During the simultaneous 20.379-second process sample, the worker
+used 1.8125 CPU seconds (8.89% of one core), with 316 handles, eight OS threads,
+37,445,632 private bytes and a 54,419,456-byte working set. The immutable
+checkpoint SHA-256 is
+`3C2A941EC6601548A4EA886FBD66378A3760C516E6B977CA267403EB87FD18A2`;
+the indexed poll remains flat despite the larger signed history.
+
 A further completion audit found that the soak content auditor trusted the
 runner's `worker_threads_stopped` field but could not independently prove that
 the runner PID had exited. `scripts/finalize_peer_transit_soak.py` now rejects

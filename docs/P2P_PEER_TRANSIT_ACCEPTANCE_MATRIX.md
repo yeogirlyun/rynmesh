@@ -81,6 +81,10 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   relative to the 104-session warm baseline, handles were +3, OS threads -1,
   private bytes +1,654,784 and working set +1,789,952, with zero UDP
   endpoints, stderr, plaintext hits, partial/resume files or open markers.
+- r14 443-session open-order scaling checkpoint:
+  `3C2A941EC6601548A4EA886FBD66378A3760C516E6B977CA267403EB87FD18A2`;
+  100 polls per provider kept both medians near 0.23 ms, both maxima below
+  0.54 ms and worker CPU at 8.9% of one core over 20.38 seconds.
 - Shutdown-finalizer real integration progress/final-audit SHA-256:
   `ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` /
   `A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`;
