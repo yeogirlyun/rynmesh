@@ -27,8 +27,8 @@ Rynmesh is alpha software. APIs and storage formats may change before 1.0.
 
 ## Current boundaries
 
-- Desktop installers are currently available for macOS on Apple Silicon and
-  Intel. Windows and Linux packaging is planned.
+- Desktop installers are built for macOS on Apple Silicon and Intel, plus an
+  initial Ubuntu 24.04 x86_64 `.deb`. Windows packaging remains planned.
 - macOS community builds are not yet Apple-notarized.
 - Public-source recommendations work without peers, accounts, preferences, or
   a model. AI-generated briefings and Search & Ask require a reachable local
@@ -46,6 +46,23 @@ not inferred from aspirational design documents. The current accepted backlog
 is grouped in the [P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
 
 ## Install from GitHub
+
+### Linux desktop (Ubuntu 24.04 x86_64)
+
+Download `Ryn-<version>-linux-x86_64.deb` and its `.sha256` file from the
+[latest release](https://github.com/yeogirlyun/rynmesh/releases/latest), then
+verify and install it:
+
+```bash
+sha256sum --check Ryn-*-linux-x86_64.deb.sha256
+sudo apt install ./Ryn-*-linux-x86_64.deb
+```
+
+The package contains the production web interface and a frozen node daemon;
+Python, Node.js, a Vite server, and a source checkout are not runtime
+requirements. This first Linux package supports Ubuntu 24.04 on x86_64 desktop
+systems. See the [Linux desktop runbook](docs/LINUX_DESKTOP.md) for update,
+uninstall, data/log paths, Wayland/X11 notes, and troubleshooting.
 
 ### macOS desktop
 

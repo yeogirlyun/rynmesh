@@ -7,8 +7,8 @@
 
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::path::PathBuf;
+use std::net::{TcpStream, UdpSocket};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -33,33 +33,79 @@ fn capture(program: &str, args: &[&str]) -> Option<String> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn machine_name() -> String {
     capture("/usr/sbin/scutil", &["--get", "ComputerName"])
-        .or_else(|| capture("/bin/hostname", &["-s"]))
+        .or_else(|| capture("hostname", &["-s"]))
         .unwrap_or_else(|| "ryn-node".to_string())
 }
 
-fn lan_ip() -> String {
-    let iface = capture("/sbin/route", &["-n", "get", "default"]).and_then(|s| {
-        s.lines().find_map(|l| {
-            l.trim()
-                .strip_prefix("interface:")
-                .map(|v| v.trim().to_string())
-        })
-    });
-    if let Some(iface) = iface {
-        if let Some(ip) = capture("/usr/sbin/ipconfig", &["getifaddr", &iface]) {
-            return ip;
-        }
-    }
-    "127.0.0.1".to_string()
+#[cfg(not(target_os = "macos"))]
+fn machine_name() -> String {
+    capture("hostname", &["-s"]).unwrap_or_else(|| "ryn-node".to_string())
 }
 
+fn lan_ip() -> String {
+    // UDP connect does not send a packet, but lets the OS select the address
+    // it would use for an external route. This avoids macOS/Linux command and
+    // output-format differences.
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|socket| {
+            socket.connect("192.0.2.1:80")?;
+            socket.local_addr()
+        })
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+#[cfg(target_os = "macos")]
 pub fn log_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let dir = PathBuf::from(home).join("Library/Logs/Rynmesh");
     let _ = create_dir_all(&dir);
     dir
+}
+
+#[cfg(target_os = "linux")]
+fn linux_log_dir(home: Option<&str>, xdg_state_home: Option<&str>) -> PathBuf {
+    if let Some(state_home) = xdg_state_home
+        .filter(|value| !value.is_empty())
+        .filter(|value| Path::new(value).is_absolute())
+    {
+        return PathBuf::from(state_home).join("rynmesh");
+    }
+    PathBuf::from(home.filter(|value| !value.is_empty()).unwrap_or("."))
+        .join(".local/state/rynmesh")
+}
+
+#[cfg(target_os = "linux")]
+pub fn log_dir() -> PathBuf {
+    let home = std::env::var("HOME").ok();
+    let xdg = std::env::var("XDG_STATE_HOME").ok();
+    let dir = linux_log_dir(home.as_deref(), xdg.as_deref());
+    let _ = create_dir_all(&dir);
+    dir
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn log_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let dir = PathBuf::from(home).join(".rynmesh/logs");
+    let _ = create_dir_all(&dir);
+    dir
+}
+
+pub fn open_log_dir() -> std::io::Result<()> {
+    let dir = log_dir();
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("/usr/bin/open");
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut command = Command::new("explorer");
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let mut command = Command::new("xdg-open");
+    command.arg(dir).spawn().map(|_| ())
 }
 
 fn env_or(key: &str, default: impl FnOnce() -> String) -> String {
@@ -94,11 +140,29 @@ fn node_env(port: u16) -> Vec<(String, String)> {
 }
 
 fn which(bin: &str) -> bool {
-    Command::new("/usr/bin/which")
-        .arg(bin)
-        .output()
-        .map(|o| o.status.success())
+    if Path::new(bin).components().count() > 1 {
+        return executable_file(Path::new(bin));
+    }
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(bin))
+                .any(|candidate| executable_file(&candidate))
+        })
         .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn open_log() -> std::io::Result<File> {
@@ -108,37 +172,63 @@ fn open_log() -> std::io::Result<File> {
         .open(log_dir().join("ryn-node.log"))
 }
 
-/// Resolution order: RYNMESH_PEER_CMD override -> `rynmesh-peer` on PATH ->
-/// `$RYNMESH_PYTHON|python3 -c ...` with PYTHONPATH=$RYNMESH_REPO_DIR.
-/// The bundled self-contained daemon: next to the app executable when
-/// packaged, or src-tauri/binaries/rynmesh-peer-<triple> in dev.
-fn sidecar_path() -> Option<std::path::PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("rynmesh-peer");
-            if p.is_file() {
-                return Some(p);
-            }
+/// Resolution order: RYNMESH_PEER_CMD override -> exact bundled sidecar ->
+/// `rynmesh-peer` on PATH -> `$RYNMESH_PYTHON|python3 -c ...` with
+/// PYTHONPATH=$RYNMESH_REPO_DIR. The bundled self-contained daemon lives next
+/// to the app executable when packaged, or at
+/// src-tauri/binaries/rynmesh-peer-<triple> in development.
+fn target_triple() -> Option<&'static str> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    return Some("x86_64-unknown-linux-gnu");
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    return Some("aarch64-unknown-linux-gnu");
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    return Some("x86_64-apple-darwin");
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    return Some("aarch64-apple-darwin");
+    #[allow(unreachable_code)]
+    None
+}
+
+fn resolve_sidecar(app_exe: Option<&Path>, bin_dir: &Path, triple: Option<&str>) -> Option<PathBuf> {
+    if let Some(dir) = app_exe.and_then(Path::parent) {
+        let installed = dir.join("rynmesh-peer");
+        if executable_file(&installed) {
+            return Some(installed);
         }
     }
-    let bin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
-    if let Ok(rd) = std::fs::read_dir(&bin_dir) {
-        for e in rd.flatten() {
-            if e.file_name().to_string_lossy().starts_with("rynmesh-peer") {
-                return Some(e.path());
-            }
-        }
+    let triple = triple?;
+    let development = bin_dir.join(format!("rynmesh-peer-{triple}"));
+    if executable_file(&development) {
+        return Some(development);
     }
     None
 }
 
-fn build_command(port: u16) -> Command {
+fn sidecar_path() -> Option<PathBuf> {
+    let app_exe = std::env::current_exe().ok();
+    let bin_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    resolve_sidecar(app_exe.as_deref(), &bin_dir, target_triple())
+}
+
+fn build_command(port: u16) -> std::io::Result<Command> {
     let mut cmd = if let Ok(custom) = std::env::var("RYNMESH_PEER_CMD") {
+        #[cfg(unix)]
         let mut c = Command::new("/bin/sh");
+        #[cfg(windows)]
+        let mut c = Command::new("cmd");
+        #[cfg(unix)]
         c.arg("-c").arg(custom);
+        #[cfg(windows)]
+        c.arg("/C").arg(custom);
         c
     } else if let Some(sidecar) = sidecar_path() {
         Command::new(sidecar)
+    } else if !cfg!(debug_assertions) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the packaged rynmesh-peer sidecar is missing or not executable",
+        ));
     } else if which("rynmesh-peer") {
         Command::new("rynmesh-peer")
     } else {
@@ -155,7 +245,7 @@ fn build_command(port: u16) -> Command {
     for (k, v) in node_env(port) {
         cmd.env(k, v);
     }
-    cmd
+    Ok(cmd)
 }
 
 pub fn start(state: &NodeState) -> std::io::Result<()> {
@@ -179,7 +269,7 @@ pub fn start(state: &NodeState) -> std::io::Result<()> {
     }
     let log = open_log()?;
     let log_err = log.try_clone()?;
-    let mut cmd = build_command(state.port);
+    let mut cmd = build_command(state.port)?;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
@@ -191,9 +281,16 @@ pub fn start(state: &NodeState) -> std::io::Result<()> {
 fn stop_child(state: &NodeState) {
     let mut guard = state.child.lock().unwrap();
     if let Some(mut child) = guard.take() {
-        let pid = child.id() as i32;
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
+        #[cfg(unix)]
+        {
+            let pid = child.id() as i32;
+            unsafe {
+                let _ = libc::kill(pid, libc::SIGTERM);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
         }
         for _ in 0..30 {
             match child.try_wait() {
@@ -204,6 +301,86 @@ fn stop_child(state: &NodeState) {
         }
         let _ = child.kill();
         let _ = child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn scratch(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "rynmesh-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn executable(path: &Path) {
+        File::create(path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn sidecar_resolution_requires_exact_target_name() {
+        let root = scratch("sidecar-target");
+        let bin = root.join("binaries");
+        fs::create_dir_all(&bin).unwrap();
+        executable(&bin.join("rynmesh-peer-wrong-target"));
+        assert_eq!(resolve_sidecar(None, &bin, Some("expected-target")), None);
+        let expected = bin.join("rynmesh-peer-expected-target");
+        executable(&expected);
+        assert_eq!(
+            resolve_sidecar(None, &bin, Some("expected-target")),
+            Some(expected)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_sidecar_takes_precedence() {
+        let root = scratch("sidecar-installed");
+        let app = root.join("Ryn");
+        executable(&app);
+        let installed = root.join("rynmesh-peer");
+        executable(&installed);
+        let bin = root.join("binaries");
+        fs::create_dir_all(&bin).unwrap();
+        let development = bin.join("rynmesh-peer-expected-target");
+        executable(&development);
+        assert_eq!(
+            resolve_sidecar(Some(&app), &bin, Some("expected-target")),
+            Some(installed)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_logs_follow_xdg_state_directory() {
+        assert_eq!(
+            linux_log_dir(Some("/home/ryn"), Some("/run/user/1000/state")),
+            PathBuf::from("/run/user/1000/state/rynmesh")
+        );
+        assert_eq!(
+            linux_log_dir(Some("/home/ryn"), None),
+            PathBuf::from("/home/ryn/.local/state/rynmesh")
+        );
+        assert_eq!(
+            linux_log_dir(Some("/home/ryn"), Some("relative/state")),
+            PathBuf::from("/home/ryn/.local/state/rynmesh")
+        );
     }
 }
 

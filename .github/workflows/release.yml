@@ -74,6 +74,9 @@ jobs:
       - name: Install web dependencies
         working-directory: webapp
         run: npm ci
+      - name: Build production web interface
+        working-directory: webapp
+        run: npm run build
       - name: Build self-contained node sidecar
         run: ./webapp/src-tauri/scripts/build-sidecar.sh
       - name: Build desktop disk image
@@ -98,3 +101,58 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" "Ryn-${GITHUB_REF_NAME#v}-macos-${{ matrix.arch }}.dmg" --clobber
+
+  linux-desktop:
+    name: Linux desktop (Ubuntu 24.04 x86_64)
+    needs: python-package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri and smoke-test system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl dbus-x11 file libayatana-appindicator3-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf \
+            xauth xvfb
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install web dependencies
+        working-directory: webapp
+        run: npm ci
+      - name: Build production web interface
+        working-directory: webapp
+        run: npm run build
+      - name: Build self-contained Linux sidecar
+        run: ./webapp/src-tauri/scripts/build-sidecar.sh
+      - name: Build Debian package
+        working-directory: webapp
+        run: npm run tauri build -- --bundles deb
+      - name: Name, checksum, and inspect release artifact
+        run: |
+          mapfile -t packages < <(find webapp/src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print)
+          test "${#packages[@]}" -eq 1
+          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
+          cp "${packages[0]}" "$artifact"
+          ./webapp/src-tauri/scripts/verify-linux-deb.sh "$artifact" "${GITHUB_REF_NAME#v}"
+          sha256sum "$artifact" > "$artifact.sha256"
+      - name: Install and smoke-test release artifact
+        run: |
+          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
+          sudo apt-get install -y "$PWD/$artifact"
+          desktop_file="$(find /usr/share/applications -maxdepth 1 -iname '*ryn*.desktop' -print -quit)"
+          test -n "$desktop_file"
+          dbus-run-session -- ./webapp/src-tauri/scripts/smoke-linux-desktop.sh "$desktop_file"
+      - name: Upload Linux artifacts to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact="Ryn-${GITHUB_REF_NAME#v}-linux-x86_64.deb"
+          gh release upload "$GITHUB_REF_NAME" "$artifact" "$artifact.sha256"
