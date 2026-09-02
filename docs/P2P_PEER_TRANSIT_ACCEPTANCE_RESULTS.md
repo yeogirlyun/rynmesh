@@ -998,6 +998,17 @@ continued. The live sample recorded 348 handles, 11 OS threads, 38,633,472
 private bytes and a 54,857,728-byte working set; these are active-sample values,
 not the later warm idle baseline used for final leak comparison.
 
+The authoritative r14 warm idle baseline was captured after 104 completed
+sessions at 1,031.328 monotonic seconds, between transfers. It is preserved at
+`.codex-tmp/peer-transit-soak-24h-r14/os-baseline-warmup.json`, SHA-256
+`F37A820FB0AFEAFB33D6839DD664B1881AD03C2CFB923C614662144859CAA606`.
+It records 310 handles, nine OS threads, 35,790,848 private bytes, a
+52,596,736-byte working set and 874,627 bytes of traced Python memory growth.
+The same snapshot records zero failures, worker control errors, UDP endpoints,
+open markers, `.part`/`.resume.json` files, relay/registry plaintext hits,
+stdout and stderr bytes. Final shutdown verification must compare these fields
+and prove the process is absent rather than merely reporting lower counts.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
