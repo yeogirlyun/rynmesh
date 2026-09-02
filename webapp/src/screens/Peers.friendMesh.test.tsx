@@ -4,11 +4,15 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
+import { consumeFriendInviteDeepLink, queueFriendInviteDeepLink } from "../domain/friendDeepLink";
 import type { FriendRecord, NodeClient } from "../domain/nodeClient";
 import type { ConfirmRequest } from "../domain/types";
 import Peers from "./Peers";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  consumeFriendInviteDeepLink();
+  vi.restoreAllMocks();
+});
 
 function renderPeers(confirm = vi.fn(), client: NodeClient = makeFixtureNodeClient()) {
   const context: AppOutletContext = {
@@ -171,5 +175,15 @@ describe("Peers Friend Mesh", () => {
     await user.click(await screen.findByRole("button", { name: "Retry signed notice" }));
     expect(client.retryFriendRevocation).toHaveBeenCalledWith("peer:offline-friend");
     expect((await screen.findAllByText(/local denial active/)).length).toBeGreaterThan(0);
+  });
+
+  it("prefills a desktop deep link for offline review without contacting its endpoint", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect(queueFriendInviteDeepLink("rynmesh://join/desktop-token")).toBe(true);
+    renderPeers();
+
+    expect(await screen.findByLabelText("Paste invitation link")).toHaveValue("rynmesh://join/desktop-token");
+    expect(screen.queryByRole("heading", { name: "Verified invitation" })).not.toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
