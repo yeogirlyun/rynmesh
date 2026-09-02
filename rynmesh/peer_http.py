@@ -281,14 +281,16 @@ class HttpPeerClient:
             )
         except TransportError as exc:
             if exc.reason == "too_large":
-                raise PeerTransportError("peer_response_too_large") from exc
+                raise PeerTransportError("peer_response_too_large") from None
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
-            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+            raise PeerTransportError(f"peer_http_error:{exc.reason}") from None
         try:
             value = json.loads(raw.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise PeerTransportError("peer_invalid_json") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            # JSONDecodeError embeds a response excerpt. Suppress its exception
+            # context so ordinary traceback logging cannot expose peer bodies.
+            raise PeerTransportError("peer_invalid_json") from None
         if not isinstance(value, dict):
             raise PeerTransportError("peer_response_not_object")
         return value

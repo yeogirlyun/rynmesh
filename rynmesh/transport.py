@@ -341,10 +341,13 @@ class FrontedHttpsTransport:
 
     def _headers(self, host_header: str, extra: dict[str, str] | None) -> dict[str, str]:
         merged = _profile_headers(self.profile)
-        merged["Host"] = host_header  # real backend; routed by CDN/origin
-        merged["Connection"] = "close"  # one socket per request
         if extra:
             merged.update(extra)
+        # These fields define the fronting split and connection lifecycle; a
+        # generic caller header must not be able to redirect the inner request
+        # to another virtual host or keep the one-shot socket alive.
+        merged["Host"] = host_header  # real backend; routed by CDN/origin
+        merged["Connection"] = "close"  # one socket per request
         merged.update(network_key_header())
         return merged
 
@@ -408,10 +411,12 @@ class FrontedHttpsTransport:
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
+        import http.client
+
         conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
         try:
             data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
+        except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             raise TransportError(f"http error: {exc}", reason="http_error") from exc
         finally:
             conn.close()

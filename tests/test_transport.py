@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import traceback
 
 import pytest
 
@@ -272,7 +273,7 @@ def test_fronted_transport_splits_connect_host_and_host_header() -> None:
         posted = transport.post_bytes(
             f"http://backend.internal:{port}/api/peer/llm/tasks",
             b'{"encrypted":"value"}', timeout_s=5, max_bytes=1 << 20,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Host": "attacker.invalid"},
         )
         assert posted == b'{"posted": true}'
         assert seen["post_host"] == f"backend.internal:{port}"
@@ -464,16 +465,59 @@ def test_http_peer_client_rejects_invalid_post_json(response, message) -> None:
 def test_http_peer_client_post_error_does_not_echo_request_body() -> None:
     from rynmesh.peer_http import HttpPeerClient, PeerTransportError
 
+    marker = "".join(("UNIQUE_PRIVATE", "_MARKER"))
+
     class FailingTransport(_PostTransport):
         def post_bytes(self, *args, **kwargs):
-            raise TransportError("connection unavailable", reason="http_error")
+            raise TransportError(marker, reason="http_error")
 
     client = HttpPeerClient(
         "https://peer.example", transport=FailingTransport(),  # type: ignore[arg-type]
     )
     with pytest.raises(PeerTransportError) as error:
-        client.post_json("/api/peer/llm/tasks", {"prompt": "UNIQUE_PRIVATE_MARKER"})
-    assert "UNIQUE_PRIVATE_MARKER" not in str(error.value)
+        client.post_json("/api/peer/llm/tasks", {"prompt": marker})
+    assert marker not in str(error.value)
+    assert marker not in "".join(traceback.format_exception(error.value))
+
+
+def test_http_peer_client_invalid_json_does_not_leak_response_in_traceback() -> None:
+    from rynmesh.peer_http import HttpPeerClient, PeerTransportError
+
+    client = HttpPeerClient(
+        "https://peer.example",
+        transport=_PostTransport(b"UNIQUE_PRIVATE_RESPONSE_MARKER"),  # type: ignore[arg-type]
+    )
+    with pytest.raises(PeerTransportError) as error:
+        client.post_json("/api/peer/llm/tasks", {})
+    assert "UNIQUE_PRIVATE_RESPONSE_MARKER" not in "".join(
+        traceback.format_exception(error.value)
+    )
+
+
+def test_fronted_post_normalizes_malformed_response_and_closes_connection(
+    monkeypatch,
+) -> None:
+    import http.client
+
+    from rynmesh.transport import FrontedHttpsTransport
+
+    class Connection:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Response:
+        def read(self, _limit):
+            raise http.client.IncompleteRead(b"partial", 10)
+
+    connection = Connection()
+    transport = FrontedHttpsTransport(TransportProfile())
+    monkeypatch.setattr(transport, "_open", lambda *args, **kwargs: (connection, Response()))
+    with pytest.raises(TransportError) as error:
+        transport.post_bytes("https://peer.example/write", b"body", timeout_s=5, max_bytes=64)
+    assert error.value.reason == "http_error"
+    assert connection.closed is True
 
 
 def test_http_peer_client_maps_oversized_post_response() -> None:
@@ -512,6 +556,91 @@ def test_llm_peer_post_helper_uses_active_transport(monkeypatch) -> None:
     )
     assert result == {"state": "accepted"}
     assert transport.calls[0]["max_bytes"] == _MAX_PEER_RESPONSE_BYTES
+
+
+def test_llm_settlement_uses_peer_post_transport(monkeypatch, tmp_path) -> None:
+    import rynmesh.llm_package.routes as routes
+    from rynmesh.store import RynmeshStore
+
+    store = RynmeshStore(home=tmp_path / "consumer", network_dir=tmp_path / "mesh")
+    calls: list[tuple[str, str, dict, float]] = []
+
+    def post(endpoint, path, payload, *, timeout_s):
+        calls.append((endpoint, path, payload, timeout_s))
+        return {"ok": True}
+
+    monkeypatch.setattr(routes, "_peer_post_json", post)
+    assert routes.dispatch_settlement(
+        store,
+        task_id="task-transport-settlement",
+        provider_peer_id="provider-peer",
+        service_id="private-service",
+        amount=0.25,
+        network_id="test-network",
+        endpoint="https://provider.example",
+    ) is True
+    assert calls[0][0:2] == (
+        "https://provider.example",
+        "/api/peer/llm/settlements",
+    )
+    assert calls[0][2]["payload"]["kind"] == "llm_settlement"
+    assert calls[0][3] == 15
+
+
+def test_llm_cancellation_uses_peer_post_transport(monkeypatch, tmp_path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import rynmesh.llm_package.routes as routes
+    from rynmesh.llm_package.task_protocol import TaskOrderStore
+    from rynmesh.services import peer_box
+    from rynmesh.store import RynmeshStore
+
+    home = tmp_path / "consumer"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "mesh")
+    app = FastAPI()
+    calls: list[tuple[str, str, dict, float]] = []
+
+    def post(endpoint, path, payload, *, timeout_s):
+        calls.append((endpoint, path, payload, timeout_s))
+        return {"ok": True}
+
+    monkeypatch.setattr(routes, "_peer_post_json", post)
+    routes.install_llm_routes(
+        app,
+        store=store,
+        home=home,
+        messaging_key=peer_box.load_or_create_messaging_key(home / "messaging.x25519"),
+        resolve_endpoint=lambda _peer_id: "https://provider.example",
+        resolve_pubkey=lambda _peer_id: "",
+    )
+    orders = TaskOrderStore(home / "llm" / "consumer-orders")
+    orders.claim(
+        task_id="task-transport-cancel",
+        bindings={
+            "provider_peer_id": "provider-peer",
+            "service_id": "private-service",
+            "idempotency_key": "task-transport-cancel",
+            "request_fingerprint": "fingerprint",
+        },
+    )
+    orders.transition(
+        task_id="task-transport-cancel",
+        state="accepted",
+        metadata={"network_id": "test-network"},
+    )
+    orders.transition(task_id="task-transport-cancel", state="running")
+
+    with TestClient(app) as client:
+        response = client.post("/api/local/llm/orders/task-transport-cancel/cancel")
+    assert response.status_code == 200
+    assert response.json()["state"] == "cancelled"
+    assert calls[0][0:2] == (
+        "https://provider.example",
+        "/api/peer/llm/cancellations",
+    )
+    assert calls[0][2]["payload"]["kind"] == "llm_cancel"
+    assert calls[0][3] == 5
 
 
 def test_meek_post_uses_versioned_inner_request_envelope(monkeypatch) -> None:
@@ -623,3 +752,58 @@ def test_ech_fallback_post_uses_fronted_delegate() -> None:
     ) == b'{"ok":true}'
     assert delegate.calls[0]["body"] == b"ciphertext"
     assert delegate.calls[0]["max_bytes"] == 345
+
+
+def test_ech_active_post_normalizes_malformed_response(monkeypatch) -> None:
+    import http.client
+    import socket
+
+    from rynmesh.transport_plugins import EchTransport
+
+    class RawSocket:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    class Context:
+        def wrap_socket(self, raw, *, server_hostname):
+            assert server_hostname == "peer.example"
+            return raw
+
+    class Response:
+        status = 200
+
+        def read(self, _limit):
+            raise http.client.IncompleteRead(b"private-partial-response", 10)
+
+    class Connection:
+        def __init__(self, host, port, timeout):
+            assert (host, port, timeout) == ("peer.example", 443, 7)
+            self.sock = None
+
+        def request(self, method, path, *, body, headers):
+            assert method == "POST"
+            assert path == "/api/peer/llm/tasks"
+            assert body == b"ciphertext"
+
+        def getresponse(self):
+            return Response()
+
+    raw = RawSocket()
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: raw)
+    monkeypatch.setattr(http.client, "HTTPConnection", Connection)
+    transport = EchTransport.__new__(EchTransport)
+    transport.profile = TransportProfile(name="ech")
+    transport._ech_ctx = Context()
+    with pytest.raises(TransportError) as error:
+        transport._ech_request(
+            "https://peer.example/api/peer/llm/tasks",
+            method="POST",
+            body=b"ciphertext",
+            timeout_s=7,
+            max_bytes=64,
+            headers={"Content-Type": "application/json"},
+        )
+    assert error.value.reason == "http_error"
+    assert raw.closed is True
