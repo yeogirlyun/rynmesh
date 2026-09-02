@@ -133,6 +133,10 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
       requestJson(`${baseUrl}/friends/invites`, { method: "POST", body: JSON.stringify(req) }),
     reviewFriendInvite: (req) =>
       requestJson(`${baseUrl}/friends/invites/review`, { method: "POST", body: JSON.stringify(req) }),
+    joinFriend: (req) =>
+      requestJson(`${baseUrl}/friends/join`, { method: "POST", body: JSON.stringify(req) }),
+    reviewFriendEndpoints: (req) =>
+      requestJson(`${baseUrl}/friends/endpoint-review`, { method: "POST", body: JSON.stringify(req) }),
     cancelFriendInvite: (inviteId) =>
       requestJson(`${baseUrl}/friends/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }),
     revokeFriend: (peerId, reasonCode = "owner_revoked") =>

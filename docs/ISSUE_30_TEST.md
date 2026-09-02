@@ -69,7 +69,7 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
 
 - outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
 - revocation delivery/reconnect tests;
-- Webapp outbound-Join and Tauri integration tests beyond the completed safety/review slice;
+- Tauri deep-link integration tests beyond the completed Webapp paste/Join slice;
 - Tauri deep-link tests;
 - full backend/CI and two clean physical nodes, including offline revoke.
 
@@ -81,7 +81,8 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
 - local QR creation, raw-link session boundary, invitation listing/cancellation;
 - focus transfer after create and review;
 - offline signature/fingerprint/network/scope/expiry/all-endpoint review;
-- disabled, truthfully explained outbound Join;
+- enabled outbound Join only after offline review, delegated to the local node;
+- invalidation of the old review whenever the pasted link changes;
 - high-risk local-first revoke and safe delivery status;
 - separation from trust-root actions and blocked local endpoints.
 
@@ -96,10 +97,10 @@ Executed in `codex/issue-30-friend-mesh-ui`:
 
 ```powershell
 npm test -- --run src/domain/friendMesh.test.ts src/domain/liveNodeClient.friendMesh.test.ts src/screens/Peers.friendMesh.test.tsx
-# 3 files passed, 7 tests passed
+# 3 files passed, 8 tests passed
 
 npm test
-# 12 files passed, 45 tests passed
+# 12 files passed, 46 tests passed
 
 npm run lint
 # TypeScript project check passed
@@ -108,6 +109,7 @@ npm run build
 # TypeScript and Vite production build passed; 1770 modules transformed
 ```
 
-Dependency installation/audit reported 0 vulnerabilities. These results accept
-only the Webapp safety/review slice; they do not satisfy physical Join, Tauri
-deep-link, service ACL, or two-node acceptance.
+Dependency installation/audit reported 0 vulnerabilities. These results cover
+the Webapp create/review/local-Join slice and exact local-control API bodies;
+they do not satisfy a physical two-node Join, Tauri deep-link, remote revoke,
+privacy lifecycle, or final product acceptance.
