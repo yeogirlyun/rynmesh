@@ -340,6 +340,7 @@
 
 .messageRowUser .messageBubble { border-radius: 12px 12px 3px 12px; background: var(--bg-tertiary); }
 .messageFailed { border-color: var(--accent-red-border); background: var(--accent-red-soft); }
+.messageStreaming { white-space: pre-wrap; border-color: var(--accent-blue-border); }
 
 .messageMeta { color: var(--text-muted); font-size: 10px; }
 

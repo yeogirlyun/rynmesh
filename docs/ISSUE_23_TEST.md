@@ -1,4 +1,4 @@
-# Issue #23 测试文档：stream-v1 后端切片
+# Issue #23 测试文档：stream-v1 后端与 Webapp
 
 ## 自动化范围
 
@@ -44,17 +44,19 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest -q
 - 完整 output 只存在于加密 `ciphertext`，磁盘无明文；
 - 错误码不包含模拟的私密 frame 文本。
 
-## 尚待 UI 分支执行
+## Webapp 自动化
 
-- Webapp 首 delta 替换 thinking 状态的组件测试。
-- 乱序/重复 SSE 不污染 React message 的测试。
-- terminal 前不写 IndexedDB、terminal 后只写一次的测试。
-- Stop、断线、不完整回答、重连快照和完整响应降级的可视状态测试。
-- `npm test`、`typecheck`、`build` 与真实双节点浏览器/桌面时间戳证据。
+- 首 delta 替换 thinking，连续 delta 追加且重复 sequence 被忽略；
+- terminal 前加密会话没有 assistant partial，terminal 后只有一个 assistant；
+- Stop 保留已显示片段并标为 incomplete；
+- 断线显示 recovering，以最后 sequence 重连并应用累计 snapshot；
+- 无 delta 的完整响应 fallback 从同一本机 SSE 表面完成；
+- EventSource URL 只在 `/api/local`，task ID 编码、凭证、after-sequence 和 close 均测试。
 
-以上未完成前，测试结论只能是“后端切片通过”，不能是 Issue #23 全量通过。
+Webapp 聚焦测试 `2 files / 7 tests`、全量 `10 files / 43 tests`、TypeScript lint 和生产
+build 均通过。真实双节点/路由时间戳和 exact-commit 跨平台 CI 仍是整项验收门槛。
 
-## 2026-09-02 执行结果
+## 2026-09-02 后端执行结果
 
 - Ruff（本切片全部 Python 文件）：通过。
 - 最终聚焦与相关回归：`84 passed, 1 warning`。
@@ -67,3 +69,12 @@ D:\code\rynmesh\.venv\Scripts\python.exe -m pytest -q
   Windows `select()` 不支持 pipe，以及一个 Windows 文件 replace 并发用例；最后一项单独重跑通过。
 
 本分支未修改这些跨平台基线问题，也没有把带排除项的结果写成“全量通过”。
+
+## 2026-09-03 Webapp 执行结果
+
+- `npm test -- --run src/screens/PrivateAIChat.test.tsx src/domain/liveNodeClient.streaming.test.ts`：
+  `2 files / 7 tests` 通过；
+- `npm test`：`10 files / 43 tests` 通过；
+- `npm run lint`：TypeScript 通过；
+- `npm run build`：1739 modules，Vite production build 通过；
+- `npm ci` audit：0 vulnerabilities。

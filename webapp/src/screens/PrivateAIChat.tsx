@@ -30,11 +30,18 @@ import {
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
-import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
+import type { LLMOrderResult, LLMOrderStreamEvent, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
+
+interface StreamPreview {
+  conversationId: string;
+  taskId: string;
+  content: string;
+  state: "waiting" | "streaming" | "recovering";
+}
 
 function serviceKey(service: LLMServiceRecord) {
   // Aliases are display names and are not unique. Scope history by both the
@@ -66,7 +73,9 @@ function historyBucket(value: string) {
 }
 
 function resultMessage(result: LLMOrderResult) {
-  if (result.state === "cancelled") return "Generation stopped.";
+  if (result.state === "cancelled") return result.output
+    ? `${result.output}\n\nGeneration stopped — this response is incomplete.`
+    : "Generation stopped.";
   if (result.state === "timed_out") return "The model took too long to respond. Try again.";
   if (result.error_code === "insufficient_balance") return "There are not enough credits to run this request.";
   if (result.error_code === "p2p_distinct_public_egress_required") return "The provider needs a different public network. Change networks and try again.";
@@ -86,6 +95,7 @@ export default function PrivateAIChat() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
+  const [streamPreview, setStreamPreview] = useState<StreamPreview | null>(null);
   const [error, setError] = useState("");
   const [storageMode, setStorageMode] = useState<"encrypted" | "session-only">("encrypted");
   const [helpfulMessages, setHelpfulMessages] = useState<Set<string>>(new Set());
@@ -96,9 +106,12 @@ export default function PrivateAIChat() {
   const deletedIdsRef = useRef<Set<string>>(new Set());
   // Stop pressed before submitLLMOrder returned a task id.
   const cancelRequestedRef = useRef(false);
+  const streamCloseRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => {
     mountedRef.current = false;
+    streamCloseRef.current?.();
+    streamCloseRef.current = null;
   }, []);
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
@@ -246,6 +259,7 @@ export default function PrivateAIChat() {
         prompt: buildConversationPrompt(withUser.messages),
         max_tokens: Math.min(selectedService.service.max_output_tokens || 256, 256),
         transport: "auto",
+        response_mode: "stream-v1",
       });
       setActiveTaskId(result.task_id);
       if (cancelRequestedRef.current) {
@@ -254,11 +268,107 @@ export default function PrivateAIChat() {
         cancelRequestedRef.current = false;
         await client.cancelLLMOrder(result.task_id).catch(() => null);
       }
-      // Orders are asynchronous at the node boundary. Keep polling centralized
-      // here so the UI never bypasses node transport, settlement, or cancellation.
-      while (mountedRef.current && !TERMINAL_STATES.has(result.state)) {
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
-        result = await client.getLLMOrder(result.task_id);
+      if (!TERMINAL_STATES.has(result.state)) {
+        result = await new Promise<LLMOrderResult>((resolve) => {
+          let settled = false;
+          let lastSequence = -1;
+          let partial = "";
+          let reconnects = 0;
+          let polling = false;
+          let close: () => void = () => undefined;
+
+          const finish = (terminal: LLMOrderResult) => {
+            if (settled) return;
+            settled = true;
+            close();
+            streamCloseRef.current = null;
+            resolve(terminal);
+          };
+
+          const showState = (state: StreamPreview["state"]) => {
+            if (!mountedRef.current) return;
+            setStreamPreview({
+              conversationId: withUser.id,
+              taskId: result.task_id,
+              content: partial,
+              state,
+            });
+          };
+
+          const pollTerminal = async () => {
+            if (polling || settled) return;
+            polling = true;
+            close();
+            showState("recovering");
+            for (let attempt = 0; attempt < 45 && mountedRef.current && !settled; attempt += 1) {
+              try {
+                const current = await client.getLLMOrder(result.task_id);
+                if (TERMINAL_STATES.has(current.state)) {
+                  finish(current);
+                  return;
+                }
+              } catch {
+                // A reconnecting local node can transiently reject status reads.
+              }
+              await new Promise((resume) => window.setTimeout(resume, 650));
+            }
+            finish({ task_id: result.task_id, state: "failed", error_code: "stream_recovery_failed" });
+          };
+
+          const acceptEvent = (event: LLMOrderStreamEvent) => {
+            if (settled) return;
+            if (event.event === "delta") {
+              if (!Number.isInteger(event.sequence) || event.sequence <= lastSequence) return;
+              if (event.snapshot) {
+                partial = event.delta;
+              } else if (event.sequence === lastSequence + 1) {
+                partial += event.delta;
+              } else {
+                void pollTerminal();
+                return;
+              }
+              lastSequence = event.sequence;
+              showState("streaming");
+              return;
+            }
+            if (event.event === "state") {
+              showState(event.state === "recovering" ? "recovering" : partial ? "streaming" : "waiting");
+              return;
+            }
+            if (event.event === "complete") {
+              finish(event);
+              return;
+            }
+            finish({
+              task_id: result.task_id,
+              state: event.state || "failed",
+              error_code: event.error_code || "stream_failed",
+              output: partial || undefined,
+            });
+          };
+
+          const subscribe = () => {
+            if (settled || !mountedRef.current) return;
+            close = client.subscribeLLMOrder(result.task_id, {
+              onEvent: acceptEvent,
+              onDisconnect: () => {
+                if (settled) return;
+                close();
+                showState("recovering");
+                if (reconnects < 1) {
+                  reconnects += 1;
+                  window.setTimeout(subscribe, 250);
+                } else {
+                  void pollTerminal();
+                }
+              },
+            }, lastSequence);
+            streamCloseRef.current = close;
+          };
+
+          showState("waiting");
+          subscribe();
+        });
       }
       if (!mountedRef.current) return;
       const success = result.state === "succeeded";
@@ -280,6 +390,7 @@ export default function PrivateAIChat() {
       };
       if (deletedIdsRef.current.has(withUser.id)) return;
       await replaceConversation(completed);
+      setStreamPreview(null);
       notify(success ? "ok" : "warn", success ? "Private AI response complete" : `Private AI request ${result.state}`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Private AI request failed";
@@ -287,6 +398,7 @@ export default function PrivateAIChat() {
         id: messageId(), role: "assistant", content: message, createdAt: new Date().toISOString(), status: "failed",
       };
       if (mountedRef.current && !deletedIdsRef.current.has(withUser.id)) {
+        setStreamPreview(null);
         await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] });
         setError(message);
         notify("danger", message);
@@ -408,7 +520,11 @@ export default function PrivateAIChat() {
               {message.role === "assistant" ? <span className={styles.assistantAvatar}><Bot size={18} /></span> : null}
               <div className={styles.messageBlock}>
                 <div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.content}</div>
-                <span className={styles.messageMeta}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
+                <span className={styles.messageMeta}>
+                  {formatTime(message.createdAt)}
+                  {message.cost !== undefined ? ` · ${message.cost} credits` : ""}
+                  {message.status === "cancelled" ? " · incomplete" : message.status === "failed" ? " · failed" : ""}
+                </span>
                 {message.role === "assistant" ? (
                   <div className={styles.messageActions}>
                     <button type="button" onClick={() => void navigator.clipboard?.writeText(message.content)}><Copy size={12} /> Copy</button>
@@ -421,10 +537,23 @@ export default function PrivateAIChat() {
               </div>
             </div>
           ))}
-          {sending ? (
+          {sending && streamPreview?.conversationId === selectedConversation?.id && streamPreview.content ? (
+            <div className={styles.messageRow} role="status" aria-live="polite" aria-label="Private AI streaming response">
+              <span className={styles.assistantAvatar}><Bot size={18} /></span>
+              <div className={styles.messageBlock}>
+                <div className={`${styles.messageBubble} ${styles.messageStreaming}`}>{streamPreview.content}</div>
+                <span className={styles.messageMeta}>
+                  {streamPreview.state === "recovering" ? "Connection interrupted — recovering the same task…" : "Generating…"}
+                </span>
+              </div>
+            </div>
+          ) : sending ? (
             <div className={styles.messageRow}>
               <span className={styles.assistantAvatar}><Bot size={18} /></span>
-              <div className={styles.thinking} aria-label="Private AI is thinking"><span /><span /><span /></div>
+              <div>
+                <div className={styles.thinking} aria-label="Private AI is thinking"><span /><span /><span /></div>
+                {streamPreview?.state === "recovering" ? <span className={styles.messageMeta}>Connection interrupted — recovering the same task…</span> : null}
+              </div>
             </div>
           ) : null}
         </div>

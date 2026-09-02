@@ -70,6 +70,17 @@ export interface LLMOrderResult {
   };
 }
 
+export type LLMOrderStreamEvent =
+  | { event: "state"; state: string }
+  | { event: "delta"; sequence: number; delta: string; snapshot?: boolean }
+  | ({ event: "complete" } & LLMOrderResult)
+  | { event: "error"; state: string; error_code?: string };
+
+export interface LLMOrderStreamHandlers {
+  onEvent(event: LLMOrderStreamEvent): void;
+  onDisconnect(): void;
+}
+
 export interface LLMPrivacySettings {
   result_retention_seconds: 0 | 3600 | 86400 | 604800;
   plaintext_persisted: boolean;
@@ -161,7 +172,13 @@ export interface NodeClient {
     prompt: string;
     max_tokens: number;
     transport?: "auto" | "direct" | "p2p" | "relay";
+    response_mode?: "complete-v1" | "stream-v1";
   }): Promise<LLMOrderResult>;
+  subscribeLLMOrder(
+    taskId: string,
+    handlers: LLMOrderStreamHandlers,
+    afterSequence?: number,
+  ): () => void;
   getLLMOrder(taskId: string): Promise<LLMOrderResult>;
   cancelLLMOrder(taskId: string): Promise<LLMOrderResult>;
   listLLMOrders(): Promise<LLMOrderResult[]>;

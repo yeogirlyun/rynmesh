@@ -1,6 +1,6 @@
 # Issue #23 开发文档：stream-v1 后端与传输切片
 
-状态：实现完成，等待 UI 集成分支消费本接口。
+状态：后端、传输和 Webapp 集成完成，等待真实路由矩阵验收。
 
 ## 协议
 
@@ -90,3 +90,15 @@ sequence 从 0 开始严格连续。重复、缺口、乱序、错误 task/servi
 - Relay、P2P 和无 streaming capability 的服务不使用流式端点。
 - 最终信封、Task Balance ledger、settlement ID 和 Provider earning ID 均未改版。
 - UI 接入只需扩展 NodeClient 订阅本机 SSE，无需接触 Provider 或密钥。
+
+## Webapp 集成
+
+`NodeClient.subscribeLLMOrder()` 将浏览器限制在
+`/api/local/llm/orders/{task_id}/events`，携带同源凭证并支持 `after_sequence`。组件请求
+`stream-v1`，但能力协商仍由 Consumer 决定，旧 Provider/Relay/P2P 可继续完整响应。
+
+`PrivateAIChat` 把 partial assistant 保存在独立 React state，不调用会话存储。连续 delta
+追加，重复 sequence 忽略，broker snapshot 原子替换。首次 SSE 断线以最后 sequence 续订；
+再次断线或 sequence gap 改为轮询同一 task 的终态，不创建第二次推理或结算。terminal
+后构造一个 assistant message 并走原加密持久化一次。取消会保存已显示片段并明确标为
+incomplete，而不是成功回答。

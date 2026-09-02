@@ -83,6 +83,32 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getTaskBalance: () => requestJson(`${baseUrl}/task-balance`),
     submitLLMOrder: (req) =>
       requestJson(`${baseUrl}/llm/orders/async`, { method: "POST", body: JSON.stringify(req) }),
+    subscribeLLMOrder: (taskId, handlers, afterSequence = -1) => {
+      const params = new URLSearchParams({ after_sequence: String(afterSequence) });
+      const source = new EventSource(
+        `${baseUrl}/llm/orders/${encodeURIComponent(taskId)}/events?${params}`,
+        { withCredentials: true },
+      );
+      let closed = false;
+      const names = ["state", "delta", "complete", "error"] as const;
+      for (const name of names) {
+        source.addEventListener(name, (raw) => {
+          try {
+            const payload = JSON.parse((raw as MessageEvent<string>).data) as Record<string, unknown>;
+            handlers.onEvent({ ...payload, event: name } as import("./nodeClient").LLMOrderStreamEvent);
+          } catch {
+            if (!closed) handlers.onDisconnect();
+          }
+        });
+      }
+      source.onerror = () => {
+        if (!closed) handlers.onDisconnect();
+      };
+      return () => {
+        closed = true;
+        source.close();
+      };
+    },
     getLLMOrder: (taskId) =>
       requestJson(`${baseUrl}/llm/orders/${encodeURIComponent(taskId)}`),
     cancelLLMOrder: (taskId) =>
