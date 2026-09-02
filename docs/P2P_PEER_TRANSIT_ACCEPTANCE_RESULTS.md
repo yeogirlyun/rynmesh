@@ -801,6 +801,43 @@ reported no type errors, and `tsc -b && vite build` produced the production
 bundle successfully. These checks did not change the transit runtime or soak
 runner fixed point.
 
+A requirement-by-requirement audit found that r23/r24 supplied route-quality
+metrics to the hysteresis state machine but did not impair the real direct UDP
+application datagrams. The acceptance producer and independent auditor now
+fail closed unless a real nominated direct pair is shaped, its loss is
+recomputed from attempted/dropped datagrams, its retransmitted file is unique
+and intact, and a subsequent adaptive request produces signed peer-transit
+evidence with increased relay counters. The strengthened auditor rejects r24
+with `real_degraded_network` missing.
+
+Two fresh strengthened preflights passed. r25 at
+`.codex-tmp/peer-transit-acceptance-r25-real-impairment-preflight` shaped 342
+application datagram sends across a 250-350 ms scheduled RTT range and dropped
+61 (17.836%). The impaired direct file completed in 6.782 s; the actual adaptive
+request selected peer 2 in 0.516 s. The 8 MiB main transfer took 7.860 s, both
+worker peaks were 20, trace completion and worker error gates passed, and both
+independent audits passed. `report.json` has SHA-256
+`1F1E9DAAA1B075A5A629A21A3013E6823CDAD579935DC1A33E801B79B991A7D1` and
+`evidence.json` has SHA-256
+`CDE524F96BCDB0A74EF7D22A38F1C73CD89DD43CBF3A8D5C331BB6BFAAD5589D`;
+the report and evidence audit hashes are
+`3B8FC7D39091445908057B713B2DC7F7146811D5E4B0EF956BDF75568E0034E1` and
+`BB06B9DE2FA65DEE3ECA512E97CE8C5266EDAFF9385FF600B87F58FABA9865ED`.
+
+The independent r26 repeat at
+`.codex-tmp/peer-transit-acceptance-r26-real-impairment-repeat` again attempted
+342 datagram sends and dropped 61 over the full 250-350 ms range. Its impaired
+direct file took 6.797 s, adaptive transit took 0.578 s, the main transfer took
+7.828 s, all 20 one-MiB sessions completed in 27.156 s, relay and target peaks
+were both 20, the trace was complete, both worker error counts were zero and
+peak traced memory was 5,499,623 bytes. Its `report.json` has SHA-256
+`BA8FF94533F31920DD311A6BC1CAB9CBDF1D59DF4D0D2F2A99B3C6F82656D3A7` and
+`evidence.json` has SHA-256
+`DD4573CA05367D3B0B0762088E90C3D7DA1C049CDD994927BB5E505C8C9799A4`;
+the report and evidence audit hashes are
+`7AF21E502E28464A461915F17DA217F2AF7D800373F2E49273137B9FFA5638FD`
+and `A5E6B097270B490750503A6C3EFFD44BC20D31F31142E13844CE51CF36E3B64C`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

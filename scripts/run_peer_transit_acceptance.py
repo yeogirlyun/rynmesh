@@ -124,6 +124,95 @@ class _RegistryBlackout:
         return guarded
 
 
+class _DatagramImpairment:
+    """Deterministic application-datagram shaper for the real direct ICE pair.
+
+    The production transport remains untouched.  Acceptance temporarily wraps
+    each direct connection's ``send`` method so the same aioice UDP socket is
+    used after a bounded one-way delay, while a deterministic subset of calls
+    is omitted to model loss.  The two one-way bounds correspond to the
+    contract's 250-350 ms round-trip delay range.
+    """
+
+    rtt_min_ms = 250.0
+    rtt_max_ms = 350.0
+    jitter_ms = 75.0
+    target_loss_ratio = 0.18
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._attempted = 0
+        self._dropped = 0
+        self._scheduled_rtt_ms: list[float] = []
+
+    def plan(self) -> tuple[bool, float]:
+        with self._lock:
+            self._attempted += 1
+            sequence = self._attempted
+            # Multiplication by 37 distributes the eighteen dropped positions
+            # through every hundred calls instead of creating one long burst.
+            dropped = (sequence * 37) % 100 < 18
+            # A second coprime sequence covers the inclusive 250-350 ms RTT
+            # interval deterministically.  Each endpoint delays one direction
+            # by half of the selected round-trip value.
+            rtt_ms = self.rtt_min_ms + float((sequence * 53) % 101)
+            self._scheduled_rtt_ms.append(rtt_ms)
+            if dropped:
+                self._dropped += 1
+            return dropped, rtt_ms / 2000.0
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            attempted = self._attempted
+            dropped = self._dropped
+            samples = list(self._scheduled_rtt_ms)
+        return {
+            "transport": "real_local_ice_udp_application_datagrams",
+            "configured_rtt_min_ms": self.rtt_min_ms,
+            "configured_rtt_max_ms": self.rtt_max_ms,
+            "configured_jitter_ms": self.jitter_ms,
+            "configured_loss_ratio": self.target_loss_ratio,
+            "attempted_datagrams": attempted,
+            "dropped_datagrams": dropped,
+            "delivered_datagrams": attempted - dropped,
+            "observed_loss_ratio": 0.0 if attempted == 0 else dropped / attempted,
+            "scheduled_rtt_min_ms": min(samples, default=0.0),
+            "scheduled_rtt_max_ms": max(samples, default=0.0),
+        }
+
+
+def _impaired_connection_factory(original_factory: Any, profile: _DatagramImpairment):
+    """Return an aioice factory whose application sends are delayed/dropped."""
+
+    def create(*, controlling: bool):
+        connection = original_factory(controlling=controlling)
+        original_send = connection.send
+        original_close = connection.close
+        pending: set[asyncio.Task[Any]] = set()
+
+        async def delayed_send(payload: bytes) -> None:
+            dropped, delay_s = profile.plan()
+            if dropped:
+                return
+
+            async def deliver() -> None:
+                await asyncio.sleep(delay_s)
+                await original_send(payload)
+
+            pending.add(asyncio.create_task(deliver()))
+
+        async def close() -> None:
+            if pending:
+                await asyncio.gather(*tuple(pending))
+            await original_close()
+
+        connection.send = delayed_send
+        connection.close = close
+        return connection
+
+    return create
+
+
 def _write_payload(path: Path, size_bytes: int, *, marker: bytes = MARKER) -> None:
     block = (b"rynmesh-peer-transit-acceptance-" * 2048)[:64 * 1024]
     remaining = max(0, size_bytes - len(marker))
@@ -264,6 +353,151 @@ def _route_acceptance() -> dict[str, Any]:
             "consecutive_failures": transit.consecutive_failures,
         },
         "recovery_probe_times": recovery_probe_times,
+    }
+
+
+def _degraded_network_acceptance(
+    *,
+    work_root: Path,
+    source: RynmeshStore,
+    relay: RynmeshStore,
+    target: RynmeshStore,
+    network_id: str,
+    timeout_s: float,
+    frame_audit: _FrameAudit,
+    route: dict[str, Any],
+) -> dict[str, Any]:
+    """Exercise real direct UDP loss/retry, then actual adaptive peer transit."""
+
+    direct_file = work_root / "degraded-direct.bin"
+    _write_payload(direct_file, 64 * 1024)
+    profile = _DatagramImpairment()
+    original_factory = peer_transit_service.new_connection
+    transit_before_direct = int(frame_audit.snapshot()["bytes"])
+    direct_started = time.monotonic()
+    try:
+        peer_transit_service.new_connection = _impaired_connection_factory(
+            original_factory,
+            profile,
+        )
+        direct_evidence = send_file_direct(
+            source,
+            direct_file,
+            target_peer_id=target.peer_id,
+            network_id=network_id,
+            timeout_s=timeout_s,
+        )
+    finally:
+        peer_transit_service.new_connection = original_factory
+    direct_elapsed = time.monotonic() - direct_started
+    transit_after_direct = int(frame_audit.snapshot()["bytes"])
+    impairment = profile.snapshot()
+    direct_delivered = list(
+        (work_root / "target-inbox").glob("*-degraded-direct.bin")
+    )
+    direct_partials = list((work_root / "target-inbox").rglob("*.part"))
+    observed_loss = float(impairment["observed_loss_ratio"])
+    impairment_ok = (
+        int(impairment["attempted_datagrams"]) >= 100
+        and int(impairment["dropped_datagrams"]) > 0
+        and 0.15 <= observed_loss <= 0.20
+        and 250 <= float(impairment["scheduled_rtt_min_ms"])
+        and float(impairment["scheduled_rtt_max_ms"]) <= 350
+        and (
+            float(impairment["scheduled_rtt_max_ms"])
+            - float(impairment["scheduled_rtt_min_ms"])
+        )
+        >= 50
+    )
+    direct_ok = (
+        direct_evidence.get("path_mode") == "direct"
+        and direct_evidence.get("ice_relay_candidate_used") is False
+        and direct_evidence.get("source_sha256") == direct_evidence.get("target_sha256")
+        and transit_before_direct == transit_after_direct
+        and len(direct_delivered) == 1
+        and not direct_partials
+    )
+
+    degraded = PathMetrics(True, 330, 0.18)
+    transit = PathMetrics(True, 80, 0.01)
+    manager = RouteManager(
+        RoutePolicy(
+            degraded_hold_s=30,
+            transit_min_hold_s=60,
+            recovery_hold_s=120,
+            recovery_probe_count=5,
+        )
+    )
+    manager.update(direct=PathMetrics(True, 40, 0), transit=transit, now_monotonic=0)
+    manager.update(direct=degraded, transit=transit, now_monotonic=1)
+    manager.update(direct=degraded, transit=transit, now_monotonic=31)
+
+    adaptive_file = work_root / "degraded-adaptive.bin"
+    _write_payload(adaptive_file, 64 * 1024)
+    transit_before_adaptive = int(frame_audit.snapshot()["bytes"])
+    adaptive_started = time.monotonic()
+    adaptive_evidence = send_file_adaptive(
+        source,
+        adaptive_file,
+        relay_peer_id=relay.peer_id,
+        target_peer_id=target.peer_id,
+        direct_metrics=degraded,
+        transit_metrics=transit,
+        route_manager=manager,
+        network_id=network_id,
+        timeout_s=timeout_s,
+        direct_attempt_timeout_s=min(8.0, timeout_s),
+    )
+    adaptive_elapsed = time.monotonic() - adaptive_started
+    transit_after_adaptive = int(frame_audit.snapshot()["bytes"])
+    adaptive_delivered = list(
+        (work_root / "target-inbox").glob("*-degraded-adaptive.bin")
+    )
+    adaptive_partials = list((work_root / "target-inbox").rglob("*.part"))
+    adaptive_reasons = [
+        str(item.get("reason") or "")
+        for item in adaptive_evidence.get("route_events", [])
+    ]
+    adaptive_ok = (
+        route.get("degraded_path") == "peer_transit"
+        and adaptive_evidence.get("path_mode") == "peer_transit"
+        and adaptive_evidence.get("selected_path") == "peer_transit"
+        and not str(adaptive_evidence.get("direct_fallback_error") or "")
+        and adaptive_evidence.get("source_sha256")
+        == adaptive_evidence.get("target_sha256")
+        and transit_after_adaptive > transit_before_adaptive
+        and adaptive_reasons == ["direct_degraded", "transit_better"]
+        and len(adaptive_delivered) == 1
+        and not adaptive_partials
+    )
+    return {
+        "ok": impairment_ok and direct_ok and adaptive_ok,
+        "transfer_timeout_s": timeout_s,
+        "impairment": impairment,
+        "route_degraded_path": route.get("degraded_path"),
+        "direct_under_impairment": {
+            "ok": direct_ok,
+            "elapsed_s": direct_elapsed,
+            "transit_bytes_before": transit_before_direct,
+            "transit_bytes_after": transit_after_direct,
+            "committed_target_files": len(direct_delivered),
+            "partial_target_files": len(direct_partials),
+            "source_sha256": direct_evidence.get("source_sha256"),
+            "target_sha256": direct_evidence.get("target_sha256"),
+            "evidence": direct_evidence,
+        },
+        "adaptive_after_degrade": {
+            "ok": adaptive_ok,
+            "elapsed_s": adaptive_elapsed,
+            "transit_bytes_before": transit_before_adaptive,
+            "transit_bytes_after": transit_after_adaptive,
+            "committed_target_files": len(adaptive_delivered),
+            "partial_target_files": len(adaptive_partials),
+            "route_events": adaptive_evidence.get("route_events"),
+            "source_sha256": adaptive_evidence.get("source_sha256"),
+            "target_sha256": adaptive_evidence.get("target_sha256"),
+            "evidence": adaptive_evidence,
+        },
     }
 
 
@@ -697,6 +931,16 @@ def run_acceptance(
         )
 
         route = _route_acceptance()
+        degraded_network = _degraded_network_acceptance(
+            work_root=work_root,
+            source=source,
+            relay=relay,
+            target=target,
+            network_id=network_id,
+            timeout_s=timeout_s,
+            frame_audit=frame_audit,
+            route=route,
+        )
         direct_file = work_root / "healthy-direct.bin"
         _write_payload(direct_file, 64 * 1024)
         transit_bytes_before_direct = int(frame_audit.snapshot()["bytes"])
@@ -839,6 +1083,7 @@ def run_acceptance(
         "healthy_direct": direct["ok"] and healthy_direct_file["ok"],
         "two_hop_peer_transit": main_audit["ok"],
         "automatic_degrade_and_recovery": route["ok"],
+        "real_degraded_network": degraded_network["ok"],
         "actual_hard_failure_fallback": actual_hard_failure["ok"],
         "bounded_transit_unavailability": unavailable["ok"],
         "established_data_plane_survives_control_plane_blackout": control_plane_blackout["ok"],
@@ -864,6 +1109,7 @@ def run_acceptance(
         "direct": direct,
         "healthy_direct_file": healthy_direct_file,
         "route": route,
+        "degraded_network": degraded_network,
         "actual_hard_failure": actual_hard_failure,
         "unavailable": unavailable,
         "control_plane_blackout": control_plane_blackout,

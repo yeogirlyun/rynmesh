@@ -132,6 +132,13 @@ two-hop streams remain fair without starving ICE consent traffic.
 The target worker denies the direct operation during the hard-failure case so
 the real adaptive client must fail direct and complete through peer 2 within
 10 seconds; this is not inferred only from the route state machine.
+The degraded-path gate temporarily shapes only application sends on the real
+peer-1/peer-3 nominated ICE sockets: deterministic RTT covers 250-350 ms and
+approximately 18% of datagrams are dropped. Reliable direct delivery must still
+produce one intact target file with no partial artifact. The next real adaptive
+request must select peer 2 without attempting direct, and relay frame counters
+must increase. The independent report auditor recomputes the observed loss from
+attempted/dropped counts and fails closed if any of these fields are absent.
 
 Smoke gate:
 

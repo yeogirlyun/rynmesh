@@ -422,6 +422,132 @@ def _audit_post_recovery_direct_file(
     return direct_file_audit
 
 
+def _audit_degraded_network_gate(
+    degraded: dict[str, Any],
+    *,
+    transit_audit: dict[str, Any],
+) -> dict[str, Any]:
+    """Require real impaired UDP delivery plus an actual adaptive transit request."""
+
+    if degraded.get("ok") is not True or degraded.get("route_degraded_path") != "peer_transit":
+        raise AuditError("real degraded-network gate did not pass")
+    timeout_s = _finite_float(
+        _require(degraded, "transfer_timeout_s"), "degraded_network.transfer_timeout_s"
+    )
+    if timeout_s <= 0:
+        raise AuditError("real degraded-network timeout is invalid")
+
+    impairment = dict(_require(degraded, "impairment"))
+    attempted = int(_require(impairment, "attempted_datagrams"))
+    dropped = int(_require(impairment, "dropped_datagrams"))
+    delivered = int(_require(impairment, "delivered_datagrams"))
+    observed_loss = _finite_float(
+        _require(impairment, "observed_loss_ratio"),
+        "degraded_network.impairment.observed_loss_ratio",
+    )
+    configured_loss = _finite_float(
+        _require(impairment, "configured_loss_ratio"),
+        "degraded_network.impairment.configured_loss_ratio",
+    )
+    configured_min = _finite_float(
+        _require(impairment, "configured_rtt_min_ms"),
+        "degraded_network.impairment.configured_rtt_min_ms",
+    )
+    configured_max = _finite_float(
+        _require(impairment, "configured_rtt_max_ms"),
+        "degraded_network.impairment.configured_rtt_max_ms",
+    )
+    configured_jitter = _finite_float(
+        _require(impairment, "configured_jitter_ms"),
+        "degraded_network.impairment.configured_jitter_ms",
+    )
+    scheduled_min = _finite_float(
+        _require(impairment, "scheduled_rtt_min_ms"),
+        "degraded_network.impairment.scheduled_rtt_min_ms",
+    )
+    scheduled_max = _finite_float(
+        _require(impairment, "scheduled_rtt_max_ms"),
+        "degraded_network.impairment.scheduled_rtt_max_ms",
+    )
+    computed_loss = 0.0 if attempted == 0 else dropped / attempted
+    if (
+        impairment.get("transport") != "real_local_ice_udp_application_datagrams"
+        or attempted < 100
+        or dropped <= 0
+        or delivered != attempted - dropped
+        or abs(observed_loss - computed_loss) > 1e-12
+        or not 0.15 <= observed_loss <= 0.20
+        or not 0.15 <= configured_loss <= 0.20
+        or not 250 <= configured_min <= configured_max <= 350
+        or not 50 <= configured_jitter <= 100
+        or scheduled_min < configured_min
+        or scheduled_max > configured_max
+        or scheduled_max - scheduled_min < 50
+    ):
+        raise AuditError("real degraded-network impairment evidence is invalid")
+
+    direct = dict(_require(degraded, "direct_under_impairment"))
+    direct_evidence = dict(_require(direct, "evidence"))
+    direct_audit = audit_direct_file(direct_evidence)
+    direct_elapsed = _finite_float(
+        _require(direct, "elapsed_s"), "degraded_network.direct_under_impairment.elapsed_s"
+    )
+    if (
+        direct.get("ok") is not True
+        or direct_elapsed <= 0
+        or direct_elapsed > timeout_s
+        or direct.get("source_sha256") != direct.get("target_sha256")
+        or int(_require(direct, "transit_bytes_before"))
+        != int(_require(direct, "transit_bytes_after"))
+        or int(_require(direct, "committed_target_files")) != 1
+        or int(_require(direct, "partial_target_files")) != 0
+        or direct_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or direct_audit["target_peer_id"] != transit_audit["target_peer_id"]
+        or direct_audit["source_sha256"] != direct.get("source_sha256")
+    ):
+        raise AuditError("impaired direct UDP transfer was not atomic and intact")
+
+    adaptive = dict(_require(degraded, "adaptive_after_degrade"))
+    adaptive_evidence = dict(_require(adaptive, "evidence"))
+    adaptive_audit = audit_peer_transit(adaptive_evidence)
+    adaptive_elapsed = _finite_float(
+        _require(adaptive, "elapsed_s"), "degraded_network.adaptive_after_degrade.elapsed_s"
+    )
+    route_reasons = [
+        str(item.get("reason") or "")
+        for item in _require(adaptive, "route_events")
+        if isinstance(item, dict)
+    ]
+    if (
+        adaptive.get("ok") is not True
+        or adaptive_elapsed <= 0
+        or adaptive_elapsed > timeout_s
+        or adaptive.get("source_sha256") != adaptive.get("target_sha256")
+        or int(_require(adaptive, "transit_bytes_after"))
+        <= int(_require(adaptive, "transit_bytes_before"))
+        or int(_require(adaptive, "committed_target_files")) != 1
+        or int(_require(adaptive, "partial_target_files")) != 0
+        or adaptive_evidence.get("path_mode") != "peer_transit"
+        or adaptive_evidence.get("selected_path") != "peer_transit"
+        or str(adaptive_evidence.get("direct_fallback_error") or "")
+        or route_reasons != ["direct_degraded", "transit_better"]
+        or adaptive_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or adaptive_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
+        or adaptive_audit["target_peer_id"] != transit_audit["target_peer_id"]
+        or adaptive_audit["source_sha256"] != adaptive.get("source_sha256")
+    ):
+        raise AuditError("degraded adaptive request did not use peer transit atomically")
+    return {
+        "attempted_datagrams": attempted,
+        "dropped_datagrams": dropped,
+        "observed_loss_ratio": observed_loss,
+        "scheduled_rtt_min_ms": scheduled_min,
+        "scheduled_rtt_max_ms": scheduled_max,
+        "direct_elapsed_s": direct_elapsed,
+        "adaptive_elapsed_s": adaptive_elapsed,
+    }
+
+
 def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> WorkResult:
     fields = {
         "kind",
@@ -633,6 +759,7 @@ def audit_acceptance_report(
         "healthy_direct",
         "two_hop_peer_transit",
         "automatic_degrade_and_recovery",
+        "real_degraded_network",
         "actual_hard_failure_fallback",
         "bounded_transit_unavailability",
         "established_data_plane_survives_control_plane_blackout",
@@ -710,6 +837,10 @@ def audit_acceptance_report(
 
     route = dict(_require(value, "route"))
     _audit_route_report(route)
+    degraded_network_audit = _audit_degraded_network_gate(
+        dict(_require(value, "degraded_network")),
+        transit_audit=transit_audit,
+    )
 
     unavailable = dict(_require(value, "unavailable"))
     _audit_unavailable_gate(unavailable)
@@ -797,6 +928,7 @@ def audit_acceptance_report(
         "session_established_s": session_established,
         "protocol_overhead_ratio": protocol_overhead_ratio,
         "hard_failure_fallback_s": hard_failure_elapsed,
+        "degraded_network": degraded_network_audit,
         "peak_python_memory_bytes": peak_memory,
         "peak_python_memory_limit_bytes": peak_memory_limit,
         "one_gib_required": bool(require_one_gib),

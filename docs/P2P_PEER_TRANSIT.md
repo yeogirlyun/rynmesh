@@ -247,6 +247,12 @@ release gate for public NAT traversal.
   25% better;
 - requests finish or retry idempotently without corruption or duplication.
 
+The hermetic gate must exercise actual application datagrams on the nominated
+local ICE/UDP direct pair, not merely pass synthetic metrics to the route state
+machine. It records attempted and deliberately dropped datagrams, the scheduled
+RTT range, the intact direct retry result, and a subsequent adaptive request
+whose signed evidence and transit counters prove that peer 2 was selected.
+
 ### D. Recovery
 
 - removing impairment causes a hysteresis-controlled return to direct;
@@ -324,6 +330,9 @@ The acceptance tool emits signed or independently derived JSON containing:
 
 `scripts/audit_peer_transit.py` must reject missing evidence, TURN candidates,
 identity discontinuity, byte-count contradictions, plaintext exposure and hash
-mismatch.  The hermetic three-identity, real local-UDP/ICE scenario is the
+mismatch. It also recomputes the real impairment loss ratio and rejects missing
+delay coverage, duplicate/partial target artifacts, a direct-path transit-byte
+increase, or an adaptive degraded request that did not use peer 2. The hermetic
+three-identity, real local-UDP/ICE scenario is the
 deterministic CI gate; a separate physical run with three public egress networks
 is required before claiming public-NAT acceptance.

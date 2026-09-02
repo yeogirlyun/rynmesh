@@ -863,6 +863,108 @@ def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:
             audit_module._audit_route_report(tampered)
 
 
+def test_datagram_impairment_is_deterministic_and_within_contract() -> None:
+    profile = acceptance_module._DatagramImpairment()
+    for _ in range(200):
+        profile.plan()
+    snapshot = profile.snapshot()
+
+    assert snapshot["transport"] == "real_local_ice_udp_application_datagrams"
+    assert snapshot["attempted_datagrams"] == 200
+    assert snapshot["dropped_datagrams"] == 36
+    assert snapshot["delivered_datagrams"] == 164
+    assert snapshot["observed_loss_ratio"] == pytest.approx(0.18)
+    assert 250 <= snapshot["scheduled_rtt_min_ms"]
+    assert snapshot["scheduled_rtt_max_ms"] <= 350
+    assert snapshot["scheduled_rtt_max_ms"] - snapshot["scheduled_rtt_min_ms"] >= 50
+
+
+def test_degraded_network_auditor_recomputes_loss_and_binds_real_paths(monkeypatch) -> None:
+    identities = {
+        "source_peer_id": "source",
+        "transit_peer_id": "transit",
+        "target_peer_id": "target",
+        "source_sha256": "sha256:abc",
+    }
+    monkeypatch.setattr(
+        audit_module,
+        "audit_direct_file",
+        lambda _item: {
+            "source_peer_id": "source",
+            "target_peer_id": "target",
+            "source_sha256": "sha256:abc",
+        },
+    )
+    monkeypatch.setattr(audit_module, "audit_peer_transit", lambda _item: identities)
+    evidence = {
+        "ok": True,
+        "transfer_timeout_s": 120.0,
+        "route_degraded_path": "peer_transit",
+        "impairment": {
+            "transport": "real_local_ice_udp_application_datagrams",
+            "configured_rtt_min_ms": 250.0,
+            "configured_rtt_max_ms": 350.0,
+            "configured_jitter_ms": 75.0,
+            "configured_loss_ratio": 0.18,
+            "attempted_datagrams": 200,
+            "dropped_datagrams": 36,
+            "delivered_datagrams": 164,
+            "observed_loss_ratio": 0.18,
+            "scheduled_rtt_min_ms": 250.0,
+            "scheduled_rtt_max_ms": 350.0,
+        },
+        "direct_under_impairment": {
+            "ok": True,
+            "elapsed_s": 8.0,
+            "transit_bytes_before": 100,
+            "transit_bytes_after": 100,
+            "committed_target_files": 1,
+            "partial_target_files": 0,
+            "source_sha256": "sha256:abc",
+            "target_sha256": "sha256:abc",
+            "evidence": {},
+        },
+        "adaptive_after_degrade": {
+            "ok": True,
+            "elapsed_s": 1.0,
+            "transit_bytes_before": 100,
+            "transit_bytes_after": 200,
+            "committed_target_files": 1,
+            "partial_target_files": 0,
+            "source_sha256": "sha256:abc",
+            "target_sha256": "sha256:abc",
+            "route_events": [
+                {"reason": "direct_degraded"},
+                {"reason": "transit_better"},
+            ],
+            "evidence": {
+                "path_mode": "peer_transit",
+                "selected_path": "peer_transit",
+                "direct_fallback_error": "",
+            },
+        },
+    }
+    result = audit_module._audit_degraded_network_gate(
+        evidence,
+        transit_audit=identities,
+    )
+    assert result["observed_loss_ratio"] == pytest.approx(0.18)
+
+    mutations = [
+        ("impairment", lambda item: item["impairment"].update(dropped_datagrams=0)),
+        ("intact", lambda item: item["direct_under_impairment"].update(committed_target_files=2)),
+        ("transit", lambda item: item["adaptive_after_degrade"].update(transit_bytes_after=100)),
+    ]
+    for message, mutate in mutations:
+        tampered = copy.deepcopy(evidence)
+        mutate(tampered)
+        with pytest.raises(AuditError, match=message):
+            audit_module._audit_degraded_network_gate(
+                tampered,
+                transit_audit=identities,
+            )
+
+
 def test_post_recovery_direct_file_auditor_binds_route_and_counter_stop(monkeypatch) -> None:
     identities = {
         "source_peer_id": "source",
