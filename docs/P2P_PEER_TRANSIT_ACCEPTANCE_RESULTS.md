@@ -765,6 +765,12 @@ zeroed worker control-error snapshot. The live r13 soak continued through this
 build and install load with zero failures, control errors, partial files and
 stderr.
 
+The current branch web application also passed its release gates while r13
+continued running: Vitest passed 38 tests across nine files, `tsc -b --noEmit`
+reported no type errors, and `tsc -b && vite build` produced the production
+bundle successfully. These checks did not change the transit runtime or soak
+runner fixed point.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
