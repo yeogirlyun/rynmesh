@@ -5,19 +5,19 @@ Decision: **NOT YET ACCEPTED**
 Core branch: `codex/issue-30-friend-mesh`
 Webapp slice branch: `codex/issue-30-friend-mesh-ui`
 
-Date: 2026-09-02
+Date: 2026-09-03
 
 ## Current result
 
 The security/store/public-acceptance foundation is implemented and has focused
-automated evidence. The complete product is not accepted because Tauri
-deep-link handling, exact-commit CI, maintainer protocol review, and two-node
-physical acceptance remain outstanding.
+automated evidence. The complete product is not accepted because installed
+desktop deep-link/scan evidence, exact-commit CI, maintainer protocol review,
+and two-node physical acceptance remain outstanding.
 
 The Webapp create/offline-review/Join/list/cancel/revoke and local-QR slice is
-now implemented and automated, but this does not change the overall decision:
-the browser delegates reviewed Join to the local node, while Tauri deep links
-remain unavailable.
+now implemented and automated, but this does not change the overall decision.
+The desktop scheme and launch/running-instance forwarding are implemented; an
+installed package still needs physical QR/deep-link evidence on each platform.
 
 Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
@@ -28,7 +28,7 @@ including simulated two-node Join and explicit endpoint-change review.
 After friends-only Private AI integration, the combined focused regression is
 88 passed with Ruff green.
 
-Webapp Join/retry integration passes 9/9 focused tests, 47/47 full Webapp tests,
+Webapp Join/retry/deep-link integration passes its focused matrix and 51/51 full Webapp tests,
 TypeScript lint, and the production build. Review makes no endpoint contact;
 Join uses the local API, and changing the pasted link invalidates prior review.
 
@@ -60,7 +60,8 @@ Friend/Transport/LLM regression.
   - [x] Friend active/revoked details and high-risk local-first revoke are implemented.
   - [x] Keyboard labels, disabled-state explanation, and create/review focus transfer are tested.
   - [x] Outbound Join and received-relationship persistence are integrated and enabled through the local node.
-  - [ ] Tauri deep-link forwarding and physical scan/deep-link acceptance are complete.
+  - [x] Tauri scheme, launch/running-instance forwarding, strict validation, and paste fallback are implemented.
+  - [ ] Installed desktop physical scan/deep-link acceptance is complete on Windows/Linux/macOS.
 - [x] Privacy export/erase behavior complete.
 - [ ] Full backend/Webapp/Rust/Linux/macOS CI green on the exact commit.
 - [ ] Two clean nodes pass use/revoke/next-order-denied including offline revoke.

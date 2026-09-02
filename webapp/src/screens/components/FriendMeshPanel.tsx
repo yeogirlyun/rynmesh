@@ -10,6 +10,7 @@ import type {
 } from "../../domain/nodeClient";
 import { endpointAddressClass, splitEndpoints } from "../../domain/friendMesh";
 import { friendInviteQrDataUrl } from "../../domain/friendMeshQr";
+import { consumeFriendInviteDeepLink, onFriendInviteDeepLink } from "../../domain/friendDeepLink";
 import type { ConfirmRequest, ToastMessage } from "../../domain/types";
 import { Button, Chip, Hash, Panel } from "../../components/ui";
 
@@ -117,6 +118,20 @@ export default function FriendMeshPanel({
       });
     return () => { alive = false; };
   }, [client]);
+
+  useEffect(() => {
+    const acceptQueued = () => {
+      const link = consumeFriendInviteDeepLink();
+      if (!link) return;
+      setReviewLink(link);
+      setReview(null);
+      setPendingJoin(null);
+      setError("");
+    };
+    const remove = onFriendInviteDeepLink(acceptQueued);
+    acceptQueued();
+    return remove;
+  }, []);
 
   useEffect(() => { if (created) createdHeading.current?.focus(); }, [created]);
   useEffect(() => { if (review) reviewHeading.current?.focus(); }, [review]);

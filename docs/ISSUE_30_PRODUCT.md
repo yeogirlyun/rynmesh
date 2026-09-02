@@ -86,5 +86,11 @@ outbound Transport request, DNS resolve-and-pin checks, one-use credential
 rotation, and relationship persistence. If the inviter returns changed signed
 endpoints, the browser requires a second exact approve/reject decision; reject
 deletes the local credential. Editing the invitation or LAN-risk choice clears
-the old review so a different link cannot inherit it. Tauri deep-link forwarding,
-Tauri deep-link forwarding and physical acceptance remain.
+the old review so a different link cannot inherit it.
+
+The desktop bundle registers `rynmesh://`. A launch URL or running-instance URL
+is accepted only when it exactly matches the bounded `rynmesh://join/<base64url>`
+shape, then is held once in memory and opens the same offline-review form. The
+bearer is never placed in browser history or a router query. Pasting remains the
+cross-platform fallback. Installed-desktop scan/deep-link and physical two-node
+acceptance remain.

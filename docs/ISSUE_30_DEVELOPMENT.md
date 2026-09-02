@@ -70,9 +70,7 @@ original hostname for TLS SNI/certificate and HTTP Host validation.
 
 ## Remaining implementation slices
 
-1. Add Tauri `rynmesh://` forwarding; the Webapp paste fallback and outbound
-   Join integration are complete.
-2. Run two-node and accessibility acceptance.
+1. Run installed-desktop deep-link/scan, two-node, and accessibility acceptance.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.
@@ -100,6 +98,16 @@ and focus transfer to the created/reviewed result heading. After a successful
 offline review, Join delegates exclusively to the local node. A changed signed
 endpoint set is held in `pending_endpoint_review` until the user approves that
 exact set or rejects it and deletes the credential.
+
+## Desktop deep link
+
+The bundle statically registers `rynmesh` with `tauri-plugin-deep-link` 2.4.10.
+The existing single-instance plugin is first and enables its `deep-link` feature,
+so Windows/Linux second-instance arguments become the same event used by macOS.
+The frontend reads both launch and running-instance URLs, validates the exact
+bounded join format, and places one bearer only in module memory. App navigation
+uses `/peers` without a link query; `FriendMeshPanel` consumes the bearer once
+and still requires local offline verification before any endpoint contact.
 
 ## Revocation delivery and privacy lifecycle
 

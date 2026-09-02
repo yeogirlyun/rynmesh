@@ -19,6 +19,7 @@ import type { NodeClient } from "./domain/nodeClient";
 import { digestApi, type DiscoveryStatus } from "./domain/digestClient";
 import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
+import { installDesktopFriendDeepLinks, queueFriendInviteDeepLink } from "./domain/friendDeepLink";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
 import { installNotificationNavigation, sendDiscoveryNotification } from "./domain/notifications";
 import type { ConfirmRequest, NodeSettings, NodeStatus, Peer, RegistryStatus, ToastMessage } from "./domain/types";
@@ -168,6 +169,18 @@ export default function App() {
     }).catch(() => undefined);
     return () => remove();
   }, [navigate]);
+
+  useEffect(() => {
+    let remove: () => void = () => {};
+    void installDesktopFriendDeepLinks((link) => {
+      queueFriendInviteDeepLink(link);
+      navigate("/peers");
+      notify("ok", "Friend invitation received. Verify it offline before joining.");
+    }).then((unregister) => {
+      remove = unregister;
+    }).catch(() => undefined);
+    return () => remove();
+  }, [navigate, notify]);
 
   const openDiscovery = async () => {
     navigate("/digest");
