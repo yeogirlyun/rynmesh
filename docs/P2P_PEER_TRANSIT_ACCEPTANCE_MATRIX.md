@@ -42,8 +42,8 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - Data-plane runtime with verified-boundary resume: `ded37d2`.
 - Soak runner blob: `1f8fe15de836702619911531d2c24b6e7e802a57`.
 - Strengthened real-impairment acceptance/auditor: `700cc99`.
-- Final soak auditor including orphan resume-checkpoint and open-marker
-  rejection: `962cfc6` (blob `d0868ef2718e10c8fc0b0cfa7d7bfc19b72de43f`).
+- Final fail-closed soak artifact auditor: `6545a5e`
+  (blob `8cd8229652568e0f50acfe9bda772c301b4907b8`).
 - r25 report: `1F1E9DAAA1B075A5A629A21A3013E6823CDAD579935DC1A33E801B79B991A7D1`.
 - r26 report: `BA8FF94533F31920DD311A6BC1CAB9CBDF1D59DF4D0D2F2A99B3C6F82656D3A7`.
 - r30 one-GiB report: `C64D64EFF5D76C7D9D14440C4D9A2962503060979B0A2C3547E46A696EB6C220`.

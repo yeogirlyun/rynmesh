@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 583 passed, 3 skipped on the verified-boundary resume candidate |
+| Complete Python suite | Pass | 584 passed, 3 skipped on the fail-closed verified-boundary resume candidate |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -1026,18 +1026,19 @@ files; stdout and stderr remained empty.
 A completion-contract review found that the independent soak artifact auditor
 scanned `*.part` but did not yet reject the verified-resume runtime's
 `*.resume.json` checkpoint files or fail on leftover open work-order markers.
-Commits `74204e4` and `962cfc6` strengthen only the final
+Commits `74204e4`, `962cfc6` and `6545a5e` strengthen only the final
 auditor and its tests; the running data-plane blob
 `a861c194dfa15e5cb0ac7c83632269f44ff6c6e9` and soak-runner blob
 `1f8fe15de836702619911531d2c24b6e7e802a57` are unchanged, so r14 timing
-remains valid. The auditor now fails closed on both artifact types and open
-work-order markers, and reports their counts separately. Its focused
-positive/negative tests, Ruff and the
-complete 583-test/three-skip Python suite passed. The strengthened live artifact
-scan covered 1,122 files and 2,178,793 bytes with zero plaintext findings,
-partial files, resume checkpoints, open markers and stderr bytes. At the
-following runtime checkpoint r14 had completed 170 sessions with zero failures
-and worker errors.
+remains valid. The auditor now requires the relay, relay-net, registry and
+target-inbox directories plus both stdout/stderr files to exist; it fails closed
+on both partial artifact types, open work-order markers and non-empty stderr,
+and reports their counts separately. Its focused positive/negative tests, Ruff
+and the complete 584-test/three-skip Python suite passed. The strengthened live
+artifact scan covered 1,297 files and 2,520,918 bytes with zero plaintext
+findings, partial files, resume checkpoints, open markers and stderr bytes. At
+the following runtime checkpoint r14 had completed 195 sessions with zero
+failures and worker errors.
 
 Final acceptance requires:
 
