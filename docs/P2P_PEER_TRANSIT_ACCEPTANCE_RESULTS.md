@@ -1095,6 +1095,15 @@ checkpoint SHA-256 is
 `3C2A941EC6601548A4EA886FBD66378A3760C516E6B977CA267403EB87FD18A2`;
 the indexed poll remains flat despite the larger signed history.
 
+The next full idle resource checkpoint was captured at 502 sessions and
+5,014.875 monotonic seconds. Relative to the 104-session warm baseline,
+handles were +8, OS threads -1, private bytes +1,658,880, working set
++1,818,624 and traced Python growth +1,046,274 bytes. There were zero UDP
+endpoints, failures, worker errors, plaintext hits, partial/resume files, open
+markers, stdout or stderr bytes. The artifact audit scanned 3,523 files /
+6,872,748 bytes. The immutable checkpoint SHA-256 is
+`494B56CFF8434431AA3B5A00F982CB7B09FD8FB506E6A2DF21348CCCD09CC89B`.
+
 A further completion audit found that the soak content auditor trusted the
 runner's `worker_threads_stopped` field but could not independently prove that
 the runner PID had exited. `scripts/finalize_peer_transit_soak.py` now rejects
