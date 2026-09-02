@@ -1157,6 +1157,29 @@ remained. The r3 progress/final-audit SHA-256 values are
 The focused suite passed 50 tests; full Ruff and 590 Python tests passed with
 three skips. Data-plane and soak-runner blobs remain unchanged.
 
+A completion-boundary review then found that partial/checkpoint state was
+namespaced by authenticated source identity while the final destination path
+was only `transfer_id` plus filename. Two authenticated sources could therefore
+reuse both public fields and race separate locks. Windows reproduced the
+collision as a publication failure, while an independent POSIX rename proof
+confirmed that the second publisher could overwrite the first completed file.
+Commit `007b8b8` namespaces the final path by authenticated source identity and
+adds a two-source regression proving distinct final paths, matching hashes and
+zero residual state. The peer-transit suite passed 51 tests, the release-scope
+Ruff check over `rynmesh`, `scripts` and `tests` passed, and the complete Python
+suite passed 591 tests with three skips.
+
+Because this is a data-plane change, r14 was invalidated and deliberately
+stopped after 2,916 sessions and 29,175.093 monotonic seconds. The pre-stop
+invalidation snapshot SHA-256 is
+`4405255FDD2EEA67080D4C57AB220D9DD736BA1BA247AED814D9556C5E7A2E9E`; the
+post-stop confirmation SHA-256 is
+`29E8E4879D0140FE7EE15FDF697C1DABEBCB3A6C966711670362AA9981CB6171`.
+Both original PIDs were absent, owned UDP endpoints and residual artifacts were
+zero, and the stopped progress SHA-256 is
+`8E26112F5C5370CCBF6CBEED61731E70F4F66EA2B443F233B31820FB7B2A12C3`.
+No r14 duration is accepted; the replacement r15 soak must start from zero.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;

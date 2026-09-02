@@ -15,7 +15,7 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 | E. Transit failure | Peer-2 loss produces recovered direct/alternate transit or bounded explicit failure with no partial file | `actual_hard_failure`, `unavailable`, `_audit_unavailable_gate`; adaptive hard-failure tests | Local gate passed twice in r25/r26; hard fallback remained below 1 second |
 | F. No cloud relay | No TURN candidate/configuration, strict UDP/IP candidate validation, control-plane blackout survival, body-free registry | `control_plane_blackout`, `registry_control_plane`, candidate-filter tests, `_audit_hop`, `_audit_registry_control_plane` | Local gate passed twice in r25/r26; packet capture across three public egresses remains external |
 | G. Confidentiality/integrity | No plaintext at peer 2; tamper, replay, forged identity, expiry and recursive hop rejected; no arbitrary application destination | transit frame/registry scans; signed-session, cipher replay/tamper and result-identity tests | Automated security gates passed; invalidated r13 scans remained clean through its stop point |
-| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | New-runtime 1 GiB + 20-way r33 passed; replacement r14 soak and post-soak repeat are pending |
+| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | New-runtime 1 GiB + 20-way r33 passed; r14 was invalidated by the cross-source publication fix; r15 and the post-soak repeat are pending |
 
 ## Cross-cutting fail-closed checks
 
@@ -40,7 +40,9 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 
 ## Evidence fixed points
 
-- Data-plane runtime with verified-boundary resume: `ded37d2`.
+- Data-plane runtime with verified-boundary resume and source-namespaced final
+  publication: `007b8b8` (blob
+  `aeab2ca9c88c9fdb2a446208c24877e29e22c938`).
 - Soak runner blob: `1f8fe15de836702619911531d2c24b6e7e802a57`.
 - Strengthened real-impairment acceptance/auditor: `700cc99`.
 - Final fail-closed soak artifact auditor: `6545a5e`
@@ -60,8 +62,10 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - r33 main evidence: `C460B4D5A732CA4023CE94C1EE4CA671F5E7A9C2CC4B6D05D01554F9C0C9625B`.
 - r33 report audit: `44391ADA90B94383FB2358977CDD6788EE10E0C494DA789F844FDDC0C08CE328`.
 - r33 evidence audit: `ADDF37071EA398EF7B8AFC12F27A9FEBEBE369637FBF7DC4C12AE5C67570EA84`.
-- r14 replacement soak: started from zero at 2026-09-02 11:42:10
-  Asia/Hong_Kong; runtime and runner fixed points above remain mandatory.
+- Invalidated r14 replacement soak: started from zero at 2026-09-02 11:42:10
+  Asia/Hong_Kong and was deliberately stopped at 2,916 sessions and
+  29,175.093 monotonic seconds after the data-plane publication defect was
+  found. None of its accumulated duration is accepted or reused by r15.
 - r14 warm idle OS baseline: `F37A820FB0AFEAFB33D6839DD664B1881AD03C2CFB923C614662144859CAA606`.
 - r14 first refreshed target/transit signed-capacity snapshots:
   `AC1CCB5E27C6D7EA447AA88E00FE9F62346B2B0F70A8C8B23467B85FE85F4DFD` /
@@ -122,6 +126,15 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   versus warm-up: handles +3, OS threads -1, private bytes +6,201,344 and
   working set -1,769,472; 17,572 files passed all residual/plaintext scans,
   with zero UDP endpoints, stderr, partial/resume files or open markers.
+- r14 cross-source publication invalidation snapshot:
+  `4405255FDD2EEA67080D4C57AB220D9DD736BA1BA247AED814D9556C5E7A2E9E`;
+  the preserved pre-stop scan covered 2,910 sessions and 20,372 files with
+  zero recorded session failures or residual/plaintext findings.
+- r14 stop confirmation:
+  `29E8E4879D0140FE7EE15FDF697C1DABEBCB3A6C966711670362AA9981CB6171`;
+  worker PID 48864 and launcher PID 52188 were absent, owned UDP endpoints
+  were zero, and the final stopped progress SHA-256 was
+  `8E26112F5C5370CCBF6CBEED61731E70F4F66EA2B443F233B31820FB7B2A12C3`.
 - Shutdown-finalizer real integration progress/final-audit SHA-256:
   `ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` /
   `A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`;

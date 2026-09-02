@@ -197,6 +197,11 @@ atomically persists a checkpoint before returning a signed receipt. A later
 segment therefore starts only at a boundary independently verified by both
 ends.
 
+Both partial state and the final published filename are namespaced by the
+authenticated source identity together with `transfer_id`. Two sources that
+reuse the same transfer ID and filename therefore cannot collide with or
+replace one another's completed artifact.
+
 Every resumed segment negotiates a fresh ICE session. The source makes at most
 three resume attempts by default and never trusts bytes beyond the last signed
 receipt. The target truncates an unconfirmed tail, serializes writers for the
