@@ -842,7 +842,7 @@ def _peer_post_json(
         path,
         payload,
         max_bytes=_MAX_PEER_RESPONSE_BYTES,
-        headers=headers,
+        **({"headers": headers} if headers else {}),
     )
 
 

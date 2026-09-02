@@ -52,11 +52,20 @@ def test_http_peer_ndjson_handles_fragmented_unicode_and_bounds_events() -> None
     raw = '{"sequence":0,"delta":"世"}\n{"terminal":true}\n'.encode()
     transport = _ChunkTransport([raw[:25], raw[25:28], raw[28:]])
     client = HttpPeerClient("http://127.0.0.1:1", transport=transport)  # type: ignore[arg-type]
-    assert list(client.iter_post_ndjson("/stream", {"private": "request"})) == [
+    assert list(client.iter_post_ndjson(
+        "/stream",
+        {"private": "request"},
+        headers={"X-Rynmesh-Friend-Peer": "peer-friend"},
+    )) == [
         {"sequence": 0, "delta": "世"},
         {"terminal": True},
     ]
     assert transport.calls[0]["max_total_bytes"] == 8 * 1024 * 1024
+    assert transport.calls[0]["headers"] == {
+        "Content-Type": "application/json",
+        "Accept": "application/x-ndjson",
+        "X-Rynmesh-Friend-Peer": "peer-friend",
+    }
 
     oversized = _ChunkTransport([b'{"delta":"12345"}\n'])
     client = HttpPeerClient("http://127.0.0.1:1", transport=oversized)  # type: ignore[arg-type]
