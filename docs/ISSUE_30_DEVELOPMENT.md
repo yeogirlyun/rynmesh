@@ -70,11 +70,9 @@ original hostname for TLS SNI/certificate and HTTP Host validation.
 
 ## Remaining implementation slices
 
-1. Add signed best-effort remote revocation delivery and retry status.
-2. Add Tauri `rynmesh://` forwarding; the Webapp paste fallback and outbound
+1. Add Tauri `rynmesh://` forwarding; the Webapp paste fallback and outbound
    Join integration are complete.
-3. Include sanitized friend records in privacy export and revoke/delete in erase.
-4. Run two-node and accessibility acceptance.
+2. Run two-node and accessibility acceptance.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.
@@ -102,3 +100,17 @@ and focus transfer to the created/reviewed result heading. After a successful
 offline review, Join delegates exclusively to the local node. A changed signed
 endpoint set is held in `pending_endpoint_review` until the user approves that
 exact set or rejects it and deletes the credential.
+
+## Revocation delivery and privacy lifecycle
+
+Local revoke deletes authorization and the relationship secret before network
+delivery. The signed notice is posted through a freshly resolved and pinned
+reviewed endpoint. Failure persists only `remote_unreachable`, never response
+content; the local API and Friend panel can retry the same idempotent notice
+after reconnect. A hostname is never allowed to gain private-network reach on
+retry merely because DNS changed.
+
+Privacy status/export includes only public invite and friend projections. The
+export contains neither bearer links nor relationship secrets. Explicit
+`friends` erase first revokes locally and attempts signed notice delivery, then
+atomically removes invites, friendships, revocations, nonces, and credentials.

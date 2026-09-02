@@ -36,6 +36,7 @@ describe("live Friend Mesh client", () => {
     });
     await client.cancelFriendInvite("invite / one");
     await client.revokeFriend("peer:friend");
+    await client.retryFriendRevocation("peer:friend");
 
     expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
       "http://127.0.0.1:8791/api/local/friends",
@@ -46,6 +47,7 @@ describe("live Friend Mesh client", () => {
       "http://127.0.0.1:8791/api/local/friends/endpoint-review",
       "http://127.0.0.1:8791/api/local/friends/invites/invite%20%2F%20one",
       "http://127.0.0.1:8791/api/local/friends/revoke",
+      "http://127.0.0.1:8791/api/local/friends/revocations/retry",
     ]);
     expect(JSON.parse(String(fetchSpy.mock.calls[2][1]?.body))).toEqual({
       endpoints: ["https://friend.example:8791"],
@@ -70,6 +72,9 @@ describe("live Friend Mesh client", () => {
     expect(JSON.parse(String(fetchSpy.mock.calls[7][1]?.body))).toEqual({
       peer_id: "peer:friend",
       reason_code: "owner_revoked",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[8][1]?.body))).toEqual({
+      peer_id: "peer:friend",
     });
   });
 });

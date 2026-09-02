@@ -4,14 +4,15 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
+import type { FriendRecord, NodeClient } from "../domain/nodeClient";
 import type { ConfirmRequest } from "../domain/types";
 import Peers from "./Peers";
 
 afterEach(() => vi.restoreAllMocks());
 
-function renderPeers(confirm = vi.fn()) {
+function renderPeers(confirm = vi.fn(), client: NodeClient = makeFixtureNodeClient()) {
   const context: AppOutletContext = {
-    client: makeFixtureNodeClient(),
+    client,
     node: {
       node_name: "Test Ryn", peer_id: "peer:test", daemon_running: true,
       registry: "connected", peer_count: 0, local_items: 0, fetched_items: 0,
@@ -140,5 +141,35 @@ describe("Peers Friend Mesh", () => {
     await user.click(screen.getByRole("checkbox", { name: /I reviewed every endpoint/ }));
     expect(create).toBeDisabled();
     expect(screen.getByText("blocked local/link-local")).toBeInTheDocument();
+  });
+
+  it("retries a pending signed revocation without weakening local denial", async () => {
+    const user = userEvent.setup();
+    const client = makeFixtureNodeClient();
+    const revoked: FriendRecord = {
+      peer_id: "peer:offline-friend",
+      display_name: "Offline Friend",
+      network_id: "rynmesh-main",
+      reviewed_endpoints: ["https://offline.example:8791"],
+      granted_permissions: ["private-ai.use"],
+      received_permissions: [],
+      state: "revoked",
+      created_at: "2026-09-02T00:00:00Z",
+      accepted_at: "2026-09-02T00:00:00Z",
+      last_contact_at: null,
+      revoked_at: "2026-09-02T01:00:00Z",
+      last_delivery_error: "remote_unreachable",
+      source_invite_id: "invite-offline",
+    };
+    client.listFriends = vi.fn(async () => [{ ...revoked }]);
+    client.retryFriendRevocation = vi.fn(async () => {
+      revoked.last_delivery_error = null;
+      return { ok: true, state: "revoked" as const, revocation_id: "revoke-offline", delivery: "delivered" as const };
+    });
+    renderPeers(vi.fn(), client);
+
+    await user.click(await screen.findByRole("button", { name: "Retry signed notice" }));
+    expect(client.retryFriendRevocation).toHaveBeenCalledWith("peer:offline-friend");
+    expect((await screen.findAllByText(/local denial active/)).length).toBeGreaterThan(0);
   });
 });

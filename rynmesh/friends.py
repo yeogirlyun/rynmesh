@@ -458,6 +458,13 @@ class FriendshipStore:
             records = self._read()["friends"].values()
             return [self._public_friend(record) for record in records]
 
+    def friend(self, peer_id: str) -> dict[str, Any]:
+        with self._locked():
+            record = self._read()["friends"].get(peer_id)
+            if not isinstance(record, dict):
+                raise FriendError("friend_not_found")
+            return self._public_friend(record)
+
     def cancel_invite(self, invite_id: str, *, now: datetime | None = None) -> dict[str, Any]:
         with self._locked():
             data = self._read()
@@ -809,3 +816,39 @@ class FriendshipStore:
             secret_data["relationships"].pop(remote_peer_id, None)
             self._write(data, secret_data)
             return self._public_friend(record)
+
+    def mark_revocation_delivery(
+        self,
+        peer_id: str,
+        *,
+        revocation_id: str,
+        error_code: str | None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Persist only a bounded delivery state, never a peer response body."""
+
+        with self._locked():
+            data = self._read()
+            record = data["friends"].get(peer_id)
+            if (
+                not isinstance(record, dict)
+                or record.get("state") != "revoked"
+                or dict(record.get("revocation") or {}).get("payload", {}).get("revocation_id")
+                != revocation_id
+            ):
+                raise FriendError("revocation_not_found")
+            record["last_delivery_error"] = str(error_code)[:128] if error_code else None
+            record["revocation_delivered_at"] = (
+                None if error_code else _iso(_now_utc(now))
+            )
+            self._write(data)
+            return self._public_friend(record)
+
+    def erase_all(self) -> None:
+        """Delete all friendship metadata and credentials after explicit privacy erase."""
+
+        with self._locked():
+            self._write(
+                {"version": 1, "invites": {}, "friends": {}, "revocations": {}, "nonces": {}},
+                {"version": 1, "relationships": {}},
+            )

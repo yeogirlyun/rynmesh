@@ -14,7 +14,7 @@ from rynmesh.peer_http import create_app
 from rynmesh.registry import PeerRecord, sign_peer_record, verify_peer_record
 from rynmesh.services.peer_box import open_sealed, public_key_b64
 from rynmesh.store import RynmeshStore
-from rynmesh.transport import network_key_header
+from rynmesh.transport import TransportError, network_key_header
 
 
 def _acceptance_body(link: str, acceptor_key: bytes, messaging_key: X25519PrivateKey):
@@ -183,6 +183,133 @@ def test_two_nodes_join_through_transport_and_both_store_active_friendship(
     assert joined.json()["endpoint_review_required"] is False
     assert acceptor_client.get("/api/local/friends").json()[0]["peer_id"] == provider_store.peer_id
     assert provider_client.get("/api/local/friends").json()[0]["peer_id"] == acceptor_store.peer_id
+
+
+def test_signed_revocation_retries_after_offline_delivery_and_converges(
+    tmp_path, monkeypatch
+):
+    alice_home = tmp_path / "alice"
+    bob_home = tmp_path / "bob"
+    alice = RynmeshStore(home=alice_home, network_dir=tmp_path / "network")
+    bob = RynmeshStore(home=bob_home, network_dir=tmp_path / "network")
+    alice_friends = FriendshipStore(alice_home / "friends.json")
+    invitation = alice_friends.create_invite(
+        private_key_bytes=alice.private_key_bytes,
+        node_name="Alice",
+        network_id="rynmesh-main",
+        endpoints=["https://alice.example:8791"],
+    )
+    reviewed = verify_invite(invitation["link"])
+    accepted = alice_friends.consume_invite(
+        invite_id=reviewed["invite_id"],
+        one_time_secret=reviewed["one_time_secret"],
+        acceptor_peer_id=bob.peer_id,
+        display_name="Bob",
+        network_id="rynmesh-main",
+        endpoints=["https://bob.example:8791"],
+        permissions=["private-ai.use"],
+    )
+    bob_friends = FriendshipStore(bob_home / "friends.json")
+    bob_friends.register_received_relationship(
+        peer_id=alice.peer_id,
+        relationship_secret=accepted["relationship_secret"],
+        display_name="Alice",
+        network_id="rynmesh-main",
+        endpoints=["https://alice.example:8791"],
+        received_permissions=["private-ai.use"],
+        source_invite_id=reviewed["invite_id"],
+    )
+    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "mesh-key-that-is-not-a-friend-secret")
+    monkeypatch.setenv("RYNMESH_HOME", str(alice_home))
+    alice_client = TestClient(create_app(alice))
+    monkeypatch.setenv("RYNMESH_HOME", str(bob_home))
+    bob_client = TestClient(create_app(bob))
+    online = False
+
+    class RevocationBridge:
+        def post_bytes(self, url, body, *, timeout_s, max_bytes, headers=None):
+            from urllib.parse import urlparse
+
+            if not online:
+                raise TransportError("offline", reason="http_error")
+            response = bob_client.post(
+                urlparse(url).path,
+                content=body,
+                headers=headers or {"content-type": "application/json"},
+            )
+            return response.content
+
+    monkeypatch.setattr(
+        "rynmesh.peer_http.get_pinned_transport", lambda endpoint, address: RevocationBridge()
+    )
+    monkeypatch.setattr(
+        "rynmesh.friends.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 0))],
+    )
+
+    first = alice_client.post(
+        "/api/local/friends/revoke",
+        json={"peer_id": bob.peer_id, "reason_code": "owner_revoked"},
+    )
+    assert first.status_code == 200
+    assert first.json()["delivery"] == "remote_unreachable"
+    assert alice_client.get("/api/local/friends").json()[0]["last_delivery_error"] == "remote_unreachable"
+    assert bob_client.get("/api/local/friends").json()[0]["state"] == "active"
+
+    online = True
+    retried = alice_client.post(
+        "/api/local/friends/revocations/retry", json={"peer_id": bob.peer_id}
+    )
+    assert retried.status_code == 200
+    assert retried.json()["delivery"] == "delivered"
+    assert alice_client.get("/api/local/friends").json()[0]["last_delivery_error"] is None
+    assert bob_client.get("/api/local/friends").json()[0]["state"] == "revoked"
+    assert alice.peer_id not in (bob_home / "friends.secrets.json").read_text(encoding="utf-8")
+    # The exact same signed notice remains idempotent.
+    assert alice_client.post(
+        "/api/local/friends/revocations/retry", json={"peer_id": bob.peer_id}
+    ).json()["delivery"] == "delivered"
+
+
+def test_privacy_export_is_sanitized_and_friend_erase_deletes_credentials(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "privacy-node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    friends = FriendshipStore(home / "friends.json")
+    secret = base64.urlsafe_b64encode(b"s" * 32).decode("ascii").rstrip("=")
+    friends.register_received_relationship(
+        peer_id="bob",
+        relationship_secret=secret,
+        display_name="Bob",
+        network_id="rynmesh-main",
+        endpoints=["https://bob.example:8791"],
+        received_permissions=["private-ai.use"],
+        source_invite_id="invite-privacy",
+    )
+
+    class OfflineTransport:
+        def post_bytes(self, url, body, *, timeout_s, max_bytes, headers=None):
+            raise TransportError("offline", reason="http_error")
+
+    monkeypatch.setattr(
+        "rynmesh.peer_http.get_pinned_transport", lambda endpoint, address: OfflineTransport()
+    )
+    monkeypatch.setattr(
+        "rynmesh.friends.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 0))],
+    )
+    monkeypatch.setenv("RYNMESH_HOME", str(home))
+    client = TestClient(create_app(store))
+    exported = client.get("/api/local/privacy/export").json()
+    assert exported["friendships"][0]["peer_id"] == "bob"
+    assert secret not in json.dumps(exported)
+    assert client.get("/api/local/privacy/status").json()["friendship_records"] == 1
+
+    erased = client.post("/api/local/privacy/erase", json={"scopes": ["friends"]})
+    assert erased.status_code == 200
+    assert client.get("/api/local/friends").json() == []
+    assert secret not in (home / "friends.secrets.json").read_text(encoding="utf-8")
 
 
 def test_friend_hmac_is_network_key_alternative_and_replay_is_hidden(tmp_path, monkeypatch):
