@@ -73,6 +73,11 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   verification in the project environment.
 - r14 255-session idle OS checkpoint:
   `D787B4057CCFA4301E6C8B9B4646E16DF46527F7213816B28330EB61E6951538`.
+- r14 303-session idle OS checkpoint:
+  `D64097F09D6D29634D90F26A1F71EF49F212A5790E2DC55D9C7E2687DCBCB54E`;
+  relative to the 104-session warm baseline, handles were +3, OS threads -1,
+  private bytes +1,654,784 and working set +1,789,952, with zero UDP
+  endpoints, stderr, plaintext hits, partial/resume files or open markers.
 - Warm OS baseline: `73BF96E6AA16C7350A7888629E55671B7D4D6E4DCCC8E45A178CCC1113EDDDE3`.
 - 233-session OS checkpoint: `3AC7BB613DACA73987A0B321A9084CF743F3A25563341D414A42464F0C422657`.
 - 471-session OS checkpoint: `09806C0970DAAA93D9B574BA93C1668950F8E09DC177C74CAA81C98DF4C014BC`.
