@@ -15,7 +15,7 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 | E. Transit failure | Peer-2 loss produces recovered direct/alternate transit or bounded explicit failure with no partial file | `actual_hard_failure`, `unavailable`, `_audit_unavailable_gate`; adaptive hard-failure tests | Local gate passed twice in r25/r26; hard fallback remained below 1 second |
 | F. No cloud relay | No TURN candidate/configuration, strict UDP/IP candidate validation, control-plane blackout survival, body-free registry | `control_plane_blackout`, `registry_control_plane`, candidate-filter tests, `_audit_hop`, `_audit_registry_control_plane` | Local gate passed twice in r25/r26; packet capture across three public egresses remains external |
 | G. Confidentiality/integrity | No plaintext at peer 2; tamper, replay, forged identity, expiry and recursive hop rejected; no arbitrary application destination | transit frame/registry scans; signed-session, cipher replay/tamper and result-identity tests | Automated security gates passed; invalidated r13 scans remained clean through its stop point |
-| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | New-runtime 1 GiB + 20-way r33 passed; r14 was invalidated by the cross-source publication fix; r15 and the post-soak repeat are pending |
+| H. Resources/performance | Establishment under 5 s, fallback under 10 s, <=15% protocol overhead, <=128 MiB for 1 GiB, 20 real worker overlaps, leak-free 24 h | `performance`, two worker timelines, `_audit_memory_gate`, `_audit_overhead_gate`, replacement soak and final one-GiB report | New-runtime 1 GiB + 20-way r33 passed; r14 was invalidated by the cross-source publication fix; r15 is running from zero and the post-soak repeat is pending |
 
 ## Cross-cutting fail-closed checks
 
@@ -66,6 +66,10 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   Asia/Hong_Kong and was deliberately stopped at 2,916 sessions and
   29,175.093 monotonic seconds after the data-plane publication defect was
   found. None of its accumulated duration is accepted or reused by r15.
+- r15 replacement soak: started from a new directory at 2026-09-02
+  19:58:36.632343 Asia/Hong_Kong with launcher PID 48384 and worker PID 33976;
+  it must independently reach 86,400 `time.monotonic` seconds under runtime
+  `007b8b8` and the fixed soak-runner blob above.
 - r14 warm idle OS baseline: `F37A820FB0AFEAFB33D6839DD664B1881AD03C2CFB923C614662144859CAA606`.
 - r14 first refreshed target/transit signed-capacity snapshots:
   `AC1CCB5E27C6D7EA447AA88E00FE9F62346B2B0F70A8C8B23467B85FE85F4DFD` /

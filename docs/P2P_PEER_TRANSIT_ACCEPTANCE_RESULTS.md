@@ -1180,6 +1180,15 @@ zero, and the stopped progress SHA-256 is
 `8E26112F5C5370CCBF6CBEED61731E70F4F66EA2B443F233B31820FB7B2A12C3`.
 No r14 duration is accepted; the replacement r15 soak must start from zero.
 
+The replacement r15 soak started from a new directory at 2026-09-02
+19:58:36.632343 Asia/Hong_Kong under runtime `007b8b8` and unchanged soak-runner
+blob `1f8fe15de836702619911531d2c24b6e7e802a57`. Launcher PID 48384 owns actual
+worker PID 33976. Its first five sessions completed with zero failures, worker
+control errors, plaintext findings, UDP remnants, partial/checkpoint files,
+open-order markers, stdout or stderr bytes. It must independently reach 86,400
+monotonic seconds; its expected deadline is 2026-09-03 19:58:36.632343
+Asia/Hong_Kong.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
