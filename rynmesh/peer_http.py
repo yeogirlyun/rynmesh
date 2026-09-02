@@ -2712,7 +2712,15 @@ def create_app(store: RynmeshStore | None = None):
                 source_invite_id=reviewed["invite_id"],
                 state="pending_endpoint_review" if endpoint_changed else "active",
             )
-        except (FriendError, PeerTransportError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (
+            FriendError,
+            PeerTransportError,
+            TransportError,
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
             raise HTTPException(status_code=400, detail="friend_join_failed") from None
         return {
             "status": friend["state"],

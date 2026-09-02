@@ -44,11 +44,16 @@ same pinning guarantee.
 
 The Private AI integration persists an explicit `network`/`friends` publication
 policy and advertises only that policy, never friend IDs. In `friends` mode the
-HTTP route requires the per-friend body/path/timestamp/nonce HMAC even when a
-mesh network key is present, and `ProviderService` independently checks the
-signed Consumer peer against `private-ai.use` before capacity acquisition or
-inference. A task already claimed before revocation keeps its idempotent result;
-every new task is denied immediately after local revocation.
+complete-v1 HTTP route requires the per-friend body/path/timestamp/nonce HMAC
+even when a mesh network key is present, and `ProviderService` independently
+checks the signed Consumer peer against `private-ai.use` before capacity
+acquisition or inference. The HMAC primitive also proves that a signature for
+`/api/peer/llm/tasks` cannot be replayed to
+`/api/peer/llm/tasks/stream`. The canonical #30 branch does not contain #23's
+stream-v1 route, so route-level streaming ACL evidence must be produced on the
+final stacked/integration commit. A task already claimed before revocation
+keeps its idempotent result; every new task is denied immediately after local
+revocation.
 
 ## Secret boundaries
 
@@ -70,7 +75,17 @@ original hostname for TLS SNI/certificate and HTTP Host validation.
 
 ## Remaining implementation slices
 
-1. Run installed-desktop deep-link/scan, two-node, and accessibility acceptance.
+1. Decide the V1 outbound-proxy contract: implement equivalent authenticated
+   DNS pinning, or approve the fail-closed exclusion and expose a specific,
+   actionable user diagnostic.
+2. Prove friends-only ACL and post-revoke denial on #23's complete and streaming
+   routes on the final integrated commit.
+3. Run installed-desktop deep-link/scan acceptance on Windows, Linux, and macOS.
+4. Run two clean physical-node Join/use/revoke/offline-reconnect acceptance,
+   including observed DNS answer versus socket peer and denial before
+   capacity/inference.
+5. Complete maintainer protocol review, accessibility review, and exact-commit
+   backend/Webapp/Rust/package CI.
 
 No merge should describe the Issue as complete before all remaining slices and the
 acceptance report are green.
@@ -122,3 +137,9 @@ Privacy status/export includes only public invite and friend projections. The
 export contains neither bearer links nor relationship secrets. Explicit
 `friends` erase first revokes locally and attempts signed notice delivery, then
 atomically removes invites, friendships, revocations, nonces, and credentials.
+
+The strict completion audit found and fixed one local error-boundary defect:
+`pinned_proxy_unsupported` previously escaped the Join handler as an unhandled
+Transport error. Join now returns the bounded `friend_join_failed` response
+before constructing an outbound client, and the invitation remains unused.
+See `ISSUE_30_STRICT_COMPLETION_AUDIT.md` for the remaining proof boundary.

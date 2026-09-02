@@ -175,6 +175,8 @@ def test_friend_hmac_binds_sender_route_body_and_nonce_then_revocation_denies(tm
             now=NOW,
         )
 
+    # A complete-v1 authorization cannot be replayed to the streaming route.
+    # The eventual stream-v1 HTTP integration must use this exact route binding.
     wrong_path = store.make_auth_headers(
         "bob", method="POST", path="/api/peer/llm/tasks", body=body, now=NOW, nonce="n-2"
     )
@@ -182,7 +184,7 @@ def test_friend_hmac_binds_sender_route_body_and_nonce_then_revocation_denies(tm
         store.verify_auth_headers(
             wrong_path,
             method="POST",
-            path="/api/peer/llm/admin",
+            path="/api/peer/llm/tasks/stream",
             body=body,
             application_peer_id="bob",
             required_permission="private-ai.use",
@@ -198,6 +200,27 @@ def test_friend_hmac_binds_sender_route_body_and_nonce_then_revocation_denies(tm
             required_permission="private-ai.use",
             now=NOW,
         )
+
+    stream_headers = store.make_auth_headers(
+        "bob",
+        method="POST",
+        path="/api/peer/llm/tasks/stream",
+        body=body,
+        now=NOW,
+        nonce="n-3",
+    )
+    assert (
+        store.verify_auth_headers(
+            stream_headers,
+            method="POST",
+            path="/api/peer/llm/tasks/stream",
+            body=body,
+            application_peer_id="bob",
+            required_permission="private-ai.use",
+            now=NOW,
+        )
+        == "bob"
+    )
 
     signed_revocation = store.revoke(
         "bob", private_key_bytes=alice_key, local_peer_id=alice_peer, now=NOW
