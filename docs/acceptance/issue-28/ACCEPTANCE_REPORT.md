@@ -1,87 +1,104 @@
 # Formal acceptance report: Transport-backed Private AI writes (#28)
 
-Decision: ACCEPTED
-Reviewed commit: `933c312c6ef5e3e37799840078c9a1fd84a40e5c`
-Branch: `codex/issue-28-transport-post`
-Acceptance date: 2026-09-02
+Decision: PENDING EXACT-COMMIT CI
+Reviewed feature baseline: `bf3607222e6e817a85cc507e01ff24ca8ee28c51`
+Reviewed hardening commit: `5c1e690`
+Branch: `codex/issue-28-acceptance-isolated`
+Review date: 2026-09-02
+Acceptance date: pending
+
+## Decision summary
+
+The feature behavior is implemented and the independent local acceptance suite
+passes. A second review found three gaps in the previously accepted baseline:
+
+1. chained transport and JSON-decode exceptions could reproduce private body
+   markers in a normally formatted traceback;
+2. a caller header could override the fronted HTTPS Host/Connection metadata;
+3. malformed fronted/ECH HTTP responses were not consistently normalized.
+
+Commit `5c1e690` fixes those gaps and adds regression coverage, including direct
+settlement and cancellation call-site tests. The earlier `ACCEPTED` decision is
+therefore replaced by this pending decision until the repository CI runs on a
+branch head containing the hardening commit and this acceptance package.
 
 ## Scope under acceptance
 
-This report accepts only issue #28: bounded POST support across the Transport
-seam and migration of the three Private AI peer HTTP writes. Streaming,
-settlement-ledger unification, background-worker refactoring, and public-WAN
-P2P certification are excluded.
+This report covers only issue #28: bounded POST support across the Transport
+seam and migration of Private AI task, settlement, and cancellation peer HTTP
+writes. Streaming, settlement-ledger unification, background-worker
+refactoring, and public-WAN P2P certification remain excluded.
 
-## Evidence collected
+## Documentation package
 
-### Static and focused automated verification
+| Artifact | Path | Status |
+|---|---|---|
+| Product specification | `docs/product/ISSUE_28_TRANSPORT_POST_PRODUCT_SPEC.md` | complete |
+| Development plan | `docs/ISSUE_28_TRANSPORT_POST_WORK_PLAN.md` | complete |
+| Test plan | `docs/testing/ISSUE_28_TRANSPORT_POST_TEST_PLAN.md` | complete |
+| Requirements traceability | `docs/requirements/ISSUE_28_TRANSPORT_POST_REQUIREMENTS.md` | complete |
+| Acceptance report | this file | final CI pending |
+
+## Independent local evidence
+
+### Focused and static verification
 
 | Check | Result | Evidence |
 |---|---|---|
-| Ruff on changed Python and focused tests | PASS | `All checks passed` |
-| Transport unit suite | PASS | 25 passed |
-| Transport + LLM focused regression | PASS | 66 passed |
+| Changed-file Ruff | PASS | `All checks passed!` |
+| Transport + LLM focused suite | PASS | 72 passed, 1 deprecation warning |
 | Git whitespace validation | PASS | `git diff --check` clean |
-| Branch isolation | PASS | One issue-specific commit based on public main |
+| Branch isolation | PASS | dedicated worktree and `codex/issue-28-acceptance-isolated` branch |
 
-The focused tests cover exact body and content type, network authentication,
-exact/max+1 response boundaries, redirect rejection, fronted Host behavior,
-CDN-WebSocket framing, REALITY streaming bounds, meek inner envelopes, ECH
-fallback, UTF-8/invalid JSON handling, plugin fail-closed behavior, and private
-marker exclusion.
+Focused verification command:
 
-### Isolated multi-process acceptance
+```text
+D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests/test_transport.py tests/test_llm_package.py tests/test_llm_hardening.py -q
+```
 
-Docker Desktop could not start on the Windows host because its own stale
-`dockerInference` runtime socket crashed the engine. No application code caused
-that failure. An equivalent isolated five-process topology was run instead:
-Registry, encrypted Relay, Provider node, Consumer node, and an existing local
-OpenAI-compatible model server, each with separate data directories.
+The 72 tests include exact/max+1 response boundaries, redirect rejection,
+mandatory authentication, fronted Host protection, CDN-WebSocket framing,
+REALITY/meek/ECH paths, plugin fail-closed behavior, UTF-8/object-only JSON,
+formatted-traceback privacy markers, the 2 MiB LLM cap, and explicit settlement
+and cancellation route assertions.
 
-| Flow | Result | Safe evidence |
-|---|---|---|
-| Direct task creation | PASS | `peer_http_direct`, `relay_used=false`, non-empty output |
-| Direct settlement | PASS | Provider contained exactly one matching earning event |
-| Direct cancellation | PASS | Consumer reached `cancelled`; no output was returned |
-| Encrypted Relay regression | PASS | `encrypted_relay`, `relay_used=true`, succeeded |
-| Cleanup | PASS | All temporary node/registry processes stopped; test ports released |
+### Complete Windows suite
 
-No prompt or model output is reproduced in this report.
+With `PYTHONUTF8=1`, the complete suite produced:
 
-## Complete-suite status
+```text
+8 failed, 536 passed, 3 skipped
+```
 
-The Windows full suite reached 531 passing tests and 3 skips. Seven remaining
-failures are pre-existing platform assumptions: POSIX executable/0600 modes,
-an unavailable WSL bash, and `select()` on a Windows subprocess pipe. They do
-not execute changed #28 code. These are not treated as Linux CI evidence.
+The eight failures are outside changed #28 code:
 
-The Windows-only exclusions above are superseded by the successful Ubuntu
-backend and Docker LLM E2E jobs recorded below. They remain useful portability
-follow-up items but are not acceptance exceptions for issue #28.
+- three POSIX executable-bit or unavailable-WSL shell assertions;
+- three POSIX `0600` mode assertions on Windows;
+- one pre-existing Windows atomic file-replace/read concurrency failure in
+  Signal50 media operations;
+- one `select()`-on-Windows-subprocess-pipe failure in the MCP smoke test.
 
-## Acceptance checklist
+The focused #28 suite has zero failures. These local exclusions are not Linux
+evidence and require the Ubuntu backend job to pass on the final commit.
 
-- [x] Product specification is present and linked.
-- [x] Traceable functional, security, and reliability requirements are present.
-- [x] Development plan and rollback constraints are documented.
-- [x] Transport exposes bounded POST bytes.
-- [x] Every bundled Transport has a POST implementation.
-- [x] `HttpPeerClient.post_json` has stable, bounded JSON behavior.
-- [x] Task, settlement, and cancellation writes use the active Transport.
-- [x] Authentication, profile, proxy, and redirect policies are preserved.
-- [x] Private bodies are absent from public errors and acceptance evidence.
-- [x] Direct and encrypted Relay multi-process flows pass.
-- [x] Focused tests and lint pass.
-- [x] Required remote CI jobs pass on the reviewed commit.
-- [x] Final reviewer decision and acceptance date are recorded.
+### Local E2E availability
 
-## Remote CI evidence
+Docker Desktop was unavailable during this independent review: the configured
+Linux engine named pipe did not exist. No Docker stack was started, so no cleanup
+was necessary. The earlier isolated direct task/settlement/cancellation evidence
+is retained as prior-review evidence, but this review does not mislabel it as a
+new execution. Direct settlement/cancellation routing was independently
+rechecked with new call-site regression tests.
 
-Pull request: https://github.com/yeogirlyun/rynmesh/pull/32
-Reviewed CI commit: `2e074d70cf9cba5a93655241e47b97f7bda08448`
-Workflow run: https://github.com/yeogirlyun/rynmesh/actions/runs/33643713617
+## Verified remote baseline evidence
 
-| CI job | Result |
+The public GitHub run for baseline `bf36072` was independently inspected:
+
+- pull request: https://github.com/yeogirlyun/rynmesh/pull/32
+- workflow: https://github.com/yeogirlyun/rynmesh/actions/runs/33644630620
+- result: Success
+
+| CI job on `bf36072` | Result |
 |---|---|
 | contribution-workflow | PASS |
 | backend | PASS |
@@ -91,9 +108,29 @@ Workflow run: https://github.com/yeogirlyun/rynmesh/actions/runs/33643713617
 | desktop-compile (x86_64) | PASS |
 | desktop-compile (aarch64) | PASS |
 
-## Final decision
+This proves the pre-hardening feature baseline, including Ubuntu full-suite and
+Docker P2P/Relay regressions. It is not substituted for CI on `5c1e690`.
 
-Accepted. Issue #28 meets its functional, security, privacy, compatibility,
-documentation, focused-test, full-suite, E2E, packaging, and desktop compile
-requirements. It is ready for maintainer review and merge through pull request
-#32. This decision does not accept any explicitly excluded follow-up scope.
+## Acceptance checklist
+
+- [x] Product specification is complete and linked.
+- [x] Development plan and rollback constraints are documented.
+- [x] Independent test plan and pass/fail rules are documented.
+- [x] Traceable functional, security, privacy, and reliability requirements exist.
+- [x] Transport exposes bounded POST bytes.
+- [x] Every bundled Transport has a POST implementation.
+- [x] `HttpPeerClient.post_json` is bounded, object-only, and metadata-error-only.
+- [x] Task, settlement, and cancellation writes use the active Transport.
+- [x] Authentication, fronting, proxy, and redirect policies are preserved.
+- [x] Private body markers are absent from formatted public tracebacks.
+- [x] Focused tests, Ruff, and whitespace validation pass locally.
+- [x] Pre-hardening baseline CI and E2E evidence were independently verified.
+- [ ] Required CI jobs pass on a head containing `5c1e690` and this report.
+- [ ] Final reviewed head, workflow URL, reviewer decision, and acceptance date are recorded.
+
+## Final gate
+
+Do not merge or close issue #28 based on this report yet. Cherry-pick the
+hardening and documentation commits onto PR #32 (or open an equivalent isolated
+PR), run the complete required workflow, and update this report with the exact
+green head and workflow URL. Only then may `Decision` change to `ACCEPTED`.
