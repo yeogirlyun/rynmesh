@@ -206,12 +206,15 @@ python scripts/finalize_peer_transit_soak.py `
 ```
 
 Run the finalizer only after the soak command has returned. It independently
-rejects a still-live worker PID, invokes the strict duration/content/artifact
-audit, rechecks the PID after scanning, and binds the progress-file SHA-256 to
-the final report. Since an absent process cannot own a UDP endpoint, the report
-also records zero worker-owned UDP endpoints with that proof method. If an
-external wrapper launched the worker, pass its PID with `--launcher-pid` so the
-same fail-closed check covers both processes.
+rejects a still-active worker PID, invokes the strict duration/content/artifact
+audit, rechecks the process after scanning, and binds the progress-file SHA-256
+to the final report. On Windows it distinguishes `STILL_ACTIVE` from an exited
+process whose kernel object remains open briefly, and rejects the original
+process while allowing a PID reused after the final report timestamp. Since a
+stopped original process cannot own a UDP endpoint, the report also records
+zero worker-owned UDP endpoints with that proof method. If an external wrapper
+launched the worker, pass its PID with `--launcher-pid` so the same fail-closed
+check covers both processes.
 
 During a long soak, sample the provider's open-order poll latency as the
 registry history grows. File-backed workers must use the per-provider

@@ -883,15 +883,29 @@ def test_final_soak_audit_binds_progress_hash_and_absent_processes(
     monkeypatch,
 ) -> None:
     progress = tmp_path / "progress.json"
-    progress.write_text('{"pid": 12345, "result": "pass"}\n', encoding="utf-8")
+    progress.write_text(
+        '{"pid": 12345, "result": "pass", "updated_at": "2026-09-02T00:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
     expected_hash = hashlib.sha256(progress.read_bytes()).hexdigest()
-    observed_pids: list[int] = []
+    waited_pids: list[tuple[int, float]] = []
+    rechecked_pids: list[tuple[int, float]] = []
 
-    def process_exists(pid: int) -> bool:
-        observed_pids.append(pid)
+    def wait_for_process_exit(
+        pid: int,
+        timeout_s: float,
+        *,
+        progress_updated_epoch: float,
+    ) -> bool:
+        waited_pids.append((pid, timeout_s))
+        return True
+
+    def original_process_alive(pid: int, *, progress_updated_epoch: float) -> bool:
+        rechecked_pids.append((pid, progress_updated_epoch))
         return False
 
-    monkeypatch.setattr(finalize_soak_module, "_process_exists", process_exists)
+    monkeypatch.setattr(finalize_soak_module, "_wait_for_process_exit", wait_for_process_exit)
+    monkeypatch.setattr(finalize_soak_module, "_original_process_alive", original_process_alive)
     monkeypatch.setattr(
         finalize_soak_module,
         "audit_soak_report",
@@ -908,12 +922,15 @@ def test_final_soak_audit_binds_progress_hash_and_absent_processes(
         launcher_pid=54321,
     )
 
-    assert observed_pids == [12345, 54321, 12345, 54321]
+    assert waited_pids == [(12345, 5.0), (54321, 5.0)]
+    assert [pid for pid, _updated in rechecked_pids] == [12345, 54321]
     assert report["progress_sha256"] == expected_hash
     assert report["worker_process_alive"] is False
     assert report["launcher_process_alive"] is False
     assert report["owned_udp_endpoints"] == 0
-    assert report["udp_endpoint_proof"] == "owner_process_absent"
+    assert report["udp_endpoint_proof"] == (
+        "original_owner_process_absent_or_pid_reused_after_report"
+    )
     assert report["soak_audit"]["ok"] is True
 
 
@@ -928,8 +945,15 @@ def test_final_soak_audit_rejects_live_process(
     message,
 ) -> None:
     progress = tmp_path / "progress.json"
-    progress.write_text('{"pid": 12345, "result": "pass"}\n', encoding="utf-8")
-    monkeypatch.setattr(finalize_soak_module, "_process_exists", lambda pid: pid == live_pid)
+    progress.write_text(
+        '{"pid": 12345, "result": "pass", "updated_at": "2026-09-02T00:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        finalize_soak_module,
+        "_wait_for_process_exit",
+        lambda pid, timeout_s, **kwargs: pid != live_pid,
+    )
 
     with pytest.raises(AuditError, match=message):
         finalize_soak_module.finalize_soak(
@@ -938,6 +962,36 @@ def test_final_soak_audit_rejects_live_process(
             min_sessions=100,
             launcher_pid=54321,
         )
+
+
+def test_final_soak_audit_distinguishes_reused_pid(monkeypatch) -> None:
+    monkeypatch.setattr(finalize_soak_module, "_process_exists", lambda pid: True)
+    monkeypatch.setattr(
+        finalize_soak_module,
+        "_process_started_at_epoch",
+        lambda pid: 201.0,
+    )
+
+    assert (
+        finalize_soak_module._original_process_alive(
+            12345,
+            progress_updated_epoch=200.0,
+        )
+        is False
+    )
+
+    monkeypatch.setattr(
+        finalize_soak_module,
+        "_process_started_at_epoch",
+        lambda pid: 199.0,
+    )
+    assert (
+        finalize_soak_module._original_process_alive(
+            12345,
+            progress_updated_epoch=200.0,
+        )
+        is True
+    )
 
 
 def test_route_acceptance_auditor_enforces_timing_metrics_and_no_flap() -> None:

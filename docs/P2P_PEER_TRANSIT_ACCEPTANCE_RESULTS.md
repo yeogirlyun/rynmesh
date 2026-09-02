@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 587 passed, 3 skipped after adding the independent process-shutdown finalizer |
+| Complete Python suite | Pass | 588 passed, 3 skipped after the cross-process shutdown-finalizer integration fix |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -1082,9 +1082,21 @@ the runner PID had exited. `scripts/finalize_peer_transit_soak.py` now rejects
 a live worker (and optional launcher) before and after the strict content scan,
 binds the exact progress-file SHA-256 into its report and records that an absent
 owner process has zero owned UDP endpoints. A live r14 negative check exited 1
-and created no final report. All three new positive/negative tests passed; Ruff
-and the complete Python suite passed 587 tests with three skips. This finalizer
+and created no final report. All four positive/negative tests passed; Ruff
+and the complete Python suite passed 588 tests with three skips. This finalizer
 and test-only change does not alter the running data plane or soak runner.
+
+A real two-second three-node integration soak then exposed Windows' distinction
+between an exited process and its temporarily retained kernel object:
+`OpenProcess` may still succeed even though the process is no longer active.
+The finalizer now checks `GetExitCodeProcess == STILL_ACTIVE`, allows a bounded
+five-second object-release window, and distinguishes a PID reused after the
+final progress timestamp. The repeated real finalization passed 4 sessions over
+2.172 seconds, scanned 37 files / 78,010 bytes and reported zero stderr,
+plaintext, partial files, resume checkpoints and open markers. Its progress
+and final-audit SHA-256 values are
+`ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` and
+`A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`.
 
 Final acceptance requires:
 
@@ -1096,7 +1108,8 @@ Final acceptance requires:
   stdout/stderr for the unique soak plaintext marker, plus empty stderr and
   zero `.part`, `.resume.json` or open-work-order remnants;
 - both worker threads stopped and an external finalizer proving the worker and
-  launcher processes absent before and after the artifact scan;
+  launcher processes not active before and after the artifact scan, including
+  correct handling of exited Windows objects and post-report PID reuse;
 - traced Python memory growth no greater than 32 MiB after warm-up.
 
 This document must be updated with the final session count and memory result

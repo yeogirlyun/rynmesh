@@ -46,7 +46,7 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
 - Final fail-closed soak artifact auditor: `6545a5e`
   (blob `8cd8229652568e0f50acfe9bda772c301b4907b8`).
 - Independent soak shutdown finalizer blob:
-  `8bd7c7e47a60ac45979766b365a604a54a6bba99`.
+  `9f70795653dfe38021bf92be17095fbd29594efb`.
 - r25 report: `1F1E9DAAA1B075A5A629A21A3013E6823CDAD579935DC1A33E801B79B991A7D1`.
 - r26 report: `BA8FF94533F31920DD311A6BC1CAB9CBDF1D59DF4D0D2F2A99B3C6F82656D3A7`.
 - r30 one-GiB report: `C64D64EFF5D76C7D9D14440C4D9A2962503060979B0A2C3547E46A696EB6C220`.
@@ -81,6 +81,10 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   relative to the 104-session warm baseline, handles were +3, OS threads -1,
   private bytes +1,654,784 and working set +1,789,952, with zero UDP
   endpoints, stderr, plaintext hits, partial/resume files or open markers.
+- Shutdown-finalizer real integration progress/final-audit SHA-256:
+  `ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` /
+  `A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`;
+  four sessions completed and the independent post-exit scan passed.
 - Warm OS baseline: `73BF96E6AA16C7350A7888629E55671B7D4D6E4DCCC8E45A178CCC1113EDDDE3`.
 - 233-session OS checkpoint: `3AC7BB613DACA73987A0B321A9084CF743F3A25563341D414A42464F0C422657`.
 - 471-session OS checkpoint: `09806C0970DAAA93D9B574BA93C1668950F8E09DC177C74CAA81C98DF4C014BC`.
