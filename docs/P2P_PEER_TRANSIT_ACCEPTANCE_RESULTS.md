@@ -788,6 +788,18 @@ remained at eight, private bytes decreased by 270,336 and working set decreased
 by 1,404,928 bytes. UDP endpoints, open markers, partial files, stderr, failures
 and worker errors were all zero at the idle checkpoint.
 
+A later same-field checkpoint after 471 sessions is preserved at
+`.codex-tmp/peer-transit-soak-24h-r13/os-checkpoint-471.json`, SHA-256
+`09806C0970DAAA93D9B574BA93C1668950F8E09DC177C74CAA81C98DF4C014BC`.
+Across the 337 sessions after the warm baseline, OS threads remained at eight,
+handles increased by four, private bytes increased by 1,470,464 and working set
+decreased by 2,334,720 bytes; traced Python growth increased by only 397,101
+bytes. UDP endpoints, open markers, partial files, stderr, failures and worker
+errors were again zero. At the same point, 100 open-order polls per provider
+had 0.228/0.228 ms medians, 0.304/0.282 ms p95 and maxima below 0.53 ms despite
+942 canonical historical work orders. Both refreshed capacity records passed
+signature verification with their expected `transit` and `target` roles.
+
 The `a378bad` package candidate also passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
 276,476-byte wheel has SHA-256
