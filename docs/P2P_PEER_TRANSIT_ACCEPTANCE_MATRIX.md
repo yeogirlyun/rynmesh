@@ -72,6 +72,11 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   at 877 sessions and 8,767.844 monotonic seconds. The interruption evidence is
   `45ADC977379E60A8772D23856EBA471D6845732C9423BE61A2A1D9768F8B9F8D`;
   neither its elapsed time nor its checkpoints count toward the 24-hour gate.
+- r16 replacement soak: started from a new directory at 2026-09-02
+  22:39:05.446090 Asia/Hong_Kong under a Windows scheduled-task owner so the
+  process lifetime is independent of an individual Codex turn. Task wrapper PID
+  10696 owns virtual-environment launcher PID 24064 and worker PID 50548. r16
+  must independently reach 86,400 `time.monotonic` seconds.
 - r15 300-session warm idle OS baseline:
   `8268FC310809D1BAEBD68D1FEA601039C720E65FC59CDE8FCEFFA101B5215155`;
   it records 314 handles, eight OS threads, 37,273,600 private bytes, a

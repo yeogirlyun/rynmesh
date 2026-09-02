@@ -1231,6 +1231,15 @@ The process exit reason is not present in the runner evidence, so no unsupported
 cause is claimed. r15 did not reach the duration gate and none of its elapsed
 time is accepted.
 
+r16 then started from a new directory at 2026-09-02 22:39:05.446090
+Asia/Hong_Kong. To decouple the run from a single Codex turn, Windows Task
+Scheduler owns wrapper PID 10696, which owns virtual-environment launcher PID
+24064 and actual worker PID 50548. Its first five sessions completed with zero
+failures, worker control errors, plaintext findings, UDP remnants,
+partial/checkpoint files, open markers or log bytes. Runtime and soak-runner
+blobs remain fixed. r16 must reach 86,400 monotonic seconds independently; its
+expected deadline is 2026-09-03 22:39:05.446090 Asia/Hong_Kong.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
