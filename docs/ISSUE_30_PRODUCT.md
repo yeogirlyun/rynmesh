@@ -1,6 +1,6 @@
 # Issue #30 product specification: Friend Mesh
 
-Status: implementation in progress; Webapp safety/review slice implemented, full Join pending
+Status: implementation in progress; Webapp create/review/Join slice implemented
 Issue: https://github.com/yeogirlyun/rynmesh/issues/30
 
 ## User outcome
@@ -81,7 +81,10 @@ review; and active/revoked friend inspection and high-risk revocation. Offline
 review shows the local-node signature verdict, fingerprint, network, every
 endpoint and its address class, permission scope, and expiry before any contact.
 
-The Join control intentionally remains disabled and explains that outbound
-Transport, DNS resolve-and-pin, and received-relationship persistence are not
-integrated. This is a safety boundary, not a simulated success state. Tauri
-deep-link forwarding is also outside this slice, so Issue #30 remains incomplete.
+After offline review, Join calls only the local node. The node performs the
+outbound Transport request, DNS resolve-and-pin checks, one-use credential
+rotation, and relationship persistence. If the inviter returns changed signed
+endpoints, the browser requires a second exact approve/reject decision; reject
+deletes the local credential. Editing the invitation or LAN-risk choice clears
+the old review so a different link cannot inherit it. Tauri deep-link forwarding,
+remote revoke convergence, privacy lifecycle work, and physical acceptance remain.

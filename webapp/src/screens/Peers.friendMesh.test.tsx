@@ -62,7 +62,7 @@ describe("Peers Friend Mesh", () => {
     fetchSpy.mockRestore();
   });
 
-  it("reviews signature, fingerprint, network, scope, expiry, and every endpoint before contact", async () => {
+  it("reviews locally before contact, then joins only through the local node", async () => {
     const user = userEvent.setup();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     renderPeers();
@@ -81,10 +81,33 @@ describe("Peers Friend Mesh", () => {
     expect(within(review).getByText("private-ai.use")).toBeInTheDocument();
     expect(within(review).getByText("https://friend.example:8791")).toBeInTheDocument();
     expect(within(review).getByText("unresolved hostname")).toBeInTheDocument();
-    expect(within(review).getByRole("button", { name: "Join Friend Mesh" })).toBeDisabled();
-    expect(within(review).getByText(/Outbound Join, DNS resolve-and-pin checks/)).toBeInTheDocument();
+    const join = within(review).getByRole("button", { name: "Join Friend Mesh" });
+    expect(join).toBeEnabled();
+    expect(within(review).getByText(/No endpoint was contacted during review/)).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    await user.click(join);
+    const friendsPanel = screen.getByRole("heading", { name: "Friends" }).parentElement!;
+    expect(await within(friendsPanel).findByText("My Ryn Node")).toBeInTheDocument();
+    expect(within(friendsPanel).getAllByText("active").length).toBeGreaterThan(0);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it("invalidates an offline review whenever the pasted link changes", async () => {
+    const user = userEvent.setup();
+    renderPeers();
+    await createInvite(user);
+    const field = screen.getByLabelText("Paste invitation link");
+    const link = (screen.getByLabelText("One-use invitation link") as HTMLTextAreaElement).value;
+
+    await user.type(field, link);
+    await user.click(screen.getByRole("button", { name: "Verify and review offline" }));
+    expect(await screen.findByRole("heading", { name: "Verified invitation" })).toBeInTheDocument();
+
+    await user.type(field, "changed");
+    expect(screen.queryByRole("heading", { name: "Verified invitation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Join Friend Mesh" })).not.toBeInTheDocument();
   });
 
   it("keeps friendship separate from trust roots and uses high-risk immediate local revoke", async () => {

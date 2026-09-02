@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   FriendInviteRecord,
   FriendInviteReview,
+  FriendJoinResult,
   FriendPermission,
   FriendRecord,
   NodeClient,
@@ -73,6 +74,7 @@ export default function FriendMeshPanel({
   const [reviewLink, setReviewLink] = useState("");
   const [allowLanReview, setAllowLanReview] = useState(false);
   const [review, setReview] = useState<FriendInviteReview | null>(null);
+  const [pendingJoin, setPendingJoin] = useState<FriendJoinResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const createdHeading = useRef<HTMLHeadingElement>(null);
@@ -150,6 +152,60 @@ export default function FriendMeshPanel({
         link: reviewLink.trim(),
         allow_private_endpoints: allowLanReview,
       }));
+    } catch (reviewError) {
+      setError(errorText(reviewError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const joinReviewedInvite = async () => {
+    if (!review) return;
+    setError("");
+    setBusy(true);
+    try {
+      const result = await client.joinFriend({
+        link: reviewLink.trim(),
+        endpoint: review.endpoints[0],
+        allow_private_endpoints: allowLanReview,
+      });
+      setFriends((current) => [
+        result.friend,
+        ...current.filter((item) => item.peer_id !== result.friend.peer_id),
+      ]);
+      if (result.endpoint_review_required) {
+        setPendingJoin(result);
+        notify("warn", "The inviter returned changed endpoints. Review them before activation.");
+      } else {
+        setPendingJoin(null);
+        notify("ok", `${result.friend.display_name} joined Friend Mesh.`);
+      }
+      await refreshAfterMutation("Friendship was stored, but the lists could not be refreshed.");
+    } catch (joinError) {
+      setError(errorText(joinError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decideEndpointChange = async (approve: boolean) => {
+    if (!pendingJoin) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await client.reviewFriendEndpoints({
+        peer_id: pendingJoin.friend.peer_id,
+        approve,
+        endpoints: pendingJoin.returned_endpoints,
+      });
+      setFriends((current) => [
+        result.friend,
+        ...current.filter((item) => item.peer_id !== result.friend.peer_id),
+      ]);
+      setPendingJoin(null);
+      notify(approve ? "ok" : "warn", approve
+        ? "Changed endpoints approved; friendship is active."
+        : "Changed endpoints rejected; the local relationship credential was deleted.");
     } catch (reviewError) {
       setError(errorText(reviewError));
     } finally {
@@ -269,12 +325,20 @@ export default function FriendMeshPanel({
               <span>Paste invitation link</span>
               <textarea
                 value={reviewLink}
-                onChange={(event) => setReviewLink(event.target.value)}
+                onChange={(event) => {
+                  setReviewLink(event.target.value);
+                  setReview(null);
+                  setPendingJoin(null);
+                }}
                 placeholder="rynmesh://join/..."
               />
             </label>
             <label className="friend-risk-check">
-              <input type="checkbox" checked={allowLanReview} onChange={(event) => setAllowLanReview(event.target.checked)} />
+              <input type="checkbox" checked={allowLanReview} onChange={(event) => {
+                setAllowLanReview(event.target.checked);
+                setReview(null);
+                setPendingJoin(null);
+              }} />
               Permit the local verifier to display private-LAN endpoints for explicit review.
             </label>
             <Button type="submit" disabled={busy || !reviewLink.trim()}>Verify and review offline</Button>
@@ -293,9 +357,33 @@ export default function FriendMeshPanel({
                 <dt>Endpoints</dt><dd><EndpointList endpoints={review.endpoints} /></dd>
               </dl>
               <p id="friend-join-note" className="friend-warning">
-                Join is not available in this build. Outbound Join, DNS resolve-and-pin checks, and relationship persistence are still being integrated; no contact has occurred.
+                No endpoint was contacted during review. Join now asks the local node to resolve and pin the selected endpoint, rotate the one-use secret, and persist the encrypted relationship.
               </p>
-              <Button variant="primary" disabled aria-describedby="friend-join-note">Join Friend Mesh</Button>
+              <Button
+                variant="primary"
+                disabled={busy || Boolean(pendingJoin)}
+                aria-describedby="friend-join-note"
+                onClick={() => void joinReviewedInvite()}
+              >
+                Join Friend Mesh
+              </Button>
+              {pendingJoin ? (
+                <div className="friend-endpoint-review" role="alert">
+                  <h4>Endpoints changed during Join</h4>
+                  <p>Original signed endpoints:</p>
+                  <EndpointList endpoints={pendingJoin.original_endpoints} />
+                  <p>Returned signed endpoints requiring a second decision:</p>
+                  <EndpointList endpoints={pendingJoin.returned_endpoints} />
+                  <div className="button-row">
+                    <Button variant="primary" disabled={busy} onClick={() => void decideEndpointChange(true)}>
+                      Approve exact endpoints
+                    </Button>
+                    <Button variant="danger" disabled={busy} onClick={() => void decideEndpointChange(false)}>
+                      Reject and delete credential
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </Panel>

@@ -163,13 +163,21 @@ export interface FriendRecord {
   reviewed_endpoints: string[];
   granted_permissions: FriendPermission[];
   received_permissions: FriendPermission[];
-  state: "active" | "revoked";
+  state: "active" | "pending_endpoint_review" | "revoked";
   created_at: string;
   accepted_at: string;
   last_contact_at: string | null;
   revoked_at: string | null;
   last_delivery_error: string | null;
   source_invite_id: string;
+}
+
+export interface FriendJoinResult {
+  status: FriendRecord["state"];
+  friend: FriendRecord;
+  endpoint_review_required: boolean;
+  original_endpoints: string[];
+  returned_endpoints: string[];
 }
 
 export interface NodeClient {
@@ -228,6 +236,16 @@ export interface NodeClient {
     link: string;
     allow_private_endpoints: boolean;
   }): Promise<FriendInviteReview>;
+  joinFriend(req: {
+    link: string;
+    endpoint?: string;
+    allow_private_endpoints: boolean;
+  }): Promise<FriendJoinResult>;
+  reviewFriendEndpoints(req: {
+    peer_id: string;
+    approve: boolean;
+    endpoints: string[];
+  }): Promise<{ ok: boolean; friend: FriendRecord }>;
   cancelFriendInvite(inviteId: string): Promise<FriendInviteRecord>;
   revokeFriend(peerId: string, reasonCode?: string): Promise<{
     ok: boolean;

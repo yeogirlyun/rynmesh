@@ -1225,6 +1225,50 @@ export function makeFixtureNodeClient(): NodeClient {
       if (!review) throw new Error("invite_link_invalid");
       return { ...review, endpoints: [...review.endpoints], permissions: [...review.permissions] };
     },
+    async joinFriend(req) {
+      await delay();
+      const review = inviteReviews.get(req.link);
+      if (!review) throw new Error("friend_join_failed");
+      const now = new Date().toISOString();
+      const friend: FriendRecord = {
+        peer_id: review.inviter_peer_id,
+        display_name: review.node_name,
+        network_id: review.network_id,
+        reviewed_endpoints: [...review.endpoints],
+        granted_permissions: [],
+        received_permissions: [...review.permissions],
+        state: "active",
+        created_at: now,
+        accepted_at: now,
+        last_contact_at: now,
+        revoked_at: null,
+        last_delivery_error: null,
+        source_invite_id: review.invite_id,
+      };
+      const existing = friends.findIndex((candidate) => candidate.peer_id === friend.peer_id);
+      if (existing >= 0) friends[existing] = friend;
+      else friends.unshift(friend);
+      return {
+        status: "active" as const,
+        friend: { ...friend },
+        endpoint_review_required: false,
+        original_endpoints: [],
+        returned_endpoints: [],
+      };
+    },
+    async reviewFriendEndpoints(req) {
+      await delay();
+      const friend = friends.find((candidate) => candidate.peer_id === req.peer_id);
+      if (!friend || friend.state !== "pending_endpoint_review") {
+        throw new Error("friend_pending_review_not_found");
+      }
+      if (req.endpoints.join("\n") !== friend.reviewed_endpoints.join("\n")) {
+        throw new Error("friend_endpoint_review_mismatch");
+      }
+      friend.state = req.approve ? "active" : "revoked";
+      if (!req.approve) friend.revoked_at = new Date().toISOString();
+      return { ok: true, friend: { ...friend } };
+    },
     async cancelFriendInvite(inviteId) {
       await delay();
       const invite = friendInvites.find((candidate) => candidate.invite_id === inviteId);

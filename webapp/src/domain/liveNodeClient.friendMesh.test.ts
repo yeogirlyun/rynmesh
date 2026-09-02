@@ -24,6 +24,16 @@ describe("live Friend Mesh client", () => {
       allow_private_endpoints: false,
     });
     await client.reviewFriendInvite({ link: "rynmesh://join/opaque", allow_private_endpoints: true });
+    await client.joinFriend({
+      link: "rynmesh://join/opaque",
+      endpoint: "https://friend.example:8791",
+      allow_private_endpoints: true,
+    });
+    await client.reviewFriendEndpoints({
+      peer_id: "peer:friend",
+      approve: true,
+      endpoints: ["https://friend-new.example:8791"],
+    });
     await client.cancelFriendInvite("invite / one");
     await client.revokeFriend("peer:friend");
 
@@ -32,6 +42,8 @@ describe("live Friend Mesh client", () => {
       "http://127.0.0.1:8791/api/local/friends/invites",
       "http://127.0.0.1:8791/api/local/friends/invites",
       "http://127.0.0.1:8791/api/local/friends/invites/review",
+      "http://127.0.0.1:8791/api/local/friends/join",
+      "http://127.0.0.1:8791/api/local/friends/endpoint-review",
       "http://127.0.0.1:8791/api/local/friends/invites/invite%20%2F%20one",
       "http://127.0.0.1:8791/api/local/friends/revoke",
     ]);
@@ -45,7 +57,17 @@ describe("live Friend Mesh client", () => {
       link: "rynmesh://join/opaque",
       allow_private_endpoints: true,
     });
+    expect(JSON.parse(String(fetchSpy.mock.calls[4][1]?.body))).toEqual({
+      link: "rynmesh://join/opaque",
+      endpoint: "https://friend.example:8791",
+      allow_private_endpoints: true,
+    });
     expect(JSON.parse(String(fetchSpy.mock.calls[5][1]?.body))).toEqual({
+      peer_id: "peer:friend",
+      approve: true,
+      endpoints: ["https://friend-new.example:8791"],
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[7][1]?.body))).toEqual({
       peer_id: "peer:friend",
       reason_code: "owner_revoked",
     });

@@ -10,13 +10,14 @@ Date: 2026-09-02
 ## Current result
 
 The security/store/public-acceptance foundation is implemented and has focused
-automated evidence. The complete product is not accepted because outbound
-Join, friends-only Private AI enforcement, remote revocation delivery, Tauri
-deep-link handling, and two-node physical acceptance remain outstanding.
+automated evidence. The complete product is not accepted because remote
+revocation delivery, Tauri deep-link handling, privacy lifecycle work,
+exact-commit CI, and two-node physical acceptance remain outstanding.
 
-The Webapp create/offline-review/list/cancel/revoke and local-QR slice is now
-implemented and automated, but this does not change the overall decision:
-outbound Join and Tauri deep links are deliberately unavailable.
+The Webapp create/offline-review/Join/list/cancel/revoke and local-QR slice is
+now implemented and automated, but this does not change the overall decision:
+the browser delegates reviewed Join to the local node, while Tauri deep links
+remain unavailable.
 
 Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
@@ -26,6 +27,10 @@ Integration evidence: the #28-based branch passes 44 Friend/Transport tests,
 including simulated two-node Join and explicit endpoint-change review.
 After friends-only Private AI integration, the combined focused regression is
 88 passed with Ruff green.
+
+Webapp Join integration passes 8/8 focused tests, 46/46 full Webapp tests,
+TypeScript lint, and the production build. Review makes no endpoint contact;
+Join uses the local API, and changing the pasted link invalidates prior review.
 
 ## Criteria status
 
@@ -49,7 +54,7 @@ After friends-only Private AI integration, the combined focused regression is
   - [x] QR is generated locally with a pinned dependency and a zero-network automated assertion.
   - [x] Friend active/revoked details and high-risk local-first revoke are implemented.
   - [x] Keyboard labels, disabled-state explanation, and create/review focus transfer are tested.
-  - [ ] Outbound Join and received-relationship persistence are integrated and enabled.
+  - [x] Outbound Join and received-relationship persistence are integrated and enabled through the local node.
   - [ ] Tauri deep-link forwarding and physical scan/deep-link acceptance are complete.
 - [ ] Privacy export/erase behavior complete.
 - [ ] Full backend/Webapp/Rust/Linux/macOS CI green on the exact commit.
