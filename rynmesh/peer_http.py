@@ -396,11 +396,13 @@ def create_app(store: RynmeshStore | None = None):
     from datetime import datetime as _dt
     from pathlib import Path as _Path
 
+    from .friends import FriendshipStore
     from .services.updater import Updater
     from .settings_store import SettingsStore
     from .update_state import UpdateState
 
     _home = _Path(os.environ.get("RYNMESH_HOME", str(_Path.home() / ".rynmesh")))
+    _friends = FriendshipStore(_home / "friends.json")
     _settings = SettingsStore(_home / "settings.json")
     _recommendation_profile = RecommendationProfileStore(_home / "recommendation-profile.json")
     _stored_settings = _settings.get()
@@ -695,7 +697,8 @@ def create_app(store: RynmeshStore | None = None):
         # generic 404, so the server does not reveal that it runs Rynmesh.
         # Opt-in: with no key set, peer APIs stay open (dev/LAN default).
         peer_key = os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
-        if peer_key and (
+        friend_accept_path = "/api/peer/friends/accept"
+        if peer_key and path != friend_accept_path and (
             path.startswith("/api/v1") or path.startswith("/api/peer") or path == "/health"
         ):
             import hashlib
@@ -1368,6 +1371,81 @@ def create_app(store: RynmeshStore | None = None):
     def local_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
         return filtered_peers(discover_peer_items(control_network_id(), include_self=True), request)
+
+    @app.get("/api/local/friends")
+    def local_friends(request: FastAPIRequest) -> list[dict[str, Any]]:
+        local_control(request)
+        return _friends.list_friends()
+
+    @app.get("/api/local/friends/invites")
+    def local_friend_invites(request: FastAPIRequest) -> list[dict[str, Any]]:
+        local_control(request)
+        return _friends.list_invites()
+
+    @app.post("/api/local/friends/invites/review")
+    async def local_friend_invite_review(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError, verify_invite
+
+        body = await request.json()
+        try:
+            reviewed = verify_invite(
+                str(body.get("link", "")),
+                allow_private_endpoints=bool(body.get("allow_private_endpoints", False)),
+            )
+            reviewed.pop("one_time_secret", None)
+            return reviewed
+        except FriendError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/local/friends/invites")
+    async def local_friend_invite_create(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError
+
+        body = await request.json()
+        default_endpoints = self_peer_record(control_network_id()).get("endpoints", [])
+        try:
+            return _friends.create_invite(
+                private_key_bytes=active_store.private_key_bytes,
+                node_name=active_store.node_name,
+                network_id=control_network_id(body.get("network_id")),
+                endpoints=list(body.get("endpoints") or default_endpoints),
+                permissions=list(body.get("permissions") or ["private-ai.use"]),
+                ttl_seconds=int(body.get("ttl_seconds") or 900),
+                allow_private_endpoints=bool(body.get("allow_private_endpoints", False)),
+            )
+        except (FriendError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/local/friends/invites/{invite_id}")
+    def local_friend_invite_cancel(invite_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError
+
+        try:
+            return _friends.cancel_invite(route_id(invite_id))
+        except FriendError as exc:
+            raise HTTPException(status_code=404, detail="invite_not_found") from exc
+
+    @app.post("/api/local/friends/revoke")
+    async def local_friend_revoke(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        from .friends import FriendError
+
+        body = await request.json()
+        try:
+            signed = _friends.revoke(
+                str(body.get("peer_id", "")),
+                private_key_bytes=active_store.private_key_bytes,
+                local_peer_id=active_store.peer_id,
+                reason_code=str(body.get("reason_code", "owner_revoked")),
+            )
+        except FriendError as exc:
+            raise HTTPException(status_code=404, detail="friend_not_found") from exc
+        # Local authorization is already removed. Delivery is deliberately
+        # best-effort and is added through the Transport seam in the next slice.
+        return {"ok": True, "state": "revoked", "revocation_id": signed.payload["revocation_id"]}
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2321,6 +2399,76 @@ def create_app(store: RynmeshStore | None = None):
     _msg_store = _MsgStore(_home)
     _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
     _msg_subscribers: list = []  # asyncio.Queue per SSE client
+    _friend_accept_attempts: dict[str, list[float]] = {}
+
+    @app.post("/api/peer/friends/accept")
+    async def peer_friend_accept(request: FastAPIRequest):
+        """Consume one invite without exposing Rynmesh to invalid active probes."""
+
+        from fastapi.responses import JSONResponse
+
+        from .friends import FriendError, verify_acceptance_request
+        from .registry import PeerRecord, sign_peer_record
+
+        generic_not_found = JSONResponse({"detail": "Not Found"}, status_code=404)
+        client_key = (request.client.host if request.client else "") or "unknown"
+        current = time.monotonic()
+        recent = [value for value in _friend_accept_attempts.get(client_key, []) if current - value < 60]
+        if len(recent) >= 8:
+            return generic_not_found
+        recent.append(current)
+        _friend_accept_attempts[client_key] = recent
+        raw = await request.body()
+        if not raw or len(raw) > 64 * 1024:
+            return generic_not_found
+        try:
+            body = json.loads(raw)
+            if not isinstance(body, dict):
+                raise FriendError("friend_acceptance_invalid")
+            verified = verify_acceptance_request(body)
+            accepted = _friends.consume_invite(
+                invite_id=str(body.get("invite_id", "")),
+                one_time_secret=str(body.get("one_time_secret", "")),
+                acceptor_peer_id=verified["peer_id"],
+                display_name=verified["display_name"],
+                network_id=verified["network_id"],
+                endpoints=verified["endpoints"],
+                permissions=verified["permissions"],
+            )
+            local = self_peer_record(verified["network_id"])
+            inviter_record = PeerRecord(
+                peer_id=active_store.peer_id,
+                node_name=active_store.node_name,
+                endpoints=tuple(local.get("endpoints") or ()),
+                network_id=verified["network_id"],
+                updated_at=_iso_now(),
+                metadata={"friend_acceptance": True},
+            )
+            signed_inviter_record = sign_peer_record(
+                inviter_record, private_key_bytes=active_store.private_key_bytes
+            )
+            credential = json.dumps(
+                {
+                    "version": "rynmesh.friend-credential.v1",
+                    "invite_id": str(body["invite_id"]),
+                    "relationship_secret": accepted["relationship_secret"],
+                    "permissions": verified["permissions"],
+                    "issued_at": _iso_now(),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            nonce, ciphertext = _peer_box.seal(
+                _msg_priv, verified["x25519_pub"], credential
+            )
+        except (FriendError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return generic_not_found
+        return {
+            "version": "rynmesh.friend-accept-response.v1",
+            "inviter_peer_record": signed_inviter_record.to_dict(),
+            "inviter_x25519_pub": _peer_box.public_key_b64(_msg_priv),
+            "confirmed_permissions": verified["permissions"],
+            "credential": {"nonce": nonce, "ciphertext": ciphertext},
+        }
 
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
