@@ -4,6 +4,7 @@ import { useAppContext } from "../appContext";
 import { Button, Chip, Hash, KV, LoadingPanel, PageHeader, Panel, PeerPill, TierBadge, WeightBar } from "../components/ui";
 import type { IdentityTier, JobCapacity, Peer, PeerHealth } from "../domain/types";
 import { joinPeerMeta, type PeerMeta } from "../domain/peerMeta";
+import FriendMeshPanel from "./components/FriendMeshPanel";
 
 const tierValues: Array<IdentityTier | "all"> = ["all", "unverified", "attested", "staked", "proven"];
 
@@ -73,6 +74,7 @@ export default function Peers() {
           </Button>
         }
       />
+      <FriendMeshPanel client={client} confirm={confirm} notify={notify} />
       <Panel className="filter-panel">
         <div className="source-chips">
           <label className="field inline-field">

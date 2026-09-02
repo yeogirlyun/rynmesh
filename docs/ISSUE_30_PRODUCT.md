@@ -1,6 +1,6 @@
 # Issue #30 product specification: Friend Mesh
 
-Status: implementation in progress on `codex/issue-30-friend-mesh`
+Status: implementation in progress; Webapp safety/review slice implemented, full Join pending
 Issue: https://github.com/yeogirlyun/rynmesh/issues/30
 
 ## User outcome
@@ -71,3 +71,17 @@ protocol review is still required before its public endpoint is merged.
 The Issue is complete only after two clean nodes pass create, offline review,
 one-time join, friends-only Private AI use, online revoke, offline revoke, and
 next-order denial, with sanitized evidence and all automated checks green.
+
+## Webapp slice delivered on 2026-09-02
+
+The Peers screen now has a visually and semantically separate Friend Mesh area.
+It supports scoped, expiring invitation creation; explicit endpoint-risk review;
+on-device QR and copy; outstanding-invite cancellation; offline pasted-link
+review; and active/revoked friend inspection and high-risk revocation. Offline
+review shows the local-node signature verdict, fingerprint, network, every
+endpoint and its address class, permission scope, and expiry before any contact.
+
+The Join control intentionally remains disabled and explains that outbound
+Transport, DNS resolve-and-pin, and received-relationship persistence are not
+integrated. This is a safety boundary, not a simulated success state. Tauri
+deep-link forwarding is also outside this slice, so Issue #30 remains incomplete.

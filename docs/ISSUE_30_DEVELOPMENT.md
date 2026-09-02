@@ -1,6 +1,6 @@
 # Issue #30 development design
 
-Status: core security slice implemented; end-user flow and service ACL pending
+Status: core security and Webapp safety/review slices implemented; outbound Join and service ACL pending
 
 ## Architecture
 
@@ -50,10 +50,32 @@ resolve-and-pin check at outbound Join; that transport integration is pending.
 3. Add friend-auth middleware only to explicitly allowed peer/service routes.
 4. Add signed best-effort remote revocation delivery and retry status.
 5. Add `friends` Provider policy and pre-capacity Private AI ACL enforcement.
-6. Add Webapp create/review/join/list/revoke and a reviewed local QR dependency.
+6. Complete Webapp Join after the create/review/list/cancel/revoke UI and local QR slice.
 7. Add Tauri `rynmesh://` forwarding and paste fallback.
 8. Include sanitized friend records in privacy export and revoke/delete in erase.
 9. Run two-node and accessibility acceptance.
 
 No merge should describe the Issue as complete before all nine slices and the
 acceptance report are green.
+
+## Webapp implementation slice
+
+`FriendMeshPanel` is mounted in Peers but keeps friendship language and actions
+separate from the existing identity trust-root drawer. `NodeClient` now exposes
+the six local-control API operations for friends/invites in live and fixture
+modes. No browser call is made to a peer or QR service.
+
+Endpoint classification is a display/risk aid only. The local node remains the
+authority for signed offline verification and endpoint policy. Hostnames are
+shown as unresolved, private literals require explicit review, and local,
+link-local, unsupported, or invalid endpoints prevent invitation creation.
+Review never decodes or trusts the bearer link in browser code.
+
+QR matrices come from exact dependency `qrcode@1.5.4`, locked in
+`package-lock.json`, and are rendered into an SVG data URL locally. The SVG path
+contains only matrix coordinates; link contents are not interpolated into SVG
+markup. `@types/qrcode@1.5.5` is also pinned exactly.
+
+Keyboard users receive native labeled form controls, disabled-state guidance,
+and focus transfer to the created/reviewed result heading. Join is rendered
+disabled with an explanatory description until outbound Join is real.

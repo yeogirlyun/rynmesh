@@ -101,6 +101,19 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     discoverPeers: (req) =>
       requestJson(`${baseUrl}/peers/discover`, { method: "POST", body: JSON.stringify(req ?? {}) }),
     listPeers: (filters?: PeerFilters) => requestJson(`${baseUrl}/peers${qs(filters)}`),
+    listFriends: () => requestJson(`${baseUrl}/friends`),
+    listFriendInvites: () => requestJson(`${baseUrl}/friends/invites`),
+    createFriendInvite: (req) =>
+      requestJson(`${baseUrl}/friends/invites`, { method: "POST", body: JSON.stringify(req) }),
+    reviewFriendInvite: (req) =>
+      requestJson(`${baseUrl}/friends/invites/review`, { method: "POST", body: JSON.stringify(req) }),
+    cancelFriendInvite: (inviteId) =>
+      requestJson(`${baseUrl}/friends/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }),
+    revokeFriend: (peerId, reasonCode = "owner_revoked") =>
+      requestJson(`${baseUrl}/friends/revoke`, {
+        method: "POST",
+        body: JSON.stringify({ peer_id: peerId, reason_code: reasonCode }),
+      }),
     listContent: (filters?: ContentFilters) => requestJson(`${baseUrl}/content${qs(filters)}`),
     getContentItem: (contentId: string) => requestJson(`${baseUrl}/content/${contentId}`),
     getContentBody: (contentId: string) =>
