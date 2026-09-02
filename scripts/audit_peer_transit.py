@@ -385,6 +385,9 @@ def _audit_soak_artifacts(root: Path) -> dict[str, int]:
     partial_files = list((root / "target-inbox").rglob("*.part"))
     if partial_files:
         raise AuditError("soak artifact scan found partial target files")
+    resume_checkpoints = list((root / "target-inbox").rglob("*.resume.json"))
+    if resume_checkpoints:
+        raise AuditError("soak artifact scan found orphan resume checkpoints")
     stderr_path = root / "stderr.log"
     stderr_bytes = stderr_path.stat().st_size if stderr_path.is_file() else 0
     if stderr_bytes:
@@ -393,6 +396,7 @@ def _audit_soak_artifacts(root: Path) -> dict[str, int]:
         "artifact_files_scanned": len(files),
         "artifact_bytes_scanned": sum(path.stat().st_size for path in files),
         "artifact_partial_files": len(partial_files),
+        "artifact_resume_checkpoints": len(resume_checkpoints),
         "stderr_bytes": stderr_bytes,
     }
 

@@ -830,6 +830,7 @@ def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) ->
     audit = audit_module._audit_soak_artifacts(tmp_path)
     assert audit["artifact_files_scanned"] == 5
     assert audit["artifact_partial_files"] == 0
+    assert audit["artifact_resume_checkpoints"] == 0
     assert audit["stderr_bytes"] == 0
 
     (tmp_path / "relay" / "leak.bin").write_bytes(
@@ -841,6 +842,14 @@ def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) ->
 
     (tmp_path / "target-inbox" / ".tmp" / "orphan.part").write_bytes(b"partial")
     with pytest.raises(AuditError, match="partial"):
+        audit_module._audit_soak_artifacts(tmp_path)
+    (tmp_path / "target-inbox" / ".tmp" / "orphan.part").unlink()
+
+    (tmp_path / "target-inbox" / ".tmp" / "orphan.resume.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AuditError, match="resume checkpoint"):
         audit_module._audit_soak_artifacts(tmp_path)
 
 
