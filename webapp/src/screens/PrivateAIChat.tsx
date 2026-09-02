@@ -207,12 +207,19 @@ export default function PrivateAIChat() {
         if (bucketReady && requested.grounding) {
           const grounding = consumeGroundedContextHandoff(requested.grounding);
           if (grounding) {
+            const bucket = await listConversations(serviceKey(selected));
             const fresh = createConversation({
               serviceKey: serviceKey(selected),
               serviceName: selected.service.model_alias,
               providerPeerId: selected.peer_id,
               networkId: network,
             });
+            // The initial empty conversation and the handoff conversation can
+            // be created within the same millisecond. Give the handoff a
+            // strictly newer sort key so switching providers and returning
+            // always restores the grounded conversation deterministically.
+            const newest = Date.parse(bucket[0]?.updatedAt || "") || 0;
+            fresh.updatedAt = new Date(Math.max(Date.now(), newest + 1)).toISOString();
             fresh.title = `Ask: ${grounding.title}`;
             fresh.grounding = grounding;
             await saveConversation(fresh);
