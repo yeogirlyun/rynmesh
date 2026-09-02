@@ -750,6 +750,16 @@ all-provider open-order polls measured a 0.440 ms median and 0.734 ms p95.
 `upstream/main` remained at `b0b17c1`; any runtime, runner or upstream change
 invalidates r13 and requires another zero-duration start.
 
+After r13 passed 100 completed sessions, 100 signed canonical open-order polls
+for each provider measured 0.223 ms and 0.224 ms medians, 0.263 ms and 0.251 ms
+p95, and maxima below 0.53 ms. A simultaneous 20.036 s operating-system sample
+of the persistent soak process consumed 1.078 CPU seconds, or 5.38% of one
+core, while normal sessions continued. At the end of that sample r13 had
+completed 108 sessions with zero failures, zero worker control errors and
+2,173,108 bytes of traced memory growth. This is the long-history regression
+check for the defect that previously reached 132.77% of one core and roughly
+one-second provider polls.
+
 The `a378bad` package candidate also passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
 276,476-byte wheel has SHA-256
