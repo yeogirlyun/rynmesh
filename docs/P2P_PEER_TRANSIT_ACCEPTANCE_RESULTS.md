@@ -1126,6 +1126,14 @@ and final-audit SHA-256 values are
 `ADF13BC5C6E2A27E5541B48EA25170959D3B68CCDFEFFF5A1A634335386BC463` and
 `A21EB05627A5F1093EB2296608735281E1EED062B654982E5E3F24EF3679ECCE`.
 
+The corrected finalizer was also tested against both still-live r14 process
+layers. It rejected actual worker PID 48864 and virtual-environment launcher
+PID 52188 independently with exit code 1 and created neither requested output
+file. CIM command-line and creation-time inspection bound both PIDs to the r14
+command rather than trusting numbers alone. The immutable negative-evidence
+SHA-256 is
+`12A1D78DEFDB4CF58A1A6B22113023076948AD44BEE260E41BDF996FF47A5FBA`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
