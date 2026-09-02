@@ -709,6 +709,29 @@ sessions, without delaying handler starts or creating artificial overlap. Both
 producer and auditor require `worker_trace_complete=true`; the focused suite
 passes 39 tests.
 
+The corrected fixed point `a378bad` then passed two fresh runs and both
+independent audits. In r23 at
+`.codex-tmp/peer-transit-acceptance-r23-trace-drain-preflight`, the 8,388,608
+byte main transfer took 9.313 s and all 20 one-MiB sessions completed in
+36.172 s; relay and target peaks were both 20, the trace was complete, both
+main control-error counts were zero, peak traced memory was 5,541,312 bytes and
+hard-failure fallback took 0.844 s. `report.json` has SHA-256
+`1008573FD5C1EA8456334C9E91F4F3088CCCCD067A2372547CE0249DF68C33EA` and
+`evidence.json` has SHA-256
+`54F8C4FE3EC5897D9224F299B44DEF48827CFC80163833B81C3CB50DDC3EB969`.
+
+The independent r24 repeat at
+`.codex-tmp/peer-transit-acceptance-r24-trace-drain-repeat` completed its main
+transfer in 9.703 s and all 20 one-MiB sessions in 35.579 s. Both internal
+peaks were again 20, the trace was complete, control-error counts were zero,
+peak traced memory was 5,518,301 bytes and hard-failure fallback took 0.828 s.
+Its `report.json` has SHA-256
+`BEEBEF3EEBA79FB6093AC57CA3DDAB806C89778DAA2C50987BBC0A683D4B18A4` and
+`evidence.json` has SHA-256
+`CF6B4CDB1C610D90FE774846CF19A26D1808BCF6961DBD79B7260CDE37759141`.
+The exact fixed point passes 579 Python tests with three skips and all relevant
+Ruff checks.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
