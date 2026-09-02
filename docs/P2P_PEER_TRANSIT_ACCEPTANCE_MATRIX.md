@@ -81,6 +81,20 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   `23C86EA11A0553B958720901534D4A1BF228E039AE0F711713B67138880C65A4`;
   both 20:43:36 Asia/Hong_Kong records passed Ed25519 verification with the
   expected peer IDs, roles, network and `max_concurrent=8`.
+- r15 662-session indexed open-order scaling checkpoint:
+  `F8A65DF9ADAE696850C662D055E9E28B5EA30A3126194ADB7A5EE325F8ACB8B5`;
+  100 polls per provider kept p95 below 0.57 ms and worker CPU at 5.04% of
+  one core over 20.15 seconds while live sessions exposed at most one open
+  order per provider.
+- r15 671-session idle OS/artifact checkpoint:
+  `A76AFA682DEFF12CFE4EECADCB3179A1C8F89038AF2EDC9F423527D124532F47`;
+  versus warm-up: handles -9, OS threads unchanged, private bytes +106,496
+  and working set +258,048; 4,718 files passed all residual/plaintext scans,
+  with zero UDP endpoints, stderr, partial/resume files or open markers.
+- r15 seventh refreshed target/transit signed-capacity snapshots:
+  `5B76CDE8F4526A24517517A54C4B50C6D263DFCA052D49D4C32F70F4669B4D2C` /
+  `28734EC0AD89961B3AFEA5A516E231BB20F26FFEDA4F743BA59EEEC18346A00C`;
+  both 21:43:36 Asia/Hong_Kong records passed Ed25519 verification.
 - r14 warm idle OS baseline: `F37A820FB0AFEAFB33D6839DD664B1881AD03C2CFB923C614662144859CAA606`.
 - r14 first refreshed target/transit signed-capacity snapshots:
   `AC1CCB5E27C6D7EA447AA88E00FE9F62346B2B0F70A8C8B23467B85FE85F4DFD` /

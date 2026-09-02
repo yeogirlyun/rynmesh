@@ -1202,6 +1202,21 @@ verification. Its immutable snapshot SHA-256 values are
 `775D84A18A30D227CAECB1EF333E2C8D614B52BFDC8DC835C73D68B4973924A2` and
 `23C86EA11A0553B958720901534D4A1BF228E039AE0F711713B67138880C65A4`.
 
+The first r15 history-scaling checkpoint was captured after 662 sessions.
+Across 100 indexed open-order polls per provider, relay/target p95 latency was
+0.567/0.501 ms, each observed at most one live order, and the actual worker
+used 5.04% of one core over 20.15 seconds. The immutable checkpoint SHA-256 is
+`F8A65DF9ADAE696850C662D055E9E28B5EA30A3126194ADB7A5EE325F8ACB8B5`.
+The following idle resource checkpoint at 671 sessions is
+`A76AFA682DEFF12CFE4EECADCB3179A1C8F89038AF2EDC9F423527D124532F47`.
+Relative to warm-up, handles were -9, OS threads unchanged, private bytes
++106,496 and working set +258,048. Its 4,718-file scan found zero plaintext,
+partial/resume files, open markers, UDP endpoints or log bytes. The seventh
+target/transit capacity refresh at 21:43:36 Asia/Hong_Kong again passed
+Ed25519 verification; the snapshot SHA-256 values are
+`5B76CDE8F4526A24517517A54C4B50C6D263DFCA052D49D4C32F70F4669B4D2C` and
+`28734EC0AD89961B3AFEA5A516E231BB20F26FFEDA4F743BA59EEEC18346A00C`.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
