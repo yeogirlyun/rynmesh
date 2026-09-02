@@ -1037,6 +1037,16 @@ providers returning zero open orders and maxima below 0.67 ms. A simultaneous
 with 312 handles, eight OS threads, 36,548,608 private bytes and a 53,452,800-
 byte working set. No history-proportional poll or CPU regression is present.
 
+The first same-field r14 idle resource comparison is preserved at
+`.codex-tmp/peer-transit-soak-24h-r14/os-checkpoint-255.json`, SHA-256
+`D787B4057CCFA4301E6C8B9B4646E16DF46527F7213816B28330EB61E6951538`.
+It was captured after 255 sessions at 2,542.734 monotonic seconds. Relative to
+the 104-session warm baseline, handles decreased by two, OS threads decreased
+by one, private bytes increased by 966,656, working set increased by 1,101,824
+and traced Python growth increased by only 274,790 bytes. The checkpoint again
+records zero failures, worker errors, UDP endpoints, partial/resume files, open
+markers, filesystem plaintext hits, stdout and stderr bytes.
+
 A completion-contract review found that the independent soak artifact auditor
 scanned `*.part` but did not yet reject the verified-resume runtime's
 `*.resume.json` checkpoint files or fail on leftover open work-order markers.
