@@ -19,6 +19,7 @@
 - [x] URL 用 replace 同步 peer/service/network，刷新可恢复并保留其他参数。
 - [x] submitting/running/cancelling 生命周期内禁止切换。
 - [x] offline、busy、disappeared 状态可理解，历史和草稿不删除。
+- [x] 加密历史读取/写入失败不会永久锁住切换，原 Provider、历史和草稿保持不变。
 - [x] 加密存储、取消、结算和 node-only gateway 边界未改变。
 - [x] 聚焦测试、全 Webapp、TypeScript 和生产构建通过。
 
@@ -48,8 +49,8 @@
 
 | 命令 | 最终结果 |
 | --- | --- |
-| `npm test -- --run src/screens/PrivateAIChat.test.tsx src/domain/llmOrders.test.ts` | PASS，2 files / 9 tests，10.18s |
+| `npm test -- --run src/screens/PrivateAIChat.test.tsx`（存储失败回归） | PASS，1 file / 8 tests，10.70s |
 | `npm run lint` | PASS，`tsc -b --noEmit` |
-| `npm test` | PASS，10 files / 45 tests，13.22s |
-| `npm run build` | PASS，1739 modules，最终 395ms Vite build |
+| `npm test` | PASS，10 files / 46 tests，13.65s |
+| `npm run build` | PASS，1739 modules，最终 763ms Vite build |
 | `git diff --check` | PASS，仅 Git 的 LF/CRLF 工作区提示，无 whitespace error |

@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { clearConversations } from "../domain/llmConversationStore";
+import * as conversationStore from "../domain/llmConversationStore";
 import type { LLMOrderResult, LLMServiceRecord, NodeClient } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 
@@ -12,6 +13,10 @@ beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
   await clearConversations("peer:provider-a::package-a");
   await clearConversations("peer:provider-b::package-b");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function service(overrides: Partial<LLMServiceRecord> & { peer_id: string; packageId: string }): LLMServiceRecord {
@@ -223,5 +228,24 @@ describe("Private AI chat", () => {
     expect(await screen.findByText(/Provider disappeared from discovery — history and draft are preserved/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(client.listLLMServices).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases switching and preserves provider, history, and draft when encrypted storage fails", async () => {
+    const { user } = renderChat({
+      services: [providerA, providerB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    const composer = screen.getByLabelText("Message Private AI");
+    await user.type(composer, "draft remains local");
+    vi.spyOn(conversationStore, "listConversations").mockRejectedValueOnce(new Error("fixture storage failed"));
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    const beta = screen.getByRole("option", { name: /Provider Beta package-b/ });
+    await user.click(beta);
+
+    expect(await screen.findByText(/Unable to open that Provider's encrypted history/)).toBeInTheDocument();
+    expect(screen.getByText("shared-model-alias · Provider Alpha")).toBeInTheDocument();
+    expect(composer).toHaveValue("draft remains local");
+    await waitFor(() => expect(beta).not.toBeDisabled());
   });
 });
