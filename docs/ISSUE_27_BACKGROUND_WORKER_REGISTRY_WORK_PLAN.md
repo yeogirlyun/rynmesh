@@ -1,6 +1,6 @@
 # Issue #27 work plan: service background-worker registry
 
-Status: implementation-ready after the small API decision below
+Status: implemented; formal acceptance pending CI
 Issue: https://github.com/yeogirlyun/rynmesh/issues/27
 Recommended order: implement after or independently from #28
 
@@ -348,6 +348,11 @@ sufficient if worker tasks leak.
 - [ ] Focused tests, complete tests, direct E2E, and Relay E2E pass.
 - [ ] A future service can add a worker by changing only its package installer
       and tests.
+
+Formal execution evidence and the sign-off decision are maintained in
+`docs/acceptance/issue-27/ACCEPTANCE_REPORT.md`. This plan intentionally remains
+the implementation design; the acceptance report is the authoritative record
+of what was actually run.
 
 ## 11. Suggested commits
 
