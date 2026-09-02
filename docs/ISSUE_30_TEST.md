@@ -14,6 +14,8 @@ Status: core security slice passing locally; full Issue matrix pending
 - acceptance proof binding to peer record, invite, X25519 key, network, scope,
   timestamp, and nonce;
 - HMAC path/body/sender/timestamp binding and nonce replay rejection;
+- explicit complete-route to streaming-route HMAC replay rejection and a
+  separately signed streaming path acceptance at the protocol primitive;
 - immediate secret deletion on local revoke;
 - idempotent remote revoke and unrelated-pair rejection;
 - stale crash-lock recovery.
@@ -32,10 +34,15 @@ Status: core security slice passing locally; full Issue matrix pending
 - private or mixed DNS answers fail before contact;
 - changed endpoints remain pending until exact approval, while rejection
   deletes the local credential.
+- an explicitly configured outbound proxy fails before an outbound client is
+  constructed, before local relationship persistence, and before the remote
+  invite is consumed;
 - friend HMAC is a scoped alternative to the mesh key, and a replay is hidden
   behind the same generic 404;
 - friends-only Provider denial occurs before capacity/inference for strangers
   and takes effect on the next task immediately after revoke.
+- privacy erase leaves exact empty public and secret schemas, including
+  outstanding invitations, friends, revocations, nonces, and credentials.
 
 ## Commands
 
@@ -73,9 +80,13 @@ revocation, Transport, and LLM ACL tests passed.
 
 ## Still required
 
-- outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
+- maintainer disposition of outbound proxies: equivalent authenticated DNS
+  pinning, or an explicitly approved V1 fail-closed exclusion with actionable UI;
 - installed Tauri package deep-link/QR scan tests on Windows, Linux, and macOS;
-- full backend/CI and two clean physical nodes, including offline revoke.
+- full exact-commit backend/Webapp/Rust/package CI;
+- two clean physical nodes, including DNS/socket correlation, friends-only
+  complete and streaming use, offline/restart revocation convergence, and
+  next-order denial before capacity/inference.
 
 ## Webapp slice matrix
 
@@ -133,3 +144,28 @@ the `rynmesh` static scheme, single-instance deep-link feature, and required
 capability. `cargo metadata --locked` passes. `cargo check --locked` resolves
 and starts compiling the exact graph, then stops because this Windows host has
 no Visual C++ `link.exe`; installed-platform Rust CI remains required.
+
+## Strict completion audit evidence on 2026-09-03
+
+The canonical #30 worktree passed 48/48 Friend/HTTP/Transport tests after adding
+stream-path HMAC replay, proxy fail-before-contact, and exact privacy-store
+erasure assertions. The expanded Friend/Transport/LLM regression passed 100
+tests with one skipped. The full Webapp passed 51/51 tests, TypeScript lint, and
+the production build. Ruff passed on the touched Python implementation and test
+files. The proxy test also exposed and now covers a fixed exception-boundary
+defect: `TransportError(pinned_proxy_unsupported)` is converted to the bounded
+Join failure instead of escaping as a server error.
+
+The full backend on this canonical audit commit reported 555 passed, 3 skipped,
+and 8 failed in 69.72 seconds. The failures are the documented Windows classes:
+three executable-bit/WSL assertions, three POSIX `0600` assertions, one
+`os.replace` reader race, and one `select()`-on-pipe limitation. No Friend Mesh
+test failed. Cargo was not installed or on PATH on this audit host, so locked
+metadata was not rerun; the earlier recorded metadata result is historical
+evidence, not an exact-audit rerun.
+
+This run proves local protocol and state behavior. It does not prove a real
+socket crossed two physical hosts, an installed OS dispatched a deep link, a
+revocation survived a physical disconnect/restart, or #23's streaming route
+used the Friend ACL on the final integrated commit. Those exact external
+artifacts are specified in `ISSUE_30_STRICT_COMPLETION_AUDIT.md`.

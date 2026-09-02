@@ -185,6 +185,47 @@ def test_two_nodes_join_through_transport_and_both_store_active_friendship(
     assert provider_client.get("/api/local/friends").json()[0]["peer_id"] == acceptor_store.peer_id
 
 
+def test_join_rejects_proxy_owned_dns_before_contact_or_invite_consumption(
+    tmp_path, monkeypatch
+):
+    provider_home = tmp_path / "provider"
+    monkeypatch.setenv("RYNMESH_HOME", str(provider_home))
+    provider_store = RynmeshStore(home=provider_home, network_dir=tmp_path / "provider-network")
+    provider_client = TestClient(create_app(provider_store))
+    link = provider_client.post(
+        "/api/local/friends/invites",
+        json={"endpoints": ["https://alice.example:8791"]},
+    ).json()["link"]
+
+    monkeypatch.setattr(
+        "rynmesh.friends.socket.getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("8.8.8.8", 0))],
+    )
+    monkeypatch.setenv("RYNMESH_HTTPS_PROXY", "http://127.0.0.1:9999")
+
+    def unexpected_peer_client(*args, **kwargs):
+        raise AssertionError("Join constructed an outbound client after proxy pinning failed")
+
+    monkeypatch.setattr("rynmesh.peer_http.HttpPeerClient", unexpected_peer_client)
+    acceptor_home = tmp_path / "acceptor"
+    monkeypatch.setenv("RYNMESH_HOME", str(acceptor_home))
+    acceptor_store = RynmeshStore(home=acceptor_home, network_dir=tmp_path / "acceptor-network")
+    acceptor_client = TestClient(create_app(acceptor_store))
+
+    rejected = acceptor_client.post(
+        "/api/local/friends/join",
+        json={
+            "link": link,
+            "acceptor_endpoints": ["https://bob.example:8791"],
+        },
+    )
+
+    assert rejected.status_code == 400
+    assert rejected.json() == {"detail": "friend_join_failed"}
+    assert acceptor_client.get("/api/local/friends").json() == []
+    assert provider_client.get("/api/local/friends/invites").json()[0]["used_at"] is None
+
+
 def test_signed_revocation_retries_after_offline_delivery_and_converges(
     tmp_path, monkeypatch
 ):
@@ -287,6 +328,16 @@ def test_privacy_export_is_sanitized_and_friend_erase_deletes_credentials(
         received_permissions=["private-ai.use"],
         source_invite_id="invite-privacy",
     )
+    friends.create_invite(
+        private_key_bytes=store.private_key_bytes,
+        node_name="Privacy node",
+        network_id="rynmesh-main",
+        endpoints=["https://privacy.example:8791"],
+    )
+    public_before = json.loads((home / "friends.json").read_text(encoding="utf-8"))
+    public_before["nonces"] = {"bob": {"nonce-hash": 1}}
+    public_before["revocations"] = {"old-revocation": {"signed": True}}
+    (home / "friends.json").write_text(json.dumps(public_before), encoding="utf-8")
 
     class OfflineTransport:
         def post_bytes(self, url, body, *, timeout_s, max_bytes, headers=None):
@@ -309,7 +360,19 @@ def test_privacy_export_is_sanitized_and_friend_erase_deletes_credentials(
     erased = client.post("/api/local/privacy/erase", json={"scopes": ["friends"]})
     assert erased.status_code == 200
     assert client.get("/api/local/friends").json() == []
-    assert secret not in (home / "friends.secrets.json").read_text(encoding="utf-8")
+    assert client.get("/api/local/friends/invites").json() == []
+    assert client.get("/api/local/privacy/status").json()["friendship_records"] == 0
+    assert json.loads((home / "friends.json").read_text(encoding="utf-8")) == {
+        "version": 1,
+        "invites": {},
+        "friends": {},
+        "revocations": {},
+        "nonces": {},
+    }
+    assert json.loads((home / "friends.secrets.json").read_text(encoding="utf-8")) == {
+        "version": 1,
+        "relationships": {},
+    }
 
 
 def test_friend_hmac_is_network_key_alternative_and_replay_is_hidden(tmp_path, monkeypatch):

@@ -4,6 +4,7 @@ Decision: **NOT YET ACCEPTED**
 
 Core branch: `codex/issue-30-friend-mesh`
 Webapp slice branch: `codex/issue-30-friend-mesh-ui`
+Canonical audit branch: `codex/issue-30-friend-mesh-integration`
 
 Date: 2026-09-03
 
@@ -41,6 +42,17 @@ and converges idempotently. Sanitized privacy export and explicit friendship
 erase are covered by the 47/47 Friend/Transport run and 90/90 combined
 Friend/Transport/LLM regression.
 
+The 2026-09-03 strict canonical audit adds 48/48 focused
+Friend/HTTP/Transport tests, 100 passed/1 skipped expanded
+Friend/Transport/LLM tests, 51/51 Webapp tests, and green Ruff, TypeScript lint,
+and production build. The full backend reported 555 passed, 3 skipped, and 8
+documented Windows-platform failures, with no Friend Mesh failure. It proves
+stream-path HMAC separation at the protocol primitive, proxy rejection before
+contact/invite consumption, and exact public/secret friendship-store erasure.
+It also fixed an unhandled proxy Transport error at the Join boundary. Cargo
+was unavailable for a current metadata rerun. This does not replace route-level
+#23 streaming evidence or any physical/installed-package evidence.
+
 ## Criteria status
 
 - [x] Friendship state is separate from identity trust roots.
@@ -54,9 +66,18 @@ Friend/Transport/LLM regression.
 - [ ] Eight protocol decisions reviewed by maintainers before endpoint merge.
 - [x] Outbound Join uses #28 Transport and blocks unsafe resolved addresses.
 - [x] The Transport pins the validated DNS answer while preserving URL SNI/Host.
+- [ ] Outbound-proxy disposition is approved: equivalent authenticated pinning,
+  or an explicit V1 exclusion with a specific actionable UI diagnostic.
 - [x] Changed endpoints require a second explicit review.
-- [x] Friends-only Private AI admission denies before capacity/inference.
-- [x] Revocation delivery converges after online and offline cases.
+- [x] Friends-only complete-v1 admission denies before capacity/inference on
+  the canonical #30 implementation.
+- [ ] Friends-only stream-v1 route uses the same Friend ACL on the final stacked
+  commit; complete-route HMAC cannot authenticate the stream route; post-revoke
+  next-stream admission is denied before capacity/inference.
+- [x] Simulated two-app revocation delivery converges after offline/reconnect and
+  is idempotent.
+- [ ] Physical two-node revocation convergence is recorded across disconnect,
+  restart/reconnect, and next-order denial.
 - [ ] Webapp and Tauri create/review/join/QR/deep-link/list/revoke flows complete.
   - [x] Webapp create/list/cancel with explicit endpoint/scope/expiry review.
   - [x] Pasted-link offline review shows signature, fingerprint, network, every endpoint/address class, scope, and expiry.
