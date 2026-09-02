@@ -58,9 +58,9 @@ pub fn run() {
             tray.on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => focus_main(app),
                 "logs" => {
-                    let _ = std::process::Command::new("/usr/bin/open")
-                        .arg(node::log_dir())
-                        .spawn();
+                    if let Err(error) = node::open_log_dir() {
+                        log::warn!("failed to open log directory: {error}");
+                    }
                 }
                 "restart" => {
                     let app = app.clone();

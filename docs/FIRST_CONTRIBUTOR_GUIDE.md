@@ -24,7 +24,8 @@ Companion**:
 - optional local Ollama or explicitly enabled Anthropic assistance
 - Search & Ask, signed publication, provenance, safety receipts, peer
   discovery, encrypted messaging, and non-transferable reputation credits
-- self-contained macOS desktop packages for Apple Silicon and Intel
+- self-contained macOS desktop packages for Apple Silicon and Intel, plus an
+  initial Ubuntu 24.04 x86_64 `.deb`
 
 The release is useful but still alpha. The immediate work is reliability,
 explainability, test coverage, content-viewer hardening, and desktop
@@ -91,8 +92,8 @@ Prerequisites:
 - Python 3.10 or newer
 - Node.js 22 and npm
 - Rust stable only when working on the Tauri desktop shell
-- macOS for the currently supported native desktop package; backend and webapp
-  development can also run on Linux
+- macOS for DMG work, or Ubuntu 24.04 x86_64 for the supported Linux `.deb`;
+  backend and webapp development can also run on other Linux systems
 
 Clone the canonical public repository and run the setup script:
 

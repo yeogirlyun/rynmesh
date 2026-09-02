@@ -119,6 +119,8 @@ jobs:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - name: Build production web interface
+        run: npm run build
       - name: Build self-contained node sidecar
         run: ./src-tauri/scripts/build-sidecar.sh
       - name: Start bundled node sidecar
@@ -127,3 +129,62 @@ jobs:
           ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
       - name: Compile desktop shell
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  linux-desktop-package:
+    name: Linux desktop package (Ubuntu 24.04 x86_64)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: webapp
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Tauri and smoke-test system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl dbus-x11 file libayatana-appindicator3-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf \
+            xauth xvfb
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build production web interface
+        run: npm run build
+      - name: Build and verify x86_64 frozen sidecar
+        run: |
+          ./src-tauri/scripts/build-sidecar.sh
+          triple="$(rustc -Vv | sed -n 's/^host: //p')"
+          test "$triple" = x86_64-unknown-linux-gnu
+          sidecar="src-tauri/binaries/rynmesh-peer-$triple"
+          file "$sidecar" | grep -Eq 'ELF 64-bit.*x86-64'
+          ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
+      - name: Test desktop shell platform helpers
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - name: Build Debian package
+        run: npm run tauri build -- --bundles deb
+      - name: Inspect Debian package
+        run: |
+          mapfile -t packages < <(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print)
+          test "${#packages[@]}" -eq 1
+          ./src-tauri/scripts/verify-linux-deb.sh "${packages[0]}" "$(node -p 'require("./package.json").version')"
+          cp "${packages[0]}" Ryn-linux-x86_64.deb
+          sha256sum Ryn-linux-x86_64.deb > Ryn-linux-x86_64.deb.sha256
+      - name: Install and smoke-test desktop package
+        run: |
+          sudo apt-get install -y "$PWD/Ryn-linux-x86_64.deb"
+          desktop_file="$(find /usr/share/applications -maxdepth 1 -iname '*ryn*.desktop' -print -quit)"
+          test -n "$desktop_file"
+          dbus-run-session -- ./src-tauri/scripts/smoke-linux-desktop.sh "$desktop_file"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Ryn-linux-x86_64
+          path: |
+            webapp/Ryn-linux-x86_64.deb
+            webapp/Ryn-linux-x86_64.deb.sha256

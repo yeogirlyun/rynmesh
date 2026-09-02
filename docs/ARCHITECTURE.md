@@ -28,8 +28,10 @@ Product DNA: Rynmesh is local-node infrastructure with a human control surface. 
 - The current registry implementation is a coordination plane, not a trust authority.
 - The current safety scanner is intentionally minimal and must be expanded before operating an
   unrestricted public network of untrusted peers.
-- The current desktop release targets macOS. Windows and Linux packaging, Apple notarization,
-  and broader field validation remain release-engineering work.
+- The desktop release targets macOS Intel/Apple Silicon and Ubuntu 24.04
+  x86_64. Windows packaging, Apple notarization, additional Linux
+  distributions/architectures, and broader field validation remain
+  release-engineering work.
 
 ## System Overview
 
@@ -724,8 +726,11 @@ Implemented since (this iteration):
 - **Ryn desktop shell (M1)** — Tauri 2 app under `webapp/src-tauri/` with
   single-instance, tray menu (Open / Logs / Restart / Quit), graceful
   shutdown, and a self-contained PyInstaller-bundled `rynmesh-peer`
-  sidecar (`webapp/src-tauri/scripts/build-sidecar.sh`). Packaged as
-  `Ryn.app` + `Ryn_*.dmg`, ad-hoc signed.
+  sidecar (`webapp/src-tauri/scripts/build-sidecar.sh`). Packaged as ad-hoc
+  signed macOS DMGs and an Ubuntu 24.04 x86_64 `.deb`. The Linux shell uses
+  `${XDG_STATE_HOME:-~/.local/state}/rynmesh` for desktop logs and resolves an
+  exact architecture-matched sidecar; neither package needs system Python or
+  Node.js at runtime.
 - **F1 propagation (consumer-attested serve receipts)** — new
   `POST /api/v1/credits/append` accepts a signed payload, verifies via the
   existing policy, rejects self-attestation, dedupes. Consumer-side fetch

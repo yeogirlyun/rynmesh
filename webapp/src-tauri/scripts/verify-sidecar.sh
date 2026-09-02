@@ -24,13 +24,18 @@ RYNMESH_DESKTOP_MODE=1 \
 RYNMESH_PEER_HOST=127.0.0.1 \
 RYNMESH_PEER_PORT="$VERIFY_PORT" \
 RYNMESH_AUTO_REGISTER=0 \
+RYNMESH_REGISTRY_URL=http://127.0.0.1:9 \
+RYNMESH_RELAY_URL=http://127.0.0.1:9 \
   "$SIDECAR" >"$VERIFY_DIR/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 attempt=0
 while [ "$attempt" -lt 120 ]; do
   if curl -fsS "http://127.0.0.1:$VERIFY_PORT/health" >"$VERIFY_DIR/health.json" 2>/dev/null && \
-      grep -q 'peer_id' "$VERIFY_DIR/health.json"; then
+      grep -q 'peer_id' "$VERIFY_DIR/health.json" && \
+      grep -q '"desktop_managed":true' "$VERIFY_DIR/health.json"; then
+    curl -fsS "http://127.0.0.1:$VERIFY_PORT/" | grep -Eqi '<!doctype html|<html'
+    [ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$VERIFY_PORT/digest")" = 200 ]
     echo "SIDECAR_HEALTHY $(cat "$VERIFY_DIR/health.json")"
     exit 0
   fi
