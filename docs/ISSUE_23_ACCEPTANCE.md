@@ -1,6 +1,6 @@
 # Issue #23 验收文档：后端/传输切片
 
-验收结论：**后端切片通过；GitHub Issue #23 整项未通过（等待 UI 集成与真实双节点验收）**。
+验收结论：**后端、传输和 Webapp 切片通过；GitHub Issue #23 整项未通过（等待真实双节点/路由验收）**。
 
 ## 后端切片验收矩阵
 
@@ -19,10 +19,10 @@
 
 ## 整项仍未满足
 
-- [ ] `PrivateAIChat` 订阅 SSE 并逐段渲染一个 assistant message。
-- [ ] 首 delta、Stop、不完整回答、恢复和 fallback 具备明确可访问 UI 状态。
-- [ ] terminal 前不持久化部分文本，terminal 后加密会话只保存一次。
-- [ ] Webapp tests、typecheck、build 全通过。
+- [x] `PrivateAIChat` 订阅本机 SSE 并逐段渲染一个 assistant message。
+- [x] 首 delta、Stop、不完整回答、恢复和 fallback 具备明确可访问 UI 状态。
+- [x] terminal 前不持久化 assistant 部分文本，terminal 后加密会话只保存一次。
+- [x] Webapp tests、typecheck、build 全通过。
 - [ ] 两台真实节点记录 submit / first delta / terminal / total generation 时间戳。
 - [ ] 真实直连 streaming、完整响应 fallback、Relay、严格 P2P 验收报告齐全。
 
@@ -44,6 +44,10 @@
   POSIX `0600`、Windows pipe `select()` 和既有 Windows 原子替换并发用例，并非本切片回归。
 
 因此“后端切片通过”有证据；“跨平台全量通过”和“整 Issue 通过”仍不得勾选。
+
+2026-09-03 Webapp 证据：聚焦 `2 files / 7 tests`，全量 `10 files / 43 tests`，TypeScript
+lint、生产 build 和 0-vulnerability audit 全部通过。增量内存边界、Stop/incomplete、
+sequence/snapshot/reconnect、完整响应 fallback 和 terminal 单次持久化均有确定性测试。
 
 ## 发布门槛
 

@@ -1,6 +1,6 @@
 # Issue #23 产品文档：Private AI 流式响应
 
-状态：**后端/传输切片已实现；整项产品未完成，等待 Webapp 接入**
+状态：**后端、传输和 Webapp 流式体验已实现；等待真实双节点/路由验收**
 协议：`rynmesh.llm.stream.v1`（请求值 `stream-v1`）
 
 ## 用户问题
@@ -12,7 +12,7 @@
 
 - 在直连 `peer_http_direct` 且 Provider/模型支持流式输出时，让首个真实文本增量先于
   完整生成到达 Consumer。
-- 浏览器未来只连接本机 Consumer 的 SSE，不直接连接 Provider。
+- 浏览器只连接本机 Consumer 的 SSE，不直接连接 Provider。
 - Relay、严格 P2P、旧 Provider、旧 Transport 和不支持流式的模型继续使用完整响应，
   不因本功能失效。
 - 增量只用于展示；计费、成功状态和持久化以经过验证的最终响应为唯一事实来源。
@@ -51,5 +51,10 @@
 已交付：能力协商、OpenAI-compatible SSE 解析、增量 Transport、NDJSON framing、Provider
 端点、签名密文事件、Consumer 校验/broker、本机 SSE、终态恢复和 exactly-once 结算测试。
 
-未交付：`PrivateAIChat.tsx` 对本机 SSE 的订阅、逐字渲染、Stop 交互、部分回答视觉状态、
-屏幕阅读器策略及真实双节点桌面验收。因此本分支不能宣称 GitHub Issue #23 整体验收通过。
+Webapp 已交付本机 EventSource 订阅、增量 assistant 预览、Stop、不完整状态、`aria-live`
+播报、按 sequence 去重、snapshot 替换、一次断线续订和同 task 终态轮询恢复。增量文本只在
+React 内存中；终态到达后才把 assistant 消息写入加密会话。完整响应降级也通过同一本机
+事件表面完成。
+
+未交付：真实双节点桌面时间戳、真实直连/Relay/严格 P2P 路由矩阵，以及 exact-commit
+Linux/macOS CI。因此本分支仍不能宣称 GitHub Issue #23 整体验收通过。

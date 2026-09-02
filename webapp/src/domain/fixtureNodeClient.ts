@@ -1116,6 +1116,25 @@ export function makeFixtureNodeClient(): NodeClient {
           : req.transport === "p2p" ? "ice_udp_direct" : "peer_http_direct",
       };
     },
+    subscribeLLMOrder(taskId, handlers) {
+      let closed = false;
+      const first = window.setTimeout(() => {
+        if (!closed) handlers.onEvent({ event: "delta", sequence: 0, delta: "Fixture response" });
+      }, 10);
+      const terminal = window.setTimeout(() => {
+        if (!closed) handlers.onEvent({
+          event: "complete",
+          task_id: taskId,
+          state: "succeeded",
+          output: "Fixture response",
+        });
+      }, 20);
+      return () => {
+        closed = true;
+        window.clearTimeout(first);
+        window.clearTimeout(terminal);
+      };
+    },
     async getLLMOrder(taskId) {
       await delay();
       return { task_id: taskId, state: "succeeded", output: "Fixture completed response" };
