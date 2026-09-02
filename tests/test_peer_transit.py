@@ -831,6 +831,7 @@ def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) ->
     assert audit["artifact_files_scanned"] == 5
     assert audit["artifact_partial_files"] == 0
     assert audit["artifact_resume_checkpoints"] == 0
+    assert audit["artifact_open_work_order_markers"] == 0
     assert audit["stderr_bytes"] == 0
 
     (tmp_path / "relay" / "leak.bin").write_bytes(
@@ -850,6 +851,13 @@ def test_soak_artifact_auditor_scans_transit_storage_logs_and_parts(tmp_path) ->
         encoding="utf-8",
     )
     with pytest.raises(AuditError, match="resume checkpoint"):
+        audit_module._audit_soak_artifacts(tmp_path)
+    (tmp_path / "target-inbox" / ".tmp" / "orphan.resume.json").unlink()
+
+    open_markers = tmp_path / "registry" / "open-work-orders" / "provider"
+    open_markers.mkdir(parents=True)
+    (open_markers / "orphan.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(AuditError, match="open work-order marker"):
         audit_module._audit_soak_artifacts(tmp_path)
 
 
