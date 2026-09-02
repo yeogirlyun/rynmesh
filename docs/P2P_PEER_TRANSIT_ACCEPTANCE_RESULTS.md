@@ -780,6 +780,14 @@ and stderr bytes, with both worker error snapshots still zero. Final shutdown
 verification must use the same fields and prove that the process no longer
 exists rather than treating a lower resource count as sufficient.
 
+An independent same-field checkpoint after 233 sessions is preserved at
+`.codex-tmp/peer-transit-soak-24h-r13/os-checkpoint-233.json`, SHA-256
+`3AC7BB613DACA73987A0B321A9084CF743F3A25563341D414A42464F0C422657`.
+Across the additional 99 sessions, handles changed from 309 to 307, OS threads
+remained at eight, private bytes decreased by 270,336 and working set decreased
+by 1,404,928 bytes. UDP endpoints, open markers, partial files, stderr, failures
+and worker errors were all zero at the idle checkpoint.
+
 The `a378bad` package candidate also passed an isolated PEP 517 build and clean
 dependency installation into `.codex-tmp/venv-peer-transit-r13-start`. The
 276,476-byte wheel has SHA-256
