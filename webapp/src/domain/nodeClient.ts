@@ -127,6 +127,51 @@ export interface LLMSetupRequest {
   accept_risk?: boolean;
 }
 
+export type FriendPermission = "private-ai.use" | "peer.messaging" | "peer.discovery";
+
+export interface FriendInviteRecord {
+  version: string;
+  invite_id: string;
+  issued_at: string;
+  expires_at: string;
+  network_id: string;
+  used_at: string | null;
+  cancelled_at: string | null;
+  accepted_peer_id: string | null;
+  permissions: FriendPermission[];
+  endpoints: string[];
+}
+
+export interface FriendInviteReview {
+  version: string;
+  invite_id: string;
+  inviter_peer_id: string;
+  node_name: string;
+  network_id: string;
+  endpoints: string[];
+  permissions: FriendPermission[];
+  issued_at: string;
+  expires_at: string;
+  verified_fingerprint: string;
+  signed_payload_hash: string;
+}
+
+export interface FriendRecord {
+  peer_id: string;
+  display_name: string;
+  network_id: string;
+  reviewed_endpoints: string[];
+  granted_permissions: FriendPermission[];
+  received_permissions: FriendPermission[];
+  state: "active" | "revoked";
+  created_at: string;
+  accepted_at: string;
+  last_contact_at: string | null;
+  revoked_at: string | null;
+  last_delivery_error: string | null;
+  source_invite_id: string;
+}
+
 export interface NodeClient {
   mode: "live" | "fixture";
   getNodeStatus(): Promise<NodeStatus>;
@@ -170,6 +215,25 @@ export interface NodeClient {
   clearLLMOrders(): Promise<{ ok: boolean; removed: number }>;
   discoverPeers(req?: { network?: string }): Promise<Peer[]>;
   listPeers(filters?: PeerFilters): Promise<Peer[]>;
+  listFriends(): Promise<FriendRecord[]>;
+  listFriendInvites(): Promise<FriendInviteRecord[]>;
+  createFriendInvite(req: {
+    network_id?: string;
+    endpoints: string[];
+    permissions: FriendPermission[];
+    ttl_seconds: number;
+    allow_private_endpoints: boolean;
+  }): Promise<{ invite: FriendInviteRecord; link: string }>;
+  reviewFriendInvite(req: {
+    link: string;
+    allow_private_endpoints: boolean;
+  }): Promise<FriendInviteReview>;
+  cancelFriendInvite(inviteId: string): Promise<FriendInviteRecord>;
+  revokeFriend(peerId: string, reasonCode?: string): Promise<{
+    ok: boolean;
+    state: "revoked";
+    revocation_id: string;
+  }>;
   listContent(filters?: ContentFilters): Promise<ContentItem[]>;
   getContentItem(contentId: string): Promise<ContentItem>;
   getContentBody(contentId: string): Promise<ContentBody>;
