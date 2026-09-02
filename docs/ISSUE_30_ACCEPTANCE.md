@@ -23,6 +23,10 @@ Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
 no Friend Mesh failure. Linux exact-commit CI remains required.
 
+The final integration-branch full backend rerun reports 555 passed, 3 skipped,
+and 7 known Windows/platform failures, with no Friend Mesh, privacy, revocation,
+Transport, or LLM ACL failure.
+
 Integration evidence: the #28-based branch passes 44 Friend/Transport tests,
 including simulated two-node Join and explicit endpoint-change review.
 After friends-only Private AI integration, the combined focused regression is

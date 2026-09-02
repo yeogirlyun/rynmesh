@@ -65,6 +65,12 @@ focused Friend, Transport, LLM hardening, and full LLM package suites.
   mode assertions, one existing Windows `os.replace` reader race, and one
   Windows `select()`-on-pipe limitation. No Friend Mesh test failed.
 
+Exact integration branch full backend rerun on 2026-09-03: `555 passed,
+3 skipped, 7 failed` in 59.05s. The seven failures are the same Windows-only
+environment classes: executable-bit assertions, unavailable WSL bash, POSIX
+`0600` mode assertions, and `select()` on a pipe. All Friend Mesh, privacy,
+revocation, Transport, and LLM ACL tests passed.
+
 ## Still required
 
 - outbound-proxy support with an equivalent authenticated DNS pinning guarantee;
