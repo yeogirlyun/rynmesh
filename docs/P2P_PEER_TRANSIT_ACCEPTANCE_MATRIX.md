@@ -74,6 +74,11 @@ three-network gate in `P2P_PEER_TRANSIT_RUNBOOK.md`.
   `8CC54F0AB33A1606F5E7E48F1EEA42CC3B92BFA95191E52EDCCEBF3B5C67CDF9`;
   both records refreshed at 12:27:10 Asia/Hong_Kong and passed Ed25519
   verification in the project environment.
+- r14 fifth refreshed target/transit signed-capacity snapshots:
+  `4F9BB40CA705549BCE2E42001764490622CBD1A0B60FC48B748AC30278233AFA` /
+  `60241E1DD0EF70946BE1B4E24E10B3C5B7F1A8AC8A419D9F342C71F00E448CCD`;
+  both 12:57:10 records passed Ed25519 verification. The atomically replaced
+  fourth records were not separately preserved and are not claimed as evidence.
 - r14 255-session idle OS checkpoint:
   `D787B4057CCFA4301E6C8B9B4646E16DF46527F7213816B28330EB61E6951538`.
 - r14 303-session idle OS checkpoint:

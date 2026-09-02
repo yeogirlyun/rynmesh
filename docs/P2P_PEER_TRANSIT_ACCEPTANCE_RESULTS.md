@@ -1076,6 +1076,15 @@ handles, one fewer OS thread, 1,654,784 more private bytes and 1,789,952 more
 working-set bytes, with zero UDP endpoints, errors, plaintext findings,
 partial/resume files or open markers.
 
+The latest signed capacity records were captured again at the fifth refresh,
+2026-09-02 12:57:10 Asia/Hong_Kong. Both passed Ed25519 verification with the
+same identities, target/transit roles, eight-session concurrency and 2 GiB
+file limit. The target/transit snapshot SHA-256 values are
+`4F9BB40CA705549BCE2E42001764490622CBD1A0B60FC48B748AC30278233AFA` and
+`60241E1DD0EF70946BE1B4E24E10B3C5B7F1A8AC8A419D9F342C71F00E448CCD`.
+The fourth records had already been atomically replaced before this sample;
+they are not reconstructed or counted as immutable evidence.
+
 At 443 sessions, a third long-history sample repeated 100 indexed open-order
 polls for each provider. Target median/p95/max were 0.230/0.276/0.540 ms;
 relay median/p95/max were 0.230/0.384/0.495 ms. Both returned zero open orders
