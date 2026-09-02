@@ -1009,6 +1009,20 @@ open markers, `.part`/`.resume.json` files, relay/registry plaintext hits,
 stdout and stderr bytes. Final shutdown verification must compare these fields
 and prove the process is absent rather than merely reporting lower counts.
 
+The first scheduled r14 capacity refresh completed while normal sessions
+continued. The transit and target records were re-signed at
+2026-09-02 11:57:10 Asia/Hong_Kong, approximately fifteen minutes after
+startup. Project signature verification accepted the same peer identities,
+their respective `transit` and `target` roles, capability
+`rynmesh.peer-transit.v1`, and `max_concurrent=8`. Immutable normalized copies
+are preserved as `capacity-refresh-001-transit.json` and
+`capacity-refresh-001-target.json` with SHA-256
+`BB26C5E8641570BAC65F8DAAA298F876341A6C0A4F3FA9B983257E66DB2DCEDE`
+and `AC1CCB5E27C6D7EA447AA88E00FE9F62346B2B0F70A8C8B23467B85FE85F4DFD`.
+At the following checkpoint r14 had completed 113 sessions with zero failures,
+worker control errors, plaintext findings, open markers and partial/resume
+files; stdout and stderr remained empty.
+
 Final acceptance requires:
 
 - the full 86,400-second duration;
