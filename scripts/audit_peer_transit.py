@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -577,6 +578,246 @@ def _verify_flat_result(value: dict[str, Any], *, expected_provider: str) -> Wor
     return result
 
 
+def _audit_resumable_transit(
+    value: dict[str, Any],
+    *,
+    source: str,
+    transit: str,
+    target: str,
+) -> dict[str, Any]:
+    raw_segments = _require(value, "segment_evidence")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise AuditError("resumable transit evidence has no verified segments")
+    transfer_id = str(_require(value, "transfer_id"))
+    try:
+        if uuid.UUID(transfer_id).hex != transfer_id:
+            raise ValueError
+    except ValueError as exc:
+        raise AuditError("resumable transit transfer ID is invalid") from exc
+    source_hash = str(_require(value, "source_sha256"))
+    target_hash = str(_require(value, "target_sha256"))
+    source_size = int(_require(value, "source_size_bytes"))
+    target_size = int(_require(value, "target_size_bytes"))
+    if (
+        not source_hash.startswith("sha256:")
+        or len(source_hash) != 71
+        or source_hash != target_hash
+        or source_size < 0
+        or source_size != target_size
+    ):
+        raise AuditError("resumable source and target artifact evidence does not match")
+    segment_limit = int(_require(value, "resume_segment_bytes"))
+    if (
+        segment_limit < 64 * 1024
+        or segment_limit > 64 * 1024 * 1024
+        or segment_limit % (64 * 1024)
+    ):
+        raise AuditError("resumable segment limit is invalid")
+
+    expected_offset = 0
+    session_ids: list[str] = []
+    boundaries: list[int] = []
+    total_rx = 0
+    total_tx = 0
+    total_request_frames = 0
+    total_response_frames = 0
+    final_item: dict[str, Any] | None = None
+    for index, raw_item in enumerate(raw_segments):
+        if not isinstance(raw_item, dict):
+            raise AuditError("resumable segment evidence is malformed")
+        item = dict(raw_item)
+        if int(_require(item, "segment_index")) != index:
+            raise AuditError("resumable segment index is not contiguous")
+        offset = int(_require(item, "offset_bytes"))
+        segment_size = int(_require(item, "segment_size_bytes"))
+        end = int(_require(item, "end_offset_bytes"))
+        is_final = _require(item, "final")
+        if (
+            offset != expected_offset
+            or segment_size < 0
+            or segment_size > segment_limit
+            or end != offset + segment_size
+            or end > source_size
+            or is_final is not (end == source_size)
+        ):
+            raise AuditError("resumable segment boundary is invalid")
+        segment_hash = str(_require(item, "segment_sha256"))
+        prefix_hash = str(_require(item, "prefix_sha256"))
+        if (
+            not segment_hash.startswith("sha256:")
+            or len(segment_hash) != 71
+            or not prefix_hash.startswith("sha256:")
+            or len(prefix_hash) != 71
+            or (is_final and prefix_hash != source_hash)
+        ):
+            raise AuditError("resumable segment hash chain is invalid")
+        session_id = str(_require(item, "session_id"))
+        if not session_id or session_id in session_ids:
+            raise AuditError("resumable segment session identity is duplicated")
+        session_ids.append(session_id)
+        boundaries.append(end)
+        _audit_hop(dict(_require(item, "source_hop")), f"segment[{index}].source_hop")
+
+        relay_refs = dict(_require(item, "relay_evidence"))
+        if (
+            relay_refs.get("protocol_version") != PROTOCOL_VERSION
+            or relay_refs.get("path_mode") != "peer_transit"
+            or relay_refs.get("transit_peer_id") != transit
+            or relay_refs.get("ice_relay_candidate_used") is not False
+            or str(relay_refs.get("session_id") or "") != session_id
+        ):
+            raise AuditError("resumable signed relay segment binding is invalid")
+        _audit_hop(dict(relay_refs.get("hop_1") or {}), f"segment[{index}].hop_1")
+        _audit_hop(dict(relay_refs.get("hop_2") or {}), f"segment[{index}].hop_2")
+        relay_result = _verify_flat_result(
+            dict(_require(item, "relay_result")),
+            expected_provider=transit,
+        )
+        if (
+            relay_result.status != "completed"
+            or relay_result.requester_peer_id != source
+            or dict(relay_result.result_refs) != relay_refs
+        ):
+            raise AuditError("resumable relay result signature or lifecycle is invalid")
+
+        target_result = _verify_flat_result(
+            dict(_require(item, "target_result")),
+            expected_provider=target,
+        )
+        target_refs = dict(target_result.result_refs)
+        if (
+            target_result.status != "completed"
+            or target_result.requester_peer_id != transit
+            or str(relay_refs.get("target_work_order_id") or "")
+            != target_result.work_order_id
+            or target_refs.get("protocol_version") != PROTOCOL_VERSION
+            or target_refs.get("path_mode") != "peer_transit"
+            or target_refs.get("ice_relay_candidate_used") is not False
+            or str(target_refs.get("session_id") or "") != session_id
+        ):
+            raise AuditError("resumable target result lifecycle binding is invalid")
+        _audit_hop(dict(target_refs.get("hop") or {}), f"segment[{index}].target_hop")
+
+        receipt = dict(_require(item, "receipt"))
+        expected_receipt = {
+            "session_id": session_id,
+            "source_peer_id": source,
+            "transfer_id": transfer_id,
+            "size_bytes": source_size,
+            "sha256": source_hash,
+            "offset_bytes": offset,
+            "segment_size_bytes": segment_size,
+            "next_offset_bytes": end,
+            "segment_sha256": segment_hash,
+            "prefix_sha256": prefix_hash,
+            "complete": bool(is_final),
+            "status": "stored" if is_final else "checkpointed",
+        }
+        if any(receipt.get(key) != expected for key, expected in expected_receipt.items()):
+            raise AuditError("resumable encrypted receipt does not bind its segment")
+        if any(target_refs.get(key) != receipt.get(key) for key in receipt):
+            raise AuditError("resumable target result does not contain the encrypted receipt")
+        if bool(receipt.get("stored_path")) is not bool(is_final):
+            raise AuditError("resumable target committed at the wrong boundary")
+
+        rx = int(_require(item, "transit_rx_bytes"))
+        tx = int(_require(item, "transit_tx_bytes"))
+        request_frames = int(_require(item, "request_frames"))
+        response_frames = int(_require(item, "response_frames"))
+        if (
+            rx < segment_size
+            or tx < segment_size
+            or request_frames < 1
+            or response_frames < 1
+            or rx != int(_require(relay_refs, "transit_rx_bytes"))
+            or tx != int(_require(relay_refs, "transit_tx_bytes"))
+            or request_frames != int(_require(relay_refs, "request_frames"))
+            or response_frames != int(_require(relay_refs, "response_frames"))
+        ):
+            raise AuditError("resumable signed segment counters are inconsistent")
+        total_rx += rx
+        total_tx += tx
+        total_request_frames += request_frames
+        total_response_frames += response_frames
+        expected_offset = end
+        final_item = item
+
+    assert final_item is not None
+    if expected_offset != source_size or boundaries != list(_require(value, "verified_boundaries")):
+        raise AuditError("resumable verified boundaries do not cover the source")
+    if list(_require(value, "session_ids")) != session_ids:
+        raise AuditError("resumable session list does not match signed segments")
+    if str(_require(value, "session_id")) != session_ids[-1]:
+        raise AuditError("resumable top-level session is not the final segment")
+    if dict(_require(value, "source_hop")) != dict(final_item["source_hop"]):
+        raise AuditError("resumable top-level source hop is inconsistent")
+    if dict(_require(value, "receipt")) != dict(final_item["receipt"]):
+        raise AuditError("resumable top-level receipt is inconsistent")
+    if dict(_require(value, "relay_evidence")) != dict(final_item["relay_evidence"]):
+        raise AuditError("resumable top-level signed relay evidence is inconsistent")
+    if dict(_require(value, "relay_result")) != dict(final_item["relay_result"]):
+        raise AuditError("resumable top-level relay result is inconsistent")
+    if dict(_require(value, "target_result")) != dict(final_item["target_result"]):
+        raise AuditError("resumable top-level target result is inconsistent")
+    if (
+        int(_require(value, "transit_rx_bytes")) != total_rx
+        or int(_require(value, "transit_tx_bytes")) != total_tx
+        or int(_require(value, "request_frames")) != total_request_frames
+        or int(_require(value, "response_frames")) != total_response_frames
+        or total_rx < source_size
+        or total_tx < source_size
+    ):
+        raise AuditError("resumable aggregate transit byte or frame counters are inconsistent")
+
+    resume_attempts = int(_require(value, "resume_attempts"))
+    failed_attempts = _require(value, "failed_attempts")
+    if not isinstance(failed_attempts, list) or len(failed_attempts) != resume_attempts:
+        raise AuditError("resumable retry count is inconsistent")
+    failed_by_segment: dict[int, int] = {}
+    failed_session_ids: set[str] = set()
+    for raw_failure in failed_attempts:
+        if not isinstance(raw_failure, dict):
+            raise AuditError("resumable failed-attempt evidence is malformed")
+        failure = dict(raw_failure)
+        segment_index = int(_require(failure, "segment_index"))
+        failed_session_id = str(_require(failure, "session_id"))
+        if (
+            segment_index < 0
+            or segment_index >= len(raw_segments)
+            or failure.get("retryable") is not True
+            or not str(failure.get("error") or "")
+            or int(_require(failure, "offset_bytes"))
+            != int(raw_segments[segment_index]["offset_bytes"])
+            or not failed_session_id
+            or failed_session_id in session_ids
+            or failed_session_id in failed_session_ids
+        ):
+            raise AuditError("resumable failed attempt is not bound to a segment")
+        failed_session_ids.add(failed_session_id)
+        failed_by_segment[segment_index] = failed_by_segment.get(segment_index, 0) + 1
+    for index, item in enumerate(raw_segments):
+        if int(_require(item, "attempt")) != failed_by_segment.get(index, 0):
+            raise AuditError("resumable successful attempt index is inconsistent")
+    if value.get("result") != "pass":
+        raise AuditError("producer did not mark resumable transit as passing")
+    return {
+        "ok": True,
+        "protocol_version": PROTOCOL_VERSION,
+        "source_peer_id": source,
+        "transit_peer_id": transit,
+        "target_peer_id": target,
+        "source_sha256": source_hash,
+        "source_size_bytes": source_size,
+        "transit_rx_bytes": total_rx,
+        "transit_tx_bytes": total_tx,
+        "request_frames": total_request_frames,
+        "response_frames": total_response_frames,
+        "verified_segments": len(raw_segments),
+        "resume_attempts": resume_attempts,
+        "ice_relay_candidate_used": False,
+    }
+
+
 def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
     if _require(value, "protocol_version") != PROTOCOL_VERSION:
         raise AuditError("unexpected peer-transit protocol version")
@@ -593,6 +834,14 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
         raise AuditError("registry carried application payload bytes")
     if _require(value, "plaintext_found_on_transit") is not False:
         raise AuditError("transit confidentiality was not proven")
+
+    if "segment_evidence" in value:
+        return _audit_resumable_transit(
+            value,
+            source=source,
+            transit=transit,
+            target=target,
+        )
 
     relay_refs = dict(_require(value, "relay_evidence"))
     if relay_refs.get("path_mode") != "peer_transit":
@@ -689,6 +938,163 @@ def audit_peer_transit(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _audit_resumable_direct(
+    value: dict[str, Any],
+    *,
+    source: str,
+    target: str,
+    source_hash: str,
+    source_size: int,
+) -> dict[str, Any]:
+    raw_segments = _require(value, "segment_evidence")
+    if not isinstance(raw_segments, list) or not raw_segments:
+        raise AuditError("resumable direct evidence has no verified segments")
+    transfer_id = str(_require(value, "transfer_id"))
+    try:
+        if uuid.UUID(transfer_id).hex != transfer_id:
+            raise ValueError
+    except ValueError as exc:
+        raise AuditError("resumable direct transfer ID is invalid") from exc
+    segment_limit = int(_require(value, "resume_segment_bytes"))
+    if (
+        segment_limit < 64 * 1024
+        or segment_limit > 64 * 1024 * 1024
+        or segment_limit % (64 * 1024)
+    ):
+        raise AuditError("resumable direct segment limit is invalid")
+    offset = 0
+    sessions: list[str] = []
+    boundaries: list[int] = []
+    final_item: dict[str, Any] | None = None
+    for index, raw_item in enumerate(raw_segments):
+        if not isinstance(raw_item, dict):
+            raise AuditError("resumable direct segment evidence is malformed")
+        item = dict(raw_item)
+        segment_size = int(_require(item, "segment_size_bytes"))
+        end = int(_require(item, "end_offset_bytes"))
+        is_final = _require(item, "final")
+        if (
+            int(_require(item, "segment_index")) != index
+            or int(_require(item, "offset_bytes")) != offset
+            or segment_size < 0
+            or segment_size > segment_limit
+            or end != offset + segment_size
+            or end > source_size
+            or is_final is not (end == source_size)
+        ):
+            raise AuditError("resumable direct segment boundary is invalid")
+        segment_hash = str(_require(item, "segment_sha256"))
+        prefix_hash = str(_require(item, "prefix_sha256"))
+        if (
+            not segment_hash.startswith("sha256:")
+            or len(segment_hash) != 71
+            or not prefix_hash.startswith("sha256:")
+            or len(prefix_hash) != 71
+            or (is_final and prefix_hash != source_hash)
+        ):
+            raise AuditError("resumable direct hash chain is invalid")
+        session_id = str(_require(item, "session_id"))
+        if not session_id or session_id in sessions:
+            raise AuditError("resumable direct session identity is duplicated")
+        sessions.append(session_id)
+        boundaries.append(end)
+        _audit_hop(dict(_require(item, "source_hop")), f"direct.segment[{index}].source_hop")
+        target_result = _verify_flat_result(
+            dict(_require(item, "target_result")),
+            expected_provider=target,
+        )
+        target_refs = dict(target_result.result_refs)
+        if (
+            target_result.status != "completed"
+            or target_result.requester_peer_id != source
+            or target_refs.get("protocol_version") != PROTOCOL_VERSION
+            or target_refs.get("path_mode") != "direct"
+            or target_refs.get("ice_relay_candidate_used") is not False
+            or str(target_refs.get("session_id") or "") != session_id
+        ):
+            raise AuditError("resumable direct target lifecycle binding is invalid")
+        _audit_hop(dict(target_refs.get("hop") or {}), f"direct.segment[{index}].target_hop")
+        receipt = dict(_require(item, "receipt"))
+        expected_receipt = {
+            "session_id": session_id,
+            "source_peer_id": source,
+            "transfer_id": transfer_id,
+            "size_bytes": source_size,
+            "sha256": source_hash,
+            "offset_bytes": offset,
+            "segment_size_bytes": segment_size,
+            "next_offset_bytes": end,
+            "segment_sha256": segment_hash,
+            "prefix_sha256": prefix_hash,
+            "complete": bool(is_final),
+            "status": "stored" if is_final else "checkpointed",
+        }
+        if any(receipt.get(key) != expected for key, expected in expected_receipt.items()):
+            raise AuditError("resumable direct receipt does not bind its segment")
+        if any(target_refs.get(key) != receipt.get(key) for key in receipt):
+            raise AuditError("resumable direct signed result does not contain its receipt")
+        if bool(receipt.get("stored_path")) is not bool(is_final):
+            raise AuditError("resumable direct target committed at the wrong boundary")
+        offset = end
+        final_item = item
+
+    assert final_item is not None
+    if offset != source_size or boundaries != list(_require(value, "verified_boundaries")):
+        raise AuditError("resumable direct boundaries do not cover the source")
+    if sessions != list(_require(value, "session_ids")):
+        raise AuditError("resumable direct session list is inconsistent")
+    if str(_require(value, "session_id")) != sessions[-1]:
+        raise AuditError("resumable direct top-level session is inconsistent")
+    if dict(_require(value, "source_hop")) != dict(final_item["source_hop"]):
+        raise AuditError("resumable direct top-level hop is inconsistent")
+    if dict(_require(value, "receipt")) != dict(final_item["receipt"]):
+        raise AuditError("resumable direct top-level receipt is inconsistent")
+    if dict(_require(value, "target_result")) != dict(final_item["target_result"]):
+        raise AuditError("resumable direct top-level signed result is inconsistent")
+    resume_attempts = int(_require(value, "resume_attempts"))
+    failures = _require(value, "failed_attempts")
+    if not isinstance(failures, list) or len(failures) != resume_attempts:
+        raise AuditError("resumable direct retry count is inconsistent")
+    failed_by_segment: dict[int, int] = {}
+    failed_session_ids: set[str] = set()
+    for raw_failure in failures:
+        if not isinstance(raw_failure, dict):
+            raise AuditError("resumable direct failed-attempt evidence is malformed")
+        failure = dict(raw_failure)
+        segment_index = int(_require(failure, "segment_index"))
+        failed_session_id = str(_require(failure, "session_id"))
+        if (
+            segment_index < 0
+            or segment_index >= len(raw_segments)
+            or failure.get("retryable") is not True
+            or not str(failure.get("error") or "")
+            or int(_require(failure, "offset_bytes"))
+            != int(raw_segments[segment_index]["offset_bytes"])
+            or not failed_session_id
+            or failed_session_id in sessions
+            or failed_session_id in failed_session_ids
+        ):
+            raise AuditError("resumable direct failed attempt is not segment-bound")
+        failed_session_ids.add(failed_session_id)
+        failed_by_segment[segment_index] = failed_by_segment.get(segment_index, 0) + 1
+    for index, item in enumerate(raw_segments):
+        if int(_require(item, "attempt")) != failed_by_segment.get(index, 0):
+            raise AuditError("resumable direct attempt index is inconsistent")
+    if value.get("result") != "pass":
+        raise AuditError("direct producer did not mark resumable evidence as passing")
+    return {
+        "ok": True,
+        "protocol_version": PROTOCOL_VERSION,
+        "source_peer_id": source,
+        "target_peer_id": target,
+        "source_sha256": source_hash,
+        "source_size_bytes": source_size,
+        "verified_segments": len(raw_segments),
+        "resume_attempts": resume_attempts,
+        "ice_relay_candidate_used": False,
+    }
+
+
 def audit_direct_file(value: dict[str, Any]) -> dict[str, Any]:
     if _require(value, "protocol_version") != PROTOCOL_VERSION:
         raise AuditError("unexpected direct-file protocol version")
@@ -715,6 +1121,15 @@ def audit_direct_file(value: dict[str, Any]) -> dict[str, Any]:
         or source_size != target_size
     ):
         raise AuditError("direct source and target artifact evidence does not match")
+
+    if "segment_evidence" in value:
+        return _audit_resumable_direct(
+            value,
+            source=source,
+            target=target,
+            source_hash=source_hash,
+            source_size=source_size,
+        )
 
     target_result = _verify_flat_result(
         dict(_require(value, "target_result")),
@@ -745,6 +1160,46 @@ def audit_direct_file(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _audit_resume_after_disconnect_gate(
+    value: dict[str, Any],
+    *,
+    transit_audit: dict[str, Any],
+) -> dict[str, Any]:
+    if value.get("ok") is not True:
+        raise AuditError("verified chunk resume producer did not pass")
+    evidence = dict(_require(value, "evidence"))
+    resume_audit = audit_peer_transit(evidence)
+    injected_offset = int(_require(value, "injected_disconnect_after_offset_bytes"))
+    boundaries = list(_require(value, "verified_boundaries"))
+    failed_sessions = {str(item) for item in _require(value, "failed_session_ids")}
+    successful_sessions = {str(item) for item in _require(value, "successful_session_ids")}
+    if (
+        injected_offset <= 0
+        or int(_require(value, "resume_attempts")) < 1
+        or int(resume_audit.get("resume_attempts", 0)) < 1
+        or injected_offset not in boundaries
+        or not failed_sessions
+        or "" in failed_sessions
+        or not successful_sessions
+        or not failed_sessions.isdisjoint(successful_sessions)
+        or int(_require(value, "target_files")) != 1
+        or int(_require(value, "partial_target_files")) != 0
+        or int(_require(value, "checkpoint_files")) != 0
+        or value.get("source_sha256") != value.get("target_sha256")
+        or resume_audit["source_peer_id"] != transit_audit["source_peer_id"]
+        or resume_audit["transit_peer_id"] != transit_audit["transit_peer_id"]
+        or resume_audit["target_peer_id"] != transit_audit["target_peer_id"]
+    ):
+        raise AuditError("verified chunk resume evidence is inconsistent")
+    return {
+        "injected_disconnect_after_offset_bytes": injected_offset,
+        "resume_attempts": int(resume_audit["resume_attempts"]),
+        "verified_segments": int(resume_audit["verified_segments"]),
+        "failed_sessions": len(failed_sessions),
+        "successful_sessions": len(successful_sessions),
+    }
+
+
 def audit_acceptance_report(
     value: dict[str, Any],
     *,
@@ -761,6 +1216,7 @@ def audit_acceptance_report(
         "automatic_degrade_and_recovery",
         "real_degraded_network",
         "actual_hard_failure_fallback",
+        "verified_chunk_resume",
         "bounded_transit_unavailability",
         "established_data_plane_survives_control_plane_blackout",
         "no_turn",
@@ -839,6 +1295,10 @@ def audit_acceptance_report(
     _audit_route_report(route)
     degraded_network_audit = _audit_degraded_network_gate(
         dict(_require(value, "degraded_network")),
+        transit_audit=transit_audit,
+    )
+    resume_audit = _audit_resume_after_disconnect_gate(
+        dict(_require(value, "resume_after_disconnect")),
         transit_audit=transit_audit,
     )
 
@@ -929,6 +1389,7 @@ def audit_acceptance_report(
         "protocol_overhead_ratio": protocol_overhead_ratio,
         "hard_failure_fallback_s": hard_failure_elapsed,
         "degraded_network": degraded_network_audit,
+        "resume_after_disconnect": resume_audit,
         "peak_python_memory_bytes": peak_memory,
         "peak_python_memory_limit_bytes": peak_memory_limit,
         "one_gib_required": bool(require_one_gib),

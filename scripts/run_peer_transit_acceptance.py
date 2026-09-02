@@ -728,6 +728,92 @@ def _control_plane_blackout_acceptance(root: Path, *, timeout_s: float) -> dict[
     }
 
 
+def _resume_after_disconnect_acceptance(
+    *,
+    work_root: Path,
+    source: RynmeshStore,
+    relay: RynmeshStore,
+    target: RynmeshStore,
+    network_id: str,
+    timeout_s: float,
+) -> dict[str, Any]:
+    payload = work_root / "resume-after-disconnect.bin"
+    segment_bytes = 64 * 1024
+    _write_payload(payload, 3 * segment_bytes + 4096, marker=MARKER + b"-resume")
+    original_send = peer_transit_service.send_encrypted_stream
+    request_calls = 0
+
+    async def disconnect_second_segment(connection: Any, cipher: Any, **kwargs: Any) -> Any:
+        nonlocal request_calls
+        if kwargs.get("direction") == "request":
+            request_calls += 1
+            if request_calls == 2:
+                await connection.close()
+                raise ConnectionError("acceptance injected ICE disconnect after verified boundary")
+        return await original_send(connection, cipher, **kwargs)
+
+    peer_transit_service.send_encrypted_stream = disconnect_second_segment
+    started = time.monotonic()
+    try:
+        evidence = send_file_via_peer(
+            source,
+            payload,
+            relay_peer_id=relay.peer_id,
+            target_peer_id=target.peer_id,
+            network_id=network_id,
+            timeout_s=timeout_s,
+            resume_segment_bytes=segment_bytes,
+            max_resume_attempts=2,
+        )
+    finally:
+        peer_transit_service.send_encrypted_stream = original_send
+    elapsed = time.monotonic() - started
+    audit = audit_peer_transit(evidence)
+    delivered = list((work_root / "target-inbox").glob("*-resume-after-disconnect.bin"))
+    partials = list((work_root / "target-inbox").rglob("*.part"))
+    checkpoints = list((work_root / "target-inbox").rglob("*.resume.json"))
+    expected_boundaries = [
+        segment_bytes,
+        2 * segment_bytes,
+        3 * segment_bytes,
+        payload.stat().st_size,
+    ]
+    failures = list(evidence.get("failed_attempts") or [])
+    failed_session_ids = {str(item.get("session_id") or "") for item in failures}
+    successful_session_ids = {str(item) for item in evidence.get("session_ids") or []}
+    ok = (
+        audit.get("ok") is True
+        and int(evidence.get("resume_attempts", -1)) == 1
+        and evidence.get("verified_boundaries") == expected_boundaries
+        and len(failures) == 1
+        and int(failures[0].get("offset_bytes", -1)) == segment_bytes
+        and failures[0].get("retryable") is True
+        and bool(failed_session_ids)
+        and "" not in failed_session_ids
+        and failed_session_ids.isdisjoint(successful_session_ids)
+        and len(delivered) == 1
+        and delivered[0].read_bytes() == payload.read_bytes()
+        and not partials
+        and not checkpoints
+    )
+    return {
+        "ok": ok,
+        "elapsed_s": elapsed,
+        "injected_disconnect_after_offset_bytes": segment_bytes,
+        "resume_attempts": evidence.get("resume_attempts"),
+        "verified_boundaries": evidence.get("verified_boundaries"),
+        "failed_session_ids": sorted(failed_session_ids),
+        "successful_session_ids": sorted(successful_session_ids),
+        "target_files": len(delivered),
+        "partial_target_files": len(partials),
+        "checkpoint_files": len(checkpoints),
+        "source_sha256": evidence.get("source_sha256"),
+        "target_sha256": evidence.get("target_sha256"),
+        "evidence": evidence,
+        "audit": audit,
+    }
+
+
 def run_acceptance(
     *,
     size_bytes: int,
@@ -999,6 +1085,14 @@ def run_acceptance(
             "route_events": hard_failure_evidence.get("route_events"),
             "evidence": hard_failure_evidence,
         }
+        resume_after_disconnect = _resume_after_disconnect_acceptance(
+            work_root=work_root,
+            source=source,
+            relay=relay,
+            target=target,
+            network_id=network_id,
+            timeout_s=timeout_s,
+        )
     finally:
         tracemalloc.stop()
         stop.set()
@@ -1085,6 +1179,7 @@ def run_acceptance(
         "automatic_degrade_and_recovery": route["ok"],
         "real_degraded_network": degraded_network["ok"],
         "actual_hard_failure_fallback": actual_hard_failure["ok"],
+        "verified_chunk_resume": resume_after_disconnect["ok"],
         "bounded_transit_unavailability": unavailable["ok"],
         "established_data_plane_survives_control_plane_blackout": control_plane_blackout["ok"],
         "no_turn": evidence["ice_relay_candidate_used"] is False,
@@ -1111,6 +1206,7 @@ def run_acceptance(
         "route": route,
         "degraded_network": degraded_network,
         "actual_hard_failure": actual_hard_failure,
+        "resume_after_disconnect": resume_after_disconnect,
         "unavailable": unavailable,
         "control_plane_blackout": control_plane_blackout,
         "concurrent_evidence": concurrent_results,

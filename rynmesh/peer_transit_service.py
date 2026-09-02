@@ -15,6 +15,7 @@ import json
 import os
 import threading
 import time
+import uuid
 from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,8 @@ WORKER_ERROR_LOG_INTERVAL_S = 30.0
 # lower layer fragments this again into ~900-byte datagrams.
 DEFAULT_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024
+DEFAULT_RESUME_SEGMENT_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_RESUME_ATTEMPTS = 3
 
 
 def _expires(seconds: float) -> str:
@@ -177,14 +180,24 @@ def _poll_result(
     raise PeerTransitError(f"timed out waiting for transit result: {wanted_status}")
 
 
-def _file_chunks(path: Path, manifest: dict[str, Any], chunk_bytes: int) -> Iterable[bytes]:
+def _file_chunks(
+    path: Path,
+    manifest: dict[str, Any],
+    chunk_bytes: int,
+    *,
+    offset_bytes: int = 0,
+    length_bytes: int | None = None,
+) -> Iterable[bytes]:
     yield b"M" + json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode("utf-8")
     with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(chunk_bytes)
+        handle.seek(offset_bytes)
+        remaining = path.stat().st_size - offset_bytes if length_bytes is None else length_bytes
+        while remaining > 0:
+            chunk = handle.read(min(chunk_bytes, remaining))
             if not chunk:
-                break
+                raise PeerTransitError("transit source file ended before its declared segment")
             yield b"D" + chunk
+            remaining -= len(chunk)
 
 
 def _file_sha256(path: Path) -> str:
@@ -195,19 +208,251 @@ def _file_sha256(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+def _resume_plan(path: Path, *, segment_bytes: int) -> tuple[str, list[dict[str, Any]]]:
+    if segment_bytes < DEFAULT_CHUNK_BYTES or segment_bytes > DEFAULT_RESUME_SEGMENT_BYTES:
+        raise PeerTransitError("resume segment size is outside the safe range")
+    if segment_bytes % DEFAULT_CHUNK_BYTES:
+        raise PeerTransitError("resume segment size must align to the transit chunk size")
+    total_size = path.stat().st_size
+    prefix_digest = hashlib.sha256()
+    segments: list[dict[str, Any]] = []
+    offset = 0
+    with path.open("rb") as handle:
+        while offset < total_size:
+            length = min(segment_bytes, total_size - offset)
+            segment_digest = hashlib.sha256()
+            remaining = length
+            while remaining:
+                block = handle.read(min(1024 * 1024, remaining))
+                if not block:
+                    raise PeerTransitError("transit source file changed while hashing")
+                segment_digest.update(block)
+                prefix_digest.update(block)
+                remaining -= len(block)
+            end = offset + length
+            segments.append(
+                {
+                    "offset_bytes": offset,
+                    "segment_size_bytes": length,
+                    "end_offset_bytes": end,
+                    "segment_sha256": "sha256:" + segment_digest.hexdigest(),
+                    "prefix_sha256": "sha256:" + prefix_digest.copy().hexdigest(),
+                    "final": end == total_size,
+                }
+            )
+            offset = end
+    if not segments:
+        empty_hash = "sha256:" + hashlib.sha256(b"").hexdigest()
+        segments.append(
+            {
+                "offset_bytes": 0,
+                "segment_size_bytes": 0,
+                "end_offset_bytes": 0,
+                "segment_sha256": empty_hash,
+                "prefix_sha256": empty_hash,
+                "final": True,
+            }
+        )
+    return "sha256:" + prefix_digest.hexdigest(), segments
+
+
+def _resume_slug(source_peer_id: str, transfer_id: str) -> str:
+    return hashlib.sha256(f"{source_peer_id}\0{transfer_id}".encode("utf-8")).hexdigest()[:32]
+
+
+def _valid_sha256(value: Any) -> bool:
+    text = str(value or "")
+    if not text.startswith("sha256:") or len(text) != 71:
+        return False
+    try:
+        int(text[7:], 16)
+    except ValueError:
+        return False
+    return True
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(value, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 class _TargetFileSink:
-    def __init__(self, inbox: Path, *, session_id: str, max_file_bytes: int) -> None:
+    def __init__(
+        self,
+        inbox: Path,
+        *,
+        session_id: str,
+        source_peer_id: str,
+        max_file_bytes: int,
+        claim_transfer: Any | None = None,
+        release_transfer: Any | None = None,
+    ) -> None:
         self.inbox = inbox
         self.session_id = session_id
+        self.source_peer_id = source_peer_id
         self.max_file_bytes = max_file_bytes
+        self._claim_transfer = claim_transfer
+        self._release_transfer = release_transfer
         self.inbox.mkdir(parents=True, exist_ok=True)
         self.tmp_dir = self.inbox / ".tmp"
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.manifest: dict[str, Any] | None = None
-        self._path = self.tmp_dir / f"{session_id}.part"
-        self._handle = None
-        self._digest = hashlib.sha256()
-        self._size = 0
+        self._path: Path | None = None
+        self._state_path: Path | None = None
+        self._destination: Path | None = None
+        self._handle: Any | None = None
+        self._segment_digest = hashlib.sha256()
+        self._segment_received = 0
+        self._verified_offset = 0
+        self._duplicate = False
+        self._finished = False
+        self._state: dict[str, Any] = {}
+        self._claimed_key = ""
+
+    def _release_claim(self) -> None:
+        if self._claimed_key and self._release_transfer is not None:
+            self._release_transfer(self._claimed_key)
+        self._claimed_key = ""
+
+    def _load_manifest(self, body: bytes) -> None:
+        try:
+            manifest = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PeerTransitError("invalid encrypted file manifest") from exc
+        if not isinstance(manifest, dict) or manifest.get("kind") != "file":
+            raise PeerTransitError("unsupported transit request kind")
+        filename = str(manifest.get("filename") or "")
+        if not filename or Path(filename).name != filename:
+            raise PeerTransitError("transit filename is invalid")
+        transfer_id = str(manifest.get("transfer_id") or "")
+        try:
+            if uuid.UUID(transfer_id).hex != transfer_id:
+                raise ValueError
+        except ValueError as exc:
+            raise PeerTransitError("transit transfer ID is invalid") from exc
+        size = int(manifest.get("size_bytes", -1))
+        offset = int(manifest.get("offset_bytes", -1))
+        segment_size = int(manifest.get("segment_size_bytes", -1))
+        final = manifest.get("final")
+        if size < 0 or size > self.max_file_bytes:
+            raise PeerTransitError("transit file exceeds target size policy")
+        if (
+            offset < 0
+            or offset > size
+            or (offset and offset % DEFAULT_CHUNK_BYTES)
+            or segment_size < 0
+            or segment_size > DEFAULT_RESUME_SEGMENT_BYTES
+            or offset + segment_size > size
+            or final is not (offset + segment_size == size)
+        ):
+            raise PeerTransitError("transit resume boundary is invalid")
+        for field in ("sha256", "segment_sha256", "prefix_sha256"):
+            if not _valid_sha256(manifest.get(field)):
+                raise PeerTransitError(f"transit manifest {field} is invalid")
+
+        slug = _resume_slug(self.source_peer_id, transfer_id)
+        self._path = self.tmp_dir / f"{slug}.part"
+        self._state_path = self.tmp_dir / f"{slug}.resume.json"
+        self._destination = self.inbox / f"{transfer_id}-{filename}"
+        state: dict[str, Any] = {}
+        if self._state_path.is_file():
+            try:
+                loaded = json.loads(self._state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise PeerTransitError("transit resume checkpoint is invalid") from exc
+            if not isinstance(loaded, dict):
+                raise PeerTransitError("transit resume checkpoint is invalid")
+            state = loaded
+        elif self._destination.is_file():
+            if (
+                not bool(final)
+                or self._destination.stat().st_size != size
+                or _file_sha256(self._destination) != str(manifest["sha256"])
+            ):
+                raise PeerTransitError("transit destination conflicts with resume request")
+            state = {
+                "schema": "rynmesh.peer-transit.resume.v1",
+                "status": "complete",
+                "source_peer_id": self.source_peer_id,
+                "transfer_id": transfer_id,
+                "filename": filename,
+                "size_bytes": size,
+                "sha256": str(manifest["sha256"]),
+                "verified_offset": size,
+                "prefix_sha256": str(manifest["sha256"]),
+                "segments": [],
+                "stored_path": str(self._destination),
+            }
+
+        if state:
+            expected = {
+                "source_peer_id": self.source_peer_id,
+                "transfer_id": transfer_id,
+                "filename": filename,
+                "size_bytes": size,
+                "sha256": str(manifest["sha256"]),
+            }
+            if any(state.get(key) != value for key, value in expected.items()):
+                raise PeerTransitError("transit resume checkpoint identity mismatch")
+        else:
+            state = {
+                "schema": "rynmesh.peer-transit.resume.v1",
+                "status": "partial",
+                "source_peer_id": self.source_peer_id,
+                "transfer_id": transfer_id,
+                "filename": filename,
+                "size_bytes": size,
+                "sha256": str(manifest["sha256"]),
+                "verified_offset": 0,
+                "prefix_sha256": "sha256:" + hashlib.sha256(b"").hexdigest(),
+                "segments": [],
+            }
+
+        verified_offset = int(state.get("verified_offset", -1))
+        if verified_offset < 0 or verified_offset > size:
+            raise PeerTransitError("transit resume checkpoint offset is invalid")
+        duplicate = False
+        if offset != verified_offset:
+            duplicate = any(
+                int(item.get("offset_bytes", -1)) == offset
+                and int(item.get("end_offset_bytes", -1)) == offset + segment_size
+                and str(item.get("segment_sha256") or "") == str(manifest["segment_sha256"])
+                and str(item.get("prefix_sha256") or "") == str(manifest["prefix_sha256"])
+                for item in state.get("segments") or []
+                if isinstance(item, dict)
+            )
+            if not duplicate and state.get("status") == "complete" and bool(final):
+                duplicate = offset + segment_size == size
+            if not duplicate:
+                raise PeerTransitError("transit resume offset does not match target checkpoint")
+        elif state.get("status") == "complete":
+            duplicate = True
+
+        if self._claim_transfer is not None:
+            self._claim_transfer(slug)
+            self._claimed_key = slug
+
+        if not duplicate:
+            if self._path.exists() and self._path.stat().st_size < verified_offset:
+                raise PeerTransitError("transit partial file is shorter than its checkpoint")
+            if not self._path.exists() and verified_offset:
+                raise PeerTransitError("transit partial file is missing")
+            mode = "r+b" if self._path.exists() else "w+b"
+            self._handle = self._path.open(mode)
+            self._handle.seek(verified_offset)
+            self._handle.truncate(verified_offset)
+
+        self.manifest = manifest
+        self._state = state
+        self._verified_offset = verified_offset
+        self._duplicate = duplicate
 
     def write(self, chunk: bytes) -> None:
         if not chunk:
@@ -216,56 +461,102 @@ class _TargetFileSink:
         if self.manifest is None:
             if kind != b"M":
                 raise PeerTransitError("file manifest must be the first transit chunk")
-            try:
-                manifest = json.loads(body)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise PeerTransitError("invalid encrypted file manifest") from exc
-            if not isinstance(manifest, dict) or manifest.get("kind") != "file":
-                raise PeerTransitError("unsupported transit request kind")
-            size = int(manifest.get("size_bytes", -1))
-            if size < 0 or size > self.max_file_bytes:
-                raise PeerTransitError("transit file exceeds target size policy")
-            self.manifest = manifest
-            self._handle = self._path.open("wb")
+            self._load_manifest(body)
             return
         if kind != b"D":
             raise PeerTransitError("invalid transit file data chunk")
-        self._size += len(body)
-        if self._size > self.max_file_bytes:
-            raise PeerTransitError("transit file exceeds target size policy")
-        self._digest.update(body)
-        assert self._handle is not None
-        self._handle.write(body)
+        self._segment_received += len(body)
+        if self._segment_received > int(self.manifest["segment_size_bytes"]):
+            raise PeerTransitError("transit segment exceeds its declared boundary")
+        self._segment_digest.update(body)
+        if not self._duplicate:
+            assert self._handle is not None
+            self._handle.write(body)
 
     def finish(self) -> dict[str, Any]:
-        if self.manifest is None or self._handle is None:
+        if self.manifest is None:
             raise PeerTransitError("transit file manifest is missing")
-        self._handle.close()
-        expected_size = int(self.manifest["size_bytes"])
-        expected_hash = str(self.manifest.get("sha256") or "")
-        actual_hash = "sha256:" + self._digest.hexdigest()
-        if self._size != expected_size:
-            self._path.unlink(missing_ok=True)
-            raise PeerTransitError("transit target file size mismatch")
-        if actual_hash != expected_hash:
-            self._path.unlink(missing_ok=True)
-            raise PeerTransitError("transit target file hash mismatch")
-        filename = Path(str(self.manifest.get("filename") or "artifact.bin")).name
-        destination = self.inbox / f"{self.session_id}-{filename}"
-        self._path.replace(destination)
+        expected_segment_size = int(self.manifest["segment_size_bytes"])
+        actual_segment_hash = "sha256:" + self._segment_digest.hexdigest()
+        if self._segment_received != expected_segment_size:
+            raise PeerTransitError("transit segment size mismatch")
+        if actual_segment_hash != str(self.manifest["segment_sha256"]):
+            raise PeerTransitError("transit segment hash mismatch")
+        assert self._path is not None and self._state_path is not None
+        assert self._destination is not None
+        end_offset = int(self.manifest["offset_bytes"]) + expected_segment_size
+        if not self._duplicate:
+            assert self._handle is not None
+            self._handle.flush()
+            os.fsync(self._handle.fileno())
+            self._handle.close()
+            self._handle = None
+            if self._path.stat().st_size != end_offset:
+                raise PeerTransitError("transit checkpoint file size mismatch")
+            actual_prefix_hash = _file_sha256(self._path)
+            if actual_prefix_hash != str(self.manifest["prefix_sha256"]):
+                with self._path.open("r+b") as handle:
+                    handle.truncate(self._verified_offset)
+                raise PeerTransitError("transit checkpoint prefix hash mismatch")
+            segment_record = {
+                "offset_bytes": int(self.manifest["offset_bytes"]),
+                "end_offset_bytes": end_offset,
+                "segment_size_bytes": expected_segment_size,
+                "segment_sha256": actual_segment_hash,
+                "prefix_sha256": actual_prefix_hash,
+            }
+            self._state["segments"] = [*(self._state.get("segments") or []), segment_record]
+            self._state["verified_offset"] = end_offset
+            self._state["prefix_sha256"] = actual_prefix_hash
+            self._state["status"] = "complete" if self.manifest["final"] else "partial"
+            if self.manifest["final"]:
+                if actual_prefix_hash != str(self.manifest["sha256"]):
+                    raise PeerTransitError("transit target file hash mismatch")
+                if self._destination.exists():
+                    raise PeerTransitError("transit destination already exists")
+                self._path.replace(self._destination)
+                self._state["stored_path"] = str(self._destination)
+            _write_json_atomic(self._state_path, self._state)
+        self._finished = True
+        complete = bool(self.manifest["final"])
         return {
-            "status": "stored",
+            "status": "stored" if complete else "checkpointed",
             "session_id": self.session_id,
-            "filename": filename,
-            "size_bytes": self._size,
-            "sha256": actual_hash,
-            "stored_path": str(destination),
+            "source_peer_id": self.source_peer_id,
+            "transfer_id": str(self.manifest["transfer_id"]),
+            "filename": str(self.manifest["filename"]),
+            "size_bytes": int(self.manifest["size_bytes"]),
+            "sha256": str(self.manifest["sha256"]),
+            "offset_bytes": int(self.manifest["offset_bytes"]),
+            "segment_size_bytes": expected_segment_size,
+            "next_offset_bytes": end_offset,
+            "segment_sha256": actual_segment_hash,
+            "prefix_sha256": str(self.manifest["prefix_sha256"]),
+            "complete": complete,
+            "duplicate": self._duplicate,
+            "stored_path": str(self._destination) if complete else "",
         }
+
+    def acknowledge_receipt(self) -> None:
+        if self._finished and self.manifest and self.manifest.get("final") and self._state_path:
+            self._state_path.unlink(missing_ok=True)
+        self._release_claim()
 
     def abort(self) -> None:
         if self._handle is not None and not self._handle.closed:
             self._handle.close()
-        self._path.unlink(missing_ok=True)
+        self._handle = None
+        if self._finished or self._duplicate or self._path is None:
+            self._release_claim()
+            return
+        if self._path.exists():
+            with self._path.open("r+b") as handle:
+                handle.truncate(self._verified_offset)
+        if self._verified_offset == 0:
+            self._path.unlink(missing_ok=True)
+            if self._state_path is not None:
+                self._state_path.unlink(missing_ok=True)
+        self._release_claim()
 
 
 class PeerTransitWorker:
@@ -303,6 +594,18 @@ class PeerTransitWorker:
         self._control_error_count = 0
         self._first_control_error = ""
         self._last_control_error = ""
+        self._resume_lock = threading.Lock()
+        self._active_resume_transfers: set[str] = set()
+
+    def _claim_resume_transfer(self, key: str) -> None:
+        with self._resume_lock:
+            if key in self._active_resume_transfers:
+                raise PeerTransitError("transit resume transfer is already active")
+            self._active_resume_transfers.add(key)
+
+    def _release_resume_transfer(self, key: str) -> None:
+        with self._resume_lock:
+            self._active_resume_transfers.discard(key)
 
     def control_error_snapshot(self) -> dict[str, Any]:
         with self._control_error_lock:
@@ -579,7 +882,10 @@ class PeerTransitWorker:
         sink = _TargetFileSink(
             self.inbox,
             session_id=session.session_id,
+            source_peer_id=session.source_peer_id,
             max_file_bytes=_max_file_bytes(),
+            claim_transfer=self._claim_resume_transfer,
+            release_transfer=self._release_resume_transfer,
         )
         try:
             answer = await gather_signal(connection)
@@ -636,6 +942,7 @@ class PeerTransitWorker:
                 },
                 network_id=self.network_id,
             )
+            sink.acknowledge_receipt()
         except Exception:
             sink.abort()
             raise
@@ -643,34 +950,84 @@ class PeerTransitWorker:
             await _close_connection(connection)
 
 
-async def _send_file_async(
+def _segment_manifest(
+    path: Path,
+    *,
+    transfer_id: str,
+    source_hash: str,
+    segment: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "kind": "file",
+        "filename": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": source_hash,
+        "transfer_id": transfer_id,
+        **segment,
+    }
+
+
+def _validate_segment_receipt(
+    receipt: Any,
+    *,
+    session_id: str,
+    source_peer_id: str,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(receipt, dict):
+        raise PeerTransitError("target returned an invalid encrypted receipt")
+    expected = {
+        "session_id": session_id,
+        "source_peer_id": source_peer_id,
+        "transfer_id": manifest["transfer_id"],
+        "filename": manifest["filename"],
+        "size_bytes": manifest["size_bytes"],
+        "sha256": manifest["sha256"],
+        "offset_bytes": manifest["offset_bytes"],
+        "segment_size_bytes": manifest["segment_size_bytes"],
+        "next_offset_bytes": manifest["end_offset_bytes"],
+        "segment_sha256": manifest["segment_sha256"],
+        "prefix_sha256": manifest["prefix_sha256"],
+        "complete": manifest["final"],
+        "status": "stored" if manifest["final"] else "checkpointed",
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise PeerTransitError("target receipt does not match the verified resume boundary")
+    if bool(manifest["final"]) is bool(receipt.get("stored_path")):
+        return receipt
+    raise PeerTransitError("target receipt storage state is inconsistent")
+
+
+def _retryable_resume_error(exc: BaseException) -> bool:
+    if isinstance(exc, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
+        return True
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "connection lost",
+            "not connected",
+            "p2p message acknowledgement",
+            "receiving p2p message",
+            "ice connection",
+            "ice negotiation",
+        )
+    )
+
+
+async def _send_transit_segment_async(
     store: RynmeshStore,
     *,
     path: Path,
+    manifest: dict[str, Any],
+    target_messaging_pub: str,
     relay_peer_id: str,
     target_peer_id: str,
     network_id: str,
     timeout_s: float,
 ) -> dict[str, Any]:
     session_started = time.monotonic()
-    target_capacity = _find_capacity(
-        store,
-        peer_id=target_peer_id,
-        role="target",
-        network_id=network_id,
-    )
-    _find_capacity(
-        store,
-        peer_id=relay_peer_id,
-        role="transit",
-        network_id=network_id,
-    )
-    target_messaging_pub = str(
-        (target_capacity.get("metadata") or {}).get("messaging_public_key") or ""
-    )
-    if not target_messaging_pub:
-        raise PeerTransitError("target capacity is missing its messaging public key")
-
+    session_id = ""
     connection = new_connection(controlling=True)
     try:
         offer = await gather_signal(connection)
@@ -726,18 +1083,17 @@ async def _send_file_async(
         source_hop = selected_pair(connection)
         validate_ice_hop(source_hop)
 
-        source_hash = _file_sha256(path)
-        manifest = {
-            "kind": "file",
-            "filename": path.name,
-            "size_bytes": path.stat().st_size,
-            "sha256": source_hash,
-        }
         sent = await send_encrypted_stream(
             connection,
             cipher,
             direction="request",
-            chunks=_file_chunks(path, manifest, DEFAULT_CHUNK_BYTES),
+            chunks=_file_chunks(
+                path,
+                manifest,
+                DEFAULT_CHUNK_BYTES,
+                offset_bytes=int(manifest["offset_bytes"]),
+                length_bytes=int(manifest["segment_size_bytes"]),
+            ),
             timeout_s=timeout_s,
         )
         response = bytearray()
@@ -752,8 +1108,12 @@ async def _send_file_async(
             receipt = json.loads(response)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PeerTransitError("target returned an invalid encrypted receipt") from exc
-        if not isinstance(receipt, dict) or receipt.get("sha256") != source_hash:
-            raise PeerTransitError("target receipt hash does not match source")
+        receipt = _validate_segment_receipt(
+            receipt,
+            session_id=session_id,
+            source_peer_id=store.peer_id,
+            manifest=manifest,
+        )
         completed = await asyncio.to_thread(
             _poll_result,
             store,
@@ -778,34 +1138,157 @@ async def _send_file_async(
             timeout_s=timeout_s,
         )
         return {
-            "protocol_version": PROTOCOL_VERSION,
-            "source_peer_id": store.peer_id,
-            "transit_peer_id": relay_peer_id,
-            "target_peer_id": target_peer_id,
             "session_id": session_id,
             "session_established_s": session_established_s,
-            "path_mode": "peer_transit",
-            "ice_relay_candidate_used": False,
             "source_hop": source_hop,
-            "source_sha256": source_hash,
-            "target_sha256": str(receipt["sha256"]),
-            "source_size_bytes": path.stat().st_size,
-            "target_size_bytes": int(receipt.get("size_bytes") or 0),
             "transit_rx_bytes": int(relay_refs.get("transit_rx_bytes") or 0),
             "transit_tx_bytes": int(relay_refs.get("transit_tx_bytes") or 0),
             "request_frames": int(relay_refs.get("request_frames") or 0),
             "response_frames": int(relay_refs.get("response_frames") or 0),
-            "registry_payload_bytes": 0,
-            "plaintext_found_on_transit": False,
+            "offset_bytes": int(manifest["offset_bytes"]),
+            "end_offset_bytes": int(manifest["end_offset_bytes"]),
+            "segment_size_bytes": int(manifest["segment_size_bytes"]),
+            "segment_sha256": str(manifest["segment_sha256"]),
+            "prefix_sha256": str(manifest["prefix_sha256"]),
+            "final": bool(manifest["final"]),
             "receipt": receipt,
             "sent": sent,
             "relay_evidence": relay_refs,
             "relay_result": completed,
             "target_result": target_completed,
-            "result": "pass",
         }
+    except Exception as exc:
+        if session_id:
+            exc.rynmesh_session_id = session_id  # type: ignore[attr-defined]
+        raise
     finally:
         await _close_connection(connection)
+
+
+async def _send_file_async(
+    store: RynmeshStore,
+    *,
+    path: Path,
+    relay_peer_id: str,
+    target_peer_id: str,
+    network_id: str,
+    timeout_s: float,
+    resume_segment_bytes: int,
+    max_resume_attempts: int,
+) -> dict[str, Any]:
+    target_capacity = _find_capacity(
+        store,
+        peer_id=target_peer_id,
+        role="target",
+        network_id=network_id,
+    )
+    _find_capacity(
+        store,
+        peer_id=relay_peer_id,
+        role="transit",
+        network_id=network_id,
+    )
+    target_messaging_pub = str(
+        (target_capacity.get("metadata") or {}).get("messaging_public_key") or ""
+    )
+    if not target_messaging_pub:
+        raise PeerTransitError("target capacity is missing its messaging public key")
+    if max_resume_attempts < 0:
+        raise PeerTransitError("maximum resume attempts cannot be negative")
+
+    source_hash, plan = _resume_plan(path, segment_bytes=resume_segment_bytes)
+    transfer_id = uuid.uuid4().hex
+    segment_evidence: list[dict[str, Any]] = []
+    failed_attempts: list[dict[str, Any]] = []
+    resume_attempts = 0
+    for segment_index, segment in enumerate(plan):
+        manifest = _segment_manifest(
+            path,
+            transfer_id=transfer_id,
+            source_hash=source_hash,
+            segment=segment,
+        )
+        attempt = 0
+        while True:
+            try:
+                evidence = await _send_transit_segment_async(
+                    store,
+                    path=path,
+                    manifest=manifest,
+                    target_messaging_pub=target_messaging_pub,
+                    relay_peer_id=relay_peer_id,
+                    target_peer_id=target_peer_id,
+                    network_id=network_id,
+                    timeout_s=timeout_s,
+                )
+                evidence["segment_index"] = segment_index
+                evidence["attempt"] = attempt
+                segment_evidence.append(evidence)
+                break
+            except Exception as exc:
+                failed_attempts.append(
+                    {
+                        "segment_index": segment_index,
+                        "attempt": attempt,
+                        "offset_bytes": int(segment["offset_bytes"]),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "retryable": _retryable_resume_error(exc),
+                        "session_id": str(getattr(exc, "rynmesh_session_id", "")),
+                    }
+                )
+                if not _retryable_resume_error(exc) or attempt >= max_resume_attempts:
+                    raise
+                attempt += 1
+                resume_attempts += 1
+                await asyncio.sleep(min(0.25 * attempt, 1.0))
+
+    final = segment_evidence[-1]
+    relay_refs = dict(final["relay_evidence"])
+    aggregate_sent = {
+        "frames": sum(int(item["sent"]["frames"]) for item in segment_evidence),
+        "plaintext_bytes": sum(
+            int(item["sent"]["plaintext_bytes"]) for item in segment_evidence
+        ),
+        "wire_bytes": sum(int(item["sent"]["wire_bytes"]) for item in segment_evidence),
+        "sha256": source_hash,
+    }
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "source_peer_id": store.peer_id,
+        "transit_peer_id": relay_peer_id,
+        "target_peer_id": target_peer_id,
+        "session_id": str(final["session_id"]),
+        "session_ids": [str(item["session_id"]) for item in segment_evidence],
+        "session_established_s": max(
+            float(item["session_established_s"]) for item in segment_evidence
+        ),
+        "path_mode": "peer_transit",
+        "ice_relay_candidate_used": False,
+        "source_hop": dict(final["source_hop"]),
+        "source_sha256": source_hash,
+        "target_sha256": str(final["receipt"]["sha256"]),
+        "source_size_bytes": path.stat().st_size,
+        "target_size_bytes": int(final["receipt"]["size_bytes"]),
+        "transit_rx_bytes": sum(int(item["transit_rx_bytes"]) for item in segment_evidence),
+        "transit_tx_bytes": sum(int(item["transit_tx_bytes"]) for item in segment_evidence),
+        "request_frames": sum(int(item["request_frames"]) for item in segment_evidence),
+        "response_frames": sum(int(item["response_frames"]) for item in segment_evidence),
+        "registry_payload_bytes": 0,
+        "plaintext_found_on_transit": False,
+        "transfer_id": transfer_id,
+        "resume_segment_bytes": resume_segment_bytes,
+        "resume_attempts": resume_attempts,
+        "verified_boundaries": [int(item["end_offset_bytes"]) for item in segment_evidence],
+        "segment_evidence": segment_evidence,
+        "failed_attempts": failed_attempts,
+        "receipt": dict(final["receipt"]),
+        "sent": aggregate_sent,
+        "relay_evidence": relay_refs,
+        "relay_result": dict(final["relay_result"]),
+        "target_result": dict(final["target_result"]),
+        "result": "pass",
+    }
 
 
 def send_file_via_peer(
@@ -816,6 +1299,8 @@ def send_file_via_peer(
     target_peer_id: str,
     network_id: str = "rynmesh-main",
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    resume_segment_bytes: int = DEFAULT_RESUME_SEGMENT_BYTES,
+    max_resume_attempts: int = DEFAULT_MAX_RESUME_ATTEMPTS,
 ) -> dict[str, Any]:
     source = Path(path).expanduser()
     if not source.is_file():
@@ -832,29 +1317,24 @@ def send_file_via_peer(
             target_peer_id=target_peer_id,
             network_id=network_id,
             timeout_s=timeout_s,
+            resume_segment_bytes=resume_segment_bytes,
+            max_resume_attempts=max_resume_attempts,
         )
     )
 
 
-async def _send_file_direct_async(
+async def _send_direct_segment_async(
     store: RynmeshStore,
     *,
     path: Path,
+    manifest: dict[str, Any],
+    target_messaging_pub: str,
     target_peer_id: str,
     network_id: str,
     timeout_s: float,
 ) -> dict[str, Any]:
-    target_capacity = _find_capacity(
-        store,
-        peer_id=target_peer_id,
-        role="target",
-        network_id=network_id,
-    )
-    target_messaging_pub = str(
-        (target_capacity.get("metadata") or {}).get("messaging_public_key") or ""
-    )
-    if not target_messaging_pub:
-        raise PeerTransitError("target capacity is missing its messaging public key")
+    session_started = time.monotonic()
+    session_id = ""
     connection = new_connection(controlling=True)
     try:
         offer = await gather_signal(connection)
@@ -902,21 +1382,21 @@ async def _send_file_direct_async(
         validate_distinct_public_egress(offer, answer)
         await apply_remote_signal(connection, answer)
         await asyncio.wait_for(connection.connect(), timeout_s)
+        session_established_s = time.monotonic() - session_started
         source_hop = selected_pair(connection)
         validate_ice_hop(source_hop)
 
-        source_hash = _file_sha256(path)
-        manifest = {
-            "kind": "file",
-            "filename": path.name,
-            "size_bytes": path.stat().st_size,
-            "sha256": source_hash,
-        }
         sent = await send_encrypted_stream(
             connection,
             cipher,
             direction="request",
-            chunks=_file_chunks(path, manifest, DEFAULT_CHUNK_BYTES),
+            chunks=_file_chunks(
+                path,
+                manifest,
+                DEFAULT_CHUNK_BYTES,
+                offset_bytes=int(manifest["offset_bytes"]),
+                length_bytes=int(manifest["segment_size_bytes"]),
+            ),
             timeout_s=timeout_s,
         )
         response = bytearray()
@@ -931,8 +1411,12 @@ async def _send_file_direct_async(
             receipt = json.loads(response)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PeerTransitError("target returned an invalid encrypted direct receipt") from exc
-        if not isinstance(receipt, dict) or receipt.get("sha256") != source_hash:
-            raise PeerTransitError("direct target receipt hash does not match source")
+        receipt = _validate_segment_receipt(
+            receipt,
+            session_id=session_id,
+            source_peer_id=store.peer_id,
+            manifest=manifest,
+        )
         completed = await asyncio.to_thread(
             _poll_result,
             store,
@@ -944,25 +1428,132 @@ async def _send_file_direct_async(
             timeout_s=timeout_s,
         )
         return {
-            "protocol_version": PROTOCOL_VERSION,
-            "source_peer_id": store.peer_id,
-            "target_peer_id": target_peer_id,
             "session_id": session_id,
-            "path_mode": "direct",
-            "ice_relay_candidate_used": False,
+            "session_established_s": session_established_s,
             "source_hop": source_hop,
-            "source_sha256": source_hash,
-            "target_sha256": str(receipt["sha256"]),
-            "source_size_bytes": path.stat().st_size,
-            "target_size_bytes": int(receipt.get("size_bytes") or 0),
-            "registry_payload_bytes": 0,
+            "offset_bytes": int(manifest["offset_bytes"]),
+            "end_offset_bytes": int(manifest["end_offset_bytes"]),
+            "segment_size_bytes": int(manifest["segment_size_bytes"]),
+            "segment_sha256": str(manifest["segment_sha256"]),
+            "prefix_sha256": str(manifest["prefix_sha256"]),
+            "final": bool(manifest["final"]),
             "receipt": receipt,
             "sent": sent,
             "target_result": completed,
-            "result": "pass",
         }
+    except Exception as exc:
+        if session_id:
+            exc.rynmesh_session_id = session_id  # type: ignore[attr-defined]
+        raise
     finally:
         await _close_connection(connection)
+
+
+async def _send_file_direct_async(
+    store: RynmeshStore,
+    *,
+    path: Path,
+    target_peer_id: str,
+    network_id: str,
+    timeout_s: float,
+    resume_segment_bytes: int,
+    max_resume_attempts: int,
+) -> dict[str, Any]:
+    target_capacity = _find_capacity(
+        store,
+        peer_id=target_peer_id,
+        role="target",
+        network_id=network_id,
+    )
+    target_messaging_pub = str(
+        (target_capacity.get("metadata") or {}).get("messaging_public_key") or ""
+    )
+    if not target_messaging_pub:
+        raise PeerTransitError("target capacity is missing its messaging public key")
+    if max_resume_attempts < 0:
+        raise PeerTransitError("maximum resume attempts cannot be negative")
+    source_hash, plan = _resume_plan(path, segment_bytes=resume_segment_bytes)
+    transfer_id = uuid.uuid4().hex
+    segment_evidence: list[dict[str, Any]] = []
+    failed_attempts: list[dict[str, Any]] = []
+    resume_attempts = 0
+    for segment_index, segment in enumerate(plan):
+        manifest = _segment_manifest(
+            path,
+            transfer_id=transfer_id,
+            source_hash=source_hash,
+            segment=segment,
+        )
+        attempt = 0
+        while True:
+            try:
+                evidence = await _send_direct_segment_async(
+                    store,
+                    path=path,
+                    manifest=manifest,
+                    target_messaging_pub=target_messaging_pub,
+                    target_peer_id=target_peer_id,
+                    network_id=network_id,
+                    timeout_s=timeout_s,
+                )
+                evidence["segment_index"] = segment_index
+                evidence["attempt"] = attempt
+                segment_evidence.append(evidence)
+                break
+            except Exception as exc:
+                failed_attempts.append(
+                    {
+                        "segment_index": segment_index,
+                        "attempt": attempt,
+                        "offset_bytes": int(segment["offset_bytes"]),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "retryable": _retryable_resume_error(exc),
+                        "session_id": str(getattr(exc, "rynmesh_session_id", "")),
+                    }
+                )
+                if not _retryable_resume_error(exc) or attempt >= max_resume_attempts:
+                    raise
+                attempt += 1
+                resume_attempts += 1
+                await asyncio.sleep(min(0.25 * attempt, 1.0))
+
+    final = segment_evidence[-1]
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "source_peer_id": store.peer_id,
+        "target_peer_id": target_peer_id,
+        "session_id": str(final["session_id"]),
+        "session_ids": [str(item["session_id"]) for item in segment_evidence],
+        "session_established_s": max(
+            float(item["session_established_s"]) for item in segment_evidence
+        ),
+        "path_mode": "direct",
+        "ice_relay_candidate_used": False,
+        "source_hop": dict(final["source_hop"]),
+        "source_sha256": source_hash,
+        "target_sha256": str(final["receipt"]["sha256"]),
+        "source_size_bytes": path.stat().st_size,
+        "target_size_bytes": int(final["receipt"]["size_bytes"]),
+        "registry_payload_bytes": 0,
+        "transfer_id": transfer_id,
+        "resume_segment_bytes": resume_segment_bytes,
+        "resume_attempts": resume_attempts,
+        "verified_boundaries": [int(item["end_offset_bytes"]) for item in segment_evidence],
+        "segment_evidence": segment_evidence,
+        "failed_attempts": failed_attempts,
+        "receipt": dict(final["receipt"]),
+        "sent": {
+            "frames": sum(int(item["sent"]["frames"]) for item in segment_evidence),
+            "plaintext_bytes": sum(
+                int(item["sent"]["plaintext_bytes"]) for item in segment_evidence
+            ),
+            "wire_bytes": sum(int(item["sent"]["wire_bytes"]) for item in segment_evidence),
+            "sha256": source_hash,
+        },
+        "target_result": dict(final["target_result"]),
+        "result": "pass",
+    }
 
 
 def send_file_direct(
@@ -972,6 +1563,8 @@ def send_file_direct(
     target_peer_id: str,
     network_id: str = "rynmesh-main",
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    resume_segment_bytes: int = DEFAULT_RESUME_SEGMENT_BYTES,
+    max_resume_attempts: int = DEFAULT_MAX_RESUME_ATTEMPTS,
 ) -> dict[str, Any]:
     source = Path(path).expanduser()
     if not source.is_file():
@@ -987,6 +1580,8 @@ def send_file_direct(
             target_peer_id=target_peer_id,
             network_id=network_id,
             timeout_s=timeout_s,
+            resume_segment_bytes=resume_segment_bytes,
+            max_resume_attempts=max_resume_attempts,
         )
     )
 
@@ -1003,6 +1598,8 @@ def send_file_adaptive(
     network_id: str = "rynmesh-main",
     timeout_s: float = DEFAULT_TIMEOUT_S,
     direct_attempt_timeout_s: float = DEFAULT_DIRECT_ATTEMPT_TIMEOUT_S,
+    resume_segment_bytes: int = DEFAULT_RESUME_SEGMENT_BYTES,
+    max_resume_attempts: int = DEFAULT_MAX_RESUME_ATTEMPTS,
 ) -> dict[str, Any]:
     """Prefer direct P2P and automatically fall back to an ordinary peer.
 
@@ -1026,6 +1623,8 @@ def send_file_adaptive(
                 target_peer_id=target_peer_id,
                 network_id=network_id,
                 timeout_s=min(timeout_s, direct_attempt_timeout_s),
+                resume_segment_bytes=resume_segment_bytes,
+                max_resume_attempts=max_resume_attempts,
             )
         except Exception as exc:
             fallback_error = f"{type(exc).__name__}: {exc}"
@@ -1040,6 +1639,8 @@ def send_file_adaptive(
                 target_peer_id=target_peer_id,
                 network_id=network_id,
                 timeout_s=timeout_s,
+                resume_segment_bytes=resume_segment_bytes,
+                max_resume_attempts=max_resume_attempts,
             )
     else:
         result = send_file_via_peer(
@@ -1049,6 +1650,8 @@ def send_file_adaptive(
             target_peer_id=target_peer_id,
             network_id=network_id,
             timeout_s=timeout_s,
+            resume_segment_bytes=resume_segment_bytes,
+            max_resume_attempts=max_resume_attempts,
         )
     result["route_events"] = list(manager.events)
     result["direct_fallback_error"] = fallback_error
@@ -1079,6 +1682,8 @@ def main() -> int:
     send.add_argument("--target-peer", required=True)
     send.add_argument("--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"))
     send.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    send.add_argument("--resume-segment-mib", type=int, default=64)
+    send.add_argument("--max-resume-attempts", type=int, default=DEFAULT_MAX_RESUME_ATTEMPTS)
     send.add_argument("--evidence", default="")
     direct = subparsers.add_parser("send-file-direct", help="send a file over direct P2P")
     direct.add_argument("path")
@@ -1087,6 +1692,8 @@ def main() -> int:
         "--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
     )
     direct.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    direct.add_argument("--resume-segment-mib", type=int, default=64)
+    direct.add_argument("--max-resume-attempts", type=int, default=DEFAULT_MAX_RESUME_ATTEMPTS)
     direct.add_argument("--evidence", default="")
     adaptive = subparsers.add_parser(
         "send-file-adaptive",
@@ -1099,6 +1706,8 @@ def main() -> int:
         "--network-id", default=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
     )
     adaptive.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_S)
+    adaptive.add_argument("--resume-segment-mib", type=int, default=64)
+    adaptive.add_argument("--max-resume-attempts", type=int, default=DEFAULT_MAX_RESUME_ATTEMPTS)
     adaptive.add_argument(
         "--direct-timeout",
         type=float,
@@ -1126,6 +1735,8 @@ def main() -> int:
             target_peer_id=args.target_peer,
             network_id=args.network_id,
             timeout_s=args.timeout,
+            resume_segment_bytes=args.resume_segment_mib * 1024 * 1024,
+            max_resume_attempts=args.max_resume_attempts,
         )
     elif args.command == "send-file-adaptive":
         evidence = send_file_adaptive(
@@ -1136,6 +1747,8 @@ def main() -> int:
             network_id=args.network_id,
             timeout_s=args.timeout,
             direct_attempt_timeout_s=args.direct_timeout,
+            resume_segment_bytes=args.resume_segment_mib * 1024 * 1024,
+            max_resume_attempts=args.max_resume_attempts,
         )
     else:
         evidence = send_file_via_peer(
@@ -1145,6 +1758,8 @@ def main() -> int:
             target_peer_id=args.target_peer,
             network_id=args.network_id,
             timeout_s=args.timeout,
+            resume_segment_bytes=args.resume_segment_mib * 1024 * 1024,
+            max_resume_attempts=args.max_resume_attempts,
         )
     rendered = json.dumps(evidence, indent=2, sort_keys=True)
     if args.evidence:

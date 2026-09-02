@@ -1668,3 +1668,187 @@ def test_direct_file_path_uses_one_non_turn_ice_pair(tmp_path, monkeypatch) -> N
     assert evidence["source_hop"]["remote"]["type"] != "relay"
     assert evidence["source_sha256"] == evidence["target_sha256"]
     assert audit_direct_file(evidence)["source_size_bytes"] == source_file.stat().st_size
+
+
+def test_transit_resumes_from_verified_boundary_after_ice_disconnect(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    network_id = "peer-transit-resume"
+    registry = FilePeerRegistry(tmp_path / "registry")
+    source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "source-net")
+    relay = RynmeshStore(home=tmp_path / "relay", network_dir=tmp_path / "relay-net")
+    target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "target-net")
+    for store in (source, relay, target):
+        store.registry = registry
+    inbox = tmp_path / "target-inbox"
+    relay_worker = PeerTransitWorker(
+        relay,
+        role="transit",
+        network_id=network_id,
+        timeout_s=10,
+    )
+    target_worker = PeerTransitWorker(
+        target,
+        role="target",
+        network_id=network_id,
+        inbox=inbox,
+        timeout_s=10,
+    )
+    relay_worker.register()
+    target_worker.register()
+    source_file = tmp_path / "resume.bin"
+    source_file.write_bytes(bytes(range(251)) * 800)
+
+    original_send = peer_transit_service.send_encrypted_stream
+    request_calls = 0
+
+    async def disconnect_second_segment(connection, cipher, **kwargs):
+        nonlocal request_calls
+        if kwargs.get("direction") == "request":
+            request_calls += 1
+            if request_calls == 2:
+                await connection.close()
+                raise ConnectionError("injected ICE disconnect after verified boundary")
+        return await original_send(connection, cipher, **kwargs)
+
+    monkeypatch.setattr(
+        peer_transit_service,
+        "send_encrypted_stream",
+        disconnect_second_segment,
+    )
+    stop = threading.Event()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        relay_future = pool.submit(
+            relay_worker.serve_forever,
+            poll_interval_s=0.01,
+            stop_event=stop,
+        )
+        target_future = pool.submit(
+            target_worker.serve_forever,
+            poll_interval_s=0.01,
+            stop_event=stop,
+        )
+        try:
+            evidence = peer_transit_service.send_file_via_peer(
+                source,
+                source_file,
+                relay_peer_id=relay.peer_id,
+                target_peer_id=target.peer_id,
+                network_id=network_id,
+                timeout_s=10,
+                resume_segment_bytes=64 * 1024,
+                max_resume_attempts=2,
+            )
+        finally:
+            stop.set()
+            relay_future.result(timeout=10)
+            target_future.result(timeout=10)
+
+    assert evidence["result"] == "pass"
+    assert evidence["resume_attempts"] == 1
+    assert len(evidence["failed_attempts"]) == 1
+    failure = evidence["failed_attempts"][0]
+    assert failure["segment_index"] == 1
+    assert failure["attempt"] == 0
+    assert failure["offset_bytes"] == 64 * 1024
+    assert failure["error_type"] == "ConnectionError"
+    assert failure["error"] == "injected ICE disconnect after verified boundary"
+    assert failure["retryable"] is True
+    assert failure["session_id"]
+    assert evidence["verified_boundaries"] == [
+        64 * 1024,
+        128 * 1024,
+        192 * 1024,
+        source_file.stat().st_size,
+    ]
+    assert len(evidence["session_ids"]) == 4
+    assert len(set(evidence["session_ids"])) == 4
+    assert evidence["segment_evidence"][1]["attempt"] == 1
+    delivered = list(inbox.glob("*-resume.bin"))
+    assert len(delivered) == 1
+    assert delivered[0].read_bytes() == source_file.read_bytes()
+    assert not list(inbox.rglob("*.part"))
+    assert not list(inbox.rglob("*.resume.json"))
+    assert target_worker._active_resume_transfers == set()
+    audited = audit_peer_transit(evidence)
+    assert audited["verified_segments"] == 4
+    assert audited["resume_attempts"] == 1
+
+    tampered = copy.deepcopy(evidence)
+    tampered["segment_evidence"][1]["offset_bytes"] += 1
+    with pytest.raises(AuditError, match="boundary"):
+        audit_peer_transit(tampered)
+
+
+def test_direct_resumes_from_verified_boundary_after_ice_disconnect(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    network_id = "direct-resume"
+    registry = FilePeerRegistry(tmp_path / "registry")
+    source = RynmeshStore(home=tmp_path / "source", network_dir=tmp_path / "source-net")
+    target = RynmeshStore(home=tmp_path / "target", network_dir=tmp_path / "target-net")
+    source.registry = registry
+    target.registry = registry
+    inbox = tmp_path / "inbox"
+    worker = PeerTransitWorker(
+        target,
+        role="target",
+        network_id=network_id,
+        inbox=inbox,
+        timeout_s=10,
+    )
+    worker.register()
+    source_file = tmp_path / "direct-resume.bin"
+    source_file.write_bytes(bytes(range(239)) * 600)
+    original_send = peer_transit_service.send_encrypted_stream
+    request_calls = 0
+
+    async def disconnect_second_segment(connection, cipher, **kwargs):
+        nonlocal request_calls
+        if kwargs.get("direction") == "request":
+            request_calls += 1
+            if request_calls == 2:
+                await connection.close()
+                raise ConnectionError("injected direct ICE disconnect")
+        return await original_send(connection, cipher, **kwargs)
+
+    monkeypatch.setattr(
+        peer_transit_service,
+        "send_encrypted_stream",
+        disconnect_second_segment,
+    )
+    stop = threading.Event()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        worker_future = pool.submit(
+            worker.serve_forever,
+            poll_interval_s=0.01,
+            stop_event=stop,
+        )
+        try:
+            evidence = send_file_direct(
+                source,
+                source_file,
+                target_peer_id=target.peer_id,
+                network_id=network_id,
+                timeout_s=10,
+                resume_segment_bytes=64 * 1024,
+                max_resume_attempts=2,
+            )
+        finally:
+            stop.set()
+            worker_future.result(timeout=10)
+
+    assert evidence["resume_attempts"] == 1
+    assert evidence["verified_boundaries"] == [64 * 1024, 128 * 1024, source_file.stat().st_size]
+    assert evidence["segment_evidence"][1]["attempt"] == 1
+    assert audit_direct_file(evidence)["verified_segments"] == 3
+    delivered = list(inbox.glob("*-direct-resume.bin"))
+    assert len(delivered) == 1
+    assert delivered[0].read_bytes() == source_file.read_bytes()
+    assert not list(inbox.rglob("*.part"))
+    assert not list(inbox.rglob("*.resume.json"))
+    assert worker._active_resume_transfers == set()
