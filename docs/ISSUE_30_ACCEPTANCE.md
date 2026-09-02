@@ -13,7 +13,7 @@ automated evidence. The complete product is not accepted because outbound
 Join, friends-only Private AI enforcement, remote revocation delivery, Webapp,
 QR/deep-link handling, and two-node physical acceptance remain outstanding.
 
-Core-slice evidence: 8/8 focused tests and Ruff passed; the full Windows run
+Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
 no Friend Mesh failure. Linux exact-commit CI remains required.
 

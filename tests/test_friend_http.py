@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import UTC, datetime
 
@@ -108,3 +109,29 @@ def test_local_invite_then_public_one_time_accept_rotates_encrypted_credential(
     # Normal peer routes still require the mesh key; only one-time acceptance bypasses it.
     assert client.get("/api/peer/pubkey").status_code == 404
     assert client.get("/api/peer/pubkey", headers=network_key_header()).status_code == 200
+
+
+def test_invalid_x25519_key_cannot_consume_the_invite(tmp_path, monkeypatch):
+    home = tmp_path / "provider"
+    monkeypatch.setenv("RYNMESH_HOME", str(home))
+    provider_store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    client = TestClient(create_app(provider_store))
+    link = client.post(
+        "/api/local/friends/invites",
+        json={"endpoints": ["https://alice.example:8791"]},
+    ).json()["link"]
+    acceptor_key = Ed25519PrivateKey.generate().private_bytes_raw()
+    valid_messaging_key = X25519PrivateKey.generate()
+    invalid = _acceptance_body(link, acceptor_key, valid_messaging_key)
+    zero_key = base64.b64encode(bytes(32)).decode("ascii")
+    invalid["acceptor_x25519_pub"] = zero_key
+    proof_payload = dict(invalid["proof"]["payload"])
+    proof_payload["acceptor_x25519_pub"] = zero_key
+    invalid["proof"] = sign_payload(proof_payload, private_key_bytes=acceptor_key).to_dict()
+
+    assert client.post("/api/peer/friends/accept", json=invalid).status_code == 404
+    outstanding = client.get("/api/local/friends/invites").json()
+    assert outstanding[0]["used_at"] is None
+
+    valid = _acceptance_body(link, acceptor_key, valid_messaging_key)
+    assert client.post("/api/peer/friends/accept", json=valid).status_code == 200
