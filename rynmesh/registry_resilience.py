@@ -94,6 +94,16 @@ class FallbackRegistryChain:
     def list_work_results(self, **kwargs: Any) -> list[SignedPayload]:
         return self._try_all("list_work_results", **kwargs)
 
+    # Mailbox traffic falls through on transport failure like everything else.
+    # A MailboxError is deliberately *not* caught by _try_all: "duplicate" or
+    # "rate_limited" is a verdict about the message, not a dead registry, and
+    # retrying it against a mirror would fan one message out across the chain.
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
+        return self._try_all("deposit_mailbox", signed)
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        return self._try_all("poll_mailbox", signed_poll)
+
     # -------------------------------------------------------------------------
 
     def _try_all(self, method: str, *args: Any, **kwargs: Any) -> Any:

@@ -45,9 +45,15 @@ MAX_POLL_LIMIT = 50
 POLL_SKEW_S = 300
 MAX_KIND_LEN = 96
 MAX_ACK_IDS = 200
+# A full poll (50 x 64 KiB) would be 3.2 MiB, over the 2 MiB the registry HTTP
+# client will read back. The server stops filling a poll response at this
+# budget instead, so a large mailbox drains over several polls rather than
+# producing one response no client can accept.
+MAX_POLL_RESPONSE_BYTES = 1536 * 1024
 
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
 _X25519_KEY_BYTES = 32
+_ED25519_KEY_BYTES = 32
 _SEAL_NONCE_BYTES = 12
 
 
@@ -107,6 +113,25 @@ def _b64_len(value: str, expected: int) -> None:
         raise MailboxError("invalid_envelope_field") from exc
     if len(raw) != expected:
         raise MailboxError("invalid_envelope_field")
+
+
+def _require_peer_id(peer_id: str) -> str:
+    """Peer ids are base64 Ed25519 public keys — 32 bytes, nothing else.
+
+    Checked on the registry side too: the recipient id picks the spool
+    directory, so junk here would scatter unreachable boxes across the disk.
+    """
+
+    cleaned = str(peer_id or "")
+    if not cleaned:
+        raise MailboxError("peer_id_required")
+    try:
+        raw = base64.b64decode(cleaned.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise MailboxError("invalid_peer_id") from exc
+    if len(raw) != _ED25519_KEY_BYTES:
+        raise MailboxError("invalid_peer_id")
+    return cleaned
 
 
 def _require_kind(kind: str) -> str:
@@ -186,9 +211,7 @@ def seal_mailbox_message(
         raise MailboxError("invalid_ttl") from exc
     if ttl <= 0 or ttl > MAX_TTL_S:
         raise MailboxError("invalid_ttl")
-    recipient = str(to_peer_id or "")
-    if not recipient:
-        raise MailboxError("recipient_required")
+    recipient = _require_peer_id(to_peer_id)
     messaging_pub = str(to_messaging_pub or "")
     _b64_len(messaging_pub, _X25519_KEY_BYTES)
 
@@ -250,8 +273,8 @@ def verify_mailbox_envelope(
         raise MailboxError("version_unsupported")
     if envelope.from_peer_id != signed.public_key:
         raise MailboxError("sender_mismatch")
-    if not envelope.from_peer_id or not envelope.to_peer_id:
-        raise MailboxError("peer_id_required")
+    _require_peer_id(envelope.from_peer_id)
+    _require_peer_id(envelope.to_peer_id)
     _require_kind(envelope.kind)
     _require_message_id(envelope.message_id)
     _b64_len(envelope.ephemeral_pub, _X25519_KEY_BYTES)

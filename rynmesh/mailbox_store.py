@@ -23,8 +23,10 @@ from typing import Any, Callable
 
 from .crypto import SignedPayload
 from .mailbox import (
+    MAX_POLL_RESPONSE_BYTES,
     POLL_SKEW_S,
     MailboxError,
+    envelope_size_bytes,
     rfc3339,
     verify_mailbox_envelope,
     verify_poll_request,
@@ -33,6 +35,7 @@ from .mailbox import (
 MAX_REPLAY_ENTRIES = 4096
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
+_TOMBSTONE_SUFFIX = ".acked"
 
 
 def _utcnow() -> datetime:
@@ -74,17 +77,21 @@ class FileMailboxStore:
 
         envelope = verify_mailbox_envelope(signed, now=self._now)
         with self._lock:
+            # Charged before the cheap rejections so that a sender looping on
+            # duplicates or on a full recipient is throttled just like one
+            # delivering real mail.
+            self._take_token(envelope.from_peer_id)
             recipient_dir = self._recipient_dir(envelope.to_peer_id)
             path = recipient_dir / f"{envelope.message_id}.json"
-            if path.exists():
+            tombstone = path.with_suffix(_TOMBSTONE_SUFFIX)
+            if path.exists() or tombstone.exists():
                 raise MailboxError("duplicate")
             self._sweep_dir(recipient_dir)
-            if path.exists():  # re-check: the sweep may have removed a stale copy
+            if path.exists() or tombstone.exists():
                 raise MailboxError("duplicate")
             pending = self._pending_count(recipient_dir)
             if pending >= self.max_pending_per_recipient:
                 raise MailboxError("recipient_full")
-            self._take_token(envelope.from_peer_id)
             self._private_dir(recipient_dir)
             _atomic_write_json(
                 path,
@@ -109,11 +116,14 @@ class FileMailboxStore:
             for message_id in acks:
                 # verify_poll_request already constrained these to 32 hex
                 # characters, so they cannot escape the recipient directory.
-                (recipient_dir / f"{message_id}.json").unlink(missing_ok=True)
+                self._ack(recipient_dir / f"{message_id}.json")
             self._sweep_dir(recipient_dir)
             found: list[tuple[str, str, SignedPayload]] = []
             for path in sorted(recipient_dir.glob("*.json")):
-                signed = self._load(path)
+                try:
+                    signed = self._load(path)
+                except OSError:
+                    continue
                 if signed is None:
                     continue
                 try:
@@ -125,16 +135,28 @@ class FileMailboxStore:
                     continue
                 found.append((envelope.created_at, envelope.message_id, signed))
             found.sort(key=lambda item: (item[0], item[1]))
-            return [signed for _, _, signed in found[:limit]]
+            # Oldest first, capped by both the caller's limit and a byte budget
+            # the registry HTTP client is guaranteed to be able to read back.
+            selected: list[SignedPayload] = []
+            budget = MAX_POLL_RESPONSE_BYTES
+            for _, _, signed in found[:limit]:
+                size = envelope_size_bytes(signed)
+                if selected and size > budget:
+                    break
+                budget -= size
+                selected.append(signed)
+            return selected
 
     def sweep(self) -> int:
-        """Delete every expired envelope in the spool; returns the count."""
+        """Delete every expired envelope and tombstone; returns the count."""
 
         removed = 0
         with self._lock:
             for recipient_dir in sorted(self.mailbox_dir.glob("*/*")):
-                if recipient_dir.is_dir():
-                    removed += self._sweep_dir(recipient_dir)
+                if not recipient_dir.is_dir():
+                    continue
+                removed += self._sweep_dir(recipient_dir)
+                self._prune_empty(recipient_dir)
         return removed
 
     # -------------------------------------------------------------- internals
@@ -168,40 +190,91 @@ class FileMailboxStore:
         return sum(1 for _ in recipient_dir.glob("*.json"))
 
     def _load(self, path: Path) -> SignedPayload | None:
+        """Read one stored envelope. ``None`` means corrupt; OSError propagates.
+
+        The distinction matters: corrupt content is unrecoverable and gets
+        deleted, but a transient read failure must never destroy a peer's mail.
+        """
+
+        raw = path.read_text(encoding="utf-8")
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-            return SignedPayload.from_dict(dict(record["signed"]))
-        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return SignedPayload.from_dict(dict(json.loads(raw)["signed"]))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
+    def _ack(self, path: Path) -> None:
+        """Delete a delivered envelope, leaving a tombstone until its TTL.
+
+        Without the tombstone the message id is free again the moment it is
+        acked, and anyone who observed the (public, signed) envelope could
+        re-deposit it for a second delivery. The tombstone holds only the
+        expiry — no routing fields, no ciphertext.
+        """
+
+        try:
+            signed = self._load(path)
+        except OSError:
+            signed = None
+        expires_at = str(signed.payload.get("expires_at") or "") if signed else ""
+        if not path.exists():
+            return
+        path.unlink(missing_ok=True)
+        if expires_at:
+            _atomic_write_json(path.with_suffix(_TOMBSTONE_SUFFIX), {"expires_at": expires_at})
+
     def _sweep_dir(self, recipient_dir: Path) -> int:
-        """Drop expired (or unreadable) envelopes without decrypting anything."""
+        """Drop expired envelopes and tombstones without decrypting anything."""
 
         if not recipient_dir.is_dir():
             return 0
         moment = self._moment()
         removed = 0
         for path in sorted(recipient_dir.glob("*.json")):
-            signed = self._load(path)
-            expires_at = ""
-            if signed is not None:
-                expires_at = str(signed.payload.get("expires_at") or "")
-            if not expires_at:
-                path.unlink(missing_ok=True)
-                removed += 1
-                continue
             try:
-                expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
-            except ValueError:
-                path.unlink(missing_ok=True)
-                removed += 1
+                signed = self._load(path)
+            except OSError:
+                continue  # transient read failure: leave the mail alone
+            expires_at = str(signed.payload.get("expires_at") or "") if signed else ""
+            removed += self._expire(path, expires_at, moment)
+        for path in sorted(recipient_dir.glob(f"*{_TOMBSTONE_SUFFIX}")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                expires_at = str(dict(record)["expires_at"])
+            except OSError:
                 continue
-            if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            if expires <= moment:
-                path.unlink(missing_ok=True)
-                removed += 1
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                expires_at = ""
+            removed += self._expire(path, expires_at, moment)
         return removed
+
+    def _expire(self, path: Path, expires_at: str, moment: datetime) -> int:
+        """Unlink ``path`` if its expiry has passed or cannot be read at all."""
+
+        if not expires_at:
+            path.unlink(missing_ok=True)
+            return 1
+        try:
+            expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            path.unlink(missing_ok=True)
+            return 1
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires <= moment:
+            path.unlink(missing_ok=True)
+            return 1
+        return 0
+
+    def _prune_empty(self, recipient_dir: Path) -> None:
+        """Remove drained box directories so an idle spool leaves no fan-out."""
+
+        for directory in (recipient_dir, recipient_dir.parent):
+            if directory == self.mailbox_dir or directory == directory.parent:
+                return
+            try:
+                directory.rmdir()
+            except OSError:
+                return  # still holds mail, already gone, or a deposit raced us
 
     def _take_token(self, sender_peer_id: str) -> None:
         """Per-sender token bucket: ``rate`` burst, ``rate/60`` refilled a second."""
@@ -225,7 +298,11 @@ class FileMailboxStore:
         if key in self._seen_nonces:
             raise MailboxError("replay")
         if len(self._seen_nonces) >= MAX_REPLAY_ENTRIES:
-            # Bounded memory: shed the entries closest to expiry first.
+            # Bounded memory: shed the entries closest to expiry first. Under a
+            # sustained flood this can evict a nonce that has not expired yet,
+            # briefly reopening the replay window for that one poll. Memory
+            # exhaustion is the worse failure, so the bound wins; a shared cache
+            # with a real TTL store is the fix if this ever matters.
             for stale, _ in sorted(self._seen_nonces.items(), key=lambda item: item[1])[:64]:
                 self._seen_nonces.pop(stale, None)
         self._seen_nonces[key] = seconds + 2 * POLL_SKEW_S

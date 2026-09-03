@@ -33,7 +33,18 @@ from .types import now_iso
 
 
 class RegistryError(RuntimeError):
-    pass
+    """A registry call failed.
+
+    ``status`` and ``detail`` are populated when the failure came back as an
+    HTTP response, so a caller can branch on *why* (409 ``duplicate`` versus
+    429 ``rate_limited``) instead of pattern-matching the message string.
+    Both stay unset for local backends and transport-level failures.
+    """
+
+    def __init__(self, message: str = "", *, status: int | None = None, detail: str = "") -> None:
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
 
 
 MAX_REGISTRY_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -410,6 +421,9 @@ class HttpPeerRegistry:
         )
         if not isinstance(messages, list):
             raise RegistryError("registry response missing messages list")
+        # A registry that hands back somebody else's mail is either broken or
+        # hostile; either way it is not this peer's to hold.
+        expected_to_peer_id = str(signed_poll.payload.get("peer_id") or "")
         records: list[SignedPayload] = []
         for item in messages:
             if not isinstance(item, dict):
@@ -417,8 +431,11 @@ class HttpPeerRegistry:
                 continue
             try:
                 signed = SignedPayload.from_dict(item)
-                verify_mailbox_envelope(signed)
+                envelope = verify_mailbox_envelope(signed)
             except (KeyError, TypeError, ValueError, MailboxError):
+                self.dropped_mailbox_messages += 1
+                continue
+            if envelope.to_peer_id != expected_to_peer_id:
                 self.dropped_mailbox_messages += 1
                 continue
             records.append(signed)
@@ -598,7 +615,13 @@ class HttpPeerRegistry:
                 if len(raw_bytes) > MAX_REGISTRY_RESPONSE_BYTES:
                     raise RegistryError("registry_response_too_large")
                 raw = raw_bytes.decode("utf-8")
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except HTTPError as exc:
+            raise RegistryError(
+                f"registry_http_error: {exc}",
+                status=int(getattr(exc, "code", 0) or 0) or None,
+                detail=_http_error_detail(exc),
+            ) from exc
+        except (URLError, TimeoutError) as exc:
             raise RegistryError(f"registry_http_error: {exc}") from exc
         try:
             payload = json.loads(raw or "{}")
@@ -607,6 +630,23 @@ class HttpPeerRegistry:
         if not isinstance(payload, (dict, list)):
             raise RegistryError("registry_response_not_object_or_list")
         return payload
+
+
+def _http_error_detail(exc: HTTPError) -> str:
+    """Best-effort ``detail`` from a JSON error body; "" when there isn't one."""
+
+    try:
+        body = exc.read(MAX_REGISTRY_RESPONSE_BYTES + 1)
+    except (OSError, ValueError):
+        return ""
+    if len(body) > MAX_REGISTRY_RESPONSE_BYTES:
+        return ""
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return detail if isinstance(detail, str) else ""
 
 
 def _signed_payload_list(

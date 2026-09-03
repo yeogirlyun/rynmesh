@@ -17,11 +17,14 @@ from rynmesh.crypto import SignedPayload, public_key_from_private, sign_payload
 from rynmesh.mailbox import (
     MAILBOX_VERSION,
     MAX_ACK_IDS,
+    MAX_ENVELOPE_BYTES,
     MAX_POLL_LIMIT,
+    MAX_POLL_RESPONSE_BYTES,
     MAX_TTL_S,
     POLL_KIND,
     MailboxError,
     build_poll_request,
+    envelope_size_bytes,
     open_mailbox_message,
     rfc3339,
     seal_mailbox_message,
@@ -29,7 +32,7 @@ from rynmesh.mailbox import (
     verify_poll_request,
 )
 from rynmesh.mailbox_store import FileMailboxStore
-from rynmesh.registry import FilePeerRegistry, HttpPeerRegistry
+from rynmesh.registry import FilePeerRegistry, HttpPeerRegistry, RegistryError
 
 T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -190,6 +193,37 @@ def test_verify_rejects_expired_and_future_envelopes(tmp_path) -> None:
         verify_mailbox_envelope(stretched, now=_at(T0))
 
 
+def test_verify_rejects_oversized_and_malformed_peer_ids(tmp_path) -> None:
+    """The registry re-checks the caps; it never trusts the sender's restraint."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    signed = _seal(alice, bob)
+
+    # Correctly signed, but fattened past the 64 KiB cap after sealing.
+    bloated = _resign(
+        signed,
+        private_key_bytes=alice.private_key_bytes,
+        ciphertext=base64.b64encode(b"x" * (70 * 1024)).decode("ascii"),
+    )
+    with pytest.raises(MailboxError, match="envelope_too_large"):
+        verify_mailbox_envelope(bloated, now=_at(T0))
+
+    for bad in ("not base64!", base64.b64encode(b"short").decode("ascii")):
+        with pytest.raises(MailboxError, match="invalid_peer_id"):
+            verify_mailbox_envelope(
+                _resign(signed, private_key_bytes=alice.private_key_bytes, to_peer_id=bad),
+                now=_at(T0),
+            )
+        with pytest.raises(MailboxError, match="invalid_peer_id"):
+            seal_mailbox_message(
+                kind="pair.accept", body={}, from_private_key_bytes=alice.private_key_bytes,
+                to_peer_id=bad, to_messaging_pub=bob.messaging_pub,
+            )
+    with pytest.raises(MailboxError, match="peer_id_required"):
+        _seal(alice, bob, to_peer_id="")
+
+
 # -------------------------------------------------------------------- 4. poll
 
 
@@ -332,6 +366,127 @@ def test_file_mailbox_store_rate_limit_replay_and_capacity(tmp_path) -> None:
         full.deposit(_seal(alice, bob, message_id=f"{index:032x}"))
     with pytest.raises(MailboxError, match="recipient_full"):
         full.deposit(_seal(alice, bob))
+
+
+def test_acked_message_leaves_a_tombstone_until_it_expires(tmp_path) -> None:
+    """An acked id stays spent for its TTL, so a captured envelope cannot replay."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", now=clock)
+
+    signed = _seal(alice, bob, ttl_s=600, now=clock)
+    message_id = signed.payload["message_id"]
+    store.deposit(signed)
+    assert len(store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                             now=clock))) == 1
+    store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                  ack=[message_id], now=clock))
+
+    digest = hashlib.sha256(bob.peer_id.encode("utf-8")).hexdigest()
+    box = tmp_path / "registry" / "mailbox" / digest[:2] / digest
+    tombstone = box / f"{message_id}.acked"
+    assert not (box / f"{message_id}.json").exists()
+    assert tombstone.exists()
+    assert json.loads(tombstone.read_text()) == {"expires_at": signed.payload["expires_at"]}
+    assert tombstone.stat().st_mode & 0o777 == 0o600
+
+    # Re-depositing the very same signed envelope is refused for its whole TTL.
+    with pytest.raises(MailboxError, match="duplicate"):
+        store.deposit(signed)
+
+    # Past the TTL the tombstone is swept and the box directory is reclaimed.
+    clock.advance(601)
+    assert store.sweep() == 1
+    assert not tombstone.exists()
+    assert not box.exists()
+
+
+def test_deposit_charges_the_sender_for_rejected_mail(tmp_path) -> None:
+    """A sender looping on duplicates burns budget like one delivering mail."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", sender_rate_per_minute=2, now=clock)
+
+    signed = _seal(alice, bob, now=clock)
+    store.deposit(signed)
+    with pytest.raises(MailboxError, match="duplicate"):
+        store.deposit(signed)
+    with pytest.raises(MailboxError, match="rate_limited"):
+        store.deposit(signed)
+
+
+def test_sweep_keeps_mail_it_cannot_read(tmp_path) -> None:
+    """A transient read failure must never be mistaken for corruption."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", now=clock)
+
+    keep = _seal(alice, bob, ttl_s=60, message_id="a" * 32, now=clock)
+    drop = _seal(alice, bob, ttl_s=60, message_id="b" * 32, now=clock)
+    store.deposit(keep)
+    store.deposit(drop)
+
+    digest = hashlib.sha256(bob.peer_id.encode("utf-8")).hexdigest()
+    box = tmp_path / "registry" / "mailbox" / digest[:2] / digest
+    unreadable = box / f"{'a' * 32}.json"
+    original = store._load
+
+    def flaky(path: Path):
+        if path == unreadable:
+            raise OSError("device busy")
+        return original(path)
+
+    store._load = flaky
+    clock.advance(120)
+    assert store.sweep() == 1
+    assert unreadable.exists(), "an unreadable file must survive the sweep"
+    assert not (box / f"{'b' * 32}.json").exists()
+
+    store._load = original
+    assert store.sweep() == 1
+    assert not unreadable.exists()
+
+
+def test_poll_response_is_capped_below_the_client_read_limit(tmp_path) -> None:
+    """A full mailbox drains over several polls instead of one unreadable one."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", sender_rate_per_minute=5000, now=clock)
+
+    expected = set()
+    for index in range(40):
+        signed = _seal(alice, bob, body={"blob": "x" * 45000},
+                       message_id=f"{index:032x}", ttl_s=MAX_TTL_S, now=clock)
+        size = envelope_size_bytes(signed)
+        assert 32 * 1024 < size <= MAX_ENVELOPE_BYTES
+        store.deposit(signed)
+        expected.add(signed.payload["message_id"])
+
+    delivered: set[str] = set()
+    batches = 0
+    ack: list[str] = []
+    while True:
+        polled = store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                               ack=ack, now=clock))
+        if not polled:
+            break
+        batches += 1
+        # Nothing the registry hands back may exceed what the client will read.
+        assert sum(envelope_size_bytes(item) for item in polled) <= MAX_POLL_RESPONSE_BYTES
+        assert len(polled) < 40, "the byte budget, not the limit, must bind here"
+        ack = [item.payload["message_id"] for item in polled]
+        delivered.update(ack)
+
+    assert batches >= 2
+    assert delivered == expected
 
 
 def test_file_mailbox_store_sweeps_expired_mail(tmp_path) -> None:
@@ -514,6 +669,13 @@ def test_http_peer_registry_mailbox_round_trip_through_server(tmp_path) -> None:
         )
         assert body == {"note": "over-the-wire"}
 
+        # A rejection carries the HTTP status and short code, so a caller can
+        # tell "already delivered" from "slow down" without parsing a message.
+        with pytest.raises(RegistryError) as duplicate:
+            client.deposit_mailbox(signed)
+        assert duplicate.value.status == 409
+        assert duplicate.value.detail == "duplicate"
+
         assert client.poll_mailbox(
             build_poll_request(private_key_bytes=bob.private_key_bytes,
                                ack=[envelope.message_id])
@@ -524,3 +686,48 @@ def test_http_peer_registry_mailbox_round_trip_through_server(tmp_path) -> None:
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_http_poll_mailbox_drops_mail_addressed_to_someone_else(tmp_path) -> None:
+    """A broken or hostile registry cannot push another peer's mail onto us."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    carol = _Peer(tmp_path, "carol")
+    client = HttpPeerRegistry("http://127.0.0.1:9")
+
+    for_bob = _seal(alice, bob, now=None)
+    for_carol = _seal(alice, carol, now=None)
+    client._json = lambda req: {
+        "messages": [for_carol.to_dict(), for_bob.to_dict(), {"not": "an envelope"}]
+    }
+
+    records = client.poll_mailbox(build_poll_request(private_key_bytes=bob.private_key_bytes))
+    assert [item.payload["message_id"] for item in records] == [for_bob.payload["message_id"]]
+    assert client.dropped_mailbox_messages == 2
+
+
+def test_fallback_chain_carries_mailbox_traffic_past_a_dead_registry(tmp_path) -> None:
+    from rynmesh.registry_resilience import FallbackRegistryChain
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+
+    class _DeadRegistry:
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise RegistryError("registry_http_error: unreachable")
+
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise RegistryError("registry_http_error: unreachable")
+
+    live = FilePeerRegistry(tmp_path / "registry")
+    chain = FallbackRegistryChain([_DeadRegistry(), live])
+
+    signed = _seal(alice, bob, now=None)
+    assert chain.deposit_mailbox(signed)["message_id"] == signed.payload["message_id"]
+    polled = chain.poll_mailbox(build_poll_request(private_key_bytes=bob.private_key_bytes))
+    assert [item.payload["message_id"] for item in polled] == [signed.payload["message_id"]]
+    # The message really landed in the second registry, not the dead one.
+    assert live.poll_mailbox(
+        build_poll_request(private_key_bytes=bob.private_key_bytes)
+    )[0].payload["message_id"] == signed.payload["message_id"]
