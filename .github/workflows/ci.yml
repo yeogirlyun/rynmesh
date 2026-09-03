@@ -58,6 +58,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -e .
+      - name: Docker-free local multiprocess stream and fallback acceptance
+        run: python scripts/llm_e2e.py local-run
       - name: Deterministic strict P2P private LLM flow
         run: python scripts/llm_e2e.py run
       - name: Deterministic encrypted-relay private LLM flow

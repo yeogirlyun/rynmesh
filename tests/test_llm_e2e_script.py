@@ -24,7 +24,13 @@ def test_sse_evidence_records_delta_before_terminal() -> None:
 
 @pytest.mark.parametrize(
     ("mode", "transport"),
-    [("stream-test", "direct"), ("test", "p2p"), ("relay-test", "relay")],
+    [
+        ("stream-test", "direct"),
+        ("test", "p2p"),
+        ("relay-test", "relay"),
+        ("local-stream", "direct"),
+        ("local-fallback", "direct"),
+    ],
 )
 def test_deterministic_modes_request_stream_but_preserve_transport_boundary(
     mode: str, transport: str,
@@ -48,19 +54,41 @@ def test_deterministic_adapter_emits_real_sse_chunks_and_final_usage() -> None:
     assert "data: [DONE]" in response.text
 
 
+def test_deterministic_adapter_can_expose_complete_only_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RYNMESH_TEST_ADAPTER_DISABLE_STREAM", "1")
+    with TestClient(deterministic_adapter) as client:
+        response = client.post("/v1/chat/completions", json={
+            "messages": [{"role": "user", "content": "fallback evidence"}],
+            "stream": True,
+        })
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["choices"][0]["message"]["content"]
+
+
 def test_stream_verifier_writes_timing_route_and_exactly_once_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     provider_id = "provider-peer"
+    async_calls = 0
 
     def fake_json(url, body=None, timeout=20):
+        nonlocal async_calls
         del body, timeout
         if url.endswith("/services/publish"):
             return {"record": {"peer_id": provider_id}}
         if "/llm/services?" in url:
-            return {"services": [{"peer_id": provider_id}]}
+            return {"services": [{
+                "peer_id": provider_id,
+                "service": {"package_id": "e2e-test-service"},
+            }]}
         if url.endswith("/llm/orders/async"):
-            return {"task_id": "queued", "state": "queued"}
+            async_calls += 1
+            return {
+                "task_id": task_id,
+                "state": "queued" if async_calls == 1 else "succeeded",
+            }
         if url == "http://127.0.0.1:18892/api/local/task-balance":
             return {"available": 99, "held": 0, "earned": 0, "events": [
                 {"kind": "hold", "task_id": task_id},
@@ -103,13 +131,33 @@ def test_stream_verifier_writes_timing_route_and_exactly_once_evidence(
     assert report["consumer_hold_recorded_once"] is True
     assert report["consumer_settlement_recorded_once"] is True
     assert report["provider_earning_recorded_once"] is True
+    assert report["duplicate_submission_reused_task"] is True
+    assert report["consumer_task_recorded_once"] is True
+    assert report["provider_task_recorded_once"] is True
+    assert report["effective_response_mode"] == "stream-v1"
     assert report["stream_event_count"] == 1
     assert "output_preview" not in report
+    assert "provider_peer_id" not in report
+    assert report["provider_peer_id_sha256"]
     assert (tmp_path / "deploy/llm-e2e/results/stream-test-result.json").is_file()
+
+
+def test_local_environment_removes_host_transport_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "do-not-inherit")
+    monkeypatch.setenv("RYNMESH_LLM_FORCE_RELAY", "1")
+    monkeypatch.setenv("RYNMESH_REGISTRY_URLS", "https://external.invalid")
+    env = llm_e2e._local_environment(tmp_path)
+    assert "RYNMESH_NETWORK_KEY" not in env
+    assert "RYNMESH_LLM_FORCE_RELAY" not in env
+    assert "RYNMESH_REGISTRY_URLS" not in env
+    assert env["RYNMESH_NETWORK_ID"] == "rynmesh-llm-e2e"
 
 
 def test_ci_runs_deterministic_stream_verifier() -> None:
     workflow = (llm_e2e.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "python scripts/llm_e2e.py local-run" in workflow
     assert "python scripts/llm_e2e.py stream-run" in workflow
 
 

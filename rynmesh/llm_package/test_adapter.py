@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from typing import Any
 
@@ -39,7 +40,9 @@ def complete(body: dict[str, Any]) -> Any:
         "completion_tokens": max(1, len(text) // 4),
         "total_tokens": max(2, len(prompt) // 4 + len(text) // 4),
     }
-    if body.get("stream"):
+    streaming_enabled = os.environ.get("RYNMESH_TEST_ADAPTER_DISABLE_STREAM", "").strip().lower() \
+        not in {"1", "true", "yes"}
+    if body.get("stream") and streaming_enabled:
         parts = ("rynmesh encrypted ", "e2e ok ", digest)
 
         def events():
@@ -53,7 +56,7 @@ def complete(body: dict[str, Any]) -> Any:
                 yield "data: " + json.dumps(event, separators=(",", ":")) + "\n\n"
                 # Keep a measurable gap between first delta and terminal so the
                 # two-node verifier proves live delivery rather than replay.
-                time.sleep(0.08)
+                time.sleep(0.25)
             yield "data: " + json.dumps(
                 {"choices": [], "usage": usage}, separators=(",", ":"),
             ) + "\n\n"

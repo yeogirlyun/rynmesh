@@ -1919,7 +1919,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                     delta = verifier.accept_delta(envelope)
                                     stream_broker.publish(
                                         task_id,
-                                        {"event": "delta", **delta},
+                                        {
+                                            "event": "delta",
+                                            "emitted_monotonic_ns": time.monotonic_ns(),
+                                            **delta,
+                                        },
                                     )
                                 elif kind == "llm_response":
                                     verifier.accept_terminal(envelope)
@@ -2052,7 +2056,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 consumer_orders.checkpoint(
                     task_id=task_id, metadata={"settlement_dispatched": True},
                 )
-            stream_broker.publish(task_id, {"event": "complete", **result})
+            stream_broker.publish(
+                task_id,
+                {
+                    "event": "complete",
+                    "emitted_monotonic_ns": time.monotonic_ns(),
+                    **result,
+                },
+            )
             return result
         except Exception as exc:
             error_code = _delivery_error_code(exc, transport=transport_mode)

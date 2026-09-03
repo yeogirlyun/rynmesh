@@ -1,6 +1,6 @@
 # Issue #23 开发文档：stream-v1 后端与传输切片
 
-状态：后端、传输和 Webapp 集成完成，等待真实路由矩阵验收。
+状态：后端、传输和 Webapp 集成完成；Docker-free 本地四进程验收已具备并通过。
 
 ## 协议
 
@@ -40,7 +40,8 @@ sequence 从 0 开始严格连续。重复、缺口、乱序、错误 task/servi
 
 - `rynmesh/transport.py`
   - `Transport.iter_post_bytes` 增量 seam。
-  - `StdlibHttpsTransport`、`FrontedHttpsTransport` 实现有界读取与 finally 关闭。
+  - `StdlibHttpsTransport`、`FrontedHttpsTransport` 使用 `read1` 交付当前可用字节，避免
+    小型 NDJSON 等满读取上限/EOF，并保持有界读取与 finally 关闭。
   - 旧插件未实现该方法时明确返回 unsupported，不隐式旁路。
 - `rynmesh/peer_http.py`
   - `HttpPeerClient.iter_post_ndjson` 负责 UTF-8 增量解码、换行 framing、对象校验、
@@ -104,3 +105,28 @@ sequence 从 0 开始严格连续。重复、缺口、乱序、错误 task/servi
 再次断线或 sequence gap 改为轮询同一 task 的终态，不创建第二次推理或结算。terminal
 后构造一个 assistant message 并走原加密持久化一次。取消会保存已显示片段并明确标为
 incomplete，而不是成功回答。
+
+## Docker-free 本地多进程验收
+
+`python scripts/llm_e2e.py local-run` 连续运行两个完全隔离的场景。每个场景都从 OS 分配
+四个非冲突 loopback 端口，在临时目录分别启动 Registry、adapter、Provider、Consumer，
+逐个等待 `/health` 后才提交任务。两个 peer 使用不同 `RYNMESH_HOME` 和
+`RYNMESH_NETWORK_DIR`，通过真实 Registry 发布/发现和真实 HTTP/NDJSON/SSE 通信，不使用
+FastAPI TestClient，也不复用调用进程内状态。
+
+- `local-stream`：adapter 真实发送三段 OpenAI SSE；Provider 发布
+  `delivery_protocols=[complete-v1, stream-v1]`，Consumer 走 `peer_http_direct`。
+- `local-fallback`：同一 adapter 进程配置为 complete-only；Provider 只发布
+  `complete-v1`。Consumer 虽请求 `stream-v1`，仍通过真实 direct complete 端点得到终态，
+  不产生伪 delta，也不触发第二次推理。
+
+verifier 在收到 terminal 后以完全相同的 task/order 再提交一次，再读取双方账本与订单状态，
+证明 duplicate submission 复用原 task，Consumer hold/settlement 与 Provider earning 各一条。
+四个子进程随后被 harness 回收；日志只做 prompt/output marker 扫描，证据 JSON 不写正文。
+delta 与 terminal SSE 事件带 Consumer 进程产生的 `emitted_monotonic_ns`；验收器用它计算
+first-delta/terminal，而不是用可能被 HTTP 缓冲合并的客户端读取时刻。
+退出前还会递归扫描 Registry/Provider/Consumer 临时持久文件，确认 prompt marker 和唯一
+output digest marker 均不存在；原始日志和节点状态在证据摘要写出后随临时目录删除。
+
+显式 Relay 与 strict P2P 命令仍保留在 Docker/真实网络 harness 中。loopback direct 不是这两种
+传输，因此本地命令不会把 direct 改名为 Relay/P2P 来制造通过记录。
