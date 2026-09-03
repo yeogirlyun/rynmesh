@@ -64,6 +64,25 @@ def test_pinned_transport_rejects_proxy_owned_dns(monkeypatch) -> None:
     assert caught.value.reason == "pinned_proxy_unsupported"
 
 
+def test_pinned_transport_bounds_socket_dial_failure(monkeypatch) -> None:
+    monkeypatch.setenv("RYNMESH_TRANSPORT", "direct")
+    monkeypatch.delenv("RYNMESH_HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("RYNMESH_HTTP_PROXY", raising=False)
+    transport = get_pinned_transport("http://friend.example:8791", "8.8.8.8")
+
+    def refused(*args, **kwargs):
+        raise ConnectionRefusedError("offline fixture")
+
+    monkeypatch.setattr("socket.create_connection", refused)
+    with pytest.raises(TransportError) as caught:
+        transport.get_bytes(
+            "http://friend.example:8791/health",
+            timeout_s=1,
+            max_bytes=1024,
+        )
+    assert caught.value.reason == "http_error"
+
+
 def test_network_key_is_sent_as_salted_hash(monkeypatch) -> None:
     monkeypatch.setenv("RYNMESH_NETWORK_KEY", "swordfish")
     transport = StdlibHttpsTransport(TransportProfile())

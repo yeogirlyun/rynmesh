@@ -371,7 +371,10 @@ class FrontedHttpsTransport:
         is_default_port = port == (443 if scheme == "https" else 80)
         host_header = host if is_default_port else f"{host}:{port}"
 
-        raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        try:
+            raw = socket.create_connection((connect_host, port), timeout=timeout_s)
+        except OSError as exc:
+            raise TransportError(f"http error: {exc}", reason="http_error") from exc
         try:
             if scheme == "https":
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
