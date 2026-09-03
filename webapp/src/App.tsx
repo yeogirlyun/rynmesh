@@ -14,6 +14,7 @@ import {
 import { ConfirmDialog, Hash, IconButton, LoadingPanel, NavIcons, PeerPill, Toast, Chip } from "./components/ui";
 import { RynLockup, RynMark, RynWordmark } from "./brand/RynBrand";
 import OnboardingTour, { ONBOARDING_VERSION } from "./components/OnboardingTour";
+import FirstSuccessFlow from "./components/FirstSuccessFlow";
 import type { AppOutletContext } from "./appContext";
 import type { NodeClient } from "./domain/nodeClient";
 import { digestApi, type DiscoveryStatus } from "./domain/digestClient";
@@ -21,7 +22,7 @@ import { makeFixtureNodeClient } from "./domain/fixtureNodeClient";
 import { makeLiveNodeClient } from "./domain/liveNodeClient";
 import { nodeControlBaseUrl } from "./domain/nodeUrl";
 import { installNotificationNavigation, sendDiscoveryNotification } from "./domain/notifications";
-import type { ConfirmRequest, NodeSettings, NodeStatus, Peer, RegistryStatus, ToastMessage } from "./domain/types";
+import type { ConfirmRequest, FirstSuccessStatus, NodeSettings, NodeStatus, Peer, RegistryStatus, ToastMessage } from "./domain/types";
 import Home from "./screens/Home";
 import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
@@ -75,11 +76,14 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [aiOpen, setAiOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
-  const tourEvaluated = useRef(false);
+  const [firstSuccess, setFirstSuccess] = useState<FirstSuccessStatus | null>(null);
+  const [firstSuccessOpen, setFirstSuccessOpen] = useState(false);
+  const firstSuccessEvaluated = useRef(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const lastUnread = useRef(0);
+  const firstSuccessEnabled = import.meta.env.VITE_RYN_FIRST_SUCCESS_V1_ENABLED !== "0";
 
   const notify = useCallback((tone: ToastMessage["tone"], text: string) => {
     const message = { id: crypto.randomUUID(), tone, text };
@@ -91,25 +95,27 @@ export default function App() {
 
   const refreshShell = useCallback(async () => {
     try {
-      const [nodeStatus, registryStatus, peerList, nodeSettings] = await Promise.all([
+      const [nodeStatus, registryStatus, peerList, nodeSettings, successStatus] = await Promise.all([
         client.getNodeStatus(),
         client.getRegistryStatus(),
         client.listPeers(),
         client.getSettings(),
+        firstSuccessEnabled ? client.getFirstSuccess().catch(() => null) : Promise.resolve(null),
       ]);
       setNode(nodeStatus);
       setRegistry(registryStatus);
       setPeers(peerList);
       setSettings(nodeSettings);
-      if (!tourEvaluated.current) {
-        tourEvaluated.current = true;
-        setTourOpen(nodeSettings.onboarding_version < ONBOARDING_VERSION);
+      if (successStatus) setFirstSuccess(successStatus);
+      if (successStatus && !firstSuccessEvaluated.current) {
+        firstSuccessEvaluated.current = true;
+        setFirstSuccessOpen(!successStatus.completed && !successStatus.dismissed);
       }
       setOffline(false);
     } catch {
       setOffline(true);
     }
-  }, [client]);
+  }, [client, firstSuccessEnabled]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", "dark");
@@ -186,7 +192,14 @@ export default function App() {
     node,
     registry,
     peers,
+    firstSuccess,
+    openFirstSuccess: () => setFirstSuccessOpen(true),
     refreshShell,
+    refreshFirstSuccess: async () => {
+      const next = await client.getFirstSuccess();
+      setFirstSuccess(next);
+      return next;
+    },
     confirm: setConfirmRequest,
     notify,
   };
@@ -227,6 +240,14 @@ export default function App() {
             setSettings(updated);
             setTourOpen(false);
           }}
+        />
+      ) : null}
+      {firstSuccessOpen && firstSuccess ? (
+        <FirstSuccessFlow
+          client={client}
+          status={firstSuccess}
+          onStatusChange={setFirstSuccess}
+          onClose={() => setFirstSuccessOpen(false)}
         />
       ) : null}
     </div>
