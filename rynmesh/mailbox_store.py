@@ -214,10 +214,16 @@ class FileMailboxStore:
         try:
             signed = self._load(path)
         except OSError:
-            signed = None
-        expires_at = str(signed.payload.get("expires_at") or "") if signed else ""
+            # The expiry lives inside the file, so a read failure means there is
+            # no tombstone to write. Deleting anyway would free the message id
+            # early and reopen the replay window this tombstone exists to close.
+            # Leave the envelope: a later ack, or the sweep at TTL, clears it.
+            return
         if not path.exists():
             return
+        # A corrupt record has no recoverable expiry and was never deliverable
+        # (poll drops it too), so it goes without a tombstone.
+        expires_at = str(signed.payload.get("expires_at") or "") if signed else ""
         path.unlink(missing_ok=True)
         if expires_at:
             _atomic_write_json(path.with_suffix(_TOMBSTONE_SUFFIX), {"expires_at": expires_at})

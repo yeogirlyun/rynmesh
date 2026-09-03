@@ -403,6 +403,51 @@ def test_acked_message_leaves_a_tombstone_until_it_expires(tmp_path) -> None:
     assert not box.exists()
 
 
+def test_ack_keeps_mail_it_cannot_read(tmp_path) -> None:
+    """A read failure during ack must not delete the envelope tombstone-less.
+
+    The expiry lives in the file, so an unreadable file yields no tombstone —
+    deleting anyway would free the message id early and reopen the replay hole.
+    """
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", now=clock)
+
+    signed = _seal(alice, bob, ttl_s=600, now=clock)
+    message_id = signed.payload["message_id"]
+    store.deposit(signed)
+    assert len(store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                             now=clock))) == 1
+
+    digest = hashlib.sha256(bob.peer_id.encode("utf-8")).hexdigest()
+    box = tmp_path / "registry" / "mailbox" / digest[:2] / digest
+    envelope_path = box / f"{message_id}.json"
+    tombstone = box / f"{message_id}.acked"
+    original = store._load
+
+    def flaky(path: Path):
+        if path == envelope_path:
+            raise OSError("device busy")
+        return original(path)
+
+    store._load = flaky
+    store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                  ack=[message_id], now=clock))
+    assert envelope_path.exists(), "an unreadable envelope must survive its ack"
+    assert not tombstone.exists(), "no tombstone can be written without an expiry"
+
+    # The next ack, with the read working again, completes the delivery.
+    store._load = original
+    store.poll(build_poll_request(private_key_bytes=bob.private_key_bytes,
+                                  ack=[message_id], now=clock))
+    assert not envelope_path.exists()
+    assert json.loads(tombstone.read_text()) == {"expires_at": signed.payload["expires_at"]}
+    with pytest.raises(MailboxError, match="duplicate"):
+        store.deposit(signed)
+
+
 def test_deposit_charges_the_sender_for_rejected_mail(tmp_path) -> None:
     """A sender looping on duplicates burns budget like one delivering mail."""
 
@@ -731,3 +776,33 @@ def test_fallback_chain_carries_mailbox_traffic_past_a_dead_registry(tmp_path) -
     assert live.poll_mailbox(
         build_poll_request(private_key_bytes=bob.private_key_bytes)
     )[0].payload["message_id"] == signed.payload["message_id"]
+
+
+def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tmp_path) -> None:
+    """`duplicate` is a verdict about the message, not a dead registry.
+
+    Falling through would deliver one message twice, once per mirror.
+    """
+
+    from rynmesh.registry_resilience import FallbackRegistryChain
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+
+    class _RejectingRegistry:
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise MailboxError("duplicate")
+
+    class _SpyRegistry:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            self.calls += 1
+            return {"message_id": signed.payload["message_id"]}
+
+    spy = _SpyRegistry()
+    chain = FallbackRegistryChain([_RejectingRegistry(), spy])
+    with pytest.raises(MailboxError, match="duplicate"):
+        chain.deposit_mailbox(_seal(alice, bob, now=None))
+    assert spy.calls == 0
