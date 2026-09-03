@@ -20,16 +20,20 @@ _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
 # says nothing about how much reading history a node should keep, so this
 # store gets its own explicit budget instead of borrowing that one).
 #
-# Worst case at max_items=1000: 12 string fields x 4000 chars + tags/reasons
-# (2 x 64 entries x 160 chars) + item_id (2 x 256 chars, top-level and
-# nested) per record, x1000 records, plus JSON structure/indent overhead
-# measures to ~66.8 MB (see
+# Worst case at max_items=1000, every field _clean_item actually truncates
+# maxed out: 12 string fields (including `link`) at 4000 chars + tags/reasons
+# (2 x 64 entries x 160 chars) + item_id at its real 256-char cap (appearing
+# twice per record: top-level and nested in `item`), x1000 records, plus
+# JSON structure/indent overhead measures to ~68.2 MiB (see
 # tests/test_consumption.py::test_consumption_store_worst_case_stays_under_atomic_cap,
-# which builds exactly this and asserts it against MAX_HISTORY_BYTES).
-# MAX_HISTORY_BYTES is set well above that measured worst case. If you raise
-# `max_items` or any `_ITEM_FIELDS` truncation length, re-run that test and
-# raise MAX_HISTORY_BYTES together with it — the two move as a pair.
-MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured worst case at 1000 items is ~66.8 MB
+# which builds exactly this — item_id and link included at their real caps,
+# not shortened — and asserts it against MAX_HISTORY_BYTES). That leaves
+# ~40% headroom under the 96 MiB cap below (worst case is ~71% of the cap).
+# If you raise `max_items` or any `_ITEM_FIELDS` truncation length, re-run
+# that test and raise MAX_HISTORY_BYTES together with it — the two move as a
+# pair, and the test's own field-maxing must be kept in sync with whatever
+# `_clean_item` actually truncates.
+MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured true worst case at 1000 items is ~68.2 MiB
 _ITEM_FIELDS = {
     "item_id",
     "source_id",
