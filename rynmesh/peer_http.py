@@ -23,7 +23,15 @@ from urllib.parse import quote, urlencode, urlparse
 
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
-from .background_workers import BackgroundWorkerRegistry
+from .background_workers import (
+    BackgroundWorkerRegistry,
+)
+from .background_workers import (
+    BackgroundWorkerSpec as _BackgroundWorkerSpec,
+)
+from .background_workers import (
+    BackoffPolicy as _BackoffPolicy,
+)
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
@@ -419,38 +427,33 @@ def create_app(store: RynmeshStore | None = None):
             await _asyncio.sleep(grace)
             updater.mark_serving()
 
-        async def _poll():
-            interval = int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
-            while True:
-                await _asyncio.sleep(interval)
-                try:
-                    res = await _asyncio.to_thread(updater.check)
-                    if res.get("available") and updater.status()["autoUpdate"]:
-                        await _asyncio.to_thread(updater.apply, updater.check_manifest())
-                except Exception:
-                    pass
+        _update_poll_s = float(int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800))
 
-        async def _recap_daily():
+        def _check_and_apply_update() -> bool:
+            res = updater.check()
+            if res.get("available") and updater.status()["autoUpdate"]:
+                updater.apply(updater.check_manifest())
+                return True
+            return False
+
+        def _send_recap_if_due() -> bool:
             """Send the recap once per day, at the configured UTC hour.
 
             Deliberately a poll rather than a timer: the machine sleeps, and a
             laptop that was closed at the send hour should still get its recap
             when it wakes rather than skipping the day.
             """
-            await _asyncio.sleep(20)
-            while True:
-                try:
-                    stored = dict(_settings.get().get("recap", {}) or {})
-                    if stored.get("enabled") and stored.get("smtp_host"):
-                        now = time.time()
-                        hour = int(stored.get("send_hour_utc", 13))
-                        last = float(stored.get("last_sent_unix", 0) or 0)
-                        due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
-                        if due:
-                            await _asyncio.to_thread(_send_recap_now)
-                except Exception:
-                    pass
-                await _asyncio.sleep(900)
+            stored = dict(_settings.get().get("recap", {}) or {})
+            if not (stored.get("enabled") and stored.get("smtp_host")):
+                return False
+            now = time.time()
+            hour = int(stored.get("send_hour_utc", 13))
+            last = float(stored.get("last_sent_unix", 0) or 0)
+            due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
+            if due:
+                _send_recap_now()
+                return True
+            return False
 
         async def _discover():
             service = getattr(lifespan_app.state, "digest_service", None)
@@ -491,12 +494,24 @@ def create_app(store: RynmeshStore | None = None):
                 await _asyncio.sleep(delay)
 
         registry = lifespan_app.state.background_workers
+        # Fixed-cadence loops ride the same supervisor as the service workers,
+        # so a crash is logged and restarted instead of silently ending the
+        # loop. replace=True: the lifespan can run more than once per app
+        # object (test clients re-enter it).
+        registry.register(_BackgroundWorkerSpec(
+            name="updates.poll", run_once=_check_and_apply_update,
+            initial_delay_s=_update_poll_s, policy=_BackoffPolicy.fixed(_update_poll_s),
+        ), replace=True)
+        registry.register(_BackgroundWorkerSpec(
+            name="recap.daily", run_once=_send_recap_if_due,
+            initial_delay_s=20.0, policy=_BackoffPolicy.fixed(900.0),
+        ), replace=True)
         await registry.start()
+        # _confirm_after_grace is a one-shot and _discover derives its next
+        # delay from the run result; neither fits a fixed policy yet.
         tasks = (
             _asyncio.create_task(_confirm_after_grace()),
-            _asyncio.create_task(_poll()),
             _asyncio.create_task(_discover()),
-            _asyncio.create_task(_recap_daily()),
         )
         try:
             yield
@@ -2322,7 +2337,7 @@ def create_app(store: RynmeshStore | None = None):
     from .llm_package.routes import install_llm_routes as _install_llm_routes
 
     _install_llm_routes(
-        app,
+        app, workers=app.state.background_workers,
         store=active_store,
         home=active_store.home,
         messaging_key=_msg_priv,

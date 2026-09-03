@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -68,6 +69,8 @@ from .task_protocol import (
     open_task,
     seal_task,
 )
+
+_log = logging.getLogger(__name__)
 
 CAPABILITY = "rynmesh.llm.private.v1"
 OPERATION = "rynmesh.llm.private.infer.v1"
@@ -702,7 +705,8 @@ def _recover_consumer_orders(
 
 
 def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_key: Any,
-                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
+                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str],
+                       workers: BackgroundWorkerRegistry | None = None) -> None:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
     balance = TaskBalanceLedger(home / "llm" / "task-balance.json")
@@ -1062,17 +1066,26 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
         return processed
 
-    registry = getattr(app.state, "background_workers", None)
+    registry = workers if workers is not None else getattr(app.state, "background_workers", None)
     if registry is None:
-        # Standalone package tests and embedders may install the routes on a
-        # plain FastAPI app. The full node lifespan owns start/stop.
+        # An embedder installing the routes on a plain FastAPI app with no
+        # lifespan that starts the registry gets registered-but-dormant
+        # workers: publication and relay polling silently never run. Say so
+        # loudly rather than letting the provider look healthy and go stale.
         registry = BackgroundWorkerRegistry()
-        app.state.background_workers = registry
+        _log.warning(
+            "install_llm_routes: no background worker registry was supplied and none "
+            "is on app.state; created one that NOTHING starts. Pass workers= from a "
+            "lifespan that calls registry.start(), or LLM publication will expire."
+        )
     if not isinstance(registry, BackgroundWorkerRegistry):
-        raise TypeError("app.state.background_workers must be a BackgroundWorkerRegistry")
+        raise TypeError("background worker registry must be a BackgroundWorkerRegistry")
+    app.state.background_workers = registry
+    # replace=True keeps re-installation idempotent (swapping store/keys in
+    # place, shared test apps) instead of raising on the second install.
     registry.register(BackgroundWorkerSpec(
         name="llm.relay-poll",
-        run_once=lambda: bool(relay_once()),
+        run_once=relay_once,  # int processed-count: truthy when busy
         initial_delay_s=1.0,
         policy=BackoffPolicy(
             busy_delay_s=1.0,
@@ -1083,21 +1096,25 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             error_max_s=30.0,
         ),
         error_sink=lambda value: setattr(app.state, "llm_relay_error", value),
-    ))
+    ), replace=True)
     registry.register(BackgroundWorkerSpec(
         name="llm.publish-refresh",
         run_once=publish_once,
         initial_delay_s=1.0,
+        # error_max_s stays at the publish cadence: the discovery record is
+        # short-lived (consumers treat >180s as stale), so a failing publish
+        # must keep retrying every 30s — exponential backoff here let a
+        # 70s registry blip drop a healthy provider out of discovery.
         policy=BackoffPolicy(
             busy_delay_s=30.0,
             idle_initial_s=30.0,
             idle_multiplier=1.0,
             idle_max_s=30.0,
-            error_multiplier=2.0,
-            error_max_s=120.0,
+            error_multiplier=1.0,
+            error_max_s=30.0,
         ),
         error_sink=lambda value: setattr(app.state, "llm_publication_error", value),
-    ))
+    ), replace=True)
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
@@ -1336,6 +1353,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         background = {
             "publication_error": str(getattr(request.app.state, "llm_publication_error", "") or ""),
             "relay_poll_error": str(getattr(request.app.state, "llm_relay_error", "") or ""),
+            # Liveness per worker: a crashed or never-started worker shows
+            # running=False here even when its error string is empty.
+            "workers": registry.status(),
         }
         current = active_manager()
         if current is None:

@@ -53,7 +53,7 @@ def run_worker(spec: BackgroundWorkerSpec, *, stop_after: int) -> tuple[list[flo
     return sleeper.delays, asyncio.run(scenario())
 
 
-def test_registration_is_unique_deterministic_and_sealed_after_start() -> None:
+def test_registration_is_unique_deterministic_and_late_registration_spawns() -> None:
     registry = BackgroundWorkerRegistry()
     second = BackgroundWorkerSpec("service.z", lambda: None, policy())
     first = BackgroundWorkerSpec("service.a", lambda: None, policy())
@@ -63,13 +63,29 @@ def test_registration_is_unique_deterministic_and_sealed_after_start() -> None:
     with pytest.raises(ValueError, match="already registered"):
         registry.register(first)
 
-    async def scenario() -> None:
+    async def scenario() -> tuple[bool, bool]:
         await registry.start()
-        with pytest.raises(RuntimeError, match="registration is closed"):
-            registry.register(BackgroundWorkerSpec("late", lambda: None, policy()))
-        await registry.stop()
+        # A service package installed after the lifespan started must still
+        # get its worker run — the old duck-typed loop picked late installs
+        # up within 5s, and sealing the registry regressed that.
+        late_ran = asyncio.Event()
 
-    asyncio.run(scenario())
+        async def late() -> bool:
+            late_ran.set()
+            return True
+
+        registry.register(BackgroundWorkerSpec("late", late, policy(busy_delay_s=60, error_max_s=60)))
+        await asyncio.wait_for(late_ran.wait(), timeout=2)
+        late_running = registry.status()["late"]["running"]
+        # replace=True supersedes in place (idempotent re-install).
+        registry.register(BackgroundWorkerSpec("late", late, policy(busy_delay_s=60, error_max_s=60)), replace=True)
+        replaced_running = registry.status()["late"]["running"]
+        await registry.stop()
+        return late_running, replaced_running
+
+    late_running, replaced_running = asyncio.run(scenario())
+    assert late_running is True
+    assert replaced_running is True
 
 
 @pytest.mark.parametrize(
@@ -81,6 +97,7 @@ def test_registration_is_unique_deterministic_and_sealed_after_start() -> None:
         ("idle_max_s", float("inf")),
         ("error_multiplier", float("nan")),
         ("error_max_s", 0.0),
+        ("error_max_s", 0.5),  # below busy_delay_s: a failing worker would out-poll a healthy one
     ],
 )
 def test_policy_rejects_invalid_backoff(field: str, value: float) -> None:
@@ -148,8 +165,12 @@ def test_failure_backoff_is_bounded_and_success_clears_error_sink() -> None:
     )
     delays, status = run_worker(spec, stop_after=3)
     assert delays == [3, 5, 1]
-    assert errors[0] == "RuntimeError: background worker invocation failed"
-    assert errors[-1] == ""
+    # The message is kept: "registry unavailable" vs "unhealthy service" is
+    # exactly what an operator reading /service/status needs.
+    assert errors[0] == "RuntimeError: registry unavailable"
+    # Forwarded once per change, not once per tick (calls 1 and 2 both failed
+    # with the same message; the success clears it).
+    assert errors == ["RuntimeError: registry unavailable", ""]
     assert status["consecutive_failures"] == 0
     assert status["last_failure_at"]
     assert status["last_success_at"]
@@ -211,6 +232,94 @@ def test_stop_cancels_and_awaits_workers_without_recording_cancellation() -> Non
     assert status["error"] == ""
 
 
+def test_stop_is_bounded_when_a_sync_worker_is_mid_tick() -> None:
+    """task.cancel() cannot interrupt a thread; stop() must not wait forever."""
+    import time as _time
+
+    release = threading.Event()
+
+    def slow_sync() -> bool:
+        release.wait(timeout=10)
+        return True
+
+    async def scenario() -> tuple[float, dict]:
+        registry = BackgroundWorkerRegistry(stop_timeout_s=0.3)
+        registry.register(BackgroundWorkerSpec("slow", slow_sync, policy()))
+        await registry.start()
+        await asyncio.sleep(0.1)  # let the thread enter slow_sync
+        started = _time.monotonic()
+        await registry.stop()
+        elapsed = _time.monotonic() - started
+        release.set()
+        return elapsed, registry.status()["slow"]
+
+    elapsed, status = asyncio.run(scenario())
+    assert elapsed < 2.0, f"stop() blocked for {elapsed:.1f}s on a thread it cannot interrupt"
+    assert status["running"] is False
+
+
+def test_dead_worker_is_recorded_surfaced_and_restarted() -> None:
+    """A task that dies (BaseException) must not silently look healthy."""
+    sink: list[str] = []
+    runs: list[int] = []
+
+    class _Death(BaseException):
+        """Escapes the worker's `except Exception` like a real non-Exception
+        crash would (KeyboardInterrupt/SystemExit themselves are special-cased
+        by asyncio and would abort the test runner)."""
+
+    def crash_once() -> bool:
+        runs.append(1)
+        if len(runs) == 1:
+            raise _Death("simulated non-Exception death")
+        return True
+
+    async def scenario() -> tuple[dict, list[str]]:
+        registry = BackgroundWorkerRegistry()
+        registry.register(BackgroundWorkerSpec(
+            "fragile", crash_once, policy(busy_delay_s=0.05, error_max_s=0.05),
+            error_sink=sink.append,
+        ))
+        await registry.start()
+        for _ in range(60):
+            await asyncio.sleep(0.05)
+            if len(runs) >= 2 and registry.status()["fragile"]["last_success_at"]:
+                break
+        status = registry.status()["fragile"]
+        await registry.stop()
+        return status, sink
+
+    status, sink_values = asyncio.run(scenario())
+    assert status["restarts"] == 1
+    assert len(runs) >= 2, "worker was never restarted after dying"
+    assert any("worker crashed" in value and "_Death" in value for value in sink_values)
+    assert sink_values[-1] == "", "recovery must clear the surfaced error"
+
+
+def test_int_and_dict_returns_count_as_activity() -> None:
+    """serve_once-style callables return processed counts; 3 means busy."""
+    spec = BackgroundWorkerSpec("counting", lambda: 3, policy())
+    delays, _ = run_worker(spec, stop_after=2)
+    assert delays == [1.0, 1.0], "an int count must select the busy cadence, not idle backoff"
+    zero = BackgroundWorkerSpec("idle", lambda: 0, policy())
+    delays, _ = run_worker(zero, stop_after=2)
+    assert delays[1] > delays[0], "zero processed must back off"
+
+
+def test_error_messages_are_kept_unless_the_worker_opts_into_redaction() -> None:
+    def fail() -> None:
+        raise RuntimeError("registry unreachable: connection refused")
+
+    plain = BackgroundWorkerSpec("plain", fail, policy())
+    _, status = run_worker(plain, stop_after=1)
+    assert "connection refused" in status["error"]
+
+    redacted = BackgroundWorkerSpec("redacted", fail, policy(), redact_errors=True)
+    _, status = run_worker(redacted, stop_after=1)
+    assert "connection refused" not in status["error"]
+    assert status["error"].startswith("RuntimeError")
+
+
 def test_status_is_bounded_metadata_and_uses_monotonic_schedule() -> None:
     ticks = iter([10.0, 11.0, 12.0])
     sleeper = RecordingSleep(stop_after=1)
@@ -234,6 +343,7 @@ def test_status_is_bounded_metadata_and_uses_monotonic_schedule() -> None:
     private_error = "PRIVATE_ERROR_BODY_MARKER" * 100
     failing = BackgroundWorkerSpec(
         "bounded", lambda: (_ for _ in ()).throw(ValueError(private_error)), policy(),
+        redact_errors=True,
     )
     _, failed_status = run_worker(failing, stop_after=1)
     assert private_error not in failed_status["error"]
@@ -262,11 +372,19 @@ def test_create_app_registers_only_the_two_llm_service_workers(tmp_path, monkeyp
     assert specs["llm.relay-poll"].policy.error_max_s == 30
     assert specs["llm.publish-refresh"].initial_delay_s == 1
     assert specs["llm.publish-refresh"].policy.busy_delay_s == 30
+    # A failing publish must keep retrying at the publish cadence: consumers
+    # treat a record older than 180s as stale, so exponential backoff here
+    # dropped healthy providers out of discovery after one registry blip.
+    assert specs["llm.publish-refresh"].policy.error_max_s == 30
     assert not hasattr(app.state, "llm_publish_once")
     assert not hasattr(app.state, "llm_relay_once")
 
-    with TestClient(app):
+    with TestClient(app) as client:
         running = registry.status()
+        # The lifespan registers the node's own fixed-cadence loops too.
+        assert set(running) == {"llm.publish-refresh", "llm.relay-poll", "updates.poll", "recap.daily"}
         assert all(item["running"] for item in running.values())
+        background = client.get("/api/local/llm/service/status").json()["background"]
+        assert set(background["workers"]) == set(running)
     stopped = registry.status()
     assert all(not item["running"] for item in stopped.values())

@@ -33,6 +33,10 @@ class ServiceWorker:
         raise NotImplementedError
 
     # ---- loop ------------------------------------------------------------
+    # In-process deployments should register ``serve_once`` with
+    # ``rynmesh.background_workers.BackgroundWorkerRegistry`` instead (its int
+    # return is the activity signal it expects). ``serve_forever`` remains the
+    # standalone-process shim: no backoff, no status, print-based reporting.
     def serve_forever(
         self,
         store: RynmeshStore | None = None,
