@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
 import type {
+  LLMHardwareReport,
   LLMOrderResult,
   LLMPrivacySettings,
   LLMProviderStatus,
@@ -40,14 +41,25 @@ function llmErrorMessage(errorCode: string): string {
   return LLM_ERROR_MESSAGES[errorCode] || errorCode;
 }
 
-function friendlyError(error: unknown, fallback: string): string {
-  const raw = error instanceof Error ? error.message : fallback;
-  const message = raw.replace(/^Local Ryn node returned \d+:\s*/i, "").trim();
+// Shared by friendlyError (thrown request errors) and the async setup-job
+// status panel (a raw backend message reported through job polling) so both
+// surfaces show the same mapped text for a given backend error string.
+function mapKnownLlmErrorText(message: string): string | null {
   if (/insufficient development task balance/i.test(message)) return LLM_ERROR_MESSAGES.insufficient_task_balance;
   if (/capacity[_ ]exhausted/i.test(message)) return LLM_ERROR_MESSAGES.capacity_exhausted;
   if (/docker is not installed/i.test(message)) return "Docker is required for managed or GGUF modes. Start Docker, or connect an existing local model API.";
   if (/engine is not running/i.test(message)) return "Docker is installed but not running. Start Docker Desktop and retry.";
-  return message || fallback;
+  if (/no local inference runtime is available/i.test(message)) return "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.";
+  if (/runtime archive checksum mismatch|model checksum mismatch/i.test(message)) return "A download failed verification and was discarded. Retry to download it again.";
+  if (/exited during startup/i.test(message)) return "The local model runtime stopped while starting. Retry with a smaller model profile.";
+  if (/download exceeded the pinned size/i.test(message)) return "The download did not match the expected size and was discarded. Retry.";
+  return null;
+}
+
+function friendlyError(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : fallback;
+  const message = raw.replace(/^Local Ryn node returned \d+:\s*/i, "").trim();
+  return mapKnownLlmErrorText(message) || message || fallback;
 }
 
 export default function Services() {
@@ -77,6 +89,8 @@ export default function Services() {
   const [llmPrivacy, setLlmPrivacy] = useState<LLMPrivacySettings | null>(null);
   const [llmConfiguring, setLlmConfiguring] = useState(false);
   const [llmSetupMode, setLlmSetupMode] = useState<LLMSetupRequest["mode"]>("openai-compatible");
+  const [llmProfile, setLlmProfile] = useState<NonNullable<LLMSetupRequest["profile"]>>("auto");
+  const [llmHardware, setLlmHardware] = useState<LLMHardwareReport | null>(null);
   const [llmPackageId, setLlmPackageId] = useState("local-small");
   const [llmAlias, setLlmAlias] = useState("rynmesh-local");
   const [llmBaseUrl, setLlmBaseUrl] = useState("http://127.0.0.1:8080");
@@ -151,7 +165,7 @@ export default function Services() {
         llmNetworkInitialized.current = true;
         setLlmNetwork(discoveryNetwork);
       }
-      const [capacityResult, serviceResult, balanceResult, providerResult, ordersResult, privacyResult, setupResult] = await Promise.allSettled([
+      const [capacityResult, serviceResult, balanceResult, providerResult, ordersResult, privacyResult, setupResult, hardwareResult] = await Promise.allSettled([
         client.listJobCapacities({ capability: VEO_CAPABILITY }),
         client.listLLMServices(discoveryNetwork || "rynmesh-main"),
         client.getTaskBalance(),
@@ -159,6 +173,7 @@ export default function Services() {
         client.listLLMOrders(),
         client.getLLMPrivacy(),
         client.getLLMSetupStatus(),
+        client.getLLMHardware(),
       ]);
       if (capacityResult.status === "fulfilled") {
         setCapacities(capacityResult.value);
@@ -188,6 +203,7 @@ export default function Services() {
           void trackSetupJob(setupResult.value.job_id);
         }
       }
+      if (hardwareResult.status === "fulfilled") setLlmHardware(hardwareResult.value);
       if (lastOrderId) setResults(await client.listWorkResults({ work_order_id: lastOrderId }));
     } finally {
       if (!silent) setLoading(false);
@@ -367,6 +383,7 @@ export default function Services() {
         api_key_env: llmApiKeyEnv.trim(),
         allow_non_loopback: llmAllowNonLoopback,
         accept_risk: llmSetupConfirmed,
+        profile: llmProfile,
       });
       setLlmSetupJob(job);
       await trackSetupJob(job.job_id || "");
@@ -623,9 +640,22 @@ export default function Services() {
               <option value="openai-compatible">OpenAI-compatible local API</option>
               <option value="ollama">Ollama</option>
               <option value="import-gguf">Import a GGUF file read-only</option>
-              <option value="managed">Optional managed Docker model</option>
+              <option value="managed">Managed local model (bundled runtime)</option>
             </select>
           </label>
+          {llmHardware ? (
+            <div className="service-result">
+              <small>
+                {/* `native_runtime_present`, not `native_runtime_available`:
+                    the latter is true wherever the pinned release *could* be
+                    downloaded, so it would claim "available" on a device that
+                    has nothing installed yet. */}
+                {llmHardware.hardware.native_runtime_present
+                  ? "Bundled runtime: available"
+                  : "Bundled runtime: will be downloaded on first setup"}
+              </small>
+            </div>
+          ) : null}
           <label className="field">
             <span>Package ID</span>
             <input value={llmPackageId} onChange={(event) => setLlmPackageId(event.target.value)} />
@@ -674,10 +704,35 @@ export default function Services() {
             <>
               <div className="service-result">
                 <small>
-                  Provider setup only: Docker Desktop/Engine must already be installed and running.
-                  The Ryn desktop node and recommendations work without this optional provider runtime.
+                  {llmSetupMode === "managed"
+                    ? "Downloads a verified model and runs it with the bundled llama.cpp runtime on this device. Docker is only used on server nodes that choose it."
+                    : "Runs the imported GGUF file with the bundled llama.cpp runtime on this device. Docker is only used on server nodes that choose it."}
                 </small>
               </div>
+              {llmSetupMode === "managed" ? (
+                <label className="field">
+                  <span>Model profile</span>
+                  <select
+                    value={llmProfile}
+                    onChange={(event) => setLlmProfile(event.target.value as typeof llmProfile)}
+                  >
+                    <option value="auto">Automatic — recommended for this device</option>
+                    {/* A recommendation the device cannot run is not an
+                        option, and the no-fit sentinel the node returns has
+                        no profile name — either would render a blank entry. */}
+                    {(llmHardware?.recommendations ?? [])
+                      .filter((rec) => rec.can_run && rec.profile)
+                      .map((rec) => (
+                        <option key={rec.profile} value={rec.profile}>
+                          {(rec.display_name || rec.profile)}
+                          {rec.estimated_memory_mb ? ` · ~${rec.estimated_memory_mb} MB memory` : ""}
+                          {rec.estimated_disk_mb ? ` · ~${rec.estimated_disk_mb} MB disk` : ""}
+                          {rec.recommended ? " · recommended" : ""}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="field">
                 <span>Local runtime port</span>
                 <input value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
@@ -690,7 +745,11 @@ export default function Services() {
           ) : null}
           {llmSetupJob && llmSetupJob.state !== "idle" ? (
             <div className="service-result" role="status" aria-live="polite">
-              <span>{llmSetupJob.message || llmSetupJob.stage}</span>
+              <span>
+                {llmSetupJob.state === "failed"
+                  ? mapKnownLlmErrorText(llmSetupJob.message || "") || llmSetupJob.message || llmSetupJob.stage
+                  : llmSetupJob.message || llmSetupJob.stage}
+              </span>
               <progress value={llmSetupJob.progress} max={100} aria-label="Model setup progress" />
               <small>{llmSetupJob.progress}% · {llmSetupJob.state}</small>
             </div>
