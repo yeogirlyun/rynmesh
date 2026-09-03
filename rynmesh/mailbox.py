@@ -23,9 +23,10 @@ import re
 import secrets
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+if TYPE_CHECKING:  # pragma: no cover - annotation only
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .crypto import (
     SignatureError,
@@ -242,6 +243,11 @@ def seal_mailbox_message(
         raise MailboxError("invalid_body") from exc
 
     box = _peer_box()
+    # Imported here, not at module scope: `rynmesh.registry` imports this
+    # module, and the desktop packaging script imports the package with a
+    # bare interpreter that has no `cryptography` (same rule as crypto.py).
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
     ephemeral = X25519PrivateKey.generate()
     try:
         nonce, ciphertext = box.seal(
