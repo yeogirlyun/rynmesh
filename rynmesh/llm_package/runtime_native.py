@@ -209,8 +209,18 @@ def _write_record(root: Path, package_id: str, pid: int, server_name: str,
 
 def _command_matches(pid: int, server_name: str) -> bool:
     """True when the running process still names the recorded server."""
+    # Linux exposes the exact argv; read it directly so a long install path
+    # is never cut off. `ps` is the portable fallback, and `-ww` stops procps
+    # from truncating piped output at 80 columns (which hid the server name
+    # on CI runners with long temporary paths).
     try:
-        result = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        cmdline = b""
+    if cmdline:
+        return server_name.encode() in cmdline
+    try:
+        result = subprocess.run(["ps", "-ww", "-o", "command=", "-p", str(pid)],
                                 capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return False  # Unverifiable: treat as stale, never signal it.
