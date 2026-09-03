@@ -16,9 +16,12 @@ The Provider necessarily decrypts a request to run inference. Process isolation,
 short-lived in-memory values, disabled body logging, and cleanup reduce exposure;
 they are not confidential computing and do not promise absolute privacy.
 
-Rynmesh Credits remain non-transferable contribution/reputation signals. The new
-development-only **Task Balance** ledger is a separate simulated spend/earn
-account. It is not money, a deposit, or a production payment system.
+Rynmesh Credits remain non-transferable contribution/reputation signals. The
+development-only **Task Balance** is a simulated spend/earn account. It is not
+money, a deposit, or a production payment system. On a node it is persisted as
+signed events in the credit ledger's `dev:task_balance` category — one
+auditable escrow history for every service — which reputation scoring never
+reads; the JSON file next to it is a rebuildable snapshot.
 
 ## Components and files
 
