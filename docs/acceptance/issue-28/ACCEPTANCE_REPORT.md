@@ -64,19 +64,21 @@ and cancellation route assertions.
 
 ### Complete Windows suite
 
-With `PYTHONUTF8=1`, the complete suite produced:
+With `PYTHONUTF8=1`, the 2026-09-03 audit run produced:
 
 ```text
-8 failed, 536 passed, 3 skipped
+7 failed, 537 passed, 3 skipped
 ```
 
-The eight failures are outside changed #28 code:
+The seven failures are outside changed #28 code:
 
 - three POSIX executable-bit or unavailable-WSL shell assertions;
 - three POSIX `0600` mode assertions on Windows;
-- one pre-existing Windows atomic file-replace/read concurrency failure in
-  Signal50 media operations;
 - one `select()`-on-Windows-subprocess-pipe failure in the MCP smoke test.
+
+The previously recorded Signal50 Windows atomic file-replace/read race did not
+reproduce in this run; it remains unrelated to #28 but is no longer counted in
+the current result.
 
 The focused #28 suite has zero failures. These local exclusions are not Linux
 evidence and require the Ubuntu backend job to pass on the final commit.
@@ -89,6 +91,23 @@ was necessary. The earlier isolated direct task/settlement/cancellation evidence
 is retained as prior-review evidence, but this review does not mislabel it as a
 new execution. Direct settlement/cancellation routing was independently
 rechecked with new call-site regression tests.
+
+### 2026-09-03 strict completion audit
+
+| Check | Result |
+|---|---|
+| Transport + LLM focused suite | PASS, 72 tests |
+| Changed-file Ruff | PASS |
+| Complete Windows backend | 537 passed, 3 skipped, 7 documented platform failures |
+| Webapp regression | PASS, 9 files / 38 tests |
+| Webapp TypeScript / build | PASS, 1,739 modules |
+| `git diff --check` | PASS |
+| Docker direct/Relay rerun | BLOCKED, local engine unavailable/unresponsive |
+| Remote exact-head check | BLOCKED, remote branch still resolves to `bf36072` |
+
+The local code and focused behavior remain green. This audit does not change the
+pending decision: neither baseline CI nor local Windows tests substitute for a
+green workflow on a head containing `5c1e690` and the final acceptance package.
 
 ## Verified remote baseline evidence
 

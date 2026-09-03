@@ -89,8 +89,10 @@ Evidence is authoritative only in
 - focused Transport + LLM suite: **72 passed**;
 - changed-file Ruff: **PASS**;
 - whitespace validation: **PASS**;
-- complete Windows suite with UTF-8 mode: **536 passed, 3 skipped, 8
-  platform/unrelated failures**;
+- complete Windows suite with UTF-8 mode (2026-09-03): **537 passed, 3 skipped,
+  7 platform failures**;
+- Webapp regression: **9 files / 38 tests**, TypeScript and production build
+  pass locally;
 - prior baseline CI (`bf36072`): **PASS** in workflow run `33644630620`;
 - final hardening commit (`5c1e690`): local verification **PASS**, exact-commit
   CI **pending**.
