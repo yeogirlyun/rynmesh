@@ -12,7 +12,6 @@ owner through setup progress and node logs.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import platform
 import tarfile
@@ -22,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
+from ..atomic_io import AtomicIOError, atomic_write_json
 from .errors import LifecycleError
 from .https_only import build_https_only_opener
 
@@ -244,12 +244,9 @@ def _extracted_server(target: Path) -> Path | None:
 def _write_marker(target: Path, server: Path, expected_sha256: str) -> None:
     payload = {"release": RUNTIME_RELEASE, "server": server.relative_to(target).as_posix(),
                "sha256": expected_sha256.lower()}
-    temporary = target / (MARKER_NAME + ".tmp")
     try:
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(temporary, target / MARKER_NAME)
-    except OSError as exc:
-        _discard(temporary)
+        atomic_write_json(target / MARKER_NAME, payload, indent=2, sort_keys=True)
+    except AtomicIOError as exc:
         raise LifecycleError(UNWRITABLE_STATE) from exc
 
 
