@@ -91,6 +91,25 @@ written to temporary files. Terminal cleanup removes request keys, partial
 files, and controllable adapter caches. Python cannot guarantee erasure of every
 in-memory copy; the documentation and UI must not claim otherwise.
 
+## Background worker lifecycle
+
+The LLM package registers two supervised workers with the node's
+`BackgroundWorkerRegistry` while installing its routes:
+
+- `llm.relay-poll` processes signaling, settlement, cancellation, and optional
+  encrypted Relay work. It polls every second while active and backs off to 10
+  seconds while idle or 30 seconds after repeated failures.
+- `llm.publish-refresh` refreshes an enabled Provider's short-lived discovery
+  record every 30 seconds, with bounded failure backoff.
+
+The node lifespan starts and stops the registry; the LLM package does not own
+detached asyncio tasks. Synchronous worker calls run in a thread, failures are
+isolated per worker, and shutdown cancels and awaits all registered workers.
+Registry status contains scheduling metadata and exception classes only. It
+never stores worker arguments, results, prompts, outputs, keys, URLs, or private
+paths. Existing local service status fields remain `publication_error` and
+`relay_poll_error`.
+
 ## Change plan
 
 The implementation is additive: preserve existing content, recommendation,
