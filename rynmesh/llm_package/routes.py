@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -66,6 +67,8 @@ from .task_protocol import (
     open_task,
     seal_task,
 )
+
+_log = logging.getLogger(__name__)
 
 CAPABILITY = "rynmesh.llm.private.v1"
 OPERATION = "rynmesh.llm.private.infer.v1"
@@ -609,8 +612,9 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
                 endpoint, "/api/peer/llm/settlements", settlement.to_dict(), timeout_s=15,
             )
             return True
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("direct settlement delivery to %s failed (%s); using the work-order path",
+                         endpoint, exc)
     try:
         store.submit_work_order(
             provider_peer_id=provider_peer_id, capability=CAPABILITY,
@@ -1642,6 +1646,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     }
                 except Exception as exc:
                     direct_error = exc
+                    _log.warning("direct task delivery to %s failed (%s)", endpoint, exc)
             if encrypted_response is None and transport_mode == "direct":
                 raise TaskProtocolError("strict direct provider path failed") from direct_error
             if encrypted_response is None:
@@ -1914,8 +1919,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         signed_cancel.to_dict(), timeout_s=5,
                     )
                     delivered = True
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("direct cancellation delivery to %s failed (%s)", endpoint, exc)
             if not delivered and provider_peer_id and service_id:
                 try:
                     store.submit_work_order(

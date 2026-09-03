@@ -29,7 +29,7 @@ from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
-from .transport import Transport, TransportError, get_transport
+from .transport import Transport, TransportError, get_transport, stamp_network_key
 from .types import RYNMESH_VERSION
 
 
@@ -278,16 +278,26 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={"Content-Type": "application/json"},
+                # Stamped here as well as in the transport, so a third-party
+                # transport that forgets the credential still authenticates.
+                headers=stamp_network_key({"Content-Type": "application/json"}),
             )
         except TransportError as exc:
             if exc.reason == "too_large":
                 raise PeerTransportError("peer_response_too_large") from exc
             # Keep plugin exception text out of the public error surface: a
             # third-party transport may include request/response bytes there.
-            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+            # The HTTP status is metadata, not body — carry it so a keyed
+            # peer's 404 (key mismatch) is distinguishable from network loss.
+            detail = f"http_{exc.status}" if exc.status else exc.reason
+            raise PeerTransportError(f"peer_http_error:{detail}") from exc
+        if not raw.strip():
+            # A 2xx with no body is a middlebox or a broken peer, never a
+            # valid answer: treating it as {} once recorded settlements as
+            # delivered and suppressed the relay fallback for tasks.
+            raise PeerTransportError("peer_empty_response")
         try:
-            value = json.loads(raw.decode("utf-8") or "{}")
+            value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PeerTransportError("peer_invalid_json") from exc
         if not isinstance(value, dict):
