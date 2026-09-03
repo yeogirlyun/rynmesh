@@ -920,14 +920,24 @@ def test_a_poll_request_carries_only_signed_metadata(tmp_path) -> None:
 
 
 class _FakeMessenger:
-    """Records the headers it was asked to receive; returns a history record."""
+    """Records the headers it was asked to receive; returns a history record.
+
+    Mirrors the real `PeerMessenger.receive` contract on the point that matters
+    here: a message id it has already stored comes back marked `duplicate`.
+    """
 
     def __init__(self) -> None:
         self.headers: list[dict] = []
+        self.stored: dict[str, dict] = {}
 
     def receive(self, header: dict) -> dict:
         self.headers.append(header)
-        return {"msg_id": "m1", "dir": "in", "from": header["from"], "text": "hi"}
+        msg_id = str(header.get("msg_id", "m1"))
+        if msg_id in self.stored:
+            return {**self.stored[msg_id], "duplicate": True}
+        record = {"msg_id": msg_id, "dir": "in", "from": header["from"], "text": "hi"}
+        self.stored[msg_id] = record
+        return record
 
 
 def _relay_header(sender_peer_id: str, recipient_peer_id: str) -> dict:
@@ -959,6 +969,32 @@ def test_relayed_peer_messages_reach_receive_and_the_sse_stream(tmp_path) -> Non
     assert cache[alice.peer_id] == "SENDER_PUB"    # TOFU, as /api/peer/msg does
 
 
+def test_a_message_already_received_directly_is_not_published_again(tmp_path) -> None:
+    """The mailbox retry of a message the direct route already delivered."""
+
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND, install_peer_message_relay
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    messenger = _FakeMessenger()
+    published: list[dict] = []
+    receiver = bob.client()
+    install_peer_message_relay(receiver, messenger, published.append)
+
+    header = _relay_header(alice.peer_id, bob.peer_id)
+    messenger.receive(header)  # the direct POST landed first
+    alice.client().deposit(bob.peer_id, PEER_MESSAGE_KIND, header,
+                           to_messaging_pub=bob.messaging_pub)
+
+    # Handled, not dropped — the message really was delivered, just not twice.
+    assert receiver.poll_once() == 1
+    assert receiver.status()["dropped_total"] == 0
+    assert published == []
+    assert len(messenger.stored) == 1
+
+
 def test_a_relayed_header_claiming_another_sender_is_refused(tmp_path) -> None:
     from rynmesh.mailbox_routes import PEER_MESSAGE_KIND, install_peer_message_relay
 
@@ -981,6 +1017,31 @@ def test_a_relayed_header_claiming_another_sender_is_refused(tmp_path) -> None:
     assert receiver.poll_once() == 0
     assert messenger.headers == [] and published == [] and cache == {}
     assert receiver.status()["dropped_total"] == 0  # still retrying, not yet dropped
+
+
+def test_a_header_at_the_messenger_gate_still_fits_an_envelope(tmp_path) -> None:
+    """The gate must sit *below* the real limit, not above it.
+
+    A gate that admits headers the sealer then rejects would turn every large
+    message into a wasted rate-limit token and a raised exception.
+    """
+
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND
+    from rynmesh.services.peer_messenger import MAX_MAILBOX_HEADER_BYTES
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    header = _relay_header(alice.peer_id, bob.peer_id)
+    pad = MAX_MAILBOX_HEADER_BYTES - len(json.dumps(header))
+    header["ciphertext"] = "A" * (len(header["ciphertext"]) + pad)
+    assert len(json.dumps(header)) == MAX_MAILBOX_HEADER_BYTES
+
+    # Would raise `envelope_too_large` if the gate were set above the real cap.
+    receipt = alice.client().deposit(bob.peer_id, PEER_MESSAGE_KIND, header,
+                                     to_messaging_pub=bob.messaging_pub)
+    assert receipt["message_id"]
 
 
 def test_the_fallback_is_absent_without_a_registry(tmp_path) -> None:

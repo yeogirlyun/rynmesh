@@ -191,3 +191,62 @@ def test_without_a_fallback_a_failed_send_is_unchanged(tmp_path):
     rec = a.send("peerB", text="hi")
 
     assert rec["delivered"] is False and "via" not in rec
+
+
+# ---- at-least-once delivery: receive is idempotent -------------------------
+
+
+def test_the_same_header_received_twice_makes_one_history_line(tmp_path):
+    """The direct POST's response was lost; the sender retried the same message."""
+
+    peers = _peers(tmp_path)
+    a, inbox = _messenger(tmp_path, "A", peers)
+    b, _ = _messenger(tmp_path, "B", peers)
+    a.send("peerB", text="hello")
+    header = inbox["peerB"][0]
+
+    first = b.receive(header)
+    second = b.receive(header)
+
+    assert "duplicate" not in first
+    assert second["duplicate"] is True
+    assert {k: v for k, v in second.items() if k != "duplicate"} == first
+    assert len(b.history("peerA")) == 1
+    # The marker is a report to the caller, not something that lands in history.
+    assert "duplicate" not in b.history("peerA")[0]
+
+
+def test_a_duplicate_never_rewrites_the_stored_attachment(tmp_path):
+    peers = _peers(tmp_path)
+    a, inbox = _messenger(tmp_path, "A", peers)
+    b, _ = _messenger(tmp_path, "B", peers)
+    a.send("peerB", text="pic",
+           attachment={"filename": "x.png", "mime": "image/png", "bytes": b"\x89PNG"})
+    header = inbox["peerB"][0]
+
+    got = b.receive(header)
+    # Something else edited the blob between the two deliveries; a duplicate
+    # must not silently restore it, because it must not write at all.
+    b._store.save_attachment(got["msg_id"], b"EDITED")
+    assert b.receive(header)["duplicate"] is True
+
+    assert b._store.load_attachment(got["msg_id"]) == b"EDITED"
+    assert len(b.history("peerA")) == 1
+
+
+def test_a_sender_cannot_suppress_its_message_by_reusing_our_outbound_id(tmp_path):
+    """Only inbound records dedupe; an id we used for an outbound send does not."""
+
+    peers = _peers(tmp_path)
+    a, inbox = _messenger(tmp_path, "A", peers)
+    b, _ = _messenger(tmp_path, "B", peers)
+    # B writes an outbound record to A under the id A's messenger also uses.
+    b.send("peerA", text="mine")
+    a.send("peerB", text="theirs")
+
+    got = b.receive(inbox["peerB"][0])
+
+    assert "duplicate" not in got
+    assert [(item["dir"], item["text"]) for item in b.history("peerA")] == [
+        ("out", "mine"), ("in", "theirs"),
+    ]

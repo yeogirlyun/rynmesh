@@ -2316,7 +2316,8 @@ def create_app(store: RynmeshStore | None = None):
         if fp and header.get("from"):
             _pubkey_cache.setdefault(str(header["from"]), str(fp))  # TOFU
         record = _messenger.receive(header)
-        _publish(record)
+        if not record.get("duplicate"):  # a retried POST must not double the stream
+            _publish(record)
         return {"ok": True, "msg_id": record["msg_id"]}
 
     @app.post("/api/local/messages/send")

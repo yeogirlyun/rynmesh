@@ -13,11 +13,13 @@ from rynmesh.services.messaging_store import MessagingStore
 MAX_INLINE_BYTES = 5 * 1024 * 1024
 
 # A sealed header carries the attachment as base64, so a 5 MiB attachment makes a
-# ~6.7 MiB header. The mailbox envelope caps at 64 KiB, and sealing adds base64 on
-# top of that again, so anything over this budget can only ever be rejected by the
-# registry. Offering it to the fallback would burn a sender's rate-limit token on a
-# message that cannot fit; such messages stay direct-only.
-MAX_MAILBOX_HEADER_BYTES = 48 * 1024
+# ~6.7 MiB header. The mailbox envelope caps at 64 KiB *after* the header is wrapped,
+# encrypted (+16 byte tag) and base64'd (x4/3), plus the envelope's own fields and
+# signature — so the largest header that actually fits is a little over 48,600 bytes.
+# This gate sits just under that: a header above it can only ever be rejected by the
+# registry, and offering it would burn a sender's rate-limit token on a message that
+# cannot fit. Such messages stay direct-only.
+MAX_MAILBOX_HEADER_BYTES = 47 * 1024
 
 
 class MessengerError(RuntimeError):
@@ -115,6 +117,20 @@ class PeerMessenger:
         self._store.append(peer_id, record)
         return record
 
+    def _already_received(self, sender: str, msg_id: str) -> dict[str, Any] | None:
+        """The stored inbound record for `msg_id`, if this peer already sent it.
+
+        Only `dir == "in"` records count: a sender who reuses one of *our*
+        outbound ids must not be able to make its own message disappear.
+        """
+
+        if not msg_id:
+            return None
+        for stored in self._store.history(sender):
+            if stored.get("msg_id") == msg_id and stored.get("dir") == "in":
+                return stored
+        return None
+
     # ---- receive ----
     def receive(self, header: dict[str, Any]) -> dict[str, Any]:
         sender = str(header.get("from", ""))
@@ -123,6 +139,14 @@ class PeerMessenger:
         their_pub = self._resolve_pubkey(sender)
         plain = peer_box.open_sealed(self._priv, their_pub, str(header["nonce"]), str(header["ciphertext"]))
         inner = json.loads(plain.decode("utf-8"))
+        # Delivery is at-least-once in both directions: a direct send whose
+        # response was lost after we processed it comes back through the
+        # mailbox, and a crash between here and the mailbox client's seen-cache
+        # write redelivers too. Re-appending would double the history line and
+        # the SSE record, so the second arrival is a no-op that reports itself.
+        seen = self._already_received(sender, str(inner.get("msg_id", "")))
+        if seen is not None:
+            return {**seen, "duplicate": True}
         record = {**{k: v for k, v in inner.items() if k != "attachment"},
                   "dir": "in", "from": sender, "to": self._me, "delivered": True}
         att = inner.get("attachment")

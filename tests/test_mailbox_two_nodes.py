@@ -194,6 +194,82 @@ def test_a_peer_message_survives_a_dead_direct_transport(tmp_path, monkeypatch) 
             ).json()[0]["via"] == "mailbox"
 
 
+def _queued_header(registry, recipient_store) -> dict:
+    """The sealed peer-message header sitting in the recipient's registry box.
+
+    Opening it with the recipient's own messaging key is exactly what the poll
+    worker would do; pulling it out here lets a test deliver the *same* message
+    twice by two different routes.
+    """
+
+    import json as _json
+
+    from rynmesh.crypto import SignedPayload
+    from rynmesh.mailbox import open_mailbox_message
+    from rynmesh.services import peer_box
+
+    [path] = sorted((registry.root / "mailbox").rglob("*.json"))
+    stored = _json.loads(path.read_text(encoding="utf-8"))
+    key = peer_box.load_or_create_messaging_key(recipient_store.home / "messaging.x25519")
+    _envelope, body = open_mailbox_message(
+        SignedPayload.from_dict(stored["signed"]),
+        my_peer_id=recipient_store.peer_id,
+        messaging_private_key=key,
+        kind=PEER_MESSAGE_KIND,
+    )
+    return body
+
+
+def _post_direct(client, header: dict):
+    from rynmesh.transport import network_key_header
+
+    return client.post("/api/peer/msg", json=header, headers=network_key_header())
+
+
+@pytest.mark.parametrize("direct_first", [True, False])
+def test_the_same_message_by_both_routes_lands_once(
+    tmp_path, monkeypatch, direct_first: bool
+) -> None:
+    """A direct POST whose response was lost, then the mailbox retry — or vice versa.
+
+    Both orders must leave exactly one history line: `receive` is the single
+    point that decides a message has already been stored.
+    """
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RYNMESH_MESSAGING_FORCE_MAILBOX", "1")
+    with _registry_server(tmp_path, monkeypatch) as (registry, _port):
+        alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
+        bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
+
+        with TestClient(alice_app) as alice_client, TestClient(bob_app) as bob_client:
+            sent = alice_client.post(
+                "/api/local/messages/send",
+                json={"peer_id": bob_store.peer_id, "text": "exactly once"},
+            ).json()
+            assert sent["via"] == "mailbox"
+
+            header = _queued_header(registry, bob_store)
+
+            if direct_first:
+                assert _post_direct(bob_client, header).status_code == 200
+                assert bob_app.state.mailbox.poll_once() == 1  # handled, as a no-op
+            else:
+                assert bob_app.state.mailbox.poll_once() == 1
+                assert _post_direct(bob_client, header).status_code == 200
+
+            history = bob_client.get(
+                "/api/local/messages", params={"peer_id": alice_store.peer_id}
+            ).json()
+            assert [(item["dir"], item["text"]) for item in history] == [
+                ("in", "exactly once")
+            ]
+            # The second arrival is not an error: it was handled, not dropped.
+            status = bob_client.get("/api/local/mailbox/status").json()
+            assert status["handled_total"] == 1 and status["dropped_total"] == 0
+
+
 def test_a_relayed_header_cannot_claim_another_sender(tmp_path, monkeypatch) -> None:
     """A depositor may only relay messages that say they are from itself."""
 

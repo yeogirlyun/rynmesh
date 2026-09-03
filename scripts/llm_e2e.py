@@ -210,8 +210,12 @@ def mailbox_verify() -> dict[str, Any]:
     }
     if not delivered_at:
         raise RuntimeError(f"E2E mailbox message never arrived: {report}")
-    if int(consumer_status.get("handled_total") or 0) < 0:
-        raise RuntimeError(f"E2E consumer mailbox status is malformed: {report}")
+    # The consumer only deposits, so it should have handled nothing and, more to
+    # the point, hit no errors and dropped nothing while its own box stayed empty.
+    if consumer_status.get("last_error") != "":
+        raise RuntimeError(f"E2E consumer mailbox reported an error: {report}")
+    if int(consumer_status.get("dropped_total") or 0) != 0:
+        raise RuntimeError(f"E2E consumer mailbox dropped mail: {report}")
     if int(provider_status.get("handled_total") or 0) < 1:
         raise RuntimeError(f"E2E provider mailbox handled nothing: {report}")
     results_dir = ROOT / "deploy" / "llm-e2e" / "results"

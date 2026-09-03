@@ -176,10 +176,24 @@ under this kind; the local history record gets `via: "mailbox"` and keeps
 `/api/local/messages/stream` SSE feed, so a mailbox-carried message is
 indistinguishable from a direct one once it lands.
 
+The handler is idempotent, as every handler must be. `PeerMessenger.receive`
+looks the sender's `msg_id` up in that peer's history first; if it is already
+there it returns the stored record marked `duplicate: True` without appending,
+re-saving the attachment, or re-publishing, and both `/api/peer/msg` and the
+relay skip the SSE publish on that marker. This is not a theoretical case: a
+direct POST whose *response* is lost after the recipient processed it leaves the
+sender believing delivery failed, so the fallback queues the very same message
+into the mailbox.
+
 Two rules the relay enforces beyond the direct route:
 
 - The header's `from` must equal the envelope's proven `from_peer_id`. A peer
-  may only relay messages that say they are from itself.
+  may only relay messages that say they are from itself. Note the scope: this
+  binds what the *relay* writes — history lines and the TOFU key-cache entries
+  it seeds. It is not a network-wide guarantee, because the unauthenticated
+  direct `/api/peer/msg` route can still seed the same TOFU cache from a header
+  it did not verify. That gap predates the mailbox and is tracked separately;
+  the mailbox path simply does not widen it.
 - A header that serializes above 48 KiB is never offered to the mailbox (it
   could not fit a 64 KiB envelope once sealed and base64'd). Large attachments
   stay direct-only.

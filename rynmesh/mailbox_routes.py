@@ -130,10 +130,11 @@ def peer_message_fallback(
         client = getattr(app.state, "mailbox", None)
         if client is None:
             return False
-        # `deposit` resolves the recipient's messaging key itself (direct
-        # /api/peer/pubkey, then the registry record) and raises on refusal;
-        # the messenger treats a raise as "not queued".
-        return client.deposit(peer_id, PEER_MESSAGE_KIND, header) is not None
+        # `deposit` returns a receipt or raises — a refusal (full box, rate
+        # limit, unreachable registry) is the exception path, which the
+        # messenger already reads as "not queued". So reaching this return at
+        # all means the message is in the box.
+        return bool(client.deposit(peer_id, PEER_MESSAGE_KIND, header))
 
     return fallback
 
@@ -165,7 +166,12 @@ def install_peer_message_relay(
         from_pub = body.get("from_pub")
         if pubkey_cache is not None and from_pub:
             pubkey_cache.setdefault(sender, str(from_pub))  # TOFU, as /api/peer/msg does
-        publish(messenger.receive(body))
+        record = messenger.receive(body)
+        # A direct send that timed out after the recipient processed it arrives
+        # here a second time. `receive` refuses to store it twice; publishing it
+        # again would still put a duplicate in the SSE stream.
+        if not record.get("duplicate"):
+            publish(record)
 
     client.register_handler(PEER_MESSAGE_KIND, handle, replace=True)
 
