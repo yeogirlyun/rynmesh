@@ -540,7 +540,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if discovered.get("access_policy") != "friends":
             raise RuntimeError("Consumer discovery did not preserve friends-only policy")
 
-        def private_ai_order(task_id: str, prompt: str) -> tuple[int, dict[str, Any]]:
+        def private_ai_order(
+            task_id: str,
+            prompt: str,
+            *,
+            response_mode: str = "complete-v1",
+        ) -> tuple[int, dict[str, Any]]:
             status, payload = request_json(
                 node_b_local,
                 "/api/local/llm/orders",
@@ -553,6 +558,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "max_tokens": 16,
                     "transport": "direct",
                     "task_id": task_id,
+                    "response_mode": response_mode,
                 },
                 expected=(200, 400, 404, 409, 500, 502, 503),
                 timeout=30,
@@ -560,7 +566,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             return status, dict(payload) if isinstance(payload, dict) else {}
 
         success_status, success = private_ai_order(
-            "issue30-online-authorized", "Confirm this invited friend can use Private AI"
+            "issue30-online-authorized",
+            "Confirm this invited friend can stream Private AI",
+            response_mode="stream-v1",
         )
         if success_status != 200 or success.get("state") != "succeeded":
             raise RuntimeError(
@@ -568,8 +576,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 f"(HTTP {success_status}, state={success.get('state')}, "
                 f"detail={str(success.get('detail', ''))[:120]})"
             )
-        if success.get("output") != MODEL_OUTPUT:
-            raise RuntimeError("Authorized Private AI output was not the deterministic result")
+        if success.get("output") != "ok":
+            raise RuntimeError("Authorized streaming output was not the deterministic result")
+        stream_evidence = dict(success.get("transport_evidence") or {})
+        if stream_evidence.get("stream_protocol") != "rynmesh.llm.stream.v1":
+            raise RuntimeError("Authorized friend order did not use the stream-v1 peer route")
         model_after_success = model.calls()
 
         _, online_revoke = request_json(
@@ -586,7 +597,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if friend_record(node_b_local, peer_a).get("state") != "revoked":
             raise RuntimeError("Friend did not apply online revocation")
         denied_status, _denied = private_ai_order(
-            "issue30-online-denied", "This must not reach inference after revoke"
+            "issue30-online-denied",
+            "This stream must not reach inference after revoke",
+            response_mode="stream-v1",
         )
         online_denied_before_inference = model.calls() == model_after_success
         if denied_status < 400 or not online_denied_before_inference:
@@ -687,6 +700,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "--",
                 str(Path(__file__).relative_to(ROOT)),
                 "rynmesh/transport.py",
+                "rynmesh/llm_package/routes.py",
                 "tests/test_transport.py",
             ],
             cwd=ROOT,
@@ -695,7 +709,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             text=True,
         ).stdout.strip()
         evidence = {
-            "schema": "rynmesh.issue30.local-two-node-e2e.v1",
+            "schema": "rynmesh.issue30.local-two-node-e2e.v2",
             "decision": "development_acceptance_passed",
             "release_acceptance": "not_claimed",
             "started_at": started_at,
@@ -708,7 +722,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 + hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "command": (
                     "python scripts/issue30_two_node_e2e.py "
-                    "--output docs/evidence/issue30-local-two-node-e2e.json"
+                    "--output docs/evidence/issue30-integration-two-node-e2e.json"
                 ),
                 "docker_used": False,
             },
@@ -728,10 +742,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "flows": {
                 "online": {
                     "relationship": relationship_online,
-                    "private_ai_complete": {
+                    "private_ai_stream": {
                         "status": "succeeded",
-                        "output_sha256": hashlib.sha256(MODEL_OUTPUT.encode()).hexdigest(),
+                        "output_sha256": hashlib.sha256(b"ok").hexdigest(),
                         "transport": success.get("transport"),
+                        "stream_protocol": stream_evidence.get("stream_protocol"),
                     },
                     "revoke_delivery": online_revoke.get("delivery"),
                     "next_order_http_status": denied_status,
@@ -760,7 +775,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "limitations": [
                 "Both node processes ran on one host over its private LAN interface.",
                 "This proves source-build development acceptance, not installed desktop deep-link dispatch.",
-                "The canonical branch exercises complete-v1; stream-v1 remains an integration-branch check.",
+                "The integrated branch exercises stream-v1 online and complete-v1 after reconnect.",
             ],
         }
         return evidence
