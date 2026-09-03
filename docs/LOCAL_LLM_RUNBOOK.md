@@ -92,6 +92,13 @@ How the node finds the server, in order (`runtime_native.resolve_server`):
    is what a `pip`-installed node without a bundle uses.
 5. `llama-server` on `PATH`.
 
+`GET /api/local/llm/hardware` reports both halves of that question:
+`native_runtime_available` is true wherever the pinned release *could* be
+obtained, while `native_runtime_present` is true only when one of the steps
+above resolves a server right now. Neither exposes a path. CI asserts
+`native_runtime_present`, which is what proves a bundle actually shipped a
+runtime.
+
 Staging the bundle for a build:
 
 ```bash

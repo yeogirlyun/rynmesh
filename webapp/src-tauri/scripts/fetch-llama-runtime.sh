@@ -71,7 +71,7 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM
 
-curl -fsSL --proto '=https' --tlsv1.2 -o "$WORK/$ASSET" "$URL"
+curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$WORK/$ASSET" "$URL"
 
 if command -v shasum >/dev/null 2>&1; then
   ACTUAL="$(shasum -a 256 "$WORK/$ASSET" | cut -d ' ' -f 1)"

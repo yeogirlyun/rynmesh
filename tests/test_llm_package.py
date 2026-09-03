@@ -538,7 +538,7 @@ def test_install_managed_with_auto_profile_picks_the_recommended_catalog_entry(t
         os="Linux", architecture="x86_64", cpu="test", logical_cpus=8,
         ram_total_mb=8000, ram_available_mb=4000, disk_free_mb=10_000, nvidia_gpus=[],
         nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
-        native_runtime_available=True, warnings=[],
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
     )
     monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
     sanity_choices = llm_lifecycle.recommend(fake_report)
@@ -629,7 +629,7 @@ def test_install_managed_custom_override_on_a_no_fit_hardware_report_raises_with
         os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
         ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
         nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
-        native_runtime_available=True, warnings=[],
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
     )
     monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
     with pytest.raises(LifecycleError, match="No bundled profile safely fits"):
@@ -658,7 +658,7 @@ def test_install_managed_custom_override_with_accept_risk_proceeds_on_no_fit_har
         os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
         ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
         nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
-        native_runtime_available=True, warnings=[],
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
     )
     monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
     result = llm_lifecycle.install_managed(
@@ -689,7 +689,7 @@ def test_install_managed_with_an_unfitting_explicit_profile_raises_without_downl
         os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
         ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
         nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
-        native_runtime_available=True, warnings=[],
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
     )
     monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
     with pytest.raises(LifecycleError, match="profile quality needs about"):

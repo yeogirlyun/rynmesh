@@ -6,6 +6,8 @@ import subprocess
 
 import rynmesh.llm_package.catalog as llm_catalog
 import rynmesh.llm_package.hardware as llm_hardware
+import rynmesh.llm_package.runtime_native as llm_runtime_native
+import rynmesh.llm_package.runtime_native_install as llm_runtime_install
 from rynmesh.llm_package.hardware import GPUInfo, HardwareReport
 
 VM_STAT_SAMPLE_16K_PAGES = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -106,13 +108,40 @@ def test_docker_warning_names_native_runtime_and_local_api(monkeypatch, tmp_path
     )
 
 
+def test_native_runtime_present_needs_a_resolvable_server(monkeypatch, tmp_path):
+    """`available` is true wherever the pin exists; `present` needs a real server.
+
+    The desktop bundle check depends on that difference: without it a build with
+    an empty resources/llama would still report the runtime as usable.
+    """
+    monkeypatch.setenv("RYNMESH_LLM_HOME", str(tmp_path / "llm"))
+    monkeypatch.delenv("RYNMESH_LLAMA_SERVER", raising=False)
+    monkeypatch.delenv("RYNMESH_LLAMA_DIR", raising=False)
+    monkeypatch.setattr(llm_runtime_native.shutil, "which", lambda _name: None)
+
+    nothing_installed = llm_hardware.detect_hardware(tmp_path)
+    assert nothing_installed.native_runtime_present is False
+    assert nothing_installed.native_runtime_available is True  # still downloadable
+
+    bundled = tmp_path / "resources" / "llama"
+    bundled.mkdir(parents=True)
+    server = bundled / llm_runtime_install.server_filename()
+    server.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    server.chmod(0o755)
+    monkeypatch.setenv("RYNMESH_LLAMA_DIR", str(bundled))
+
+    bundled_report = llm_hardware.detect_hardware(tmp_path)
+    assert bundled_report.native_runtime_present is True
+    assert bundled_report.to_dict()["native_runtime_present"] is True
+
+
 def _report(*, ram_available_mb: int, disk_free_mb: int) -> HardwareReport:
     return HardwareReport(
         os="Linux", architecture="x86_64", cpu="test-cpu", logical_cpus=8,
         ram_total_mb=ram_available_mb * 2, ram_available_mb=ram_available_mb,
         disk_free_mb=disk_free_mb, nvidia_gpus=[], nvidia_probe="nvidia-smi not found",
         container_runtime="", container_available=False, native_runtime_available=True,
-        warnings=[],
+        native_runtime_present=False, warnings=[],
     )
 
 
@@ -169,7 +198,7 @@ def test_recommend_uses_gpu_memory_when_it_exceeds_cpu_ram_estimate():
         os="Linux", architecture="x86_64", cpu="test-cpu", logical_cpus=8,
         ram_total_mb=4_000, ram_available_mb=1_000, disk_free_mb=64_000,
         nvidia_gpus=[gpu], nvidia_probe="ok", container_runtime="", container_available=False,
-        native_runtime_available=True, warnings=[],
+        native_runtime_available=True, native_runtime_present=False, warnings=[],
     )
     assert llm_hardware.usable_memory_mb(report) == int(40_000 * 0.85)
     recommendations = llm_hardware.recommend(report)

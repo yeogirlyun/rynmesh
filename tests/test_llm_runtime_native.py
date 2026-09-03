@@ -263,11 +263,29 @@ def test_machine_names_are_normalized_for_the_asset_table(monkeypatch, reported,
     assert llm_runtime_install.machine() == expected
 
 
-def test_asset_for_answers_the_desktop_bundler_without_a_second_pin():
+@pytest.mark.parametrize(("system", "reported", "key"), [
+    ("Darwin", "arm64", ("Darwin", "arm64")),
+    ("darwin", "aarch64", ("Darwin", "arm64")),
+    ("Darwin", "x86_64", ("Darwin", "x86_64")),
+    ("Linux", "x86_64", ("Linux", "x86_64")),
+    ("Linux", "aarch64", ("Linux", "arm64")),
+    ("Windows", "AMD64", ("Windows", "x86_64")),
+    ("Windows", "ARM64", ("Windows", "arm64")),
+])
+def test_asset_for_answers_the_desktop_bundler_without_a_second_pin(system, reported, key):
     """The Tauri fetch script reads the pin through this helper."""
-    pinned = llm_runtime_install.asset_for("darwin", "aarch64")
-    assert pinned == llm_runtime_install.RUNTIME_ASSETS[("Darwin", "arm64")]
+    assert llm_runtime_install.asset_for(system, reported) == llm_runtime_install.RUNTIME_ASSETS[key]
+
+
+def test_asset_for_has_no_entry_for_an_unsupported_platform():
     assert llm_runtime_install.asset_for("Plan9", "x86_64") is None
+    assert llm_runtime_install.asset_for("Darwin", "riscv64") is None
+
+
+def test_asset_delegates_to_asset_for_with_the_running_platform(monkeypatch):
+    monkeypatch.setattr(llm_runtime_install.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(llm_runtime_install.platform, "machine", lambda: "aarch64")
+    assert llm_runtime_install.asset() == llm_runtime_install.RUNTIME_ASSETS[("Linux", "arm64")]
 
 
 class _FakeResponse:

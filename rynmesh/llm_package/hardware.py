@@ -37,6 +37,7 @@ class HardwareReport:
     container_runtime: str
     container_available: bool
     native_runtime_available: bool
+    native_runtime_present: bool
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +148,25 @@ def _native_runtime_available() -> bool:
         return False
 
 
+def _native_runtime_present() -> bool:
+    """Whether a llama-server resolves *right now* — bundled, managed, or on PATH.
+
+    `native_runtime_available` is true wherever the pinned release could be
+    downloaded, so it cannot tell a bundled runtime from a missing one. This
+    answers the narrower question the desktop bundle needs. Boolean only: the
+    resolved path is node-private and never leaves this function.
+
+    Resolution uses the node's own LLM root; `detect_hardware`'s `path` is a
+    disk-probe target (a model directory, for one caller), not that root.
+    """
+    try:
+        from . import runtime_native
+
+        return runtime_native.resolve_server() is not None
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return False
+
+
 def detect_hardware(path: str | Path | None = None) -> HardwareReport:
     ram_total, ram_available = _memory()
     disk_target = Path(path or Path.cwd()).expanduser().resolve()
@@ -178,7 +198,8 @@ def detect_hardware(path: str | Path | None = None) -> HardwareReport:
         logical_cpus=os.cpu_count() or 1, ram_total_mb=ram_total, ram_available_mb=ram_available,
         disk_free_mb=disk_free, nvidia_gpus=gpus, nvidia_probe=gpu_status,
         container_runtime="docker" if docker else "", container_available=container_ok,
-        native_runtime_available=_native_runtime_available(), warnings=warnings,
+        native_runtime_available=_native_runtime_available(),
+        native_runtime_present=_native_runtime_present(), warnings=warnings,
     )
 
 

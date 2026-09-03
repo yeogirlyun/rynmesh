@@ -9,6 +9,7 @@ CHECK_LLM=0
 for arg in "$@"; do
   case "$arg" in
     --check-llm) CHECK_LLM=1 ;;
+    -*) echo "unknown argument: $arg" >&2; exit 1 ;;
     *) [ -n "$SIDECAR" ] || SIDECAR="$arg" ;;
   esac
 done
@@ -65,9 +66,12 @@ if [ "$CHECK_LLM" -eq 1 ]; then
     echo "sidecar did not answer the hardware probe" >&2
     exit 1
   fi
-  if ! grep -q '"native_runtime_available":[[:space:]]*true' "$VERIFY_DIR/hardware.json"; then
+  # `native_runtime_present`, not `native_runtime_available`: the latter is true
+  # wherever the pinned release could be downloaded, so it would pass even with
+  # an empty resources/llama.
+  if ! grep -q '"native_runtime_present":[[:space:]]*true' "$VERIFY_DIR/hardware.json"; then
     cat "$VERIFY_DIR/hardware.json" >&2
-    echo "node does not report a usable native inference runtime" >&2
+    echo "node did not resolve a native inference runtime" >&2
     exit 1
   fi
   echo "SIDECAR_NATIVE_RUNTIME_OK"
