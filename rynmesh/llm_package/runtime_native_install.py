@@ -52,8 +52,8 @@ UNREADABLE_ARCHIVE = "runtime archive is unreadable or corrupt"
 UNWRITABLE_STATE = "unable to write runtime state"
 
 
-def machine() -> str:
-    value = platform.machine().strip().lower()
+def normalize_machine(value: str) -> str:
+    value = value.strip().lower()
     if value in {"aarch64", "arm64"}:
         return "arm64"
     if value in {"amd64", "x86_64"}:
@@ -61,8 +61,21 @@ def machine() -> str:
     return value
 
 
+def machine() -> str:
+    return normalize_machine(platform.machine())
+
+
+def asset_for(system: str, machine_name: str) -> tuple[str, str, int] | None:
+    """Pinned (asset, sha256, size) for a platform pair, or None.
+
+    The single source of truth for the pin: the desktop bundling script asks
+    this instead of carrying a second copy of the digests.
+    """
+    return RUNTIME_ASSETS.get((system.strip().title(), normalize_machine(machine_name)))
+
+
 def asset() -> tuple[str, str, int] | None:
-    return RUNTIME_ASSETS.get((platform.system(), machine()))
+    return asset_for(platform.system(), platform.machine())
 
 
 def server_filename() -> str:

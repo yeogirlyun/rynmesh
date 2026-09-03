@@ -263,6 +263,13 @@ def test_machine_names_are_normalized_for_the_asset_table(monkeypatch, reported,
     assert llm_runtime_install.machine() == expected
 
 
+def test_asset_for_answers_the_desktop_bundler_without_a_second_pin():
+    """The Tauri fetch script reads the pin through this helper."""
+    pinned = llm_runtime_install.asset_for("darwin", "aarch64")
+    assert pinned == llm_runtime_install.RUNTIME_ASSETS[("Darwin", "arm64")]
+    assert llm_runtime_install.asset_for("Plan9", "x86_64") is None
+
+
 class _FakeResponse:
     def __init__(self, payload: bytes) -> None:
         self._stream = io.BytesIO(payload)

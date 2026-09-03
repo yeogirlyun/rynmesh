@@ -73,6 +73,56 @@ rynmesh-llm setup --mode ollama --package-id ollama-local \
   --alias local-ollama --base-url http://127.0.0.1:11434
 ```
 
+## Bundled native runtime
+
+The Ryn desktop app ships the pinned `llama-server` inside the application
+bundle, so managed Local AI runs on a consumer machine with no runtime download
+and no Docker (issue #34).
+
+How the node finds the server, in order (`runtime_native.resolve_server`):
+
+1. `RYNMESH_LLAMA_SERVER` — an explicit path to a server binary, for operators
+   who run their own build.
+2. `RYNMESH_LLAMA_DIR` — a directory holding `llama-server` (also searched under
+   `build/bin/`). The desktop shell sets this to the bundled runtime it found:
+   `Ryn.app/Contents/Resources/llama` when packaged, `src-tauri/resources/llama`
+   in a dev checkout. An operator's own value always wins.
+3. The `llama/` directory next to a frozen node executable.
+4. The managed download under the node home (`runtime/llama-<release>/`), which
+   is what a `pip`-installed node without a bundle uses.
+5. `llama-server` on `PATH`.
+
+Staging the bundle for a build:
+
+```bash
+./webapp/src-tauri/scripts/fetch-llama-runtime.sh          # host target
+./webapp/src-tauri/scripts/fetch-llama-runtime.sh x86_64-apple-darwin
+```
+
+The script downloads the pinned asset over HTTPS, verifies its SHA-256, keeps
+only `llama-server`, its shared libraries, and the licence, and writes
+`resources/llama/runtime.json`. It is idempotent — a directory already staged at
+the same release and digest is left alone. `resources/` is git-ignored; the
+runtime is never committed. `tauri.conf.json` maps `resources/llama/` to
+`llama/` in the bundle, and the app's ad-hoc signature seals it.
+
+Refreshing the pin (one place, `rynmesh/llm_package/runtime_native_install.py`):
+
+1. Pick the new llama.cpp release tag and read the per-asset digests from the
+   GitHub release API, e.g.
+   `curl -fsSL https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/<tag>`
+   (each asset's `digest` field, or download and `shasum -a 256`).
+2. Update `RUNTIME_RELEASE` and every row of `RUNTIME_ASSETS`
+   (asset name, SHA-256, size in bytes) — both the desktop bundling script and
+   the node's managed download read this table, so there is no second copy.
+3. Rerun `./webapp/src-tauri/scripts/fetch-llama-runtime.sh` and confirm
+   `webapp/src-tauri/resources/llama/llama-server --version` reports the new
+   build.
+
+Docker mode is unchanged and remains the runtime for server nodes and for
+operators who prefer container isolation; the native runtime is the default on
+desktops, which cannot be assumed to have Docker.
+
 ## Lifecycle and removal
 
 ```bash

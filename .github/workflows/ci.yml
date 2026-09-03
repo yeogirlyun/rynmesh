@@ -121,9 +121,18 @@ jobs:
       - run: npm ci
       - name: Build self-contained node sidecar
         run: ./src-tauri/scripts/build-sidecar.sh
+      - name: Fetch pinned llama.cpp runtime
+        run: ./src-tauri/scripts/fetch-llama-runtime.sh
+      - name: Verify bundled runtime starts
+        run: ./src-tauri/resources/llama/llama-server --version
       - name: Start bundled node sidecar
         run: |
           sidecar="$(find src-tauri/binaries -type f -name 'rynmesh-peer-*' -print -quit)"
           ./src-tauri/scripts/verify-sidecar.sh "$sidecar"
+      - name: Node finds the bundled runtime
+        run: |
+          sidecar="$(find src-tauri/binaries -type f -name 'rynmesh-peer-*' -print -quit)"
+          RYNMESH_LLAMA_DIR="$PWD/src-tauri/resources/llama" \
+            ./src-tauri/scripts/verify-sidecar.sh "$sidecar" --check-llm
       - name: Compile desktop shell
         run: cargo check --manifest-path src-tauri/Cargo.toml
