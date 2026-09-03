@@ -230,6 +230,28 @@ describe("Private AI chat", () => {
     expect(client.listLLMServices).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the last successful discovery snapshot when a refresh fails", async () => {
+    const { client, submit, user } = renderChat({
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+      configureClient: (configured) => {
+        configured.listLLMServices = vi.fn(async () => [providerA, providerB]);
+      },
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    vi.mocked(client.listLLMServices).mockRejectedValueOnce(new Error("fixture discovery failure"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(client.listLLMServices).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByText(/Provider disappeared from discovery/)).not.toBeInTheDocument();
+    const composer = screen.getByLabelText("Message Private AI");
+    await user.type(composer, "request after failed refresh");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
+      provider_peer_id: "peer:provider-a", service_id: "package-a",
+    }));
+  });
+
   it("releases switching and preserves provider, history, and draft when encrypted storage fails", async () => {
     const { user } = renderChat({
       services: [providerA, providerB],
@@ -246,6 +268,27 @@ describe("Private AI chat", () => {
     expect(await screen.findByText(/Unable to open that Provider's encrypted history/)).toBeInTheDocument();
     expect(screen.getByText("shared-model-alias · Provider Alpha")).toBeInTheDocument();
     expect(composer).toHaveValue("draft remains local");
+    await waitFor(() => expect(beta).not.toBeDisabled());
+  });
+
+  it("recovers when creating the target Provider's first encrypted conversation fails", async () => {
+    const { user } = renderChat({
+      services: [providerA, providerB],
+      initialEntry: "/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a",
+    });
+    await screen.findByText("shared-model-alias · Provider Alpha");
+    const composer = screen.getByLabelText("Message Private AI");
+    await user.type(composer, "draft survives failed first write");
+    const save = vi.spyOn(conversationStore, "saveConversation")
+      .mockRejectedValueOnce(new Error("fixture encrypted write failure"));
+    await user.click(screen.getByLabelText("Change Private AI provider"));
+    const beta = screen.getByRole("option", { name: /Provider Beta package-b/ });
+    await user.click(beta);
+
+    expect(await screen.findByText(/Unable to open that Provider's encrypted history/)).toBeInTheDocument();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("shared-model-alias · Provider Alpha")).toBeInTheDocument();
+    expect(composer).toHaveValue("draft survives failed first write");
     await waitFor(() => expect(beta).not.toBeDisabled());
   });
 });
