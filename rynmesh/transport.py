@@ -54,11 +54,50 @@ NETWORK_KEY_HEADER = "X-Ryn-Auth"
 
 
 class TransportError(RuntimeError):
-    """Transport-layer failure. ``reason`` lets callers map to domain errors."""
+    """Transport-layer failure. ``reason`` lets callers map to domain errors.
 
-    def __init__(self, message: str, *, reason: str = "http_error") -> None:
+    ``status`` carries the HTTP status code when the failure was an HTTP
+    response, so a keyed peer's 404 (network-key mismatch) is distinguishable
+    from network loss without leaking anything from the response body.
+    """
+
+    def __init__(self, message: str, *, reason: str = "http_error",
+                 status: int | None = None) -> None:
         super().__init__(message)
         self.reason = reason
+        self.status = status
+
+
+def stamp_network_key(headers: dict[str, str]) -> dict[str, str]:
+    """Return ``headers`` with the mesh credential enforced, case-insensitively.
+
+    HTTP header names are case-insensitive; a plain ``dict.update`` with the
+    canonical casing would let a caller-supplied ``x-ryn-auth`` ride along as a
+    duplicate line, and whichever the receiving stack reads first would win.
+    Every caller-supplied spelling is stripped before the real value is set.
+    """
+    cleaned = {k: v for k, v in headers.items() if k.lower() != NETWORK_KEY_HEADER.lower()}
+    cleaned.update(network_key_header())
+    return cleaned
+
+
+def read_bounded(resp, max_bytes: int) -> bytes:
+    """Read at most ``max_bytes`` from a response, refusing anything larger."""
+    data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise TransportError("response too large", reason="too_large")
+    return data
+
+
+def check_status(status: int, *, strict: bool) -> None:
+    """Reject failure responses.
+
+    POST paths are ``strict`` (2xx only — a redirect of a signed task is never
+    right). GET/download keep the pre-existing ``>= 400`` contract so peers
+    behind redirecting CDN edges do not flip from readable to hard-failed.
+    """
+    if (strict and not 200 <= status < 300) or (not strict and status >= 400):
+        raise TransportError(f"http status {status}", reason="http_error", status=status)
 
 
 @dataclass(frozen=True)
@@ -185,7 +224,17 @@ def resolve_profile() -> TransportProfile:
 
 
 class Transport(Protocol):
-    """The minimal bounded-I/O surface the peer client needs."""
+    """The minimal bounded-I/O surface the peer client needs.
+
+    Implementation contract (third-party ``register_transport`` plugins
+    included): every request must carry the mesh credential from
+    ``stamp_network_key``/``network_key_header`` so caller headers cannot
+    suppress it, reads must be bounded by ``max_bytes`` (``read_bounded``),
+    redirects must not be followed, and HTTP failures must raise
+    ``TransportError`` with ``status`` set (``check_status``). ``HttpPeerClient``
+    additionally stamps the credential itself, so a plugin that forgets still
+    authenticates — but its GET/download paths would not.
+    """
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
@@ -257,37 +306,32 @@ class StdlibHttpsTransport:
         if extra:
             merged.update(extra)
         # Caller-supplied headers must not suppress mesh authentication.
-        merged.update(network_key_header())
-        return merged
+        return stamp_network_key(merged)
+
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        req = urllib.request.Request(url, data=body, method=method, headers=self._headers(headers))
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                return read_bounded(resp, max_bytes)
+        except HTTPError as exc:
+            raise TransportError(f"http status {exc.code}", reason="http_error",
+                                 status=exc.code) from exc
+        except (URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError(f"http error: {exc}", reason="http_error") from exc
 
     def get_bytes(
         self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
     ) -> bytes:
-        req = urllib.request.Request(url, method="GET", headers=self._headers(headers))
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        req = urllib.request.Request(
-            url, data=body, method="POST", headers=self._headers(headers),
-        )
-        try:
-            with self._opener.open(req, timeout=timeout_s) as resp:
-                data = resp.read(max_bytes + 1)
-        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -345,8 +389,7 @@ class FrontedHttpsTransport:
         merged["Connection"] = "close"  # one socket per request
         if extra:
             merged.update(extra)
-        merged.update(network_key_header())
-        return merged
+        return stamp_network_key(merged)
 
     def _open(
         self, url: str, timeout_s: float, extra_headers: dict[str, str] | None,
@@ -385,39 +428,35 @@ class FrontedHttpsTransport:
             except OSError:
                 pass
             raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        if not 200 <= resp.status < 300:
+        try:
+            check_status(resp.status, strict=method == "POST")
+        except TransportError:
             conn.close()
-            raise TransportError(f"http status {resp.status}", reason="http_error")
+            raise
         return conn, resp
 
-    def get_bytes(
-        self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
-    ) -> bytes:
-        conn, resp = self._open(url, timeout_s, headers)
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        conn, resp = self._open(url, timeout_s, headers, method=method, body=body)
         try:
-            data = resp.read(max_bytes + 1)
+            return read_bounded(resp, max_bytes)
         except (OSError, ssl.SSLError) as exc:
             raise TransportError(f"http error: {exc}", reason="http_error") from exc
         finally:
             conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+
+    def get_bytes(
+        self, url: str, *, timeout_s: float, max_bytes: int, headers: dict[str, str] | None = None
+    ) -> bytes:
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def post_bytes(
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
-        try:
-            data = resp.read(max_bytes + 1)
-        except (OSError, ssl.SSLError) as exc:
-            raise TransportError(f"http error: {exc}", reason="http_error") from exc
-        finally:
-            conn.close()
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -608,7 +647,7 @@ class CdnWebSocketTransport:
         req_headers = dict(_profile_headers(self.profile))
         if extra_headers:
             req_headers.update(extra_headers)
-        req_headers.update(network_key_header())
+        req_headers = stamp_network_key(req_headers)
         req_headers["Host"] = host_header
         if body is not None:
             req_headers["Content-Length"] = str(len(body))
@@ -637,8 +676,7 @@ class CdnWebSocketTransport:
             status = int(status_line[1])
         except (IndexError, ValueError) as exc:
             raise TransportError("ws: malformed HTTP status", reason="http_error") from exc
-        if not 200 <= status < 300:
-            raise TransportError(f"http status {status}", reason="http_error")
+        check_status(status, strict=method == "POST")
         response_body = raw_response[sep + 4:]
         if len(response_body) > max_bytes:
             raise TransportError("response too large", reason="too_large")

@@ -67,6 +67,7 @@ def test_stdlib_post_is_bounded_and_preserves_required_auth(monkeypatch) -> None
             seen["body"] = self.rfile.read(length)
             seen["content_type"] = self.headers.get("Content-Type")
             seen["auth"] = self.headers.get(NETWORK_KEY_HEADER)
+            seen["auth_count"] = len(self.headers.get_all(NETWORK_KEY_HEADER) or [])
             if self.path == "/redirect":
                 self.send_response(302)
                 self.send_header("Location", "/ok")
@@ -103,6 +104,12 @@ def test_stdlib_post_is_bounded_and_preserves_required_auth(monkeypatch) -> None
         assert seen["auth"] == hashlib.sha256(
             b"rynmesh-net-key:required-key",
         ).hexdigest()
+        assert seen["auth_count"] == 1, "a differently-cased override must not ride along"
+        transport.post_bytes(
+            url + "/ok", b"{}", timeout_s=5, max_bytes=64,
+            headers={"x-ryn-auth": "lowercase-override"},
+        )
+        assert seen["auth_count"] == 1 and seen["auth"] != "lowercase-override"
         assert transport.post_bytes(
             url + "/exact", b"{}", timeout_s=5, max_bytes=4,
         ) == b"1234"
@@ -116,6 +123,7 @@ def test_stdlib_post_is_bounded_and_preserves_required_auth(monkeypatch) -> None
                 url + "/redirect", b"{}", timeout_s=5, max_bytes=64,
             )
         assert error.value.reason == "http_error"
+        assert error.value.status == 302
     finally:
         server.shutdown()
         thread.join(timeout=2)
@@ -224,6 +232,12 @@ def test_fronted_transport_splits_connect_host_and_host_header() -> None:
         def do_GET(self):  # noqa: N802
             seen["host"] = self.headers.get("Host", "")
             seen["ua"] = self.headers.get("User-Agent", "")
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "/api/v1/node")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             body = b'{"ok": true}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -242,6 +256,8 @@ def test_fronted_transport_splits_connect_host_and_host_header() -> None:
                 self.end_headers()
                 return
             body = b'{"posted": true}'
+            if self.path == "/oversized":
+                body = b'{"posted": true, "pad": "xxxxxxxx"}'
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -284,6 +300,20 @@ def test_fronted_transport_splits_connect_host_and_host_header() -> None:
                 timeout_s=5, max_bytes=1 << 20,
             )
         assert error.value.reason == "http_error"
+        assert error.value.status == 307
+        # GET keeps the pre-existing contract (only >=400 raises): peers behind
+        # redirecting CDN edges stay readable on the registry/sync paths this
+        # transport already served before POST support landed.
+        redirected = transport.get_bytes(
+            f"http://backend.internal:{port}/redirect", timeout_s=5, max_bytes=1 << 20,
+        )
+        assert redirected == b""
+        with pytest.raises(TransportError) as error:
+            transport.post_bytes(
+                f"http://backend.internal:{port}/oversized", b"{}",
+                timeout_s=5, max_bytes=4,
+            )
+        assert error.value.reason == "too_large"
     finally:
         server.shutdown()
         t.join(timeout=2)
@@ -461,6 +491,51 @@ def test_http_peer_client_rejects_invalid_post_json(response, message) -> None:
         client.post_json("/api/peer/llm/tasks", {"private": "do-not-log"})
 
 
+def test_http_peer_client_refuses_empty_post_response() -> None:
+    """A 2xx with no body is a middlebox or broken peer, never a valid answer:
+    treating it as {} recorded settlements as delivered without the provider
+    receiving them and suppressed the task relay fallback."""
+    from rynmesh.peer_http import HttpPeerClient, PeerTransportError
+
+    for empty in (b"", b"   \n"):
+        client = HttpPeerClient(
+            "https://peer.example", transport=_PostTransport(empty),  # type: ignore[arg-type]
+        )
+        with pytest.raises(PeerTransportError, match="peer_empty_response"):
+            client.post_json("/api/peer/llm/settlements", {"settlement": "signed"})
+
+
+def test_http_peer_client_carries_http_status_in_post_errors() -> None:
+    """A keyed peer answers a key mismatch with 404; that must be tellable
+    apart from network loss without exposing anything from the body."""
+    from rynmesh.peer_http import HttpPeerClient, PeerTransportError
+
+    class DeniedTransport(_PostTransport):
+        def post_bytes(self, *args, **kwargs):
+            raise TransportError("http status 404", reason="http_error", status=404)
+
+    client = HttpPeerClient(
+        "https://peer.example", transport=DeniedTransport(),  # type: ignore[arg-type]
+    )
+    with pytest.raises(PeerTransportError, match="peer_http_error:http_404"):
+        client.post_json("/api/peer/llm/tasks", {"prompt": "PRIVATE"})
+
+
+def test_http_peer_client_stamps_credential_for_forgetful_transports(monkeypatch) -> None:
+    """A third-party transport that satisfies the protocol but never adds the
+    mesh credential must still authenticate — the client stamps it too."""
+    from rynmesh.peer_http import HttpPeerClient
+
+    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "required-key")
+    transport = _PostTransport(b'{"ok":true}')
+    HttpPeerClient(
+        "https://peer.example", transport=transport,  # type: ignore[arg-type]
+    ).post_json("/api/peer/llm/tasks", {})
+    assert transport.calls[0]["headers"][NETWORK_KEY_HEADER] == hashlib.sha256(
+        b"rynmesh-net-key:required-key",
+    ).hexdigest()
+
+
 def test_http_peer_client_post_error_does_not_echo_request_body() -> None:
     from rynmesh.peer_http import HttpPeerClient, PeerTransportError
 
@@ -514,53 +589,35 @@ def test_llm_peer_post_helper_uses_active_transport(monkeypatch) -> None:
     assert transport.calls[0]["max_bytes"] == _MAX_PEER_RESPONSE_BYTES
 
 
-def test_meek_post_uses_versioned_inner_request_envelope(monkeypatch) -> None:
-    import base64
-    import json
-
+def test_meek_post_is_refused_explicitly(monkeypatch) -> None:
+    """No bridge parses a request envelope; a unilateral one made every peer
+    write silently fail against deployed bridges while reads kept working."""
     from rynmesh.transport_plugins import MeekTransport
 
     monkeypatch.setenv("RYNMESH_MEEK_URL", "https://meek.example/bridge")
-    monkeypatch.setenv("RYNMESH_NETWORK_KEY", "required-key")
     transport = MeekTransport(TransportProfile(name="meek"))
-    captured: dict[str, object] = {}
-
-    def bridge(payload, timeout_s, max_bytes):
-        captured.update(payload=payload, timeout_s=timeout_s, max_bytes=max_bytes)
-        return b'{"ok":true}'
-
-    monkeypatch.setattr(transport, "_post_to_bridge", bridge)
-    result = transport.post_bytes(
-        "https://provider.example/api/peer/llm/tasks", b"ciphertext",
-        timeout_s=9, max_bytes=99,
-        headers={
-            "Content-Type": "application/json",
-            NETWORK_KEY_HEADER: "attacker-override",
-        },
+    bridge_calls: list[bytes] = []
+    monkeypatch.setattr(
+        transport, "_post_to_bridge",
+        lambda payload, timeout_s, max_bytes: bridge_calls.append(payload) or b"{}",
     )
-    envelope = json.loads(captured["payload"])
-    assert result == b'{"ok":true}'
-    assert envelope["kind"] == "rynmesh.transport.request.v1"
-    assert envelope["method"] == "POST"
-    assert envelope["url"].endswith("/api/peer/llm/tasks")
-    assert envelope["headers"]["Content-Type"] == "application/json"
-    assert envelope["headers"][NETWORK_KEY_HEADER] == hashlib.sha256(
-        b"rynmesh-net-key:required-key",
-    ).hexdigest()
-    assert base64.b64decode(envelope["body_b64"]) == b"ciphertext"
+    with pytest.raises(TransportError) as error:
+        transport.post_bytes(
+            "https://provider.example/api/peer/llm/tasks", b"ciphertext",
+            timeout_s=9, max_bytes=99,
+        )
+    assert error.value.reason == "unsupported"
+    assert bridge_calls == [], "a refused POST must never reach the bridge"
 
 
 def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -> None:
     from rynmesh.transport_plugins import RealityTransport
 
     class Response:
-        def __init__(self, chunks):
+        def __init__(self, chunks, status_code=200):
             self.chunks = chunks
             self.closed = False
-            self.status_code = 200
-
-        def raise_for_status(self):
-            return None
+            self.status_code = status_code
 
         def iter_content(self, *, chunk_size):
             assert chunk_size == 64 * 1024
@@ -573,10 +630,14 @@ def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -
         def __init__(self, response):
             self.response = response
             self.calls = []
+            self.closed = False
 
-        def post(self, url, **kwargs):
-            self.calls.append((url, kwargs))
+        def request(self, method, url, **kwargs):
+            self.calls.append((method, url, kwargs))
             return self.response
+
+        def close(self):
+            self.closed = True
 
     monkeypatch.setenv("RYNMESH_NETWORK_KEY", "required-key")
     transport = RealityTransport.__new__(RealityTransport)
@@ -591,16 +652,21 @@ def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -
         timeout_s=8, max_bytes=4,
         headers={NETWORK_KEY_HEADER: "attacker-override"},
     ) == b"1234"
-    _, call = session.calls[0]
+    method, _, call = session.calls[0]
+    assert method == "POST"
     assert call["stream"] is True
     assert call["allow_redirects"] is False
     assert call["headers"][NETWORK_KEY_HEADER] == hashlib.sha256(
         b"rynmesh-net-key:required-key",
     ).hexdigest()
     assert response.closed is True
+    # The session holds a curl multi handle + sockets; it used to be leaked
+    # on every POST of the inference hot path.
+    assert session.closed is True
 
     oversized = Response([b"123", b"45"])
-    transport._session = lambda: (Session(oversized), "", "")
+    oversized_session = Session(oversized)
+    transport._session = lambda: (oversized_session, "", "")
     with pytest.raises(TransportError) as error:
         transport.post_bytes(
             "https://peer.example/api/peer/llm/tasks", b"ciphertext",
@@ -608,6 +674,28 @@ def test_reality_post_streams_bounded_response_and_preserves_auth(monkeypatch) -
         )
     assert error.value.reason == "too_large"
     assert oversized.closed is True
+    assert oversized_session.closed is True
+
+    # 4xx surfaces as the stable metadata-only error with the status attached,
+    # not as library-formatted text carrying a server-controlled reason phrase.
+    denied = Response([], status_code=404)
+    denied_session = Session(denied)
+    transport._session = lambda: (denied_session, "", "")
+    with pytest.raises(TransportError) as error:
+        transport.post_bytes(
+            "https://peer.example/api/peer/llm/tasks", b"ciphertext",
+            timeout_s=8, max_bytes=4,
+        )
+    assert error.value.status == 404
+    assert str(error.value) == "http status 404"
+    assert denied_session.closed is True
+
+    # GET is bounded by the same streaming cap, not a buffer-then-check.
+    big = Response([b"123", b"45"])
+    transport._session = lambda: (Session(big), "", "")
+    with pytest.raises(TransportError) as error:
+        transport.get_bytes("https://peer.example/api/v1/node", timeout_s=8, max_bytes=4)
+    assert error.value.reason == "too_large"
 
 
 def test_ech_fallback_post_uses_fronted_delegate() -> None:

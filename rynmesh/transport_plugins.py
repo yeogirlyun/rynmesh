@@ -19,22 +19,20 @@ Registered transports:
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import os
 import ssl
 from pathlib import Path
 from typing import Any
 
 from .transport import (
-    NETWORK_KEY_HEADER,
     TransportError,
     TransportProfile,
     _profile_headers,
     _ssl_context,
-    network_key,
+    check_status,
+    network_key_header,
     register_transport,
+    stamp_network_key,
     urlparse,
 )
 
@@ -88,11 +86,8 @@ class RealityTransport:
             impersonate=self._impersonate,
             verify=self.profile.verify_tls,
         )
-        # Inject network-key auth header.
-        key = network_key()
-        if key:
-            salted = hashlib.sha256(("rynmesh-net-key:" + key).encode()).hexdigest()
-            session.headers[NETWORK_KEY_HEADER] = salted
+        # Inject network-key auth header (single derivation lives in transport).
+        session.headers.update(network_key_header())
 
         # Browser camouflage headers (UA, Accept-*, etc.) are already correct
         # because curl_cffi sends exactly what Chrome 124 sends. We only overlay
@@ -123,49 +118,30 @@ class RealityTransport:
         )
         return rewritten, {"Host": host_header or ""}
 
-    def get_bytes(
-        self, url: str, *, timeout_s: float, max_bytes: int,
-        headers: dict[str, str] | None = None,
-    ) -> bytes:
-        session, connect_host, sni = self._session()
-        rewritten, extra = self._resolve_url(url, connect_host, sni)
-        if headers:
-            extra.update(headers)
-        try:
-            resp = session.get(rewritten, headers=extra, timeout=timeout_s)
-            resp.raise_for_status()
-        except Exception as exc:
-            raise TransportError(f"reality: {exc}", reason="http_error") from exc
-        data = resp.content
-        if len(data) > max_bytes:
-            raise TransportError("response too large", reason="too_large")
-        return data
+    def _request(self, method: str, url: str, *, body: bytes | None, timeout_s: float,
+                 max_bytes: int, headers: dict[str, str] | None) -> bytes:
+        """One bounded, streamed request; the session is closed on every path.
 
-    def post_bytes(
-        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
-        headers: dict[str, str] | None = None,
-    ) -> bytes:
+        A fresh curl_cffi Session per call holds a multi handle and sockets;
+        leaving it to the GC leaked descriptors on the inference hot path.
+        The status is checked explicitly (no ``raise_for_status``): a 4xx must
+        surface as the stable ``reality: HTTP <code>`` with the status set,
+        not as library-formatted text with a server-controlled reason phrase.
+        """
         session, connect_host, sni = self._session()
         rewritten, extra = self._resolve_url(url, connect_host, sni)
         if headers:
             extra.update(headers)
         # The mesh credential is mandatory transport metadata. A caller may
         # add content headers, but must not be able to replace authentication.
-        key = network_key()
-        if key:
-            extra[NETWORK_KEY_HEADER] = hashlib.sha256(
-                ("rynmesh-net-key:" + key).encode(),
-            ).hexdigest()
+        extra = stamp_network_key(extra)
+        resp = None
         try:
-            resp = session.post(
-                rewritten, data=body, headers=extra, timeout=timeout_s,
+            resp = session.request(
+                method, rewritten, data=body, headers=extra, timeout=timeout_s,
                 stream=True, allow_redirects=False,
             )
-            resp.raise_for_status()
-            if not 200 <= resp.status_code < 300:
-                raise TransportError(
-                    f"reality: HTTP {resp.status_code}", reason="http_error",
-                )
+            check_status(resp.status_code, strict=method == "POST")
             chunks: list[bytes] = []
             total = 0
             for chunk in resp.iter_content(chunk_size=64 * 1024):
@@ -175,15 +151,31 @@ class RealityTransport:
                 if total > max_bytes:
                     raise TransportError("response too large", reason="too_large")
                 chunks.append(chunk)
-            data = b"".join(chunks)
+            return b"".join(chunks)
         except TransportError:
             raise
         except Exception as exc:
-            raise TransportError(f"reality: {exc}", reason="http_error") from exc
+            raise TransportError(f"reality: {type(exc).__name__}", reason="http_error") from exc
         finally:
-            if "resp" in locals():
+            if resp is not None:
                 resp.close()
-        return data
+            close = getattr(session, "close", None)
+            if callable(close):
+                close()
+
+    def get_bytes(
+        self, url: str, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        return self._request("GET", url, body=None, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
+
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        return self._request("POST", url, body=body, timeout_s=timeout_s,
+                             max_bytes=max_bytes, headers=headers)
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -279,8 +271,9 @@ class MeekTransport:
             headers["Content-Length"] = str(len(payload))
             conn.request("POST", parts.path or "/", body=payload, headers=headers)
             resp = conn.getresponse()
-            if not 200 <= resp.status < 300:
-                raise TransportError(f"meek bridge HTTP {resp.status}", reason="http_error")
+            if resp.status >= 400:
+                raise TransportError(f"meek bridge HTTP {resp.status}", reason="http_error",
+                                     status=resp.status)
             body = resp.read(max_bytes + 1)
         except TransportError:
             raise
@@ -310,29 +303,17 @@ class MeekTransport:
         self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
     ) -> bytes:
-        # POST needs an explicit inner request envelope so a meek-compatible
-        # Rynmesh bridge can reconstruct method, protected origin headers, and
-        # the already-encrypted application body without exposing them as outer
-        # CDN headers.
-        inner_headers = dict(_profile_headers(self.profile))
-        if headers:
-            inner_headers.update(headers)
-        key = network_key()
-        if key:
-            inner_headers[NETWORK_KEY_HEADER] = hashlib.sha256(
-                ("rynmesh-net-key:" + key).encode(),
-            ).hexdigest()
-        envelope = json.dumps({
-            "kind": "rynmesh.transport.request.v1",
-            "method": "POST",
-            "url": url,
-            "headers": inner_headers,
-            "body_b64": base64.b64encode(body).decode("ascii"),
-        }, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        response = self._post_to_bridge(envelope, timeout_s, max_bytes)
-        if len(response) > max_bytes:
-            raise TransportError("meek response too large", reason="too_large")
-        return response
+        # The meek bridge protocol carries one URL per POST and fetches it (see
+        # get_bytes). Tunnelling a request body would need a versioned inner
+        # envelope AND a bridge that parses it; no such bridge exists, and a
+        # unilateral envelope made every write silently fail against deployed
+        # bridges while reads kept working. Refuse loudly until the bridge side
+        # lands (tracked in docs/RYNMESH_TRANSPORT_CENSORSHIP.md).
+        raise TransportError(
+            "meek: POST is not supported by the bridge protocol; "
+            "use a transport with request-body support for peer writes",
+            reason="unsupported",
+        )
 
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
@@ -489,18 +470,13 @@ class EchTransport:
             merged = _profile_headers(self.profile)
             if headers:
                 merged.update(headers)
-            key = network_key()
-            if key:
-                merged[NETWORK_KEY_HEADER] = hashlib.sha256(
-                    ("rynmesh-net-key:" + key).encode(),
-                ).hexdigest()
+            merged = stamp_network_key(merged)
             merged["Host"] = host if port in (80, 443) else f"{host}:{port}"
             if body is not None:
                 merged["Content-Length"] = str(len(body))
             conn.request(method, path, body=body, headers=merged)
             resp = conn.getresponse()
-            if not 200 <= resp.status < 300:
-                raise TransportError(f"http status {resp.status}", reason="http_error")
+            check_status(resp.status, strict=method == "POST")
             data = resp.read(max_bytes + 1)
         except TransportError:
             raise

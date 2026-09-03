@@ -181,11 +181,22 @@ What the default transport already does:
 - **Bounded POST responses:** `Transport.post_bytes(...)` enforces a caller-set
   response limit just like GET/download. Required mesh authentication is added
   after caller headers, so a service call cannot accidentally replace it.
-- **Meek POST envelope:** write requests use the versioned
-  `rynmesh.transport.request.v1` JSON envelope inside the outer bridge POST. The
-  encrypted application body is base64 encoded in the envelope; it is never
-  exposed as an outer CDN header. A Rynmesh meek relay must understand this
-  envelope before `RYNMESH_TRANSPORT=meek` can carry write traffic.
+- **Meek and peer writes:** the meek bridge protocol carries one URL per POST
+  and fetches it, so it cannot tunnel a request body. `MeekTransport.post_bytes`
+  refuses with `reason="unsupported"` rather than inventing an inner envelope
+  no bridge parses (which made every write silently fail while reads worked).
+  Write support needs a versioned envelope **and** a bridge that understands it,
+  shipped together; until then `RYNMESH_TRANSPORT=meek` is read-only for peer
+  traffic and LLM tasks take the relay path.
+- **Peer POSTs and transport policy:** LLM task, settlement, and cancellation
+  POSTs go through the same `Transport` as every other peer call. That means
+  they ignore ambient `http(s)_proxy` (set `RYNMESH_HTTPS_PROXY` explicitly),
+  never follow redirects, and reject link-local, userinfo, or fragment
+  endpoints. A deployment that reached peers through an ambient proxy will see
+  direct delivery fail and fall back to the relay path; the node logs a warning
+  naming the endpoint so this is not mistaken for a peer outage. HTTP failures
+  carry the status (`peer_http_error:http_404`), so a network-key mismatch is
+  distinguishable from network loss.
 
 > **On ECH (Encrypted Client Hello):** ECH is the standards-track way to encrypt
 > the SNI entirely. It is **not yet usable from Python** — it needs OpenSSL
