@@ -525,7 +525,7 @@ describe("Private AI chat", () => {
 
   it("polls the same task after a second disconnect and persists one terminal assistant", async () => {
     const subscriptions: LLMOrderStreamHandlers[] = [];
-    const { client, submit, user } = renderChat((configured) => {
+    const { client, submit, user } = renderChat({ configureClient: (configured) => {
       configured.submitLLMOrder = vi.fn(async () => ({ task_id: "task-poll-reconnect", state: "queued" }));
       configured.subscribeLLMOrder = vi.fn((_taskId, handlers) => {
         subscriptions.push(handlers);
@@ -534,7 +534,7 @@ describe("Private AI chat", () => {
       configured.getLLMOrder = vi.fn(async () => ({
         task_id: "task-poll-reconnect", state: "succeeded", output: "Recovered terminal answer",
       }));
-    });
+    } });
     await screen.findByRole("heading", { name: "Private AI" });
     await user.type(screen.getByLabelText("Message Private AI"), "Recover by polling");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -551,7 +551,7 @@ describe("Private AI chat", () => {
 
   it("falls back to terminal polling on a sequence gap without creating another order", async () => {
     let handlers: LLMOrderStreamHandlers | undefined;
-    const { client, submit, user } = renderChat((configured) => {
+    const { client, submit, user } = renderChat({ configureClient: (configured) => {
       configured.submitLLMOrder = vi.fn(async () => ({ task_id: "task-gap", state: "queued" }));
       configured.subscribeLLMOrder = vi.fn((_taskId, next) => {
         handlers = next;
@@ -560,7 +560,7 @@ describe("Private AI chat", () => {
       configured.getLLMOrder = vi.fn(async () => ({
         task_id: "task-gap", state: "succeeded", output: "Gap recovered terminal",
       }));
-    });
+    } });
     await screen.findByRole("heading", { name: "Private AI" });
     await user.type(screen.getByLabelText("Message Private AI"), "Recover a gap");
     await user.click(screen.getByRole("button", { name: "Send message" }));
