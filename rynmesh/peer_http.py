@@ -533,7 +533,12 @@ def create_app(store: RynmeshStore | None = None):
                 # window (`_confirm_after_grace`) is still open.
                 initial_delay_s=update_poll_interval,
                 error_sink=lambda value: setattr(lifespan_app.state, "update_error", value),
-            )
+            ),
+            # `stop()` never removes a spec from the registry's own bookkeeping
+            # (only its task), so a process that re-enters this lifespan on the
+            # same app (startup -> shutdown -> startup) must be able to
+            # re-register without raising "already registered".
+            replace=True,
         )
         registry.register(
             BackgroundWorkerSpec(
@@ -542,7 +547,8 @@ def create_app(store: RynmeshStore | None = None):
                 policy=BackoffPolicy.fixed(900.0),
                 initial_delay_s=20.0,
                 error_sink=lambda value: setattr(lifespan_app.state, "recap_error", value),
-            )
+            ),
+            replace=True,
         )
         await registry.start()
         tasks = (

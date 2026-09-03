@@ -125,6 +125,37 @@ def test_late_registration_runs_and_replace_swaps_the_running_worker() -> None:
     asyncio.run(scenario())
 
 
+def test_initial_delay_s_defers_the_first_invocation() -> None:
+    """`initial_delay_s` must be slept through before `run_once` is ever
+    called — not after. This is the mechanism `updates.poll` relies on to
+    keep a boot from checking for an update while the crash-loop rollback
+    window (`_confirm_after_grace`) is still open.
+    """
+    calls: list[int] = []
+
+    def once() -> bool:
+        calls.append(len(calls))
+        return False
+
+    spec = BackgroundWorkerSpec(
+        "delayed", once, policy(busy_delay_s=5.0), initial_delay_s=1800.0,
+    )
+
+    # Cancelling at the very first recorded sleep call proves that sleep is
+    # the *initial* delay, and that it happens before any invocation.
+    delays, status = run_worker(spec, stop_after=1)
+    assert delays == [1800.0]
+    assert calls == []
+    assert status["last_started_monotonic"] is None
+
+    # Letting one more sleep happen proves `run_once` *does* eventually run,
+    # and only after that first delay — not before it and not skipped.
+    delays, status = run_worker(spec, stop_after=2)
+    assert delays[0] == 1800.0
+    assert calls == [0]
+    assert status["last_started_monotonic"] is not None
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -384,6 +415,43 @@ def test_create_app_registers_the_service_and_node_workers(tmp_path, monkeypatch
     assert all(not item["running"] for item in stopped.values())
 
 
+def test_reentering_the_lifespan_on_the_same_app_does_not_raise(tmp_path, monkeypatch) -> None:
+    """`stop()` cancels a worker's task but never removes its spec from the
+    registry's bookkeeping, so a process that re-enters this app's lifespan
+    (startup -> shutdown -> startup, e.g. a supervisor restarting the ASGI
+    server without recreating the app object) must be able to register
+    `updates.poll`/`recap.daily` a second time without raising "already
+    registered". The registration calls pass `replace=True` for exactly this
+    reason.
+    """
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
+    store = RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network")
+    app = create_app(store)
+    registry = app.state.background_workers
+
+    with TestClient(app):
+        first_names = {spec.name for spec in registry.specs()}
+        assert {"updates.poll", "recap.daily"} <= first_names
+        assert all(item["running"] for item in registry.status().values())
+
+    assert all(not item["running"] for item in registry.status().values())
+
+    # Re-entering must not raise ValueError("already registered: ...").
+    with TestClient(app):
+        second_names = {spec.name for spec in registry.specs()}
+        assert second_names == first_names
+        assert all(item["running"] for item in registry.status().values())
+
+    assert all(not item["running"] for item in registry.status().values())
+
+
 def test_update_poll_interval_env_var_moves_interval_and_initial_delay(
     tmp_path, monkeypatch,
 ) -> None:
@@ -404,6 +472,55 @@ def test_update_poll_interval_env_var_moves_interval_and_initial_delay(
         spec = next(s for s in registry.specs() if s.name == "updates.poll")
         assert spec.initial_delay_s == 60.0
         assert spec.policy.busy_delay_s == 60.0
+
+
+def test_updates_poll_does_not_check_before_its_initial_delay_elapses(
+    tmp_path, monkeypatch,
+) -> None:
+    """Pins the generic `initial_delay_s` ordering test to the actual
+    registered `updates.poll` worker and its env-derived interval: the real
+    spec, driven through `_run` with a fake sleep, must not call
+    `Updater.check` before the recorded first sleep completes.
+    """
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.services.updater import Updater
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_UPDATE_POLL_S", "1800")
+
+    checked = False
+
+    def recording_check(self) -> dict:
+        nonlocal checked
+        checked = True
+        return {"available": False}
+
+    monkeypatch.setattr(Updater, "check", recording_check)
+
+    app = create_app(RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network"))
+    with TestClient(app):
+        registry = app.state.background_workers
+        spec = next(s for s in registry.specs() if s.name == "updates.poll")
+
+    # The spec object itself is immutable and detached from the (now
+    # stopped) registry above; drive it through a fresh registry with an
+    # injected fake sleep so we can observe ordering without a real
+    # 1800-second wait.
+    sleeper = RecordingSleep(stop_after=1)
+    fresh_registry = BackgroundWorkerRegistry(sleep=sleeper)
+    fresh_registry.register(spec)
+
+    async def scenario() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await fresh_registry._run(spec)
+
+    asyncio.run(scenario())
+    assert sleeper.delays == [1800.0]
+    assert checked is False
 
 
 def test_update_poll_once_propagates_failures_and_reports_apply_as_activity(
