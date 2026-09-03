@@ -261,7 +261,7 @@ describe("Private AI chat", () => {
 
     expect(await screen.findByRole("region", { name: "Article context" })).toHaveTextContent("Grounded article 25");
     const location = screen.getByLabelText("Current location search");
-    expect(location).not.toHaveTextContent("grounding=");
+    await waitFor(() => expect(location).not.toHaveTextContent("grounding="));
     expect(location).toHaveTextContent("peer=peer%3Aprovider-a");
     expect(location).toHaveTextContent("service=package-a");
     expect(location).toHaveTextContent("network=rynmesh-main");

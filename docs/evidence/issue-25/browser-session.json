@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-09-03",
+  "branch_head_before_evidence_commit": "840ca881e94a28ef8989ee255c34e397bdaf0c98",
+  "browser": "Chrome extension",
+  "web_origin": "http://127.0.0.1:42527",
+  "consumer_origin": "http://127.0.0.1:18795",
+  "temporary_state_outside_repository": true,
+  "docker_used": false,
+  "external_registry_or_provider_used": false,
+  "article_marker": "ISSUE25_BROWSER_ARTICLE_MARKER_6F27",
+  "route_after_handoff": "http://127.0.0.1:42527/services/private-ai/chat?peer=peer%3Aissue-25-fixture-provider&service=issue-25-fixture-model&network=issue-25-browser-network",
+  "route_contains_handoff_or_article_marker": false,
+  "pre_question_truncation": {
+    "included_characters": 1057,
+    "original_characters": 15600,
+    "included_blocks": 2,
+    "original_blocks": 2
+  },
+  "post_question_truncation": {
+    "included_characters": 871,
+    "original_characters": 15600,
+    "included_blocks": 2,
+    "original_blocks": 2
+  },
+  "order_state": "succeeded",
+  "article_context_count_after_remove": 0,
+  "console_warning_or_error_count": 0,
+  "screenshots": [
+    {
+      "name": "01-reader-ask-action.png",
+      "bytes": 212123,
+      "sha256": "4405960f0598b90ed83780a0c0f494bfed42ca3d70cc80abf88f5fd56749cc38"
+    },
+    {
+      "name": "02-grounded-truncation.png",
+      "bytes": 84297,
+      "sha256": "3d0cd23f29c495d05982d9562df5556625507664310b65eec9b4d382f81a6022"
+    },
+    {
+      "name": "03-grounded-response.png",
+      "bytes": 83063,
+      "sha256": "b1d38a5b5fb25eb140b83a98b36bbae306b4b5efb7920416395aed7a47bb1d06"
+    },
+    {
+      "name": "04-context-removed.png",
+      "bytes": 74852,
+      "sha256": "5dfe3a7a83a8a56bfc118c4056c47229bdb264639b56ff3527f8a46d4e8c25e5"
+    }
+  ]
+}

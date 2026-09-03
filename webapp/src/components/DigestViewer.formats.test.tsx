@@ -43,6 +43,10 @@ describe("DigestViewer formats", () => {
     expect(search).not.toContain("UNIQUE_TITLE_25");
     expect(search).not.toContain("UNIQUE_URL_25");
     expect(search).not.toContain("article body");
+    const historyState = screen.getByLabelText("Private AI handoff history state").textContent ?? "";
+    expect(historyState).not.toContain("UNIQUE_TITLE_25");
+    expect(historyState).not.toContain("UNIQUE_URL_25");
+    expect(historyState).not.toContain("article body");
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
     const id = new URLSearchParams(search).get("grounding")!;

@@ -50,6 +50,7 @@ Baseline: Issue #24 commit `ef817bc`
 | Remove action | Card count 1 -> 0 |
 | Provider storage failure | Bucket/draft preserved; switching released |
 | Full backend run | 521 passed, 3 skipped; 8 Windows platform/unrelated failures |
+| Repeatable browser package | PASS; four screenshots, empty console, route and sanitized Consumer ledger committed |
 
 ## Non-blocking environment notes
 
@@ -67,9 +68,8 @@ platform gate for those exclusions.
 - Added expired handoff plus failed/empty reader extraction coverage.
 - Re-ran focused Webapp (32/32), full Webapp (63/63), TypeScript, production
   build, focused Python (63/63), Ruff, and the complete Windows backend suite.
-- Historical browser observations remain documented, but their screenshot
-  files are not present in this branch. A fresh browser evidence package
-  requires the isolated Consumer/reader/provider fixture on port 8791.
+- Closed the browser-evidence gap with an isolated Consumer harness and a
+  committed, repeatable evidence package under `docs/evidence/issue-25/`.
 
 ## Release/merge note
 

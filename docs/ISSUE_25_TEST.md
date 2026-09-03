@@ -83,10 +83,11 @@ the repository's Ubuntu CI for supported-platform closure.
 
 Environment:
 
-- isolated Vite server on `127.0.0.1:42525`;
-- isolated temporary Consumer node on `127.0.0.1:8791`;
-- deterministic reader cache and fixture LLM Provider;
-- in-app Chromium browser.
+- isolated Vite server on `127.0.0.1:42527`;
+- acceptance Consumer harness on `127.0.0.1:18795`;
+- temporary state directory outside the repository;
+- deterministic Reader cache and fixture Provider behind the Consumer API;
+- Chrome browser; no Docker or external network dependency.
 
 Observed:
 
@@ -94,19 +95,14 @@ Observed:
 2. click opened a new encrypted Private AI conversation;
 3. final URL contained only `peer`, `service`, and `network`—no handoff, title,
    source host, or unique article marker;
-4. normal fixture: `Full article context fits: 207 characters`;
-5. long multilingual fixture: `1021 of 13907 characters (1/2 blocks)` before
-   send;
-6. grounded order completed through the local fixture node;
-7. Remove changed the visible article-card count from one to zero;
-8. returning to the compact recently-opened item produced no new console error.
+4. long multilingual fixture showed `1057 of 15600 characters (2/2 blocks)`
+   before typing and `871 of 15600` after the question consumed budget;
+5. grounded order completed through the local fixture node;
+6. Remove changed the visible article-card count from one to zero;
+7. browser warning/error capture remained empty;
+8. the sanitized Consumer ledger contained the article marker only in the
+   `POST /api/local/llm/orders/async` body, never in a request target.
 
-Screenshots were captured in the acceptance session at the reader action,
-full-context card, and long-context truncation card.
-
-The 2026-09-03 independent audit found that those historical screenshots were
-not committed to this branch. A browser re-run reached the Webapp but could not
-recreate the reader flow because the isolated Consumer expected at
-`127.0.0.1:8791` was not running. This does not replace the recorded historical
-browser observations; it is an explicit evidence-artifact gap for reviewers who
-require a reproducible fresh browser package.
+Four screenshots, console capture, final URL/session metadata, request-boundary
+evidence, hashes, and exact reproduction commands are committed in
+`docs/evidence/issue-25/`.

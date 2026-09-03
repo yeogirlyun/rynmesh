@@ -75,3 +75,11 @@ added to later prompts.
 | Context too small | Send disabled; choose larger Provider/remove context |
 | Provider storage switch fails | Current bucket/history/draft remain; switch releases |
 | Order fails | Draft is restored and failure remains visible |
+
+## Acceptance evidence
+
+The repeatable local browser package is committed under
+`docs/evidence/issue-25/`. It exercises a cached multilingual Reader article,
+the one-click handoff, visible truncation, local-Consumer submission, and
+removal without Docker or external services. The companion automated tests
+cover history-state and storage leakage plus AES-GCM persistence.

@@ -42,7 +42,12 @@ type ProfilePatch = Partial<Pick<RecommendationProfile, "direction" | "topics" |
 
 function PrivateAIHandoffProbe() {
   const location = useLocation();
-  return <output aria-label="Private AI handoff location">{location.search}</output>;
+  return (
+    <>
+      <output aria-label="Private AI handoff location">{location.search}</output>
+      <output aria-label="Private AI handoff history state">{JSON.stringify(location.state)}</output>
+    </>
+  );
 }
 
 export function createDigestScenario(options: DigestScenarioOptions = {}) {
