@@ -55,10 +55,16 @@ def _parse_vm_stat(text: str, page_size_default: int = 4096) -> int:
     pages = 0
     for line in text.splitlines():
         for label in wanted:
-            if line.startswith(label):
-                value = line.split(":", 1)[1].strip().rstrip(".")
-                pages += int(value)
+            if not line.startswith(label):
+                continue
+            parts = line.split(":", 1)
+            if len(parts) != 2:
                 break
+            try:
+                pages += int(parts[1].strip().rstrip("."))
+            except ValueError:
+                pass
+            break
     return pages * page_size // 2**20
 
 
@@ -78,7 +84,7 @@ def _memory() -> tuple[int, int]:
     if platform.system() == "Darwin":
         try:
             return _darwin_memory()
-        except (OSError, subprocess.SubprocessError, ValueError):
+        except (OSError, subprocess.SubprocessError, ValueError, LookupError):
             return 0, 0
     if os.name == "nt":
         import ctypes

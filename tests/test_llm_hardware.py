@@ -69,6 +69,32 @@ def test_darwin_memory_branch_falls_back_to_zero_on_failure(monkeypatch):
     assert llm_hardware._memory() == (0, 0)
 
 
+def test_parse_vm_stat_tolerates_malformed_lines_without_raising():
+    # A label line missing its colon, and a label line with a non-numeric
+    # page count, must both be skipped rather than raising IndexError/ValueError.
+    text = "Pages free\nPages inactive:   10.\nPages speculative:   not-a-number.\n"
+    # Only "Pages inactive: 10" is parseable; default page size is 4096.
+    assert llm_hardware._parse_vm_stat(text) == (10 * 4096) // 2**20
+
+
+def test_darwin_memory_branch_returns_zero_pair_on_garbage_vm_stat_output(monkeypatch):
+    monkeypatch.setattr(llm_hardware.platform, "system", lambda: "Darwin")
+
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["sysctl", "-n"]:
+            return subprocess.CompletedProcess(command, 0, stdout=str(16 * 2**30) + "\n", stderr="")
+        if command == ["vm_stat"]:
+            return subprocess.CompletedProcess(command, 0, stdout="not vm_stat output at all\n\xff\xfe", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(llm_hardware.subprocess, "run", fake_run)
+    total_mb, available_mb = llm_hardware._memory()
+    # _parse_vm_stat must not raise on garbage input; with no parseable page
+    # lines, available memory comes back as 0 while total is still read.
+    assert total_mb == 16 * 1024
+    assert available_mb == 0
+
+
 def test_docker_warning_names_native_runtime_and_local_api(monkeypatch, tmp_path):
     monkeypatch.setattr(llm_hardware.shutil, "which", lambda _name: None)
     report = llm_hardware.detect_hardware(tmp_path)
