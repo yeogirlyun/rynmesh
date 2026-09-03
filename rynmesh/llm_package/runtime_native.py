@@ -5,26 +5,23 @@ Mirrors the backend surface of `runtime_docker.py` (`RUNTIME_ID`, `available`,
 `lifecycle._backend` can dispatch on `manifest.runtime`. This is the default
 managed runtime on consumer desktops, which cannot run Docker (issue #34).
 
-Privacy rule for everything in this module: no filesystem path, prompt, or
-model output may appear in a raised message, in `state()`, or in anything the
-node itself writes to a log.
+This module resolves and runs the server; `runtime_native_install` obtains it.
+
+Privacy rule for everything here: no filesystem path, prompt, or model output
+may appear in a raised message, in `state()`, or in anything the node itself
+writes to a log.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import platform
 import shutil
 import signal
 import socket
 import subprocess
 import sys
-import tarfile
 import time
-import urllib.request
-import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
@@ -32,29 +29,22 @@ from urllib.parse import urlparse
 from .adapters import AdapterError, adapter_from_manifest
 from .errors import LifecycleError
 from .manifest import LLMPackageManifest, fingerprint_file
+from .runtime_native_install import (
+    MARKER_NAME,
+    RUNTIME_RELEASE,
+    UNAVAILABLE_REASON,
+    UNWRITABLE_STATE,
+    asset,
+    download,
+    find_server,
+    managed_root,
+    report,
+    server_filename,
+    usable_server,
+)
 
 RUNTIME_ID = "native_llama_cpp"
 
-RUNTIME_RELEASE = "b10774"  # ggml-org/llama.cpp, 2026-09-03
-RUNTIME_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{RUNTIME_RELEASE}/"
-# (platform.system(), normalized machine) -> (asset, sha256, size_bytes)
-RUNTIME_ASSETS: dict[tuple[str, str], tuple[str, str, int]] = {
-    ("Darwin", "arm64"): ("llama-b10774-bin-macos-arm64.tar.gz",
-        "aeb59ccd60191bdf96ddb57f352286430d9e0b6dc29281460e1bd217556c3c78", 11088473),
-    ("Darwin", "x86_64"): ("llama-b10774-bin-macos-x64.tar.gz",
-        "9acda4c44584970622ecc06086b5b8cd3e06b6dc0d039f8c95a63f1186f80e5e", 11146110),
-    ("Linux", "x86_64"): ("llama-b10774-bin-ubuntu-x64.tar.gz",
-        "68caa9c0e6dcdf32283fc4d8a0008fe389cb191bb79f5fa34c255beec388046d", 16718077),
-    ("Linux", "arm64"): ("llama-b10774-bin-ubuntu-arm64.tar.gz",
-        "eeb67bd32e163d09687e7a7a8bc25119bb2cbc637d5ec2b45c493c7df1675452", 13363523),
-    ("Windows", "x86_64"): ("llama-b10774-bin-win-cpu-x64.zip",
-        "04f25dd148fda9d66efd91e96c637126220273fec62cdf5007367722c11bc744", 18380733),
-    ("Windows", "arm64"): ("llama-b10774-bin-win-cpu-arm64.zip",
-        "a26b288a4a9b1d9163a171e6b834b4f2956f72fcb51d8b75560565939b4a755f", 11949368),
-}
-
-MARKER_NAME = "runtime.json"
-MAX_EXTRACTED_BYTES = 200 * 2**20
 STARTUP_GRACE_SECONDS = 2.0
 STOP_GRACE_SECONDS = 10.0
 
@@ -64,7 +54,7 @@ _CHILDREN: dict[int, subprocess.Popen] = {}
 
 
 # --------------------------------------------------------------------------
-# Platform + binary resolution
+# Binary resolution
 # --------------------------------------------------------------------------
 
 def _default_root() -> Path:
@@ -72,44 +62,6 @@ def _default_root() -> Path:
     from .lifecycle import default_root
 
     return default_root()
-
-
-def _machine() -> str:
-    machine = platform.machine().strip().lower()
-    if machine in {"aarch64", "arm64"}:
-        return "arm64"
-    if machine in {"amd64", "x86_64"}:
-        return "x86_64"
-    return machine
-
-
-def _asset() -> tuple[str, str, int] | None:
-    return RUNTIME_ASSETS.get((platform.system(), _machine()))
-
-
-def server_filename() -> str:
-    return "llama-server.exe" if platform.system() == "Windows" else "llama-server"
-
-
-def _regular_file(path: Path) -> Path | None:
-    try:
-        return path if path.is_file() else None
-    except OSError:
-        return None
-
-
-def _in_directory(directory: Path) -> Path | None:
-    """Find the server in `directory`, allowing the release `build/bin` layout."""
-    name = server_filename()
-    for candidate in (directory / name, directory / "build" / "bin" / name):
-        found = _regular_file(candidate)
-        if found is not None:
-            return found
-    return None
-
-
-def _managed_root(root: Path | str) -> Path:
-    return Path(root).expanduser() / "runtime" / f"llama-{RUNTIME_RELEASE}"
 
 
 def _marker_server(base: Path) -> Path | None:
@@ -124,141 +76,38 @@ def _marker_server(base: Path) -> Path | None:
     parts = PurePosixPath(relative)
     if parts.is_absolute() or ".." in parts.parts:
         return None
-    return _regular_file(base / parts)
+    return usable_server(base / parts)
 
 
 def resolve_server(root: Path | str | None = None) -> Path | None:
     """First usable `llama-server`, in the documented preference order."""
     explicit = os.environ.get("RYNMESH_LLAMA_SERVER", "").strip()
     if explicit:
-        found = _regular_file(Path(explicit).expanduser())
+        found = usable_server(Path(explicit).expanduser())
         if found is not None:
             return found
     bundled = os.environ.get("RYNMESH_LLAMA_DIR", "").strip()
     if bundled:
-        found = _in_directory(Path(bundled).expanduser())
+        found = find_server(Path(bundled).expanduser())
         if found is not None:
             return found
     if getattr(sys, "frozen", False):
-        found = _in_directory(Path(sys.executable).parent / "llama")
+        found = find_server(Path(sys.executable).parent / "llama")
         if found is not None:
             return found
-    base = _managed_root(root if root is not None else _default_root())
-    found = _marker_server(base) or _in_directory(base)
+    base = managed_root(root if root is not None else _default_root())
+    found = _marker_server(base) or find_server(base)
     if found is not None:
         return found
     on_path = shutil.which(server_filename())
-    return Path(on_path) if on_path else None
+    return usable_server(Path(on_path)) if on_path else None
 
 
-def available() -> tuple[bool, str]:
+def available(root: Path | str | None = None) -> tuple[bool, str]:
     """(True, "") when a server is resolvable or downloadable; else a safe reason."""
-    if resolve_server() is not None or _asset() is not None:
+    if resolve_server(root) is not None or asset() is not None:
         return True, ""
-    return False, (
-        "no bundled inference runtime is available for this platform; "
-        "connect an existing local API or install Docker instead"
-    )
-
-
-# --------------------------------------------------------------------------
-# Managed runtime download
-# --------------------------------------------------------------------------
-
-def _report(progress: Any, cancel_check: Any, percent: int, message: str) -> None:
-    if cancel_check and cancel_check():
-        raise LifecycleError("setup cancelled")
-    if progress:
-        progress("pull_runtime", percent, message)
-
-
-def _fetch(url: str, destination: Path, expected_sha256: str, size_bytes: int, *,
-           progress: Any = None, cancel_check: Any = None) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise LifecycleError("runtime downloads require an HTTPS URL")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".part")
-    digest = hashlib.sha256()
-    downloaded = 0
-    try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh/0.6"})
-        with urllib.request.urlopen(request, timeout=300) as response, temporary.open("wb") as handle:
-            while chunk := response.read(1024 * 1024):
-                if cancel_check and cancel_check():
-                    raise LifecycleError("setup cancelled")
-                downloaded += len(chunk)
-                if downloaded > size_bytes:
-                    raise LifecycleError("runtime archive is larger than its pinned size")
-                digest.update(chunk)
-                handle.write(chunk)
-                percent = min(80, 65 + int(downloaded / size_bytes * 15))
-                _report(progress, None, percent, "Downloading the local inference runtime")
-    except LifecycleError:
-        temporary.unlink(missing_ok=True)
-        raise
-    except OSError as exc:
-        temporary.unlink(missing_ok=True)
-        raise LifecycleError("downloading the local inference runtime failed") from exc
-    if digest.hexdigest() != expected_sha256.lower():
-        temporary.unlink(missing_ok=True)
-        raise LifecycleError("runtime archive checksum mismatch")
-    temporary.replace(destination)
-
-
-def _check_member(name: str) -> None:
-    if not name or name.startswith(("/", "\\")) or "\\" in name or (len(name) > 1 and name[1] == ":"):
-        raise LifecycleError("runtime archive contains an unsafe member path")
-    if ".." in PurePosixPath(name).parts:
-        raise LifecycleError("runtime archive contains an unsafe member path")
-
-
-def _check_total(total: int) -> int:
-    if total > MAX_EXTRACTED_BYTES:
-        raise LifecycleError("runtime archive expands past the extraction size limit")
-    return total
-
-
-def _extract_tar(archive: Path, target: Path) -> None:
-    with tarfile.open(archive, "r:gz") as bundle:
-        members = bundle.getmembers()
-        total = 0
-        for member in members:
-            _check_member(member.name)
-            if not (member.isfile() or member.isdir()):
-                raise LifecycleError("runtime archive contains an unsafe member type")
-            total = _check_total(total + max(0, int(member.size)))
-        bundle.extractall(target, members=members, filter="data")
-
-
-def _extract_zip(archive: Path, target: Path) -> None:
-    with zipfile.ZipFile(archive) as bundle:
-        entries = bundle.infolist()
-        total = 0
-        for entry in entries:
-            _check_member(entry.filename)
-            if (entry.external_attr >> 16) & 0o170000 == 0o120000:
-                raise LifecycleError("runtime archive contains an unsafe member type")
-            total = _check_total(total + max(0, int(entry.file_size)))
-        bundle.extractall(target, members=[entry.filename for entry in entries])
-
-
-def _extract(archive: Path, target: Path) -> None:
-    target.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        os.chmod(target, 0o700)
-    if archive.name.endswith(".zip"):
-        _extract_zip(archive, target)
-    else:
-        _extract_tar(archive, target)
-
-
-def _write_marker(target: Path, server: Path, expected_sha256: str) -> None:
-    payload = {"release": RUNTIME_RELEASE, "server": server.relative_to(target).as_posix(),
-               "sha256": expected_sha256.lower()}
-    temporary = target / (MARKER_NAME + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, target / MARKER_NAME)
+    return False, UNAVAILABLE_REASON
 
 
 def prepare(*, progress: Any = None, cancel_check: Any = None,
@@ -266,28 +115,9 @@ def prepare(*, progress: Any = None, cancel_check: Any = None,
     """Make a `llama-server` available, downloading the pinned release if needed."""
     base = Path(root).expanduser() if root is not None else _default_root()
     if resolve_server(base) is not None:
-        _report(progress, cancel_check, 72, "Local inference runtime already present")
+        report(progress, cancel_check, 72, "Local inference runtime already present")
         return
-    asset = _asset()
-    if asset is None:
-        raise LifecycleError(available()[1])
-    name, expected_sha256, size_bytes = asset
-    _report(progress, cancel_check, 65, "Downloading the local inference runtime")
-    archive = base / "runtime" / name
-    _fetch(RUNTIME_BASE_URL + name, archive, expected_sha256, size_bytes,
-           progress=progress, cancel_check=cancel_check)
-    target = _managed_root(base)
-    try:
-        _extract(archive, target)
-    finally:
-        archive.unlink(missing_ok=True)
-    server = _in_directory(target)
-    if server is None:
-        raise LifecycleError("the runtime archive did not contain an inference server")
-    if os.name != "nt":
-        server.chmod(0o755)
-    _write_marker(target, server, expected_sha256)
-    _report(progress, cancel_check, 80, "Local inference runtime installed")
+    download(base, progress=progress, cancel_check=cancel_check)
 
 
 # --------------------------------------------------------------------------
@@ -298,12 +128,20 @@ def _runtime_root(manifest: LLMPackageManifest) -> Path:
     return Path(manifest.runtime_dir).expanduser() if manifest.runtime_dir else _default_root()
 
 
+def _runtime_dir(root: Path) -> Path:
+    """The private per-node runtime directory (pidfiles and server logs)."""
+    directory = root / "runtime"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            os.chmod(directory, 0o700)
+    except OSError as exc:
+        raise LifecycleError(UNWRITABLE_STATE) from exc
+    return directory
+
+
 def _pid_path(root: Path, package_id: str) -> Path:
     return root / "runtime" / f"{package_id}.pid"
-
-
-def _log_path(root: Path, package_id: str) -> Path:
-    return root / "runtime" / f"{package_id}.log"
 
 
 def _read_pid(path: Path) -> int | None:
@@ -313,11 +151,16 @@ def _read_pid(path: Path) -> int | None:
         return None
 
 
-def _write_pid(path: Path, pid: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(str(pid))
+def _write_pid(root: Path, package_id: str, pid: int) -> None:
+    path = _runtime_dir(root) / f"{package_id}.pid"
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(str(pid))
+        if os.name != "nt":
+            os.chmod(path, 0o600)
+    except OSError as exc:
+        raise LifecycleError(UNWRITABLE_STATE) from exc
 
 
 def _alive(pid: int | None) -> bool:
@@ -363,17 +206,25 @@ def _endpoint_serves_alias(manifest: LLMPackageManifest) -> bool:
     return bool(health.get("ok")) and str(health.get("model") or "") == expected
 
 
-def _spawn(server: Path, command: list[str], log: Path, port: int) -> subprocess.Popen:
-    log.parent.mkdir(parents=True, exist_ok=True)
+def _spawn(server: Path, command: list[str], root: Path, package_id: str,
+           port: int) -> subprocess.Popen:
     detach: dict[str, Any] = {"start_new_session": True}
     if os.name == "nt":
         detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    # Truncate mode: the log starts empty on every start, so it stays bounded.
-    with log.open("wb") as handle:
-        process = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT,
-            cwd=str(server.parent), **detach,
-        )
+    log = _runtime_dir(root) / f"{package_id}.log"
+    try:
+        # Truncated on every start (so it stays bounded) and owner-only, since
+        # a runtime log is node-private operational data.
+        descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            if os.name != "nt":
+                os.chmod(log, 0o600)
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT,
+                cwd=str(server.parent), **detach,
+            )
+    except OSError as exc:
+        raise LifecycleError("unable to start llama-server (see the runtime log)") from exc
     deadline = time.monotonic() + STARTUP_GRACE_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
@@ -400,16 +251,16 @@ def start(manifest: LLMPackageManifest) -> None:
     if _endpoint_serves_alias(manifest):
         if _alive(_read_pid(pid_path)):
             return  # Already running under this pidfile; never spawn a second server.
-        _write_pid(pid_path, 0)  # Adopted: an owner-managed server holds the port.
+        _write_pid(root, manifest.package_id, 0)  # Adopted: owner-managed server.
         return
     command = [
         str(server), "-m", str(model), "--host", "127.0.0.1", "--port", str(port),
         "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),
         "-np", str(manifest.max_concurrent), "--no-webui",
     ]
-    process = _spawn(server, command, _log_path(root, manifest.package_id), port)
+    process = _spawn(server, command, root, manifest.package_id, port)
     _CHILDREN[process.pid] = process
-    _write_pid(pid_path, process.pid)
+    _write_pid(root, manifest.package_id, process.pid)
     manifest.runtime_command = command
 
 
@@ -424,7 +275,17 @@ def _terminate(pid: int, *, force: bool) -> None:
         pass
 
 
+def _forget(pid_path: Path, pid: int | None) -> None:
+    try:
+        pid_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if pid:
+        _CHILDREN.pop(pid, None)
+
+
 def stop(manifest: LLMPackageManifest) -> bool:
+    """True only when this node had a live server and it is now gone."""
     root = _runtime_root(manifest)
     pid_path = _pid_path(root, manifest.package_id)
     pid = _read_pid(pid_path)
@@ -433,9 +294,8 @@ def stop(manifest: LLMPackageManifest) -> bool:
     if pid is None:
         return False  # No pidfile: this node never started a server for the package.
     if not _alive(pid):
-        pid_path.unlink(missing_ok=True)
-        _CHILDREN.pop(pid, None)
-        return True
+        _forget(pid_path, pid)  # Stale pidfile: nothing of ours was running.
+        return False
     _terminate(pid, force=False)
     deadline = time.monotonic() + STOP_GRACE_SECONDS
     while time.monotonic() < deadline and _alive(pid):
@@ -447,8 +307,7 @@ def stop(manifest: LLMPackageManifest) -> bool:
             time.sleep(0.1)
     stopped = not _alive(pid)
     if stopped:
-        pid_path.unlink(missing_ok=True)
-        _CHILDREN.pop(pid, None)
+        _forget(pid_path, pid)
     return stopped
 
 

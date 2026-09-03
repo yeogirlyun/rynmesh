@@ -45,15 +45,17 @@ def _backend(manifest: LLMPackageManifest):
     raise LifecycleError(f"unsupported runtime: {manifest.runtime}")
 
 
-def select_runtime(preference: str = "auto"):
+def select_runtime(preference: str = "auto", *, root: str | Path | None = None):
     """Pick a runtime backend module for a package that does not exist yet.
 
     "auto" prefers the native child-process runtime (no Docker on consumer
     desktops) and falls back to Docker for server nodes that have the engine.
+    `root` is the install root the caller will use, so a runtime already
+    downloaded under a custom root counts as available.
     """
     choice = str(preference or "auto").strip().lower()
     if choice in {"native", RUNTIME_NATIVE}:
-        ok, reason = runtime_native.available()
+        ok, reason = runtime_native.available(root)
         if not ok:
             raise LifecycleError(reason)
         return runtime_native
@@ -64,7 +66,7 @@ def select_runtime(preference: str = "auto"):
         return runtime_docker
     if choice != "auto":
         raise LifecycleError("runtime preference must be auto, native, or docker")
-    native_ok, native_reason = runtime_native.available()
+    native_ok, native_reason = runtime_native.available(root)
     if native_ok:
         return runtime_native
     docker_ok, docker_reason = runtime_docker.available()
@@ -220,7 +222,7 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     if not choices[0].get("can_run") and not accept_risk:
         raise LifecycleError(str(choices[0].get("reason")))
     _progress(progress, cancel_check, "runtime_check", 10, "Checking the local inference runtime")
-    backend = select_runtime(runtime)
+    backend = select_runtime(runtime, root=base)
     _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
     digest = expected_sha256.lower()
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -275,7 +277,7 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
     _progress(progress, cancel_check, "runtime_check", 25, "Checking the local inference runtime")
-    backend = select_runtime(runtime)
+    backend = select_runtime(runtime, root=base)
     _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
     manifest = LLMPackageManifest(
