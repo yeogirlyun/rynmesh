@@ -286,6 +286,64 @@ def test_two_threads_receiving_one_header_write_one_history_line(tmp_path):
     )] == [None, True]
 
 
+def test_a_conversation_lock_is_never_evicted_out_from_under_a_caller(tmp_path):
+    """`lock.locked()` is not the same question as "is anybody using this?".
+
+    A caller handed the lock but not yet inside `with` reads as unlocked, so an
+    eviction keyed on `locked()` can drop the entry under it and hand the next
+    caller a different lock for the same conversation. The entry is refcounted
+    on hand-out instead, and only a zero-count entry may be evicted.
+    """
+
+    import threading
+
+    from rynmesh.services.peer_messenger import MAX_CONVERSATION_LOCKS
+
+    peers = _peers(tmp_path)
+    b, _ = _messenger(tmp_path, "B", peers)
+
+    handed_out = threading.Barrier(2)
+    pressured = threading.Barrier(2)
+    seen: list[threading.Lock] = []
+    errors: list[BaseException] = []
+
+    def claim() -> None:
+        lock = b._claim_conversation("peerA")
+        seen.append(lock)
+        try:
+            # Both threads hold a *slot* but neither has acquired the lock yet:
+            # this is exactly the window `locked()` reads as idle. Nobody
+            # releases until the second barrier, so this observation is stable.
+            handed_out.wait(timeout=5)
+            entry = b._conversation_locks["peerA"]
+            assert entry[1] == 2, "both users must be counted"
+            assert entry[0].locked() is False, "and neither has acquired it yet"
+            # Pressure the map hard enough to force eviction while they wait.
+            for index in range(MAX_CONVERSATION_LOCKS + 5):
+                b._claim_conversation(f"filler-{index}")
+                b._release_conversation(f"filler-{index}")
+            pressured.wait(timeout=5)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+            pressured.abort()
+        finally:
+            b._release_conversation("peerA")
+
+    threads = [threading.Thread(target=claim) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(seen) == 2
+    assert seen[0] is seen[1], "the in-use conversation was evicted mid-flight"
+    assert b._conversation_locks["peerA"][1] == 0
+    # The filler traffic really did press against the bound, and the idle
+    # entries it left behind are the ones that got evicted.
+    assert len(b._conversation_locks) <= MAX_CONVERSATION_LOCKS + 1
+
+
 def test_a_sender_cannot_suppress_its_message_by_reusing_our_outbound_id(tmp_path):
     """Only inbound records dedupe; an id we used for an outbound send does not."""
 

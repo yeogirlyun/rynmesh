@@ -375,13 +375,16 @@ def test_the_attempt_counter_survives_a_restart(tmp_path) -> None:
     )["attempts"]
 
 
-def test_a_message_that_will_not_decrypt_is_kept_not_acked(tmp_path, caplog) -> None:
-    """A rotated messaging key must not destroy mail still sitting in the box.
+def test_a_message_that_will_not_decrypt_is_retried_then_given_up_on(
+    tmp_path, caplog
+) -> None:
+    """A rotated messaging key must not destroy mail on the first look.
 
     An envelope that verifies but will not open is a different failure from a
     bad envelope: the shell is fine and it really is addressed to us, so acking
-    it would delete mail that the right key could still read. It is counted and
-    left to expire.
+    it straight away would delete mail the right key could still read. It gets
+    the same retry budget a failing handler gets — and then, so it cannot sit at
+    the head of the box forever, it is acked and dropped.
     """
 
     import logging
@@ -397,25 +400,79 @@ def test_a_message_that_will_not_decrypt_is_kept_not_acked(tmp_path, caplog) -> 
         bob.peer_id, KIND, {"secret": "SECRET_BODY_MARKER"},
         to_messaging_pub=stranger.messaging_pub,
     )
-    receiver = bob.client()
+    receiver = bob.client(max_attempts=3)
     handler = _Recorder()
     receiver.register_handler(KIND, handler)
 
     with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_client"):
-        assert receiver.poll_once() == 0
-        assert receiver.poll_once() == 0
+        for poll in range(3):
+            assert receiver.poll_once() == 0
+            if poll < 2:
+                assert len(_pending_files(registry)) == 1, "not acked while retries remain"
 
     assert handler.calls == []
     status = receiver.status()
-    assert status["undecryptable"] == 2
-    assert status["dropped_total"] == 0
-    assert len(_pending_files(registry)) == 1, "an unopenable message is never acked"
+    # Every look counts, so a key rotation stays visible in the status.
+    assert status["undecryptable"] == 3
+    assert status["dropped_total"] == 1
+    assert status["handled_total"] == 0
+
+    # The give-up ack rides the next poll, and the box is empty afterwards.
+    assert receiver.poll_once() == 0
+    assert _pending_files(registry) == []
+    assert receiver.status()["undecryptable"] == 3
 
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert "SECRET_BODY_MARKER" not in text
     assert "MailboxError" in text
     # One line per poll, not one per message.
-    assert len([1 for record in caplog.records if "could not be opened" in record.getMessage()]) == 2
+    assert len([1 for record in caplog.records if "could not be opened" in record.getMessage()]) == 3
+
+
+def test_undecryptable_mail_at_the_head_of_a_box_does_not_hide_newer_mail(tmp_path) -> None:
+    """A poll serves the oldest 50 and has no cursor.
+
+    So a wall of never-acked messages at the head of a box would hide every
+    newer message behind it for a full TTL. The retry budget is what keeps the
+    queue moving.
+    """
+
+    from rynmesh.mailbox import MAX_POLL_LIMIT
+    from rynmesh.mailbox_store import FileMailboxStore
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    # A wall this size is many senders' worth in a real mesh (the per-sender
+    # quota is 16); one sender is simply the cheapest way to build it.
+    registry._mailbox = FileMailboxStore(registry.root, max_pending_per_sender=10_000)
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    stranger = _Node(tmp_path, "stranger", registry)
+
+    sender = alice.client()
+    # A full poll batch of mail Bob cannot open, all older than the good one.
+    for index in range(MAX_POLL_LIMIT):
+        sender.deposit(
+            bob.peer_id, KIND, {"n": index}, to_messaging_pub=stranger.messaging_pub
+        )
+    sender.deposit(bob.peer_id, KIND, {"readable": True}, to_messaging_pub=bob.messaging_pub)
+    assert len(_pending_files(registry)) == MAX_POLL_LIMIT + 1
+
+    receiver = bob.client(max_attempts=3)
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    delivered_on = None
+    for poll in range(1, 5):
+        if receiver.poll_once():
+            delivered_on = poll
+            break
+    assert delivered_on is not None, "the readable message never got through"
+    assert delivered_on <= 4
+    assert [body for _envelope, body in handler.calls] == [{"readable": True}]
+    status = receiver.status()
+    assert status["handled_total"] == 1
+    assert status["dropped_total"] == MAX_POLL_LIMIT
+    assert status["undecryptable"] == 3 * MAX_POLL_LIMIT
 
 
 # ------------------------------------------------------- 4. unknown / expired

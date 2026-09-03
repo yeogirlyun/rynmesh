@@ -7,6 +7,8 @@ import json
 import threading
 import uuid
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Callable
 
 from rynmesh.services import peer_box
@@ -74,30 +76,55 @@ class PeerMessenger:
         # two can pass the same `msg_id` through the dedupe check together and
         # both append, doubling the history line. One lock per conversation
         # keeps unrelated peers from serializing behind each other.
-        self._conversation_locks: OrderedDict[str, threading.Lock] = OrderedDict()
+        #
+        # Each entry carries a user count, not just a lock. `lock.locked()` is
+        # not enough to decide an entry is idle: a caller that has been handed
+        # the lock but has not acquired it yet reads as unlocked, and evicting
+        # under it would hand the next caller a *different* lock for the same
+        # conversation — exactly the race the lock exists to prevent.
+        self._conversation_locks: OrderedDict[str, list[Any]] = OrderedDict()
         self._locks_guard = threading.Lock()
 
-    def _conversation_lock(self, peer_id: str) -> threading.Lock:
+    @contextmanager
+    def _conversation(self, peer_id: str) -> Iterator[None]:
+        """Hold one conversation's lock, keeping its entry alive until released."""
+
+        lock = self._claim_conversation(peer_id)
+        try:
+            with lock:
+                yield
+        finally:
+            self._release_conversation(peer_id)
+
+    def _claim_conversation(self, peer_id: str) -> threading.Lock:
         with self._locks_guard:
-            lock = self._conversation_locks.get(peer_id)
-            if lock is None:
+            entry = self._conversation_locks.get(peer_id)
+            if entry is None:
                 self._evict_idle_locks()
-                lock = threading.Lock()
-                self._conversation_locks[peer_id] = lock
+                entry = [threading.Lock(), 0]
+                self._conversation_locks[peer_id] = entry
+            entry[1] += 1
             self._conversation_locks.move_to_end(peer_id)
-            return lock
+            return entry[0]
+
+    def _release_conversation(self, peer_id: str) -> None:
+        with self._locks_guard:
+            entry = self._conversation_locks.get(peer_id)
+            if entry is not None:
+                entry[1] = max(0, entry[1] - 1)
 
     def _evict_idle_locks(self) -> None:
-        """Trim the map, oldest first, but never drop a lock somebody holds.
+        """Trim the map, oldest first, but never drop an entry still in use.
 
-        Evicting a held lock would hand the next caller a *different* lock for
-        the same conversation, which is exactly the race the lock prevents. If
-        every entry is busy the map is allowed over its bound instead.
+        An entry with no users is safe to drop: the next caller for that peer
+        simply builds a fresh lock, and there is nobody to be out of step with.
+        If every entry is in use the map is allowed over its bound instead —
+        correctness beats the bound, and `receive` holds a lock for one append.
         """
 
         while len(self._conversation_locks) >= MAX_CONVERSATION_LOCKS:
             victim = next(
-                (key for key, lock in self._conversation_locks.items() if not lock.locked()),
+                (key for key, entry in self._conversation_locks.items() if entry[1] == 0),
                 None,
             )
             if victim is None:
@@ -191,7 +218,7 @@ class PeerMessenger:
         # the same message can arrive on both at once. Decryption is already
         # done, and the lock is per conversation, so this serializes nothing but
         # concurrent writes to one peer's history.
-        with self._conversation_lock(sender):
+        with self._conversation(sender):
             seen = self._already_received(sender, str(inner.get("msg_id", "")))
             if seen is not None:
                 return {**seen, "duplicate": True}

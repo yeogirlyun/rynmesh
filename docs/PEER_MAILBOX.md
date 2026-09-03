@@ -132,16 +132,23 @@ while it fills.
 
 Per message, `poll_once` does: seen-cache replay → ack and drop; bad envelope
 (signature, recipient, expiry, size, charset) → ack and drop; **decrypt failed →
-count `undecryptable`, do not ack**; unknown kind → ack and drop; handler raised
-→ retry (no ack) up to three attempts, then ack and drop; handler returned →
-remember, ack, count as handled.
+count `undecryptable`, retry (no ack) up to three attempts, then ack and drop**;
+unknown kind → ack and drop; handler raised → retry (no ack) up to three
+attempts, then ack and drop; handler returned → remember, ack, count as handled.
 
-The decrypt-failure case is deliberately not a drop. It means the envelope is
-valid and really is addressed to this node but the seal will not open — a
-messaging key rotated while the message was in flight, most likely. Acking would
-delete mail the right key could still read, so the message is left to expire in
-the registry's box on its own. Those are counted, and one log line per poll
-records the count and the exception class, nothing more.
+The decrypt-failure case is deliberately not an immediate drop. It means the
+envelope is valid and really is addressed to this node but the seal will not
+open — a messaging key rotated while the message was in flight, most likely.
+Acking on the first look would delete mail the right key could still read, so it
+gets the same three-attempt budget a failing handler gets.
+
+It cannot be retried indefinitely, though. A poll serves the oldest 50 envelopes
+and has no cursor, so a wall of never-acked messages at the head of a box would
+hide every newer message behind it for the full TTL. The budget is what keeps
+the queue moving. Every look still counts under `undecryptable` — the counter is
+occurrences, not distinct messages — so a key rotation stays visible in
+`status()` either way, and one log line per poll records the count and the
+exception class, nothing more.
 
 The seen cache lives at `<home>/mailbox/seen.json` (0600 in a 0700 directory,
 bounded at 5000 ids, pruned by expiry). It holds two maps: `entries`
@@ -168,8 +175,10 @@ Loopback-only, like the rest of `/api/local`.
 }
 ```
 
-`undecryptable` counts envelopes that verified but would not open (see above);
-they are still in the registry's box and will expire there. `registry_dropped`
+`undecryptable` counts every *look* at an envelope that verified but would not
+open (see above), so one message failing its three attempts adds three. A number
+that keeps climbing is the signature of a messaging key that rotated under mail
+still in flight. `registry_dropped`
 is `HttpPeerRegistry.dropped_mailbox_messages` — envelopes the node's own
 registry client refused on the way in, because they failed verification or were
 addressed to somebody else. It is present only when the configured registry
@@ -274,6 +283,20 @@ envelope.** An envelope proves possession (a signature, an HMAC over a value the
 holder already knows); it never carries the credential itself. A body is
 end-to-end encrypted, but it is also stored on a third-party host for up to
 24 hours, and a leaked credential outlives that.
+
+## Upgrading: message history moved to the store home
+
+Message history and attachments used to live under `$RYNMESH_HOME/messages`.
+They now live under the *store's* home — `<store.home>/messages` — beside the
+`messaging.x25519` key that decrypts them and the `mailbox/seen.json` the poll
+worker keeps. The two are the same directory in every default install, and
+nothing needs doing there. **If your node runs with `$RYNMESH_HOME` pointing
+somewhere other than the store home, move the directory once, while the node is
+stopped:** `mv "$RYNMESH_HOME/messages" <store-home>/messages`. Skipping the
+move does not lose anything — the old files stay where they are — but the node
+starts from an empty history, and a message it had already received could be
+stored (and shown) a second time, because the dedupe check reads the history it
+can see. The node logs a warning at startup when the two homes disagree.
 
 ## Environment switches
 

@@ -991,7 +991,7 @@ def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tm
         def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
             raise RegistryError("registry_rejected", status=self.status, detail="poll_skew")
 
-    for status in (409, 429, 400):
+    for status in (400, 409, 413, 429):
         spy = _SpyRegistry()
         chain = FallbackRegistryChain([_RejectingRegistry(status), spy])
         with pytest.raises(RegistryError) as refused:
@@ -1012,6 +1012,42 @@ def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tm
     with pytest.raises(MailboxError, match="duplicate"):
         chain.deposit_mailbox(_seal(alice, bob, now=None))
     assert spy.deposits == 0
+
+
+def test_fallback_chain_moves_past_a_mirror_that_refuses_the_route(tmp_path) -> None:
+    """Not every 4xx is a verdict about the message.
+
+    A mirror without the network key — or without the mailbox routes at all —
+    answers 404, and 401/403/501 are the same kind of answer: something about
+    *that mirror*, not about this message. Aborting the chain on one would let a
+    single misconfigured mirror at the head of the list take mail down for
+    everybody, which is the failure the chain exists to prevent.
+    """
+
+    from rynmesh.registry_resilience import FallbackRegistryChain
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+
+    class _RefusingRegistry:
+        def __init__(self, status: int) -> None:
+            self.status = status
+
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise RegistryError("registry_refused", status=self.status, detail="")
+
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise RegistryError("registry_refused", status=self.status, detail="")
+
+    for status in (401, 403, 404, 501):
+        spy = _SpyRegistry()
+        chain = FallbackRegistryChain([_RefusingRegistry(status), spy])
+        signed = _seal(alice, bob, now=None)
+        assert chain.deposit_mailbox(signed)["message_id"] == signed.payload["message_id"]
+        assert chain.poll_mailbox(
+            build_poll_request(private_key_bytes=bob.private_key_bytes)
+        ) == []
+        assert (spy.deposits, spy.polls) == (1, 1), f"status {status} must fall through"
 
 
 def test_fallback_chain_still_moves_past_a_registry_that_did_not_answer(tmp_path) -> None:

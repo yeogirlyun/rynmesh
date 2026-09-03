@@ -15,10 +15,12 @@ Two things keep that safe:
   failing handler across polls *and across restarts* and gives up after
   ``max_attempts``, so one poisonous message cannot wedge the box forever.
 
-An envelope that verifies but will not *decrypt* is the one case that is
-neither handled nor dropped: the messaging key rotated while the message was in
-flight, and acking would destroy mail a restored key could still read. Those
-are counted (``undecryptable``) and left to expire in the registry's box.
+An envelope that verifies but will not *decrypt* — the messaging key rotated
+while the message was in flight — is retried on the same budget rather than
+acked on sight, since acking would destroy mail a restored key could still
+read. It cannot be retried indefinitely: a poll has no cursor, so a head of
+never-acked messages would hide everything newer behind it. Every look counts
+under ``undecryptable``, so a rotation stays visible in ``status()``.
 
 Nothing here logs a body, a ciphertext, or a key: log records carry the
 verified ``kind``, the 32-hex message id, and an exception *class* name only.
@@ -266,13 +268,30 @@ class MailboxClient:
                 )
             except MailboxError as exc:
                 if str(exc) == "open_failed":
-                    # The envelope is valid and addressed to us; only the seal
-                    # would not open — the messaging key rotated while this was
-                    # in flight, most likely. Acking would destroy a message a
-                    # restored key could still read, so it is left to expire on
-                    # its own. Nothing but a count is kept per message.
+                    # The envelope verified and really is addressed to us; only
+                    # the seal would not open — the messaging key rotated while
+                    # this was in flight, most likely. Acking on the first look
+                    # would destroy mail a restored key could still read, so it
+                    # is retried like a failing handler.
+                    #
+                    # It cannot be retried forever, though: `poll` serves the
+                    # oldest MAX_POLL_LIMIT envelopes and has no cursor, so 50
+                    # never-acked messages at the head of a box would hide every
+                    # newer message behind them for a full TTL. The same
+                    # `max_attempts` budget that bounds a poison message bounds
+                    # this, and every look still counts as `undecryptable`, so a
+                    # key rotation stays visible in `status()` either way.
                     undecryptable += 1
                     self._undecryptable_total += 1
+                    expires_at = (
+                        str(payload.get("expires_at") or "") if isinstance(payload, dict) else ""
+                    )
+                    attempts = self._record_attempt(message_id, expires_at)
+                    changed = True
+                    if attempts >= self._max_attempts:
+                        self._attempts.pop(message_id, None)
+                        self._ack(message_id)
+                        self._dropped_total += 1
                     continue
                 # Anything else is a verdict on the envelope shell — bad
                 # signature, wrong recipient, expired, oversized. It will never
@@ -382,11 +401,23 @@ class MailboxClient:
         return True
 
     def _record_attempt(self, message_id: str, expires_at: str) -> int:
-        """Bump (and bound) the persistent retry counter for one message."""
+        """Bump (and bound) the persistent retry counter for one message.
+
+        A counter is only useful while the message it tracks can still be
+        redelivered, so it is stored under that message's expiry and pruned
+        with it. An expiry that cannot be read is therefore untrackable: rather
+        than store a counter that the next prune would silently reset — turning
+        the retry budget into an infinite loop — this reports the budget as
+        already spent, and the caller gives up now.
+        """
 
         self._prune_attempts()
+        expiry = self._expiry_epoch(expires_at)
+        if expiry <= self._epoch():
+            self._attempts.pop(message_id, None)
+            return self._max_attempts
         attempts = self._attempts.get(message_id, (0, 0.0))[0] + 1
-        self._attempts[message_id] = (attempts, self._expiry_epoch(expires_at))
+        self._attempts[message_id] = (attempts, expiry)
         self._attempts.move_to_end(message_id)
         while len(self._attempts) > self._seen_capacity:
             self._attempts.popitem(last=False)
