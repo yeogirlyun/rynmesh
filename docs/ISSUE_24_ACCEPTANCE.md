@@ -19,6 +19,7 @@
 - [x] URL 用 replace 同步 peer/service/network，刷新可恢复并保留其他参数。
 - [x] submitting/running/cancelling 生命周期内禁止切换。
 - [x] offline、busy、disappeared 状态可理解，历史和草稿不删除。
+- [x] 发现刷新失败保留最后成功快照，不把全体 Provider 误判为离线。
 - [x] 加密历史读取/写入失败不会永久锁住切换，原 Provider、历史和草稿保持不变。
 - [x] 加密存储、取消、结算和 node-only gateway 边界未改变。
 - [x] 聚焦测试、全 Webapp、TypeScript 和生产构建通过。
@@ -54,3 +55,23 @@
 | `npm test` | PASS，10 files / 46 tests，13.65s |
 | `npm run build` | PASS，1739 modules，最终 763ms Vite build |
 | `git diff --check` | PASS，仅 Git 的 LF/CRLF 工作区提示，无 whitespace error |
+
+## 2026-09-03 严格完成审计
+
+本次审计重新逐项对照产品、开发、测试与验收文档，并补齐两项此前只有实现、没有直接组件回归的承诺：
+
+- 发现刷新失败时保留最后成功快照，当前精确 Provider 仍可提交；
+- 目标 Provider 空桶的首次加密写入失败时释放 switching，并保留原 Provider、历史和草稿。
+
+重新执行结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| `npm test -- --run src/screens/PrivateAIChat.test.tsx src/domain/llmOrders.test.ts` | PASS，2 files / 12 tests |
+| `npm test` | PASS，10 files / 48 tests |
+| `npm run lint` | PASS，`tsc -b --noEmit` |
+| `npm run build` | PASS，1,739 modules |
+| `git diff --check` | PASS，无 whitespace error |
+
+四类文档、自动化映射和已提交的浏览器截图证据均存在。真实付费 Provider、真实结算和线上 CI 不属于
+本 Issue 的本地验收声明；发布前仍应在最终集成提交上运行仓库 CI。
