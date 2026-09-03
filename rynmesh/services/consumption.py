@@ -12,6 +12,18 @@ from ..atomic_io import atomic_write_json
 __all__ = ["ConsumptionError", "ConsumptionStore"]
 
 _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
+# `ConsumptionStore.max_items` (below) times the worst-case size of one
+# cleaned record (every capped string field in `_ITEM_FIELDS` at its 4000-char
+# max, `tags`/`reasons` full at 64 entries of 160 chars) must stay under
+# `atomic_io.MAX_RECORD_BYTES`: the whole history is written as one JSON
+# record, and `atomic_write_json` hard-fails the write past that cap.
+# `max_items=1000` (the size the rest of this bound was designed around)
+# would already serialize to ~4x MAX_RECORD_BYTES at these per-field limits,
+# so the default here is lowered instead of left to fail in production; see
+# `tests/test_consumption.py::test_consumption_store_worst_case_stays_under_atomic_cap`,
+# which fills a history to these exact limits and asserts the total stays
+# under the cap. Re-run that test before raising `max_items` or any
+# `_ITEM_FIELDS` truncation length.
 _ITEM_FIELDS = {
     "item_id",
     "source_id",
@@ -40,7 +52,7 @@ class ConsumptionError(ValueError):
 class ConsumptionStore:
     """Atomic, bounded history stored only beneath the local node home."""
 
-    def __init__(self, path: str | Path, *, max_items: int = 1000) -> None:
+    def __init__(self, path: str | Path, *, max_items: int = 200) -> None:
         self.path = Path(path)
         self.max_items = max(1, int(max_items))
 
