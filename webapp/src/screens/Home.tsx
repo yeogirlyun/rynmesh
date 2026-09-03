@@ -1,4 +1,4 @@
-import { Compass, Settings2, Sparkles, UploadCloud } from "lucide-react";
+import { Bot, Compass, Settings2, Sparkles, UploadCloud } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAppContext } from "../appContext";
@@ -18,7 +18,7 @@ import { digestApi } from "../domain/digestClient";
 import RecommendedServices from "./components/RecommendedServices";
 
 export default function Home() {
-  const { client, node, peers, notify } = useAppContext();
+  const { client, node, peers, notify, firstSuccess, openFirstSuccess, refreshFirstSuccess } = useAppContext();
   const navigate = useNavigate();
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
@@ -68,6 +68,26 @@ export default function Home() {
   return (
     <div className="screen-grid home-grid">
       <RecommendedServices client={client} />
+      {firstSuccess && !firstSuccess.completed ? (
+        <Panel className="home-first-success">
+          <div>
+            <span className="eyebrow">Start here</span>
+            <h2>Get your first useful result</h2>
+            <p>Open one recommendation and save one choice. Ryn uses that local signal to improve what comes next.</p>
+          </div>
+          <Button variant="primary" icon={Sparkles} onClick={() => openFirstSuccess?.()}>Continue · about 2 minutes</Button>
+        </Panel>
+      ) : null}
+      {firstSuccess?.completed ? (
+        <Panel className="home-first-success">
+          <div>
+            <span className="eyebrow">Optional next step</span>
+            <h2>Enable private AI on this device</h2>
+            <p>Ryn can recommend a model for this computer and keep prompts local. Your recommendations already work without it.</p>
+          </div>
+          <Button icon={Bot} onClick={() => navigate("/services/manage")}>Set up local AI</Button>
+        </Panel>
+      ) : null}
       <PageHeader
         eyebrow="Ryn node"
         title="Local node console"
@@ -139,6 +159,7 @@ export default function Home() {
                   onInspect={() => navigate(`/items/${item.content_id}`)}
                   onOpen={() => {
                     setViewing(item);
+                    void client.recordContentConsumption(item, "opened").then(() => refreshFirstSuccess?.()).catch(() => undefined);
                     if (item.digest_item_id) void digestApi.sendFeedback(item.digest_item_id, "opened").catch(() => undefined);
                   }}
                   onFetchPreview={() => notify("info", "Preview fetch requested through local node")}
