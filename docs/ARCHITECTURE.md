@@ -413,6 +413,30 @@ Credit events also penalize harmful behavior:
 
 Credits produce a `distribution_weight`, which can be used by nodes and registries to rank content. This creates immediate incentive without requiring a token sale.
 
+## Background Workers
+
+Module: `rynmesh.background_workers`
+
+Every peer node owns one `BackgroundWorkerRegistry` (`app.state.background_workers`), created in `create_app` and started/stopped as a unit by the `lifespan` handler in `rynmesh/peer_http.py`. Service packages (the LLM package, the node itself) register their repeatable jobs as a `BackgroundWorkerSpec` — a name, a sync or async `run_once`, a `BackoffPolicy`, an optional `initial_delay_s`, and an optional `error_sink` — instead of spawning their own detached `asyncio.create_task` loop.
+
+Currently registered workers:
+
+| worker | policy | initial delay | error field |
+|---|---|---|---|
+| `llm.relay-poll` | busy 1s / idle up to 10s / error up to 30s | 1s | `app.state.llm_relay_error` |
+| `llm.publish-refresh` | busy/idle 30s / error up to 120s | 1s | `app.state.llm_publication_error` |
+| `updates.poll` | `BackoffPolicy.fixed(RYNMESH_UPDATE_POLL_S)`, default 1800s | same as the interval, so a boot never checks for an update before the crash-loop rollback window (`_confirm_after_grace`, still an ad-hoc task) has closed | `app.state.update_error` |
+| `recap.daily` | `BackoffPolicy.fixed(900)` | 20s | `app.state.recap_error` |
+
+`_confirm_after_grace` (one-shot) and `_discover` (delay computed from the digest service's own `next_refresh_unix`, which the fixed/idle policy model cannot express) remain ad-hoc `asyncio.create_task` loops in the lifespan; adopting `_discover` needs a dynamic-delay policy and is tracked as follow-up work.
+
+### Supervision contract
+
+- **Crash recovery**: a worker task that raises anything — `Exception`, a bare `BaseException`, or simply returns (which `_run` never does by design, so it is treated as a bug) — is recorded as a crash: `status()[name]["crash_class"]` gets the exception's class name (never its message), `restarts` increments, and the worker is respawned after `policy.error_max_s`. A normal `Exception` raised from inside `run_once` is handled one level up, in `_run`'s own try/except, and backs off along the busy → idle/error schedule without counting as a crash or a restart.
+- **Bounded `stop()`**: `stop()` cancels every worker task and pending restart timer, then waits at most `stop_timeout_s` (default 5.0s) via `asyncio.wait`. It returns `{"stopped": [...], "abandoned": [...]}` and logs a warning naming anything abandoned. A sync worker stuck inside `asyncio.to_thread` (a hung socket call, a wedged disk write) cannot actually be killed — that OS thread keeps running and leaks until it eventually returns on its own. `stop()` only bounds how long the node *waits* for it; it cannot terminate it.
+- **Status is metadata-only**: `status()` (and the `workers` block on `GET /api/local/node/status`) exposes only names, timestamps, counters, and exception *class names* — never a prompt, a response, a file path, or any other value a worker's own body handled. The same rule applies to whatever an `error_sink` writes to `app.state`.
+- **Registration**: `register(spec, *, replace=False)` can be called before or after `start()`; a duplicate name without `replace=True` raises `ValueError`, and `replace=True` cancels the running task (and any pending restart timer) for that name before installing and spawning the replacement.
+
 ## Overlay Network Fabric & VPN Egress (`net.egress`)
 
 Most rynnodes live behind NAT with **no public inbound** (home/edge machines, and

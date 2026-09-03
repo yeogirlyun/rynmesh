@@ -183,6 +183,10 @@ class BackgroundWorkerRegistry:
         self._started = False
         for timer in self._restart_timers.values():
             timer.cancel()
+        # Cleared without awaiting the cancellation: a pending timer's crashed
+        # task is always still sitting in `self._tasks` (nothing pops it until
+        # `_spawn` replaces it), so `asyncio.wait` below still has that task to
+        # wait on and gives the event loop the turn the cancellation needs.
         self._restart_timers.clear()
         tasks = tuple(self._tasks.values())
         for task in tasks:

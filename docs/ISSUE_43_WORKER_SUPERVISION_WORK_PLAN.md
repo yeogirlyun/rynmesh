@@ -99,20 +99,27 @@ appears, rather than pinning an exact list.
 
 ## Acceptance
 
-- [ ] A worker whose task dies from a non-`Exception` `BaseException` is
+- [x] A worker whose task dies from a non-`Exception` `BaseException` is
       restarted after `error_max_s`, and `status()` shows `restarts >= 1` with
       a `crash_class` and no message text.
-- [ ] `stop()` returns within the timeout even when a sync worker is stuck in
+- [x] `stop()` returns within the timeout even when a sync worker is stuck in
       a thread, and names the abandoned worker.
-- [ ] A worker registered after `start()` runs; `replace=True` cancels and
+- [x] A worker registered after `start()` runs; `replace=True` cancels and
       replaces the running one; a duplicate name without `replace` raises.
-- [ ] `error_max_s < busy_delay_s` is rejected; `BackoffPolicy.fixed` builds a
+- [x] `error_max_s < busy_delay_s` is rejected; `BackoffPolicy.fixed` builds a
       valid interval policy.
-- [ ] `create_app` registers `updates.poll` and `recap.daily` with the
+- [x] `create_app` registers `updates.poll` and `recap.daily` with the
       documented policies; the update poll does not run before its first
       interval; no `except Exception: pass` remains in either body.
-- [ ] Failures in either adopted worker appear in the worker status and in an
+- [x] Failures in either adopted worker appear in the worker status and in an
       error field on `app.state`.
-- [ ] No prompt, response, model path, or private path in any worker status,
+- [x] No prompt, response, model path, or private path in any worker status,
       error field, or log line.
-- [ ] `python -m ruff check rynmesh/ tests/` and the full pytest suite pass.
+- [x] `python -m ruff check rynmesh/ tests/` and the full pytest suite pass.
+
+`_discover` remains an ad-hoc `asyncio.create_task` loop (not moved onto the
+registry): its delay is computed from the digest service's own
+`next_refresh_unix`, which the current fixed/idle `BackoffPolicy` model has no
+way to express. Adopting it needs a dynamic-delay policy shape and is left as
+follow-up work, tracked in the "Background Workers" section of
+`docs/ARCHITECTURE.md`.

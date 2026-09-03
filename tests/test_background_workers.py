@@ -304,40 +304,185 @@ def test_register_replaces_a_worker_only_when_asked() -> None:
     assert registry.specs() == (second,)
 
 
-def test_create_app_registers_the_llm_and_mailbox_service_workers(tmp_path, monkeypatch) -> None:
+# Every service package registers into this one registry, so pinning an exact
+# worker-name list makes this test a merge-conflict magnet. It asserts instead
+# that the expected workers are present and that no unrecognized worker sneaks
+# in.
+_KNOWN_WORKER_NAMES = {
+    "llm.publish-refresh",
+    "llm.relay-poll",
+    "updates.poll",
+    "recap.daily",
+    "mailbox.poll",
+}
+
+
+def test_create_app_registers_the_service_and_node_workers(tmp_path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from rynmesh.peer_http import create_app
     from rynmesh.store import RynmeshStore
 
     monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
     store = RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network")
     app = create_app(store)
     registry = app.state.background_workers
-    assert [spec.name for spec in registry.specs()] == [
-        "llm.publish-refresh",
-        "llm.relay-poll",
-        "mailbox.poll",
-    ]
-    specs = {spec.name: spec for spec in registry.specs()}
-    assert specs["mailbox.poll"].initial_delay_s == 3
-    assert specs["mailbox.poll"].policy.busy_delay_s == 2
-    assert specs["mailbox.poll"].policy.idle_max_s == 60
-    assert specs["llm.relay-poll"].initial_delay_s == 1
-    assert specs["llm.relay-poll"].policy.busy_delay_s == 1
-    assert specs["llm.relay-poll"].policy.idle_multiplier == 1.5
-    assert specs["llm.relay-poll"].policy.idle_max_s == 10
-    assert specs["llm.relay-poll"].policy.error_max_s == 30
-    assert specs["llm.publish-refresh"].initial_delay_s == 1
-    assert specs["llm.publish-refresh"].policy.busy_delay_s == 30
+    # The service packages register during `create_app`; the two adopted node
+    # loops only appear once the ASGI lifespan has started (below).
+    build_time = {spec.name: spec for spec in registry.specs()}
+    assert build_time["mailbox.poll"].initial_delay_s == 3
+    assert build_time["mailbox.poll"].policy.busy_delay_s == 2
+    assert build_time["mailbox.poll"].policy.idle_max_s == 60
+    assert build_time["llm.relay-poll"].initial_delay_s == 1
+    assert build_time["llm.relay-poll"].policy.busy_delay_s == 1
+    assert build_time["llm.relay-poll"].policy.idle_multiplier == 1.5
+    assert build_time["llm.relay-poll"].policy.idle_max_s == 10
+    assert build_time["llm.relay-poll"].policy.error_max_s == 30
+    assert build_time["llm.publish-refresh"].initial_delay_s == 1
+    assert build_time["llm.publish-refresh"].policy.busy_delay_s == 30
     assert not hasattr(app.state, "llm_publish_once")
     assert not hasattr(app.state, "llm_relay_once")
 
-    with TestClient(app):
+    # The two adopted loops register inside `lifespan`, so they only appear
+    # once the ASGI lifespan has actually started.
+    with TestClient(app) as client:
+        names = {spec.name for spec in registry.specs()}
+        assert {"llm.publish-refresh", "llm.relay-poll", "updates.poll", "recap.daily"} <= names
+        assert names <= _KNOWN_WORKER_NAMES
+
+        specs = {spec.name: spec for spec in registry.specs()}
+        updates_policy = specs["updates.poll"].policy
+        assert specs["updates.poll"].initial_delay_s == 1800.0
+        assert updates_policy.busy_delay_s == 1800.0
+        assert (
+            updates_policy.idle_initial_s
+            == updates_policy.idle_max_s
+            == updates_policy.error_max_s
+            == 1800.0
+        )
+        assert updates_policy.idle_multiplier == 1.0
+        assert updates_policy.error_multiplier == 1.0
+
+        recap_policy = specs["recap.daily"].policy
+        assert specs["recap.daily"].initial_delay_s == 20.0
+        assert recap_policy.busy_delay_s == 900.0
+
         running = registry.status()
+        assert set(running) >= {
+            "llm.publish-refresh", "llm.relay-poll", "updates.poll", "recap.daily",
+        }
         assert all(item["running"] for item in running.values())
+
+        status_body = client.get("/api/local/node/status").json()
+        assert set(status_body["workers"]) >= {
+            "llm.publish-refresh", "llm.relay-poll", "updates.poll", "recap.daily",
+        }
+
     stopped = registry.status()
     assert all(not item["running"] for item in stopped.values())
+
+
+def test_update_poll_interval_env_var_moves_interval_and_initial_delay(
+    tmp_path, monkeypatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
+    monkeypatch.setenv("RYNMESH_UPDATE_POLL_S", "60")
+    store = RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network")
+    app = create_app(store)
+    registry = app.state.background_workers
+
+    with TestClient(app):
+        spec = next(s for s in registry.specs() if s.name == "updates.poll")
+        assert spec.initial_delay_s == 60.0
+        assert spec.policy.busy_delay_s == 60.0
+
+
+def test_update_poll_once_propagates_failures_and_reports_apply_as_activity(
+    tmp_path, monkeypatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.services.updater import Updater
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+
+    def raising_check(self) -> dict:
+        raise RuntimeError("update check failed")
+
+    monkeypatch.setattr(Updater, "check", raising_check)
+    app = create_app(RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network"))
+    with TestClient(app):
+        registry = app.state.background_workers
+        spec = next(s for s in registry.specs() if s.name == "updates.poll")
+        with pytest.raises(RuntimeError, match="update check failed"):
+            spec.run_once()
+
+    # A successful check for an auto-applied update reports activity (True).
+    monkeypatch.setattr(Updater, "check", lambda self: {"available": True})
+    monkeypatch.setattr(Updater, "status", lambda self: {"autoUpdate": True})
+    monkeypatch.setattr(Updater, "check_manifest", lambda self: {"manifest": True})
+    monkeypatch.setattr(Updater, "apply", lambda self, manifest: {"ok": True})
+    app2 = create_app(
+        RynmeshStore(home=tmp_path / "home2", network_dir=tmp_path / "network2")
+    )
+    with TestClient(app2):
+        registry2 = app2.state.background_workers
+        spec2 = next(s for s in registry2.specs() if s.name == "updates.poll")
+        assert spec2.run_once() is True
+
+
+def test_recap_once_propagates_failures_and_reports_send_as_activity(
+    tmp_path, monkeypatch,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.services import recap as recap_service
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
+    monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "none")
+    monkeypatch.setenv("RYNMESH_DISABLE_DISCOVERY", "1")
+    app = create_app(RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network"))
+
+    with TestClient(app) as client:
+        # send_hour_utc=0 and a never-sent recap make the "due" check true
+        # regardless of wall-clock time.
+        client.patch(
+            "/api/local/recap/settings",
+            json={
+                "to_address": "me@example.com",
+                "smtp_host": "smtp.example.com",
+                "enabled": True,
+                "send_hour_utc": 0,
+            },
+        )
+        registry = app.state.background_workers
+        spec = next(s for s in registry.specs() if s.name == "recap.daily")
+
+        def raising_send(*args, **kwargs):
+            raise recap_service.RecapError("recap_send_failed: boom")
+
+        monkeypatch.setattr(recap_service, "send_email", raising_send)
+        with pytest.raises(recap_service.RecapError, match="recap_send_failed"):
+            spec.run_once()
+
+        monkeypatch.setattr(recap_service, "send_email", lambda *a, **k: {"ok": True})
+        assert spec.run_once() is True
 
 
 async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
