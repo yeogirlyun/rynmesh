@@ -658,6 +658,7 @@ def test_install_managed_on_the_native_runtime_keeps_local_details_private(tmp_p
     monkeypatch.setattr(llm_lifecycle, "_download", fake_download)
     result = llm_lifecycle.install_managed(
         package_id="native-managed", root=root, port=_free_port(),
+        model_url="https://huggingface.co/example/example/resolve/main/example.gguf",
         expected_sha256=digest, accept_risk=True, runtime="native",
     )
     manifest = load_manifest(result["manifest"])
@@ -666,6 +667,7 @@ def test_install_managed_on_the_native_runtime_keeps_local_details_private(tmp_p
         assert manifest.runtime_command[0] == str(server)
         assert manifest.runtime_dir == str(root)
         assert manifest.install_source["runtime_release"] == llm_runtime_install.RUNTIME_RELEASE
+        assert manifest.install_source["profile"] == "custom"
         assert result["self_test"]["ok"] is True
         public = json.dumps(manifest.public_dict())
         assert "runtime_command" not in public and "runtime_dir" not in public

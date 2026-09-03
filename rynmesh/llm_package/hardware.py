@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from . import catalog
+
 
 @dataclass
 class GPUInfo:
@@ -180,35 +182,51 @@ def detect_hardware(path: str | Path | None = None) -> HardwareReport:
     )
 
 
-def recommend(report: HardwareReport) -> list[dict[str, Any]]:
-    """Return only profiles that fit conservative available-memory/disk caps."""
-    candidates = [
-        ("Qwen2.5-0.5B-Instruct-Q4_K_M", 500, 900, 4096, 2),
-        ("Qwen2.5-1.5B-Instruct-Q4_K_M", 1500, 2300, 4096, 1),
-        ("Qwen2.5-3B-Instruct-Q4_K_M", 3000, 4200, 4096, 1),
-    ]
+def usable_memory_mb(report: HardwareReport) -> int:
+    """Conservative available memory in MiB — the same cap `recommend` checks."""
     usable_ram = int(report.ram_available_mb * 0.75)
     usable_vram = max((gpu.memory_free_mb for gpu in report.nvidia_gpus), default=0)
-    usable_memory = max(usable_ram, int(usable_vram * 0.85))
-    recommendations = []
-    for alias, params_m, estimated_mb, context, concurrency in candidates:
-        disk_need = int(estimated_mb * 1.5 + 256)
-        if estimated_mb <= usable_memory and disk_need <= report.disk_free_mb:
+    return max(usable_ram, int(usable_vram * 0.85))
+
+
+def recommend(report: HardwareReport) -> list[dict[str, Any]]:
+    """Return only catalog profiles that fit conservative available-memory/disk caps.
+
+    Profiles are pinned in `catalog.PROFILES`, smallest first. The largest
+    fitting profile is flagged `"recommended": True` so a setup wizard can
+    highlight one option; every other fitting profile gets `False`.
+    """
+    usable_memory = usable_memory_mb(report)
+    recommendations: list[dict[str, Any]] = []
+    for profile in catalog.PROFILES:
+        disk_need = catalog.estimated_disk_mb(profile)
+        if profile.estimated_memory_mb <= usable_memory and disk_need <= report.disk_free_mb:
             recommendations.append({
-                "model_alias": alias, "parameter_millions": params_m, "quantization": "Q4_K_M",
-                "estimated_memory_mb": estimated_mb, "estimated_disk_mb": disk_need,
-                "context_window": context, "max_concurrent": concurrency,
+                "profile": profile.profile,
+                # Kept as the display string (not the internal alias) so
+                # existing /api/local/llm/hardware consumers are unchanged.
+                "model_alias": profile.display_name,
+                "display_name": profile.display_name,
+                "parameter_millions": profile.parameter_millions,
+                "quantization": profile.quantization,
+                "estimated_memory_mb": profile.estimated_memory_mb,
+                "estimated_disk_mb": disk_need,
+                "context_window": profile.context_window,
+                "max_concurrent": profile.max_concurrent,
                 # The managed llama.cpp image is the portable CPU build. GPU
                 # data is still reported so an advanced owner can override it,
                 # but the safe default must describe what we actually launch.
                 "device": "cpu",
                 "can_run": True,
+                "recommended": False,
             })
     if not recommendations:
         recommendations.append({
             "can_run": False, "reason": "No bundled profile safely fits detected available RAM/disk.",
             "alternatives": ["Connect an existing loopback OpenAI-compatible service", "Free memory/disk and retry"],
         })
+    else:
+        recommendations[-1]["recommended"] = True
     return recommendations
 
 

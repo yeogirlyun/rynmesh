@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import subprocess
 
+import rynmesh.llm_package.catalog as llm_catalog
 import rynmesh.llm_package.hardware as llm_hardware
+from rynmesh.llm_package.hardware import GPUInfo, HardwareReport
 
 VM_STAT_SAMPLE_16K_PAGES = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                              10000.
@@ -102,3 +104,73 @@ def test_docker_warning_names_native_runtime_and_local_api(monkeypatch, tmp_path
         "the bundled native runtime or an existing local API remains available" in warning
         for warning in report.warnings
     )
+
+
+def _report(*, ram_available_mb: int, disk_free_mb: int) -> HardwareReport:
+    return HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test-cpu", logical_cpus=8,
+        ram_total_mb=ram_available_mb * 2, ram_available_mb=ram_available_mb,
+        disk_free_mb=disk_free_mb, nvidia_gpus=[], nvidia_probe="nvidia-smi not found",
+        container_runtime="", container_available=False, native_runtime_available=True,
+        warnings=[],
+    )
+
+
+EXPECTED_KEYS = {
+    "profile", "model_alias", "display_name", "parameter_millions", "quantization",
+    "estimated_memory_mb", "estimated_disk_mb", "context_window", "max_concurrent",
+    "device", "can_run", "recommended",
+}
+
+
+def test_recommend_marks_exactly_the_largest_fitting_profile_as_recommended():
+    # Plenty of RAM/disk: every catalog profile fits.
+    report = _report(ram_available_mb=64_000, disk_free_mb=64_000)
+    recommendations = llm_hardware.recommend(report)
+    assert len(recommendations) == len(llm_catalog.PROFILES)
+    for entry in recommendations:
+        assert EXPECTED_KEYS <= set(entry)
+        assert entry["can_run"] is True
+        assert entry["model_alias"] == entry["display_name"]
+    recommended_flags = [entry["recommended"] for entry in recommendations]
+    assert recommended_flags.count(True) == 1
+    assert recommendations[-1]["recommended"] is True
+    assert recommendations[-1]["profile"] == llm_catalog.PROFILES[-1].profile
+
+
+def test_recommend_marks_the_only_fitting_profile_when_just_one_fits():
+    light = llm_catalog.profile_by_name("light")
+    disk_need = llm_catalog.estimated_disk_mb(light)
+    # Enough for "light" (memory floor is ram_available_mb * 0.75) but not "balanced".
+    ram_available = int(light.estimated_memory_mb / 0.75) + 10
+    report = _report(ram_available_mb=ram_available, disk_free_mb=disk_need + 10)
+    recommendations = llm_hardware.recommend(report)
+    assert len(recommendations) == 1
+    assert recommendations[0]["profile"] == "light"
+    assert recommendations[0]["recommended"] is True
+
+
+def test_recommend_returns_can_run_false_fallback_when_nothing_fits():
+    report = _report(ram_available_mb=1, disk_free_mb=1)
+    recommendations = llm_hardware.recommend(report)
+    assert recommendations == [{
+        "can_run": False,
+        "reason": "No bundled profile safely fits detected available RAM/disk.",
+        "alternatives": [
+            "Connect an existing loopback OpenAI-compatible service",
+            "Free memory/disk and retry",
+        ],
+    }]
+
+
+def test_recommend_uses_gpu_memory_when_it_exceeds_cpu_ram_estimate():
+    gpu = GPUInfo(name="Test GPU", memory_total_mb=48_000, memory_free_mb=40_000, driver_version="1")
+    report = HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test-cpu", logical_cpus=8,
+        ram_total_mb=4_000, ram_available_mb=1_000, disk_free_mb=64_000,
+        nvidia_gpus=[gpu], nvidia_probe="ok", container_runtime="", container_available=False,
+        native_runtime_available=True, warnings=[],
+    )
+    assert llm_hardware.usable_memory_mb(report) == int(40_000 * 0.85)
+    recommendations = llm_hardware.recommend(report)
+    assert len(recommendations) == len(llm_catalog.PROFILES)

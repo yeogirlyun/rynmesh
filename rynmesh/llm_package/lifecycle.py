@@ -6,15 +6,16 @@ import hashlib
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from . import runtime_docker, runtime_native
+from . import catalog, runtime_docker, runtime_native
 from .adapters import adapter_from_manifest
 from .errors import LifecycleError
-from .hardware import HardwareReport, detect_hardware, recommend
+from .hardware import HardwareReport, detect_hardware, recommend, usable_memory_mb
 from .manifest import (
     LLMPackageManifest,
     fingerprint_file,
@@ -22,14 +23,14 @@ from .manifest import (
     save_manifest,
 )
 
-DEFAULT_MODEL_REVISION = "872f8a96064a1242ac3a3359cad77c3042548405"
-DEFAULT_MODEL_SHA256 = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
-DEFAULT_MODEL_URL = (
-    "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/"
-    f"{DEFAULT_MODEL_REVISION}/"
-    "qwen2.5-0.5b-instruct-q4_k_m.gguf"
-)
+# The "light" catalog profile, kept available under its historical names:
+# existing tests/docs/CLI callers reference these three module constants.
+_LIGHT_PROFILE = catalog.profile_by_name("light")
+DEFAULT_MODEL_URL = _LIGHT_PROFILE.url
+DEFAULT_MODEL_SHA256 = _LIGHT_PROFILE.sha256
+DEFAULT_MODEL_REVISION = DEFAULT_MODEL_URL.split("/resolve/", 1)[1].split("/", 1)[0]
 GGUF_MAGIC = b"GGUF"
+_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 RUNTIME_DOCKER = runtime_docker.RUNTIME_ID
 RUNTIME_NATIVE = runtime_native.RUNTIME_ID
@@ -139,44 +140,98 @@ def validate_gguf(path: str | Path, *, report: HardwareReport | None = None,
             "fingerprint": fingerprint_file(source)}
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(_DOWNLOAD_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _download(
     url: str,
     destination: Path,
     expected_sha256: str,
     *,
+    size_bytes: int | None = None,
     progress: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
 ) -> str:
+    """Download `url` to `destination`, resuming a prior partial attempt.
+
+    A `<destination>.part` left over from an earlier call (a dropped
+    connection, a cancelled setup, or the app quitting) is resumed with a
+    `Range` request rather than restarted from zero. The part is only ever
+    deleted for a size-guard violation (untrustworthy data) or replaced with
+    `.corrupt` on a checksum mismatch; every other failure (cancellation,
+    a network error) leaves it in place so the next attempt can resume.
+    """
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise LifecycleError("install downloads require an HTTPS URL")
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".part")
-    digest = hashlib.sha256()
+    resume_from = temporary.stat().st_size if temporary.exists() else 0
+    headers = {"User-Agent": "Rynmesh/0.6"}
+    if resume_from:
+        headers["Range"] = f"bytes={resume_from}-"
+        _progress(progress, cancel_check, "download_model", 15, "Resuming verified model download")
+
+    request = urllib.request.Request(url, headers=headers)
+    already_complete = False
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh/0.6"})
-        with urllib.request.urlopen(request, timeout=300) as response, temporary.open("wb") as handle:
-            total = int(response.headers.get("content-length") or 0)
-            downloaded = 0
-            while chunk := response.read(1024 * 1024):
-                if cancel_check and cancel_check():
-                    raise LifecycleError("setup cancelled")
-                digest.update(chunk)
-                handle.write(chunk)
-                downloaded += len(chunk)
-                percent = 15 + int((downloaded / total) * 45) if total else 35
-                if progress:
-                    progress("download_model", min(60, percent), "Downloading verified model data")
-    except LifecycleError:
-        temporary.unlink(missing_ok=True)
-        raise
-    except OSError as exc:
-        temporary.unlink(missing_ok=True)
+        connection = urllib.request.urlopen(request, timeout=300)
+    except urllib.error.HTTPError as exc:
+        if resume_from and exc.code == 416:
+            # The server confirms there is nothing left to fetch: the part on
+            # disk already holds the whole file (only its checksum is unverified).
+            already_complete = True
+            connection = None
+        else:
+            raise LifecycleError(f"download failed: {exc}") from exc
+    except (OSError, urllib.error.URLError) as exc:
         raise LifecycleError(f"download failed: {exc}") from exc
-    actual = digest.hexdigest()
+
+    if not already_complete:
+        try:
+            with connection as response:
+                status = int(getattr(response, "status", 200) or 200)
+                restart = bool(resume_from) and status != 206
+                downloaded = 0 if restart else resume_from
+                total = int(response.headers.get("content-length") or 0)
+                if size_bytes:
+                    full_size = size_bytes
+                elif total and status == 206:
+                    full_size = total + resume_from
+                else:
+                    full_size = total or None
+                mode = "wb" if restart or not resume_from else "ab"
+                with temporary.open(mode) as handle:
+                    while chunk := response.read(_DOWNLOAD_CHUNK_BYTES):
+                        if cancel_check and cancel_check():
+                            raise LifecycleError("setup cancelled")
+                        downloaded += len(chunk)
+                        if size_bytes is not None and downloaded > size_bytes:
+                            # Not trustworthy: discard rather than resume from it.
+                            temporary.unlink(missing_ok=True)
+                            raise LifecycleError("download exceeded the pinned size")
+                        handle.write(chunk)
+                        percent = 15 + int(downloaded / full_size * 45) if full_size else 35
+                        if progress:
+                            progress("download_model", min(60, percent), "Downloading verified model data")
+        except LifecycleError:
+            raise
+        except OSError as exc:
+            raise LifecycleError(f"download failed: {exc}") from exc
+
+    # Hash the complete file fresh (not a running digest), so a resumed part
+    # verifies against the bytes actually on disk rather than just this session.
+    actual = _file_sha256(temporary)
     if actual != expected_sha256.lower():
-        temporary.unlink(missing_ok=True)
-        raise LifecycleError(f"checksum mismatch: expected {expected_sha256}, got {actual}")
+        corrupt = destination.with_suffix(destination.suffix + ".corrupt")
+        corrupt.unlink(missing_ok=True)
+        temporary.replace(corrupt)
+        raise LifecycleError("model checksum mismatch; the download was quarantined and will restart")
     temporary.replace(destination)
     return actual
 
@@ -209,49 +264,107 @@ def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
             "output_preview": text[:120], **result}
 
 
+def _resolve_install_profile(
+    *, profile: str, model_url: str, expected_sha256: str, accept_risk: bool,
+    report: HardwareReport, choices: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Pick the model to install: a pinned catalog profile or a custom override.
+
+    Returns a plain dict (not `ModelProfile`, since a custom override has no
+    catalog entry) with the keys `install_managed` needs downstream: `name`,
+    `url`, `sha256`, `size_bytes`, `alias`, `context_window`,
+    `max_concurrent`, `estimated_memory_mb`, `license_id`, `license_notice`.
+    """
+    has_url, has_sha = bool(model_url), bool(expected_sha256)
+    if has_url != has_sha:
+        raise LifecycleError("a custom model install requires both model_url and expected_sha256")
+    if has_url and has_sha:
+        digest = expected_sha256.lower()
+        if not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise LifecycleError("managed model install requires a pinned SHA-256 digest")
+        return {
+            "name": "custom", "url": model_url, "sha256": digest, "size_bytes": None,
+            "alias": "rynmesh-custom-model", "context_window": 4096, "max_concurrent": 1,
+            "estimated_memory_mb": 2048, "license_id": "unknown",
+            "license_notice": "Operator must review and comply with the model and runtime licenses.",
+        }
+
+    requested = str(profile or "auto").strip().lower()
+    if requested == "auto":
+        if not choices[0].get("can_run"):
+            if not accept_risk:
+                raise LifecycleError(str(choices[0].get("reason")))
+            resolved = catalog.profile_by_name("light")
+        else:
+            recommended_name = next(c["profile"] for c in choices if c.get("recommended"))
+            resolved = catalog.profile_by_name(recommended_name)
+    else:
+        resolved = catalog.profile_by_name(requested)  # raises ValueError on an unknown name
+        fits = any(c.get("profile") == resolved.profile and c.get("can_run") for c in choices)
+        if not fits and not accept_risk:
+            limit = usable_memory_mb(report)
+            raise LifecycleError(
+                f"profile {resolved.profile} needs about {resolved.estimated_memory_mb} MiB but the "
+                f"conservative available limit is {limit} MiB; choose a smaller profile or accept the risk"
+            )
+    return {
+        "name": resolved.profile, "url": resolved.url, "sha256": resolved.sha256,
+        "size_bytes": resolved.size_bytes, "alias": resolved.model_alias,
+        "context_window": resolved.context_window, "max_concurrent": resolved.max_concurrent,
+        "estimated_memory_mb": resolved.estimated_memory_mb, "license_id": resolved.license_id,
+        "license_notice": resolved.license_notice,
+    }
+
+
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
-                    port: int = 18080, model_url: str = DEFAULT_MODEL_URL,
-                    expected_sha256: str = DEFAULT_MODEL_SHA256, accept_risk: bool = False,
-                    runtime: str = "auto", progress: ProgressCallback | None = None,
+                    port: int = 18080, model_url: str = "", expected_sha256: str = "",
+                    accept_risk: bool = False, runtime: str = "auto", profile: str = "auto",
+                    progress: ProgressCallback | None = None,
                     cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
     _progress(progress, cancel_check, "hardware", 5, "Checking available hardware")
     report = detect_hardware(base)
     choices = recommend(report)
-    if not choices[0].get("can_run") and not accept_risk:
-        raise LifecycleError(str(choices[0].get("reason")))
+    selected = _resolve_install_profile(
+        profile=profile, model_url=model_url, expected_sha256=expected_sha256,
+        accept_risk=accept_risk, report=report, choices=choices,
+    )
     _progress(progress, cancel_check, "runtime_check", 10, "Checking the local inference runtime")
     backend = select_runtime(runtime, root=base)
     _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
-    digest = expected_sha256.lower()
-    if not re.fullmatch(r"[a-f0-9]{64}", digest):
-        raise LifecycleError("managed model install requires a pinned SHA-256 digest")
+    digest = selected["sha256"]
+    checksum = "sha256:" + digest
     model_dir = base / "models" / package_id
-    model_path = model_dir / "model.gguf"
-    if not model_path.exists() or fingerprint_file(model_path) != "sha256:" + digest:
-        _download(
-            model_url, model_path, digest, progress=progress, cancel_check=cancel_check,
-        )
-    else:
+    # Profile-scoped filename so switching profiles never overwrites another
+    # already-verified model; a pre-existing bare `model.gguf` (from before
+    # profiles existed) is still honored when its checksum matches.
+    model_path = model_dir / f"{selected['name']}.gguf"
+    legacy_path = model_dir / "model.gguf"
+    if model_path.exists() and fingerprint_file(model_path) == checksum:
         _progress(progress, cancel_check, "download_model", 60, "Verified model already present")
-    selected = choices[0] if choices[0].get("can_run") else {
-        "context_window": 2048, "max_concurrent": 1, "estimated_memory_mb": 1024,
-    }
+    elif legacy_path.exists() and fingerprint_file(legacy_path) == checksum:
+        model_path = legacy_path
+        _progress(progress, cancel_check, "download_model", 60, "Verified model already present")
+    else:
+        _download(
+            selected["url"], model_path, digest, size_bytes=selected["size_bytes"],
+            progress=progress, cancel_check=cancel_check,
+        )
     _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
     backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
     manifest = LLMPackageManifest(
-        package_id=package_id, mode="managed", public_model_alias="rynmesh-qwen2.5-0.5b-q4",
-        adapter="openai_compatible", runtime=backend.RUNTIME_ID, model="rynmesh-qwen2.5-0.5b-q4",
+        package_id=package_id, mode="managed", public_model_alias=selected["alias"],
+        adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=selected["alias"],
         model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
         runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
-        checksum="sha256:" + digest, model_fingerprint="sha256:" + digest,
+        checksum=checksum, model_fingerprint=checksum,
         context_window=int(selected["context_window"]), max_output_tokens=256,
         max_concurrent=int(selected["max_concurrent"]),
         hardware_requirements={"estimated_memory_mb": int(selected["estimated_memory_mb"])},
-        install_source={"model_url": model_url, **backend.install_source(None)},
-        license_notice="Qwen2.5 0.5B and llama.cpp are Apache-2.0; review their notices before use.",
-        license_id="Apache-2.0",
+        install_source={"model_url": selected["url"], "profile": selected["name"],
+                        **backend.install_source(None)},
+        license_notice=selected["license_notice"], license_id=selected["license_id"],
         lifecycle={"start": "rynmesh-llm start", "stop": "rynmesh-llm stop",
                    "restart": "rynmesh-llm restart", "status": "rynmesh-llm status"},
     )

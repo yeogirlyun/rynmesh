@@ -835,6 +835,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 port=int(body.get("port") or 18080),
                 accept_risk=bool(body.get("accept_risk", False)),
                 runtime=str(body.get("runtime") or "auto"),
+                profile=str(body.get("profile") or "auto"),
                 progress=progress, cancel_check=cancel_check,
             )
         if mode == "import-gguf":
