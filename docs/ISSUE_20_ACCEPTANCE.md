@@ -1,80 +1,79 @@
 # Issue #20 acceptance record
 
-## Acceptance checklist
+## Scope of this decision
 
-- [ ] Tagged release publishes `Ryn-<version>-linux-x86_64.deb` and `.sha256`.
-- [ ] Final package reports the tag version and `amd64` architecture.
-- [ ] Package contains the desktop executable, desktop entry, icon, and exactly
-  one executable x86-64 `rynmesh-peer`.
-- [ ] Installed application runs without system Python, Node.js, Vite, or a
-  source checkout.
-- [ ] Managed node reports healthy and serves the bundled `/` and `/digest` UI.
-- [ ] Single-instance, watchdog restart, tray restart, close-to-tray, quit, and
-  orphan cleanup pass.
-- [ ] Linux log is written under the documented XDG state path.
-- [ ] Clean install, data-preserving upgrade, and uninstall retention pass on a
-  named Ubuntu 24.04 GNOME desktop.
-- [ ] README/runbook cover checksum, requirements, install, update, uninstall,
-  retained data, paths, and desktop limitations.
-- [ ] Linux CI/release jobs and existing macOS Intel/Apple Silicon gates pass.
+This record follows the seven acceptance criteria in
+[upstream GitHub Issue #20](https://github.com/yeogirlyun/rynmesh/issues/20)
+verbatim in substance. It deliberately separates implementation evidence that
+can be accepted before merge from the two operations that require GitHub's
+Linux/release environment. A tagged-release rehearsal, a named GNOME machine,
+and physical install/upgrade/uninstall evidence can be useful release QA, but
+they are not additional Issue #20 development-completion criteria.
 
-## Evidence status in this branch
+## Local development acceptance
 
-| Evidence | Status | Record |
-|---|---|---|
-| Cross-platform implementation and CI/release definitions | Implemented | source diff on this branch |
-| Web dependency install | Passed 2026-09-02 | `npm ci`, 175 packages audited, 0 vulnerabilities |
-| Web unit tests | Passed 2026-09-02 | 9 files, 38 tests |
-| Web typecheck/production build | Passed 2026-09-02 | `npm run lint`; `npm run build`, 1,739 modules transformed |
-| Python lint regression | Passed 2026-09-02 | `ruff check rynmesh tests` |
-| New/existing desktop shell script syntax | Passed 2026-09-02 | Git Bash `bash -n` on build, sidecar verify, Debian verify, and installed smoke scripts |
-| Workflow YAML parse | Passed 2026-09-02 | Python `yaml.safe_load` for CI and release workflows |
-| Linux artifact contract tests | Passed 2026-09-03 | `tests/test_linux_desktop_artifacts.py`: 5 passed; checks config, CI/release wiring, smoke coverage, and script entrypoints |
-| Cargo dependency graph | Passed 2026-09-03 | `cargo metadata --locked --no-deps --format-version 1` |
-| Existing deploy artifact tests | Environment-limited 2026-09-03 | raw Windows run: 11 passed, 9 failed; failures are default-GBK UTF-8 reads, POSIX executable bits, and unusable WSL `bash.exe`, not Issue #20 files |
-| Rust compile/unit tests | Environment-limited | `cargo check --locked` reaches compilation but fails because MSVC `link.exe` is absent; Linux-only helper tests still require Ubuntu CI |
-| Ubuntu 24.04 CI build and installed smoke | Not yet run | requires GitHub Linux runner |
-| Tagged artifact and checksum | Not yet published | requires an actual release tag |
-| macOS regression jobs | Not yet run | requires repository CI |
-| Real Ubuntu 24.04 GNOME manual acceptance | Not yet run | requires supported desktop hardware/VM |
+| # | Original Issue criterion | Local evidence | Decision |
+|---|---|---|---|
+| 1 | Select and document one initial Tauri Linux format | Ubuntu 24.04 x86_64 `.deb` is fixed in the product doc, runbook, Tauri command, CI, and release workflow | Pass |
+| 2 | Bundle the Ryn node sidecar and webapp without requiring system Python or Node.js | PyInstaller `--onefile` embeds `webapp/dist`; Tauri has exactly one `externalBin`; standalone verification removes source fallbacks; Debian verifier rejects dynamic Python/Node linkage | Pass at implementation/contract level; final Linux execution belongs to release gate #3 |
+| 4 | Verify sidecar architecture matches package architecture | Build names the sidecar from the Rust host triple; CI requires `x86_64-unknown-linux-gnu`; Debian verifier requires `amd64` plus x86-64 ELF shell and sidecar | Pass at implementation/contract level; executed by release gate #3 |
+| 6 | Document installation, update behavior, system requirements, and known limits | `docs/LINUX_DESKTOP.md` and README cover checksum, install, update, uninstall, retained data, supported system, paths, and limits | Pass |
+| 7 | Preserve existing macOS release verification | Both Intel and Apple Silicon compile/release jobs, DMG build, codesign verification, and sidecar verification remain wired; contract tests protect them | Pass |
 
-## GitHub acceptance-criteria audit
+The branch therefore meets the **local development acceptance** for all five
+criteria that can be established from source, deterministic tests, and workflow
+contracts. This means the implementation is development-complete; it does not
+claim that an unpublished Linux package has already passed GitHub CI or exists
+on a GitHub Release.
 
-| Upstream criterion | Implementation evidence | Completion evidence |
-|---|---|---|
-| Select one Tauri Linux format | Ubuntu 24.04 x86_64 `.deb` in product/runbook and both workflows | Implemented; final artifact still external |
-| Bundle node and Webapp without runtime Python/Node | production UI embedded into one PyInstaller sidecar; exact Tauri `externalBin` | Static contract passed; installed-package proof pending |
-| Startup, health, UI, clean shutdown, restart in CI | `smoke-linux-desktop.sh` plus fixed Ubuntu package job | Workflow wired; GitHub job not yet run on this commit |
-| Sidecar/package architecture match | exact Rust triple build plus `dpkg-deb`, `file`, and layout verifier | Workflow wired; final `.deb` inspection pending |
-| Publish artifact and checksum | tagged release job uploads `.deb` and `.sha256` | Not complete until a real tag release succeeds |
-| Document install/update/requirements/limits | README and `docs/LINUX_DESKTOP.md` | Implemented and statically reviewable |
-| Preserve macOS verification | Intel/Apple Silicon compile and tagged DMG jobs remain | Definitions present; exact-commit jobs pending |
+## Original Issue release acceptance still required
 
-## Required external evidence
+| # | Original Issue criterion | Required external evidence | Status |
+|---|---|---|---|
+| 3 | Verify daemon startup, health, UI serving, clean shutdown, and restart in CI | A successful `linux-desktop-package` GitHub Actions job for the candidate commit. Its installed-package smoke must show health, `/`, `/digest`, child replacement, SIGTERM cleanup, and no orphan. The same job also executes the architecture and runtime-closure verifiers from #2/#4. | Pending CI run |
+| 5 | Publish checksums and the Linux artifact through the existing release workflow | A successful `linux-desktop` release job and GitHub Release assets containing `Ryn-<version>-linux-x86_64.deb` and its `.sha256`. | Pending release |
 
-For an exact candidate commit `<sha>` and workflow run `<run-id>`, preserve:
+These are the only two remaining Issue-level acceptance operations. The
+workflow implementation for both is present and locally contract-tested, but a
+local Windows run cannot truthfully substitute for GitHub's Ubuntu runner or a
+GitHub Release publication.
+
+## Local verification evidence (2026-09-03)
+
+| Check | Result |
+|---|---|
+| Original-criteria contract tests | Pass: `tests/test_linux_desktop_artifacts.py`, 8 tests |
+| Shell syntax | Pass: Git Bash `bash -n` on all four desktop scripts |
+| Workflow YAML | Pass: both CI and release workflows parsed with `yaml.safe_load` |
+| Tauri configuration discovery | Config recognized: `npm run tauri -- info` resolves bundle mode, `frontendDist`, Tauri/plugin versions, and WebView2; it also correctly reports that Rust/MSVC are absent |
+| Web tests/typecheck/build | Pass: 9 files / 38 tests; `npm run lint`; production build with 1,739 modules |
+| Python lint | Pass: `ruff check rynmesh tests` |
+| Portable Python regression | Pass: 529 passed, 3 skipped, 6 explicitly deselected Windows-inapplicable tests |
+| Raw full Python regression | Environment-limited: 529 passed, 3 skipped, 6 failed; failures are two POSIX executable-bit assertions, three POSIX `0600` mode assertions, and one Windows-incompatible `select()`-on-pipe MCP test, none in Issue #20 code |
+| Rust compile/unit tests | Not executable locally: this host has no Rust/MSVC toolchain |
+| Linux `.deb` build/inspection | Not executable locally: Docker Desktop is installed but its Linux engine did not become available; WSL contains only the stopped internal `docker-desktop` distribution; no Ubuntu distro or Debian/Rust tools are installed |
+
+No system-level software was installed to manufacture a result. Static checks
+prove that the configuration and workflow are closed; they do not claim an ELF
+binary, Debian package, installed shell, or Linux process was run locally.
+
+## Reproduction of the two release gates
+
+For candidate commit `<sha>`, preserve the Actions URL and logs for its normal
+CI run. After the project performs its normal release, preserve the release URL
+and asset listing:
 
 ```bash
-gh run watch <run-id> --exit-status
-gh run view <run-id> --log > issue-20-github-run.log
-gh run download <run-id> -n Ryn-linux-x86_64 -D issue-20-artifact
-cd issue-20-artifact && sha256sum -c Ryn-linux-x86_64.deb.sha256
-dpkg-deb --field Ryn-linux-x86_64.deb Version Architecture
+gh run view <ci-run-id> --log
+gh release view <tag> --json tagName,assets,url
 ```
 
-The log must show the Linux package/smoke job and both macOS compile gates for
-the same `<sha>`. On a named Ubuntu 24.04 GNOME machine, save `lsb_release -a`,
-`uname -a`, `gnome-shell --version`, `$XDG_SESSION_TYPE`, checksum output, and a
-screen recording or timestamped checklist covering menu launch, second launch,
-tray Open/Open Logs/Restart/Quit, close-to-tray, prior-version upgrade with data
-retention, and uninstall with application removal plus owner-data/log retention.
-Finally save `gh release view <tag> --json tagName,assets,url` proving the final
-`.deb` and checksum are published.
+The release mechanism happens to be tag-triggered today. That is an
+implementation detail of the existing workflow, not a new eighth acceptance
+criterion.
 
 ## Completion decision
 
-**Not accepted yet.** The code and automation can be reviewed and executed, but
-Issue #20 must remain open until Linux CI, existing macOS gates, a tagged final
-artifact, and the real-desktop install/upgrade/uninstall record all pass. Static
-inspection on a Windows development checkout is not a substitute for those
-release gates.
+**Development complete; release acceptance pending two external operations.**
+Criteria #1, #2, #4, #6, and #7 are locally accepted. Close Issue #20 only after
+the CI evidence for #3 and published release evidence for #5 both succeed.

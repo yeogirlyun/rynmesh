@@ -30,6 +30,34 @@ def test_linux_bundle_uses_one_target_named_sidecar() -> None:
     assert "production webapp is missing" in build
 
 
+def test_sidecar_bundle_closure_is_built_and_verified_without_source_fallbacks() -> None:
+    build = _text(TAURI / "scripts" / "build-sidecar.sh")
+    assert "--onefile" in build
+    assert '--collect-submodules rynmesh' in build
+    assert '--add-data "$WEBUI:rynmesh/webui"' in build
+    assert '"$SRC_TAURI/sidecar/rynmesh_peer_entry.py"' in build
+
+    verify = _text(TAURI / "scripts" / "verify-sidecar.sh")
+    assert "env -u PYTHONPATH -u RYNMESH_REPO_DIR" in verify
+    assert '"$SIDECAR"' in verify
+    assert 'curl -fsS "http://127.0.0.1:$VERIFY_PORT/"' in verify
+    assert 'http://127.0.0.1:$VERIFY_PORT/digest' in verify
+
+    deb_verify = _text(TAURI / "scripts" / "verify-linux-deb.sh")
+    assert "ldd \"$SIDECAR\"" in deb_verify
+    assert "python|node" in deb_verify
+
+
+def test_linux_package_and_sidecar_architecture_contracts_agree() -> None:
+    ci = _text(REPO / ".github" / "workflows" / "ci.yml")
+    verifier = _text(TAURI / "scripts" / "verify-linux-deb.sh")
+    assert "x86_64-unknown-linux-gnu" in ci
+    assert "ELF 64-bit.*x86-64" in ci
+    assert '[ "$ARCH" = "amd64" ]' in verifier
+    assert "ELF 64-bit.*x86-64" in verifier
+    assert "expected exactly one packaged rynmesh-peer" in verifier
+
+
 def test_pull_request_linux_job_builds_inspects_installs_and_smokes_deb() -> None:
     workflow = _text(REPO / ".github" / "workflows" / "ci.yml")
     required = (
@@ -78,6 +106,28 @@ def test_installed_smoke_covers_health_ui_recovery_xdg_and_orphan_cleanup() -> N
     )
     for value in required:
         assert value in smoke, f"installed smoke lost assertion: {value}"
+
+
+def test_shell_lifecycle_keeps_single_instance_watchdog_and_bounded_shutdown() -> None:
+    shell = _text(TAURI / "src" / "lib.rs")
+    node = _text(TAURI / "src" / "node.rs")
+    for value in (
+        "tauri_plugin_single_instance::init",
+        '"restart" =>',
+        "recover_if_unhealthy",
+        "RunEvent::ExitRequested",
+        "install_termination_handler",
+    ):
+        assert value in shell, f"desktop lifecycle lost behavior: {value}"
+    for value in (
+        "libc::SIGTERM",
+        "child.try_wait()",
+        "Duration::from_millis(100)",
+        "child.kill()",
+        "child.wait()",
+        "the packaged rynmesh-peer sidecar is missing or not executable",
+    ):
+        assert value in node, f"managed-child lifecycle lost behavior: {value}"
 
 
 def test_linux_verifiers_remain_executable_shell_entrypoints() -> None:

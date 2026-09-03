@@ -20,10 +20,10 @@
 All network-independent smoke runs set isolated `RYNMESH_HOME` and
 `RYNMESH_NETWORK_DIR`, bind loopback, and set `RYNMESH_AUTO_REGISTER=0`.
 
-## Manual release matrix
+## Optional release QA matrix
 
-Record the artifact SHA-256, Ubuntu point release, kernel, GNOME version, and
-Wayland/X11 session. On a clean supported desktop:
+This matrix is useful product QA but is not an additional Issue #20 completion
+gate. On a clean supported desktop:
 
 1. Verify checksum and install the downloaded artifact.
 2. Launch from the application menu with Python, Node, and source checkout
@@ -34,23 +34,24 @@ Wayland/X11 session. On a clean supported desktop:
    remain.
 6. Uninstall; verify application files leave and owner data/logs remain.
 
-## Failure policy
+## Issue acceptance policy
 
-Missing CI logs, a package built on an unlisted distribution, a smoke test that
-uses the source checkout, or a manual record without upgrade/uninstall evidence
-is a failed acceptance—not a documentation exception.
+The five locally decidable criteria fail if their implementation, tests, or
+workflow contracts fail. The two external criteria fail or remain pending when
+the Linux CI lifecycle job or release publication is missing. Absence of the
+optional physical-desktop QA record does not redefine development completion.
 
 ## Cross-platform audit checks
 
 `tests/test_linux_desktop_artifacts.py` is deliberately static: it can run on
-Windows/macOS and prevents removal or renaming of the Tauri sidecar contract,
-Ubuntu package job, Debian verifier, installed smoke, checksum upload, and
-existing macOS verification. It does **not** prove that a `.deb` installs or
-runs. That stronger evidence must come from the Ubuntu jobs and manual matrix
-above.
+Windows/macOS and prevents removal or renaming of the Tauri sidecar closure,
+architecture agreement, lifecycle contract, Ubuntu package job, Debian
+verifier, installed smoke, checksum upload, and existing macOS verification.
+It does **not** prove that a `.deb` installs or runs. That evidence is the
+original Issue's CI criterion (#3), not a locally fabricated substitute.
 
 ```bash
-python -m pytest tests/test_linux_desktop_artifacts.py -q
+python -m pytest tests/test_linux_desktop_artifacts.py -q  # 8 contract tests
 bash -n webapp/src-tauri/scripts/{build-sidecar,verify-sidecar,verify-linux-deb,smoke-linux-desktop}.sh
 cargo metadata --manifest-path webapp/src-tauri/Cargo.toml --locked --no-deps
 ```

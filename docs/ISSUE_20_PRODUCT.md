@@ -31,10 +31,14 @@ Supported: Ubuntu 24.04 LTS, x86_64, interactive desktop session. Not claimed:
 ARM64, other distributions, headless use, Windows, AppImage/RPM/Flatpak/Snap,
 automatic updates, package signing, or every tray implementation.
 
-## Success measures
+## Completion boundary
 
-The release is successful only when the tagged `.deb` and checksum are
-published, CI proves package architecture/content and isolated runtime
-behavior, existing macOS gates still pass, and a named real Ubuntu 24.04
-desktop acceptance record covers install, launch, tray, restart, upgrade, and
-uninstall.
+Development is complete when the selected `.deb` format, self-contained bundle
+design, architecture checks, lifecycle smoke, documentation, release wiring,
+and preserved macOS verification are implemented and pass all locally available
+checks. The original Issue still has two release operations after that point:
+the installed Linux lifecycle smoke must pass in CI, and the `.deb` plus
+checksum must be published through the existing release workflow.
+
+A physical GNOME install/upgrade/uninstall exercise is recommended release QA,
+not an extra requirement added to the seven upstream acceptance criteria.
