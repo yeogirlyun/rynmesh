@@ -74,8 +74,11 @@ fn env_or(key: &str, default: impl FnOnce() -> String) -> String {
 /// the packaged app resources, then the dev tree. `None` means "not bundled",
 /// and the node falls back to its managed download.
 fn llama_runtime_dir() -> Option<PathBuf> {
+    // Both spellings: the Windows release ships `llama-server.exe`, and this
+    // shell is built for Windows too.
     fn holds_server(dir: PathBuf) -> Option<PathBuf> {
-        dir.join("llama-server").is_file().then_some(dir)
+        (dir.join("llama-server").is_file() || dir.join("llama-server.exe").is_file())
+            .then_some(dir)
     }
     if let Ok(explicit) = std::env::var("RYNMESH_LLAMA_DIR") {
         if !explicit.is_empty() {

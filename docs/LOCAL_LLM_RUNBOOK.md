@@ -285,7 +285,9 @@ Cleanup never deletes a host GGUF mounted read-only by the real profile.
 - Docker runtime (opt-in): `Docker ... engine is not running` — start Docker
   Desktop/Engine, then rerun. Only applies when `--runtime docker` was chosen;
   the default native runtime never needs Docker.
-- `checksum mismatch`: the partial file is deleted and installation stops.
+- `checksum mismatch`: installation stops and the unverified bytes are put out
+  of reach — a model download is quarantined as `<model>.gguf.corrupt` (kept
+  for inspection, never used) and a runtime archive is discarded outright.
   Do not bypass it; retry only after validating the source.
 - `non-loopback local API blocked`: use loopback. Use the override only for an
   owner-controlled isolated network.

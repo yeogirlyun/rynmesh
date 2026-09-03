@@ -4,7 +4,13 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
-import type { LLMOrderResult, LLMProviderStatus, LLMServiceRecord, LLMSetupJob } from "../domain/nodeClient";
+import type {
+  LLMHardwareReport,
+  LLMOrderResult,
+  LLMProviderStatus,
+  LLMServiceRecord,
+  LLMSetupJob,
+} from "../domain/nodeClient";
 import Services from "./Services";
 
 function renderServices(options: {
@@ -14,8 +20,10 @@ function renderServices(options: {
   providerStatus?: LLMProviderStatus;
   orders?: LLMOrderResult[];
   setupStatuses?: LLMSetupJob[];
+  hardware?: LLMHardwareReport;
 } = {}) {
   const client = makeFixtureNodeClient();
+  if (options.hardware) client.getLLMHardware = vi.fn(async () => options.hardware!);
   const discover = vi.spyOn(client, "listLLMServices");
   if (options.configuredNetwork) {
     const getSettings = client.getSettings.bind(client);
@@ -284,10 +292,46 @@ describe("Services local LLM flow", () => {
     expect(screen.getByRole("option", { name: /Balanced.*recommended/ })).toBeInTheDocument();
   });
 
-  it("shows whether the bundled runtime is already available", async () => {
+  it("reports the runtime actually on the device, not one that could be downloaded", async () => {
+    // The fixture node reports `native_runtime_available: true` with
+    // `native_runtime_present: false`; branching on the wrong field would
+    // claim the runtime is already there.
     renderServices();
 
+    expect(await screen.findByText("Bundled runtime: will be downloaded on first setup"))
+      .toBeInTheDocument();
+    expect(screen.queryByText("Bundled runtime: available")).not.toBeInTheDocument();
+  });
+
+  it("shows the bundled runtime as available once it is present on the device", async () => {
+    renderServices({
+      hardware: {
+        hardware: { native_runtime_available: true, native_runtime_present: true },
+        recommendations: [{ profile: "light", can_run: true, display_name: "Light" }],
+      },
+    });
+
     expect(await screen.findByText("Bundled runtime: available")).toBeInTheDocument();
+  });
+
+  it("leaves no blank profile option when nothing in the catalog fits", async () => {
+    // The node's no-fit sentinel carries `can_run: false` and no profile
+    // name, so an unfiltered map renders an empty <option>.
+    const { user } = renderServices({
+      hardware: {
+        hardware: { native_runtime_available: true, native_runtime_present: true },
+        recommendations: [
+          { can_run: false, reason: "No bundled profile safely fits detected available RAM/disk." },
+        ] as unknown as LLMHardwareReport["recommendations"],
+      },
+    });
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
+
+    const options = screen.getByLabelText("Model profile").querySelectorAll("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveValue("auto");
   });
 
   it("posts the selected profile in the managed setup body", async () => {
@@ -321,7 +365,9 @@ describe("Services local LLM flow", () => {
     },
     {
       raw: "llama-server exited during startup (see the runtime log)",
-      mapped: "The local model runtime stopped while starting. Try a smaller model profile or check the runtime log from Settings.",
+      // No "runtime log" view exists to send the owner to, so the copy only
+      // names an action they can actually take.
+      mapped: "The local model runtime stopped while starting. Retry with a smaller model profile.",
     },
     {
       raw: "download exceeded the pinned size",

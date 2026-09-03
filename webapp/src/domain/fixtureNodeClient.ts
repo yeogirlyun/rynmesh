@@ -1096,7 +1096,11 @@ export function makeFixtureNodeClient(): NodeClient {
     async getLLMHardware() {
       await delay();
       return {
-        hardware: { native_runtime_available: true, native_runtime_present: true },
+        // The fixture node has no LLM configured yet, so the bundled runtime
+        // is downloadable (`available`) but not installed (`present`). The
+        // two fields are deliberately different: the setup panel must report
+        // what is on the device, not what could be fetched.
+        hardware: { native_runtime_available: true, native_runtime_present: false },
         recommendations: [
           {
             profile: "light", can_run: true, display_name: "Light",

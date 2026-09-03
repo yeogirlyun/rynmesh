@@ -51,7 +51,7 @@ function mapKnownLlmErrorText(message: string): string | null {
   if (/engine is not running/i.test(message)) return "Docker is installed but not running. Start Docker Desktop and retry.";
   if (/no local inference runtime is available/i.test(message)) return "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.";
   if (/runtime archive checksum mismatch|model checksum mismatch/i.test(message)) return "A download failed verification and was discarded. Retry to download it again.";
-  if (/exited during startup/i.test(message)) return "The local model runtime stopped while starting. Try a smaller model profile or check the runtime log from Settings.";
+  if (/exited during startup/i.test(message)) return "The local model runtime stopped while starting. Retry with a smaller model profile.";
   if (/download exceeded the pinned size/i.test(message)) return "The download did not match the expected size and was discarded. Retry.";
   return null;
 }
@@ -646,7 +646,11 @@ export default function Services() {
           {llmHardware ? (
             <div className="service-result">
               <small>
-                {llmHardware.hardware.native_runtime_available
+                {/* `native_runtime_present`, not `native_runtime_available`:
+                    the latter is true wherever the pinned release *could* be
+                    downloaded, so it would claim "available" on a device that
+                    has nothing installed yet. */}
+                {llmHardware.hardware.native_runtime_present
                   ? "Bundled runtime: available"
                   : "Bundled runtime: will be downloaded on first setup"}
               </small>
@@ -713,14 +717,19 @@ export default function Services() {
                     onChange={(event) => setLlmProfile(event.target.value as typeof llmProfile)}
                   >
                     <option value="auto">Automatic — recommended for this device</option>
-                    {(llmHardware?.recommendations ?? []).map((rec) => (
-                      <option key={rec.profile} value={rec.profile}>
-                        {(rec.display_name || rec.profile)}
-                        {rec.estimated_memory_mb ? ` · ~${rec.estimated_memory_mb} MB memory` : ""}
-                        {rec.estimated_disk_mb ? ` · ~${rec.estimated_disk_mb} MB disk` : ""}
-                        {rec.recommended ? " · recommended" : ""}
-                      </option>
-                    ))}
+                    {/* A recommendation the device cannot run is not an
+                        option, and the no-fit sentinel the node returns has
+                        no profile name — either would render a blank entry. */}
+                    {(llmHardware?.recommendations ?? [])
+                      .filter((rec) => rec.can_run && rec.profile)
+                      .map((rec) => (
+                        <option key={rec.profile} value={rec.profile}>
+                          {(rec.display_name || rec.profile)}
+                          {rec.estimated_memory_mb ? ` · ~${rec.estimated_memory_mb} MB memory` : ""}
+                          {rec.estimated_disk_mb ? ` · ~${rec.estimated_disk_mb} MB disk` : ""}
+                          {rec.recommended ? " · recommended" : ""}
+                        </option>
+                      ))}
                   </select>
                 </label>
               ) : null}
