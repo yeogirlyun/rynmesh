@@ -14,6 +14,7 @@
 | Recovery | killing child yields a different healthy child | Linux CI/release |
 | Shutdown | desktop exit leaves no managed child | Linux CI/release |
 | Paths | shell writes `ryn-node.log` under isolated `XDG_STATE_HOME` | Linux CI/release |
+| Workflow contract | package job, release upload, macOS preservation, and smoke wiring stay connected | cross-platform pytest |
 | Regression | backend/webapp and both macOS desktop compile/release jobs unchanged | repository CI |
 
 All network-independent smoke runs set isolated `RYNMESH_HOME` and
@@ -38,3 +39,18 @@ Wayland/X11 session. On a clean supported desktop:
 Missing CI logs, a package built on an unlisted distribution, a smoke test that
 uses the source checkout, or a manual record without upgrade/uninstall evidence
 is a failed acceptance—not a documentation exception.
+
+## Cross-platform audit checks
+
+`tests/test_linux_desktop_artifacts.py` is deliberately static: it can run on
+Windows/macOS and prevents removal or renaming of the Tauri sidecar contract,
+Ubuntu package job, Debian verifier, installed smoke, checksum upload, and
+existing macOS verification. It does **not** prove that a `.deb` installs or
+runs. That stronger evidence must come from the Ubuntu jobs and manual matrix
+above.
+
+```bash
+python -m pytest tests/test_linux_desktop_artifacts.py -q
+bash -n webapp/src-tauri/scripts/{build-sidecar,verify-sidecar,verify-linux-deb,smoke-linux-desktop}.sh
+cargo metadata --manifest-path webapp/src-tauri/Cargo.toml --locked --no-deps
+```
