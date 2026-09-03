@@ -22,7 +22,17 @@ the recipient collects them. Its properties, all enforced in code:
 - **Sealed.** The body is encrypted to the recipient's X25519 messaging key with
   a fresh ephemeral key per message. The registry holds ciphertext only. It
   cannot read a body, and re-labelling an envelope does not work: `kind` and
-  `message_id` are repeated *inside* the seal and re-checked on open.
+  `message_id` are repeated *inside* the seal and re-checked on open. The seal
+  is domain-separated (HKDF info `rynmesh-mailbox-v1`) from the direct
+  peer-message channel, so a ciphertext captured off the registry cannot be
+  replayed into `/api/peer/msg`, or the reverse.
+- **Metadata is not hidden.** The envelope is plaintext by design: the registry
+  sees the sender and recipient peer ids, the `kind`, the message id, the
+  timestamps and the size. Only the body is sealed.
+- **Best-effort, not guaranteed.** A hostile or broken registry cannot read,
+  forge or alter mail, but it *can* withhold, delay or reorder it, and a client
+  has no way to detect that. Treat delivery as best-effort within the TTL: never
+  depend on a message arriving, and never on two messages arriving in order.
 - **Signed.** Every deposit and every poll is an Ed25519-signed payload.
   `from_peer_id` must equal the signer, so an envelope cannot claim a sender it
   does not hold the key for.
@@ -33,7 +43,9 @@ the recipient collects them. Its properties, all enforced in code:
 - **Tombstones.** An acked message leaves a `<message_id>.acked` marker holding
   only its `expires_at`, so a captured envelope cannot be re-deposited and
   re-delivered inside its TTL. Tombstones expire with the message and do not
-  count against the recipient's pending budget.
+  count against the recipient's pending budget, but they are bounded too: at
+  most 2048 per box, oldest evicted first, so a box churning faster than its TTL
+  cannot grow markers without limit.
 
 ## Envelope and poll shapes
 
@@ -72,10 +84,10 @@ Routes (both under `/api/v1`, so a network key hides them as 404):
 | `POST /api/v1/mailbox/deposit` | signed envelope | `{message_id, expires_at, pending}` |
 | `POST /api/v1/mailbox/poll` | signed poll | `{"messages": [signed envelope, ...]}` |
 
-Status codes: `409` duplicate or replayed poll, `429` recipient full or sender
-rate-limited, `400` anything else. The detail is a short stable code
-(`duplicate`, `rate_limited`, `recipient_full`, `expired`, …) and never
-interpolates peer-supplied text.
+Status codes: `409` duplicate or replayed poll, `429` recipient full, sender
+quota exceeded, or sender rate-limited, `400` anything else. The detail is a
+short stable code (`duplicate`, `rate_limited`, `recipient_full`,
+`sender_quota`, `expired`, …) and never interpolates peer-supplied text.
 
 ## Caps
 
@@ -86,10 +98,18 @@ interpolates peer-supplied text.
 | Poll batch | 50 messages | `MAX_POLL_LIMIT` |
 | Ack ids per poll | 200 | `MAX_ACK_IDS` |
 | TTL | 1 h default, 24 h max | `DEFAULT_TTL_S`, `MAX_TTL_S` |
-| Kind length | 96 chars | `MAX_KIND_LEN` |
+| Kind length and charset | 96 chars, `[A-Za-z0-9][A-Za-z0-9._-]*` | `MAX_KIND_LEN`, `_require_kind` |
 | Clock skew | 300 s | `POLL_SKEW_S` |
 | Pending per recipient | 256 | `FileMailboxStore(max_pending_per_recipient=…)` |
+| Pending per (sender, recipient) | 16 | `FileMailboxStore(max_pending_per_sender=…)` |
+| Tombstones per box | 2048 (oldest evicted) | `MAX_TOMBSTONES_PER_BOX` |
 | Deposits per sender | 120/min (token bucket) | `FileMailboxStore(sender_rate_per_minute=…)` |
+
+**These caps are not admission control — the network key is.** Any peer holding
+`RYNMESH_NETWORK_KEY` may deposit into any box. The per-recipient cap bounds
+disk; the per-(sender, recipient) cap is what stops one such peer from filling
+somebody else's box and starving every other sender for a full TTL. Neither is a
+substitute for keeping the network key private.
 
 The sender bucket is per-process and in-memory: a multi-replica registry grants
 `N x rate` in aggregate and resets on restart.
@@ -110,11 +130,25 @@ A poll counts as *busy* when it handled or dropped anything, so a box full of
 replays or unknown kinds still drains at the busy delay instead of backing off
 while it fills.
 
-Per message, `poll_once` does: seen-cache replay → ack and drop; unopenable or
-expired → ack and drop; unknown kind → ack and drop; handler raised → retry (no
-ack) up to three attempts, then ack and drop; handler returned → remember, ack,
-count as handled. The seen cache lives at `<home>/mailbox/seen.json` (0600 in a
-0700 directory, bounded at 5000 ids, pruned by expiry).
+Per message, `poll_once` does: seen-cache replay → ack and drop; bad envelope
+(signature, recipient, expiry, size, charset) → ack and drop; **decrypt failed →
+count `undecryptable`, do not ack**; unknown kind → ack and drop; handler raised
+→ retry (no ack) up to three attempts, then ack and drop; handler returned →
+remember, ack, count as handled.
+
+The decrypt-failure case is deliberately not a drop. It means the envelope is
+valid and really is addressed to this node but the seal will not open — a
+messaging key rotated while the message was in flight, most likely. Acking would
+delete mail the right key could still read, so the message is left to expire in
+the registry's box on its own. Those are counted, and one log line per poll
+records the count and the exception class, nothing more.
+
+The seen cache lives at `<home>/mailbox/seen.json` (0600 in a 0700 directory,
+bounded at 5000 ids, pruned by expiry). It holds two maps: `entries`
+(message id → expiry, the replay guard) and `attempts` (message id → retry count
+and expiry). The attempt counters are persisted for the same reason the seen
+cache is: without them, restarting the node would hand a poison message a fresh
+three attempts on every restart, for as long as its TTL runs.
 
 ## `GET /api/local/mailbox/status`
 
@@ -124,13 +158,24 @@ Loopback-only, like the rest of `/api/local`.
 {
   "handled_total": 3,
   "dropped_total": 0,
+  "undecryptable": 0,
   "pending_last": 0,
   "last_poll_at": "2026-09-03T10:04:11Z",
   "last_error": "",
   "handlers": ["friend.invite.accept.v1", "peer.message.v1"],
-  "worker": {"name": "mailbox.poll", "running": true, "...": "..."}
+  "worker": {"name": "mailbox.poll", "running": true, "...": "..."},
+  "registry_dropped": 0
 }
 ```
+
+`undecryptable` counts envelopes that verified but would not open (see above);
+they are still in the registry's box and will expire there. `registry_dropped`
+is `HttpPeerRegistry.dropped_mailbox_messages` — envelopes the node's own
+registry client refused on the way in, because they failed verification or were
+addressed to somebody else. It is present only when the configured registry
+counts them (a fallback chain reports the sum over its mirrors; a file-backed
+registry omits the key). A rising number means a registry is serving mail this
+node will not accept.
 
 `last_error` is an exception *class* name or the sentinel `no_registry` — never
 a message, a path, or anything derived from a body. No count, field, or log line
@@ -194,9 +239,9 @@ Two rules the relay enforces beyond the direct route:
   direct `/api/peer/msg` route can still seed the same TOFU cache from a header
   it did not verify. That gap predates the mailbox and is tracked separately;
   the mailbox path simply does not widen it.
-- A header that serializes above 48 KiB is never offered to the mailbox (it
-  could not fit a 64 KiB envelope once sealed and base64'd). Large attachments
-  stay direct-only.
+- A header that serializes above 47 KiB (`MAX_MAILBOX_HEADER_BYTES = 47 * 1024`)
+  is never offered to the mailbox: it could not fit a 64 KiB envelope once
+  sealed and base64'd. Large attachments stay direct-only.
 
 ### `friend.invite.accept.v1` (contract, user track)
 
