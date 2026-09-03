@@ -5,10 +5,10 @@ Decision: **NOT YET ACCEPTED**
 Audit date: 2026-09-03
 
 Scope: GitHub Issue #30, the product/development/test/acceptance documents, the
-canonical #30 code and tests, and the cross-feature contracts needed from #23
-and #28. This audit distinguishes implemented behavior, locally automated
-proof, and release acceptance. A checked unit/integration test is not treated as
-physical or installed-package evidence.
+canonical #30 code and tests, and the combined #23/#28/#30 cross-feature
+contracts. This audit distinguishes implemented behavior, locally automated
+proof, and release acceptance. A checked unit/integration test is not treated
+as physical or installed-package evidence.
 
 ## Traceability result
 
@@ -22,7 +22,7 @@ physical or installed-package evidence.
 | Two-node Join | Two independent stores/apps exchange through an in-memory bridge and persist the active relationship | Simulation only; physical network proof pending |
 | Revocation | Local secret removed before delivery; signed notice; bounded offline error; retry/idempotence; DNS rechecked; simulated convergence | Local semantics proven; physical disconnect/restart convergence pending |
 | Privacy export/erase | Export excludes bearer/relationship secrets. Erase remains local-authoritative if notice delivery fails and writes exact empty invite/friend/revocation/nonce/credential schemas. | Locally proven |
-| Friends-only Private AI | Complete-v1 route and Provider admission denial are covered. HMAC primitive binds the stream path separately from complete. | Stream-v1 route proof pending on final #23+#30 commit |
+| Friends-only Private AI | Complete-v1 admission is covered. On the combined branch, HTTP tests prove exact stream-path HMAC, complete-to-stream rejection, correct stream admission, and post-revoke denial before service entry. | Locally proven; physical use/deny evidence pending |
 | CI/release | Focused backend and full Web evidence exists; historical Rust metadata resolved. Current Windows full backend has documented platform failures. | Exact-commit three-OS CI/package matrix pending |
 | Protocol governance | Eight product/security decisions are written down. | Maintainer sign-off pending |
 
@@ -59,6 +59,12 @@ Command results:
 Cargo was unavailable on this audit host, so locked metadata was not rerun. The
 metadata result in the test plan predates this audit and is not counted as
 exact-commit proof.
+
+On the combined #23/#28/#30 branch, the suite including
+`test_llm_streaming.py` passes 112 tests with one skipped. The #30 focused suite
+remains 48/48 and Ruff is green. The integrated HTTP assertions prove route
+binding and revocation denial locally; they do not satisfy the physical
+complete/stream acceptance in section B.
 
 ## Required external evidence
 

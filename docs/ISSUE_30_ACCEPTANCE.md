@@ -50,8 +50,11 @@ documented Windows-platform failures, with no Friend Mesh failure. It proves
 stream-path HMAC separation at the protocol primitive, proxy rejection before
 contact/invite consumption, and exact public/secret friendship-store erasure.
 It also fixed an unhandled proxy Transport error at the Join boundary. Cargo
-was unavailable for a current metadata rerun. This does not replace route-level
-#23 streaming evidence or any physical/installed-package evidence.
+was unavailable for a current metadata rerun. On the combined branch, the
+expanded suite including #23 streaming passes 112 tests with one skipped, and
+the HTTP regression proves stream-specific path binding and post-revoke denial
+at the outer Friend gate. This does not replace physical/installed-package
+evidence.
 
 ## Criteria status
 
@@ -71,13 +74,14 @@ was unavailable for a current metadata rerun. This does not replace route-level
 - [x] Changed endpoints require a second explicit review.
 - [x] Friends-only complete-v1 admission denies before capacity/inference on
   the canonical #30 implementation.
-- [ ] Friends-only stream-v1 route uses the same Friend ACL on the final stacked
-  commit; complete-route HMAC cannot authenticate the stream route; post-revoke
-  next-stream admission is denied before capacity/inference.
+- [x] On the combined branch, friends-only stream-v1 uses the exact-path Friend
+  ACL; complete-route HMAC cannot authenticate it and post-revoke requests are
+  denied at the outer gate before the LLM service is entered.
 - [x] Simulated two-app revocation delivery converges after offline/reconnect and
   is idempotent.
 - [ ] Physical two-node revocation convergence is recorded across disconnect,
-  restart/reconnect, and next-order denial.
+  restart/reconnect, and next complete/stream order denial before
+  capacity/inference.
 - [ ] Webapp and Tauri create/review/join/QR/deep-link/list/revoke flows complete.
   - [x] Webapp create/list/cancel with explicit endpoint/scope/expiry review.
   - [x] Pasted-link offline review shows signature, fingerprint, network, every endpoint/address class, scope, and expiry.

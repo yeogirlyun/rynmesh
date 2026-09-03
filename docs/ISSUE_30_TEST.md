@@ -165,7 +165,12 @@ metadata was not rerun; the earlier recorded metadata result is historical
 evidence, not an exact-audit rerun.
 
 This run proves local protocol and state behavior. It does not prove a real
-socket crossed two physical hosts, an installed OS dispatched a deep link, a
-revocation survived a physical disconnect/restart, or #23's streaming route
-used the Friend ACL on the final integrated commit. Those exact external
+socket crossed two physical hosts, an installed OS dispatched a deep link, or
+a revocation survived a physical disconnect/restart. Those exact external
 artifacts are specified in `ISSUE_30_STRICT_COMPLETION_AUDIT.md`.
+
+After stacking the audit onto the combined #23/#28/#30 branch, the HTTP Friend
+regression additionally proves stream-route path binding and post-revoke denial
+at the outer gate. The combined Friend/Transport/LLM suite, including
+`test_llm_streaming.py`, passes 112 tests with one skipped; the #30 focused
+suite remains 48/48 and Ruff remains green.

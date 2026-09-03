@@ -50,10 +50,12 @@ checks the signed Consumer peer against `private-ai.use` before capacity
 acquisition or inference. The HMAC primitive also proves that a signature for
 `/api/peer/llm/tasks` cannot be replayed to
 `/api/peer/llm/tasks/stream`. The canonical #30 branch does not contain #23's
-stream-v1 route, so route-level streaming ACL evidence must be produced on the
-final stacked/integration commit. A task already claimed before revocation
-keeps its idempotent result; every new task is denied immediately after local
-revocation.
+stream-v1 route. This combined integration branch does: its HTTP regression
+proves complete-route credentials cannot authenticate the stream route, a
+stream-specific credential passes the Friend gate, and a credential prepared
+before revocation is denied at that gate after revoke. A task already claimed
+before revocation keeps its idempotent result; every new task is denied
+immediately after local revocation.
 
 ## Secret boundaries
 
@@ -78,8 +80,8 @@ original hostname for TLS SNI/certificate and HTTP Host validation.
 1. Decide the V1 outbound-proxy contract: implement equivalent authenticated
    DNS pinning, or approve the fail-closed exclusion and expose a specific,
    actionable user diagnostic.
-2. Prove friends-only ACL and post-revoke denial on #23's complete and streaming
-   routes on the final integrated commit.
+2. Re-run the locally proven friends-only complete and streaming ACL on the
+   immutable final integrated commit and include it in physical acceptance.
 3. Run installed-desktop deep-link/scan acceptance on Windows, Linux, and macOS.
 4. Run two clean physical-node Join/use/revoke/offline-reconnect acceptance,
    including observed DNS answer versus socket peer and denial before

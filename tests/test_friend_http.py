@@ -433,3 +433,49 @@ def test_friend_hmac_is_network_key_alternative_and_replay_is_hidden(tmp_path, m
     assert provider_client.post(
         "/api/peer/llm/tasks", content=encoded, headers=headers
     ).status_code == 404
+
+    wrong_stream_headers = consumer_friends.make_auth_headers(
+        provider_store.peer_id,
+        sender_peer_id=consumer_store.peer_id,
+        method="POST",
+        path="/api/peer/llm/tasks",
+        body=encoded,
+        nonce="friend-stream-wrong-path",
+    )
+    wrong_stream_headers["content-type"] = "application/json"
+    assert provider_client.post(
+        "/api/peer/llm/tasks/stream", content=encoded, headers=wrong_stream_headers
+    ).status_code == 404
+
+    stream_headers = consumer_friends.make_auth_headers(
+        provider_store.peer_id,
+        sender_peer_id=consumer_store.peer_id,
+        method="POST",
+        path="/api/peer/llm/tasks/stream",
+        body=encoded,
+        nonce="friend-stream-valid-path",
+    )
+    stream_headers["content-type"] = "application/json"
+    # The correct stream-specific signature passes the outer Friend gate and
+    # reaches the unconfigured LLM route, which returns its normal 503.
+    assert provider_client.post(
+        "/api/peer/llm/tasks/stream", content=encoded, headers=stream_headers
+    ).status_code == 503
+
+    revoked_stream_headers = consumer_friends.make_auth_headers(
+        provider_store.peer_id,
+        sender_peer_id=consumer_store.peer_id,
+        method="POST",
+        path="/api/peer/llm/tasks/stream",
+        body=encoded,
+        nonce="friend-stream-after-revoke",
+    )
+    revoked_stream_headers["content-type"] = "application/json"
+    provider_friends.revoke(
+        consumer_store.peer_id,
+        private_key_bytes=provider_store.private_key_bytes,
+        local_peer_id=provider_store.peer_id,
+    )
+    assert provider_client.post(
+        "/api/peer/llm/tasks/stream", content=encoded, headers=revoked_stream_headers
+    ).status_code == 404
