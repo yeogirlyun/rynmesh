@@ -91,6 +91,9 @@ Implemented foundations:
 - encrypted direct messages and small attachments
 - signed publication and verified peer fetches
 - credit and serve-receipt primitives
+- peer mailbox (delivered, #35): sealed, signed, short-TTL registry
+  store-and-forward so pairing and chat reach an offline or endpoint-less node
+  (`docs/PEER_MAILBOX.md`)
 
 Planned product work:
 
