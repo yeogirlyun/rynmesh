@@ -108,11 +108,16 @@ class BackgroundWorkerRegistry:
         self._started = False
         self._sealed = False
 
-    def register(self, spec: BackgroundWorkerSpec) -> None:
-        """Register one unique worker before the registry is first started."""
+    def register(self, spec: BackgroundWorkerSpec, *, replace: bool = False) -> None:
+        """Register one worker before the registry is first started.
+
+        A name is claimed exactly once unless ``replace`` is set, which lets an
+        installer be re-run over the same app (re-installed routes, a rebuilt
+        client) without the second pass colliding with its own first one.
+        """
         if self._sealed:
             raise RuntimeError("background worker registration is closed after start")
-        if spec.name in self._specs:
+        if spec.name in self._specs and not replace:
             raise ValueError(f"background worker already registered: {spec.name}")
         self._specs[spec.name] = spec
         self._states[spec.name] = _WorkerState()

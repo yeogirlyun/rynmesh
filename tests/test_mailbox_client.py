@@ -1,0 +1,802 @@
+"""Node-side mailbox: poll worker client, app wiring, messaging-key discovery."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from rynmesh.crypto import SignedPayload
+from rynmesh.mailbox import (
+    MAX_ACK_IDS,
+    MailboxEnvelope,
+    MailboxError,
+    build_poll_request,
+    seal_mailbox_message,
+)
+from rynmesh.mailbox_client import MailboxClient
+from rynmesh.registry import FilePeerRegistry
+
+pytest.importorskip("cryptography")
+
+KIND = "friend.invite.accept.v1"
+
+
+class _Node:
+    """A real store on its own home, pointed at a shared registry."""
+
+    def __init__(self, tmp_path: Path, name: str, registry: Any) -> None:
+        from rynmesh.services import peer_box
+        from rynmesh.store import RynmeshStore
+
+        self.home = tmp_path / name
+        self.store = RynmeshStore(home=self.home, network_dir=tmp_path / f"{name}-net")
+        self.store.registry = registry
+        self.messaging_key = peer_box.load_or_create_messaging_key(self.home / "messaging.x25519")
+        self.messaging_pub = peer_box.public_key_b64(self.messaging_key)
+
+    @property
+    def peer_id(self) -> str:
+        return self.store.peer_id
+
+    def client(self, **overrides: Any) -> MailboxClient:
+        options: dict[str, Any] = dict(
+            store=self.store,
+            messaging_key=self.messaging_key,
+            home=self.home,
+            resolve_messaging_pub=lambda peer_id: (_ for _ in ()).throw(
+                AssertionError("messaging pub should have been supplied explicitly")
+            ),
+        )
+        options.update(overrides)
+        return MailboxClient(**options)
+
+
+class _Recorder:
+    """A handler that remembers what it was given (and can be made to fail)."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.calls: list[tuple[MailboxEnvelope, dict]] = []
+        self.failures = failures
+
+    def __call__(self, envelope: MailboxEnvelope, body: dict) -> None:
+        self.calls.append((envelope, body))
+        if self.failures > 0:
+            self.failures -= 1
+            raise RuntimeError("SECRET_HANDLER_FAILURE_MARKER")
+
+
+class _StubRegistry:
+    """Hands back envelopes verbatim — a registry that skipped its own checks."""
+
+    def __init__(self, messages: list[SignedPayload]) -> None:
+        self.messages = list(messages)
+        self.acked: list[str] = []
+        self.polls = 0
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        self.polls += 1
+        acks = set(signed_poll.payload.get("ack", []))
+        self.acked.extend(sorted(acks))
+        self.messages = [
+            item
+            for item in self.messages
+            if getattr(item, "payload", {}).get("message_id") not in acks
+        ]
+        return list(self.messages)
+
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
+        self.messages.append(signed)
+        return {"message_id": signed.payload["message_id"], "pending": len(self.messages)}
+
+
+def _pending_files(registry: FilePeerRegistry) -> list[Path]:
+    return sorted((registry.root / "mailbox").rglob("*.json"))
+
+
+def _at(moment: datetime):
+    return lambda: moment
+
+
+# ------------------------------------------------------------------ 1. deliver
+
+
+def test_deposit_is_delivered_opened_dispatched_and_acked(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    sender = alice.client()
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    receipt = sender.deposit(
+        bob.peer_id, KIND, {"invite_id": "abc", "note": "yes"},
+        to_messaging_pub=bob.messaging_pub,
+    )
+    assert receipt["message_id"]
+    assert len(_pending_files(registry)) == 1
+
+    assert receiver.poll_once() == 1
+    [(envelope, body)] = handler.calls
+    assert envelope.kind == KIND
+    assert envelope.from_peer_id == alice.peer_id
+    assert body == {"invite_id": "abc", "note": "yes"}
+
+    # The ack rides the next poll, which is also what empties the spool.
+    assert receiver.poll_once() == 0
+    assert _pending_files(registry) == []
+    assert len(handler.calls) == 1
+
+    status = receiver.status()
+    assert status["handled_total"] == 1
+    assert status["dropped_total"] == 0
+    assert status["handlers"] == [KIND]
+
+
+def test_register_handler_claims_a_kind_once(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", registry)
+    client = bob.client()
+
+    first, second = _Recorder(), _Recorder()
+    client.register_handler(KIND, first)
+    with pytest.raises(ValueError, match="already registered"):
+        client.register_handler(KIND, second)
+    client.register_handler(KIND, second, replace=True)
+    assert client.status()["handlers"] == [KIND]
+    with pytest.raises(ValueError):
+        client.register_handler("  ", first)
+
+
+# ------------------------------------------------------------------- 2. replay
+
+
+def test_a_redelivered_message_is_dropped_by_the_seen_cache(tmp_path) -> None:
+    """A second registry (or a re-deposit) must not run a handler twice."""
+
+    first = FilePeerRegistry(tmp_path / "registry-a")
+    second = FilePeerRegistry(tmp_path / "registry-b")
+    alice = _Node(tmp_path, "alice", first)
+    bob = _Node(tmp_path, "bob", first)
+
+    handler = _Recorder()
+    receiver = bob.client()
+    receiver.register_handler(KIND, handler)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"invite_id": "abc"},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+    )
+    first.deposit_mailbox(signed)
+    assert receiver.poll_once() == 1
+    assert len(handler.calls) == 1
+    assert receiver.poll_once() == 0  # flush the ack; the first box is empty
+
+    # The identical envelope, deposited into a registry that never saw it.
+    second.deposit_mailbox(signed)
+    bob.store.registry = second
+    assert receiver.poll_once() == 0
+    assert len(handler.calls) == 1
+    assert receiver.status()["dropped_total"] == 1
+    # ...and it was acked, so the second registry drains too.
+    assert receiver.poll_once() == 0
+    assert _pending_files(second) == []
+
+
+def test_the_seen_cache_survives_a_client_restart(tmp_path) -> None:
+    first = FilePeerRegistry(tmp_path / "registry-a")
+    second = FilePeerRegistry(tmp_path / "registry-b")
+    alice = _Node(tmp_path, "alice", first)
+    bob = _Node(tmp_path, "bob", first)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"invite_id": "abc"},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+    )
+    first.deposit_mailbox(signed)
+    original = bob.client()
+    original.register_handler(KIND, _Recorder())
+    assert original.poll_once() == 1
+
+    seen = bob.home / "mailbox" / "seen.json"
+    assert seen.is_file()
+    if os.name == "posix":
+        assert stat.S_IMODE(seen.stat().st_mode) == 0o600
+        assert stat.S_IMODE(seen.parent.stat().st_mode) == 0o700
+    stored = json.loads(seen.read_text(encoding="utf-8"))
+    assert list(stored["entries"]) == [signed.payload["message_id"]]
+
+    second.deposit_mailbox(signed)
+    bob.store.registry = second
+    restarted = bob.client()
+    handler = _Recorder()
+    restarted.register_handler(KIND, handler)
+    assert restarted.poll_once() == 0
+    assert handler.calls == []
+    assert restarted.status()["dropped_total"] == 1
+
+
+def test_the_seen_cache_is_bounded_and_prunes_expired_entries(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    receiver = bob.client(seen_capacity=2)
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+    for index in range(3):
+        registry.deposit_mailbox(
+            seal_mailbox_message(
+                kind=KIND,
+                body={"n": index},
+                from_private_key_bytes=alice.store.private_key_bytes,
+                to_peer_id=bob.peer_id,
+                to_messaging_pub=bob.messaging_pub,
+            )
+        )
+    assert receiver.poll_once() == 3
+
+    delivered = [envelope.message_id for envelope, _ in handler.calls]
+    entries = json.loads((bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8"))
+    assert set(entries["entries"]) == set(delivered[1:])  # oldest evicted first
+
+    # Reloading applies the same bound, and drops the entry that expires first.
+    tightened = bob.client(seen_capacity=1)
+    tightened._save_seen()
+    survivors = json.loads(
+        (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
+    )["entries"]
+    assert len(survivors) == 1
+    assert set(survivors) <= set(entries["entries"])
+    assert survivors[next(iter(survivors))] == max(entries["entries"].values())
+
+    # An entry whose envelope has expired is not kept forever either.
+    later = bob.client(seen_capacity=2, now=_at(datetime.now(timezone.utc) + timedelta(days=2)))
+    assert later.status()["handlers"] == []
+    later._save_seen()
+    assert json.loads(
+        (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
+    )["entries"] == {}
+
+
+# ----------------------------------------------------------------- 3. attempts
+
+
+def test_a_failing_handler_is_retried_until_it_succeeds(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, KIND, {"invite_id": "abc"}, to_messaging_pub=bob.messaging_pub
+    )
+    receiver = bob.client()
+    handler = _Recorder(failures=2)
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 0
+    assert len(_pending_files(registry)) == 1, "a failed handler must not ack"
+    assert receiver.poll_once() == 0
+    assert len(_pending_files(registry)) == 1
+    assert receiver.poll_once() == 1
+    assert len(handler.calls) == 3
+
+    assert receiver.poll_once() == 0
+    assert _pending_files(registry) == []
+    status = receiver.status()
+    assert status["handled_total"] == 1
+    assert status["dropped_total"] == 0
+
+
+def test_a_poison_message_is_dropped_after_max_attempts(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, KIND, {"invite_id": "abc"}, to_messaging_pub=bob.messaging_pub
+    )
+    receiver = bob.client(max_attempts=3)
+    handler = _Recorder(failures=99)
+    receiver.register_handler(KIND, handler)
+
+    for _ in range(3):
+        assert receiver.poll_once() == 0
+    assert len(handler.calls) == 3
+    status = receiver.status()
+    assert status["dropped_total"] == 1
+    assert status["handled_total"] == 0
+
+    # Acked on the give-up poll, so it is gone and never seen again.
+    assert receiver.poll_once() == 0
+    assert _pending_files(registry) == []
+    assert len(handler.calls) == 3
+
+
+# ------------------------------------------------------- 4. unknown / expired
+
+
+def test_an_unknown_kind_is_dropped_and_acked(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, "some.kind.nobody.handles", {"x": 1}, to_messaging_pub=bob.messaging_pub
+    )
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 0
+    assert handler.calls == []
+    assert receiver.status()["dropped_total"] == 1
+    assert receiver.poll_once() == 0
+    assert _pending_files(registry) == []
+
+
+def test_an_expired_envelope_is_never_delivered(tmp_path) -> None:
+    """Even a registry that serves stale mail cannot get it past the client."""
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    born = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"invite_id": "abc"},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+        ttl_s=60,
+        now=_at(born),
+    )
+    stub = _StubRegistry([signed])
+    bob.store.registry = stub
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 0
+    assert handler.calls == []
+    assert receiver.status()["dropped_total"] == 1
+    receiver.poll_once()
+    assert stub.acked == [signed.payload["message_id"]]
+
+    # The real registry refuses to hand it over at all.
+    with pytest.raises(MailboxError, match="expired"):
+        registry.deposit_mailbox(signed)
+
+
+# ---------------------------------------------------------------- 5. isolation
+
+
+def test_mail_for_another_peer_never_reaches_this_node(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    carol = _Node(tmp_path, "carol", registry)
+
+    alice.client().deposit(
+        carol.peer_id, KIND, {"invite_id": "for-carol"}, to_messaging_pub=carol.messaging_pub
+    )
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 0
+    assert handler.calls == []
+    assert receiver.status()["pending_last"] == 0
+    assert len(_pending_files(registry)) == 1, "Carol's mail is untouched"
+
+    carol_client = carol.client()
+    carol_handler = _Recorder()
+    carol_client.register_handler(KIND, carol_handler)
+    assert carol_client.poll_once() == 1
+    assert carol_handler.calls[0][1] == {"invite_id": "for-carol"}
+
+
+def test_a_mislabelled_envelope_from_the_registry_is_rejected(tmp_path) -> None:
+    """A registry that pushes someone else's envelope at us gets a drop."""
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    carol = _Node(tmp_path, "carol", registry)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"invite_id": "for-carol"},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=carol.peer_id,
+        to_messaging_pub=carol.messaging_pub,
+    )
+    bob.store.registry = _StubRegistry([signed])
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 0
+    assert handler.calls == []
+    assert receiver.status()["dropped_total"] == 1
+
+
+def test_junk_from_the_registry_cannot_wedge_the_box(tmp_path) -> None:
+    """One unopenable item must not stop the rest of the batch."""
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    good = seal_mailbox_message(
+        kind=KIND,
+        body={"invite_id": "good"},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+    )
+    stub = _StubRegistry([])
+    stub.messages = ["not an envelope at all", good]
+    bob.store.registry = stub
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    assert receiver.poll_once() == 1
+    assert handler.calls[0][1] == {"invite_id": "good"}
+    assert receiver.status()["dropped_total"] == 1
+
+
+# ------------------------------------------------------------------- 6. status
+
+
+def test_status_shape_and_error_redaction(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", registry)
+    client = bob.client()
+
+    assert client.status() == {
+        "handled_total": 0,
+        "dropped_total": 0,
+        "pending_last": 0,
+        "last_poll_at": "",
+        "last_error": "",
+        "handlers": [],
+    }
+
+    class _Broken:
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise ConnectionResetError("SECRET_REGISTRY_URL_MARKER")
+
+    bob.store.registry = _Broken()
+    with pytest.raises(ConnectionResetError):
+        client.poll_once()
+    status = client.status()
+    assert status["last_error"] == "ConnectionResetError"
+    assert "SECRET_REGISTRY_URL_MARKER" not in json.dumps(status)
+
+    bob.store.registry = None
+    assert client.poll_once() == 0
+    assert client.status()["last_error"] == "no_registry"
+    with pytest.raises(MailboxError, match="no_registry"):
+        client.deposit("x", KIND, {}, to_messaging_pub="")
+
+
+def test_pending_acks_are_capped_per_poll(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", registry)
+    client = bob.client()
+
+    ids = [f"{index:032x}" for index in range(MAX_ACK_IDS + 10)]
+    for message_id in ids:
+        client._ack(message_id)
+    client._ack(ids[0])  # deduped, not queued twice
+
+    stub = _StubRegistry([])
+    bob.store.registry = stub
+    assert client.poll_once() == 0
+    assert len(stub.acked) == MAX_ACK_IDS
+    assert client.poll_once() == 0
+    assert sorted(stub.acked) == sorted(ids)
+
+
+# ------------------------------------------------------------------- 7. wiring
+
+
+def _worker_registry():
+    from rynmesh.background_workers import BackgroundWorkerRegistry
+
+    return BackgroundWorkerRegistry()
+
+
+def test_install_mailbox_registers_the_supervised_poll_worker(tmp_path) -> None:
+    fastapi = pytest.importorskip("fastapi")
+
+    from rynmesh.mailbox_routes import install_mailbox
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", registry)
+    workers = _worker_registry()
+    app = fastapi.FastAPI()
+
+    client = install_mailbox(
+        app,
+        store=bob.store,
+        messaging_key=bob.messaging_key,
+        home=bob.home,
+        resolve_pubkey=lambda peer_id: bob.messaging_pub,
+        workers=workers,
+    )
+    assert app.state.mailbox is client
+    [spec] = [item for item in workers.specs() if item.name == "mailbox.poll"]
+    assert spec.initial_delay_s == 3.0
+    assert spec.policy.busy_delay_s == 2.0
+    assert spec.policy.idle_initial_s == 5.0
+    assert spec.policy.idle_multiplier == 1.5
+    assert spec.policy.idle_max_s == 60.0
+    assert spec.policy.error_multiplier == 2.0
+    assert spec.policy.error_max_s == 120.0
+
+    # The supervisor reads busy/idle from a bool or a WorkerRunResult, so the
+    # handled count has to arrive as one.
+    alice = _Node(tmp_path, "alice", registry)
+    client.register_handler(KIND, _Recorder())
+    alice.client().deposit(
+        bob.peer_id, KIND, {"invite_id": "abc"}, to_messaging_pub=bob.messaging_pub
+    )
+    assert spec.run_once().activity is True
+    assert spec.run_once().activity is False
+
+
+def test_install_mailbox_skips_the_worker_without_a_registry(tmp_path) -> None:
+    fastapi = pytest.importorskip("fastapi")
+
+    from rynmesh.mailbox_routes import install_mailbox
+
+    bob = _Node(tmp_path, "bob", FilePeerRegistry(tmp_path / "registry"))
+    bob.store.registry = None
+    workers = _worker_registry()
+    app = fastapi.FastAPI()
+
+    install_mailbox(
+        app,
+        store=bob.store,
+        messaging_key=bob.messaging_key,
+        home=bob.home,
+        resolve_pubkey=lambda peer_id: "",
+        workers=workers,
+    )
+    assert [spec.name for spec in workers.specs()] == []
+    assert app.state.mailbox.poll_once() == 0
+
+
+def test_install_mailbox_is_idempotent(tmp_path) -> None:
+    fastapi = pytest.importorskip("fastapi")
+
+    from rynmesh.mailbox_routes import install_mailbox
+
+    bob = _Node(tmp_path, "bob", FilePeerRegistry(tmp_path / "registry"))
+    workers = _worker_registry()
+    app = fastapi.FastAPI()
+    options = dict(
+        store=bob.store,
+        messaging_key=bob.messaging_key,
+        home=bob.home,
+        resolve_pubkey=lambda peer_id: "",
+        workers=workers,
+    )
+    install_mailbox(app, **options)
+    install_mailbox(app, **options)
+    assert [spec.name for spec in workers.specs()] == ["mailbox.poll"]
+
+
+def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("RYNMESH_LOCAL_TOKEN", raising=False)
+    monkeypatch.delenv("RYNMESH_ALLOW_REMOTE_CONTROL", raising=False)
+    store = RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network")
+    app = create_app(store)
+    app.state.mailbox.register_handler(KIND, _Recorder())
+
+    with TestClient(app, base_url="https://testserver") as client:
+        body = client.get("/api/local/mailbox/status").json()
+        assert set(body) == {
+            "handled_total",
+            "dropped_total",
+            "pending_last",
+            "last_poll_at",
+            "last_error",
+            "handlers",
+            "worker",
+        }
+        assert body["handlers"] == [KIND]
+        assert body["worker"]["name"] == "mailbox.poll"
+        assert body["worker"]["running"] is True
+
+        tunnel = {"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9"}
+        assert client.get("/api/local/mailbox/status", headers=tunnel).status_code == 401
+
+
+# ---------------------------------------------------- 9. messaging-key lookup
+
+
+def test_registration_advertises_the_messaging_key(tmp_path, monkeypatch) -> None:
+    from rynmesh.mailbox_routes import registry_messaging_pub, with_registry_fallback
+
+    monkeypatch.delenv("RYNMESH_PEER_PORT", raising=False)
+    monkeypatch.delenv("RYNMESH_PEER_ENDPOINT", raising=False)
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.store.register_node(network_id="testnet")
+    peers = bob.store.discover_peers(network_id="testnet", include_self=False)["peers"]
+    [record] = [item for item in peers if item["peer_id"] == alice.peer_id]
+    assert record["metadata"]["messaging_pub"] == alice.messaging_pub
+    assert registry_messaging_pub(
+        bob.store, alice.peer_id, network_id="testnet"
+    ) == alice.messaging_pub
+    assert registry_messaging_pub(bob.store, bob.peer_id, network_id="testnet") == ""
+
+    cache: dict[str, str] = {}
+
+    def _no_endpoint(peer_id: str) -> str:
+        raise RuntimeError(f"no endpoint for peer {peer_id}")
+
+    resolve = with_registry_fallback(
+        _no_endpoint, store=bob.store, cache=cache, network_id=lambda: "testnet"
+    )
+    assert resolve(alice.peer_id) == alice.messaging_pub
+    assert cache[alice.peer_id] == alice.messaging_pub  # TOFU-cached like the direct path
+    # A peer with neither an endpoint nor a record raises the original error.
+    with pytest.raises(RuntimeError, match="no endpoint"):
+        resolve(_Node(tmp_path, "dave", registry).peer_id)
+
+
+def test_registry_fallback_prefers_the_direct_lookup(tmp_path) -> None:
+    from rynmesh.mailbox_routes import with_registry_fallback
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    alice.store.register_node(network_id="testnet")
+
+    cache: dict[str, str] = {"cached": "CACHED_PUB"}
+    calls: list[str] = []
+
+    def _direct(peer_id: str) -> str:
+        calls.append(peer_id)
+        return "DIRECT_PUB"
+
+    resolve = with_registry_fallback(
+        _direct, store=bob.store, cache=cache, network_id=lambda: "testnet"
+    )
+    assert resolve(alice.peer_id) == "DIRECT_PUB"
+    assert resolve("cached") == "CACHED_PUB"
+    assert calls == [alice.peer_id]
+
+
+def test_deposit_resolves_the_messaging_key_when_not_supplied(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    sender = alice.client(resolve_messaging_pub=lambda peer_id: bob.messaging_pub)
+    sender.deposit(bob.peer_id, KIND, {"invite_id": "resolved"})
+
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+    assert receiver.poll_once() == 1
+    assert handler.calls[0][1] == {"invite_id": "resolved"}
+
+
+def test_nothing_sensitive_reaches_the_logs(tmp_path, caplog) -> None:
+    """Log records carry kind, message id and an exception class — nothing else."""
+
+    import logging
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, KIND, {"secret": "SECRET_BODY_MARKER"}, to_messaging_pub=bob.messaging_pub
+    )
+    alice.client().deposit(
+        bob.peer_id, "unhandled.kind", {"secret": "SECRET_BODY_MARKER"},
+        to_messaging_pub=bob.messaging_pub,
+    )
+    receiver = bob.client(max_attempts=1)
+    receiver.register_handler(KIND, _Recorder(failures=99))
+
+    with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_client"):
+        receiver.poll_once()
+        receiver.poll_once()
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert text, "the drop paths must be observable"
+    assert "SECRET_BODY_MARKER" not in text
+    assert "SECRET_HANDLER_FAILURE_MARKER" not in text
+    assert "RuntimeError" in text
+    assert KIND in text
+
+
+def test_a_hostile_message_id_is_not_written_to_the_log(tmp_path, caplog) -> None:
+    import logging
+
+    from rynmesh.crypto import sign_payload
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"x": 1},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+    )
+    forged = sign_payload(
+        {**signed.payload, "message_id": "LOG_INJECTION\nmailbox handled id=0"},
+        private_key_bytes=alice.store.private_key_bytes,
+    )
+    bob.store.registry = _StubRegistry([forged])
+    receiver = bob.client()
+    receiver.register_handler(KIND, _Recorder())
+
+    with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_client"):
+        assert receiver.poll_once() == 0
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "LOG_INJECTION" not in text
+    assert "id=invalid" in text
+    assert receiver.status()["dropped_total"] == 1
+
+
+def test_ciphertext_and_bodies_never_reach_the_seen_cache(tmp_path) -> None:
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, KIND, {"secret": "SECRET_BODY_MARKER"}, to_messaging_pub=bob.messaging_pub
+    )
+    receiver = bob.client()
+    receiver.register_handler(KIND, _Recorder())
+    assert receiver.poll_once() == 1
+
+    stored = (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
+    assert "SECRET_BODY_MARKER" not in stored
+    payload = json.loads(stored)
+    assert set(payload) == {"version", "entries"}
+    assert all(isinstance(value, float) for value in payload["entries"].values())
+
+
+def test_a_poll_request_carries_only_signed_metadata(tmp_path) -> None:
+    """Sanity check on what the client sends: no body, no key, just an ack list."""
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", registry)
+    signed = build_poll_request(private_key_bytes=bob.store.private_key_bytes, ack=["a" * 32])
+    assert set(signed.payload) == {"kind", "peer_id", "issued_at", "nonce", "ack", "limit"}
+    assert signed.payload["peer_id"] == bob.peer_id

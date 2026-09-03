@@ -240,7 +240,18 @@ def test_status_is_bounded_metadata_and_uses_monotonic_schedule() -> None:
     assert len(failed_status["error"]) <= 512
 
 
-def test_create_app_registers_only_the_two_llm_service_workers(tmp_path, monkeypatch) -> None:
+def test_register_replaces_a_worker_only_when_asked() -> None:
+    registry = BackgroundWorkerRegistry()
+    first = BackgroundWorkerSpec("service.a", lambda: None, policy())
+    second = BackgroundWorkerSpec("service.a", lambda: True, policy())
+    registry.register(first)
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(second)
+    registry.register(second, replace=True)
+    assert registry.specs() == (second,)
+
+
+def test_create_app_registers_the_llm_and_mailbox_service_workers(tmp_path, monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
     from rynmesh.peer_http import create_app
@@ -253,8 +264,12 @@ def test_create_app_registers_only_the_two_llm_service_workers(tmp_path, monkeyp
     assert [spec.name for spec in registry.specs()] == [
         "llm.publish-refresh",
         "llm.relay-poll",
+        "mailbox.poll",
     ]
     specs = {spec.name: spec for spec in registry.specs()}
+    assert specs["mailbox.poll"].initial_delay_s == 3
+    assert specs["mailbox.poll"].policy.busy_delay_s == 2
+    assert specs["mailbox.poll"].policy.idle_max_s == 60
     assert specs["llm.relay-poll"].initial_delay_s == 1
     assert specs["llm.relay-poll"].policy.busy_delay_s == 1
     assert specs["llm.relay-poll"].policy.idle_multiplier == 1.5

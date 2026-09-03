@@ -2253,6 +2253,12 @@ def create_app(store: RynmeshStore | None = None):
         _pubkey_cache[peer_id] = pub
         return pub
 
+    from . import mailbox_routes as _mailbox_routes
+
+    _resolve_pubkey = _mailbox_routes.with_registry_fallback(
+        _resolve_pubkey, store=active_store, cache=_pubkey_cache, network_id=control_network_id
+    )
+
     def _transport(peer_id: str, header: dict) -> int:
         ep = _resolve_endpoint(peer_id)
         if not ep:
@@ -2275,6 +2281,12 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
         transport=_transport,
         now=lambda: _dt.now(_UTC).isoformat(timespec="seconds"),
+    )
+
+    _mailbox_routes.install_mailbox(
+        app, store=active_store, messaging_key=_msg_priv, home=_home,
+        resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
+        local_control=local_control,
     )
 
     def _publish(record: dict) -> None:

@@ -384,6 +384,20 @@ class RynmeshStore:
             "warning_terms": list(self.scanner.warning_terms),
         }
 
+    def messaging_public_key(self) -> str:
+        """This node's X25519 messaging public key, base64.
+
+        Same file the peer HTTP layer serves from ``/api/peer/pubkey``, so a
+        record and a live lookup can never disagree.
+        """
+        from .services import peer_box
+
+        try:
+            key = peer_box.load_or_create_messaging_key(self.home / "messaging.x25519")
+        except (OSError, ValueError):
+            return ""
+        return peer_box.public_key_b64(key)
+
     def register_node(
         self,
         *,
@@ -406,6 +420,10 @@ class RynmeshStore:
                 "primary_ip": _primary_lan_ip(),
                 "ip_addresses": list(_local_ip_addresses()),
                 "peer_endpoint": active_endpoints[0] if active_endpoints else "",
+                # How a peer that cannot reach this node's endpoint (both
+                # behind NATs) still seals mailbox messages for it. The record
+                # is signed, so the key is as trustworthy as the peer id.
+                "messaging_pub": self.messaging_public_key(),
             },
         )
         signed = sign_peer_record(record, private_key_bytes=self.private_key_bytes)
