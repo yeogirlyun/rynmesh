@@ -663,7 +663,8 @@ def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
             "handlers",
             "worker",
         }
-        assert body["handlers"] == [KIND]
+        # `create_app` also registers the peer-message relay handler.
+        assert body["handlers"] == sorted([KIND, "peer.message.v1"])
         assert body["worker"]["name"] == "mailbox.poll"
         assert body["worker"]["running"] is True
 
@@ -913,3 +914,115 @@ def test_a_poll_request_carries_only_signed_metadata(tmp_path) -> None:
     signed = build_poll_request(private_key_bytes=bob.store.private_key_bytes, ack=["a" * 32])
     assert set(signed.payload) == {"kind", "peer_id", "issued_at", "nonce", "ack", "limit"}
     assert signed.payload["peer_id"] == bob.peer_id
+
+
+# --------------------------------------------- 10. peer-message store-and-forward
+
+
+class _FakeMessenger:
+    """Records the headers it was asked to receive; returns a history record."""
+
+    def __init__(self) -> None:
+        self.headers: list[dict] = []
+
+    def receive(self, header: dict) -> dict:
+        self.headers.append(header)
+        return {"msg_id": "m1", "dir": "in", "from": header["from"], "text": "hi"}
+
+
+def _relay_header(sender_peer_id: str, recipient_peer_id: str) -> dict:
+    return {"v": 1, "from": sender_peer_id, "to": recipient_peer_id,
+            "nonce": "n", "ciphertext": "c", "from_pub": "SENDER_PUB"}
+
+
+def test_relayed_peer_messages_reach_receive_and_the_sse_stream(tmp_path) -> None:
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND, install_peer_message_relay
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    messenger = _FakeMessenger()
+    published: list[dict] = []
+    cache: dict[str, str] = {}
+    receiver = bob.client()
+    install_peer_message_relay(receiver, messenger, published.append, pubkey_cache=cache)
+
+    header = _relay_header(alice.peer_id, bob.peer_id)
+    alice.client().deposit(bob.peer_id, PEER_MESSAGE_KIND, header,
+                           to_messaging_pub=bob.messaging_pub)
+
+    assert receiver.poll_once() == 1
+    assert messenger.headers == [header]           # the sealed header, verbatim
+    # `receive`'s record — not the envelope — is what reaches the SSE stream.
+    assert published == [{"msg_id": "m1", "dir": "in", "from": alice.peer_id, "text": "hi"}]
+    assert cache[alice.peer_id] == "SENDER_PUB"    # TOFU, as /api/peer/msg does
+
+
+def test_a_relayed_header_claiming_another_sender_is_refused(tmp_path) -> None:
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND, install_peer_message_relay
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    carol = _Node(tmp_path, "carol", registry)
+
+    messenger = _FakeMessenger()
+    published: list[dict] = []
+    cache: dict[str, str] = {}
+    receiver = bob.client()
+    install_peer_message_relay(receiver, messenger, published.append, pubkey_cache=cache)
+
+    # Carol deposits under her own signature a header that names Alice.
+    carol.client().deposit(bob.peer_id, PEER_MESSAGE_KIND,
+                           _relay_header(alice.peer_id, bob.peer_id),
+                           to_messaging_pub=bob.messaging_pub)
+
+    assert receiver.poll_once() == 0
+    assert messenger.headers == [] and published == [] and cache == {}
+    assert receiver.status()["dropped_total"] == 0  # still retrying, not yet dropped
+
+
+def test_the_fallback_is_absent_without_a_registry(tmp_path) -> None:
+    from rynmesh.mailbox_routes import peer_message_fallback
+
+    class _App:
+        state = type("S", (), {})()
+
+    alice = _Node(tmp_path, "alice", None)
+    assert peer_message_fallback(_App(), store=alice.store) is None
+
+
+def test_the_fallback_deposits_the_header_into_the_recipients_box(tmp_path) -> None:
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND, peer_message_fallback
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    class _App:
+        state = type("S", (), {})()
+
+    app = _App()
+    fallback = peer_message_fallback(app, store=alice.store)
+    assert fallback is not None
+    # Built before the client exists, exactly as `create_app` does it.
+    assert fallback(bob.peer_id, _relay_header(alice.peer_id, bob.peer_id)) is False
+
+    app.state.mailbox = alice.client(
+        resolve_messaging_pub=lambda peer_id: bob.messaging_pub
+    )
+    assert fallback(bob.peer_id, _relay_header(alice.peer_id, bob.peer_id)) is True
+
+    stored = _pending_files(registry)
+    assert len(stored) == 1
+    # Only ciphertext reaches the registry: the relayed header is inside the seal.
+    assert "SENDER_PUB" not in stored[0].read_text(encoding="utf-8")
+
+    receiver = bob.client()
+    messenger = _FakeMessenger()
+    from rynmesh.mailbox_routes import install_peer_message_relay
+
+    install_peer_message_relay(receiver, messenger, lambda record: None)
+    assert receiver.poll_once() == 1
+    assert receiver.status()["handlers"] == [PEER_MESSAGE_KIND]

@@ -2262,6 +2262,8 @@ def create_app(store: RynmeshStore | None = None):
     )
 
     def _transport(peer_id: str, header: dict) -> int:
+        if os.environ.get("RYNMESH_MESSAGING_FORCE_MAILBOX", "").strip() == "1":
+            return 0  # test/E2E aid: skip direct delivery so the mailbox path runs
         ep = _resolve_endpoint(peer_id)
         if not ep:
             return 0
@@ -2283,9 +2285,10 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
         transport=_transport,
         now=lambda: _dt.now(_UTC).isoformat(timespec="seconds"),
+        fallback=_mailbox_routes.peer_message_fallback(app, store=active_store),
     )
 
-    _mailbox_routes.install_mailbox(
+    _mailbox = _mailbox_routes.install_mailbox(
         app, store=active_store, messaging_key=_msg_priv, home=_home,
         resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
         local_control=local_control,
@@ -2297,6 +2300,10 @@ def create_app(store: RynmeshStore | None = None):
                 q.put_nowait(record)
             except Exception:
                 pass
+
+    _mailbox_routes.install_peer_message_relay(
+        _mailbox, _messenger, _publish, pubkey_cache=_pubkey_cache
+    )
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:

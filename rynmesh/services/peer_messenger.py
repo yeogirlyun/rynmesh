@@ -12,6 +12,13 @@ from rynmesh.services.messaging_store import MessagingStore
 
 MAX_INLINE_BYTES = 5 * 1024 * 1024
 
+# A sealed header carries the attachment as base64, so a 5 MiB attachment makes a
+# ~6.7 MiB header. The mailbox envelope caps at 64 KiB, and sealing adds base64 on
+# top of that again, so anything over this budget can only ever be rejected by the
+# registry. Offering it to the fallback would burn a sender's rate-limit token on a
+# message that cannot fit; such messages stay direct-only.
+MAX_MAILBOX_HEADER_BYTES = 48 * 1024
+
 
 class MessengerError(RuntimeError):
     pass
@@ -39,6 +46,7 @@ class PeerMessenger:
         transport: Callable[[str, dict[str, Any]], int],
         now: Callable[[], str],
         new_id: Callable[[], str] | None = None,
+        fallback: Callable[[str, dict[str, Any]], bool] | None = None,
     ) -> None:
         self._me = my_peer_id
         self._priv = my_priv
@@ -47,6 +55,25 @@ class PeerMessenger:
         self._transport = transport
         self._now = now
         self._new_id = new_id or (lambda: uuid.uuid4().hex)
+        # store-and-forward: `fallback(peer_id, sealed_header) -> True when queued`.
+        # Called only after a genuine direct-delivery failure; the header handed to
+        # it is the very same sealed one the transport tried, so the recipient runs
+        # the identical `receive` path whichever way it arrives.
+        self._fallback = fallback
+
+    def _queue_for_later(self, peer_id: str, header: dict[str, Any]) -> bool:
+        """Offer an undelivered header to the store-and-forward fallback."""
+
+        if self._fallback is None:
+            return False
+        try:
+            if len(json.dumps(header)) > MAX_MAILBOX_HEADER_BYTES:
+                return False
+            return bool(self._fallback(peer_id, header))
+        except Exception:
+            # A full, rate-limited or unreachable mailbox is not a send error: the
+            # record already says `delivered: False`, and the sender can retry.
+            return False
 
     # ---- send ----
     def send(self, peer_id: str, *, text: str = "", attachment: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -72,9 +99,16 @@ class PeerMessenger:
             delivered = 200 <= int(self._transport(peer_id, header)) < 300
         except Exception:
             delivered = False
+        queued = False if delivered else self._queue_for_later(peer_id, header)
         # persist OUR copy (attachment bytes to blob, not in the history line)
         record = {**{k: v for k, v in inner.items() if k != "attachment"},
                   "dir": "out", "from": self._me, "to": peer_id, "delivered": delivered}
+        # `via` is absent when neither path took the message — the caller sees the
+        # same undelivered record it saw before store-and-forward existed.
+        if delivered:
+            record["via"] = "direct"
+        elif queued:
+            record["via"] = "mailbox"
         if attachment is not None:
             self._store.save_attachment(msg_id, att_bytes or b"")
             record["attachment"] = {k: v for k, v in inner["attachment"].items() if k != "bytes"}

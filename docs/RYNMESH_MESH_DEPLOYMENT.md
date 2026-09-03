@@ -250,3 +250,24 @@ your local node's web UI is bound).
   installed (venv vs `/usr/local/bin`). The unit sets `NoNewPrivileges=true`,
   which is fine because the peer binds port 8791 (>1024) and needs no extra
   capabilities.
+
+---
+
+## 9. Registry Mailbox Storage
+
+A registry also carries store-and-forward mail for peers that cannot reach each
+other directly (`docs/PEER_MAILBOX.md`). The spool lives under
+`$RYNMESH_REGISTRY_DIR/mailbox`, sharded by a hash of the recipient's peer id,
+one JSON file per pending message at mode 0600 in 0700 directories. It holds
+**ciphertext only** — bodies are sealed to the recipient's X25519 messaging key,
+so the registry operator cannot read mail and cannot tell one message kind from
+another. Only routing metadata (sender, recipient, timestamps, size) is visible.
+
+Sizing is bounded by construction: 64 KiB per envelope, 256 pending messages per
+recipient, 120 deposits per minute per sender, and a maximum 24-hour TTL (one
+hour by default). The worst case is therefore about 16 MiB per recipient, and
+expired messages plus their ack tombstones are swept lazily — on poll, and every
+50th deposit. A registry that goes completely idle reclaims disk late but never
+serves expired mail. No extra configuration or open port is needed: the routes
+are `POST /api/v1/mailbox/{deposit,poll}` on the registry's existing listener,
+hidden as 404 to callers without `RYNMESH_NETWORK_KEY`.

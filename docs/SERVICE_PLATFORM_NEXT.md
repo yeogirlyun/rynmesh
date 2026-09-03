@@ -80,6 +80,9 @@ shares one escrow path, one idempotency story, and one auditable history.
 
 The single-user experience is compelling; the network effect starts here:
 
+0. **Peer mailbox (delivered, #35)** — a sealed, signed, short-TTL registry
+   spool so invites, acceptances, revocations and chat reach a node that is
+   offline or has no reachable endpoint. See `docs/PEER_MAILBOX.md`.
 1. Invite links / QR with explicit network + endpoint review before trust.
 2. Friend-attributed content ranked in For You with inspectable provenance.
 3. Revocation and small-mesh diagnostics that non-technical users can drive.

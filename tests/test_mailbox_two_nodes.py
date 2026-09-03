@@ -12,6 +12,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ pytest.importorskip("fastapi")
 NETWORK_KEY = "two-node-mailbox-key"
 NETWORK_ID = "mailboxnet"
 KIND = "friend.invite.accept.v1"
+PEER_MESSAGE_KIND = "peer.message.v1"
 
 
 def _free_port() -> int:
@@ -41,10 +43,16 @@ def _node(tmp_path, name: str, monkeypatch):
     return create_app(store), store
 
 
-def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch) -> None:
-    uvicorn = pytest.importorskip("uvicorn")
-    from fastapi.testclient import TestClient
+@contextmanager
+def _registry_server(tmp_path, monkeypatch):
+    """A real registry on a loopback port, with the node env pointed at it.
 
+    Yields the `FilePeerRegistry` behind it so a test can inspect the spool on
+    disk. Nodes are given no peer endpoint: they are reachable only through the
+    registry, which is exactly the case the mailbox exists for.
+    """
+
+    uvicorn = pytest.importorskip("uvicorn")
     from rynmesh.registry import FilePeerRegistry
     from rynmesh.registry_http import create_app as create_registry_app
 
@@ -54,8 +62,6 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
     monkeypatch.setenv("RYNMESH_NETWORK_ID", NETWORK_ID)
     monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "1")
     monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
-    # No peer endpoint: these two nodes are only reachable through the
-    # registry, which is exactly the case the mailbox exists for.
     monkeypatch.delenv("RYNMESH_PEER_PORT", raising=False)
     monkeypatch.delenv("RYNMESH_PEER_ENDPOINT", raising=False)
     monkeypatch.delenv("RYNMESH_LOCAL_TOKEN", raising=False)
@@ -73,7 +79,16 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
         while not server.started and time.time() < deadline:
             time.sleep(0.05)
         assert server.started, "registry server did not start"
+        yield registry, port
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
 
+
+def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    with _registry_server(tmp_path, monkeypatch) as (registry, port):
         alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
         bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
 
@@ -119,7 +134,8 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
             assert status["handled_total"] == 1
             assert status["dropped_total"] == 0
             assert status["last_error"] == ""
-            assert status["handlers"] == [KIND]
+            # `create_app` also registers the peer-message relay handler.
+            assert status["handlers"] == sorted([KIND, PEER_MESSAGE_KIND])
             assert status["worker"]["name"] == "mailbox.poll"
 
             # The peer surface really is keyed: the same registry refuses a
@@ -135,6 +151,81 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
             assert unkeyed.value.code == 404
 
             assert alice_client.get("/api/local/mailbox/status").json()["handled_total"] == 0
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10)
+
+
+def test_a_peer_message_survives_a_dead_direct_transport(tmp_path, monkeypatch) -> None:
+    """Alice's chat message reaches Bob through the mailbox, not the wire.
+
+    `RYNMESH_MESSAGING_FORCE_MAILBOX=1` makes Alice's direct transport report
+    failure without trying, so the only route left is store-and-forward.
+    """
+
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RYNMESH_MESSAGING_FORCE_MAILBOX", "1")
+    with _registry_server(tmp_path, monkeypatch) as (registry, _port):
+        alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
+        bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
+
+        with TestClient(alice_app) as alice_client, TestClient(bob_app) as bob_client:
+            sent = alice_client.post(
+                "/api/local/messages/send",
+                json={"peer_id": bob_store.peer_id, "text": "carried by the mailbox"},
+            ).json()
+            assert sent["delivered"] is False
+            assert sent["via"] == "mailbox"
+
+            assert bob_app.state.mailbox.poll_once() == 1
+
+            history = bob_client.get(
+                "/api/local/messages", params={"peer_id": alice_store.peer_id}
+            ).json()
+            assert [(item["dir"], item["text"], item["from"]) for item in history] == [
+                ("in", "carried by the mailbox", alice_store.peer_id)
+            ]
+            # Bob decrypted it, so the plaintext never travelled: the registry
+            # only ever held the sealed envelope, and the box is drained now.
+            assert bob_app.state.mailbox.poll_once() == 0
+            assert sorted((registry.root / "mailbox").rglob("*.json")) == []
+
+            assert bob_client.get("/api/local/mailbox/status").json()["handled_total"] == 1
+            assert alice_client.get(
+                "/api/local/messages", params={"peer_id": bob_store.peer_id}
+            ).json()[0]["via"] == "mailbox"
+
+
+def test_a_relayed_header_cannot_claim_another_sender(tmp_path, monkeypatch) -> None:
+    """A depositor may only relay messages that say they are from itself."""
+
+    from fastapi.testclient import TestClient
+
+    from rynmesh.mailbox_routes import PEER_MESSAGE_KIND as KIND_UNDER_TEST
+
+    monkeypatch.setenv("RYNMESH_MESSAGING_FORCE_MAILBOX", "1")
+    with _registry_server(tmp_path, monkeypatch) as (registry, _port):
+        alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
+        bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
+        carol_app, carol_store = _node(tmp_path, "carol", monkeypatch)
+
+        with TestClient(alice_app), TestClient(bob_app) as bob_client, TestClient(carol_app):
+            # Carol seals a well-formed peer-message header that names Alice as
+            # the sender, and deposits it in Bob's box under her own signature.
+            carol_app.state.mailbox.deposit(
+                bob_store.peer_id,
+                KIND_UNDER_TEST,
+                {"v": 1, "from": alice_store.peer_id, "to": bob_store.peer_id,
+                 "nonce": "AAAAAAAAAAAAAAAA", "ciphertext": "AAAA", "from_pub": "AAAA"},
+            )
+            assert carol_store.peer_id != alice_store.peer_id
+
+            # Handler raises -> three attempts, then a drop; nothing is written
+            # to Bob's history. The drop's ack rides the fourth poll.
+            for _ in range(4):
+                bob_app.state.mailbox.poll_once()
+            status = bob_client.get("/api/local/mailbox/status").json()
+            assert status["handled_total"] == 0
+            assert status["dropped_total"] == 1
+            assert bob_client.get(
+                "/api/local/messages", params={"peer_id": alice_store.peer_id}
+            ).json() == []
+            assert sorted((registry.root / "mailbox").rglob("*.json")) == []
