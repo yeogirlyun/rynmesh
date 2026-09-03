@@ -107,9 +107,43 @@ def install_mailbox(
         # per-route re-check the routes in `peer_http` do on top of it.
         if local_control is not None:
             local_control(request)
-        return {**client.status(), "worker": workers.status().get(MAILBOX_WORKER_NAME)}
+        body: dict[str, Any] = {
+            **client.status(),
+            "worker": workers.status().get(MAILBOX_WORKER_NAME),
+        }
+        dropped = registry_dropped_messages(store)
+        if dropped is not None:
+            # Envelopes the node's own registry client refused on the way in. A
+            # non-zero count means a registry is serving mail this node will not
+            # accept — worth seeing next to the client's own drop counters.
+            body["registry_dropped"] = dropped
+        return body
 
     return client
+
+
+def registry_dropped_messages(store: Any) -> int | None:
+    """Envelopes ``HttpPeerRegistry`` dropped, or ``None`` if nothing counts them.
+
+    A fallback chain has no counter of its own, so the mirrors' counts are
+    summed. A file-backed registry has none at all and reports ``None``.
+    """
+
+    registry = getattr(store, "registry", None)
+    if registry is None:
+        return None
+    direct = getattr(registry, "dropped_mailbox_messages", None)
+    if isinstance(direct, int):
+        return direct
+    mirrors = getattr(registry, "registries", None)
+    if not isinstance(mirrors, (list, tuple)):
+        return None
+    counts = [
+        getattr(item, "dropped_mailbox_messages", None)
+        for item in mirrors
+        if isinstance(getattr(item, "dropped_mailbox_messages", None), int)
+    ]
+    return sum(counts) if counts else None
 
 
 def peer_message_fallback(
@@ -231,6 +265,7 @@ __all__ = [
     "install_mailbox",
     "install_peer_message_relay",
     "peer_message_fallback",
+    "registry_dropped_messages",
     "registry_messaging_pub",
     "with_registry_fallback",
 ]

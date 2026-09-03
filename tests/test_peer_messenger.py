@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -232,6 +233,57 @@ def test_a_duplicate_never_rewrites_the_stored_attachment(tmp_path):
 
     assert b._store.load_attachment(got["msg_id"]) == b"EDITED"
     assert len(b.history("peerA")) == 1
+
+
+def test_two_threads_receiving_one_header_write_one_history_line(tmp_path):
+    """The direct route and the mailbox handler run on different threads.
+
+    `/api/peer/msg` is served on the event loop; the mailbox poll worker runs in
+    a thread of its own. Both call `receive`, and both can be handed the same
+    message. Without a per-conversation lock the two pass the dedupe check
+    together and append twice.
+    """
+
+    import threading
+
+    peers = _peers(tmp_path)
+    a, inbox = _messenger(tmp_path, "A", peers)
+    b, _ = _messenger(tmp_path, "B", peers)
+    a.send("peerB", text="exactly once")
+    header = inbox["peerB"][0]
+
+    # Widen the window the lock has to close: with the check and the append
+    # this far apart, an unlocked `receive` loses the race essentially always.
+    original_append = b._store.append
+
+    def slow_append(peer_id, record):
+        time.sleep(0.05)
+        return original_append(peer_id, record)
+
+    b._store.append = slow_append
+
+    results: list[dict] = []
+    errors: list[BaseException] = []
+    start = threading.Barrier(2)
+
+    def worker() -> None:
+        try:
+            start.wait(timeout=5)
+            results.append(b.receive(header))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(b.history("peerA")) == 1, "one message, one history line"
+    assert [record.get("duplicate") for record in sorted(
+        results, key=lambda item: bool(item.get("duplicate"))
+    )] == [None, True]
 
 
 def test_a_sender_cannot_suppress_its_message_by_reusing_our_outbound_id(tmp_path):

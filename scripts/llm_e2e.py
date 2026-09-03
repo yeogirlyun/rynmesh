@@ -204,9 +204,11 @@ def mailbox_verify() -> dict[str, Any]:
         "send_delivered": sent.get("delivered"),
         "delivered_after_s": round(delivered_at, 1) if delivered_at else None,
         "consumer_mailbox": {k: consumer_status.get(k)
-                             for k in ("handled_total", "dropped_total", "last_error")},
+                             for k in ("handled_total", "dropped_total",
+                                       "undecryptable", "last_error")},
         "provider_mailbox": {k: provider_status.get(k)
-                             for k in ("handled_total", "dropped_total", "last_error")},
+                             for k in ("handled_total", "dropped_total",
+                                       "undecryptable", "last_error")},
     }
     if not delivered_at:
         raise RuntimeError(f"E2E mailbox message never arrived: {report}")
@@ -218,6 +220,10 @@ def mailbox_verify() -> dict[str, Any]:
         raise RuntimeError(f"E2E consumer mailbox dropped mail: {report}")
     if int(provider_status.get("handled_total") or 0) < 1:
         raise RuntimeError(f"E2E provider mailbox handled nothing: {report}")
+    # An unopenable envelope is neither handled nor dropped; it would otherwise
+    # sit in the box until its TTL with nothing else in this report noticing.
+    if int(provider_status.get("undecryptable") or 0) != 0:
+        raise RuntimeError(f"E2E provider mailbox could not open mail: {report}")
     results_dir = ROOT / "deploy" / "llm-e2e" / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "mailbox-result.json").write_text(

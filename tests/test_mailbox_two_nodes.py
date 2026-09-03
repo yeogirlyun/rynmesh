@@ -194,6 +194,78 @@ def test_a_peer_message_survives_a_dead_direct_transport(tmp_path, monkeypatch) 
             ).json()[0]["via"] == "mailbox"
 
 
+def test_the_poll_worker_publishes_to_the_sse_stream_from_its_own_thread(
+    tmp_path, monkeypatch
+) -> None:
+    """The supervised worker's publish has to cross a thread boundary safely.
+
+    `BackgroundWorkerRegistry` runs `run_once` through `asyncio.to_thread`, so
+    the mailbox handler — and the SSE fan-out it calls — execute off the event
+    loop. `asyncio.Queue` is not thread-safe there: the put has to be handed
+    back to the loop that owns the subscriber queues.
+
+    The loop runs in debug mode on purpose. That turns the non-thread-safe
+    wakeup into the RuntimeError it really is, instead of a silent race that
+    happens to work whenever something else wakes the loop in time.
+    """
+
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    import rynmesh.mailbox_routes as mailbox_routes
+
+    monkeypatch.setenv("RYNMESH_MESSAGING_FORCE_MAILBOX", "1")
+    monkeypatch.setattr(mailbox_routes, "MAILBOX_POLL_INITIAL_DELAY_S", 0.05)
+    with _registry_server(tmp_path, monkeypatch) as (_registry, _port):
+        alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
+        bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
+
+        # Bob registers (that is what publishes his messaging key), then goes
+        # away again so the message is waiting in the registry when the worker
+        # under test starts. Nothing is in his box during this window.
+        with TestClient(bob_app):
+            pass
+
+        with TestClient(alice_app) as alice_client:
+            sent = alice_client.post(
+                "/api/local/messages/send",
+                json={"peer_id": bob_store.peer_id, "text": "published from a worker thread"},
+            ).json()
+            assert sent["via"] == "mailbox"
+
+        async def scenario() -> dict:
+            # The real lifespan: it captures the loop and starts the workers.
+            async with bob_app.router.lifespan_context(bob_app):
+                queue: asyncio.Queue = asyncio.Queue()
+                bob_app.state.message_subscribers.append(queue)
+                assert bob_app.state.loop is asyncio.get_running_loop()
+                try:
+                    return await queue.get()
+                finally:
+                    bob_app.state.message_subscribers.remove(queue)
+
+        # Driven from a daemon thread rather than awaited with a timeout: an
+        # unsafe cross-thread wakeup leaves the getter's future resolved but
+        # never scheduled, which no in-loop timeout can cancel its way out of.
+        # The join bound turns that into a failed assertion instead of a hang.
+        outcome: list[Any] = []
+        runner = threading.Thread(
+            target=lambda: outcome.append(asyncio.run(scenario(), debug=True)),
+            daemon=True,
+        )
+        runner.start()
+        runner.join(timeout=60)
+        assert outcome, "the worker's publish never reached the SSE subscriber"
+        [record] = outcome
+        assert record["text"] == "published from a worker thread"
+        assert record["from"] == alice_store.peer_id
+        assert record["dir"] == "in"
+        # The loop handle is released on shutdown, so a late publish falls back
+        # to the plain put rather than touching a closed loop.
+        assert bob_app.state.loop is None
+
+
 def _queued_header(registry, recipient_store) -> dict:
     """The sealed peer-message header sitting in the recipient's registry box.
 

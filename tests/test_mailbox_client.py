@@ -326,6 +326,98 @@ def test_a_poison_message_is_dropped_after_max_attempts(tmp_path) -> None:
     assert len(handler.calls) == 3
 
 
+def test_the_attempt_counter_survives_a_restart(tmp_path) -> None:
+    """A poison message must not reset its retry budget by outliving the process.
+
+    Delivery is at-least-once, so a message whose handler always raises comes
+    back on every poll. If the counter lived only in memory, restarting the node
+    (or crashing on it) would start the three attempts over — forever, for as
+    long as the message's TTL allows.
+    """
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    alice.client().deposit(
+        bob.peer_id, KIND, {"invite_id": "abc"}, to_messaging_pub=bob.messaging_pub
+    )
+    handler = _Recorder(failures=99)
+
+    first = bob.client(max_attempts=3)
+    first.register_handler(KIND, handler)
+    for _ in range(2):
+        assert first.poll_once() == 0
+    assert len(handler.calls) == 2
+    assert first.status()["dropped_total"] == 0
+    stored = json.loads((bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8"))
+    [(message_id, counter)] = stored["attempts"].items()
+    assert counter["count"] == 2
+    # Counts and expiries only: nothing about the message itself.
+    assert set(counter) == {"count", "expires"}
+
+    # A brand-new client on the same home picks the budget up where it was.
+    restarted = bob.client(max_attempts=3)
+    restarted.register_handler(KIND, handler)
+    assert restarted.poll_once() == 0
+    assert len(handler.calls) == 3, "the third attempt is the last one"
+    assert restarted.status()["dropped_total"] == 1
+
+    # Acked on the give-up poll; the spool is empty and the counter is gone.
+    assert restarted.poll_once() == 0
+    assert _pending_files(registry) == []
+    assert len(handler.calls) == 3
+    assert json.loads(
+        (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
+    )["attempts"] == {}
+    assert message_id not in json.loads(
+        (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
+    )["attempts"]
+
+
+def test_a_message_that_will_not_decrypt_is_kept_not_acked(tmp_path, caplog) -> None:
+    """A rotated messaging key must not destroy mail still sitting in the box.
+
+    An envelope that verifies but will not open is a different failure from a
+    bad envelope: the shell is fine and it really is addressed to us, so acking
+    it would delete mail that the right key could still read. It is counted and
+    left to expire.
+    """
+
+    import logging
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    stranger = _Node(tmp_path, "stranger", registry)
+
+    # Addressed to Bob, but sealed to somebody else's messaging key — exactly
+    # what a rotation leaves behind for messages already in flight.
+    alice.client().deposit(
+        bob.peer_id, KIND, {"secret": "SECRET_BODY_MARKER"},
+        to_messaging_pub=stranger.messaging_pub,
+    )
+    receiver = bob.client()
+    handler = _Recorder()
+    receiver.register_handler(KIND, handler)
+
+    with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_client"):
+        assert receiver.poll_once() == 0
+        assert receiver.poll_once() == 0
+
+    assert handler.calls == []
+    status = receiver.status()
+    assert status["undecryptable"] == 2
+    assert status["dropped_total"] == 0
+    assert len(_pending_files(registry)) == 1, "an unopenable message is never acked"
+
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "SECRET_BODY_MARKER" not in text
+    assert "MailboxError" in text
+    # One line per poll, not one per message.
+    assert len([1 for record in caplog.records if "could not be opened" in record.getMessage()]) == 2
+
+
 # ------------------------------------------------------- 4. unknown / expired
 
 
@@ -472,6 +564,7 @@ def test_status_shape_and_error_redaction(tmp_path) -> None:
     assert client.status() == {
         "handled_total": 0,
         "dropped_total": 0,
+        "undecryptable": 0,
         "pending_last": 0,
         "last_poll_at": "",
         "last_error": "",
@@ -657,6 +750,7 @@ def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
         assert set(body) == {
             "handled_total",
             "dropped_total",
+            "undecryptable",
             "pending_last",
             "last_poll_at",
             "last_error",
@@ -670,6 +764,44 @@ def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
 
         tunnel = {"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9"}
         assert client.get("/api/local/mailbox/status", headers=tunnel).status_code == 401
+
+
+def test_the_status_route_surfaces_the_registrys_own_drop_count(tmp_path) -> None:
+    """Mail the node's registry client refused is worth seeing next to its own."""
+
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from rynmesh.mailbox_routes import install_mailbox, registry_dropped_messages
+    from rynmesh.registry import HttpPeerRegistry
+    from rynmesh.registry_resilience import FallbackRegistryChain
+
+    file_registry = FilePeerRegistry(tmp_path / "registry")
+    bob = _Node(tmp_path, "bob", file_registry)
+    # A file-backed registry counts nothing, so the key stays off the response.
+    assert registry_dropped_messages(bob.store) is None
+
+    http = HttpPeerRegistry("http://127.0.0.1:9")
+    http.dropped_mailbox_messages = 4
+    bob.store.registry = http
+
+    app = fastapi.FastAPI()
+    install_mailbox(
+        app,
+        store=bob.store,
+        messaging_key=bob.messaging_key,
+        home=bob.home,
+        resolve_pubkey=lambda peer_id: bob.messaging_pub,
+        workers=_worker_registry(),
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/local/mailbox/status").json()["registry_dropped"] == 4
+
+    # A fallback chain has no counter of its own, so the mirrors' are summed.
+    mirror = HttpPeerRegistry("http://127.0.0.1:10")
+    mirror.dropped_mailbox_messages = 3
+    bob.store.registry = FallbackRegistryChain([http, mirror])
+    assert registry_dropped_messages(bob.store) == 7
 
 
 def test_the_store_home_owns_the_messaging_key(tmp_path, monkeypatch) -> None:
@@ -887,6 +1019,47 @@ def test_a_hostile_message_id_is_not_written_to_the_log(tmp_path, caplog) -> Non
     assert receiver.status()["dropped_total"] == 1
 
 
+def test_a_hostile_kind_is_not_written_to_the_log(tmp_path, caplog) -> None:
+    """A `kind` carrying an escape sequence never reaches the node's log.
+
+    It cannot: the charset check runs inside `verify_mailbox_envelope`, so the
+    message is rejected as a bad envelope — the one drop path that logs a
+    class name and a validated id and nothing the sender chose.
+    """
+
+    import logging
+
+    from rynmesh.crypto import sign_payload
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+
+    signed = seal_mailbox_message(
+        kind=KIND,
+        body={"x": 1},
+        from_private_key_bytes=alice.store.private_key_bytes,
+        to_peer_id=bob.peer_id,
+        to_messaging_pub=bob.messaging_pub,
+    )
+    forged = sign_payload(
+        {**signed.payload, "kind": "LOG_INJECTION\x1b[2J\nmailbox handled kind=ok"},
+        private_key_bytes=alice.store.private_key_bytes,
+    )
+    bob.store.registry = _StubRegistry([forged])
+    receiver = bob.client()
+    receiver.register_handler(KIND, _Recorder())
+
+    with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_client"):
+        assert receiver.poll_once() == 0
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert text, "the drop path must be observable"
+    assert "LOG_INJECTION" not in text
+    assert "\x1b" not in text
+    assert "MailboxError" in text
+    assert receiver.status()["dropped_total"] == 1
+
+
 def test_ciphertext_and_bodies_never_reach_the_seen_cache(tmp_path) -> None:
     registry = FilePeerRegistry(tmp_path / "registry")
     alice = _Node(tmp_path, "alice", registry)
@@ -902,8 +1075,9 @@ def test_ciphertext_and_bodies_never_reach_the_seen_cache(tmp_path) -> None:
     stored = (bob.home / "mailbox" / "seen.json").read_text(encoding="utf-8")
     assert "SECRET_BODY_MARKER" not in stored
     payload = json.loads(stored)
-    assert set(payload) == {"version", "entries"}
+    assert set(payload) == {"version", "entries", "attempts"}
     assert all(isinstance(value, float) for value in payload["entries"].values())
+    assert payload["attempts"] == {}
 
 
 def test_a_poll_request_carries_only_signed_metadata(tmp_path) -> None:

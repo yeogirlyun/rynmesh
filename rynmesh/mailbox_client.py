@@ -11,9 +11,14 @@ Two things keep that safe:
 * a persistent **seen cache** (message id -> expiry) rejects a redelivery of a
   message a handler already completed, so handlers see each message once in
   the normal case;
-* a per-message **attempt counter** retries a failing handler across polls and
-  gives up after ``max_attempts``, so one poisonous message cannot wedge the
-  box forever.
+* a per-message **attempt counter**, persisted beside the seen cache, retries a
+  failing handler across polls *and across restarts* and gives up after
+  ``max_attempts``, so one poisonous message cannot wedge the box forever.
+
+An envelope that verifies but will not *decrypt* is the one case that is
+neither handled nor dropped: the messaging key rotated while the message was in
+flight, and acking would destroy mail a restored key could still read. Those
+are counted (``undecryptable``) and left to expire in the registry's box.
 
 Nothing here logs a body, a ciphertext, or a key: log records carry the
 verified ``kind``, the 32-hex message id, and an exception *class* name only.
@@ -52,7 +57,10 @@ Handler = Callable[[MailboxEnvelope, dict[str, Any]], None]
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
-_SEEN_VERSION = 1
+#: v1 held only `entries` (the seen cache). v2 adds `attempts`, so a poison
+#: message cannot reset its retry budget by outliving the process. v1 files load
+#: unchanged — the attempts map simply starts empty.
+_SEEN_VERSION = 2
 
 
 def _utcnow() -> datetime:
@@ -94,12 +102,17 @@ class MailboxClient:
         self._lock = threading.RLock()
         self._handlers: dict[str, Handler] = {}
         self._pending_acks: list[str] = []
-        self._attempts: dict[str, int] = {}
+        # message_id -> (attempts so far, envelope expiry in epoch seconds).
+        # Persisted beside the seen cache and bounded by the same capacity, so
+        # a message that crashes its handler cannot restart its retry budget by
+        # outliving the process.
+        self._attempts: OrderedDict[str, tuple[int, float]] = OrderedDict()
         # message_id -> expiry, epoch seconds. Insertion-ordered so the bound
         # evicts the oldest entry rather than an arbitrary one.
         self._seen: OrderedDict[str, float] = OrderedDict()
         self._handled_total = 0
         self._dropped_total = 0
+        self._undecryptable_total = 0
         self._last_poll_dropped = 0
         self._pending_last = 0
         self._last_poll_at = ""
@@ -213,6 +226,10 @@ class MailboxClient:
             return {
                 "handled_total": self._handled_total,
                 "dropped_total": self._dropped_total,
+                # Envelopes that verified but would not decrypt — a messaging
+                # key rotated out from under mail already in flight, most
+                # likely. They are never acked; they expire in the box.
+                "undecryptable": self._undecryptable_total,
                 "pending_last": self._pending_last,
                 "last_poll_at": self._last_poll_at,
                 "last_error": self._last_error,
@@ -227,6 +244,7 @@ class MailboxClient:
         handled = 0
         dropped_before = self._dropped_total
         changed = False
+        undecryptable = 0
         for signed_message in messages or ():
             payload = getattr(signed_message, "payload", None)
             raw_id = payload.get("message_id") if isinstance(payload, dict) else ""
@@ -246,10 +264,31 @@ class MailboxClient:
                     messaging_private_key=self._messaging_key,
                     now=self._now,
                 )
+            except MailboxError as exc:
+                if str(exc) == "open_failed":
+                    # The envelope is valid and addressed to us; only the seal
+                    # would not open — the messaging key rotated while this was
+                    # in flight, most likely. Acking would destroy a message a
+                    # restored key could still read, so it is left to expire on
+                    # its own. Nothing but a count is kept per message.
+                    undecryptable += 1
+                    self._undecryptable_total += 1
+                    continue
+                # Anything else is a verdict on the envelope shell — bad
+                # signature, wrong recipient, expired, oversized. It will never
+                # become deliverable, so it is acked and dropped.
+                self._ack(message_id)
+                self._dropped_total += 1
+                log.warning(
+                    "mailbox envelope rejected id=%s error=%s",
+                    _safe_id(message_id),
+                    type(exc).__name__,
+                )
+                continue
             except Exception as exc:
-                # Broad on purpose: one unopenable message — a bad envelope, a
-                # non-envelope a hostile registry pushed at us — must not wedge
-                # the box. `kind` is unverified here, so it is not logged.
+                # Broad on purpose: a non-envelope a hostile registry pushed at
+                # us must not wedge the box. `kind` is unverified here, so it is
+                # not logged.
                 self._ack(message_id)
                 self._dropped_total += 1
                 log.warning(
@@ -274,8 +313,8 @@ class MailboxClient:
             try:
                 handler(envelope, body)
             except Exception as exc:
-                attempts = self._attempts.get(message_id, 0) + 1
-                self._attempts[message_id] = attempts
+                attempts = self._record_attempt(message_id, envelope.expires_at)
+                changed = True
                 log.error(
                     "mailbox handler failed kind=%s id=%s attempt=%d error=%s",
                     envelope.kind,
@@ -290,12 +329,21 @@ class MailboxClient:
                     self._dropped_total += 1
                 continue
 
-            self._attempts.pop(message_id, None)
+            changed = self._attempts.pop(message_id, None) is not None or changed
             changed = self._remember(message_id, envelope.expires_at) or changed
             self._ack(message_id)
             self._handled_total += 1
             handled += 1
 
+        if undecryptable:
+            # One line per poll, not per message: a rotated key makes every
+            # queued message fail at once, and the class name is all there is
+            # to say about it that is safe to write down.
+            log.warning(
+                "mailbox messages could not be opened count=%d error=%s",
+                undecryptable,
+                MailboxError.__name__,
+            )
         if changed:
             self._save_seen()
         return handled, self._dropped_total - dropped_before
@@ -333,47 +381,104 @@ class MailboxClient:
             self._seen.popitem(last=False)
         return True
 
+    def _record_attempt(self, message_id: str, expires_at: str) -> int:
+        """Bump (and bound) the persistent retry counter for one message."""
+
+        self._prune_attempts()
+        attempts = self._attempts.get(message_id, (0, 0.0))[0] + 1
+        self._attempts[message_id] = (attempts, self._expiry_epoch(expires_at))
+        self._attempts.move_to_end(message_id)
+        while len(self._attempts) > self._seen_capacity:
+            self._attempts.popitem(last=False)
+        return attempts
+
+    @staticmethod
+    def _expiry_epoch(expires_at: str) -> float:
+        try:
+            parsed = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+
     def _prune_seen(self) -> None:
         moment = self._epoch()
         for key in [key for key, expiry in self._seen.items() if expiry <= moment]:
             self._seen.pop(key, None)
+
+    def _prune_attempts(self) -> None:
+        # An expired message is never redelivered, so its counter is dead
+        # weight. A counter with an unreadable expiry (0.0) prunes immediately.
+        moment = self._epoch()
+        for key in [key for key, (_, expiry) in self._attempts.items() if expiry <= moment]:
+            self._attempts.pop(key, None)
 
     def _load_seen(self) -> None:
         try:
             raw = json.loads(self._seen_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
-        entries = raw.get("entries") if isinstance(raw, dict) else None
-        if not isinstance(entries, dict):
+        if not isinstance(raw, dict):
             return
-        restored: list[tuple[str, float]] = []
-        for key, value in entries.items():
-            if not _HEX32.match(str(key)):
-                continue
-            try:
-                restored.append((str(key), float(value)))
-            except (TypeError, ValueError):
-                continue
-        # The file is written with sorted keys for a stable diff, so insertion
-        # order does not survive a round trip. Expiry is the age proxy that
-        # does, and it is what the capacity bound should evict by.
-        for key, expiry in sorted(restored, key=lambda item: item[1]):
-            self._seen[key] = expiry
-        self._prune_seen()
-        while len(self._seen) > self._seen_capacity:
-            self._seen.popitem(last=False)
+        entries = raw.get("entries")
+        if isinstance(entries, dict):
+            restored: list[tuple[str, float]] = []
+            for key, value in entries.items():
+                if not _HEX32.match(str(key)):
+                    continue
+                try:
+                    restored.append((str(key), float(value)))
+                except (TypeError, ValueError):
+                    continue
+            # The file is written with sorted keys for a stable diff, so
+            # insertion order does not survive a round trip. Expiry is the age
+            # proxy that does, and it is what the capacity bound evicts by.
+            for key, expiry in sorted(restored, key=lambda item: item[1]):
+                self._seen[key] = expiry
+            self._prune_seen()
+            while len(self._seen) > self._seen_capacity:
+                self._seen.popitem(last=False)
+
+        attempts = raw.get("attempts")  # absent in a v1 file
+        if isinstance(attempts, dict):
+            counters: list[tuple[str, int, float]] = []
+            for key, value in attempts.items():
+                if not _HEX32.match(str(key)) or not isinstance(value, dict):
+                    continue
+                try:
+                    count = int(value["count"])
+                    expiry = float(value["expires"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if count > 0:
+                    counters.append((str(key), count, expiry))
+            for key, count, expiry in sorted(counters, key=lambda item: item[2]):
+                self._attempts[key] = (count, expiry)
+            self._prune_attempts()
+            while len(self._attempts) > self._seen_capacity:
+                self._attempts.popitem(last=False)
 
     def _save_seen(self) -> None:
         """Atomic 0600 write; a failure here must never lose a delivery."""
 
         self._prune_seen()
+        self._prune_attempts()
         directory = self._seen_path.parent
         try:
             directory.mkdir(parents=True, exist_ok=True)
             os.chmod(directory, _DIR_MODE)
         except OSError:
             return
-        value = {"version": _SEEN_VERSION, "entries": dict(self._seen)}
+        value = {
+            "version": _SEEN_VERSION,
+            "entries": dict(self._seen),
+            # Counts and expiries only: no kind, no body, no ciphertext.
+            "attempts": {
+                key: {"count": count, "expires": expiry}
+                for key, (count, expiry) in self._attempts.items()
+            },
+        }
         tmp = self._seen_path.with_name(self._seen_path.name + ".tmp")
         try:
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)

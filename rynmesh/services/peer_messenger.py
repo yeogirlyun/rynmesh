@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import uuid
+from collections import OrderedDict
 from typing import Any, Callable
 
 from rynmesh.services import peer_box
 from rynmesh.services.messaging_store import MessagingStore
 
 MAX_INLINE_BYTES = 5 * 1024 * 1024
+
+# Conversations with a live receive lock. One entry is a peer id and a lock, so
+# the bound is generous; it exists only so a node talking to a very large mesh
+# does not keep a lock per peer it ever heard from.
+MAX_CONVERSATION_LOCKS = 512
 
 # A sealed header carries the attachment as base64, so a 5 MiB attachment makes a
 # ~6.7 MiB header. The mailbox envelope caps at 64 KiB *after* the header is wrapped,
@@ -62,6 +69,40 @@ class PeerMessenger:
         # it is the very same sealed one the transport tried, so the recipient runs
         # the identical `receive` path whichever way it arrives.
         self._fallback = fallback
+        # `receive` runs on two threads: the event loop (the direct
+        # /api/peer/msg route) and the mailbox poll worker. Without a lock the
+        # two can pass the same `msg_id` through the dedupe check together and
+        # both append, doubling the history line. One lock per conversation
+        # keeps unrelated peers from serializing behind each other.
+        self._conversation_locks: OrderedDict[str, threading.Lock] = OrderedDict()
+        self._locks_guard = threading.Lock()
+
+    def _conversation_lock(self, peer_id: str) -> threading.Lock:
+        with self._locks_guard:
+            lock = self._conversation_locks.get(peer_id)
+            if lock is None:
+                self._evict_idle_locks()
+                lock = threading.Lock()
+                self._conversation_locks[peer_id] = lock
+            self._conversation_locks.move_to_end(peer_id)
+            return lock
+
+    def _evict_idle_locks(self) -> None:
+        """Trim the map, oldest first, but never drop a lock somebody holds.
+
+        Evicting a held lock would hand the next caller a *different* lock for
+        the same conversation, which is exactly the race the lock prevents. If
+        every entry is busy the map is allowed over its bound instead.
+        """
+
+        while len(self._conversation_locks) >= MAX_CONVERSATION_LOCKS:
+            victim = next(
+                (key for key, lock in self._conversation_locks.items() if not lock.locked()),
+                None,
+            )
+            if victim is None:
+                return
+            self._conversation_locks.pop(victim, None)
 
     def _queue_for_later(self, peer_id: str, header: dict[str, Any]) -> bool:
         """Offer an undelivered header to the store-and-forward fallback."""
@@ -144,16 +185,23 @@ class PeerMessenger:
         # mailbox, and a crash between here and the mailbox client's seen-cache
         # write redelivers too. Re-appending would double the history line and
         # the SSE record, so the second arrival is a no-op that reports itself.
-        seen = self._already_received(sender, str(inner.get("msg_id", "")))
-        if seen is not None:
-            return {**seen, "duplicate": True}
-        record = {**{k: v for k, v in inner.items() if k != "attachment"},
-                  "dir": "in", "from": sender, "to": self._me, "delivered": True}
-        att = inner.get("attachment")
-        if att is not None:
-            self._store.save_attachment(inner["msg_id"], base64.b64decode(att["bytes"]))
-            record["attachment"] = {k: v for k, v in att.items() if k != "bytes"}
-        self._store.append(sender, record)
+        #
+        # The check and the append have to be one step: the direct route runs on
+        # the event loop and the mailbox handler on the poll worker's thread, so
+        # the same message can arrive on both at once. Decryption is already
+        # done, and the lock is per conversation, so this serializes nothing but
+        # concurrent writes to one peer's history.
+        with self._conversation_lock(sender):
+            seen = self._already_received(sender, str(inner.get("msg_id", "")))
+            if seen is not None:
+                return {**seen, "duplicate": True}
+            record = {**{k: v for k, v in inner.items() if k != "attachment"},
+                      "dir": "in", "from": sender, "to": self._me, "delivered": True}
+            att = inner.get("attachment")
+            if att is not None:
+                self._store.save_attachment(inner["msg_id"], base64.b64decode(att["bytes"]))
+                record["attachment"] = {k: v for k, v in att.items() if k != "bytes"}
+            self._store.append(sender, record)
         return record
 
     def history(self, peer_id: str) -> list[dict[str, Any]]:
