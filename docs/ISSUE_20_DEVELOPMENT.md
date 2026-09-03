@@ -51,6 +51,20 @@ files without overwriting an existing artifact.
 - `smoke-linux-desktop.sh`: installed shell/node health, bundled UI route,
   watchdog recovery, XDG log, clean exit, and orphan check.
 
+`verify-sidecar.sh` explicitly removes `PYTHONPATH` and `RYNMESH_REPO_DIR`
+before launch. A successful frozen-sidecar check therefore cannot silently use
+the source checkout as its import path.
+
+## Acceptance layers
+
+Cross-platform development checks validate the Tauri external-binary contract,
+bundle inputs, workflow connections, architecture agreement, lifecycle code,
+documentation, and preservation of both macOS jobs. Linux CI then executes the
+real ELF/`.deb` inspection and installed process lifecycle. The release workflow
+performs the final publication. This split prevents a Windows static audit from
+being mistaken for a Linux package run while still allowing implementation to
+reach development-complete status.
+
 ## Build locally on the supported system
 
 Use Ubuntu 24.04 x86_64 and install the same packages listed in
