@@ -18,16 +18,15 @@ convention here. Read this document before hand-editing what it produces.
 
 ## Why not add it to `peer_http.py`
 
-`rynmesh/peer_http.py` is 2437 lines against this repo's hard 10K-line
-module ceiling, with mandatory restructuring triggered at 8K (see the
-project's module-size rule). It is already almost a quarter of the way to
-the point where the rule requires stopping feature work on it entirely.
-Every route, background worker, and bit of state a new user-facing feature
-needs belongs in its own module from the start — not because 2437 lines is
-close to either threshold today, but because a module that keeps absorbing
-one more endpoint at a time is exactly the pattern the rule exists to stop
-before it becomes unreviewable. `peer_http.py` still owns wiring the
-package in (one `install_<name>(...)` call) and nothing more.
+`rynmesh/peer_http.py` is already well past 2000 lines against this repo's
+hard 10K-line module ceiling, with mandatory restructuring triggered at 8K
+(see the project's module-size rule). Every route, background worker, and
+bit of state a new user-facing feature needs belongs in its own module
+from the start — not because the file is close to either threshold today,
+but because a module that keeps absorbing one more endpoint at a time is
+exactly the pattern the rule exists to stop before it becomes
+unreviewable. `peer_http.py` still owns wiring the package in (one
+`install_<name>(...)` call) and nothing more.
 
 ## The installer signature
 
@@ -156,11 +155,17 @@ than the one that will read them back.
 ## Routes
 
 - Owner-only routes live under `/api/local/<name>/...`. `/api/local` is
-  gated by node-auth middleware, and every local route in both existing
-  packages *also* calls `local_control(request)` itself at the top of the
-  handler — a second, explicit check on top of the middleware, not a
-  replacement for it (`install_mailbox`'s status route does this; so does
-  every local route the generator produces).
+  gated by node-auth middleware. `install_mailbox`'s status route *also*
+  calls `local_control(request)` itself at the top of the handler — a
+  second, explicit check on top of the middleware, not a replacement for
+  it, and defence in depth: a per-route re-check still protects the route
+  if the middleware's own assumptions about what counts as "local" ever
+  change. `install_llm_routes` does not: it takes no `local_control`
+  parameter at all, and none of its `/api/local/llm/...` handlers re-check
+  (`grep -n "local_control" rynmesh/llm_package/routes.py` returns
+  nothing) — it relies on the middleware alone. The mailbox's pattern is
+  the one to follow for a new package, and it is what the generator
+  produces; the LLM package simply predates it.
 - Peer-facing routes live under `/api/peer/...` (see the mailbox's own
   registry routes, and the LLM package's peer settlement/cancel routes).
   They are unauthenticated by node-auth and must do their own request

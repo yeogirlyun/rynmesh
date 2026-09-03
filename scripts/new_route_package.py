@@ -339,8 +339,18 @@ def generate(name: str, dest: Path) -> tuple[Path, Path]:
 
     routes_path.parent.mkdir(parents=True, exist_ok=True)
     test_path.parent.mkdir(parents=True, exist_ok=True)
-    routes_path.write_text(routes_source, encoding="utf-8")
-    test_path.write_text(test_source, encoding="utf-8")
+    written: list[Path] = []
+    try:
+        routes_path.write_text(routes_source, encoding="utf-8")
+        written.append(routes_path)
+        test_path.write_text(test_source, encoding="utf-8")
+        written.append(test_path)
+    except BaseException:
+        # Never leave an orphaned first file behind for a retry to trip over
+        # with a `FileExistsError` that doesn't explain it's a leftover.
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise
     return routes_path, test_path
 
 

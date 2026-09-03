@@ -187,6 +187,31 @@ def test_rejects_when_destination_file_already_exists(generator, tmp_path: Path)
     assert not (tmp_path / "tests" / "test_taken_routes.py").exists()
 
 
+def test_failing_second_write_leaves_destination_clean(
+    generator, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure writing the test file must not orphan the routes file.
+
+    Without cleanup, a retry after this failure would hit `FileExistsError`
+    on `<name>_routes.py` with no indication it's a leftover from the
+    failed attempt rather than someone else's file.
+    """
+    original_write_text = Path.write_text
+
+    def flaky_write_text(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name == "test_flaky_pkg_routes.py":
+            raise OSError("simulated disk failure on the second write")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky_write_text)
+
+    with pytest.raises(OSError, match="simulated disk failure"):
+        generator.generate("flaky_pkg", tmp_path)
+
+    assert not (tmp_path / "rynmesh" / "flaky_pkg_routes.py").exists()
+    assert not (tmp_path / "tests" / "test_flaky_pkg_routes.py").exists()
+
+
 def test_cli_rejects_bad_name_and_exits_nonzero(tmp_path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "NotLowercase", "--dest", str(tmp_path)],
