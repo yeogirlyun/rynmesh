@@ -23,6 +23,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
+from .background_workers import BackgroundWorkerRegistry
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
@@ -451,43 +452,6 @@ def create_app(store: RynmeshStore | None = None):
                     pass
                 await _asyncio.sleep(900)
 
-        async def _llm_relay_poll():
-            # Poll fast while orders are flowing, back off when idle or when no
-            # provider is configured, and surface persistent failures instead of
-            # silently dropping them (a provider that cannot poll is offline in
-            # every way that matters, yet used to look healthy).
-            await _asyncio.sleep(1)
-            interval = 1.0
-            while True:
-                worker = getattr(lifespan_app.state, "llm_relay_once", None)
-                if worker is None:
-                    await _asyncio.sleep(5)
-                    continue
-                try:
-                    processed = await _asyncio.to_thread(worker)
-                    lifespan_app.state.llm_relay_error = ""
-                    interval = 1.0 if processed else min(interval * 1.5, 10.0)
-                except Exception as exc:
-                    lifespan_app.state.llm_relay_error = str(exc)
-                    interval = min(max(interval, 1.0) * 2, 30.0)
-                await _asyncio.sleep(interval)
-
-        async def _llm_publish_refresh():
-            # LLM discovery records are intentionally short lived. Keep a configured,
-            # healthy provider visible without requiring an operator to republish it.
-            await _asyncio.sleep(1)
-            while True:
-                publisher = getattr(lifespan_app.state, "llm_publish_once", None)
-                if publisher is not None:
-                    try:
-                        await _asyncio.to_thread(publisher)
-                        lifespan_app.state.llm_publication_error = ""
-                    except Exception as exc:
-                        # A registry or runtime outage must not take down the node;
-                        # the Services screen still provides a manual retry.
-                        lifespan_app.state.llm_publication_error = str(exc)
-                await _asyncio.sleep(30)
-
         async def _discover():
             service = getattr(lifespan_app.state, "digest_service", None)
             if service is None or not service.bootstrap_defaults:
@@ -526,24 +490,28 @@ def create_app(store: RynmeshStore | None = None):
                 )
                 await _asyncio.sleep(delay)
 
-        confirm_task = _asyncio.create_task(_confirm_after_grace())
-        poll_task = _asyncio.create_task(_poll())
-        discovery_task = _asyncio.create_task(_discover())
-        recap_task = _asyncio.create_task(_recap_daily())
-        llm_relay_task = _asyncio.create_task(_llm_relay_poll())
-        llm_publish_task = _asyncio.create_task(_llm_publish_refresh())
-        yield
-        confirm_task.cancel()
-        poll_task.cancel()
-        discovery_task.cancel()
-        recap_task.cancel()
-        llm_relay_task.cancel()
-        llm_publish_task.cancel()
+        registry = lifespan_app.state.background_workers
+        await registry.start()
+        tasks = (
+            _asyncio.create_task(_confirm_after_grace()),
+            _asyncio.create_task(_poll()),
+            _asyncio.create_task(_discover()),
+            _asyncio.create_task(_recap_daily()),
+        )
+        try:
+            yield
+        finally:
+            await registry.stop()
+            for task in tasks:
+                task.cancel()
+            await _asyncio.gather(*tasks, return_exceptions=True)
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
+    app.state.background_workers = BackgroundWorkerRegistry()
     started_at = time.monotonic()
     app.state.registration_error = ""
     app.state.llm_publication_error = ""
+    app.state.llm_relay_error = ""
     app.state.publish_drafts = {}
     app.add_middleware(
         CORSMiddleware,
