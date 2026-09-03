@@ -1156,6 +1156,10 @@ def create_app(store: RynmeshStore | None = None):
             "version": f"ryn-node {RYNMESH_VERSION}",
             "uptime_seconds": int(time.monotonic() - started_at),
             "workers": app.state.background_workers.status(),
+            "worker_errors": {
+                "updates.poll": app.state.update_error,
+                "recap.daily": app.state.recap_error,
+            },
         }
 
     @app.get("/api/local/registry/status")

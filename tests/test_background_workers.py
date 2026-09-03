@@ -415,6 +415,39 @@ def test_create_app_registers_the_service_and_node_workers(tmp_path, monkeypatch
     assert all(not item["running"] for item in stopped.values())
 
 
+def test_worker_errors_surfaces_sink_writes_on_status_endpoint(tmp_path, monkeypatch) -> None:
+    """`app.state.update_error`/`app.state.recap_error` are written by the
+    workers' `error_sink`s but were read nowhere. `GET
+    /api/local/node/status` must surface them under `worker_errors` next to
+    `workers` so an operator can see a sink write.
+    """
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_ALLOW_REMOTE_CONTROL", "1")
+    store = RynmeshStore(home=tmp_path / "home", network_dir=tmp_path / "network")
+    app = create_app(store)
+
+    with TestClient(app) as client:
+        body = client.get("/api/local/node/status").json()
+        assert body["worker_errors"] == {"updates.poll": "", "recap.daily": ""}
+
+        registry = app.state.background_workers
+        specs = {spec.name: spec for spec in registry.specs()}
+        assert specs["updates.poll"].error_sink is not None
+        specs["updates.poll"].error_sink("RuntimeError: background worker invocation failed")
+
+        body = client.get("/api/local/node/status").json()
+        assert body["worker_errors"] == {
+            "updates.poll": "RuntimeError: background worker invocation failed",
+            "recap.daily": "",
+        }
+
+
 def test_reentering_the_lifespan_on_the_same_app_does_not_raise(tmp_path, monkeypatch) -> None:
     """`stop()` cancels a worker's task but never removes its spec from the
     registry's bookkeeping, so a process that re-enters this app's lifespan
@@ -754,6 +787,98 @@ def test_sink_notified_once_for_repeated_identical_failure_then_on_recovery() ->
     )
     run_worker(spec, stop_after=3)
     assert errors == ["RuntimeError: background worker invocation failed", ""]
+
+
+def test_sent_error_sentinel_clears_stale_error_after_replace() -> None:
+    """Regression for the stale-error bug: `register(..., replace=True)`
+    installs a fresh `_WorkerState`, and if `sent_error` defaulted to `""`
+    the first success after the replace would compute `"" == ""` and skip
+    the sink -- leaving whatever error the previous incarnation last sent
+    (e.g. on `app.state.update_error`) stuck forever. `sent_error` must
+    default to a sentinel no legitimate `error` value can equal, so the
+    first send after a fresh state always fires.
+    """
+
+    async def scenario() -> list[str]:
+        errors: list[str] = []
+
+        def failing() -> None:
+            raise RuntimeError("boom")
+
+        spec = BackgroundWorkerSpec(
+            "flaky", failing, policy(error_max_s=5.0), error_sink=errors.append,
+        )
+        registry = BackgroundWorkerRegistry()
+        registry.register(spec)
+        await registry.start()
+        await _wait_until(lambda: bool(errors))
+        assert errors[-1] == "RuntimeError: background worker invocation failed"
+
+        healthy_ran = asyncio.Event()
+
+        def healthy() -> bool:
+            healthy_ran.set()
+            return True
+
+        registry.register(
+            BackgroundWorkerSpec("flaky", healthy, policy(), error_sink=errors.append),
+            replace=True,
+        )
+        await asyncio.wait_for(healthy_ran.wait(), timeout=2)
+        await _wait_until(lambda: errors[-1] == "")
+        await registry.stop()
+        return errors
+
+    errors = asyncio.run(scenario())
+    # The replacement's first (successful) run must clear the sink, not skip
+    # it because the fresh state's `sent_error` happened to equal `""`.
+    assert errors[-1] == ""
+
+
+def test_restart_timer_failure_is_logged_and_visible(caplog: pytest.LogCaptureFixture) -> None:
+    """`_restart_after_delay` used to catch only `asyncio.CancelledError`
+    around its sleep. Anything else killed the timer task silently and
+    abandoned that worker forever with no log -- the one unsupervised
+    failure mode left in the supervision code. It must now be logged, with
+    only the exception's class name (never its message).
+    """
+
+    class _SleepFailure(RuntimeError):
+        def __str__(self) -> str:
+            return "PRIVATE_SLEEP_FAILURE_MARKER"
+
+    async def scenario() -> None:
+        sleep_calls = 0
+
+        async def flaky_sleep(_delay: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            raise _SleepFailure
+
+        def crash() -> None:
+            raise _Death
+
+        spec = BackgroundWorkerSpec(
+            "timer-broken", crash, policy(busy_delay_s=0.01, error_max_s=0.01),
+        )
+        registry = BackgroundWorkerRegistry(sleep=flaky_sleep)
+        registry.register(spec)
+        await registry.start()
+        await _wait_until(lambda: registry.status()["timer-broken"]["crash_class"] != "")
+        await _wait_until(lambda: sleep_calls >= 1)
+        await asyncio.sleep(0.05)
+        status = registry.status()["timer-broken"]
+        await registry.stop()
+        return status
+
+    with caplog.at_level("ERROR"):
+        status = asyncio.run(scenario())
+
+    assert status["restarts"] == 0
+    assert status["running"] is False
+    messages = [record.message for record in caplog.records]
+    assert any("timer-broken" in message and "_SleepFailure" in message for message in messages)
+    assert not any("PRIVATE_SLEEP_FAILURE_MARKER" in message for message in messages)
 
 
 def test_crash_message_is_redacted_from_status() -> None:

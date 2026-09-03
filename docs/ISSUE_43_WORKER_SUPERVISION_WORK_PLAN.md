@@ -52,8 +52,13 @@ State gains `restarts: int` and `crash_class: str`; both appear in `status()`.
 `asyncio.wait(tasks, timeout=self._stop_timeout_s)` (default 5.0 s,
 constructor argument). A worker still stuck in a thread after the timeout is
 reported in the return value (`{"stopped": [...], "abandoned": [...]}`) and
-logged; the daemon exits regardless. The thread cannot be killed — that is a
-Python limit — but shutdown no longer waits on it.
+logged. `stop()` only bounds how long the node *waits* for it; it cannot
+terminate it. A sync worker stuck inside `asyncio.to_thread` still leaks its
+OS thread, and because `asyncio.to_thread` runs on the loop's default
+`ThreadPoolExecutor`, whose module registers an `atexit` handler that joins
+every such thread with no timeout, a permanently wedged sync worker can still
+stall process exit after `uvicorn.run()` returns — unchanged from before this
+branch.
 
 `register(spec, *, replace=False)` drops the seal: registering after `start()`
 spawns immediately. `replace=True` cancels the running task for that name and

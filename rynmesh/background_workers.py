@@ -112,7 +112,14 @@ class _WorkerState:
     error: str = ""
     restarts: int = 0
     crash_class: str = ""
-    sent_error: str = field(default="", repr=False)
+    # `None` is a sentinel that no real `error` value can ever equal (`error`
+    # is always `str`), so the first `_send_error` call after a fresh state
+    # (initial registration, or `register(..., replace=True)`) always fires
+    # even when the first outcome happens to be a success (`error == ""`).
+    # Defaulting this to `""` would make that first success a no-op compare
+    # (`"" == ""`), silently skipping the sink and leaving a stale error from
+    # the previous incarnation on `app.state`.
+    sent_error: str | None = field(default=None, repr=False)
 
 
 class BackgroundWorkerRegistry:
@@ -210,22 +217,47 @@ class BackgroundWorkerRegistry:
         return {"stopped": sorted(stopped), "abandoned": sorted(abandoned)}
 
     def status(self) -> dict[str, dict[str, object]]:
-        """Return bounded scheduling metadata; never worker arguments/results."""
+        """Return bounded scheduling metadata; never worker arguments/results.
+
+        Best-effort diagnostics snapshot: safe to call from any thread (the
+        `GET /api/local/node/status` route is a sync handler, so Starlette
+        runs this in its threadpool while the event loop thread concurrently
+        mutates worker state), but with no lock protecting the async paths.
+        Rows are not guaranteed to be mutually consistent with each other,
+        and a single row is not guaranteed to reflect one single instant —
+        see the Background Workers section of docs/ARCHITECTURE.md for the
+        full contract.
+        """
         values: dict[str, dict[str, object]] = {}
+        started = self._started
         for name in sorted(self._specs):
             state = self._states[name]
             task = self._tasks.get(name)
+            # Capture every field into a local before assembling the row's
+            # dict literal below, so construction reads `state`/`task` once
+            # each rather than interleaving attribute reads with the literal
+            # build (the GIL can switch to the mutating event-loop thread
+            # between any two bytecode ops while this runs off-loop).
+            running = bool(started and task is not None and not task.done())
+            last_success_at = state.last_success_at
+            last_failure_at = state.last_failure_at
+            last_started_monotonic = state.last_started_monotonic
+            next_run_monotonic = state.next_run_monotonic
+            consecutive_failures = state.consecutive_failures
+            error = state.error[:_MAX_ERROR_CHARS]
+            restarts = state.restarts
+            crash_class = state.crash_class
             values[name] = {
                 "name": name,
-                "running": bool(self._started and task is not None and not task.done()),
-                "last_success_at": state.last_success_at,
-                "last_failure_at": state.last_failure_at,
-                "last_started_monotonic": state.last_started_monotonic,
-                "next_run_monotonic": state.next_run_monotonic,
-                "consecutive_failures": state.consecutive_failures,
-                "error": state.error[:_MAX_ERROR_CHARS],
-                "restarts": state.restarts,
-                "crash_class": state.crash_class,
+                "running": running,
+                "last_success_at": last_success_at,
+                "last_failure_at": last_failure_at,
+                "last_started_monotonic": last_started_monotonic,
+                "next_run_monotonic": next_run_monotonic,
+                "consecutive_failures": consecutive_failures,
+                "error": error,
+                "restarts": restarts,
+                "crash_class": crash_class,
             }
         return values
 
@@ -268,16 +300,36 @@ class BackgroundWorkerRegistry:
             await self._sleep(spec.policy.error_max_s)
         except asyncio.CancelledError:
             return
-        self._restart_timers.pop(spec.name, None)
-        if not self._started:
+        except Exception as exc:
+            # An injected `sleep` (or, in principle, a bug in this method's
+            # own bookkeeping below) is otherwise the one unsupervised
+            # failure mode left in this module: it would kill this timer
+            # task silently and abandon the worker forever with no restart
+            # and no log. Make it visible instead. Class name only — never
+            # the exception's own message.
+            _log.error(
+                "background worker %s restart timer failed: %s",
+                spec.name,
+                type(exc).__name__,
+            )
             return
-        if self._specs.get(spec.name) is not spec:
-            # The spec was replaced or removed while the timer was pending.
-            return
-        state = self._states.get(spec.name)
-        if state is not None:
-            state.restarts += 1
-        self._spawn(spec, initial_delay_s=0.0)
+        try:
+            self._restart_timers.pop(spec.name, None)
+            if not self._started:
+                return
+            if self._specs.get(spec.name) is not spec:
+                # The spec was replaced or removed while the timer was pending.
+                return
+            state = self._states.get(spec.name)
+            if state is not None:
+                state.restarts += 1
+            self._spawn(spec, initial_delay_s=0.0)
+        except Exception as exc:
+            _log.error(
+                "background worker %s failed to restart: %s",
+                spec.name,
+                type(exc).__name__,
+            )
 
     async def _run(
         self, spec: BackgroundWorkerSpec, *, initial_delay_s: float | None = None,
