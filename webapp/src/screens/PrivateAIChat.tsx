@@ -837,7 +837,9 @@ export default function PrivateAIChat() {
               <div className={styles.groundingMeta}>
                 {groundingPreview ? (
                   <span className={groundingPreview.truncated ? styles.groundingTruncated : ""} role="status">
-                    {groundingPreview.truncated
+                    {groundingPreview.tooSmall
+                      ? "Article context does not fit this model. Choose a larger-context Provider or remove the article context."
+                      : groundingPreview.truncated
                       ? `Article shortened for this model: ${groundingPreview.includedCharacters} of ${groundingPreview.originalCharacters} characters (${groundingPreview.includedBlocks}/${groundingPreview.originalBlocks} blocks).`
                       : `Full article context fits: ${groundingPreview.originalCharacters} characters.`}
                   </span>

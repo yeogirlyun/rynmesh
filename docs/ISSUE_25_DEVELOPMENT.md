@@ -105,3 +105,11 @@ not initially expose:
 2. compact consumption-history records can omit `evidence_packet`; Digest card
    and viewer rendering now treat it as optional instead of crashing when the
    user returns from Private AI.
+
+The 2026-09-03 completion audit added two further deterministic safeguards:
+
+3. an initial empty conversation and its grounded handoff conversation can
+   share a millisecond timestamp; the grounded conversation now receives a
+   strictly newer sort key so Provider round-trips restore it reliably;
+4. a Provider whose context cannot fit a useful article excerpt now shows an
+   actionable larger-context/remove message instead of only disabling Send.
