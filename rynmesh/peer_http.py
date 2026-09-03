@@ -23,7 +23,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
-from .background_workers import BackgroundWorkerRegistry
+from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
@@ -456,38 +456,30 @@ def create_app(store: RynmeshStore | None = None):
             await _asyncio.sleep(grace)
             updater.mark_serving()
 
-        async def _poll():
-            interval = int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
-            while True:
-                await _asyncio.sleep(interval)
-                try:
-                    res = await _asyncio.to_thread(updater.check)
-                    if res.get("available") and updater.status()["autoUpdate"]:
-                        await _asyncio.to_thread(updater.apply, updater.check_manifest())
-                except Exception:
-                    pass
+        def _update_poll_once() -> bool:
+            res = updater.check()
+            if res.get("available") and updater.status()["autoUpdate"]:
+                updater.apply(updater.check_manifest())
+                return True
+            return False
 
-        async def _recap_daily():
+        def _recap_once() -> bool:
             """Send the recap once per day, at the configured UTC hour.
 
             Deliberately a poll rather than a timer: the machine sleeps, and a
             laptop that was closed at the send hour should still get its recap
             when it wakes rather than skipping the day.
             """
-            await _asyncio.sleep(20)
-            while True:
-                try:
-                    stored = dict(_settings.get().get("recap", {}) or {})
-                    if stored.get("enabled") and stored.get("smtp_host"):
-                        now = time.time()
-                        hour = int(stored.get("send_hour_utc", 13))
-                        last = float(stored.get("last_sent_unix", 0) or 0)
-                        due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
-                        if due:
-                            await _asyncio.to_thread(_send_recap_now)
-                except Exception:
-                    pass
-                await _asyncio.sleep(900)
+            stored = dict(_settings.get().get("recap", {}) or {})
+            if stored.get("enabled") and stored.get("smtp_host"):
+                now = time.time()
+                hour = int(stored.get("send_hour_utc", 13))
+                last = float(stored.get("last_sent_unix", 0) or 0)
+                due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
+                if due:
+                    _send_recap_now()
+                    return True
+            return False
 
         async def _discover():
             service = getattr(lifespan_app.state, "digest_service", None)
@@ -528,12 +520,40 @@ def create_app(store: RynmeshStore | None = None):
                 await _asyncio.sleep(delay)
 
         registry = lifespan_app.state.background_workers
+        update_poll_interval = float(
+            int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
+        )
+        registry.register(
+            BackgroundWorkerSpec(
+                name="updates.poll",
+                run_once=_update_poll_once,
+                policy=BackoffPolicy.fixed(update_poll_interval),
+                # Preserves today's sleep-then-check order: a boot must not
+                # trigger an update check while the crash-loop rollback
+                # window (`_confirm_after_grace`) is still open.
+                initial_delay_s=update_poll_interval,
+                error_sink=lambda value: setattr(lifespan_app.state, "update_error", value),
+            ),
+            # `stop()` never removes a spec from the registry's own bookkeeping
+            # (only its task), so a process that re-enters this lifespan on the
+            # same app (startup -> shutdown -> startup) must be able to
+            # re-register without raising "already registered".
+            replace=True,
+        )
+        registry.register(
+            BackgroundWorkerSpec(
+                name="recap.daily",
+                run_once=_recap_once,
+                policy=BackoffPolicy.fixed(900.0),
+                initial_delay_s=20.0,
+                error_sink=lambda value: setattr(lifespan_app.state, "recap_error", value),
+            ),
+            replace=True,
+        )
         await registry.start()
         tasks = (
             _asyncio.create_task(_confirm_after_grace()),
-            _asyncio.create_task(_poll()),
             _asyncio.create_task(_discover()),
-            _asyncio.create_task(_recap_daily()),
         )
         try:
             yield
@@ -558,6 +578,8 @@ def create_app(store: RynmeshStore | None = None):
     app.state.registration_error = ""
     app.state.llm_publication_error = ""
     app.state.llm_relay_error = ""
+    app.state.update_error = ""
+    app.state.recap_error = ""
     app.state.publish_drafts = {}
     app.add_middleware(
         CORSMiddleware,
@@ -1133,6 +1155,11 @@ def create_app(store: RynmeshStore | None = None):
             "pending_recs": 0,
             "version": f"ryn-node {RYNMESH_VERSION}",
             "uptime_seconds": int(time.monotonic() - started_at),
+            "workers": app.state.background_workers.status(),
+            "worker_errors": {
+                "updates.poll": app.state.update_error,
+                "recap.daily": app.state.recap_error,
+            },
         }
 
     @app.get("/api/local/registry/status")
