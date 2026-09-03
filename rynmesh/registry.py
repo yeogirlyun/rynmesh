@@ -27,6 +27,8 @@ from .jobs import (
     verify_work_order,
     verify_work_result,
 )
+from .mailbox import MailboxError, verify_mailbox_envelope
+from .mailbox_store import FileMailboxStore
 from .types import now_iso
 
 
@@ -127,6 +129,8 @@ class PeerRegistry(Protocol):
         provider_peer_id: str = "",
         status: str = "",
     ) -> list[SignedPayload]: ...
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]: ...
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]: ...
 
 
 def sign_peer_record(record: PeerRecord, *, private_key_bytes: bytes) -> SignedPayload:
@@ -157,6 +161,24 @@ class FilePeerRegistry:
         self.job_capacity_dir.mkdir(parents=True, exist_ok=True)
         self.work_orders_dir.mkdir(parents=True, exist_ok=True)
         self.work_results_dir.mkdir(parents=True, exist_ok=True)
+        self._mailbox: FileMailboxStore | None = None
+
+    @property
+    def mailbox(self) -> FileMailboxStore:
+        """Lazily built: registries that never carry mail never create the spool."""
+
+        if self._mailbox is None:
+            self._mailbox = FileMailboxStore(self.root)
+        return self._mailbox
+
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
+        return self.mailbox.deposit(signed)
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        return self.mailbox.poll(signed_poll)
+
+    def sweep_mailbox(self) -> int:
+        return self.mailbox.sweep()
 
     def publish(self, signed_record: SignedPayload) -> dict[str, Any]:
         record = verify_peer_record(signed_record)
@@ -349,6 +371,58 @@ class HttpPeerRegistry:
     def __init__(self, base_url: str, *, timeout_s: float = 10.0) -> None:
         self.base_url = _validate_registry_url(base_url)
         self.timeout_s = float(timeout_s)
+        # Envelopes this client refused on the way in. A hostile or broken
+        # registry must not be able to abort a poll by injecting one bad
+        # record, but a silently shrinking mailbox should still be observable.
+        self.dropped_mailbox_messages = 0
+
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
+        body = json.dumps(signed.to_dict()).encode("utf-8")
+        req = Request(
+            f"{self.base_url}/api/v1/mailbox/deposit",
+            data=body,
+            headers={
+                "content-type": "application/json",
+                "user-agent": RYNMESH_USER_AGENT,
+            },
+            method="POST",
+        )
+        payload = self._json(req)
+        if not isinstance(payload, dict):
+            raise RegistryError("registry_response_not_object")
+        return payload
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        body = json.dumps(signed_poll.to_dict()).encode("utf-8")
+        req = Request(
+            f"{self.base_url}/api/v1/mailbox/poll",
+            data=body,
+            headers={
+                "content-type": "application/json",
+                "user-agent": RYNMESH_USER_AGENT,
+            },
+            method="POST",
+        )
+        payload = self._json(req)
+        messages = (
+            payload.get("messages", []) if isinstance(payload, dict)
+            else payload if isinstance(payload, list) else None
+        )
+        if not isinstance(messages, list):
+            raise RegistryError("registry response missing messages list")
+        records: list[SignedPayload] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                self.dropped_mailbox_messages += 1
+                continue
+            try:
+                signed = SignedPayload.from_dict(item)
+                verify_mailbox_envelope(signed)
+            except (KeyError, TypeError, ValueError, MailboxError):
+                self.dropped_mailbox_messages += 1
+                continue
+            records.append(signed)
+        return records
 
     def publish(self, signed_record: SignedPayload) -> dict[str, Any]:
         body = json.dumps(signed_record.to_dict()).encode("utf-8")
