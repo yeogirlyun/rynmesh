@@ -120,6 +120,30 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
       }),
     requestRecommendations: (req) =>
       requestJson(`${baseUrl}/recommendations`, { method: "POST", body: JSON.stringify(req ?? {}) }),
+    getFirstSuccess: () => requestJson(`${baseUrl}/first-success`),
+    dismissFirstSuccess: () => requestJson(`${baseUrl}/first-success/dismiss`, { method: "POST" }),
+    resetFirstSuccess: () => requestJson(`${baseUrl}/first-success/reset`, { method: "POST" }),
+    recordContentConsumption: async (item, action) => {
+      await requestJson(`${baseUrl}/consumption`, {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          item: {
+            item_id: item.digest_item_id ?? item.content_id,
+            source_id: item.publisher_peer_id,
+            source_title: item.source_peer_name ?? item.source_platform ?? "Ryn source",
+            source_kind: item.source_platform ?? "rynmesh",
+            title: item.title,
+            link: item.external_url ?? "",
+            summary: item.description,
+            content_kind: item.content_kind,
+            content_type: item.content_type,
+            tags: item.tags,
+            reasons: [],
+          },
+        }),
+      });
+    },
     getRecommendationProfile: () => requestJson(`${baseUrl}/recommendations/profile`),
     updateRecommendationProfile: (patch) =>
       requestJson(`${baseUrl}/recommendations/profile`, {

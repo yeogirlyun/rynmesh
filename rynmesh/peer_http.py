@@ -1444,6 +1444,7 @@ def create_app(store: RynmeshStore | None = None):
     from .services.assistant_audit import AssistantAuditStore
     from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
+    from .services.first_success import FirstSuccessStore
     from .services.reader import ReaderCache, ReaderError, read_article
 
     desktop_discovery = os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower() in {
@@ -1461,6 +1462,8 @@ def create_app(store: RynmeshStore | None = None):
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
+    app.state.first_success_store = FirstSuccessStore(active_store.home / "first-success.json")
+    app.state.first_success_enabled = os.environ.get("RYNMESH_FIRST_SUCCESS_V1_ENABLED", "1") != "0"
     app.state.assistant_audit = AssistantAuditStore(active_store.home / "assistant-audit.json")
     app.state.model_provider = None
     app.state.model_provider_checked_at = 0.0
@@ -1470,6 +1473,84 @@ def create_app(store: RynmeshStore | None = None):
 
     def _audit() -> AssistantAuditStore:
         return app.state.assistant_audit
+
+    def _first_success_status() -> dict[str, Any]:
+        discovery = _digest_service().discovery_status()
+        consumption = app.state.consumption_store.list()
+        profile = _recommendation_profile.public()
+        item_count = int(discovery.get("item_count", 0) or 0)
+        existing = app.state.first_success_store.get()
+        replay_since = float(existing.get("replay_started_at_unix", 0.0) or 0.0)
+        opened = any(
+            float(record.get("last_opened_unix", 0.0) or 0.0) >= replay_since
+            for record in consumption
+            if float(record.get("last_opened_unix", 0.0) or 0.0) > 0
+        )
+        signal = replay_since <= 0 and (
+            any(bool(record.get("bookmarked")) for record in consumption)
+            or bool(int(profile.get("feedback_count", 0) or 0))
+        )
+        stored = app.state.first_success_store.sync(
+            node_ready=True,
+            content_ready=item_count > 0,
+            first_item_opened=opened,
+            first_signal_recorded=signal,
+        )
+        milestones = dict(stored.get("milestones", {}))
+        completed = bool(float(milestones.get("completed", 0.0) or 0.0))
+        if completed:
+            phase = "completed"
+        elif bool(float(milestones.get("first_item_opened", 0.0) or 0.0)):
+            phase = "awaiting_signal"
+        elif item_count > 0:
+            phase = "ready"
+        elif str(discovery.get("phase", "")) == "error" or (
+            int(discovery.get("source_count", 0) or 0) > 0
+            and int(discovery.get("failed_sources", 0) or 0)
+            >= int(discovery.get("source_count", 0) or 0)
+        ):
+            phase = "needs_action"
+        else:
+            phase = "checking_sources"
+        return {
+            "version": "ryn.first-success.v1",
+            "phase": phase,
+            "completed": completed,
+            "dismissed": bool(stored.get("dismissed", False)),
+            "node_ready": bool(float(milestones.get("node_ready", 0.0) or 0.0)),
+            "content_ready": bool(float(milestones.get("content_ready", 0.0) or 0.0)),
+            "item_count": item_count,
+            "healthy_sources": int(discovery.get("healthy_sources", 0) or 0),
+            "source_count": int(discovery.get("source_count", 0) or 0),
+            "failed_sources": int(discovery.get("failed_sources", 0) or 0),
+            "degraded": bool(discovery.get("degraded", False)),
+            "using_cache": bool(int(discovery.get("cached_sources", 0) or 0)),
+            "first_item_opened": bool(
+                float(milestones.get("first_item_opened", 0.0) or 0.0)
+            ),
+            "first_signal_recorded": bool(
+                float(milestones.get("first_signal_recorded", 0.0) or 0.0)
+            ),
+            "milestones": milestones,
+            "safe_error": "discovery_unavailable" if phase == "needs_action" else None,
+            "recoverable_actions": ["retry_discovery"] if phase == "needs_action" else [],
+        }
+
+    def _record_first_success(milestone: str) -> None:
+        """A damaged progress file must never break the user's real action."""
+        if not app.state.first_success_enabled:
+            return
+        try:
+            app.state.first_success_store.record(milestone)
+        except (OSError, TypeError, ValueError):
+            try:
+                _audit().append(
+                    "verify",
+                    "First-success progress could not be saved",
+                    details={"code": "first_success_store_unavailable"},
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     def _preferred_model() -> str:
         """The owner's explicit choice, if they've made one."""
@@ -1509,6 +1590,29 @@ def create_app(store: RynmeshStore | None = None):
         if provider is None:
             return {"provider": None, "model": None}
         return {"provider": provider.id, "model": provider.model}
+
+    @app.get("/api/local/first-success")
+    def local_first_success(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        if not app.state.first_success_enabled:
+            raise HTTPException(status_code=404, detail="first_success_disabled")
+        return _first_success_status()
+
+    @app.post("/api/local/first-success/dismiss")
+    def local_first_success_dismiss(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        if not app.state.first_success_enabled:
+            raise HTTPException(status_code=404, detail="first_success_disabled")
+        app.state.first_success_store.dismiss()
+        return _first_success_status()
+
+    @app.post("/api/local/first-success/reset")
+    def local_first_success_reset(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        if not app.state.first_success_enabled:
+            raise HTTPException(status_code=404, detail="first_success_disabled")
+        app.state.first_success_store.reset()
+        return _first_success_status()
 
     @app.get("/api/local/ai/models")
     def local_ai_models(request: FastAPIRequest) -> dict[str, Any]:
@@ -1772,10 +1876,14 @@ def create_app(store: RynmeshStore | None = None):
                 progress=body.get("progress"),
             )
             action = str(body.get("action", ""))
+            if action == "opened":
+                _record_first_success("first_item_opened")
+            elif action == "bookmark":
+                _record_first_success("first_signal_recorded")
             if action in {"opened", "bookmark", "completed"}:
                 _audit().append(
                     "fetch" if action == "opened" else "rec",
-                    f"Content {action}: {record['item'].get('title', record['item_id'])}",
+                    f"Content {action}",
                     details={"action": action, "stored_locally": True},
                     item_id=record["item_id"],
                 )
@@ -1923,6 +2031,8 @@ def create_app(store: RynmeshStore | None = None):
             raise HTTPException(status_code=404, detail="recommendation_content_not_found")
         try:
             profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
+            if str(body.get("action", "")) != "neutral":
+                _record_first_success("first_signal_recorded")
             _digest_service().build(now_unix=time.time())
             _audit().append(
                 "rec",
@@ -2121,6 +2231,7 @@ def create_app(store: RynmeshStore | None = None):
             "reading_history": app.state.consumption_store.list(),
             "sources": _digest_service().list_sources(),
             "assistant_audit": _audit().list(),
+            "first_success": app.state.first_success_store.get(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
                 "ai_model": stored["ai_model"],
@@ -2135,7 +2246,7 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         requested = body.get("scopes", []) if isinstance(body, dict) else []
         scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit"}
+        allowed = {"history", "profile", "cache", "audit", "onboarding"}
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
         if "history" in scopes:
@@ -2148,7 +2259,9 @@ def create_app(store: RynmeshStore | None = None):
             app.state.reader_cache.clear()
         if "audit" in scopes:
             _audit().clear()
-        else:
+        if "onboarding" in scopes:
+            app.state.first_success_store.reset()
+        if "audit" not in scopes:
             _audit().append(
                 "verify",
                 "Personal assistant data erased",

@@ -3,6 +3,7 @@ import type {
   ContentBody,
   ContentItem,
   EgressStatus,
+  FirstSuccessStatus,
   JobCapacity,
   NodeSettings,
   NodeStatus,
@@ -204,6 +205,13 @@ export interface NodeClient {
   fetchPreview(contentId: string, providerPeerId: string): Promise<{ ok: boolean; size: string }>;
   fetchFullContent(contentId: string, providerPeerId: string): Promise<{ ok: boolean; size: string }>;
   requestRecommendations(req?: { query?: string; limit?: number }): Promise<Recommendation[]>;
+  getFirstSuccess(): Promise<FirstSuccessStatus>;
+  dismissFirstSuccess(): Promise<FirstSuccessStatus>;
+  resetFirstSuccess(): Promise<FirstSuccessStatus>;
+  recordContentConsumption(
+    item: ContentItem,
+    action: "opened" | "bookmark" | "unbookmark" | "completed",
+  ): Promise<void>;
   getRecommendationProfile(): Promise<RecommendationProfile>;
   updateRecommendationProfile(
     patch: Partial<Pick<RecommendationProfile, "direction" | "topics" | "platforms">>,
