@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -24,6 +25,7 @@ from typing import Any
 
 import pytest
 
+import rynmesh.llm_package.https_only as llm_https_only
 import rynmesh.llm_package.lifecycle as llm_lifecycle
 import rynmesh.llm_package.runtime_docker as llm_runtime_docker
 import rynmesh.llm_package.runtime_native as llm_runtime_native
@@ -35,8 +37,13 @@ posix_only = pytest.mark.skipif(
     os.name == "nt", reason="the fake llama-server is an executable POSIX script"
 )
 
+# Mirrors the real server's authentication shape: `--api-key` guards the
+# inference endpoints, while `/health` and `/v1/models` stay public (that is
+# what llama.cpp itself exempts). It also records the `LLAMA_*` variables it
+# actually inherited, so a test can prove the node sanitizes the child
+# environment instead of trusting the flags alone.
 SERVER_BODY = """
-import json, sys
+import json, os, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ARGS = sys.argv[1:]
@@ -48,9 +55,19 @@ def option(name, default=""):
 
 PORT = int(option("--port", "0"))
 ALIAS = option("--alias", "fake-alias")
+API_KEY = option("--api-key")
+
+ENV_DUMP = os.environ.get("RYNMESH_FAKE_ENV_DUMP", "")
+if ENV_DUMP:
+    inherited = sorted(name for name in os.environ if name.startswith("LLAMA_"))
+    with open(ENV_DUMP, "w") as handle:
+        handle.write("\\n".join(inherited))
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _authorized(self):
+        return not API_KEY or self.headers.get("Authorization") == "Bearer " + API_KEY
+
     def do_GET(self):
         if self.path == "/health":
             self._send({"status": "ok"})
@@ -64,6 +81,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         self.rfile.read(int(self.headers.get("content-length", "0")))
+        if not self._authorized():
+            self.send_error(401)
+            return
         self._send({
             "choices": [{"message": {"content": "RYNMESH SELF TEST OK"}}],
             "usage": {"prompt_tokens": 4, "completion_tokens": 5},
@@ -87,6 +107,9 @@ server.serve_forever()
 """
 
 EXIT_BODY = "import sys\nsys.exit(3)\n"
+# A server that is alive but not yet answering anything: the shape of a real
+# one still loading a multi-gigabyte model.
+LOADING_BODY = "import time\ntime.sleep(300)\n"
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +164,19 @@ def _model_file(directory: Path) -> Path:
     model = directory / "model.gguf"
     model.write_bytes(b"GGUF" + bytes(96))
     return model
+
+
+def _record(pid_path: Path) -> dict[str, Any]:
+    return json.loads(pid_path.read_text(encoding="utf-8"))
+
+
+def _write_record(pid_path: Path, pid: int, server_name: str = "llama-server") -> Path:
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(
+        json.dumps({"pid": pid, "server": server_name, "started": int(time.time())}),
+        encoding="utf-8",
+    )
+    return pid_path
 
 
 # --------------------------------------------------------------------------
@@ -385,7 +421,7 @@ def test_prepare_refuses_a_runtime_url_that_is_not_https(tmp_path, monkeypatch):
 
 
 def test_a_redirect_off_https_is_refused_mid_download():
-    handler = llm_runtime_install._HttpsOnlyRedirect()
+    handler = llm_https_only.HttpsOnlyRedirect()
     request = urllib.request.Request("https://example.invalid/a.tar.gz")
     with pytest.raises(LifecycleError, match="non-HTTPS"):
         handler.redirect_request(request, None, 302, "Found", {}, "http://example.invalid/a.tar.gz")
@@ -396,7 +432,7 @@ def test_the_runtime_fetch_installs_the_https_only_redirect_handler(tmp_path, mo
     _pin(monkeypatch, payload)
     seen = _serve(monkeypatch, payload)
     llm_runtime_native.prepare(root=tmp_path / "llm")
-    assert llm_runtime_install._HttpsOnlyRedirect in seen["handlers"]
+    assert llm_https_only.HttpsOnlyRedirect in seen["handlers"]
 
 
 def test_prepare_deletes_the_archive_on_a_checksum_mismatch(tmp_path, monkeypatch):
@@ -542,7 +578,8 @@ def test_start_health_self_test_and_stop_run_a_real_child_process(tmp_path, monk
 
         pid_file = root / "runtime" / "native-one.pid"
         log_file = root / "runtime" / "native-one.log"
-        pid = int(pid_file.read_text(encoding="utf-8"))
+        pid = _record(pid_file)["pid"]
+        assert _record(pid_file)["server"] == server.name
         assert stat.S_IMODE(log_file.stat().st_mode) == 0o600
         assert stat.S_IMODE(pid_file.stat().st_mode) == 0o600
         assert stat.S_IMODE((root / "runtime").stat().st_mode) == 0o700
@@ -586,7 +623,7 @@ def test_start_adopts_a_server_that_already_owns_the_port(tmp_path, monkeypatch)
         _wait_for_port(port)
         manifest = _manifest("native-adopt", root=root, model=_model_file(tmp_path), port=port)
         llm_runtime_native.start(manifest)
-        assert (root / "runtime" / "native-adopt.pid").read_text(encoding="utf-8") == "0"
+        assert _record(root / "runtime" / "native-adopt.pid")["pid"] == 0
         assert manifest.runtime_command == []
         assert llm_runtime_native.state(manifest)["status"] == "adopted"
         assert llm_runtime_native.stop(manifest) is False
@@ -599,12 +636,146 @@ def test_start_adopts_a_server_that_already_owns_the_port(tmp_path, monkeypatch)
 def test_stop_reports_nothing_stopped_for_a_stale_pidfile(tmp_path):
     root = tmp_path / "llm"
     manifest = _manifest("native-stale", root=root, model=_model_file(tmp_path), port=_free_port())
-    pid_path = root / "runtime" / "native-stale.pid"
-    pid_path.parent.mkdir(parents=True, exist_ok=True)
-    pid_path.write_text("999999999", encoding="utf-8")
+    pid_path = _write_record(root / "runtime" / "native-stale.pid", 999999999)
     assert llm_runtime_native.stop(manifest) is False
     assert not pid_path.exists()
     assert llm_runtime_native.stop(manifest) is False  # no pidfile at all
+
+
+def test_a_legacy_bare_integer_pidfile_reads_as_stale(tmp_path):
+    """Pre-JSON pidfiles name no server, so nothing can be attributed to them."""
+    root = tmp_path / "llm"
+    manifest = _manifest("native-legacy", root=root, model=_model_file(tmp_path), port=_free_port())
+    pid_path = root / "runtime" / "native-legacy.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(str(os.getpid()), encoding="utf-8")  # alive, but unattributable
+    assert llm_runtime_native.stop(manifest) is False
+    assert not pid_path.exists()
+    assert llm_runtime_native._alive(os.getpid()) is True  # this process is untouched
+
+
+@posix_only
+def test_a_pidfile_naming_an_unrelated_live_process_is_never_signalled(tmp_path):
+    """A reused pid must read as stale, not become a kill target."""
+    root = tmp_path / "llm"
+    manifest = _manifest("native-reused", root=root, model=_model_file(tmp_path), port=_free_port())
+    # This very test process: alive, but its command is not a llama-server.
+    pid_path = _write_record(root / "runtime" / "native-reused.pid", os.getpid())
+
+    assert llm_runtime_native.stop(manifest) is False
+    assert not pid_path.exists()
+    assert llm_runtime_native._alive(os.getpid()) is True
+    assert llm_runtime_native.state(manifest)["running"] is False
+
+
+@posix_only
+def test_start_does_not_respawn_while_our_own_server_is_still_loading(tmp_path, monkeypatch):
+    """The pidfile is consulted before the port, so a slow load is not a restart."""
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", LOADING_BODY)
+    monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(server))
+    loading = subprocess.Popen([sys.executable, str(server)], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        pid_path = _write_record(root / "runtime" / "native-loading.pid", loading.pid)
+        manifest = _manifest("native-loading", root=root, model=_model_file(tmp_path),
+                             port=_free_port())
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a still-loading owned server must never be respawned")
+
+        monkeypatch.setattr(llm_runtime_native, "_spawn", refuse)
+        llm_runtime_native.start(manifest)
+
+        assert loading.poll() is None
+        assert _record(pid_path)["pid"] == loading.pid
+        assert llm_runtime_native.state(manifest)["status"] == "running"
+    finally:
+        loading.terminate()
+        loading.wait(timeout=10)
+
+
+@posix_only
+def test_the_spawned_server_requires_the_minted_bearer_token(tmp_path, monkeypatch):
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
+    monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(server))
+    port = _free_port()
+    manifest = _manifest("native-auth", root=root, model=_model_file(tmp_path), port=port)
+    assert manifest.runtime_api_key == ""
+    try:
+        llm_runtime_native.start(manifest)
+        key = manifest.runtime_api_key
+        command = manifest.runtime_command
+        assert len(key) >= 40
+        assert command[command.index("--api-key") + 1] == key
+        assert command[command.index("--cors-origins") + 1] == "localhost"
+        assert command[command.index("-lv") + 1] == "1"
+
+        # Rynmesh itself is authenticated end to end.
+        assert llm_lifecycle.self_test(manifest)["ok"] is True
+
+        # A page the owner happens to visit is not.
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            data=json.dumps({"model": "rynmesh-fake", "messages": []}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(request, timeout=10)
+        assert refused.value.code == 401
+
+        # The key stays out of everything the owner or a peer can read.
+        assert key not in json.dumps(llm_runtime_native.state(manifest))
+        assert key not in json.dumps(manifest.public_dict())
+        assert key not in (root / "runtime" / "native-auth.log").read_text(encoding="utf-8")
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+@posix_only
+def test_the_child_never_inherits_llama_argument_overrides(tmp_path, monkeypatch):
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
+    monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(server))
+    dump = tmp_path / "child-llama-env.txt"
+    monkeypatch.setenv("RYNMESH_FAKE_ENV_DUMP", str(dump))
+    # Without sanitizing, these would make the server log whole request bodies
+    # and write that log outside the owner-only runtime directory.
+    monkeypatch.setenv("LLAMA_ARG_LOG_VERBOSITY", "99")
+    monkeypatch.setenv("LLAMA_ARG_LOG_FILE", str(tmp_path / "leaked.log"))
+    monkeypatch.setenv("LLAMA_API_KEY", "an-owner-set-key")
+    port = _free_port()
+    manifest = _manifest("native-env", root=root, model=_model_file(tmp_path), port=port)
+    try:
+        llm_runtime_native.start(manifest)
+        _wait_for_port(port)
+        assert dump.read_text(encoding="utf-8").strip() == ""
+        assert not (tmp_path / "leaked.log").exists()
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+@posix_only
+def test_stop_owned_children_leaves_no_orphaned_server_behind(tmp_path, monkeypatch):
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
+    monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(server))
+    manifest = _manifest("native-exit", root=root, model=_model_file(tmp_path), port=_free_port())
+    try:
+        llm_runtime_native.start(manifest)
+        pid_path = root / "runtime" / "native-exit.pid"
+        pid = _record(pid_path)["pid"]
+        assert llm_runtime_native._alive(pid) is True
+
+        llm_runtime_native.stop_owned_children()
+
+        assert llm_runtime_native._alive(pid) is False
+        assert not pid_path.exists()
+        assert pid not in llm_runtime_native._CHILDREN
+        assert llm_runtime_native.state(manifest)["running"] is False
+    finally:
+        llm_runtime_native.stop(manifest)
 
 
 def test_start_refuses_a_model_whose_checksum_changed(tmp_path, monkeypatch):
@@ -694,6 +865,9 @@ def test_install_managed_on_the_native_runtime_keeps_local_details_private(tmp_p
         assert manifest.install_source["runtime_release"] == llm_runtime_install.RUNTIME_RELEASE
         assert manifest.install_source["profile"] == "custom"
         assert result["self_test"]["ok"] is True
+        # The private manifest now carries the loopback bearer token.
+        assert manifest.runtime_api_key
+        assert stat.S_IMODE(Path(result["manifest"]).stat().st_mode) == 0o600
         public = json.dumps(manifest.public_dict())
         assert "runtime_command" not in public and "runtime_dir" not in public
         assert str(server) not in public and str(root) not in public

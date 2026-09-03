@@ -2,7 +2,8 @@
 
 Split out of `runtime_native.py` so each module has one job: that one resolves
 and runs the server, this one gets it onto disk — the pinned per-platform asset
-table, the verified HTTPS download, and the hardened archive extraction.
+table, the verified HTTPS download (through the shared HTTPS-only opener in
+`https_only`), and the hardened archive extraction.
 
 Nothing raised from here may contain a filesystem path: these errors reach the
 owner through setup progress and node logs.
@@ -22,6 +23,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .errors import LifecycleError
+from .https_only import build_https_only_opener
 
 RUNTIME_RELEASE = "b10774"  # ggml-org/llama.cpp, 2026-09-03
 RUNTIME_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{RUNTIME_RELEASE}/"
@@ -111,15 +113,6 @@ def report(progress: Any, cancel_check: Any, percent: int, message: str) -> None
         progress("pull_runtime", percent, message)
 
 
-class _HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
-    """Keep the whole redirect chain on HTTPS, not just the first request."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if urlparse(newurl).scheme != "https":
-            raise LifecycleError("runtime download redirected to a non-HTTPS URL")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def _fetch(url: str, destination: Path, expected_sha256: str, size_bytes: int, *,
            progress: Any = None, cancel_check: Any = None) -> None:
     parsed = urlparse(url)
@@ -131,7 +124,7 @@ def _fetch(url: str, destination: Path, expected_sha256: str, size_bytes: int, *
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
         request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh/0.6"})
-        opener = urllib.request.build_opener(_HttpsOnlyRedirect)
+        opener = build_https_only_opener()
         with opener.open(request, timeout=300) as response, temporary.open("wb") as handle:
             while chunk := response.read(CHUNK_BYTES):
                 if cancel_check and cancel_check():

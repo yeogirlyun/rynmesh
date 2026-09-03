@@ -6,6 +6,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import rynmesh.llm_package.catalog as llm_catalog
+import rynmesh.llm_package.https_only as llm_https_only
 import rynmesh.llm_package.lifecycle as llm_lifecycle
 import rynmesh.llm_package.model_download as llm_model_download
 import rynmesh.llm_package.p2p as llm_p2p
@@ -228,7 +230,7 @@ def test_download_resume_after_cancel_completes_via_206(tmp_path, monkeypatch):
 
     # 1. The first attempt is cancelled partway through: `.part` keeps the
     #    bytes written so far and the destination is never created.
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
     calls = {"n": 0}
 
@@ -253,7 +255,7 @@ def test_download_resume_after_cancel_completes_via_206(tmp_path, monkeypatch):
         seen_ranges.append(request.get_header("Range"))
         return replay(request, timeout=timeout)
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen", recording_urlopen)
+    monkeypatch.setattr(llm_model_download, "_urlopen", recording_urlopen)
     actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert actual == DOWNLOAD_SHA256
     assert seen_ranges == [f"bytes={partial_size}-"]
@@ -265,7 +267,7 @@ def test_download_restarts_from_scratch_when_the_server_ignores_range(tmp_path, 
     destination = tmp_path / "model.gguf"
     part = destination.with_suffix(destination.suffix + ".part")
     part.write_bytes(b"stale bytes from an earlier attempt that do not match the real prefix")
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         _fake_urlopen(DOWNLOAD_BODY, honor_range=False))
     actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert actual == DOWNLOAD_SHA256
@@ -286,7 +288,7 @@ def test_download_restarts_when_a_206_content_range_does_not_match_resume_point(
         return _ChunkedResponse(DOWNLOAD_BODY, status=206,
                                 content_range=f"bytes 0-{len(DOWNLOAD_BODY) - 1}/{len(DOWNLOAD_BODY)}")
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
     actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert actual == DOWNLOAD_SHA256
     assert destination.read_bytes() == DOWNLOAD_BODY
@@ -302,7 +304,7 @@ def test_download_treats_a_416_as_an_already_complete_part(tmp_path, monkeypatch
         assert request.get_header("Range") == f"bytes={len(DOWNLOAD_BODY)}-"
         raise urllib.error.HTTPError(request.full_url, 416, "Range Not Satisfiable", {}, None)
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
     actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert actual == DOWNLOAD_SHA256
     assert destination.read_bytes() == DOWNLOAD_BODY
@@ -323,7 +325,7 @@ def test_download_closes_the_416_response_before_discarding_it(tmp_path, monkeyp
     def urlopen(request, timeout=0):
         raise _TrackedHTTPError(request.full_url, 416, "Range Not Satisfiable", {}, None)
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
     llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
     assert closed["value"] is True
 
@@ -332,7 +334,7 @@ def test_download_quarantines_a_checksum_mismatch_without_leaking_a_path(tmp_pat
     destination = tmp_path / "model.gguf"
     part = destination.with_suffix(destination.suffix + ".part")
     corrupt = destination.with_suffix(destination.suffix + ".corrupt")
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
     wrong_sha = "0" * 64
     with pytest.raises(LifecycleError) as failure:
@@ -349,7 +351,7 @@ def test_download_quarantines_a_checksum_mismatch_without_leaking_a_path(tmp_pat
 def test_download_size_guard_rejects_a_body_larger_than_pinned(tmp_path, monkeypatch):
     destination = tmp_path / "model.gguf"
     part = destination.with_suffix(destination.suffix + ".part")
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
     with pytest.raises(LifecycleError, match="exceeded the pinned size"):
         llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256, size_bytes=1024)
@@ -367,7 +369,7 @@ def test_download_keeps_the_part_on_a_network_error(tmp_path, monkeypatch):
                 raise OSError("connection reset")
             return super().read(_size)
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         lambda request, timeout=0: _FlakyResponse(DOWNLOAD_BODY, status=200))
     with pytest.raises(LifecycleError, match="download failed"):
         llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
@@ -384,7 +386,7 @@ def test_download_network_error_message_never_includes_a_path(tmp_path, monkeypa
         def read(self, _size: int = -1) -> bytes:
             raise OSError(2, "No such file or directory", secret_path)
 
-    monkeypatch.setattr(llm_model_download.urllib.request, "urlopen",
+    monkeypatch.setattr(llm_model_download, "_urlopen",
                         lambda request, timeout=0: _PathLeakingResponse(DOWNLOAD_BODY, status=200))
     with pytest.raises(LifecycleError) as failure:
         llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
@@ -397,6 +399,47 @@ def test_download_network_error_message_never_includes_a_path(tmp_path, monkeypa
     assert secret_path not in message
     assert not destination.exists()
     assert part.exists()  # a network error must never discard the resumable part
+
+
+def test_the_model_download_refuses_a_redirect_off_https(tmp_path, monkeypatch):
+    """An HTTPS start is not enough: the whole redirect chain has to stay HTTPS."""
+    destination = tmp_path / "model.gguf"
+    plaintext = "http://mirror.invalid/model.gguf"
+    followed: list[str] = []
+
+    class _RecordingHandler(llm_https_only.HttpsOnlyRedirect):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            followed.append(newurl)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    handler = _RecordingHandler()
+    with pytest.raises(LifecycleError) as refused:
+        handler.redirect_request(
+            urllib.request.Request(DOWNLOAD_URL), None, 302, "Found", {}, plaintext,
+        )
+    assert followed == [plaintext]
+    message = str(refused.value)
+    assert "non-HTTPS" in message
+    assert plaintext not in message and "mirror.invalid" not in message
+    assert "/" not in message and "\\" not in message
+    assert not destination.exists()
+
+
+def test_the_model_download_opens_through_the_https_only_opener(monkeypatch):
+    """The redirect guard is only real if the download actually installs it."""
+    seen: dict[str, object] = {}
+
+    class _Opener:
+        def open(self, request, timeout=0):
+            return _ChunkedResponse(DOWNLOAD_BODY, status=200)
+
+    def fake_build_opener(*handlers):
+        seen["handlers"] = handlers
+        return _Opener()
+
+    monkeypatch.setattr(llm_https_only.urllib.request, "build_opener", fake_build_opener)
+    llm_model_download._urlopen(urllib.request.Request(DOWNLOAD_URL))
+    assert llm_https_only.HttpsOnlyRedirect in seen["handlers"]
 
 
 # --------------------------------------------------------------------------
@@ -511,6 +554,42 @@ def test_install_managed_with_an_explicit_profile_uses_the_catalog_entry(tmp_pat
         assert manifest.context_window == llm_catalog.profile_by_name("balanced").context_window
         assert manifest.max_concurrent == llm_catalog.profile_by_name("balanced").max_concurrent
         assert result["self_test"]["ok"] is True
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the fake llama-server is a POSIX script")
+def test_install_managed_reuses_a_verified_legacy_model_gguf_without_downloading(tmp_path,
+                                                                                monkeypatch):
+    """A pre-profiles `model.gguf` that still matches is reused, not re-fetched."""
+    root = tmp_path / "llm"
+    server = _write_fake_llama_server(tmp_path / "llama-server")
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    payload = b"GGUF" + bytes(96)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    legacy = root / "models" / "legacy-reuse" / "model.gguf"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(payload)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("an already-verified model must never be downloaded again")
+
+    monkeypatch.setattr(llm_lifecycle, "_download", refuse)
+    stages: list[tuple[str, int, str]] = []
+    result = llm_lifecycle.install_managed(
+        package_id="legacy-reuse", root=root, port=_free_tcp_port(),
+        model_url="https://huggingface.co/example/example/resolve/main/example.gguf",
+        expected_sha256=digest, accept_risk=True, runtime="native",
+        progress=lambda *event: stages.append(event),
+    )
+    manifest = load_manifest(result["manifest"])
+    try:
+        assert Path(manifest.model_path) == legacy
+        assert manifest.checksum == fingerprint_file(legacy)
+        assert legacy.read_bytes() == payload  # untouched on disk
+        assert not (root / "models" / "legacy-reuse" / "custom.gguf").exists()
+        assert ("download_model", 60, "Verified model already present") in stages
     finally:
         llm_runtime_native.stop(manifest)
 
@@ -960,11 +1039,38 @@ def test_interrupted_setup_status_is_recovered_as_retryable_failure(tmp_path):
     assert status["retryable"] is True
 
 
+def test_node_shutdown_stops_every_owned_inference_server(tmp_path, monkeypatch):
+    """Quitting the node must not orphan a `llama-server` child."""
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    stopped: list[bool] = []
+    monkeypatch.setattr(llm_runtime_native, "stop_owned_children",
+                        lambda: stopped.append(True))
+
+    with TestClient(app) as client:
+        client.get("/api/local/llm/service/status")
+        assert stopped == []
+    assert stopped == [True]
+
+    # The node's own app replaces Starlette's shutdown handling with a custom
+    # lifespan, so it reaches the same hook through `app.state`.
+    assert app.state.llm_shutdown is not None
+    app.state.llm_shutdown()
+    assert stopped == [True, True]
+
+
 def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):
     manifest = LLMPackageManifest(
         package_id="private-model", mode="import_gguf", public_model_alias="private-alias",
         base_url="http://127.0.0.1:8080", api_key_env="VERY_SECRET_KEY",
         model_path=str(tmp_path / "commercial-secret.gguf"), runtime_command=["secret-bin"],
+        runtime_api_key="a-loopback-bearer-token",
         model_fingerprint="sha256:" + "a" * 64,
     )
     public = json.dumps(manifest.public_dict())
@@ -972,6 +1078,8 @@ def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):
     assert "VERY_SECRET_KEY" not in public
     assert "127.0.0.1" not in public
     assert "secret-bin" not in public
+    assert "runtime_api_key" not in public
+    assert "a-loopback-bearer-token" not in public
     assert "private-alias" in public
 
 

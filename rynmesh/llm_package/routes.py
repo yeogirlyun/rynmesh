@@ -28,6 +28,7 @@ from rynmesh.background_workers import (
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
 
+from . import runtime_native
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
 from .lifecycle import (
     LifecycleError,
@@ -1100,6 +1101,27 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         ),
         error_sink=lambda value: setattr(app.state, "llm_publication_error", value),
     ))
+
+    def shutdown_owned_runtimes() -> None:
+        """Never orphan an inference server when the node exits.
+
+        A native-runtime `llama-server` is a child of this process; without
+        this it would outlive the node, keeping the loopback port bound and
+        the model resident. `runtime_native` also registers the same call with
+        `atexit`, for exits that never run an application shutdown at all.
+        """
+        nonlocal manager
+        if manager is not None:
+            manager.adapter.shutdown()
+            manager = None
+        runtime_native.stop_owned_children()
+
+    # Two registrations, because Starlette runs `on_shutdown` only for an app
+    # that kept the default lifespan: this covers embedders and the package
+    # tests, while the node's own lifespan calls `app.state.llm_shutdown`.
+    # `stop_owned_children` is idempotent, so running both is harmless.
+    app.state.llm_shutdown = shutdown_owned_runtimes
+    app.router.on_shutdown.append(shutdown_owned_runtimes)
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:

@@ -374,7 +374,13 @@ def start(path: str | Path) -> dict[str, Any]:
     manifest = load_manifest(path)
     if manifest.runtime == RUNTIME_EXTERNAL:
         return {"managed": False, "health": adapter_from_manifest(manifest).health()}
+    before = manifest.runtime_api_key
     _backend(manifest).start(manifest)
+    if manifest.runtime_api_key != before:
+        # A loopback key minted by this start has to reach the private
+        # manifest before anything talks to the server, or the next process
+        # would call an authenticated runtime without the bearer token.
+        save_manifest(manifest, path)
     return {"managed": True, "health": wait_healthy(manifest)}
 
 
@@ -418,7 +424,10 @@ def uninstall(path: str | Path, *, delete_environment: bool = True,
     removed = []
     if delete_environment and manifest.runtime != RUNTIME_EXTERNAL:
         _backend(manifest).remove(manifest)
-        removed.append("runtime_container")
+        # The native backend owns a child process, not a container; reporting
+        # "runtime_container" there described something that never existed.
+        removed.append("runtime_process" if manifest.runtime == RUNTIME_NATIVE
+                       else "runtime_container")
     if delete_model:
         if not confirm_model_delete:
             raise LifecycleError("model deletion needs separate explicit confirmation")

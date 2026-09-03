@@ -4,9 +4,12 @@ Split out of `lifecycle.py` to keep that module under the project's module
 size ceiling. `lifecycle._download` re-exports `download` here under its
 historical name so existing monkeypatch call sites (`lifecycle._download`)
 keep working; a caller may also patch `model_download.download` directly,
-or this module's own `urllib.request.urlopen`.
+or this module's own `_urlopen`.
 
-Nothing raised from here may contain a filesystem path: only fixed,
+Every request goes through the shared HTTPS-only opener (`https_only`), so a
+redirect off HTTPS is refused mid-download rather than followed.
+
+Nothing raised from here may contain a filesystem path or a URL: only fixed,
 path-free strings and (for genuine I/O failures) the exception's type name.
 """
 
@@ -17,16 +20,25 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .errors import LifecycleError
+from .https_only import build_https_only_opener
 
 ProgressCallback = Callable[[str, int, str], None]
 CancelCheck = Callable[[], bool]
 
 CHUNK_BYTES = 1024 * 1024
 _CONTENT_RANGE_START = re.compile(r"bytes\s+(\d+)-")
+
+
+def _urlopen(request: urllib.request.Request, timeout: float = 300) -> Any:
+    """Open `request` with the HTTPS-only opener (the whole redirect chain).
+
+    The single seam tests replace to serve a model body without a network.
+    """
+    return build_https_only_opener().open(request, timeout=timeout)
 
 
 def _header(headers: object, name: str) -> str | None:
@@ -97,7 +109,7 @@ def download(
     request = urllib.request.Request(url, headers=headers)
     already_complete = False
     try:
-        connection = urllib.request.urlopen(request, timeout=300)
+        connection = _urlopen(request, timeout=300)
     except urllib.error.HTTPError as exc:
         if resume_from and exc.code == 416:
             # The server confirms there is nothing left to fetch: the part on

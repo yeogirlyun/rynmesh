@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -20,6 +21,11 @@ from urllib.parse import urlparse
 
 from .errors import LifecycleError
 from .manifest import LLMPackageManifest, fingerprint_file
+
+# The llama.cpp server flags are the same binary's either way, so the hardening
+# constants are defined once, next to the flag verification, in the native
+# backend, and imported here rather than copied.
+from .runtime_native import API_KEY_BYTES, CORS_ORIGINS
 
 RUNTIME_ID = "docker_llama_cpp"
 
@@ -122,6 +128,8 @@ def _run_container(manifest: LLMPackageManifest) -> None:
     subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30)
     port = int(urlparse(manifest.base_url).port or 8080)
     runtime_image = _pinned_runtime_image(manifest)
+    if not manifest.runtime_api_key:
+        manifest.runtime_api_key = secrets.token_urlsafe(API_KEY_BYTES)
     command = [
         docker, "run", "-d", "--name", name, "--read-only", "--tmpfs", "/tmp:size=128m",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "256",
@@ -129,6 +137,10 @@ def _run_container(manifest: LLMPackageManifest) -> None:
         "-m", f"/models/{model.name}", "--host", "0.0.0.0", "--port", "8080",
         "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),
         "-np", str(manifest.max_concurrent),
+        # Same two dangerous llama.cpp defaults as the native backend: the
+        # published port is loopback-only, but without these any page the
+        # owner visits could still drive the model through it.
+        "--api-key", manifest.runtime_api_key, "--cors-origins", CORS_ORIGINS,
     ]
     result = subprocess.run(command, capture_output=True, text=True, timeout=60)
     if result.returncode:
