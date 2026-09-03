@@ -34,6 +34,7 @@ class HardwareReport:
     nvidia_probe: str
     container_runtime: str
     container_available: bool
+    native_runtime_available: bool
     warnings: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,6 +131,20 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
         return [], f"NVIDIA probe failed: {exc}"
 
 
+def _native_runtime_available() -> bool:
+    """Whether a native llama-server is resolvable or downloadable here.
+
+    Imported lazily: `runtime_native` reaches back into `lifecycle`, which
+    imports this module.
+    """
+    try:
+        from . import runtime_native
+
+        return bool(runtime_native.available()[0])
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return False
+
+
 def detect_hardware(path: str | Path | None = None) -> HardwareReport:
     ram_total, ram_available = _memory()
     disk_target = Path(path or Path.cwd()).expanduser().resolve()
@@ -160,7 +175,8 @@ def detect_hardware(path: str | Path | None = None) -> HardwareReport:
         os=platform.system(), architecture=platform.machine(), cpu=platform.processor() or "unknown",
         logical_cpus=os.cpu_count() or 1, ram_total_mb=ram_total, ram_available_mb=ram_available,
         disk_free_mb=disk_free, nvidia_gpus=gpus, nvidia_probe=gpu_status,
-        container_runtime="docker" if docker else "", container_available=container_ok, warnings=warnings,
+        container_runtime="docker" if docker else "", container_available=container_ok,
+        native_runtime_available=_native_runtime_available(), warnings=warnings,
     )
 
 

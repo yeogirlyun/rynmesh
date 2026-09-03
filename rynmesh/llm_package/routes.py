@@ -834,6 +834,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 package_id=package_id, root=root,
                 port=int(body.get("port") or 18080),
                 accept_risk=bool(body.get("accept_risk", False)),
+                runtime=str(body.get("runtime") or "auto"),
                 progress=progress, cancel_check=cancel_check,
             )
         if mode == "import-gguf":
@@ -841,6 +842,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 source=str(body.get("model_path") or ""), package_id=package_id,
                 alias=alias, root=root, port=int(body.get("port") or 18080),
                 accept_risk=bool(body.get("accept_risk", False)),
+                runtime=str(body.get("runtime") or "auto"),
                 progress=progress, cancel_check=cancel_check,
             )
         if mode in {"openai-compatible", "ollama"}:

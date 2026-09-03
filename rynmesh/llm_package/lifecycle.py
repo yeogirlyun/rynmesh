@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from . import runtime_docker
+from . import runtime_docker, runtime_native
 from .adapters import adapter_from_manifest
 from .errors import LifecycleError
 from .hardware import HardwareReport, detect_hardware, recommend
@@ -31,7 +31,8 @@ DEFAULT_MODEL_URL = (
 )
 GGUF_MAGIC = b"GGUF"
 
-RUNTIME_DOCKER = "docker_llama_cpp"
+RUNTIME_DOCKER = runtime_docker.RUNTIME_ID
+RUNTIME_NATIVE = runtime_native.RUNTIME_ID
 RUNTIME_EXTERNAL = "external"
 
 
@@ -39,7 +40,39 @@ def _backend(manifest: LLMPackageManifest):
     """Return the runtime backend module for `manifest.runtime`."""
     if manifest.runtime == RUNTIME_DOCKER:
         return runtime_docker
+    if manifest.runtime == RUNTIME_NATIVE:
+        return runtime_native
     raise LifecycleError(f"unsupported runtime: {manifest.runtime}")
+
+
+def select_runtime(preference: str = "auto"):
+    """Pick a runtime backend module for a package that does not exist yet.
+
+    "auto" prefers the native child-process runtime (no Docker on consumer
+    desktops) and falls back to Docker for server nodes that have the engine.
+    """
+    choice = str(preference or "auto").strip().lower()
+    if choice in {"native", RUNTIME_NATIVE}:
+        ok, reason = runtime_native.available()
+        if not ok:
+            raise LifecycleError(reason)
+        return runtime_native
+    if choice in {"docker", RUNTIME_DOCKER}:
+        ok, reason = runtime_docker.available()
+        if not ok:
+            raise LifecycleError(reason)
+        return runtime_docker
+    if choice != "auto":
+        raise LifecycleError("runtime preference must be auto, native, or docker")
+    native_ok, native_reason = runtime_native.available()
+    if native_ok:
+        return runtime_native
+    docker_ok, docker_reason = runtime_docker.available()
+    if docker_ok:
+        return runtime_docker
+    raise LifecycleError(
+        f"no local inference runtime is available: {native_reason}; {docker_reason}"
+    )
 
 
 ProgressCallback = Callable[[str, int, str], None]
@@ -177,7 +210,7 @@ def self_test(manifest: LLMPackageManifest) -> dict[str, Any]:
 def install_managed(*, package_id: str = "local-small", root: str | Path | None = None,
                     port: int = 18080, model_url: str = DEFAULT_MODEL_URL,
                     expected_sha256: str = DEFAULT_MODEL_SHA256, accept_risk: bool = False,
-                    progress: ProgressCallback | None = None,
+                    runtime: str = "auto", progress: ProgressCallback | None = None,
                     cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
     base = Path(root or default_root()).expanduser()
@@ -186,10 +219,8 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     choices = recommend(report)
     if not choices[0].get("can_run") and not accept_risk:
         raise LifecycleError(str(choices[0].get("reason")))
-    _progress(progress, cancel_check, "runtime_check", 10, "Checking Docker runtime")
-    ok, reason = runtime_docker.available()
-    if not ok:
-        raise LifecycleError(reason)
+    _progress(progress, cancel_check, "runtime_check", 10, "Checking the local inference runtime")
+    backend = select_runtime(runtime)
     _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
     digest = expected_sha256.lower()
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -206,16 +237,17 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         "context_window": 2048, "max_concurrent": 1, "estimated_memory_mb": 1024,
     }
     _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
-    runtime_docker.prepare(progress=progress, cancel_check=cancel_check)
+    backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias="rynmesh-qwen2.5-0.5b-q4",
-        adapter="openai_compatible", runtime=RUNTIME_DOCKER, model="rynmesh-qwen2.5-0.5b-q4",
+        adapter="openai_compatible", runtime=backend.RUNTIME_ID, model="rynmesh-qwen2.5-0.5b-q4",
         model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
+        runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum="sha256:" + digest, model_fingerprint="sha256:" + digest,
         context_window=int(selected["context_window"]), max_output_tokens=256,
         max_concurrent=int(selected["max_concurrent"]),
         hardware_requirements={"estimated_memory_mb": int(selected["estimated_memory_mb"])},
-        install_source={"model_url": model_url, **runtime_docker.install_source(None)},
+        install_source={"model_url": model_url, **backend.install_source(None)},
         license_notice="Qwen2.5 0.5B and llama.cpp are Apache-2.0; review their notices before use.",
         license_id="Apache-2.0",
         lifecycle={"start": "rynmesh-llm start", "stop": "rynmesh-llm stop",
@@ -235,26 +267,27 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
 
 def import_gguf(*, source: str | Path, package_id: str, alias: str,
                 root: str | Path | None = None, port: int = 18080,
-                accept_risk: bool = False, progress: ProgressCallback | None = None,
+                accept_risk: bool = False, runtime: str = "auto",
+                progress: ProgressCallback | None = None,
                 cancel_check: CancelCheck | None = None) -> dict[str, Any]:
     package_id = _validate_package_id(package_id)
+    base = Path(root or default_root()).expanduser()
     _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
-    _progress(progress, cancel_check, "runtime_check", 25, "Checking Docker runtime")
-    ok, reason = runtime_docker.available()
-    if not ok:
-        raise LifecycleError(reason)
+    _progress(progress, cancel_check, "runtime_check", 25, "Checking the local inference runtime")
+    backend = select_runtime(runtime)
     _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
-    runtime_docker.prepare(progress=progress, cancel_check=cancel_check)
+    backend.prepare(progress=progress, cancel_check=cancel_check, root=base)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
-        adapter="openai_compatible", runtime=RUNTIME_DOCKER, model=alias,
+        adapter="openai_compatible", runtime=backend.RUNTIME_ID, model=alias,
         model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
+        runtime_dir=str(base) if backend.RUNTIME_ID == RUNTIME_NATIVE else "",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
         hardware_requirements={"estimated_memory_mb": details["estimated_memory_mb"]},
-        install_source={"kind": "user_owned_read_only_gguf", **runtime_docker.install_source(None)},
+        install_source={**backend.install_source(None), "kind": "user_owned_read_only_gguf"},
     )
-    path = manifest_path(package_id, root)
+    path = manifest_path(package_id, base)
     _progress(progress, cancel_check, "start_runtime", 80, "Starting the read-only GGUF runtime")
     _backend(manifest).start(manifest)
     _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")

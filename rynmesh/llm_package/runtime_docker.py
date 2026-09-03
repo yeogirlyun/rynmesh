@@ -144,8 +144,12 @@ def available() -> tuple[bool, str]:
     return True, ""
 
 
-def prepare(*, progress: Any = None, cancel_check: Any = None) -> None:
-    """Pull the pinned image (was `_docker_pull(DEFAULT_IMAGE, ...)`)."""
+def prepare(*, progress: Any = None, cancel_check: Any = None, root: Any = None) -> None:
+    """Pull the pinned image (was `_docker_pull(DEFAULT_IMAGE, ...)`).
+
+    `root` exists only so both backends share one `prepare` signature; the
+    Docker image lives in the engine's own store, not under the Rynmesh root.
+    """
     _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
 
 
