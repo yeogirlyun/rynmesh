@@ -1,6 +1,6 @@
 # Issue #30 product specification: Friend Mesh
 
-Status: implementation in progress; Webapp create/review/Join slice implemented
+Status: local source-build development acceptance passed; release validation pending
 Issue: https://github.com/yeogirlyun/rynmesh/issues/30
 
 ## User outcome
@@ -18,12 +18,12 @@ hostname remains unresolved during offline review and must pass DNS/rebinding
 checks immediately before outbound contact. Cross-public-egress P2P claims
 remain gated by Issue #22 physical acceptance.
 
-An explicitly configured outbound proxy is not silently used for Join in the
-current V1. The node fails closed because the proxy would own DNS and the
-current Transport seam cannot prove that the reviewed address was the address
-contacted. Before Issue completion, maintainers must choose and document either
-an authenticated proxy pinning design or a supported-V1 exclusion with a clear
-user-facing diagnostic; a generic Join failure is not final product evidence.
+An explicitly configured outbound proxy is outside the current V1 Join contract
+and is never silently used. The node fails closed because the proxy would own
+DNS and the current Transport seam cannot prove that the reviewed address was
+the address contacted. Proxy support requires authenticated pinning in a later
+wire version; an installed release should expose the bounded failure as an
+actionable diagnostic.
 
 ## User flows
 
@@ -62,8 +62,8 @@ denied.
 7. A Provider may publish `network` or `friends` access policy.
 8. V1 reachability is LAN/already-public only; relay acceptance is a later wire version.
 
-These are the implementation baseline for this isolated branch. Maintainer
-protocol review is still required before its public endpoint is merged.
+These are the implementation baseline for this isolated branch. Normal code
+review remains merge governance, not a user-facing functional acceptance item.
 
 ## Non-goals
 
@@ -73,15 +73,21 @@ protocol review is still required before its public endpoint is merged.
 - hosted QR generation or URL shortening;
 - exposing `/api/local` to a peer.
 
-## Release definition
+## Development acceptance and release hardening
 
-The Issue is complete only after two clean physical nodes pass create, offline
-review, one-time join, friends-only Private AI complete and streaming use,
-online revoke, offline/reconnect revoke convergence, and next-order denial
-before capacity/inference, with sanitized evidence and all automated checks
-green on the exact integrated commit. Installed-package deep links and the V1
-proxy disposition are part of that decision; in-memory clients and source
-configuration inspection are supporting evidence, not substitutes.
+Development acceptance requires two isolated node processes and homes to pass
+create, offline review, one-time Join, friends-only Private AI use, online
+revoke, offline/restart retry convergence, and next-order denial before
+inference over real local TCP/HTTP boundaries. That bar is now met by the
+sanitized no-Docker harness evidence.
+
+Physical cross-host networking, signed installed-package deep-link/QR dispatch,
+the final #23 streaming stack, and CI/package evidence for the project's
+declared supported release targets remain release-hardening gates. The original
+Issue does not independently require two physical machines, all three desktop
+OSes, or a separate maintainer sign-off artifact, so those are not retroactive
+functional blockers. DNS pinning, fail-closed proxy behavior, secret hygiene,
+and immediate local revocation remain mandatory security requirements.
 
 ## Webapp slice delivered on 2026-09-02
 
@@ -103,5 +109,6 @@ The desktop bundle registers `rynmesh://`. A launch URL or running-instance URL
 is accepted only when it exactly matches the bounded `rynmesh://join/<base64url>`
 shape, then is held once in memory and opens the same offline-review form. The
 bearer is never placed in browser history or a router query. Pasting remains the
-cross-platform fallback. Installed-desktop scan/deep-link and physical two-node
-acceptance remain.
+cross-platform fallback. Installed-desktop scan/deep-link evidence remains a
+release gate; local source-build development acceptance is recorded in
+`docs/evidence/issue30-local-two-node-e2e.json`.

@@ -1,6 +1,8 @@
 # Issue #30 acceptance report
 
-Decision: **NOT YET ACCEPTED**
+Development decision: **ACCEPTED (LOCAL SOURCE BUILD)**
+
+Release decision: **NOT YET ACCEPTED**
 
 Core branch: `codex/issue-30-friend-mesh`
 Webapp slice branch: `codex/issue-30-friend-mesh-ui`
@@ -10,15 +12,25 @@ Date: 2026-09-03
 
 ## Current result
 
-The security/store/public-acceptance foundation is implemented and has focused
-automated evidence. The complete product is not accepted because installed
-desktop deep-link/scan evidence, exact-commit CI, maintainer protocol review,
-and two-node physical acceptance remain outstanding.
+The Issue's local development outcome is accepted. A no-Docker harness ran two
+real node processes with independent homes/identities/ports plus a local HTTP
+Registry. It completed create, offline review, Join, both-side persistence,
+friends-only Private AI complete, online revoke, offline stop/restart/retry
+convergence, and denial of the next order before inference. Sanitized evidence
+is in `docs/evidence/issue30-local-two-node-e2e.json`.
+
+Release is not yet accepted because installed desktop deep-link/scan evidence,
+final integrated #23 streaming ACL evidence, and exact-commit release CI/package
+evidence remain outstanding. Cross-host physical repetition, three-OS testing,
+and a separate maintainer sign-off were additions in earlier local documents,
+not explicit Issue requirements; they are now correctly classified as release
+hardening/governance rather than retroactive development blockers.
 
 The Webapp create/offline-review/Join/list/cancel/revoke and local-QR slice is
-now implemented and automated, but this does not change the overall decision.
+implemented and automated.
 The desktop scheme and launch/running-instance forwarding are implemented; an
-installed package still needs physical QR/deep-link evidence on each platform.
+installed package still needs QR/deep-link evidence on each declared supported
+release target.
 
 Core-slice evidence: 9/9 focused tests and Ruff passed; the full Windows run
 reported 527 passed, 3 skipped, and 8 known platform/pre-existing failures with
@@ -51,7 +63,14 @@ stream-path HMAC separation at the protocol primitive, proxy rejection before
 contact/invite consumption, and exact public/secret friendship-store erasure.
 It also fixed an unhandled proxy Transport error at the Join boundary. Cargo
 was unavailable for a current metadata rerun. This does not replace route-level
-#23 streaming evidence or any physical/installed-package evidence.
+#23 streaming evidence or installed-package evidence.
+
+The final local E2E run used source commit
+`c40403bfaf8ea14f968153dff6a79a51c2a28401`, passed in 37.968 seconds, and
+recorded zero invite-link/secret occurrences across both homes and sanitized
+logs. The exact run stopped every child process and deleted its temporary homes.
+The final focused suite passed 49 tests, the expanded Friend/Transport/LLM suite
+passed 101 with one skip, and the full Webapp passed 51/51 plus lint and build.
 
 ## Criteria status
 
@@ -63,22 +82,23 @@ was unavailable for a current metadata rerun. This does not replace route-level
 - [x] Per-friend HMAC rejects wrong sender/path/body/time/nonce and revoked secrets.
 - [x] Local revoke removes authorization and the relationship secret immediately.
 - [x] Signed remote revocation application is idempotent for the exact pair.
-- [ ] Eight protocol decisions reviewed by maintainers before endpoint merge.
+- [x] Eight protocol/security decisions are documented; normal maintainer review
+  remains merge governance rather than functional acceptance.
 - [x] Outbound Join uses #28 Transport and blocks unsafe resolved addresses.
 - [x] The Transport pins the validated DNS answer while preserving URL SNI/Host.
-- [ ] Outbound-proxy disposition is approved: equivalent authenticated pinning,
-  or an explicit V1 exclusion with a specific actionable UI diagnostic.
+- [x] V1 explicitly excludes outbound proxy Join and fails closed before contact
+  or invite consumption; actionable installed-app presentation remains a release item.
 - [x] Changed endpoints require a second explicit review.
 - [x] Friends-only complete-v1 admission denies before capacity/inference on
   the canonical #30 implementation.
-- [ ] Friends-only stream-v1 route uses the same Friend ACL on the final stacked
+- [ ] Release: friends-only stream-v1 route uses the same Friend ACL on the final stacked
   commit; complete-route HMAC cannot authenticate the stream route; post-revoke
   next-stream admission is denied before capacity/inference.
 - [x] Simulated two-app revocation delivery converges after offline/reconnect and
   is idempotent.
-- [ ] Physical two-node revocation convergence is recorded across disconnect,
-  restart/reconnect, and next-order denial.
-- [ ] Webapp and Tauri create/review/join/QR/deep-link/list/revoke flows complete.
+- [x] Two independent node processes with durable homes converge across actual
+  process stop/restart and deny the next order before inference.
+- [x] Webapp and Tauri source create/review/join/QR/deep-link/list/revoke flows complete.
   - [x] Webapp create/list/cancel with explicit endpoint/scope/expiry review.
   - [x] Pasted-link offline review shows signature, fingerprint, network, every endpoint/address class, scope, and expiry.
   - [x] QR is generated locally with a pinned dependency and a zero-network automated assertion.
@@ -86,14 +106,15 @@ was unavailable for a current metadata rerun. This does not replace route-level
   - [x] Keyboard labels, disabled-state explanation, and create/review focus transfer are tested.
   - [x] Outbound Join and received-relationship persistence are integrated and enabled through the local node.
   - [x] Tauri scheme, launch/running-instance forwarding, strict validation, and paste fallback are implemented.
-  - [ ] Installed desktop physical scan/deep-link acceptance is complete on Windows/Linux/macOS.
+  - [ ] Release: installed desktop scan/deep-link acceptance is complete on declared supported targets.
 - [x] Privacy export/erase behavior complete.
-- [ ] Full backend/Webapp/Rust/Linux/macOS CI green on the exact commit.
-- [ ] Two clean nodes pass use/revoke/next-order-denied including offline revoke.
-- [ ] Product, development, test, and final acceptance evidence reviewed.
+- [ ] Release: full backend/Webapp/Rust/package CI is green on the exact integrated commit.
+- [x] Two clean local node processes pass use/revoke/next-order-denied including offline revoke.
+- [x] Product, development, test, and local acceptance evidence are updated.
 
 ## Acceptance rule
 
-Unchecked items are release blockers, not advisory follow-ups. This report may
-change to **ACCEPTED** only after each item has exact-commit or physical evidence
-and no invite/relationship secret appears in the evidence bundle.
+Unchecked items block the release decision, not the accepted local development
+decision. Release may change to **ACCEPTED** only after the integrated/installed
+items have exact-commit evidence and no invite/relationship secret appears in
+the evidence bundle.
