@@ -510,11 +510,65 @@ describe("Private AI chat", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(handlers).toBeDefined());
     act(() => handlers?.onEvent({ event: "delta", sequence: 0, delta: "Partial answer" }));
+    expect((await listConversations("peer:fixture-llm-provider::fixture-local-llm"))[0].messages
+      .filter((message) => message.role === "assistant")).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Stop generating" }));
     expect(client.cancelLLMOrder).toHaveBeenCalledWith("task-stop");
     await act(async () => handlers?.onEvent({ event: "error", state: "cancelled", error_code: "cancelled" }));
     expect(await screen.findByText(/Generation stopped — this response is incomplete/)).toBeInTheDocument();
     expect(screen.getAllByText("incomplete", { exact: false }).length).toBeGreaterThan(0);
+    const stored = await listConversations("peer:fixture-llm-provider::fixture-local-llm");
+    const assistants = stored[0].messages.filter((message) => message.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]).toMatchObject({ status: "cancelled", content: expect.stringContaining("Partial answer") });
+  });
+
+  it("polls the same task after a second disconnect and persists one terminal assistant", async () => {
+    const subscriptions: LLMOrderStreamHandlers[] = [];
+    const { client, submit, user } = renderChat((configured) => {
+      configured.submitLLMOrder = vi.fn(async () => ({ task_id: "task-poll-reconnect", state: "queued" }));
+      configured.subscribeLLMOrder = vi.fn((_taskId, handlers) => {
+        subscriptions.push(handlers);
+        return vi.fn();
+      });
+      configured.getLLMOrder = vi.fn(async () => ({
+        task_id: "task-poll-reconnect", state: "succeeded", output: "Recovered terminal answer",
+      }));
+    });
+    await screen.findByRole("heading", { name: "Private AI" });
+    await user.type(screen.getByLabelText("Message Private AI"), "Recover by polling");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(subscriptions).toHaveLength(1));
+    act(() => subscriptions[0].onDisconnect());
+    await waitFor(() => expect(subscriptions).toHaveLength(2));
+    act(() => subscriptions[1].onDisconnect());
+    await waitFor(() => expect(client.getLLMOrder).toHaveBeenCalledWith("task-poll-reconnect"));
+    expect(await screen.findByText("Recovered terminal answer")).toBeInTheDocument();
+    expect(submit).toHaveBeenCalledTimes(1);
+    const stored = await listConversations("peer:fixture-llm-provider::fixture-local-llm");
+    expect(stored[0].messages.filter((message) => message.role === "assistant")).toHaveLength(1);
+  });
+
+  it("falls back to terminal polling on a sequence gap without creating another order", async () => {
+    let handlers: LLMOrderStreamHandlers | undefined;
+    const { client, submit, user } = renderChat((configured) => {
+      configured.submitLLMOrder = vi.fn(async () => ({ task_id: "task-gap", state: "queued" }));
+      configured.subscribeLLMOrder = vi.fn((_taskId, next) => {
+        handlers = next;
+        return vi.fn();
+      });
+      configured.getLLMOrder = vi.fn(async () => ({
+        task_id: "task-gap", state: "succeeded", output: "Gap recovered terminal",
+      }));
+    });
+    await screen.findByRole("heading", { name: "Private AI" });
+    await user.type(screen.getByLabelText("Message Private AI"), "Recover a gap");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(handlers).toBeDefined());
+    act(() => handlers?.onEvent({ event: "delta", sequence: 1, delta: "missing zero" }));
+    await waitFor(() => expect(client.getLLMOrder).toHaveBeenCalledWith("task-gap"));
+    expect(await screen.findByText("Gap recovered terminal")).toBeInTheDocument();
+    expect(submit).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a complete-response fallback through the same local event surface", async () => {
