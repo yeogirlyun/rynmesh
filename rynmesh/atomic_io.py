@@ -8,15 +8,24 @@ file's bytes.
 
 Nothing here ever puts a filesystem path or record content into an exception
 message: these errors can reach a log line or an HTTP response verbatim.
+
+A hard kill (power loss, `SIGKILL`) between the temp file's creation and the
+`os.replace` rename leaves an orphaned `.{name}.{uuid}.tmp` file behind in the
+destination's directory; because each write picks a fresh random name, a
+later retry cannot land on and overwrite it the way a fixed temp name would,
+so such orphans accumulate until something else cleans the directory.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 FILE_MODE = 0o600
@@ -168,12 +177,13 @@ def _fsync_dir(parent: Path) -> None:
 
     try:
         fd = os.open(str(parent), os.O_RDONLY)
-    except OSError:
+    except OSError as exc:
+        _logger.debug("directory fsync unavailable: %s", type(exc).__name__)
         return
     try:
         os.fsync(fd)
-    except OSError:
-        pass
+    except OSError as exc:
+        _logger.debug("directory fsync failed: %s", type(exc).__name__)
     finally:
         os.close(fd)
 
