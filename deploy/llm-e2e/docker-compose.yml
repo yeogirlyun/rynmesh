@@ -66,6 +66,9 @@ services:
       RYNMESH_NODE_NAME: llm-consumer
       RYNMESH_PEER_ENDPOINT: http://consumer:8791
       RYNMESH_LLM_FORCE_RELAY: ${RYNMESH_LLM_FORCE_RELAY:-0}
+      # Empty by default; the mailbox E2E sets it to "1" so the consumer's direct
+      # peer-message transport reports failure and store-and-forward takes over.
+      RYNMESH_MESSAGING_FORCE_MAILBOX: ${RYNMESH_MESSAGING_FORCE_MAILBOX:-}
     ports: ["127.0.0.1:18892:8791"]
     volumes:
       - consumer-data:/data

@@ -432,6 +432,11 @@ def create_app(store: RynmeshStore | None = None):
 
     @asynccontextmanager
     async def lifespan(lifespan_app):
+        # Background workers run their bodies in threads (`asyncio.to_thread`),
+        # and the mailbox poll worker publishes to the SSE queues from there.
+        # `asyncio.Queue` is not thread-safe, so the fan-out needs a handle on
+        # the loop that owns those queues.
+        lifespan_app.state.loop = _asyncio.get_running_loop()
         updater.on_startup()  # may os.execv away on crash-loop rollback
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
@@ -543,9 +548,12 @@ def create_app(store: RynmeshStore | None = None):
             llm_shutdown = getattr(lifespan_app.state, "llm_shutdown", None)
             if callable(llm_shutdown):
                 await _asyncio.to_thread(llm_shutdown)
+            lifespan_app.state.loop = None
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     app.state.background_workers = BackgroundWorkerRegistry()
+    # Set by the lifespan; until then there is no loop and no SSE subscriber.
+    app.state.loop = None
     started_at = time.monotonic()
     app.state.registration_error = ""
     app.state.llm_publication_error = ""
@@ -2220,10 +2228,15 @@ def create_app(store: RynmeshStore | None = None):
     from .services.messaging_store import MessagingStore as _MsgStore
     from .services.peer_messenger import PeerMessenger as _PeerMessenger
 
-    _msg_priv = _peer_box.load_or_create_messaging_key(_home / "messaging.x25519")
-    _msg_store = _MsgStore(_home)
+    # Beside the identity key, not $RYNMESH_HOME: the store owns the peer id
+    # these messages are sealed to, and `register_node` advertises this key.
+    _msg_priv = _peer_box.load_or_create_messaging_key(active_store.home / "messaging.x25519")
+    # Beside the key that decrypts them, for the same reason: history belongs to
+    # the identity the store owns, not to whatever $RYNMESH_HOME happens to say.
+    _msg_store = _MsgStore(active_store.home)
     _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
     _msg_subscribers: list = []  # asyncio.Queue per SSE client
+    app.state.message_subscribers = _msg_subscribers
 
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
@@ -2253,7 +2266,15 @@ def create_app(store: RynmeshStore | None = None):
         _pubkey_cache[peer_id] = pub
         return pub
 
+    from . import mailbox_routes as _mailbox_routes
+
+    _resolve_pubkey = _mailbox_routes.with_registry_fallback(
+        _resolve_pubkey, store=active_store, cache=_pubkey_cache, network_id=control_network_id
+    )
+
     def _transport(peer_id: str, header: dict) -> int:
+        if os.environ.get("RYNMESH_MESSAGING_FORCE_MAILBOX", "").strip() == "1":
+            return 0  # test/E2E aid: skip direct delivery so the mailbox path runs
         ep = _resolve_endpoint(peer_id)
         if not ep:
             return 0
@@ -2275,14 +2296,44 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
         transport=_transport,
         now=lambda: _dt.now(_UTC).isoformat(timespec="seconds"),
+        fallback=_mailbox_routes.peer_message_fallback(app, store=active_store),
+    )
+
+    _mailbox = _mailbox_routes.install_mailbox(
+        app, store=active_store, messaging_key=_msg_priv, home=_home,
+        resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
+        local_control=local_control,
     )
 
     def _publish(record: dict) -> None:
+        """Fan one record out to every SSE subscriber, from any thread.
+
+        The direct `/api/peer/msg` route calls this on the event loop; the
+        mailbox poll worker calls it from the thread `asyncio.to_thread` ran it
+        in. `asyncio.Queue.put_nowait` is not thread-safe — off-loop it wakes a
+        waiting getter through a non-thread-safe `call_soon`, which can leave
+        the record sitting in the queue unnoticed — so an off-loop caller hands
+        the put to the loop instead.
+        """
+
+        try:
+            _asyncio.get_running_loop()
+            on_loop = True
+        except RuntimeError:
+            on_loop = False
+        loop = getattr(app.state, "loop", None)
         for q in list(_msg_subscribers):
             try:
-                q.put_nowait(record)
+                if on_loop or loop is None:
+                    q.put_nowait(record)
+                else:
+                    loop.call_soon_threadsafe(q.put_nowait, record)
             except Exception:
                 pass
+
+    _mailbox_routes.install_peer_message_relay(
+        _mailbox, _messenger, _publish, pubkey_cache=_pubkey_cache
+    )
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
@@ -2295,7 +2346,8 @@ def create_app(store: RynmeshStore | None = None):
         if fp and header.get("from"):
             _pubkey_cache.setdefault(str(header["from"]), str(fp))  # TOFU
         record = _messenger.receive(header)
-        _publish(record)
+        if not record.get("duplicate"):  # a retried POST must not double the stream
+            _publish(record)
         return {"ok": True, "msg_id": record["msg_id"]}
 
     @app.post("/api/local/messages/send")

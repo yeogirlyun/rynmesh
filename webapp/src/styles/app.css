@@ -2177,6 +2177,7 @@ td small {
 .chat-attachment-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--accent-green); text-decoration: none; }
 .chat-meta { font-size: 11px; color: var(--text-muted); align-self: flex-end; }
 .chat-check { color: var(--accent-green); }
+.chat-queued { color: var(--text-muted); font-style: italic; cursor: help; }
 .chat-composer { display: flex; align-items: center; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-color); margin-top: 10px; }
 .chat-input { flex: 1; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--surface, transparent); color: var(--text-primary); }
 .chat-file-input { display: none; }
