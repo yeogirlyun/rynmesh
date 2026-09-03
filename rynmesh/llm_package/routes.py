@@ -697,7 +697,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                        resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
-    balance = TaskBalanceLedger(home / "llm" / "task-balance.json")
+    # Ledger-backed: every hold/settle/release/earning is a signed event in
+    # the node's credit ledger (category dev:task_balance, invisible to
+    # reputation scoring), with this file as the O(1) snapshot.
+    balance = TaskBalanceLedger(
+        home / "llm" / "task-balance.json",
+        credit_ledger=store.credit_ledger, peer_id=store.peer_id,
+        private_key_bytes=store.private_key_bytes,
+    )
     _recover_consumer_orders(consumer_orders, balance, store)
     manager: ProviderService | None = None
     manager_lock = threading.Lock()

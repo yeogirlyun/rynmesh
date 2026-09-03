@@ -18,7 +18,8 @@ Two tracks, visible as labels on the
   quiet days.
 
 Delivered so far on the system track: the background-worker registry (§2.2,
-#27 via #33) and Transport-routed peer POSTs (§2.4, #28 via #32).
+#27 via #33), Transport-routed peer POSTs (§2.4, #28 via #32), and the
+ledger-backed Task Balance (§3, #29).
 
 The local-LLM package proved the shape: encrypted node-to-node tasks, signed
 discovery, idempotent settlement, and a task-first catalog. The next set of
@@ -63,7 +64,7 @@ package proved:
    profiles apply to service traffic (today raw urllib bypasses them, and
    censorship-resistant transports cannot carry LLM tasks at all).
 
-## 3. One settlement ledger
+## 3. One settlement ledger (delivered, #29)
 
 `TaskBalanceLedger` is a second, parallel balance system next to the signed
 `FileCreditLedger`. Before a second paid-ish service ships, extend the credit
