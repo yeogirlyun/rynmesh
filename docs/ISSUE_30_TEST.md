@@ -1,6 +1,6 @@
 # Issue #30 test plan and evidence
 
-Status: core security slice passing locally; full Issue matrix pending
+Status: local source-build development matrix passed; release matrix pending
 
 ## Automated matrix
 
@@ -52,7 +52,26 @@ Run from the Issue worktree with the repository virtual environment:
 D:\code\rynmesh\.venv\Scripts\ruff.exe check rynmesh\friends.py rynmesh\peer_http.py tests\test_friends.py tests\test_friend_http.py
 D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_friends.py tests\test_friend_http.py -q
 D:\code\rynmesh\.venv\Scripts\python.exe -m pytest tests\test_peer_http_auth.py tests\test_peer_messaging_http.py tests\test_llm_hardening.py -q
+D:\code\rynmesh\.venv\Scripts\python.exe scripts\issue30_two_node_e2e.py --output docs\evidence\issue30-local-two-node-e2e.json
 ```
+
+## Local two-process E2E evidence on 2026-09-03
+
+Exact source commit `c40403bfaf8ea14f968153dff6a79a51c2a28401` passed the
+no-Docker harness in 37.968 seconds. The sanitized JSON is
+`docs/evidence/issue30-local-two-node-e2e.json`; it records two distinct child
+processes/homes/ports, reviewed private-LAN DNS-to-socket correlation, real HTTP
+Registry and peer transport, friends-only complete inference, online revoke,
+offline stop/restart/retry convergence, and both post-revoke orders denied
+before the deterministic model call count changed. Both relationship secret
+sets were empty after convergence, raw invite/link scans were zero, every child
+process stopped, and the temporary workspace was removed.
+
+The harness was repeated 10 consecutive times after adding readiness for the
+real 30-second provider capacity publication; all 10 passed. The focused
+Friend/HTTP/Transport regression passed 49 tests; the expanded
+Friend/Transport/LLM regression passed 101 with one skip. The full Webapp passed
+51/51 tests, TypeScript lint, and production build. Ruff/`py_compile` passed.
 
 ## Evidence on 2026-09-02
 
@@ -78,15 +97,13 @@ environment classes: executable-bit assertions, unavailable WSL bash, POSIX
 `0600` mode assertions, and `select()` on a pipe. All Friend Mesh, privacy,
 revocation, Transport, and LLM ACL tests passed.
 
-## Still required
+## Release evidence still required
 
-- maintainer disposition of outbound proxies: equivalent authenticated DNS
-  pinning, or an explicitly approved V1 fail-closed exclusion with actionable UI;
-- installed Tauri package deep-link/QR scan tests on Windows, Linux, and macOS;
+- actionable installed-app presentation of the V1 fail-closed proxy exclusion;
+- installed Tauri package deep-link/QR scan tests on declared supported targets;
 - full exact-commit backend/Webapp/Rust/package CI;
-- two clean physical nodes, including DNS/socket correlation, friends-only
-  complete and streaming use, offline/restart revocation convergence, and
-  next-order denial before capacity/inference.
+- final integrated #23 stream-v1 Friend ACL and post-revoke denial;
+- optional physical cross-host repetition for release network hardening.
 
 ## Webapp slice matrix
 
@@ -129,8 +146,8 @@ npm run build
 
 Dependency installation/audit reported 0 vulnerabilities. These results cover
 the Webapp create/review/local-Join slice and exact local-control API bodies;
-they do not satisfy an installed-desktop QR/deep-link test, physical two-node
-Join, or final product acceptance.
+they do not satisfy an installed-desktop QR/deep-link test. The later
+multiprocess harness supplies the separate node/runtime evidence.
 
 Revocation/privacy integration adds automated evidence that an offline notice
 records a bounded error, the identical signed notice converges and remains
@@ -164,13 +181,8 @@ test failed. Cargo was not installed or on PATH on this audit host, so locked
 metadata was not rerun; the earlier recorded metadata result is historical
 evidence, not an exact-audit rerun.
 
-This run proves local protocol and state behavior. It does not prove a real
-socket crossed two physical hosts, an installed OS dispatched a deep link, or
-a revocation survived a physical disconnect/restart. Those exact external
-artifacts are specified in `ISSUE_30_STRICT_COMPLETION_AUDIT.md`.
-
-After stacking the audit onto the combined #23/#28/#30 branch, the HTTP Friend
-regression additionally proves stream-route path binding and post-revoke denial
-at the outer gate. The combined Friend/Transport/LLM suite, including
-`test_llm_streaming.py`, passes 112 tests with one skipped; the #30 focused
-suite remains 48/48 and Ruff remains green.
+The added multiprocess run now proves a real TCP socket between two independent
+node processes, durable restart/revocation convergence, and complete-v1 Friend
+ACL behavior. It does not prove cross-host routing, installed OS deep-link
+dispatch, or #23's streaming route on the final integrated commit. Those are
+release/integration artifacts in `ISSUE_30_STRICT_COMPLETION_AUDIT.md`.

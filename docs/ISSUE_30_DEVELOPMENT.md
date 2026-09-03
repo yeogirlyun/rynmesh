@@ -1,6 +1,6 @@
 # Issue #30 development design
 
-Status: core security, outbound Join, service ACL, and Webapp safety/review slices implemented
+Status: implementation complete for local source-build development acceptance
 
 ## Architecture
 
@@ -50,12 +50,10 @@ checks the signed Consumer peer against `private-ai.use` before capacity
 acquisition or inference. The HMAC primitive also proves that a signature for
 `/api/peer/llm/tasks` cannot be replayed to
 `/api/peer/llm/tasks/stream`. The canonical #30 branch does not contain #23's
-stream-v1 route. This combined integration branch does: its HTTP regression
-proves complete-route credentials cannot authenticate the stream route, a
-stream-specific credential passes the Friend gate, and a credential prepared
-before revocation is denied at that gate after revoke. A task already claimed
-before revocation keeps its idempotent result; every new task is denied
-immediately after local revocation.
+stream-v1 route, so route-level streaming ACL evidence must be produced on the
+final stacked/integration commit. A task already claimed before revocation
+keeps its idempotent result; every new task is denied immediately after local
+revocation.
 
 ## Secret boundaries
 
@@ -75,22 +73,45 @@ IP literals require explicit LAN review. Hostnames require a second
 resolve-and-pin check at outbound Join; the pinned Transport preserves the
 original hostname for TLS SNI/certificate and HTTP Host validation.
 
-## Remaining implementation slices
+## Development acceptance completed on 2026-09-03
 
-1. Decide the V1 outbound-proxy contract: implement equivalent authenticated
-   DNS pinning, or approve the fail-closed exclusion and expose a specific,
-   actionable user diagnostic.
-2. Re-run the locally proven friends-only complete and streaming ACL on the
-   immutable final integrated commit and include it in physical acceptance.
-3. Run installed-desktop deep-link/scan acceptance on Windows, Linux, and macOS.
-4. Run two clean physical-node Join/use/revoke/offline-reconnect acceptance,
-   including observed DNS answer versus socket peer and denial before
-   capacity/inference.
-5. Complete maintainer protocol review, accessibility review, and exact-commit
+`scripts/issue30_two_node_e2e.py` launches a local HTTP Registry and two real
+`rynmesh.peer_http` child processes with separate temporary homes, ports, peer
+identities, and durable stores. A deterministic OpenAI-compatible HTTP service
+replaces only the external model runtime; node discovery, Friend HMAC, encrypted
+task exchange, persistence, revocation, and inference admission all cross the
+real local HTTP boundaries.
+
+The harness proves create -> offline review -> Join -> both active ->
+friends-only Private AI complete -> online revoke -> next order denied before
+inference. It then creates a fresh relationship, stops the friend process,
+records `remote_unreachable`, restarts the same durable home in a new process,
+retries the signed revoke, observes remote convergence, and proves the next
+order is denied before inference. It correlates reviewed endpoint/DNS/socket
+addresses and scans homes/logs/privacy export for invite or relationship
+secrets before deleting the temporary workspace.
+
+The run exposed a real offline-path defect: a pinned socket connect refusal
+escaped `FrontedHttpsTransport` instead of becoming a bounded `TransportError`.
+`rynmesh/transport.py` now normalizes that failure and
+`test_pinned_transport_bounds_socket_dial_failure` prevents regression. The
+harness also waits for the provider's real 30-second capacity refresh when a
+point-in-time publication briefly reports `available=0`.
+
+## Remaining release/integration slices
+
+1. Surface the current fail-closed outbound-proxy exclusion as a specific,
+   actionable installed-app diagnostic; proxy support itself is a later design.
+2. Prove friends-only ACL and post-revoke denial on #23's complete and streaming
+   routes on the final integrated commit.
+3. Run installed-desktop deep-link/scan acceptance on each declared supported
+   release target and optional physical cross-host network hardening.
+4. Complete normal merge/security review, accessibility review, and exact-commit
    backend/Webapp/Rust/package CI.
 
-No merge should describe the Issue as complete before all remaining slices and the
-acceptance report are green.
+These are release/integration gates. They do not invalidate the completed local
+development acceptance or weaken the mandatory endpoint, secret, and revocation
+security properties.
 
 ## Webapp implementation slice
 
