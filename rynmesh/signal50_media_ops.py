@@ -20,6 +20,7 @@ try:
 except ImportError:  # pragma: no cover
     FastAPIRequest = Any  # type: ignore
 
+from .atomic_io import atomic_write_json
 from .signal50_service import (
     DEFAULT_WORK_DIR,
     RELAY_BUNDLE_OPERATION,
@@ -255,17 +256,10 @@ class MediaOpsState:
         return self.jobs_dir / f"{cleaned}.json"
 
     def _write_job(self, job: dict[str, Any]) -> None:
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
         path = self._job_path(str(job["job_id"]))
-        temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            with temporary_path.open("w", encoding="utf-8") as handle:
-                handle.write(json.dumps(job, indent=2, ensure_ascii=True) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary_path, path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        atomic_write_json(
+            path, job, indent=2, sort_keys=False, ensure_ascii=True, trailing_newline=True
+        )
 
 
 def _require_local_request(request: Any) -> None:

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 from collections import OrderedDict
@@ -40,6 +39,7 @@ from typing import Any, Callable
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from .atomic_io import AtomicIOError, atomic_write_json
 from .mailbox import (
     DEFAULT_TTL_S,
     MAX_ACK_IDS,
@@ -57,8 +57,6 @@ log = logging.getLogger("rynmesh.mailbox_client")
 Handler = Callable[[MailboxEnvelope, dict[str, Any]], None]
 
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
-_DIR_MODE = 0o700
-_FILE_MODE = 0o600
 #: v1 held only `entries` (the seen cache). v2 adds `attempts`, so a poison
 #: message cannot reset its retry budget by outliving the process. v1 files load
 #: unchanged — the attempts map simply starts empty.
@@ -495,12 +493,6 @@ class MailboxClient:
 
         self._prune_seen()
         self._prune_attempts()
-        directory = self._seen_path.parent
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-            os.chmod(directory, _DIR_MODE)
-        except OSError:
-            return
         value = {
             "version": _SEEN_VERSION,
             "entries": dict(self._seen),
@@ -510,20 +502,12 @@ class MailboxClient:
                 for key, (count, expiry) in self._attempts.items()
             },
         }
-        tmp = self._seen_path.with_name(self._seen_path.name + ".tmp")
         try:
-            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(value, handle, sort_keys=True)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(tmp, _FILE_MODE)
-            os.replace(tmp, self._seen_path)
-        except OSError:
+            atomic_write_json(self._seen_path, value, sort_keys=True)
+        except AtomicIOError:
             # The cache is an optimization over an at-least-once channel: a
             # write failure costs a possible duplicate delivery, never a lost
             # message, so it must not fail the poll.
-            tmp.unlink(missing_ok=True)
             log.warning("mailbox seen cache write failed")
 
 

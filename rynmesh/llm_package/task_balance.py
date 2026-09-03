@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from rynmesh.atomic_io import atomic_write_json, migration_backup
 
 LEDGER_VERSION = "rynmesh-dev-task-balance-v1"
 SNAPSHOT_VERSION = "rynmesh-dev-task-balance-view-v2"
@@ -329,7 +330,7 @@ class TaskBalanceLedger:
 
     def _migrate_legacy(self, legacy: dict[str, Any]) -> None:
         """Turn a v1 file into signed events + a v2 snapshot, once."""
-        shutil.copyfile(self.path, self.path.with_suffix(self.path.suffix + ".migrated"))
+        migration_backup(self.path, suffix=".migrated")
         state = self._fresh_state(SNAPSHOT_VERSION)
         opening = _amount(float(legacy.get("available") or 0) + float(legacy.get("held") or 0))
         state["available"] = opening
@@ -437,10 +438,7 @@ class TaskBalanceLedger:
     def _write(self, value: dict[str, Any]) -> None:
         if self._ledger is not None:
             value["folded_events"] = self._folded
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(self.path)
+        atomic_write_json(self.path, value, indent=2, sort_keys=True)
 
 
 def _task_balance_category() -> str:

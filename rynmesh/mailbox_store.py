@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .atomic_io import atomic_write_json
 from .crypto import SignedPayload
 from .mailbox import (
     MAX_POLL_RESPONSE_BYTES,
@@ -39,7 +40,6 @@ MAX_REPLAY_ENTRIES = 4096
 #: otherwise accumulate one per delivered message with nothing to bound them.
 MAX_TOMBSTONES_PER_BOX = 2048
 _DIR_MODE = 0o700
-_FILE_MODE = 0o600
 _TOMBSTONE_SUFFIX = ".acked"
 
 
@@ -106,7 +106,7 @@ class FileMailboxStore:
             if from_sender >= self.max_pending_per_sender:
                 raise MailboxError("sender_quota")
             self._private_dir(recipient_dir)
-            _atomic_write_json(
+            atomic_write_json(
                 path,
                 {"stored_at": rfc3339(self._moment()), "signed": signed.to_dict()},
             )
@@ -267,7 +267,7 @@ class FileMailboxStore:
         expires_at = str(signed.payload.get("expires_at") or "") if signed else ""
         path.unlink(missing_ok=True)
         if expires_at:
-            _atomic_write_json(path.with_suffix(_TOMBSTONE_SUFFIX), {"expires_at": expires_at})
+            atomic_write_json(path.with_suffix(_TOMBSTONE_SUFFIX), {"expires_at": expires_at})
 
     def _sweep_dir(self, recipient_dir: Path) -> int:
         """Drop expired envelopes and tombstones without decrypting anything."""
@@ -382,26 +382,6 @@ class FileMailboxStore:
             for stale, _ in sorted(self._seen_nonces.items(), key=lambda item: item[1])[:64]:
                 self._seen_nonces.pop(stale, None)
         self._seen_nonces[key] = seconds + 2 * POLL_SKEW_S
-
-
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    """0600 temp file in the same directory, then an atomic rename."""
-
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, _FILE_MODE)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, sort_keys=True)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
-    try:
-        os.chmod(tmp, _FILE_MODE)
-    except OSError:
-        pass
-    os.replace(tmp, path)
 
 
 __all__ = ["FileMailboxStore", "MAX_REPLAY_ENTRIES", "MAX_TOMBSTONES_PER_BOX"]

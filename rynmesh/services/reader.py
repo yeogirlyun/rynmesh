@@ -20,6 +20,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 
+from ..atomic_io import atomic_write_json
+
 __all__ = ["ReaderError", "extract_readable", "readable_url", "ReaderCache", "link_post_target"]
 
 MAX_BLOCKS = 400
@@ -298,15 +300,12 @@ class ReaderCache:
         return payload.get("article")
 
     def put(self, url: str, article: dict[str, Any], *, now: float) -> None:
-        tmp = self._path(url).with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"cached_at": now, "extractor": EXTRACTOR_VERSION, "article": article},
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
+        atomic_write_json(
+            self._path(url),
+            {"cached_at": now, "extractor": EXTRACTOR_VERSION, "article": article},
+            sort_keys=False,
+            ensure_ascii=False,
         )
-        tmp.replace(self._path(url))
 
     def clear(self) -> None:
         """Erase locally cached article extracts without removing the cache root."""
