@@ -1,8 +1,10 @@
 # Issue #34 — bundled desktop inference runtime (work plan)
 
-Status: in progress (system track). Tracks
+Status: delivered 2026-09-03 via
+[#42](https://github.com/yeogirlyun/rynmesh/pull/42) (system track), closing
 [#34](https://github.com/yeogirlyun/rynmesh/issues/34). Unblocks the
 [Local AI Setup](product/user/USER_LOCAL_AI_SETUP_WORK_PLAN.md) user plan.
+Follow-ups and the manual acceptance still owed are recorded on #34.
 
 ## Problem
 
@@ -120,10 +122,15 @@ UI (user track), remote signed catalog updates.
 ## Acceptance
 
 - [ ] On macOS (arm64 + x64) and Windows x64 with no Docker, `setup` in
-      managed mode completes download → verify → start → health → self-test.
-- [ ] Interrupting a download and rerunning resumes from the `.part` size.
-- [ ] A corrupt or truncated archive/model never starts; the error is safe.
-- [ ] Docker mode still works on a server with the engine running.
-- [ ] No prompt, response, model path, or owner filename in logs or public
-      manifest views.
-- [ ] `python -m ruff check rynmesh/ tests/` and the full pytest suite pass.
+      managed mode completes download → verify → start → health → self-test
+      (automated with a fake server; real-model runs still owed, see #34).
+- [x] Interrupting a download and rerunning resumes from the `.part` size
+      (tests in `tests/test_llm_package.py`).
+- [x] A corrupt or truncated archive/model never starts; the error is safe.
+- [x] Docker mode still works on a server with the engine running (flags
+      unchanged; `tests/test_llm_runtime_docker.py`).
+- [x] No prompt, response, model path, or owner filename in logs or public
+      manifest views (asserted in `tests/test_llm_runtime_native.py`; a
+      real-model log grep at `-lv 1` is still owed).
+- [x] `python -m ruff check rynmesh/ tests/` and the full pytest suite pass
+      (CI on #42).
