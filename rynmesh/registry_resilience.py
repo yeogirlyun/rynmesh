@@ -94,15 +94,13 @@ class FallbackRegistryChain:
     def list_work_results(self, **kwargs: Any) -> list[SignedPayload]:
         return self._try_all("list_work_results", **kwargs)
 
-    # Mailbox traffic falls through on transport failure like everything else.
-    # A MailboxError is deliberately *not* caught by _try_all: "duplicate" or
-    # "rate_limited" is a verdict about the message, not a dead registry, and
-    # retrying it against a mirror would fan one message out across the chain.
+    # Mailbox traffic falls through on transport failure like everything else,
+    # but *only* on transport failure — see `_try_mailbox`.
     def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
-        return self._try_all("deposit_mailbox", signed)
+        return self._try_mailbox("deposit_mailbox", signed)
 
     def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
-        return self._try_all("poll_mailbox", signed_poll)
+        return self._try_mailbox("poll_mailbox", signed_poll)
 
     # -------------------------------------------------------------------------
 
@@ -116,6 +114,35 @@ class FallbackRegistryChain:
                 return fn(*args, **kwargs)
             except RegistryError as exc:
                 log.warning("registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc)
+                last = exc
+        raise last
+
+    def _try_mailbox(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Fall through on a dead registry, never on a verdict about the message.
+
+        A local backend raises `MailboxError` ("duplicate", "rate_limited",
+        "poll_skew", ...) which is not a `RegistryError` and so was never
+        retried. `HttpPeerRegistry` turns the same verdicts into a
+        `RegistryError` carrying the HTTP status, and retrying *that* on the
+        next mirror would deposit one message into every registry in the chain
+        — the exact fan-out the local path is careful to avoid. So a 4xx ends
+        the attempt; only a transport failure (no status) or a 5xx moves on.
+        """
+
+        last: Exception = RegistryError("no registries configured")
+        for reg in self.registries:
+            fn = getattr(reg, method, None)
+            if fn is None:
+                continue
+            try:
+                return fn(*args, **kwargs)
+            except RegistryError as exc:
+                status = getattr(exc, "status", None)
+                if isinstance(status, int) and 400 <= status < 500:
+                    raise
+                log.warning(
+                    "registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc
+                )
                 last = exc
         raise last
 

@@ -28,6 +28,7 @@ _MAILBOX_STATUS = {
     "duplicate": 409,
     "replay": 409,
     "recipient_full": 429,
+    "sender_quota": 429,
     "rate_limited": 429,
 }
 

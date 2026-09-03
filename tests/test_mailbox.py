@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import socket
 import threading
 import time
@@ -15,6 +16,7 @@ import pytest
 
 from rynmesh.crypto import SignedPayload, public_key_from_private, sign_payload
 from rynmesh.mailbox import (
+    MAILBOX_SEAL_INFO,
     MAILBOX_VERSION,
     MAX_ACK_IDS,
     MAX_ENVELOPE_BYTES,
@@ -22,6 +24,7 @@ from rynmesh.mailbox import (
     MAX_POLL_RESPONSE_BYTES,
     MAX_TTL_S,
     POLL_KIND,
+    MailboxEnvelope,
     MailboxError,
     build_poll_request,
     envelope_size_bytes,
@@ -224,6 +227,99 @@ def test_verify_rejects_oversized_and_malformed_peer_ids(tmp_path) -> None:
         _seal(alice, bob, to_peer_id="")
 
 
+def test_kind_is_restricted_to_a_safe_identifier_charset(tmp_path) -> None:
+    """`kind` is stored in the clear and written to logs, so it stays boring."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    signed = _seal(alice, bob)
+
+    hostile = [
+        "pair\x1b[2Jaccept",   # terminal escape
+        "pair\naccept",        # log injection
+        "pair accept",         # whitespace
+        "pair/accept",         # path-ish
+        ".pair.accept",        # must start alphanumeric
+        "\x00pair",
+        "x" * 97,              # over MAX_KIND_LEN
+        "",
+    ]
+    for kind in hostile:
+        with pytest.raises(MailboxError, match="invalid_kind"):
+            _seal(alice, bob, kind=kind)
+        # And the registry re-checks it: a signed envelope carrying one of
+        # these never verifies, so it is refused before it is ever stored.
+        with pytest.raises(MailboxError, match="invalid_kind"):
+            verify_mailbox_envelope(
+                _resign(signed, private_key_bytes=alice.private_key_bytes, kind=kind),
+                now=_at(T0),
+            )
+
+    for kind in ("peer.message.v1", "friend.invite.accept.v1", "a", "A_b-c.1"):
+        assert verify_mailbox_envelope(_seal(alice, bob, kind=kind), now=_at(T0)).kind == kind
+
+
+def test_the_envelope_cannot_carry_an_extra_plaintext_field(tmp_path) -> None:
+    """The registry sees the envelope in the clear, so it holds nothing else."""
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    signed = _seal(alice, bob)
+
+    smuggled = sign_payload(
+        {**signed.payload, "note": "PLAINTEXT_SIDE_CHANNEL"},
+        private_key_bytes=alice.private_key_bytes,
+    )
+    with pytest.raises(MailboxError, match="unknown_field"):
+        verify_mailbox_envelope(smuggled, now=_at(T0))
+    with pytest.raises(MailboxError, match="unknown_field"):
+        MailboxEnvelope.from_dict(smuggled.payload)
+
+    # A *missing* field is still a malformed envelope, not an unknown one.
+    with pytest.raises(MailboxError, match="invalid_envelope"):
+        MailboxEnvelope.from_dict({k: v for k, v in signed.payload.items() if k != "nonce"})
+
+
+def test_a_mailbox_ciphertext_cannot_be_replayed_as_a_peer_message(tmp_path) -> None:
+    """The mailbox seal is domain-separated from the direct messaging channel."""
+
+    from cryptography.exceptions import InvalidTag
+
+    from rynmesh.services import peer_box
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    signed = _seal(alice, bob, body={"note": "hello"})
+    envelope = verify_mailbox_envelope(signed, now=_at(T0))
+
+    # The recipient's own key, the right nonce, the right ephemeral key — and
+    # still no plaintext, because `/api/peer/msg` derives a different key.
+    with pytest.raises(InvalidTag):
+        peer_box.open_sealed(
+            bob.messaging_key, envelope.ephemeral_pub, envelope.nonce, envelope.ciphertext
+        )
+    opened = peer_box.open_sealed(
+        bob.messaging_key,
+        envelope.ephemeral_pub,
+        envelope.nonce,
+        envelope.ciphertext,
+        info=MAILBOX_SEAL_INFO,
+    )
+    assert b"hello" in opened
+
+    # The reverse direction too: a direct peer-message ciphertext is not
+    # openable as mailbox mail.
+    nonce, ct = peer_box.seal(alice.messaging_key, bob.messaging_pub, b"direct")
+    with pytest.raises(InvalidTag):
+        peer_box.open_sealed(
+            bob.messaging_key,
+            peer_box.public_key_b64(alice.messaging_key),
+            nonce,
+            ct,
+            info=MAILBOX_SEAL_INFO,
+        )
+
+
 # -------------------------------------------------------------------- 4. poll
 
 
@@ -361,11 +457,81 @@ def test_file_mailbox_store_rate_limit_replay_and_capacity(tmp_path) -> None:
         replayed.poll(poll)
 
     cap_clock = _Clock(T0)
-    full = FileMailboxStore(tmp_path / "full", sender_rate_per_minute=5000, now=cap_clock)
+    full = FileMailboxStore(
+        tmp_path / "full",
+        sender_rate_per_minute=5000,
+        # The per-sender quota is exercised on its own below; lift it here so
+        # one sender can actually reach the whole-box cap.
+        max_pending_per_sender=10_000,
+        now=cap_clock,
+    )
     for index in range(full.max_pending_per_recipient):
         full.deposit(_seal(alice, bob, message_id=f"{index:032x}"))
     with pytest.raises(MailboxError, match="recipient_full"):
         full.deposit(_seal(alice, bob))
+
+
+def test_one_sender_cannot_fill_a_recipients_box(tmp_path) -> None:
+    """A per-(sender, recipient) quota keeps one peer from starving the others."""
+
+    alice = _Peer(tmp_path, "alice")
+    carol = _Peer(tmp_path, "carol")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(
+        tmp_path / "registry", sender_rate_per_minute=5000, max_pending_per_sender=16, now=clock
+    )
+
+    for index in range(16):
+        store.deposit(_seal(alice, bob, message_id=f"{index:032x}", now=clock))
+    with pytest.raises(MailboxError, match="sender_quota"):
+        store.deposit(_seal(alice, bob, now=clock))
+
+    # The box itself is nowhere near full: another sender still gets through.
+    assert store.deposit(_seal(carol, bob, now=clock))["pending"] == 17
+
+    # And the quota is a *pending* cap, not a lifetime one: draining Alice's
+    # mail frees her budget again.
+    delivered = store.poll(
+        build_poll_request(private_key_bytes=bob.private_key_bytes, now=clock)
+    )
+    store.poll(
+        build_poll_request(
+            private_key_bytes=bob.private_key_bytes,
+            ack=[item.payload["message_id"] for item in delivered],
+            now=clock,
+        )
+    )
+    assert store.deposit(_seal(alice, bob, now=clock))["message_id"]
+
+
+def test_tombstones_are_bounded_per_box(tmp_path) -> None:
+    """A box churning faster than its TTL cannot grow markers without limit."""
+
+    from rynmesh.mailbox_store import MAX_TOMBSTONES_PER_BOX
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+    clock = _Clock(T0)
+    store = FileMailboxStore(tmp_path / "registry", now=clock)
+
+    digest = hashlib.sha256(bob.peer_id.encode("utf-8")).hexdigest()
+    box = tmp_path / "registry" / "mailbox" / digest[:2] / digest
+    box.mkdir(parents=True, exist_ok=True)
+    for index in range(MAX_TOMBSTONES_PER_BOX + 25):
+        marker = box / f"{index:032x}.acked"
+        marker.write_text(
+            json.dumps({"expires_at": rfc3339(T0 + timedelta(hours=1))}), encoding="utf-8"
+        )
+        # Oldest first, so the eviction order is unambiguous.
+        os.utime(marker, (T0.timestamp() + index, T0.timestamp() + index))
+
+    store.deposit(_seal(alice, bob, now=clock))  # the deposit sweeps the box
+    survivors = sorted(path.name for path in box.glob("*.acked"))
+    assert len(survivors) == MAX_TOMBSTONES_PER_BOX
+    assert survivors[0] == f"{25:032x}.acked", "the oldest markers go first"
+    # Unexpired tombstones still block a re-deposit of the ids they cover.
+    assert (box / f"{MAX_TOMBSTONES_PER_BOX + 24:032x}.acked").exists()
 
 
 def test_acked_message_leaves_a_tombstone_until_it_expires(tmp_path) -> None:
@@ -504,7 +670,12 @@ def test_poll_response_is_capped_below_the_client_read_limit(tmp_path) -> None:
     alice = _Peer(tmp_path, "alice")
     bob = _Peer(tmp_path, "bob")
     clock = _Clock(T0)
-    store = FileMailboxStore(tmp_path / "registry", sender_rate_per_minute=5000, now=clock)
+    store = FileMailboxStore(
+        tmp_path / "registry",
+        sender_rate_per_minute=5000,
+        max_pending_per_sender=10_000,
+        now=clock,
+    )
 
     expected = set()
     for index in range(40):
@@ -778,10 +949,29 @@ def test_fallback_chain_carries_mailbox_traffic_past_a_dead_registry(tmp_path) -
     )[0].payload["message_id"] == signed.payload["message_id"]
 
 
-def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tmp_path) -> None:
-    """`duplicate` is a verdict about the message, not a dead registry.
+class _SpyRegistry:
+    """Counts the mailbox calls that actually reached it."""
 
-    Falling through would deliver one message twice, once per mirror.
+    def __init__(self) -> None:
+        self.deposits = 0
+        self.polls = 0
+
+    def deposit_mailbox(self, signed: SignedPayload) -> dict:
+        self.deposits += 1
+        return {"message_id": signed.payload["message_id"]}
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        self.polls += 1
+        return []
+
+
+def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tmp_path) -> None:
+    """A 4xx is a verdict about the message, not a dead registry.
+
+    `HttpPeerRegistry` turns `duplicate` (409), `rate_limited` (429) and every
+    other refusal into a `RegistryError` carrying the status. Falling through on
+    one would deposit the message into every mirror in the chain — the exact
+    fan-out the local `MailboxError` path is careful to avoid.
     """
 
     from rynmesh.registry_resilience import FallbackRegistryChain
@@ -790,19 +980,65 @@ def test_fallback_chain_does_not_retry_a_mailbox_verdict_on_the_next_registry(tm
     bob = _Peer(tmp_path, "bob")
 
     class _RejectingRegistry:
+        def __init__(self, status: int) -> None:
+            self.status = status
+
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise RegistryError(
+                "registry_rejected", status=self.status, detail="duplicate"
+            )
+
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise RegistryError("registry_rejected", status=self.status, detail="poll_skew")
+
+    for status in (409, 429, 400):
+        spy = _SpyRegistry()
+        chain = FallbackRegistryChain([_RejectingRegistry(status), spy])
+        with pytest.raises(RegistryError) as refused:
+            chain.deposit_mailbox(_seal(alice, bob, now=None))
+        assert refused.value.status == status
+        with pytest.raises(RegistryError):
+            chain.poll_mailbox(build_poll_request(private_key_bytes=bob.private_key_bytes))
+        assert (spy.deposits, spy.polls) == (0, 0)
+
+    # A local backend still raises `MailboxError`, which was never a
+    # `RegistryError` and so never fell through either.
+    class _LocalRejectingRegistry:
         def deposit_mailbox(self, signed: SignedPayload) -> dict:
             raise MailboxError("duplicate")
 
-    class _SpyRegistry:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def deposit_mailbox(self, signed: SignedPayload) -> dict:
-            self.calls += 1
-            return {"message_id": signed.payload["message_id"]}
-
     spy = _SpyRegistry()
-    chain = FallbackRegistryChain([_RejectingRegistry(), spy])
+    chain = FallbackRegistryChain([_LocalRejectingRegistry(), spy])
     with pytest.raises(MailboxError, match="duplicate"):
         chain.deposit_mailbox(_seal(alice, bob, now=None))
-    assert spy.calls == 0
+    assert spy.deposits == 0
+
+
+def test_fallback_chain_still_moves_past_a_registry_that_did_not_answer(tmp_path) -> None:
+    """No status means no verdict: a transport failure (or a 5xx) falls through."""
+
+    from rynmesh.registry_resilience import FallbackRegistryChain
+
+    alice = _Peer(tmp_path, "alice")
+    bob = _Peer(tmp_path, "bob")
+
+    class _UnreachableRegistry:
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise RegistryError("registry_http_error: unreachable")  # status is None
+
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise RegistryError("registry_http_error: unreachable")
+
+    class _BrokenRegistry:
+        def deposit_mailbox(self, signed: SignedPayload) -> dict:
+            raise RegistryError("registry_status_503", status=503, detail="")
+
+        def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+            raise RegistryError("registry_status_503", status=503, detail="")
+
+    spy = _SpyRegistry()
+    chain = FallbackRegistryChain([_UnreachableRegistry(), _BrokenRegistry(), spy])
+    signed = _seal(alice, bob, now=None)
+    assert chain.deposit_mailbox(signed)["message_id"] == signed.payload["message_id"]
+    assert chain.poll_mailbox(build_poll_request(private_key_bytes=bob.private_key_bytes)) == []
+    assert (spy.deposits, spy.polls) == (1, 1)

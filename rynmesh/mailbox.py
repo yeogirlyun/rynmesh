@@ -45,6 +45,10 @@ MAX_POLL_LIMIT = 50
 POLL_SKEW_S = 300
 MAX_KIND_LEN = 96
 MAX_ACK_IDS = 200
+#: HKDF label for the mailbox channel. Distinct from the direct peer-message
+#: label, so a mailbox ciphertext captured off the registry cannot be replayed
+#: into ``/api/peer/msg`` (and vice versa): the derived key simply differs.
+MAILBOX_SEAL_INFO = b"rynmesh-mailbox-v1"
 # A full poll (50 x 64 KiB) would be 3.2 MiB, over the 2 MiB the registry HTTP
 # client will read back. The server stops filling a poll response at this
 # budget instead, so a large mailbox drains over several polls rather than
@@ -52,6 +56,10 @@ MAX_ACK_IDS = 200
 MAX_POLL_RESPONSE_BYTES = 1536 * 1024
 
 _HEX32 = re.compile(r"\A[0-9a-f]{32}\Z")
+# A kind is a routing label the registry stores in the clear and the node logs.
+# Restricting it to a conservative identifier charset keeps control characters,
+# newlines and terminal escapes out of both.
+_KIND_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _X25519_KEY_BYTES = 32
 _ED25519_KEY_BYTES = 32
 _SEAL_NONCE_BYTES = 12
@@ -138,7 +146,7 @@ def _require_kind(kind: str) -> str:
     cleaned = str(kind or "")
     if not cleaned or len(cleaned) > MAX_KIND_LEN:
         raise MailboxError("invalid_kind")
-    if any(char.isspace() for char in cleaned):
+    if not _KIND_RE.match(cleaned):
         raise MailboxError("invalid_kind")
     return cleaned
 
@@ -170,6 +178,12 @@ class MailboxEnvelope:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MailboxEnvelope":
+        # The envelope is the *only* part of a mailbox message the registry can
+        # read, so it carries exactly the declared routing fields and nothing
+        # else. Without this an arbitrary plaintext side-channel could ride
+        # along inside the signed payload and be stored in the clear.
+        if not isinstance(data, dict) or set(data) - set(_ENVELOPE_FIELDS):
+            raise MailboxError("unknown_field")
         try:
             return cls(**{name: str(data[name]) for name in _ENVELOPE_FIELDS})
         except (KeyError, TypeError) as exc:
@@ -230,7 +244,9 @@ def seal_mailbox_message(
     box = _peer_box()
     ephemeral = X25519PrivateKey.generate()
     try:
-        nonce, ciphertext = box.seal(ephemeral, messaging_pub, plaintext)
+        nonce, ciphertext = box.seal(
+            ephemeral, messaging_pub, plaintext, info=MAILBOX_SEAL_INFO
+        )
     except Exception as exc:  # noqa: BLE001 - never surface crypto internals
         raise MailboxError("seal_failed") from exc
 
@@ -319,6 +335,7 @@ def open_mailbox_message(
             envelope.ephemeral_pub,
             envelope.nonce,
             envelope.ciphertext,
+            info=MAILBOX_SEAL_INFO,
         )
     except Exception as exc:  # noqa: BLE001 - decryption detail must not leak
         raise MailboxError("open_failed") from exc

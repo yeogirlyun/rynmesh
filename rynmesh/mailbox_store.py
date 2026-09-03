@@ -5,8 +5,9 @@ directly. It is a dumb, self-draining spool: it validates the envelope
 *shell* (signature, identity binding, freshness, size), never the body, and
 deletes messages once acked or expired.
 
-Abuse controls are deliberately local and cheap: one pending cap per
-recipient, one in-memory token bucket per sender, and a nonce replay cache per
+Abuse controls are deliberately local and cheap: a pending cap per recipient, a
+second pending cap per (sender, recipient) pair so one peer cannot fill someone
+else's box, an in-memory token bucket per sender, and a nonce replay cache per
 poll. Nothing here logs, and every raised message is a short stable code that
 a registry HTTP handler can return verbatim without leaking peer data.
 """
@@ -33,6 +34,10 @@ from .mailbox import (
 )
 
 MAX_REPLAY_ENTRIES = 4096
+#: Ack tombstones kept per recipient box. They are tiny (one `expires_at`) and
+#: normally expire on their own, but a sender that keeps a box churning could
+#: otherwise accumulate one per delivered message with nothing to bound them.
+MAX_TOMBSTONES_PER_BOX = 2048
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 _TOMBSTONE_SUFFIX = ".acked"
@@ -54,12 +59,18 @@ class FileMailboxStore:
         root: str | Path,
         *,
         max_pending_per_recipient: int = 256,
+        max_pending_per_sender: int = 16,
         sender_rate_per_minute: int = 120,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self.root = Path(root).expanduser()
         self.mailbox_dir = self.root / "mailbox"
         self.max_pending_per_recipient = max(1, int(max_pending_per_recipient))
+        # One sender must not be able to fill a recipient's whole box: without
+        # this, a single peer holding a valid network key can deny every other
+        # peer delivery to that recipient by parking 256 messages there for a
+        # full TTL. The network key remains the real admission control.
+        self.max_pending_per_sender = max(1, int(max_pending_per_sender))
         self.sender_rate_per_minute = max(1, int(sender_rate_per_minute))
         self._now = now or _utcnow
         self._lock = threading.RLock()
@@ -89,9 +100,11 @@ class FileMailboxStore:
             self._sweep_dir(recipient_dir)
             if path.exists() or tombstone.exists():
                 raise MailboxError("duplicate")
-            pending = self._pending_count(recipient_dir)
+            pending, from_sender = self._pending_counts(recipient_dir, envelope.from_peer_id)
             if pending >= self.max_pending_per_recipient:
                 raise MailboxError("recipient_full")
+            if from_sender >= self.max_pending_per_sender:
+                raise MailboxError("sender_quota")
             self._private_dir(recipient_dir)
             _atomic_write_json(
                 path,
@@ -118,8 +131,24 @@ class FileMailboxStore:
                 # characters, so they cannot escape the recipient directory.
                 self._ack(recipient_dir / f"{message_id}.json")
             self._sweep_dir(recipient_dir)
-            found: list[tuple[str, str, SignedPayload]] = []
-            for path in sorted(recipient_dir.glob("*.json")):
+            # Oldest first, capped by both the caller's limit and a byte budget
+            # the registry HTTP client is guaranteed to be able to read back.
+            # The order comes from the file's own mtime (deposit order), so the
+            # signature check runs only on the envelopes actually being served
+            # rather than on the whole box on every poll.
+            candidates: list[tuple[float, str, Path]] = []
+            for path in recipient_dir.glob("*.json"):
+                try:
+                    candidates.append((path.stat().st_mtime, path.name, path))
+                except OSError:
+                    continue
+            candidates.sort(key=lambda item: (item[0], item[1]))
+
+            selected: list[SignedPayload] = []
+            budget = MAX_POLL_RESPONSE_BYTES
+            for _mtime, _name, path in candidates:
+                if len(selected) >= limit:
+                    break
                 try:
                     signed = self._load(path)
                 except OSError:
@@ -133,13 +162,6 @@ class FileMailboxStore:
                     continue
                 if envelope.to_peer_id != peer_id:
                     continue
-                found.append((envelope.created_at, envelope.message_id, signed))
-            found.sort(key=lambda item: (item[0], item[1]))
-            # Oldest first, capped by both the caller's limit and a byte budget
-            # the registry HTTP client is guaranteed to be able to read back.
-            selected: list[SignedPayload] = []
-            budget = MAX_POLL_RESPONSE_BYTES
-            for _, _, signed in found[:limit]:
                 size = envelope_size_bytes(signed)
                 if selected and size > budget:
                     break
@@ -184,10 +206,29 @@ class FileMailboxStore:
             cursor = cursor.parent
         return path
 
-    def _pending_count(self, recipient_dir: Path) -> int:
+    def _pending_counts(self, recipient_dir: Path, from_peer_id: str) -> tuple[int, int]:
+        """``(pending in this box, pending from this sender)``.
+
+        The sender count needs the stored envelope's ``from_peer_id``, so this
+        reads each pending file. That is the same pass the sweep just ahead of
+        it already makes, and the pending cap bounds it either way.
+        """
+
         if not recipient_dir.is_dir():
-            return 0
-        return sum(1 for _ in recipient_dir.glob("*.json"))
+            return 0, 0
+        total = 0
+        from_sender = 0
+        for path in recipient_dir.glob("*.json"):
+            total += 1
+            try:
+                signed = self._load(path)
+            except OSError:
+                continue  # unreadable now; it still counts against the box
+            if signed is None:
+                continue
+            if str(signed.payload.get("from_peer_id") or "") == from_peer_id:
+                from_sender += 1
+        return total, from_sender
 
     def _load(self, path: Path) -> SignedPayload | None:
         """Read one stored envelope. ``None`` means corrupt; OSError propagates.
@@ -251,6 +292,35 @@ class FileMailboxStore:
             except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 expires_at = ""
             removed += self._expire(path, expires_at, moment)
+        removed += self._bound_tombstones(recipient_dir)
+        return removed
+
+    def _bound_tombstones(self, recipient_dir: Path) -> int:
+        """Keep at most ``MAX_TOMBSTONES_PER_BOX`` markers, oldest evicted first.
+
+        Expiry is the normal way a tombstone goes; this is the backstop for a
+        box churning faster than its TTL. Evicting the oldest is the right
+        order: an old marker is the closest to expiring anyway, so the replay
+        window this reopens is the smallest one available.
+        """
+
+        try:
+            markers = list(recipient_dir.glob(f"*{_TOMBSTONE_SUFFIX}"))
+        except OSError:
+            return 0
+        if len(markers) <= MAX_TOMBSTONES_PER_BOX:
+            return 0
+        aged: list[tuple[float, str, Path]] = []
+        for path in markers:
+            try:
+                aged.append((path.stat().st_mtime, path.name, path))
+            except OSError:
+                continue
+        aged.sort(key=lambda item: (item[0], item[1]))
+        removed = 0
+        for _mtime, _name, path in aged[: len(aged) - MAX_TOMBSTONES_PER_BOX]:
+            path.unlink(missing_ok=True)
+            removed += 1
         return removed
 
     def _expire(self, path: Path, expires_at: str, moment: datetime) -> int:
@@ -334,4 +404,4 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-__all__ = ["FileMailboxStore", "MAX_REPLAY_ENTRIES"]
+__all__ = ["FileMailboxStore", "MAX_REPLAY_ENTRIES", "MAX_TOMBSTONES_PER_BOX"]
