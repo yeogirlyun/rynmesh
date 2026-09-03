@@ -1,5 +1,6 @@
-import { Check, Copy, Download, RefreshCcw } from "lucide-react";
+import { Check, Download, RefreshCcw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Button, Chip, IconButton } from "../../components/ui";
 import { digestApi, type LocalModelCatalog } from "../../domain/digestClient";
 
@@ -18,7 +19,6 @@ export default function LocalModelPicker() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -58,12 +58,11 @@ export default function LocalModelPicker() {
           <b>Ollama isn't running.</b> It's the free, private way to give your node a brain —
           nothing leaves your machine.
         </p>
-        <p className="model-hint">
-          Install it from <a href="https://ollama.com/download" target="_blank" rel="noreferrer noopener">ollama.com/download</a>,
-          then pull a model and refresh.
-        </p>
-        <pre className="model-cmd"><code>ollama pull gemma3:4b</code></pre>
-        <Button icon={RefreshCcw} onClick={() => void refresh()}>Check again</Button>
+        <p className="model-hint">Ryn can check this device, install a reviewed model, and verify the first answer inside the app.</p>
+        <div className="button-row">
+          <Link to="/local-ai">Install recommended local AI</Link>
+          <Button icon={RefreshCcw} onClick={() => void refresh()}>Check again</Button>
+        </div>
       </div>
     );
   }
@@ -121,21 +120,13 @@ export default function LocalModelPicker() {
 
       {missing.length ? (
         <div className="model-suggest">
-          <p className="model-hint"><b>Not installed yet</b> — pull one to try it:</p>
+          <p className="model-hint"><b>Not installed yet.</b> Use the in-app setup for a reviewed profile:</p>
           {missing.map((model) => (
             <div key={model.name} className="model-suggest-row">
               <Download size={13} />
-              <code>ollama pull {model.name}</code>
+              <span>{model.name}</span>
               <span className="model-row-size">{model.size_hint}</span>
-              <IconButton
-                icon={copied === model.name ? Check : Copy}
-                label={`Copy pull command for ${model.name}`}
-                onClick={() => {
-                  void navigator.clipboard?.writeText(`ollama pull ${model.name}`);
-                  setCopied(model.name);
-                  window.setTimeout(() => setCopied(""), 1500);
-                }}
-              />
+              <Link to="/local-ai">Open setup</Link>
             </div>
           ))}
         </div>

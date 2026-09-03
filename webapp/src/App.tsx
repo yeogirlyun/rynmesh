@@ -33,6 +33,7 @@ import Peers from "./screens/Peers";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
 import PrivateAIChat from "./screens/PrivateAIChat";
+import LocalAISetup from "./screens/LocalAISetup";
 import VideoRendering from "./screens/VideoRendering";
 import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
@@ -50,6 +51,8 @@ const navItems = [
   { path: "/chat", label: "Chat", icon: NavIcons.chat },
   { path: "/settings", label: "Settings", icon: NavIcons.settings },
 ];
+
+const LOCAL_AI_V1_ENABLED = import.meta.env.VITE_RYN_LOCAL_AI_V1_ENABLED !== "0";
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -430,6 +433,7 @@ export function AppRoutes() {
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
           <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="local-ai" element={LOCAL_AI_V1_ENABLED ? <LocalAISetup /> : <Navigate replace to="/services/manage" />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route path="services/secure-web-access" element={<SecureWebAccess />} />
           <Route path="chat" element={<Chat />} />

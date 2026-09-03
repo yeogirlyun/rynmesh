@@ -75,6 +75,11 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getLLMSetupStatus: () => requestJson(`${baseUrl}/llm/setup/status`),
     cancelLLMSetup: (jobId) =>
       requestJson(`${baseUrl}/llm/setup/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+    retryLLMSetup: (jobId) =>
+      requestJson(`${baseUrl}/llm/setup/${encodeURIComponent(jobId)}/retry`, { method: "POST" }),
+    getLocalAIRecommendations: () => requestJson(`${baseUrl}/llm/recommendations`),
+    getLocalAIReadiness: () => requestJson(`${baseUrl}/llm/readiness`),
+    testLocalAI: () => requestJson(`${baseUrl}/llm/readiness/test`, { method: "POST" }),
     runLLMServiceAction: (action, options) =>
       requestJson(`${baseUrl}/llm/service/actions/${encodeURIComponent(action)}`, {
         method: "POST",

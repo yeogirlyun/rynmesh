@@ -1,0 +1,31 @@
+.deviceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.deviceCard { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 12px; }
+.deviceCard svg { grid-row: 1 / 3; color: var(--accent); }
+.deviceCard span { color: var(--muted); font-size: 13px; }
+.deviceCard strong { font-size: 18px; }
+.recommendHead, .progressHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.recommendHead h2, .progressHead h2 { margin: 5px 0 0; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 22px 0; }
+.facts span { display: grid; gap: 4px; padding: 13px; border-radius: 12px; background: var(--surface); color: var(--muted); font-size: 12px; }
+.facts b { color: var(--text); font-size: 15px; }
+.otherProfiles { margin: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
+.otherProfiles summary { cursor: pointer; font-weight: 700; }
+.otherProfiles label { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--surface); }
+.otherProfiles label span { display: grid; gap: 3px; }
+.otherProfiles small { color: var(--muted); }
+.disabledProfile { opacity: .48; }
+.license { display: flex; gap: 11px; align-items: flex-start; margin: 20px 0; line-height: 1.45; }
+.license input { margin-top: 4px; }
+.warning, .error { padding: 13px 15px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 13%, var(--surface)); color: var(--warn); }
+.error { background: color-mix(in srgb, var(--danger) 13%, var(--surface)); color: var(--danger); }
+.progressPanel progress { width: 100%; height: 16px; margin: 22px 0 10px; accent-color: var(--accent); }
+.progressPanel p, .progressPanel small { color: var(--muted); }
+.complete { min-height: 410px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 12px; }
+.complete h2 { margin: 4px 0; font-size: 30px; }
+.complete p { max-width: 680px; color: var(--muted); }
+.completeIcon { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, var(--surface)); }
+.answer { width: min(720px, 100%); margin: 8px 0; padding: 18px; border-left: 4px solid var(--accent); background: var(--surface); font-size: 18px; }
+@media (max-width: 760px) {
+  .deviceGrid, .facts { grid-template-columns: 1fr; }
+  .recommendHead, .progressHead { flex-direction: column; }
+}

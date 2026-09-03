@@ -85,7 +85,7 @@ export default function Home() {
             <h2>Enable private AI on this device</h2>
             <p>Ryn can recommend a model for this computer and keep prompts local. Your recommendations already work without it.</p>
           </div>
-          <Button icon={Bot} onClick={() => navigate("/services/manage")}>Set up local AI</Button>
+          <Button icon={Bot} onClick={() => navigate("/local-ai")}>Set up local AI</Button>
         </Panel>
       ) : null}
       <PageHeader

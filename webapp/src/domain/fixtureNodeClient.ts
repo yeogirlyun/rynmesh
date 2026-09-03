@@ -989,6 +989,11 @@ export function makeFixtureNodeClient(): NodeClient {
     safe_error: null,
     recoverable_actions: [],
   };
+  let localAiPoll = 0;
+  let localAiJob: import("./nodeClient").LLMSetupJob = {
+    state: "idle", stage: "idle", progress: 0,
+  };
+  let localAiReady = false;
 
   return {
     mode: "fixture",
@@ -1101,17 +1106,93 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { configured: true, publication_enabled: false };
     },
-    async startLLMSetup() {
+    async startLLMSetup(req) {
       await delay();
-      return { job_id: "setup_fixture", state: "succeeded", stage: "completed", progress: 100 };
+      localAiPoll = 0;
+      localAiJob = {
+        version: "ryn.local-ai-install.v2",
+        job_id: "setup_fixture",
+        state: "queued",
+        stage: "queued",
+        progress: 0,
+        selected_profile: "profile" in req ? req.profile : null,
+        attempt: 1,
+        resumable: true,
+        cancelable: true,
+        message: "Local AI setup is queued",
+      };
+      return localAiJob;
     },
     async getLLMSetupStatus() {
       await delay();
-      return { job_id: "setup_fixture", state: "succeeded", stage: "completed", progress: 100 };
+      if (["queued", "running"].includes(localAiJob.state)) {
+        localAiPoll += 1;
+        if (localAiPoll >= 3) {
+          localAiReady = true;
+          localAiJob = { ...localAiJob, state: "succeeded", stage: "completed", progress: 100,
+            cancelable: false, resumable: false, message: "Private local AI is ready" };
+        } else {
+          localAiJob = { ...localAiJob, state: "running", stage: localAiPoll === 1 ? "download_model" : "self_test",
+            progress: localAiPoll === 1 ? 48 : 96, bytes_done: 240_000_000,
+            bytes_total: 500_000_000, message: localAiPoll === 1 ? "Downloading verified model data" : "Running a private first-answer test" };
+        }
+      }
+      return localAiJob;
     },
     async cancelLLMSetup(jobId) {
       await delay();
-      return { job_id: jobId, state: "cancelled", stage: "cancelled", progress: 0 };
+      localAiJob = { ...localAiJob, job_id: jobId, state: "cancelled", stage: "cancelled", progress: 0,
+        retryable: true, cancelable: false };
+      return localAiJob;
+    },
+    async retryLLMSetup(jobId) {
+      await delay();
+      localAiPoll = 0;
+      localAiJob = { ...localAiJob, job_id: `${jobId}_retry`, state: "queued", stage: "queued", progress: 0,
+        attempt: (localAiJob.attempt ?? 1) + 1, retryable: false, cancelable: true };
+      return localAiJob;
+    },
+    async getLocalAIRecommendations() {
+      await delay();
+      return {
+        version: "ryn.local-ai-hardware.v1",
+        platform: "windows-x86_64",
+        memory_available_mib: 12_288,
+        disk_available_mib: 48_000,
+        accelerators: [],
+        runtime_support: { managed: true, ollama: false, docker_preview: false },
+        recommended_profile: "light",
+        profiles: [
+          { id: "light", model_id: "Qwen2.5-0.5B-Instruct-Q4_K_M", alias: "rynmesh-qwen2.5-0.5b-q4",
+            version: "reviewed-fixture", download_mib: 491, estimated_memory_mib: 900,
+            estimated_disk_mib: 1366, context_window: 4096, backend: "native-llama.cpp-cpu",
+            supported: true, unsupported_reason: null,
+            recommendation_reason: "Small reviewed model with the fastest safe first answer on this device." },
+          { id: "balanced", model_id: "Qwen2.5-1.5B-Instruct-Q4_K_M", alias: "rynmesh-qwen2.5-1.5b-q4",
+            version: "not-published", download_mib: 1100, estimated_memory_mib: 2300,
+            estimated_disk_mib: 2584, context_window: 4096, backend: "native-llama.cpp-cpu",
+            supported: false, unsupported_reason: "This profile is not published yet.",
+            recommendation_reason: "Larger profile awaiting review." },
+          { id: "quality", model_id: "Qwen2.5-3B-Instruct-Q4_K_M", alias: "rynmesh-qwen2.5-3b-q4",
+            version: "not-published", download_mib: 2200, estimated_memory_mib: 4200,
+            estimated_disk_mib: 4784, context_window: 4096, backend: "native-llama.cpp-cpu",
+            supported: false, unsupported_reason: "This profile is not published yet.",
+            recommendation_reason: "Larger profile awaiting review." },
+        ],
+        warnings: ["Fixture device report"],
+      };
+    },
+    async getLocalAIReadiness() {
+      await delay();
+      return { version: "ryn.local-ai-readiness.v1", configured: localAiReady, ready: localAiReady,
+        state: localAiReady ? "ready" : "not_configured", model_alias: localAiReady ? "rynmesh-qwen2.5-0.5b-q4" : null,
+        runtime: localAiReady ? "native_llama_cpp" : undefined, loopback_only: localAiReady,
+        last_setup_state: localAiJob.state, safe_error: null };
+    },
+    async testLocalAI() {
+      await delay();
+      return { ok: true, answer: "Ryn is running privately on this device.",
+        model_alias: "rynmesh-qwen2.5-0.5b-q4", duration_ms: 84 };
     },
     async runLLMServiceAction(action) {
       await delay();

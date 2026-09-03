@@ -104,6 +104,7 @@ export interface LLMProviderStatus {
 }
 
 export interface LLMSetupJob {
+  version?: "ryn.local-ai-install.v2";
   job_id?: string;
   state: "idle" | "queued" | "running" | "cancelling" | "cancelled" | "failed" | "succeeded";
   stage: string;
@@ -111,8 +112,63 @@ export interface LLMSetupJob {
   message?: string;
   error_code?: string;
   retryable?: boolean;
+  resumable?: boolean;
+  cancelable?: boolean;
+  bytes_done?: number;
+  bytes_total?: number;
+  selected_profile?: string | null;
+  attempt?: number;
+  safe_error?: string | null;
+  started_at?: string;
+  updated_at?: string;
   configured?: boolean;
   publication_enabled?: boolean;
+}
+
+export interface LocalAIProfile {
+  id: "light" | "balanced" | "quality";
+  model_id: string;
+  alias: string;
+  version: string;
+  download_mib: number;
+  estimated_memory_mib: number;
+  estimated_disk_mib: number;
+  context_window: number;
+  backend: string;
+  supported: boolean;
+  unsupported_reason: string | null;
+  recommendation_reason: string;
+}
+
+export interface LocalAIRecommendations {
+  version: "ryn.local-ai-hardware.v1";
+  platform: string;
+  memory_available_mib: number;
+  disk_available_mib: number;
+  accelerators: Array<{ kind: string; name?: string; memory_mib: number }>;
+  runtime_support: { managed: boolean; ollama: boolean; docker_preview: boolean };
+  recommended_profile: LocalAIProfile["id"] | null;
+  profiles: LocalAIProfile[];
+  warnings: string[];
+}
+
+export interface LocalAIReadiness {
+  version: "ryn.local-ai-readiness.v1";
+  configured: boolean;
+  ready: boolean;
+  state: "not_configured" | "ready" | "unavailable";
+  model_alias: string | null;
+  runtime?: string;
+  loopback_only?: boolean;
+  last_setup_state: string;
+  safe_error: string | null;
+}
+
+export interface LocalAISetupRequest {
+  profile: LocalAIProfile["id"];
+  accept_license: boolean;
+  package_id?: string;
+  port?: number;
 }
 
 export interface LLMSetupRequest {
@@ -147,9 +203,13 @@ export interface NodeClient {
   publishLLMService(req?: { network_id?: string; benchmark?: boolean }): Promise<Record<string, unknown>>;
   pauseLLMService(): Promise<LLMProviderStatus>;
   setupLLMService(req: LLMSetupRequest): Promise<Record<string, unknown>>;
-  startLLMSetup(req: LLMSetupRequest): Promise<LLMSetupJob>;
+  startLLMSetup(req: LLMSetupRequest | LocalAISetupRequest): Promise<LLMSetupJob>;
   getLLMSetupStatus(): Promise<LLMSetupJob>;
   cancelLLMSetup(jobId: string): Promise<LLMSetupJob>;
+  retryLLMSetup(jobId: string): Promise<LLMSetupJob>;
+  getLocalAIRecommendations(): Promise<LocalAIRecommendations>;
+  getLocalAIReadiness(): Promise<LocalAIReadiness>;
+  testLocalAI(): Promise<{ ok: boolean; answer: string; model_alias: string; duration_ms: number }>;
   runLLMServiceAction(
     action: "start" | "stop" | "restart" | "update" | "self-test" | "uninstall",
     options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },

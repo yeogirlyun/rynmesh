@@ -215,7 +215,7 @@ export default function FirstSuccessFlow({
               <p>You opened a real item and saved a preference locally. Your next recommendations can now adapt.</p>
               <div className="first-success-actions">
                 <Button variant="primary" icon={Sparkles} onClick={() => { onClose(); navigate("/digest"); }}>See more For You</Button>
-                <Button onClick={() => { onClose(); navigate("/settings"); }}>Optional: set up private AI</Button>
+                <Button onClick={() => { onClose(); navigate("/local-ai"); }}>Optional: set up private AI</Button>
               </div>
             </div>
           ) : null}

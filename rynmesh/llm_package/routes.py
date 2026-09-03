@@ -31,6 +31,7 @@ from .lifecycle import (
     connect_local_api,
     import_gguf,
     install_managed,
+    install_native_managed,
 )
 from .lifecycle import (
     restart as restart_runtime,
@@ -712,9 +713,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     settings_path = home / "llm" / "provider-settings.json"
     consumer_settings_path = home / "llm" / "consumer-settings.json"
     setup_job_path = home / "llm" / "setup-job.json"
+    setup_retry_path = home / "llm" / "setup-retry.json"
     setup_job_lock = threading.Lock()
     setup_cancel_events: dict[str, threading.Event] = {}
     manager_path = ""
+    local_ai_v1_enabled = os.environ.get("RYNMESH_LOCAL_AI_V1_ENABLED", "1") != "0"
+
+    def require_local_ai_v1() -> None:
+        if not local_ai_v1_enabled:
+            raise HTTPException(status_code=404, detail="local_ai_setup_disabled")
 
     def write_setup_job(value: dict[str, Any]) -> dict[str, Any]:
         setup_job_path.parent.mkdir(parents=True, exist_ok=True)
@@ -737,11 +744,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     previous_setup_job = read_setup_job()
     if previous_setup_job.get("state") in {"queued", "running", "cancelling"}:
         previous_setup_job.update({
+            "version": previous_setup_job.get("version") or "ryn.local-ai-install.v2",
             "state": "failed",
             "stage": "recovery",
             "error_code": "setup_interrupted",
+            "safe_error": "setup_interrupted",
             "message": "Setup was interrupted when the node stopped. Review the model service and retry.",
             "retryable": True,
+            "cancelable": False,
         })
         write_setup_job(previous_setup_job)
 
@@ -825,6 +835,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         package_id = str(body.get("package_id") or "local-small")
         alias = str(body.get("alias") or "rynmesh-local")
         root = home / "llm"
+        if mode == "managed-native":
+            return install_native_managed(
+                profile=str(body.get("profile") or "light"),
+                package_id=package_id,
+                root=root,
+                port=int(body.get("port") or 18080),
+                progress=progress,
+                cancel_check=cancel_check,
+            )
         if mode == "managed":
             return install_managed(
                 package_id=package_id, root=root,
@@ -848,7 +867,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 root=root, allow_non_loopback=bool(body.get("allow_non_loopback", False)),
                 progress=progress, cancel_check=cancel_check,
             )
-        raise LifecycleError("setup mode must be managed, import-gguf, openai-compatible, or ollama")
+        raise LifecycleError(
+            "setup mode must be managed-native, managed, import-gguf, openai-compatible, or ollama"
+        )
 
     def activate_configuration(result: dict[str, Any]) -> dict[str, Any]:
         configured = str(result["manifest"])
@@ -1062,9 +1083,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
-        from .hardware import detect_hardware, recommend
+        from .hardware import detect_hardware, setup_recommendations
         report = detect_hardware(home)
-        return {"hardware": report.to_dict(), "recommendations": recommend(report)}
+        return setup_recommendations(report)
+
+    @app.get("/api/local/llm/recommendations")
+    def local_llm_recommendations() -> dict[str, Any]:
+        from .hardware import detect_hardware, setup_recommendations
+        require_local_ai_v1()
+        return setup_recommendations(detect_hardware(home))
 
     @app.get("/api/local/llm/services")
     def local_llm_services(network_id: str = "rynmesh-main") -> dict[str, Any]:
@@ -1128,9 +1155,48 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         with setup_job_lock:
             return dict(read_setup_job())
 
-    @app.post("/api/local/llm/setup/async")
-    async def local_llm_setup_async(request: Request) -> dict[str, Any]:
-        body = dict(await request.json())
+    def safe_setup_failure(exc: Exception) -> tuple[str, str]:
+        message = str(exc).lower()
+        if "disk" in message:
+            return "insufficient_disk", "Not enough free disk space. Free space and retry."
+        if "memory" in message or "ram" in message:
+            return "insufficient_memory", "Available memory is below the safe limit for this profile."
+        if "checksum" in message or "archive" in message:
+            return "verification_failed", "Downloaded model or runtime verification failed; unsafe data was not started."
+        if "platform" in message or "not published" in message:
+            return "profile_unsupported", "This reviewed local AI profile is not available on this device yet."
+        if "healthy" in message or "health" in message or "self-test" in message:
+            return "readiness_failed", "Local AI started but did not pass its private first-answer test."
+        if "interrupted" in message or "download" in message:
+            return "download_interrupted", "The download was interrupted. Retry to continue from verified partial data."
+        return "setup_failed", "Local AI setup did not complete. Retry or review advanced setup."
+
+    def write_setup_retry(value: dict[str, Any]) -> None:
+        setup_retry_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = setup_retry_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(setup_retry_path)
+
+    def enqueue_setup(body: dict[str, Any], *, attempt: int = 1) -> dict[str, Any]:
+        requested_profile = str(body.get("profile") or "")
+        if requested_profile:
+            if not bool(body.get("accept_license")):
+                raise HTTPException(status_code=400, detail="license_acceptance_required")
+            if requested_profile not in {"light", "balanced", "quality"}:
+                raise HTTPException(status_code=400, detail="local_ai_profile_invalid")
+            body = {
+                "mode": "managed-native",
+                "profile": requested_profile,
+                "package_id": str(body.get("package_id") or f"local-{requested_profile}"),
+                "port": int(body.get("port") or 18080),
+            }
+            write_setup_retry({
+                "version": "ryn.local-ai-install-request.v1",
+                "profile": requested_profile,
+                "package_id": body["package_id"],
+                "port": body["port"],
+                "accept_license": True,
+            })
         with setup_job_lock:
             current_job = read_setup_job()
             if current_job.get("state") in {"queued", "running", "cancelling"}:
@@ -1140,16 +1206,29 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             setup_cancel_events.clear()
             setup_cancel_events[job_id] = cancel_event
             job = {
+                "version": "ryn.local-ai-install.v2",
                 "job_id": job_id,
                 "state": "queued",
                 "stage": "queued",
                 "progress": 0,
+                "bytes_done": 0,
+                "bytes_total": 0,
+                "resumable": bool(requested_profile),
+                "cancelable": True,
+                "selected_profile": requested_profile or None,
+                "attempt": max(1, int(attempt)),
                 "message": "Local model setup is queued",
+                "safe_error": None,
+                "started_at": datetime.now(timezone.utc).isoformat(),
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             write_setup_job(job)
 
-        def report(stage: str, percent: int, message: str) -> None:
+        def report(
+            stage: str, percent: int, message: str,
+            bytes_done: int = 0, bytes_total: int = 0,
+        ) -> None:
             with setup_job_lock:
                 latest = read_setup_job()
                 if latest.get("job_id") != job_id:
@@ -1159,6 +1238,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "stage": stage,
                     "progress": percent,
                     "message": message,
+                    "bytes_done": max(0, int(bytes_done)),
+                    "bytes_total": max(0, int(bytes_total)),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
                 write_setup_job(latest)
@@ -1180,6 +1261,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 activation = activate_configuration(result)
                 with setup_job_lock:
                     write_setup_job({
+                        **job,
                         "job_id": job_id,
                         "state": "succeeded",
                         "stage": "completed",
@@ -1187,10 +1269,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         "message": "Local model configured and self-tested; publishing remains off",
                         "configured": activation["configured"],
                         "publication_enabled": False,
+                        "resumable": False,
+                        "cancelable": False,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
             except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
                 cancelled = cancel_event.is_set() or "cancelled" in str(exc).lower()
+                error_code, safe_message = safe_setup_failure(exc)
                 if previous_manifest_bytes is not None:
                     try:
                         previous_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -1200,14 +1285,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         pass
                 with setup_job_lock:
                     write_setup_job({
+                        **job,
                         "job_id": job_id,
                         "state": "cancelled" if cancelled else "failed",
                         "stage": "cancelled" if cancelled else "failed",
                         "progress": 0,
-                        "error_code": "setup_cancelled" if cancelled else "setup_failed",
+                        "error_code": "setup_cancelled" if cancelled else error_code,
+                        "safe_error": "setup_cancelled" if cancelled else error_code,
                         "message": "Setup cancelled; the previous private configuration was restored."
-                        if cancelled else (str(exc).strip() or "Local model setup failed"),
+                        if cancelled else safe_message,
                         "retryable": True,
+                        "cancelable": False,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
             finally:
@@ -1219,6 +1307,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             target=run_setup, name=f"rynmesh-llm-setup-{job_id[-8:]}", daemon=True,
         ).start()
         return job
+
+    @app.post("/api/local/llm/setup/async")
+    async def local_llm_setup_async(request: Request) -> dict[str, Any]:
+        body = dict(await request.json())
+        if body.get("profile"):
+            require_local_ai_v1()
+        return enqueue_setup(body)
+
+    @app.post("/api/local/llm/setup/{job_id}/retry")
+    def local_llm_setup_retry(job_id: str) -> dict[str, Any]:
+        require_local_ai_v1()
+        with setup_job_lock:
+            current = read_setup_job()
+        if current.get("job_id") != job_id:
+            raise HTTPException(status_code=404, detail="setup job not found")
+        if not current.get("retryable") or current.get("state") not in {"failed", "cancelled"}:
+            raise HTTPException(status_code=409, detail="setup job is not retryable")
+        try:
+            retry = dict(json.loads(setup_retry_path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError, TypeError) as exc:
+            raise HTTPException(status_code=409, detail="setup_retry_requires_new_confirmation") from exc
+        return enqueue_setup(retry, attempt=int(current.get("attempt") or 1) + 1)
 
     @app.post("/api/local/llm/setup/{job_id}/cancel")
     def local_llm_setup_cancel(job_id: str) -> dict[str, Any]:
@@ -1236,6 +1346,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "state": "cancelling",
                 "stage": "cancelling",
                 "message": "Cancelling setup safely; existing configuration will be preserved",
+                "cancelable": False,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
             return write_setup_job(current_job)
@@ -1314,6 +1425,66 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "network_id": str(settings.get("network_id") or "rynmesh-main"),
                 "lifecycle": lifecycle,
                 "background": background}
+
+    @app.get("/api/local/llm/readiness")
+    def local_llm_readiness() -> dict[str, Any]:
+        require_local_ai_v1()
+        current = active_manager()
+        with setup_job_lock:
+            job = read_setup_job()
+        if current is None:
+            return {
+                "version": "ryn.local-ai-readiness.v1",
+                "configured": False,
+                "ready": False,
+                "state": "not_configured",
+                "model_alias": None,
+                "last_setup_state": job.get("state", "idle"),
+                "safe_error": job.get("safe_error"),
+            }
+        try:
+            health = current.adapter.health()
+        except Exception:  # noqa: BLE001
+            health = {"ok": False}
+        ready = bool(health.get("ok")) and job.get("state") in {"succeeded", "idle"}
+        return {
+            "version": "ryn.local-ai-readiness.v1",
+            "configured": True,
+            "ready": ready,
+            "state": "ready" if ready else "unavailable",
+            "model_alias": current.manifest.public_model_alias,
+            "runtime": current.manifest.runtime,
+            "loopback_only": current.manifest.base_url.startswith(("http://127.0.0.1", "http://localhost")),
+            "last_setup_state": job.get("state", "idle"),
+            "safe_error": None if ready else job.get("safe_error"),
+        }
+
+    @app.post("/api/local/llm/readiness/test")
+    async def local_llm_readiness_test() -> dict[str, Any]:
+        require_local_ai_v1()
+        current = active_manager()
+        if current is None:
+            raise HTTPException(status_code=409, detail="local_ai_not_configured")
+        try:
+            started = time.monotonic()
+            result = await asyncio.to_thread(
+                current.adapter.infer,
+                prompt="In one short sentence, confirm that Ryn local AI is ready.",
+                max_tokens=48,
+                task_id="local-readiness-test-" + uuid.uuid4().hex,
+                timeout_s=min(60.0, current.manifest.timeout_seconds),
+            )
+            answer = str(result.get("text") or "").strip()
+            if not answer:
+                raise AdapterError("empty first answer")
+            return {
+                "ok": True,
+                "answer": answer[:512],
+                "model_alias": current.manifest.public_model_alias,
+                "duration_ms": int((time.monotonic() - started) * 1000),
+            }
+        except (AdapterError, OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="local_ai_first_answer_failed") from exc
 
     @app.get("/api/local/task-balance")
     def local_task_balance() -> dict[str, Any]:
