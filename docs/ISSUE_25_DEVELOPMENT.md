@@ -113,3 +113,19 @@ The 2026-09-03 completion audit added two further deterministic safeguards:
    strictly newer sort key so Provider round-trips restore it reliably;
 4. a Provider whose context cannot fit a useful article excerpt now shows an
    actionable larger-context/remove message instead of only disabling Send.
+
+## Repeatable browser harness
+
+`scripts/issue25_browser_fixture.py` is a deliberately narrow acceptance-only
+HTTP Consumer. It exposes the local Reader, discovery, settings, fixture
+Provider, and async LLM-order endpoints needed by this flow. It never contacts
+a Registry, publisher, or Provider and stores temporary state outside the
+repository.
+
+The harness request ledger is privacy-preserving: it records endpoint paths,
+query-key names, body sizes/hashes, and synthetic-marker booleans, but never
+request or response bodies. `VITE_RYN_NODE_BASE_URL` points both the live
+`NodeClient` and `digestApi` at this isolated Consumer, so the browser exercises
+the production client boundary instead of the in-browser `client=fixture`
+shortcut. Reproduction commands and captured evidence live in
+`docs/evidence/issue-25/README.md`.
