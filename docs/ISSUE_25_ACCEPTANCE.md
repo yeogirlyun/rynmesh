@@ -37,10 +37,9 @@ Baseline: Issue #24 commit `ef817bc`
 
 | Evidence | Result |
 | --- | --- |
-| Focused Webapp | Included in full 59/59 pass |
-| Full Webapp | 12 files, 59 tests passed |
-| Python LLM-focused | 44 passed |
-| Existing reader/steering | 19 passed |
+| Focused Webapp | 5 files, 32 tests passed |
+| Full Webapp | 12 files, 63 tests passed |
+| Python LLM + reader focused | 63 passed |
 | TypeScript / build | Passed; 1,741 modules built |
 | Python lint | Passed |
 | Handoff leakage marker | Absent from URL/local/session storage |
@@ -50,14 +49,27 @@ Baseline: Issue #24 commit `ef817bc`
 | Provider URL after consume | `peer`, `service`, `network` only |
 | Remove action | Card count 1 -> 0 |
 | Provider storage failure | Bucket/draft preserved; switching released |
-| Full backend run | 516 passed, 3 skipped; 13 baseline Windows-only failures |
+| Full backend run | 521 passed, 3 skipped; 8 Windows platform/unrelated failures |
 
 ## Non-blocking environment notes
 
-The repository-wide Python run cannot be all-green on this Windows host because
-13 tests assert POSIX locale/file-mode/bash/pipe behavior. Every failure was
-reproduced on the untouched Issue #24 baseline. These tests do not exercise the
-Issue #25 implementation; the relevant backend and Webapp suites are green.
+The repository-wide Python run cannot be all-green on this Windows host. The
+current eight failures cover POSIX executable/file-mode behavior, unavailable
+WSL bash, one Windows file-lock race, and `select()` on a Windows subprocess
+pipe. These tests do not exercise the Issue #25 implementation; the relevant
+backend and Webapp suites are green. Ubuntu repository CI remains the supported
+platform gate for those exclusions.
+
+## 2026-09-03 completion audit
+
+- Added deterministic same-millisecond Provider round-trip coverage.
+- Added actionable too-small-context UI and component coverage.
+- Added expired handoff plus failed/empty reader extraction coverage.
+- Re-ran focused Webapp (32/32), full Webapp (63/63), TypeScript, production
+  build, focused Python (63/63), Ruff, and the complete Windows backend suite.
+- Historical browser observations remain documented, but their screenshot
+  files are not present in this branch. A fresh browser evidence package
+  requires the isolated Consumer/reader/provider fixture on port 8791.
 
 ## Release/merge note
 

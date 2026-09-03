@@ -1,8 +1,9 @@
 import { screen } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import type { DigestItem } from "../domain/digestClient";
 import { renderDigest } from "../test/digestScenario";
-import { makeDigest, makeDigestItem } from "../test/fixtures";
+import { ARTICLE_FIXTURE, makeDigest, makeDigestItem, TEST_API_BASE } from "../test/fixtures";
 import { consumeGroundedContextHandoff } from "../domain/groundedContextHandoff";
 
 async function openViewer(item: DigestItem) {
@@ -49,6 +50,28 @@ describe("DigestViewer formats", () => {
     expect(context?.itemId).toBe(item.item_id);
     expect(context?.blocks[0].text).toContain("article body");
     expect(consumeGroundedContextHandoff(id)).toBeNull();
+  });
+
+  it("keeps grounded asking disabled and explains failed extraction", async () => {
+    const failed = makeDigestItem({ item_id: "item-reader-failed", title: "Unreadable article" });
+    const { user } = renderDigest({
+      digest: makeDigest([failed]),
+      handlers: [http.get(`${TEST_API_BASE}/reader`, () => HttpResponse.json({ error: "unreadable" }, { status: 502 }))],
+    });
+    await user.click(await screen.findByRole("button", { name: failed.title }));
+    expect(await screen.findByText(/Grounded asking is unavailable because no readable article text was extracted/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask about this item" })).toBeDisabled();
+  });
+
+  it("keeps grounded asking disabled and explains empty extraction", async () => {
+    const empty = makeDigestItem({ item_id: "item-reader-empty", title: "Empty article" });
+    const { user } = renderDigest({
+      digest: makeDigest([empty]),
+      article: { ...ARTICLE_FIXTURE, blocks: [], word_count: 0 },
+    });
+    await user.click(await screen.findByRole("button", { name: empty.title }));
+    expect(await screen.findByText(/Grounded asking is unavailable because no readable article text was extracted/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask about this item" })).toBeDisabled();
   });
 
   it("opens an image item without fetching live media", async () => {

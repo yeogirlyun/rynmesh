@@ -26,10 +26,14 @@ Status: completed on Windows 11, 2026-09-02
 ### Product flow
 
 - Ask action appears after readable node extraction;
+- failed and empty reader extraction disable Ask and explain why;
 - opaque navigation contains no title/body/source marker;
 - grounding card appears before send and can be removed;
-- Provider/model switching hides other buckets and restores the original card;
+- Provider/model switching hides other buckets and restores the original card,
+  including when the initial and grounded conversations share a millisecond;
 - no Provider leaves the handoff unconsumed;
+- expired/already-used handoffs show the reopen-item instruction;
+- too-small context disables Send and explains the larger-context/remove choices;
 - Provider history storage rejection releases switching and preserves current
   Provider/history/draft;
 - request rejection restores the draft;
@@ -42,17 +46,15 @@ cd webapp && npm run lint
 PASS — TypeScript project check
 
 cd webapp && npm test -- --run
-PASS — 12 files, 59 tests
+PASS — 12 files, 63 tests
 
 cd webapp && npm run build
 PASS — 1,741 modules; production bundle emitted
 
 python -m pytest tests/test_llm_context_safety.py \
-  tests/test_llm_package.py tests/test_llm_hardening.py -q
-PASS — 44 tests
-
-python -m pytest tests/test_reader_and_steering.py -q
-PASS — 19 tests
+  tests/test_llm_package.py tests/test_llm_hardening.py \
+  tests/test_reader_and_steering.py -q
+PASS — 63 tests
 
 ruff check rynmesh/llm_package/context_safety.py \
   rynmesh/llm_package/routes.py tests/test_llm_context_safety.py
@@ -61,19 +63,21 @@ PASS
 
 ## Full backend regression run
 
-`python -m pytest -q` completed with **516 passed, 3 skipped, 13 failed**.
-All 13 failures are unchanged Windows-host baseline limitations, not Issue #25
-regressions:
+`python -m pytest tests -q` was re-run on 2026-09-03 with `PYTHONUTF8=1` and
+completed with **521 passed, 3 skipped, 8 failed**. All eight failures are
+Windows-host/platform limitations outside Issue #25:
 
-- 9 deployment-artifact tests depend on UTF-8 locale, POSIX executable bits,
-  or a working WSL `/bin/bash`;
+- 3 deployment-artifact tests depend on POSIX executable bits or a working WSL
+  `/bin/bash`;
 - 3 owner-only `0600` mode assertions are POSIX semantics not represented by
   Windows `st_mode`;
+- 1 Signal50 atomic replace/read concurrency test hit a documented Windows
+  file-lock race;
 - 1 MCP smoke test uses `select.select` on a Windows pipe.
 
-The same 9 deployment failures and the same 4 permission/pipe failures were
-reproduced read-only on baseline commit `ef817bc`. The Issue #25 backend-focused
-suite and all Webapp tests pass.
+The Issue #25 backend-focused suite and all Webapp tests pass. The platform
+failures do not execute the Issue #25 grounded-context implementation and need
+the repository's Ubuntu CI for supported-platform closure.
 
 ## Real-browser acceptance
 
@@ -99,3 +103,10 @@ Observed:
 
 Screenshots were captured in the acceptance session at the reader action,
 full-context card, and long-context truncation card.
+
+The 2026-09-03 independent audit found that those historical screenshots were
+not committed to this branch. A browser re-run reached the Webapp but could not
+recreate the reader flow because the isolated Consumer expected at
+`127.0.0.1:8791` was not running. This does not replace the recorded historical
+browser observations; it is an explicit evidence-artifact gap for reviewers who
+require a reproducible fresh browser package.

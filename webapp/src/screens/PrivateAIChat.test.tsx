@@ -286,6 +286,17 @@ describe("Private AI chat", () => {
   });
 
   it("shows deterministic pre-send truncation and keeps the grounded bucket provider-scoped", async () => {
+    const originalCreateConversation = conversationStore.createConversation;
+    const deterministicIds = ["conversation-a-initial", "conversation-z-grounded", "conversation-m-provider-b"];
+    let created = 0;
+    vi.spyOn(conversationStore, "createConversation").mockImplementation((input) => {
+      const conversation = originalCreateConversation(input);
+      conversation.id = deterministicIds[created] ?? `conversation-${created}`;
+      conversation.createdAt = "2026-09-02T00:00:00.000Z";
+      conversation.updatedAt = "2026-09-02T00:00:00.000Z";
+      created += 1;
+      return conversation;
+    });
     const longContext = groundedContext({
       blocks: [{ tag: "p", text: "中文😀e\u0301".repeat(500) }],
     });
@@ -310,6 +321,39 @@ describe("Private AI chat", () => {
     await user.click(screen.getByLabelText("Change Private AI provider"));
     await user.click(screen.getByRole("option", { name: /Provider Alpha package-a/ }));
     expect(await screen.findByRole("region", { name: "Article context" })).toHaveTextContent("Grounded article 25");
+  });
+
+  it("explains when grounded context is too large and disables sending", async () => {
+    const id = createGroundedContextHandoff(groundedContext());
+    const tinyProvider = service({
+      peer_id: "peer:provider-a",
+      packageId: "package-a",
+      node_name: "Provider Alpha",
+      service: { ...providerA.service, context_window: 256, max_output_tokens: 128 },
+    });
+    const { user } = renderChat({
+      services: [tinyProvider],
+      initialEntry: `/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a&grounding=${id}`,
+    });
+
+    expect(await screen.findByText(/Article context does not fit this model/)).toHaveTextContent(
+      "Choose a larger-context Provider or remove the article context.",
+    );
+    await user.type(screen.getByLabelText("Message Private AI"), "Question that must remain a draft");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
+  it("shows an actionable error for an expired article handoff", async () => {
+    const id = createGroundedContextHandoff(groundedContext(), { now: 0, ttlMs: 1 });
+    renderChat({
+      services: [providerA],
+      initialEntry: `/services/private-ai/chat?peer=peer%3Aprovider-a&service=package-a&grounding=${id}`,
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This article handoff expired or was already used. Reopen the item and choose Ask about this item again.",
+    );
+    expect(screen.queryByRole("region", { name: "Article context" })).not.toBeInTheDocument();
   });
 
   it("does not consume a handoff while no Provider is available", async () => {
