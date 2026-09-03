@@ -163,7 +163,7 @@ def _pid_path(root: Path, package_id: str) -> Path:
 
 
 def _read_record(path: Path) -> dict[str, Any] | None:
-    """The pidfile as `{"pid": int, "server": str}`, or None when unusable.
+    """The pidfile as `{"pid": int, "server": str, "api_key": str}`, or None.
 
     A bare-integer pidfile written before the server name was recorded cannot
     be attributed to any process, so it reads as stale rather than as
@@ -179,17 +179,23 @@ def _read_record(path: Path) -> dict[str, Any] | None:
         pid = int(value.get("pid"))
     except (TypeError, ValueError):
         return None
-    return {"pid": pid, "server": str(value.get("server") or "")}
+    return {"pid": pid, "server": str(value.get("server") or ""),
+            "api_key": str(value.get("api_key") or "")}
 
 
-def _write_record(root: Path, package_id: str, pid: int, server_name: str) -> None:
-    """Record which process, running which server, this node owns.
+def _write_record(root: Path, package_id: str, pid: int, server_name: str,
+                  api_key: str = "") -> None:
+    """Record which process, running which server, with which key, this node owns.
 
     The server basename is what makes a reused pid recognizable as *not* ours
     later, so a stale pidfile can never aim a signal at an unrelated process.
+    The key makes the record self-describing: an install that died between
+    `start()` and saving the manifest leaves a running server whose token
+    exists nowhere else, and a retry has to be able to recover it. The file is
+    already opened 0o600, so it is as private as the manifest.
     """
     path = _runtime_dir(root) / f"{package_id}.pid"
-    payload = json.dumps({"pid": int(pid), "server": server_name,
+    payload = json.dumps({"pid": int(pid), "server": server_name, "api_key": api_key,
                           "started": int(time.time())}, sort_keys=True)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -325,7 +331,14 @@ def start(manifest: LLMPackageManifest) -> None:
     # server against the same port, and fail with "exited during startup".
     record = _read_record(pid_path)
     if record is not None and _alive(record["pid"], record["server"]):
-        return  # Already running under this pidfile; never spawn a second server.
+        # Already running under this pidfile; never spawn a second server.
+        # A retry after an install that failed between `start()` and saving
+        # the manifest arrives here with no key, while the live server is
+        # still demanding the one it was given: take it from the record, or
+        # every later call would 401 until the app quits.
+        if not manifest.runtime_api_key and record["api_key"]:
+            manifest.runtime_api_key = record["api_key"]
+        return
     if record is not None and record["pid"] > 0:
         _forget(pid_path, record["pid"])  # Stale, or a reused pid that is not ours.
     if _endpoint_serves_alias(manifest):
@@ -343,7 +356,8 @@ def start(manifest: LLMPackageManifest) -> None:
     process = _spawn(server, command, root, manifest.package_id, port)
     _CHILDREN[process.pid] = process
     _PIDFILES[process.pid] = pid_path
-    _write_record(root, manifest.package_id, process.pid, server.name)
+    _write_record(root, manifest.package_id, process.pid, server.name,
+                  manifest.runtime_api_key)
     manifest.runtime_command = command
 
 

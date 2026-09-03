@@ -30,6 +30,7 @@ import rynmesh.llm_package.lifecycle as llm_lifecycle
 import rynmesh.llm_package.runtime_docker as llm_runtime_docker
 import rynmesh.llm_package.runtime_native as llm_runtime_native
 import rynmesh.llm_package.runtime_native_install as llm_runtime_install
+from rynmesh.llm_package.adapters import AdapterError
 from rynmesh.llm_package.lifecycle import LifecycleError
 from rynmesh.llm_package.manifest import LLMPackageManifest, fingerprint_file, load_manifest
 
@@ -56,6 +57,8 @@ def option(name, default=""):
 PORT = int(option("--port", "0"))
 ALIAS = option("--alias", "fake-alias")
 API_KEY = option("--api-key")
+# Lets a test drive an authenticated-but-failing self-test.
+EMPTY_COMPLETION = bool(os.environ.get("RYNMESH_FAKE_EMPTY_COMPLETION"))
 
 ENV_DUMP = os.environ.get("RYNMESH_FAKE_ENV_DUMP", "")
 if ENV_DUMP:
@@ -83,6 +86,9 @@ class Handler(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("content-length", "0")))
         if not self._authorized():
             self.send_error(401)
+            return
+        if EMPTY_COMPLETION:
+            self._send({"choices": []})
             return
         self._send({
             "choices": [{"message": {"content": "RYNMESH SELF TEST OK"}}],
@@ -575,6 +581,8 @@ def test_start_health_self_test_and_stop_run_a_real_child_process(tmp_path, monk
         assert runtime_state["status"] == "running"
         assert runtime_state["release"] == llm_runtime_install.RUNTIME_RELEASE
         assert str(server) not in json.dumps(runtime_state)
+        assert manifest.runtime_api_key not in json.dumps(runtime_state)
+        assert "api_key" not in json.dumps(runtime_state)
 
         pid_file = root / "runtime" / "native-one.pid"
         log_file = root / "runtime" / "native-one.log"
@@ -725,12 +733,89 @@ def test_the_spawned_server_requires_the_minted_bearer_token(tmp_path, monkeypat
             urllib.request.urlopen(request, timeout=10)
         assert refused.value.code == 401
 
-        # The key stays out of everything the owner or a peer can read.
+        # The key stays out of everything the owner or a peer can read; the
+        # 0600 pidfile is the one place besides the manifest that holds it.
         assert key not in json.dumps(llm_runtime_native.state(manifest))
+        assert "api_key" not in json.dumps(llm_runtime_native.state(manifest))
         assert key not in json.dumps(manifest.public_dict())
         assert key not in (root / "runtime" / "native-auth.log").read_text(encoding="utf-8")
+        pid_path = root / "runtime" / "native-auth.pid"
+        assert _record(pid_path)["api_key"] == key
+        assert stat.S_IMODE(pid_path.stat().st_mode) == 0o600
     finally:
         llm_runtime_native.stop(manifest)
+
+
+@posix_only
+def test_a_retry_recovers_the_key_from_the_still_running_server(tmp_path, monkeypatch):
+    """An install that died before saving the manifest must not strand the key.
+
+    The child is still running and still demanding the token it was given,
+    while the retry builds a fresh manifest that has none. Without recovering
+    it from the pidfile, `/health` (exempt from auth) would keep passing and
+    every self-test would 401 until the app quit.
+    """
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
+    monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(server))
+    port = _free_port()
+    model = _model_file(tmp_path)
+    interrupted = _manifest("native-retry", root=root, model=model, port=port)
+    try:
+        llm_runtime_native.start(interrupted)
+        key = interrupted.runtime_api_key
+        assert key
+
+        retry = _manifest("native-retry", root=root, model=model, port=port)
+        assert retry.runtime_api_key == ""
+        llm_runtime_native.start(retry)
+
+        assert retry.runtime_api_key == key  # recovered, not re-minted
+        assert retry.runtime_command == []  # nothing was spawned a second time
+        assert llm_lifecycle.wait_healthy(retry, timeout_s=20)["ok"] is True
+        assert llm_lifecycle.self_test(retry)["ok"] is True
+        assert key not in json.dumps(llm_runtime_native.state(retry))
+    finally:
+        llm_runtime_native.stop(interrupted)
+
+
+@posix_only
+def test_an_install_that_fails_after_start_stops_the_server_it_started(tmp_path, monkeypatch):
+    """A failed verification must not leave an orphan holding an unsaved key."""
+    root = tmp_path / "llm"
+    server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setenv("RYNMESH_FAKE_EMPTY_COMPLETION", "1")
+    payload = b"GGUF" + bytes(96)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fake_download(_url, destination, expected_sha256, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return expected_sha256
+
+    monkeypatch.setattr(llm_lifecycle, "_download", fake_download)
+    spawned: list[subprocess.Popen] = []
+    real_spawn = llm_runtime_native._spawn
+
+    def recording_spawn(*args, **kwargs):
+        process = real_spawn(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(llm_runtime_native, "_spawn", recording_spawn)
+
+    with pytest.raises((LifecycleError, AdapterError)):
+        llm_lifecycle.install_managed(
+            package_id="native-broken", root=root, port=_free_port(),
+            model_url="https://huggingface.co/example/example/resolve/main/example.gguf",
+            expected_sha256=digest, accept_risk=True, runtime="native",
+        )
+
+    assert len(spawned) == 1
+    assert spawned[0].poll() is not None  # stopped, not left holding the port
+    assert not (root / "runtime" / "native-broken.pid").exists()
+    assert not llm_lifecycle.manifest_path("native-broken", root).exists()
 
 
 @posix_only

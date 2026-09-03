@@ -93,6 +93,7 @@ def test_the_container_closes_the_same_two_llama_cpp_defaults_as_the_native_runt
     assert len(key) >= 40
     assert run_command[run_command.index("--api-key") + 1] == key
     assert run_command[run_command.index("--cors-origins") + 1] == llm_runtime_native.CORS_ORIGINS
+    assert run_command[run_command.index("-lv") + 1] == llm_runtime_native.LOG_VERBOSITY
     # Appended after the server's own capacity flags, not among the docker ones.
     assert run_command.index("--api-key") > run_command.index("-np")
     assert key not in json.dumps(manifest.public_dict())

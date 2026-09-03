@@ -25,7 +25,7 @@ from .manifest import LLMPackageManifest, fingerprint_file
 # The llama.cpp server flags are the same binary's either way, so the hardening
 # constants are defined once, next to the flag verification, in the native
 # backend, and imported here rather than copied.
-from .runtime_native import API_KEY_BYTES, CORS_ORIGINS
+from .runtime_native import API_KEY_BYTES, CORS_ORIGINS, LOG_VERBOSITY
 
 RUNTIME_ID = "docker_llama_cpp"
 
@@ -137,10 +137,12 @@ def _run_container(manifest: LLMPackageManifest) -> None:
         "-m", f"/models/{model.name}", "--host", "0.0.0.0", "--port", "8080",
         "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),
         "-np", str(manifest.max_concurrent),
-        # Same two dangerous llama.cpp defaults as the native backend: the
+        # Same dangerous llama.cpp defaults as the native backend: the
         # published port is loopback-only, but without these any page the
-        # owner visits could still drive the model through it.
+        # owner visits could still drive the model through it — and the
+        # server's own log stays at error level either way.
         "--api-key", manifest.runtime_api_key, "--cors-origins", CORS_ORIGINS,
+        "-lv", LOG_VERBOSITY,
     ]
     result = subprocess.run(command, capture_output=True, text=True, timeout=60)
     if result.returncode:

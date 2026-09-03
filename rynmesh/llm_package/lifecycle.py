@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import catalog, runtime_docker, runtime_native
-from .adapters import adapter_from_manifest
+from .adapters import AdapterError, adapter_from_manifest
 from .errors import LifecycleError
 from .hardware import HardwareReport, detect_hardware, recommend, usable_memory_mb
 from .manifest import (
@@ -87,6 +87,21 @@ def _progress(
         raise LifecycleError("setup cancelled")
     if callback:
         callback(stage, max(0, min(100, percent)), message)
+
+
+def _stop_after_failed_start(manifest: LLMPackageManifest) -> None:
+    """Best-effort stop of a server we started but never finished verifying.
+
+    An install that raises between `start()` and `save_manifest` (a health
+    timeout on a big model, a cancel, a failing self-test) would otherwise
+    leave the child running while its minted loopback key exists only in
+    memory. Nothing the stop itself can raise is worth replacing the real
+    failure with, so every error here is swallowed.
+    """
+    try:
+        _backend(manifest).stop(manifest)
+    except Exception:  # noqa: BLE001 - the original failure must reach the caller
+        pass
 
 
 def _validate_package_id(package_id: str) -> str:
@@ -290,11 +305,17 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     )
     _progress(progress, cancel_check, "start_runtime", 82, "Starting the local model runtime")
     _backend(manifest).start(manifest)
-    _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
-    wait_healthy(manifest)
-    _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
-    result = self_test(manifest)
-    save_manifest(manifest, manifest_path(package_id, base))
+    try:
+        _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
+        wait_healthy(manifest)
+        _progress(progress, cancel_check, "self_test", 96,
+                  "Running a real private inference self-test")
+        result = self_test(manifest)
+        save_manifest(manifest, manifest_path(package_id, base))
+    except (LifecycleError, AdapterError, OSError):
+        # Cancellation arrives through `_progress` as a LifecycleError too.
+        _stop_after_failed_start(manifest)
+        raise
     _progress(progress, cancel_check, "completed", 100, "Local model is ready")
     return {"manifest": str(manifest_path(package_id, base)), "hardware": report.to_dict(),
             "recommendation": selected, "self_test": result}
@@ -325,11 +346,17 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     path = manifest_path(package_id, base)
     _progress(progress, cancel_check, "start_runtime", 80, "Starting the read-only GGUF runtime")
     _backend(manifest).start(manifest)
-    _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
-    wait_healthy(manifest)
-    _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
-    result = self_test(manifest)
-    save_manifest(manifest, path)
+    try:
+        _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
+        wait_healthy(manifest)
+        _progress(progress, cancel_check, "self_test", 96,
+                  "Running a real private inference self-test")
+        result = self_test(manifest)
+        save_manifest(manifest, path)
+    except (LifecycleError, AdapterError, OSError):
+        # Cancellation arrives through `_progress` as a LifecycleError too.
+        _stop_after_failed_start(manifest)
+        raise
     _progress(progress, cancel_check, "completed", 100, "Imported model is ready")
     return {"manifest": str(path), "import": {k: v for k, v in details.items() if k != "path"},
             "self_test": result}
