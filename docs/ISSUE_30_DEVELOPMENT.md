@@ -82,7 +82,7 @@ replaces only the external model runtime; node discovery, Friend HMAC, encrypted
 task exchange, persistence, revocation, and inference admission all cross the
 real local HTTP boundaries.
 
-The harness proves create -> offline review -> Join -> both active ->
+The canonical harness proves create -> offline review -> Join -> both active ->
 friends-only Private AI complete -> online revoke -> next order denied before
 inference. It then creates a fresh relationship, stops the friend process,
 records `remote_unreachable`, restarts the same durable home in a new process,
@@ -102,12 +102,15 @@ point-in-time publication briefly reports `available=0`.
 
 1. Surface the current fail-closed outbound-proxy exclusion as a specific,
    actionable installed-app diagnostic; proxy support itself is a later design.
-2. Prove friends-only ACL and post-revoke denial on #23's complete and streaming
-   routes on the final integrated commit.
-3. Run installed-desktop deep-link/scan acceptance on each declared supported
+2. Run installed-desktop deep-link/scan acceptance on each declared supported
    release target and optional physical cross-host network hardening.
-4. Complete normal merge/security review, accessibility review, and exact-commit
+3. Complete normal merge/security review, accessibility review, and exact-commit
    backend/Webapp/Rust/package CI.
+
+The final integration branch additionally runs the same real two-node flow with
+`stream-v1`, verifies the exact stream protocol, then proves the next streaming
+order is denied before inference after revoke. That closes the former integration
+item without requiring remote Git.
 
 These are release/integration gates. They do not invalidate the completed local
 development acceptance or weaken the mandatory endpoint, secret, and revocation

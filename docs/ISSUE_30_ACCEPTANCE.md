@@ -19,9 +19,10 @@ friends-only Private AI complete, online revoke, offline stop/restart/retry
 convergence, and denial of the next order before inference. Sanitized evidence
 is in `docs/evidence/issue30-local-two-node-e2e.json`.
 
-Release is not yet accepted because installed desktop deep-link/scan evidence,
-final integrated #23 streaming ACL evidence, and exact-commit release CI/package
-evidence remain outstanding. Cross-host physical repetition, three-OS testing,
+Release is not yet accepted because installed desktop deep-link/scan evidence
+and exact-commit release CI/package evidence remain outstanding. The final
+integrated #23 streaming ACL is now locally proven by the two-process E2E evidence
+at `docs/evidence/issue30-integration-two-node-e2e.json`. Cross-host physical repetition, three-OS testing,
 and a separate maintainer sign-off were additions in earlier local documents,
 not explicit Issue requirements; they are now correctly classified as release
 hardening/governance rather than retroactive development blockers.
@@ -72,6 +73,13 @@ logs. The exact run stopped every child process and deleted its temporary homes.
 The final focused suite passed 49 tests, the expanded Friend/Transport/LLM suite
 passed 101 with one skip, and the full Webapp passed 51/51 plus lint and build.
 
+The final combined #23+#30 implementation commit
+`4bd2b8b56df6f69bd4aac2b995245b1205e98e0a` passed the schema-v2 two-node
+stream/revoke/restart harness three consecutive times. The final 8.204-second
+sanitized run records `rynmesh.llm.stream.v1`, `peer_http_direct`, post-revoke
+stream denial before inference, offline-restart denial, zero invite/link secrets,
+and complete child-process cleanup.
+
 ## Criteria status
 
 - [x] Friendship state is separate from identity trust roots.
@@ -91,7 +99,7 @@ passed 101 with one skip, and the full Webapp passed 51/51 plus lint and build.
 - [x] Changed endpoints require a second explicit review.
 - [x] Friends-only complete-v1 admission denies before capacity/inference on
   the canonical #30 implementation.
-- [ ] Release: friends-only stream-v1 route uses the same Friend ACL on the final stacked
+- [x] Local integration: friends-only stream-v1 route uses the same Friend ACL on the final stacked
   commit; complete-route HMAC cannot authenticate the stream route; post-revoke
   next-stream admission is denied before capacity/inference.
 - [x] Simulated two-app revocation delivery converges after offline/reconnect and
@@ -114,7 +122,7 @@ passed 101 with one skip, and the full Webapp passed 51/51 plus lint and build.
 
 ## Acceptance rule
 
-Unchecked items block the release decision, not the accepted local development
+Unchecked release items block the release decision, not the accepted local development
 decision. Release may change to **ACCEPTED** only after the integrated/installed
 items have exact-commit evidence and no invite/relationship secret appears in
 the evidence bundle.

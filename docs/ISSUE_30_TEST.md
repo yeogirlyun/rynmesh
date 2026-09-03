@@ -73,6 +73,17 @@ Friend/HTTP/Transport regression passed 49 tests; the expanded
 Friend/Transport/LLM regression passed 101 with one skip. The full Webapp passed
 51/51 tests, TypeScript lint, and production build. Ruff/`py_compile` passed.
 
+The final combined #23+#30 branch adds schema-v2 evidence at
+`docs/evidence/issue30-integration-two-node-e2e.json`. Two real node processes
+completed a friends-only `stream-v1` order over `peer_http_direct`, recorded the
+exact stream protocol, converged online revoke, and rejected the next streaming
+order before inference. The same run retained offline stop/restart/retry and
+complete-v1 denial coverage. Its source commit and harness hash are embedded in
+the sanitized JSON.
+The integrated stream profile was then repeated three consecutive times against
+the same clean implementation HEAD; all three passed, with the final run taking
+8.204 seconds.
+
 ## Evidence on 2026-09-02
 
 - Friend/Transport-focused integration run: 44 passed after outbound Join and
@@ -102,7 +113,6 @@ revocation, Transport, and LLM ACL tests passed.
 - actionable installed-app presentation of the V1 fail-closed proxy exclusion;
 - installed Tauri package deep-link/QR scan tests on declared supported targets;
 - full exact-commit backend/Webapp/Rust/package CI;
-- final integrated #23 stream-v1 Friend ACL and post-revoke denial;
 - optional physical cross-host repetition for release network hardening.
 
 ## Webapp slice matrix

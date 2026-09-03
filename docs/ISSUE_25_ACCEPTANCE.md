@@ -45,7 +45,7 @@ Baseline: Issue #24 commit `ef817bc`
 | Handoff leakage marker | Absent from URL/local/session storage |
 | Prompt injection fixture | One trusted closing marker; fake marker neutralized |
 | Normal browser fixture | 207/207 characters, full context |
-| Long browser fixture | 1,021/13,907 characters, 1/2 blocks |
+| Long browser fixture | pre-question 1,057/15,600 characters, 2/2 blocks; post-question 871/15,600, 2/2 blocks |
 | Provider URL after consume | `peer`, `service`, `network` only |
 | Remove action | Card count 1 -> 0 |
 | Provider storage failure | Bucket/draft preserved; switching released |

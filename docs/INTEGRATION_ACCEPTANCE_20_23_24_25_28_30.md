@@ -4,6 +4,8 @@ Date: 2026-09-03
 
 Branch: `codex/integration-issues-20-23-24-25-30`
 
+Validated implementation HEAD: `4bd2b8b56df6f69bd4aac2b995245b1205e98e0a`
+
 ## Decision
 
 Issues 30, 25, 24, and 23 are **accepted for local source-build development**.
@@ -40,7 +42,7 @@ for Issues 23 and 30. It was rechecked with the combined feature suite.
 `python scripts/llm_e2e.py local-run` starts an isolated Registry, adapter, Provider,
 and Consumer on dynamic loopback ports. On the combined branch it passed both profiles:
 
-- direct `stream-v1`: 3 delta events, first delta at 141 ms, terminal state at 907 ms;
+- direct `stream-v1`: 3 delta events, first delta at 141 ms, terminal state at 922 ms;
 - capability fallback: Provider advertised only `complete-v1`, effective mode was
   `complete-v1`, and no delta was emitted;
 - duplicate submission reused the same terminal task;
@@ -77,9 +79,14 @@ identities, ports, and a real local HTTP Registry. The exact combined code HEAD 
   keys were erased after convergence, and all child processes stopped.
 
 The canonical #30 harness was stable for 10 consecutive runs after waiting for the real
-Registry capacity refresh. On the integration branch, the Friend HMAC is additionally
-bound to the exact `/api/peer/llm/tasks/stream` route and body; focused tests verify that
-cross-route replay and post-revocation stream access are rejected before LLM dispatch.
+Registry capacity refresh. The final integration harness then ran an authorized
+`stream-v1` order over `peer_http_direct`, recorded `rynmesh.llm.stream.v1`, revoked the
+relationship, and proved the next streaming order was rejected before inference. The
+Friend HMAC is bound to the exact `/api/peer/llm/tasks/stream` route and body; focused
+tests also verify cross-route replay rejection.
+
+The integrated stream/revoke/restart harness passed three consecutive runs against the
+same clean implementation HEAD; the final sanitized run took 8.204 seconds.
 
 This proves source-build behavior on one host using its private-LAN interface. Installed
 desktop QR/deep-link dispatch remains release QA, not a failed local feature test.

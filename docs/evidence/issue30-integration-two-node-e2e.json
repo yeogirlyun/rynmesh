@@ -2,9 +2,9 @@
   "cleanup": {
     "all_child_processes_stopped": true
   },
-  "completed_at": "2026-09-03T02:36:50.555560+00:00",
+  "completed_at": "2026-09-03T06:01:40.693061+00:00",
   "decision": "development_acceptance_passed",
-  "duration_seconds": 37.922,
+  "duration_seconds": 8.204,
   "endpoint_dns_socket": {
     "node_a": {
       "address_class": "private-lan",
@@ -39,7 +39,7 @@
       "next_order_http_status": 502,
       "relationship": {
         "both_relationships_active": true,
-        "invite_ref": "sha256:8d7af9cdbedaf3af",
+        "invite_ref": "sha256:87bf07b24e6434b5",
         "offline_review_before_contact": true,
         "phase": "offline-revocation",
         "reviewed_endpoint_count": 1,
@@ -54,15 +54,16 @@
     },
     "online": {
       "next_order_denied_before_inference": true,
-      "next_order_http_status": 409,
-      "private_ai_complete": {
-        "output_sha256": "dd0efd1dbe8a128fe3ff305770d190bf188175c80ae942a84d670719c20dc9d3",
+      "next_order_http_status": 502,
+      "private_ai_stream": {
+        "output_sha256": "2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df",
         "status": "succeeded",
+        "stream_protocol": "rynmesh.llm.stream.v1",
         "transport": "peer_http_direct"
       },
       "relationship": {
         "both_relationships_active": true,
-        "invite_ref": "sha256:62ac631a7048fe78",
+        "invite_ref": "sha256:f2c6358685c7972f",
         "offline_review_before_contact": true,
         "phase": "online-revocation",
         "reviewed_endpoint_count": 1,
@@ -75,16 +76,16 @@
     }
   },
   "identities": {
-    "node_a": "sha256:d058fdc15f50f17e",
-    "node_b": "sha256:6b1e66a8a06defce"
+    "node_a": "sha256:04704fe123199c9a",
+    "node_b": "sha256:f2ece3b1e19def7f"
   },
   "limitations": [
     "Both node processes ran on one host over its private LAN interface.",
     "This proves source-build development acceptance, not installed desktop deep-link dispatch.",
-    "The canonical branch exercises complete-v1; stream-v1 remains an integration-branch check."
+    "The integrated branch exercises stream-v1 online and complete-v1 after reconnect."
   ],
   "release_acceptance": "not_claimed",
-  "schema": "rynmesh.issue30.local-two-node-e2e.v1",
+  "schema": "rynmesh.issue30.local-two-node-e2e.v2",
   "secret_scan": {
     "invite_link_occurrences": 0,
     "invite_secret_occurrences": 0,
@@ -101,13 +102,13 @@
     "secret_values_recorded": false
   },
   "source": {
-    "command": "python scripts/issue30_two_node_e2e.py --output docs/evidence/issue30-local-two-node-e2e.json",
+    "command": "python scripts/issue30_two_node_e2e.py --output docs/evidence/issue30-integration-two-node-e2e.json",
     "docker_used": false,
-    "git_base_commit": "9bee9336c9bbd0e61bd006ee0d48ff4fdf0d848f",
-    "harness_sha256": "sha256:ec887a8b830db2491f34010fa7ece448cebe3604858a42e3b7e41c8d44ee8f1e",
+    "git_base_commit": "4bd2b8b56df6f69bd4aac2b995245b1205e98e0a",
+    "harness_sha256": "sha256:364d96e684099af2ee1c2d7e35766c6f70a0138a9eb89d2e61dedbf7f1994d44",
     "harness_sources_clean": true
   },
-  "started_at": "2026-09-03T02:36:12.630275+00:00",
+  "started_at": "2026-09-03T06:01:32.499056+00:00",
   "topology": {
     "advertised_address": "<private-lan-ip>",
     "independent_homes": true,

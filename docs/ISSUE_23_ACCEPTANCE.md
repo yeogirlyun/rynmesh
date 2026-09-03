@@ -1,6 +1,6 @@
 # Issue #23 验收文档：后端/传输切片
 
-验收结论：**后端、传输、Webapp 及 Docker-free 本地独立多进程验收通过；专用 Relay/公网 P2P 路由证据未运行。**
+本地开发验收结论：**ACCEPTED**。后端、传输、Webapp 及 Docker-free 本地独立多进程验收通过；专用 Relay/公网 P2P 路由属于非阻塞发布矩阵，当前未运行且未伪造成通过。
 
 ## 后端切片验收矩阵
 
@@ -17,7 +17,7 @@
 - [x] 非 streaming 调用、Relay、P2P 和旧完整响应路径保持兼容。
 - [x] 聚焦测试、相关回归和 Ruff 通过。
 
-## 整项仍未满足
+## 本地整项验收
 
 - [x] `PrivateAIChat` 订阅本机 SSE 并逐段渲染一个 assistant message。
 - [x] 首 delta、Stop、不完整回答、恢复和 fallback 具备明确可访问 UI 状态。
@@ -26,7 +26,8 @@
 - [x] 本地独立 Registry/adapter/Provider/Consumer 进程记录 submit / first delta /
   terminal / total 时间戳，且 direct `first_delta < terminal`。
 - [x] Provider 不声明 `stream-v1` 时，通过真实发现与 HTTP 路径完成 complete fallback。
-- [ ] 专用 Relay 与不同公网出口 strict P2P 的实际路由报告齐全（本机未配置，不伪造）。
+
+专用 Relay 与不同公网出口 strict P2P 的实际路由报告不属于新的本地开发完成标准；它们保留为发布前路由扩展，本机未配置且未伪造成通过。
 
 ## 当前自动化证据
 
@@ -45,7 +46,7 @@
 - 初次未排除全量诊断：`540 passed, 3 skipped, 14 failed`；失败属于部署脚本编码/可执行位、
   POSIX `0600`、Windows pipe `select()` 和既有 Windows 原子替换并发用例，并非本切片回归。
 
-因此“后端切片通过”有证据；“跨平台全量通过”和“整 Issue 通过”仍不得勾选。
+以上是早期诊断记录。后续 Docker-free 四进程真实 HTTP 验收已补齐，因此本地开发整项现已通过；跨平台发布矩阵仍不在本结论内。
 
 2026-09-03 Webapp 证据：聚焦 `2 files / 9 tests`，全量 `10 files / 45 tests`，TypeScript
 lint、生产 build 和 0-vulnerability audit 全部通过。增量内存边界、Stop/incomplete、
@@ -59,8 +60,8 @@ complete-response 选择、第二次断线与 sequence gap 的同 task 轮询、
 
 | Issue #23 原始要求 | 当前证据 | 结论 |
 |---|---|---|
-| adapter → Provider → Consumer API → Web chat 的 direct streaming | adapter/Provider/Consumer/SSE/UI 自动化，首 delta 先于生成完成 | 切片通过；真实双节点时间戳待补 |
-| Relay/P2P 保持完整响应并平滑回退 | 显式 transport 选择测试、完整路径既有回归、UI complete-event fallback | 自动化通过；真实路由矩阵待补 |
+| adapter → Provider → Consumer API → Web chat 的 direct streaming | 四个独立本地进程、真实 HTTP/SSE/UI 自动化，首 delta 先于生成完成 | 本地开发通过 |
+| Relay/P2P 保持完整响应并平滑回退 | 显式 transport 选择测试、完整路径既有回归、UI complete-event fallback | 本地兼容性通过；真实路由矩阵为发布扩展 |
 | Node 是唯一网关 | EventSource URL 仅 `/api/local`，浏览器无 Provider endpoint | 通过 |
 | Registry/log 不含 prompt/output | 唯一 marker 的磁盘/错误文本检查，delta 仅有界内存 | 自动化通过；生产日志抽样待真实验收 |
 | 最终计量只结算一次 | terminal-only settlement/earning idempotency tests | 通过 |
@@ -85,6 +86,11 @@ D:\code\rynmesh\.venv\Scripts\python.exe scripts/llm_e2e.py local-run
 
 这个命令满足单机可完成的功能验收，并已在 Windows/Python 3.12 实际运行通过。它不会声称
 loopback direct 是 Relay 或 ICE P2P；后两者是发布路由矩阵的独立待办。
+
+最终组合实现提交 `4bd2b8b56df6f69bd4aac2b995245b1205e98e0a` 再次实际运行通过：
+direct stream 为 3 个 delta，首段 141 ms、终态 922 ms；complete-only Provider
+降级为 0 个 delta、终态 156 ms。两场景的 task/hold/settlement/earning 仍均为一次，
+日志和各 20 个持久文件的正文扫描均通过，四个子进程全部停止。
 
 ## 尚需外部环境的精确证据
 

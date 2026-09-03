@@ -25,15 +25,15 @@ from both in-process simulation and cross-host physical testing.
 | Two-node Join | Two independent `peer_http` processes, homes, identities and ports exchange over real TCP/HTTP and persist the active relationship | Local development proven |
 | Revocation | Local secret removed before delivery; signed notice; bounded offline error; retry/idempotence; DNS rechecked; process stop/restart convergence and next-order denial before inference | Local development proven |
 | Privacy export/erase | Export excludes bearer/relationship secrets. Erase remains local-authoritative if notice delivery fails and writes exact empty invite/friend/revocation/nonce/credential schemas. | Locally proven |
-| Friends-only Private AI | Complete-v1 route and Provider admission denial are covered. HMAC primitive binds the stream path separately from complete. | Stream-v1 route proof pending on final #23+#30 commit |
+| Friends-only Private AI | Complete-v1 and stream-v1 use the scoped Friend HMAC. The final #23+#30 branch passed a real two-node streaming order and rejected the next streaming order before inference after revoke. | Local development proven |
 | CI/release | Focused backend and full Web evidence exists; historical Rust metadata resolved. Current Windows full backend has documented platform failures. | Exact-commit supported-target CI/package matrix pending |
 | Protocol governance | Eight product/security decisions are written down. | Normal merge review; not a functional blocker |
 
 The GitHub Issue remains open and requires invited-friend Private AI use plus
 safe invitation/revocation UX. The implementation materially covers that scope,
-and the local source-build development bar is now proven. Installed-app,
-streaming-integration, and exact-commit package evidence remain separate release
-gates.
+and the local source-build development bar is now proven. Installed-app and
+exact-commit package evidence remain separate release gates; streaming integration
+is now locally proven.
 
 Earlier versions of these documents elevated two physical machines, mandatory
 Windows/Linux/macOS execution, and a standalone maintainer approval artifact to
@@ -85,6 +85,13 @@ model call counter changes, reviewed address-to-socket correlation, empty
 relationship-key sets after convergence, zero raw invite/link occurrences,
 child-process cleanup, and temporary-home deletion. A real refused socket also
 exposed and drove the `FrontedHttpsTransport` error-normalization regression fix.
+
+On the final combined branch, `docs/evidence/issue30-integration-two-node-e2e.json`
+records schema v2 against exact code commit `4bd2b8b56df6f69bd4aac2b995245b1205e98e0a`.
+It proves an authorized `stream-v1` order used `rynmesh.llm.stream.v1` over
+`peer_http_direct`, online revoke converged, and the next streaming order was
+rejected before the deterministic model call count changed. The offline restart
+path separately retained complete-v1 coverage.
 
 ## Remaining release/governance evidence
 
