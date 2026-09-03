@@ -261,4 +261,79 @@ describe("Services local LLM flow", () => {
     expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
     expect(submit).not.toHaveBeenCalled();
   });
+
+  it("labels the managed setup option as a bundled-runtime local model, not Docker", async () => {
+    renderServices();
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Managed local model (bundled runtime)" })).toBeInTheDocument();
+    expect(screen.queryByText(/Optional managed Docker model/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Docker Desktop\/Engine must already be installed and running/)).not.toBeInTheDocument();
+  });
+
+  it("shows the bundled runtime helper text and profile select for managed setup", async () => {
+    const { user } = renderServices();
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
+
+    expect(await screen.findByText(
+      "Downloads a verified model and runs it with the bundled llama.cpp runtime on this device. Docker is only used on server nodes that choose it.",
+    )).toBeInTheDocument();
+    expect(screen.getByLabelText("Model profile")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Balanced.*recommended/ })).toBeInTheDocument();
+  });
+
+  it("shows whether the bundled runtime is already available", async () => {
+    renderServices();
+
+    expect(await screen.findByText("Bundled runtime: available")).toBeInTheDocument();
+  });
+
+  it("posts the selected profile in the managed setup body", async () => {
+    const { client, user } = renderServices();
+    const setup = vi.spyOn(client, "startLLMSetup");
+
+    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
+    await user.selectOptions(screen.getByLabelText("Model profile"), "balanced");
+    await user.click(screen.getByRole("checkbox", { name: /prepares a local runtime/i }));
+    await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
+
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "managed",
+      profile: "balanced",
+    })));
+  });
+
+  it.each([
+    {
+      raw: "no local inference runtime is available: nothing resolvable",
+      mapped: "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.",
+    },
+    {
+      raw: "runtime archive checksum mismatch",
+      mapped: "A download failed verification and was discarded. Retry to download it again.",
+    },
+    {
+      raw: "model checksum mismatch; the download was quarantined and will restart",
+      mapped: "A download failed verification and was discarded. Retry to download it again.",
+    },
+    {
+      raw: "llama-server exited during startup (see the runtime log)",
+      mapped: "The local model runtime stopped while starting. Try a smaller model profile or check the runtime log from Settings.",
+    },
+    {
+      raw: "download exceeded the pinned size",
+      mapped: "The download did not match the expected size and was discarded. Retry.",
+    },
+  ])("maps the native runtime error '$raw'", async ({ raw, mapped }) => {
+    renderServices({
+      setupStatuses: [
+        { job_id: "setup_native_error", state: "failed", stage: "download_model", progress: 40, message: raw, retryable: true },
+      ],
+    });
+
+    expect(await screen.findByText(mapped)).toBeInTheDocument();
+  });
 });

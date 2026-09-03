@@ -24,8 +24,9 @@
 
 All modes start from `rynmesh-llm`; users do not write Python or provider-specific
 commands. Existing-API modes require a local model server. Managed and GGUF modes
-are optional provider tooling and require Docker Desktop/Engine to be installed
-and running; they are not part of the dependency-free desktop node.
+use the bundled or downloaded native `llama-server` runtime by default (no Docker
+required; see "Bundled native runtime" below) and remain optional provider
+tooling that a desktop user never has to enable to use the rest of the node.
 
 Inspect hardware and conservative recommendations:
 
@@ -281,7 +282,9 @@ Cleanup never deletes a host GGUF mounted read-only by the real profile.
 
 ## Troubleshooting
 
-- `Docker ... engine is not running`: start Docker Desktop/Engine, then rerun.
+- Docker runtime (opt-in): `Docker ... engine is not running` — start Docker
+  Desktop/Engine, then rerun. Only applies when `--runtime docker` was chosen;
+  the default native runtime never needs Docker.
 - `checksum mismatch`: the partial file is deleted and installation stops.
   Do not bypass it; retry only after validating the source.
 - `non-loopback local API blocked`: use loopback. Use the override only for an

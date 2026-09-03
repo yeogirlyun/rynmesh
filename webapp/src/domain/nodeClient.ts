@@ -125,6 +125,32 @@ export interface LLMSetupRequest {
   api_key_env?: string;
   allow_non_loopback?: boolean;
   accept_risk?: boolean;
+  runtime?: "auto" | "native" | "docker";
+  profile?: "auto" | "light" | "balanced" | "quality";
+}
+
+export interface LLMProfileRecommendation {
+  profile: "light" | "balanced" | "quality";
+  can_run: boolean;
+  reason?: string;
+  model_alias?: string;
+  display_name?: string;
+  parameter_millions?: number;
+  quantization?: string;
+  estimated_memory_mb?: number;
+  estimated_disk_mb?: number;
+  context_window?: number;
+  max_concurrent?: number;
+  recommended?: boolean;
+}
+
+export interface LLMHardwareReport {
+  hardware: {
+    native_runtime_available?: boolean;
+    native_runtime_present?: boolean;
+    [key: string]: unknown;
+  };
+  recommendations: LLMProfileRecommendation[];
 }
 
 export interface NodeClient {
@@ -149,6 +175,7 @@ export interface NodeClient {
   startLLMSetup(req: LLMSetupRequest): Promise<LLMSetupJob>;
   getLLMSetupStatus(): Promise<LLMSetupJob>;
   cancelLLMSetup(jobId: string): Promise<LLMSetupJob>;
+  getLLMHardware(): Promise<LLMHardwareReport>;
   runLLMServiceAction(
     action: "start" | "stop" | "restart" | "update" | "self-test" | "uninstall",
     options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },

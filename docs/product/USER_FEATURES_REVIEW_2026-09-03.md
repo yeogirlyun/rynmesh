@@ -156,6 +156,7 @@ System/infra work exists to make those features work seamlessly and robustly.
 - 复用已运行的 Ollama、导入 GGUF 永不删除、删除受管模型高风险确认：同意。
 - 完成页的下一步除了“问一个问题”，加上**“把这个 AI 分享给一位朋友”**——
   这是本地 AI 唯一的独有价值，也把用户导向配对。
+- #34 delivered: native runtime + profiles + resumable download; the wizard can now target `/api/local/llm/setup/async` with `{mode: "managed", profile}`.
 
 ### 4.5 “我的内容”统一工作台（P1）
 

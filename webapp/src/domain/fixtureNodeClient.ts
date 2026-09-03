@@ -1093,6 +1093,26 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { job_id: jobId, state: "cancelled", stage: "cancelled", progress: 0 };
     },
+    async getLLMHardware() {
+      await delay();
+      return {
+        hardware: { native_runtime_available: true, native_runtime_present: true },
+        recommendations: [
+          {
+            profile: "light", can_run: true, display_name: "Light",
+            estimated_memory_mb: 2048, estimated_disk_mb: 3200, recommended: false,
+          },
+          {
+            profile: "balanced", can_run: true, display_name: "Balanced",
+            estimated_memory_mb: 4096, estimated_disk_mb: 6400, recommended: true,
+          },
+          {
+            profile: "quality", can_run: true, display_name: "Quality",
+            estimated_memory_mb: 8192, estimated_disk_mb: 12800, recommended: false,
+          },
+        ],
+      };
+    },
     async runLLMServiceAction(action) {
       await delay();
       return { ok: true, action };
