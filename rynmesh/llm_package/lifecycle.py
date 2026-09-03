@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
-import shutil
-import subprocess
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from . import runtime_docker
 from .adapters import adapter_from_manifest
+from .errors import LifecycleError
 from .hardware import HardwareReport, detect_hardware, recommend
 from .manifest import (
     LLMPackageManifest,
@@ -23,10 +22,6 @@ from .manifest import (
     save_manifest,
 )
 
-DEFAULT_IMAGE = (
-    "ghcr.io/ggml-org/llama.cpp:server@"
-    "sha256:db8e923e6edc9241ad788979af79543a1e1ba55dbb7d41e62490ef0d0ad3c8e7"
-)
 DEFAULT_MODEL_REVISION = "872f8a96064a1242ac3a3359cad77c3042548405"
 DEFAULT_MODEL_SHA256 = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
 DEFAULT_MODEL_URL = (
@@ -36,9 +31,15 @@ DEFAULT_MODEL_URL = (
 )
 GGUF_MAGIC = b"GGUF"
 
+RUNTIME_DOCKER = "docker_llama_cpp"
+RUNTIME_EXTERNAL = "external"
 
-class LifecycleError(RuntimeError):
-    pass
+
+def _backend(manifest: LLMPackageManifest):
+    """Return the runtime backend module for `manifest.runtime`."""
+    if manifest.runtime == RUNTIME_DOCKER:
+        return runtime_docker
+    raise LifecycleError(f"unsupported runtime: {manifest.runtime}")
 
 
 ProgressCallback = Callable[[str, int, str], None]
@@ -145,112 +146,6 @@ def _download(
     return actual
 
 
-def _docker_pull(
-    image: str,
-    *,
-    progress: ProgressCallback | None = None,
-    cancel_check: CancelCheck | None = None,
-    timeout_s: float = 600,
-) -> None:
-    docker = _docker()
-    process = subprocess.Popen(
-        [docker, "pull", image],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    deadline = time.monotonic() + timeout_s
-    try:
-        while process.poll() is None:
-            if cancel_check and cancel_check():
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                raise LifecycleError("setup cancelled")
-            if time.monotonic() >= deadline:
-                process.terminate()
-                raise LifecycleError("downloading the llama.cpp runtime timed out")
-            if progress:
-                progress("pull_runtime", 72, "Preparing the local inference runtime")
-            time.sleep(0.25)
-    finally:
-        if process.poll() is None:
-            process.kill()
-    if process.returncode:
-        raise LifecycleError("unable to download the llama.cpp runtime image")
-
-
-def _docker() -> str:
-    executable = shutil.which("docker")
-    if not executable:
-        raise LifecycleError("Docker is not installed; connect an existing local API or install Docker first")
-    try:
-        subprocess.run([executable, "info", "--format", "{{.ServerVersion}}"], check=True,
-                       capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise LifecycleError("Docker is installed but its engine is not running") from exc
-    return executable
-
-
-def _container_name(package_id: str) -> str:
-    return "rynmesh-llm-" + re.sub(r"[^a-z0-9_.-]", "-", package_id.lower())
-
-
-def _pinned_runtime_image(manifest: LLMPackageManifest | None = None) -> str:
-    image = str((manifest.install_source if manifest else {}).get("runtime_image") or DEFAULT_IMAGE)
-    if image == "ghcr.io/ggml-org/llama.cpp:server":
-        # Migrate manifests created by the pre-pinning preview to the reviewed
-        # digest without ever pulling or running the mutable legacy tag.
-        return DEFAULT_IMAGE
-    if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image):
-        raise LifecycleError("managed runtime image must be pinned by SHA-256 digest")
-    return image
-
-
-def _docker_state(package_id: str) -> dict[str, Any]:
-    docker = shutil.which("docker")
-    if not docker:
-        return {"installed": False, "running": False, "status": "docker unavailable"}
-    result = subprocess.run(
-        [docker, "inspect", "--format", "{{json .State}}", _container_name(package_id)],
-        capture_output=True, text=True, timeout=15,
-    )
-    if result.returncode:
-        return {"installed": False, "running": False, "status": "not created"}
-    try:
-        state = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        state = {}
-    return {"installed": True, "running": bool(state.get("Running")),
-            "status": str(state.get("Status") or "unknown"), "exit_code": state.get("ExitCode")}
-
-
-def _run_container(manifest: LLMPackageManifest) -> None:
-    docker = _docker()
-    model = Path(manifest.model_path).resolve()
-    if not model.is_file():
-        raise LifecycleError("configured model file is missing")
-    if manifest.checksum and fingerprint_file(model) != manifest.checksum:
-        raise LifecycleError("configured model checksum no longer matches; refusing to start")
-    name = _container_name(manifest.package_id)
-    subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=30)
-    port = int(urlparse(manifest.base_url).port or 8080)
-    runtime_image = _pinned_runtime_image(manifest)
-    command = [
-        docker, "run", "-d", "--name", name, "--read-only", "--tmpfs", "/tmp:size=128m",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "256",
-        "-p", f"127.0.0.1:{port}:8080", "-v", f"{model.parent}:/models:ro", runtime_image,
-        "-m", f"/models/{model.name}", "--host", "0.0.0.0", "--port", "8080",
-        "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),
-        "-np", str(manifest.max_concurrent),
-    ]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60)
-    if result.returncode:
-        raise LifecycleError("llama.cpp container failed to start (inspect Docker logs for details)")
-
-
 def wait_healthy(manifest: LLMPackageManifest, *, timeout_s: float = 120) -> dict[str, Any]:
     adapter = adapter_from_manifest(manifest)
     deadline = time.monotonic() + timeout_s
@@ -292,7 +187,9 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
     if not choices[0].get("can_run") and not accept_risk:
         raise LifecycleError(str(choices[0].get("reason")))
     _progress(progress, cancel_check, "runtime_check", 10, "Checking Docker runtime")
-    _docker()
+    ok, reason = runtime_docker.available()
+    if not ok:
+        raise LifecycleError(reason)
     _progress(progress, cancel_check, "checksum", 12, "Verifying model source metadata")
     digest = expected_sha256.lower()
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -309,23 +206,23 @@ def install_managed(*, package_id: str = "local-small", root: str | Path | None 
         "context_window": 2048, "max_concurrent": 1, "estimated_memory_mb": 1024,
     }
     _progress(progress, cancel_check, "pull_runtime", 65, "Preparing the local inference runtime")
-    _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
+    runtime_docker.prepare(progress=progress, cancel_check=cancel_check)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="managed", public_model_alias="rynmesh-qwen2.5-0.5b-q4",
-        adapter="openai_compatible", runtime="docker_llama_cpp", model="rynmesh-qwen2.5-0.5b-q4",
+        adapter="openai_compatible", runtime=RUNTIME_DOCKER, model="rynmesh-qwen2.5-0.5b-q4",
         model_path=str(model_path), model_owned=True, base_url=f"http://127.0.0.1:{port}",
         checksum="sha256:" + digest, model_fingerprint="sha256:" + digest,
         context_window=int(selected["context_window"]), max_output_tokens=256,
         max_concurrent=int(selected["max_concurrent"]),
         hardware_requirements={"estimated_memory_mb": int(selected["estimated_memory_mb"])},
-        install_source={"model_url": model_url, "runtime_image": DEFAULT_IMAGE},
+        install_source={"model_url": model_url, **runtime_docker.install_source(None)},
         license_notice="Qwen2.5 0.5B and llama.cpp are Apache-2.0; review their notices before use.",
         license_id="Apache-2.0",
         lifecycle={"start": "rynmesh-llm start", "stop": "rynmesh-llm stop",
                    "restart": "rynmesh-llm restart", "status": "rynmesh-llm status"},
     )
     _progress(progress, cancel_check, "start_runtime", 82, "Starting the local model runtime")
-    _run_container(manifest)
+    _backend(manifest).start(manifest)
     _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
     wait_healthy(manifest)
     _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
@@ -344,20 +241,22 @@ def import_gguf(*, source: str | Path, package_id: str, alias: str,
     _progress(progress, cancel_check, "validate_model", 10, "Validating the GGUF file in place")
     details = validate_gguf(source, allow_risk=accept_risk)
     _progress(progress, cancel_check, "runtime_check", 25, "Checking Docker runtime")
-    _docker()
+    ok, reason = runtime_docker.available()
+    if not ok:
+        raise LifecycleError(reason)
     _progress(progress, cancel_check, "pull_runtime", 40, "Preparing the local inference runtime")
-    _docker_pull(DEFAULT_IMAGE, progress=progress, cancel_check=cancel_check)
+    runtime_docker.prepare(progress=progress, cancel_check=cancel_check)
     manifest = LLMPackageManifest(
         package_id=package_id, mode="import_gguf", public_model_alias=alias,
-        adapter="openai_compatible", runtime="docker_llama_cpp", model=alias,
+        adapter="openai_compatible", runtime=RUNTIME_DOCKER, model=alias,
         model_path=details["path"], model_owned=False, base_url=f"http://127.0.0.1:{port}",
         checksum=details["fingerprint"], model_fingerprint=details["fingerprint"],
         hardware_requirements={"estimated_memory_mb": details["estimated_memory_mb"]},
-        install_source={"kind": "user_owned_read_only_gguf", "runtime_image": DEFAULT_IMAGE},
+        install_source={"kind": "user_owned_read_only_gguf", **runtime_docker.install_source(None)},
     )
     path = manifest_path(package_id, root)
     _progress(progress, cancel_check, "start_runtime", 80, "Starting the read-only GGUF runtime")
-    _run_container(manifest)
+    _backend(manifest).start(manifest)
     _progress(progress, cancel_check, "health_check", 90, "Waiting for the model health check")
     wait_healthy(manifest)
     _progress(progress, cancel_check, "self_test", 96, "Running a real private inference self-test")
@@ -381,7 +280,7 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
     _progress(progress, cancel_check, "connect", 20, "Checking the local model API")
     manifest = LLMPackageManifest(
         package_id=package_id, mode="ollama" if adapter == "ollama" else "openai_compatible",
-        public_model_alias=alias, adapter=adapter, runtime="external", base_url=base_url,
+        public_model_alias=alias, adapter=adapter, runtime=RUNTIME_EXTERNAL, base_url=base_url,
         api_key_env=api_key_env, model=model, allow_non_loopback=allow_non_loopback,
         install_source={"kind": "existing_local_service"},
     )
@@ -405,19 +304,18 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
 
 def start(path: str | Path) -> dict[str, Any]:
     manifest = load_manifest(path)
-    if manifest.runtime == "external":
+    if manifest.runtime == RUNTIME_EXTERNAL:
         return {"managed": False, "health": adapter_from_manifest(manifest).health()}
-    _run_container(manifest)
+    _backend(manifest).start(manifest)
     return {"managed": True, "health": wait_healthy(manifest)}
 
 
 def stop(path: str | Path) -> dict[str, Any]:
     manifest = load_manifest(path)
-    if manifest.runtime == "external":
+    if manifest.runtime == RUNTIME_EXTERNAL:
         return {"managed": False, "stopped": False, "message": "external service is owner-managed"}
-    result = subprocess.run([_docker(), "stop", _container_name(manifest.package_id)],
-                            capture_output=True, text=True, timeout=60)
-    return {"managed": True, "stopped": result.returncode == 0}
+    stopped = _backend(manifest).stop(manifest)
+    return {"managed": True, "stopped": stopped}
 
 
 def restart(path: str | Path) -> dict[str, Any]:
@@ -428,10 +326,10 @@ def restart(path: str | Path) -> dict[str, Any]:
 def update(path: str | Path) -> dict[str, Any]:
     """Update the managed runtime without silently replacing/deleting models."""
     manifest = load_manifest(path)
-    if manifest.runtime == "external":
+    if manifest.runtime == RUNTIME_EXTERNAL:
         return {"managed": False, "updated": False, "message": "external runtime is owner-managed",
                 "self_test": self_test(manifest)}
-    subprocess.run([_docker(), "pull", _pinned_runtime_image(manifest)], check=True, timeout=600)
+    _backend(manifest).update(manifest)
     restarted = restart(path)
     return {"managed": True, "updated": True, "runtime": restarted,
             "model_preserved": True, "self_test": self_test(manifest)}
@@ -439,8 +337,9 @@ def update(path: str | Path) -> dict[str, Any]:
 
 def status(path: str | Path) -> dict[str, Any]:
     manifest = load_manifest(path)
+    runtime_state = {"managed": False} if manifest.runtime == RUNTIME_EXTERNAL else _backend(manifest).state(manifest)
     return {"package_id": manifest.package_id, "mode": manifest.mode,
-            "runtime": _docker_state(manifest.package_id) if manifest.runtime != "external" else {"managed": False},
+            "runtime": runtime_state,
             "health": adapter_from_manifest(manifest).health(), "public": manifest.public_dict()}
 
 
@@ -449,9 +348,8 @@ def uninstall(path: str | Path, *, delete_environment: bool = True,
     manifest_file = Path(path).expanduser()
     manifest = load_manifest(manifest_file)
     removed = []
-    if delete_environment and manifest.runtime != "external":
-        subprocess.run([_docker(), "rm", "-f", _container_name(manifest.package_id)],
-                       capture_output=True, timeout=60)
+    if delete_environment and manifest.runtime != RUNTIME_EXTERNAL:
+        _backend(manifest).remove(manifest)
         removed.append("runtime_container")
     if delete_model:
         if not confirm_model_delete:

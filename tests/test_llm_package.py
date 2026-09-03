@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 import rynmesh.llm_package.lifecycle as llm_lifecycle
 import rynmesh.llm_package.p2p as llm_p2p
 import rynmesh.llm_package.routes as llm_routes
+import rynmesh.llm_package.runtime_docker as llm_runtime_docker
 from rynmesh.crypto import SignatureError, sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
@@ -137,7 +138,7 @@ def test_lifecycle_rejects_package_path_traversal_before_writing(tmp_path, opena
 
 
 def test_managed_runtime_and_model_are_immutably_pinned():
-    assert "@sha256:" in llm_lifecycle.DEFAULT_IMAGE
+    assert "@sha256:" in llm_runtime_docker.DEFAULT_IMAGE
     assert "/resolve/main/" not in llm_lifecycle.DEFAULT_MODEL_URL
     assert llm_lifecycle.DEFAULT_MODEL_REVISION in llm_lifecycle.DEFAULT_MODEL_URL
     assert len(llm_lifecycle.DEFAULT_MODEL_SHA256) == 64
@@ -146,9 +147,9 @@ def test_managed_runtime_and_model_are_immutably_pinned():
         install_source={"runtime_image": "example.invalid/runtime:latest"},
     )
     with pytest.raises(LifecycleError, match="pinned by SHA-256"):
-        llm_lifecycle._pinned_runtime_image(manifest)
+        llm_runtime_docker._pinned_runtime_image(manifest)
     manifest.install_source["runtime_image"] = "ghcr.io/ggml-org/llama.cpp:server"
-    assert llm_lifecycle._pinned_runtime_image(manifest) == llm_lifecycle.DEFAULT_IMAGE
+    assert llm_runtime_docker._pinned_runtime_image(manifest) == llm_runtime_docker.DEFAULT_IMAGE
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.001])
@@ -168,7 +169,7 @@ def test_managed_container_drops_privileges(monkeypatch, tmp_path):
         package_id="safe", mode="managed", public_model_alias="safe",
         runtime="docker_llama_cpp", model_path=str(model),
         checksum=fingerprint_file(model), base_url="http://127.0.0.1:18080",
-        install_source={"runtime_image": llm_lifecycle.DEFAULT_IMAGE},
+        install_source={"runtime_image": llm_runtime_docker.DEFAULT_IMAGE},
     )
     commands = []
 
@@ -176,14 +177,14 @@ def test_managed_container_drops_privileges(monkeypatch, tmp_path):
         commands.append(command)
         return type("Result", (), {"returncode": 0})()
 
-    monkeypatch.setattr(llm_lifecycle, "_docker", lambda: "docker")
-    monkeypatch.setattr(llm_lifecycle.subprocess, "run", fake_run)
-    llm_lifecycle._run_container(manifest)
+    monkeypatch.setattr(llm_runtime_docker, "_docker", lambda: "docker")
+    monkeypatch.setattr(llm_runtime_docker.subprocess, "run", fake_run)
+    llm_runtime_docker.start(manifest)
     run_command = commands[-1]
     assert run_command[0:2] == ["docker", "run"]
     assert run_command[run_command.index("--cap-drop") + 1] == "ALL"
     assert run_command[run_command.index("--security-opt") + 1] == "no-new-privileges"
-    assert llm_lifecycle.DEFAULT_IMAGE in run_command
+    assert llm_runtime_docker.DEFAULT_IMAGE in run_command
 
 
 def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, openai_server):

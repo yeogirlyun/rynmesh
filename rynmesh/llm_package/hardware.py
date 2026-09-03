@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 from dataclasses import asdict, dataclass
@@ -39,7 +40,46 @@ class HardwareReport:
         return asdict(self)
 
 
+def _parse_vm_stat(text: str, page_size_default: int = 4096) -> int:
+    """Parse macOS `vm_stat` output into available memory in MiB.
+
+    Available memory is the sum of free, inactive, and speculative pages,
+    using the page size reported in the `vm_stat` header (falling back to
+    `page_size_default` if it cannot be parsed).
+    """
+    page_size = page_size_default
+    header_match = re.search(r"page size of (\d+) bytes", text)
+    if header_match:
+        page_size = int(header_match.group(1))
+    wanted = ("Pages free", "Pages inactive", "Pages speculative")
+    pages = 0
+    for line in text.splitlines():
+        for label in wanted:
+            if line.startswith(label):
+                value = line.split(":", 1)[1].strip().rstrip(".")
+                pages += int(value)
+                break
+    return pages * page_size // 2**20
+
+
+def _darwin_memory() -> tuple[int, int]:
+    total_result = subprocess.run(
+        ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5, check=True,
+    )
+    total_mb = int(total_result.stdout.strip()) // 2**20
+    vm_result = subprocess.run(
+        ["vm_stat"], capture_output=True, text=True, timeout=5, check=True,
+    )
+    available_mb = _parse_vm_stat(vm_result.stdout)
+    return total_mb, available_mb
+
+
 def _memory() -> tuple[int, int]:
+    if platform.system() == "Darwin":
+        try:
+            return _darwin_memory()
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return 0, 0
     if os.name == "nt":
         import ctypes
 
@@ -106,7 +146,10 @@ def detect_hardware(path: str | Path | None = None) -> HardwareReport:
     if not gpus:
         warnings.append("No usable NVIDIA GPU was detected; CPU inference or an existing local API remains available.")
     if not container_ok:
-        warnings.append("A running Docker engine was not detected; native runtime mode remains available.")
+        warnings.append(
+            "A running Docker engine was not detected; the bundled native runtime or an existing "
+            "local API remains available."
+        )
     return HardwareReport(
         os=platform.system(), architecture=platform.machine(), cpu=platform.processor() or "unknown",
         logical_cpus=os.cpu_count() or 1, ram_total_mb=ram_total, ram_available_mb=ram_available,
