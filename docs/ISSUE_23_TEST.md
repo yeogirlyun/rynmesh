@@ -111,3 +111,42 @@ python scripts/llm_e2e.py down
 它能区分在线增量与 terminal 后回放；CI 已新增该命令。当前 Windows 主机没有运行中的
 Docker Desktop Linux engine，故这里只完成 `99` 项单元/相关回归，尚不能把 Docker
 双节点结果登记为已通过。
+
+## Docker-free 本地验收（2026-09-03）
+
+以下命令不要求 Docker，使用当前 Python 环境启动四个真实 HTTP 进程，并在 Windows 本机
+实际通过：
+
+```powershell
+D:\code\rynmesh\.venv\Scripts\python.exe scripts/llm_e2e.py local-run
+```
+
+也可单独复现：
+
+```powershell
+D:\code\rynmesh\.venv\Scripts\python.exe scripts/llm_e2e.py local-stream-run
+D:\code\rynmesh\.venv\Scripts\python.exe scripts/llm_e2e.py local-fallback-run
+```
+
+验收结果分别写入 gitignored 的
+`deploy/llm-e2e/results/local-stream-result.json` 和
+`deploy/llm-e2e/results/local-fallback-result.json`。证据包括 exact commit、运行平台、临时端口、
+submit/first-delta/terminal/total 单调时间、事件类型/sequence/delta 字节数、协商协议、实际
+transport、duplicate submission 是否复用 task、三种 exactly-once 账本断言，以及四个进程日志
+的 SHA-256/字节数/body-marker-absent 结果；不包含 prompt、delta 或最终 output 正文。
+同时递归扫描临时 Registry/Provider/Consumer 持久文件并记录文件数与 body-free 布尔值。
+
+本次实际结果：stream 场景产生 3 个 delta，`first_delta_before_terminal=true`，首段比终态
+提前约 0.7 秒；fallback
+场景发现记录仅含 `complete-v1`、产生 0 个 delta；两个场景均为 `peer_http_direct` 且同 task
+hold/settlement/earning 各一次。首次开发中曾观察到 80 ms adapter 间隔可能与 200 ms broker
+轮询相位重合；测试 adapter 间隔改为 250 ms 后，本地 verifier 能稳定区分首 delta 与终态。
+真实运行还识别出 Transport `read(max_chunk_bytes)` 会让小型 NDJSON 等到 EOF；改用 `read1`
+并增加真实 HTTP 延迟终态测试后，Provider 到 Consumer 的首段在生成完成前立即交付。
+
+CI 的 `llm-e2e` job 也在任何 Docker Compose 步骤前执行 `local-run`。Relay/strict P2P 仍需
+对应 transport 环境；本地 direct 结果没有被冒充为这两种路由的通过证据。
+
+新增 harness、真实 HTTP 增量读取和相关 LLM/Transport 回归共 `104 passed, 1 warning`；
+本切片修改的 Python 文件 Ruff 全通过，CI YAML 可解析。仓库级 `ruff check .` 仍报告
+`sim/scale_sim.py` 与 `sim/sweep_b_c.py` 共 7 个既有问题，本分支未修改或冒充修复这些文件。

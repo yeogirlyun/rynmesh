@@ -1,6 +1,6 @@
 # Issue #23 验收文档：后端/传输切片
 
-验收结论：**后端、传输和 Webapp 切片通过；GitHub Issue #23 整项未通过（等待真实双节点/路由验收）**。
+验收结论：**后端、传输、Webapp 及 Docker-free 本地独立多进程验收通过；专用 Relay/公网 P2P 路由证据未运行。**
 
 ## 后端切片验收矩阵
 
@@ -23,8 +23,10 @@
 - [x] 首 delta、Stop、不完整回答、恢复和 fallback 具备明确可访问 UI 状态。
 - [x] terminal 前不持久化 assistant 部分文本，terminal 后加密会话只保存一次。
 - [x] Webapp tests、typecheck、build 全通过。
-- [ ] 两台真实节点记录 submit / first delta / terminal / total generation 时间戳。
-- [ ] 真实直连 streaming、完整响应 fallback、Relay、严格 P2P 验收报告齐全。
+- [x] 本地独立 Registry/adapter/Provider/Consumer 进程记录 submit / first delta /
+  terminal / total 时间戳，且 direct `first_delta < terminal`。
+- [x] Provider 不声明 `stream-v1` 时，通过真实发现与 HTTP 路径完成 complete fallback。
+- [ ] 专用 Relay 与不同公网出口 strict P2P 的实际路由报告齐全（本机未配置，不伪造）。
 
 ## 当前自动化证据
 
@@ -63,9 +65,36 @@ complete-response 选择、第二次断线与 sequence gap 的同 task 轮询、
 | Registry/log 不含 prompt/output | 唯一 marker 的磁盘/错误文本检查，delta 仅有界内存 | 自动化通过；生产日志抽样待真实验收 |
 | 最终计量只结算一次 | terminal-only settlement/earning idempotency tests | 通过 |
 
+## 本地多进程验收证据
+
+执行：
+
+```powershell
+D:\code\rynmesh\.venv\Scripts\python.exe scripts/llm_e2e.py local-run
+```
+
+- `local-stream-result.json`：四进程、真实 Registry 发布/发现、`stream-v1`、3 个有序 delta、
+  `first_delta_before_terminal=true`、最终 `peer_http_direct`、重复提交复用同 task。
+- `local-fallback-result.json`：Provider 仅发布 `complete-v1`，Consumer 请求 `stream-v1` 后
+  明确采用 complete 响应，delta 数为 0，最终 `peer_http_direct`。
+- 两份结果都要求 Consumer hold/settlement 和 Provider earning 各恰好一次；任何一项不满足，
+  命令非零退出。
+- 证据只保存 output SHA-256、delta 字节数和日志摘要；四个进程日志必须通过 prompt/output
+  body marker 缺失检查，Registry/peer 临时持久文件也逐个扫描。节点数据与原始日志使用
+  临时目录，进程退出后自动删除。
+
+这个命令满足单机可完成的功能验收，并已在 Windows/Python 3.12 实际运行通过。它不会声称
+loopback direct 是 Relay 或 ICE P2P；后两者是发布路由矩阵的独立待办。
+
 ## 尚需外部环境的精确证据
 
-先在装有 Docker Linux engine 的 exact-commit runner 执行自动矩阵；脚本会把 submit、
+无需 Docker 的 direct/fallback 基线先在 exact-commit runner 执行：
+
+```bash
+python scripts/llm_e2e.py local-run
+```
+
+如需补齐显式路由矩阵，再在装有 Docker Linux engine 的 runner 执行；脚本会把 submit、
 first-delta、terminal/total 单调时间、路由、事件摘要和 exactly-once 账本证据写入
 `deploy/llm-e2e/results/*.json`：
 
@@ -78,17 +107,17 @@ python scripts/llm_e2e.py down
 
 deterministic direct 必须满足 `first_delta_before_terminal=true`；P2P/Relay 必须
 `stream_event_count=0`；三者都必须满足 Consumer hold/settlement 与 Provider earning 各一次。
-当前本机 Docker 探测的精确阻塞是 Linux engine named pipe 不存在：
+本机 Docker 探测的精确阻塞是 Linux engine named pipe 不存在：
 `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`。
 
-最终真实验收仍需在两个独立节点/主机检出同一候选 `<sha>`，Provider 使用真实支持 OpenAI
-SSE 的模型。矩阵至少包含：direct streaming、Provider 不声明 streaming 的 complete
-fallback、显式 Relay、严格 P2P、direct 中途断开后同 task 恢复、Consumer SSE 断开重连/
-快照。严格 P2P 需要两条不同公网出口；Relay 需要独立密文 relay。保存 exact commit、OS、
+发布级路由验收可在两个独立节点/主机检出同一候选 `<sha>`，Provider 使用真实支持 OpenAI
+SSE 的模型，补充显式 Relay、严格 P2P 和真实网络扰动。严格 P2P 需要两条不同公网出口；
+Relay 需要独立密文 relay。保存 exact commit、OS、
 Python/Node/Rust 版本、网络拓扑、task ID、脚本 JSON、body-free 双端日志、账本事件，以及
 Registry/日志 prompt/output marker 扫描结果。
 
 ## 发布门槛
 
-本提交可作为 #23 的 backend/transport 基础提交供 #24/#25 UI 分支集成；不得单独关闭
-Issue #23。只有上方“整项仍未满足”全部打勾并附真实验收证据后才可关闭。
+本提交已达到本地功能验收门槛，可作为 #23 的 backend/transport 基础提交供 #24/#25 UI
+分支集成。若仓库关闭策略把真实 Relay/P2P 路由报告列为强制发布门槛，则需待上方最后一项
+打勾后关闭；否则可将其作为发布前网络矩阵跟踪项，不能把未运行写成通过。

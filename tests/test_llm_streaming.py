@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -148,6 +149,45 @@ def test_stdlib_incremental_post_preserves_auth_and_total_limit(monkeypatch) -> 
         assert getattr(error.value, "reason", "") == "too_large"
         assert seen["auth"] and seen["auth"] != "stream-secret"
     finally:
+        server.shutdown()
+        thread.join(timeout=3)
+
+
+def test_stdlib_incremental_post_yields_available_bytes_before_response_end() -> None:
+    release_last = threading.Event()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"first\n")
+            self.wfile.flush()
+            release_last.wait(timeout=1)
+            self.wfile.write(b"last\n")
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        transport = StdlibHttpsTransport(TransportProfile())
+        chunks = transport.iter_post_bytes(
+            f"http://127.0.0.1:{server.server_port}/stream",
+            b"{}",
+            timeout_s=5,
+            max_chunk_bytes=64 * 1024,
+            max_total_bytes=128 * 1024,
+        )
+        started = time.monotonic()
+        assert next(chunks) == b"first\n"
+        assert time.monotonic() - started < 0.75
+        release_last.set()
+        chunks.close()
+    finally:
+        release_last.set()
         server.shutdown()
         thread.join(timeout=3)
 

@@ -314,8 +314,13 @@ class StdlibHttpsTransport:
         try:
             with self._opener.open(req, timeout=timeout_s) as resp:
                 total = 0
+                read_chunk = getattr(resp, "read1", resp.read)
                 while True:
-                    chunk = resp.read(max_chunk_bytes)
+                    # HTTPResponse.read(n) may wait for n bytes or EOF, which
+                    # turns a small NDJSON/SSE stream back into a buffered
+                    # complete response. read1(n) returns currently available
+                    # bytes while preserving the same upper bound.
+                    chunk = read_chunk(max_chunk_bytes)
                     if not chunk:
                         break
                     total += len(chunk)
@@ -474,8 +479,9 @@ class FrontedHttpsTransport:
         conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
         try:
             total = 0
+            read_chunk = getattr(resp, "read1", resp.read)
             while True:
-                chunk = resp.read(max_chunk_bytes)
+                chunk = read_chunk(max_chunk_bytes)
                 if not chunk:
                     break
                 total += len(chunk)

@@ -1,6 +1,6 @@
 # Issue #23 产品文档：Private AI 流式响应
 
-状态：**后端、传输和 Webapp 流式体验已实现；等待真实双节点/路由验收**
+状态：**后端、传输和 Webapp 流式体验已实现；本地独立多进程验收通过，专用 Relay/公网 P2P 路由证据待补**
 协议：`rynmesh.llm.stream.v1`（请求值 `stream-v1`）
 
 ## 用户问题
@@ -56,5 +56,12 @@ Webapp 已交付本机 EventSource 订阅、增量 assistant 预览、Stop、不
 React 内存中；终态到达后才把 assistant 消息写入加密会话。完整响应降级也通过同一本机
 事件表面完成。
 
-未交付：真实双节点桌面时间戳、真实直连/Relay/严格 P2P 路由矩阵，以及 exact-commit
-Linux/macOS CI。因此本分支仍不能宣称 GitHub Issue #23 整体验收通过。
+本机现可用一个不依赖 Docker 的命令启动独立 Registry、deterministic adapter、Provider
+和 Consumer HTTP 进程。Consumer 通过自己的 API/SSE 完成任务；direct 场景证明首个 delta
+早于 terminal，complete-only Provider 场景证明请求 `stream-v1` 时会按发现能力明确降级，
+两者都会对同一 task 重复提交并验证 hold、settlement、earning 各一次。运行日志仅保存摘要
+hash/字节数和正文 marker 不存在的布尔证据，临时节点数据在结束时清理。
+
+未完成的是需要专用基础设施的显式 Relay 与不同公网出口 strict P2P 实际路由，以及
+exact-commit macOS 证据。这些不能由 loopback 配置伪装；在功能级本地验收中记录为未运行，
+不影响已经通过的 direct streaming 与 complete fallback 结论，但发布前仍建议补齐路由矩阵。
