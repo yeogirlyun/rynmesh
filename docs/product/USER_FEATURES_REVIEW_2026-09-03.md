@@ -156,6 +156,7 @@ System/infra work exists to make those features work seamlessly and robustly.
 - 复用已运行的 Ollama、导入 GGUF 永不删除、删除受管模型高风险确认：同意。
 - 完成页的下一步除了“问一个问题”，加上**“把这个 AI 分享给一位朋友”**——
   这是本地 AI 唯一的独有价值，也把用户导向配对。
+- #34 delivered: native runtime + profiles + resumable download; the wizard can now target `/api/local/llm/setup/async` with `{mode: "managed", profile}`.
 
 ### 4.5 “我的内容”统一工作台（P1）
 
@@ -197,9 +198,12 @@ System/infra work exists to make those features work seamlessly and robustly.
   [rynmesh.ai/contribute](https://rynmesh.ai/contribute) 展示，任何人可用
   `/claim` 认领切片。
 
-## 7. 需要维护者拍板的事项
+## 7. 维护者决定（2026-09-03，全部批准）
 
-1. 批准配对 v1 可达边界：局域网 + 已可达端点，跨 NAT 由 S2 交付。
-2. 批准把配对分享升为 P0、本地 AI 降为第三批。
-3. 批准最终导航结构（§6）。
-4. 批准 #16、#17 转为用户功能并由“首次成功”关闭。
+1. 配对 v1 可达边界：局域网 + 已可达端点，跨 NAT 由 S2（#35）交付。
+2. 配对分享升为 P0，与首次成功并行；本地 AI 降为第三批，等 #34。
+3. 最终导航：Home / For You / Ask Ryn / My Content / Friends / Services / Settings。
+4. #16、#17 转为用户功能，由“首次成功”关闭。
+
+#30 已改为“简单配对与分享 v1”；好友专属 Private AI 授权拆到后续 issue。
+系统组承诺对应 issue：S1 #34 · S2 #35 · S3 #36 · S4 #37 · S5 #38 · S6 #39。

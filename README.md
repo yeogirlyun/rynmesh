@@ -123,15 +123,19 @@ See [Architecture](docs/ARCHITECTURE.md), [Product milestones](docs/PRODUCT_MILE
 
 The desktop node and recommendation assistant do not require Docker or a local
 model. Operators who choose to provide private inference can connect an existing
-loopback OpenAI-compatible or Ollama service. An optional Docker-backed mode can
-prepare a pinned llama.cpp runtime and verified GGUF model; Docker must already
-be installed and running:
+loopback OpenAI-compatible or Ollama service, or let Rynmesh manage one: managed
+mode downloads a verified GGUF model and runs it with the bundled llama.cpp
+runtime built into the desktop app, or a managed download of the pinned release
+on a `pip`-installed node. Docker is an opt-in runtime for server operators who
+prefer container isolation, selected with `--runtime docker`:
 
 ```bash
 rynmesh-llm detect
 rynmesh-llm setup --mode openai-compatible --base-url http://127.0.0.1:8080
-# Optional Docker-backed provider:
-rynmesh-llm setup --mode managed --yes
+# Managed local model, bundled/downloaded native runtime (default):
+rynmesh-llm setup --mode managed --profile balanced --yes
+# Managed local model, opt-in Docker runtime (server nodes):
+rynmesh-llm setup --mode managed --runtime docker --yes
 ```
 
 Provider/Consumer task bodies travel as signed end-to-end ciphertext directly

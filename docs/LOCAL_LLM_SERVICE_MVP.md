@@ -59,6 +59,19 @@ reads; the JSON file next to it is a rebuildable snapshot.
    discovers models/capabilities, and sends a real test request. API keys are
    named by environment variable and are never copied into normal config/logs.
 
+## Runtime backends
+
+Managed and GGUF-import modes select a runtime backend (`lifecycle.select_runtime`,
+`runtime: "auto" | "native" | "docker"`): `native_llama_cpp`
+(`rynmesh/llm_package/runtime_native.py`) is the default and resolves a bundled or
+downloaded `llama-server` binary with no container engine required; `docker_llama_cpp`
+(`rynmesh/llm_package/runtime_docker.py`) is an opt-in backend for server operators who
+prefer container isolation. Managed installs additionally pick one of three pinned
+catalog profiles (`light`, `balanced`, `quality`, `rynmesh/llm_package/catalog.py`),
+each with a conservative estimated-memory/disk footprint used by
+`GET /api/local/llm/hardware` to recommend a profile for the detected hardware. See
+`docs/ISSUE_34_NATIVE_RUNTIME_WORK_PLAN.md` for the native-runtime delivery plan.
+
 ## Order flow
 
 1. Provider publishes a signed `JobCapacityRecord` containing only the public

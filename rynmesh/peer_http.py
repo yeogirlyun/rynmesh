@@ -537,6 +537,12 @@ def create_app(store: RynmeshStore | None = None):
             for task in tasks:
                 task.cancel()
             await _asyncio.gather(*tasks, return_exceptions=True)
+            # A custom lifespan replaces Starlette's `on_shutdown` handling, so
+            # the LLM routes' own hook has to be called from here; without it
+            # an owned `llama-server` child outlives the node.
+            llm_shutdown = getattr(lifespan_app.state, "llm_shutdown", None)
+            if callable(llm_shutdown):
+                await _asyncio.to_thread(llm_shutdown)
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     app.state.background_workers = BackgroundWorkerRegistry()

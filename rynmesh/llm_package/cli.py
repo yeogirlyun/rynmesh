@@ -56,6 +56,14 @@ def _parser() -> argparse.ArgumentParser:
     setup.add_argument("--allow-non-loopback", action="store_true")
     setup.add_argument("--accept-risk", action="store_true")
     setup.add_argument("--yes", action="store_true", help="confirm downloads/runtime preparation")
+    setup.add_argument(
+        "--runtime", choices=["auto", "native", "docker"], default="auto",
+        help="inference runtime backend for managed/import-gguf modes (default: auto)",
+    )
+    setup.add_argument(
+        "--profile", choices=["auto", "light", "balanced", "quality"], default="auto",
+        help="catalog model profile for managed mode (default: auto)",
+    )
     for name in ("start", "stop", "restart", "status", "update", "self-test", "uninstall"):
         command = sub.add_parser(name)
         command.add_argument("--package-id", default="local-small")
@@ -76,13 +84,14 @@ def main(argv: list[str] | None = None) -> int:
                 raise LifecycleError("runtime/model preparation requires --yes confirmation")
             if args.mode == "managed":
                 _emit(install_managed(package_id=args.package_id, root=args.root or None,
-                                      port=args.port, accept_risk=args.accept_risk))
+                                      port=args.port, accept_risk=args.accept_risk,
+                                      runtime=args.runtime, profile=args.profile))
             elif args.mode == "import-gguf":
                 if not args.model_path:
                     raise LifecycleError("--model-path is required for GGUF import")
                 _emit(import_gguf(source=args.model_path, package_id=args.package_id,
                                   alias=args.alias, root=args.root or None, port=args.port,
-                                  accept_risk=args.accept_risk))
+                                  accept_risk=args.accept_risk, runtime=args.runtime))
             else:
                 _emit(connect_local_api(
                     base_url=args.base_url, package_id=args.package_id, alias=args.alias,

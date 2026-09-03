@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,10 @@ class LLMPackageManifest:
     model_path: str = ""
     runtime_command: list[str] = field(default_factory=list)
     runtime_dir: str = ""
+    # Loopback bearer token minted for a Rynmesh-owned `llama-server`, so a web
+    # page the owner happens to visit cannot reach the local inference port.
+    # Node-private: never in `public_dict()`, a log line, or a raised message.
+    runtime_api_key: str = ""
     model_owned: bool = False
     allow_non_loopback: bool = False
     debug_log_bodies: bool = False
@@ -112,8 +117,9 @@ class LLMPackageManifest:
     def public_dict(self) -> dict[str, Any]:
         """Return only owner-approved discovery information.
 
-        Local paths, filenames, runtime commands, URLs, key references, and
-        installation source details are intentionally excluded.
+        Local paths, filenames, runtime commands, URLs, key references, the
+        loopback runtime bearer token, and installation source details are
+        intentionally excluded.
         """
         return {
             "package_id": self.package_id,
@@ -165,6 +171,13 @@ def save_manifest(manifest: LLMPackageManifest, path: str | Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + ".tmp")
     temporary.write_text(json.dumps(manifest.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+    # Owner-only: this file carries the loopback runtime bearer token, local
+    # model paths, and the runtime command line.
+    if os.name != "nt":
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
     temporary.replace(target)
     return target
 

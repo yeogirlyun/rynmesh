@@ -41,6 +41,10 @@ first social pull.
 4. **Digest integration** — "Ask about this item" from For You opens Private
    AI with the article text as grounded context. First real cross-feature use
    of a mesh service.
+5. **Bundled native inference runtime (delivered, #34)** — managed/GGUF-import
+   modes default to a bundled or downloaded `llama-server` runtime with no
+   Docker dependency; Docker remains an opt-in backend for server operators.
+   See `docs/ISSUE_34_NATIVE_RUNTIME_WORK_PLAN.md`.
 
 ## 2. Service Experience Framework (from review findings)
 
@@ -87,4 +91,3 @@ can use your model — the first tangible answer to "why connect nodes at all?"
 
 - Transferable credits, pricing, or anything money-like (P5 gate unchanged).
 - Open untrusted-peer operation (P4 gate unchanged).
-- A bundled native inference runtime (Docker-optional managed mode stays).

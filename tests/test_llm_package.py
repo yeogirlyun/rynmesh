@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,9 +15,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import rynmesh.llm_package.catalog as llm_catalog
+import rynmesh.llm_package.https_only as llm_https_only
 import rynmesh.llm_package.lifecycle as llm_lifecycle
+import rynmesh.llm_package.model_download as llm_model_download
 import rynmesh.llm_package.p2p as llm_p2p
 import rynmesh.llm_package.routes as llm_routes
+import rynmesh.llm_package.runtime_docker as llm_runtime_docker
+import rynmesh.llm_package.runtime_native as llm_runtime_native
 from rynmesh.crypto import SignatureError, sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 from rynmesh.llm_package.lifecycle import LifecycleError, connect_local_api, validate_gguf
@@ -23,6 +31,7 @@ from rynmesh.llm_package.manifest import (
     ManifestError,
     Pricing,
     fingerprint_file,
+    load_manifest,
 )
 from rynmesh.llm_package.p2p import (
     IceSignal,
@@ -137,7 +146,7 @@ def test_lifecycle_rejects_package_path_traversal_before_writing(tmp_path, opena
 
 
 def test_managed_runtime_and_model_are_immutably_pinned():
-    assert "@sha256:" in llm_lifecycle.DEFAULT_IMAGE
+    assert "@sha256:" in llm_runtime_docker.DEFAULT_IMAGE
     assert "/resolve/main/" not in llm_lifecycle.DEFAULT_MODEL_URL
     assert llm_lifecycle.DEFAULT_MODEL_REVISION in llm_lifecycle.DEFAULT_MODEL_URL
     assert len(llm_lifecycle.DEFAULT_MODEL_SHA256) == 64
@@ -146,9 +155,643 @@ def test_managed_runtime_and_model_are_immutably_pinned():
         install_source={"runtime_image": "example.invalid/runtime:latest"},
     )
     with pytest.raises(LifecycleError, match="pinned by SHA-256"):
-        llm_lifecycle._pinned_runtime_image(manifest)
+        llm_runtime_docker._pinned_runtime_image(manifest)
     manifest.install_source["runtime_image"] = "ghcr.io/ggml-org/llama.cpp:server"
-    assert llm_lifecycle._pinned_runtime_image(manifest) == llm_lifecycle.DEFAULT_IMAGE
+    assert llm_runtime_docker._pinned_runtime_image(manifest) == llm_runtime_docker.DEFAULT_IMAGE
+
+
+# --------------------------------------------------------------------------
+# Resumable model download (_download, now implemented in model_download.py
+# and re-exported by lifecycle.py under its historical name)
+# --------------------------------------------------------------------------
+
+class _ChunkedResponse:
+    """A `urlopen` response stand-in that trickles bytes out in small reads.
+
+    A real socket rarely hands back a whole multi-KB body from one
+    `.read(n)` call; returning small pieces regardless of the requested size
+    exercises the same multi-iteration loop `_download` runs against a real
+    connection, and lets a test cancel partway through.
+    """
+
+    def __init__(self, payload: bytes, *, status: int, chunk_size: int = 512,
+                content_range: str | None = None) -> None:
+        self._payload = payload
+        self._pos = 0
+        self._chunk_size = chunk_size
+        self.status = status
+        self.headers = {"content-length": str(len(payload))}
+        if content_range is not None:
+            self.headers["Content-Range"] = content_range
+
+    def read(self, _size: int = -1) -> bytes:
+        end = min(len(self._payload), self._pos + self._chunk_size)
+        chunk = self._payload[self._pos:end]
+        self._pos = end
+        return chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def _fake_urlopen(body: bytes, *, honor_range: bool):
+    """Build a `urlopen` replacement serving `body`, honoring `Range` or not."""
+
+    def urlopen(request, timeout=0):
+        range_header = request.get_header("Range")
+        if range_header and honor_range:
+            offset = int(range_header.split("=", 1)[1].split("-", 1)[0])
+            if offset >= len(body):
+                raise urllib.error.HTTPError(request.full_url, 416, "Range Not Satisfiable", {}, None)
+            remainder = body[offset:]
+            content_range = f"bytes {offset}-{len(body) - 1}/{len(body)}"
+            return _ChunkedResponse(remainder, status=206, content_range=content_range)
+        return _ChunkedResponse(body, status=200)
+
+    return urlopen
+
+
+DOWNLOAD_BODY = b"rynmesh-model-bytes-" * 160  # 3200 bytes
+DOWNLOAD_SHA256 = hashlib.sha256(DOWNLOAD_BODY).hexdigest()
+DOWNLOAD_URL = "https://huggingface.co/example/example/resolve/pin/example.gguf"
+
+
+def test_download_requires_https():
+    with pytest.raises(LifecycleError, match="HTTPS"):
+        llm_lifecycle._download("http://example.invalid/model.gguf", Path("/tmp/x"), "0" * 64)
+
+
+def test_download_resume_after_cancel_completes_via_206(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+
+    # 1. The first attempt is cancelled partway through: `.part` keeps the
+    #    bytes written so far and the destination is never created.
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
+    calls = {"n": 0}
+
+    def cancel_after_a_couple_chunks():
+        calls["n"] += 1
+        return calls["n"] > 2
+
+    with pytest.raises(LifecycleError, match="setup cancelled"):
+        llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256,
+                                cancel_check=cancel_after_a_couple_chunks)
+    assert part.exists()
+    partial_size = part.stat().st_size
+    assert 0 < partial_size < len(DOWNLOAD_BODY)
+    assert not destination.exists()
+
+    # 2. The second attempt sends Range for the partial size, gets a 206,
+    #    completes, and the verified part is renamed onto the destination.
+    seen_ranges = []
+    replay = _fake_urlopen(DOWNLOAD_BODY, honor_range=True)
+
+    def recording_urlopen(request, timeout=0):
+        seen_ranges.append(request.get_header("Range"))
+        return replay(request, timeout=timeout)
+
+    monkeypatch.setattr(llm_model_download, "_urlopen", recording_urlopen)
+    actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert actual == DOWNLOAD_SHA256
+    assert seen_ranges == [f"bytes={partial_size}-"]
+    assert not part.exists()
+    assert destination.read_bytes() == DOWNLOAD_BODY
+
+
+def test_download_restarts_from_scratch_when_the_server_ignores_range(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    part.write_bytes(b"stale bytes from an earlier attempt that do not match the real prefix")
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        _fake_urlopen(DOWNLOAD_BODY, honor_range=False))
+    actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert actual == DOWNLOAD_SHA256
+    assert destination.read_bytes() == DOWNLOAD_BODY
+    assert not part.exists()
+
+
+def test_download_restarts_when_a_206_content_range_does_not_match_resume_point(tmp_path, monkeypatch):
+    # A server/proxy that mislabels a full restart as 206 (Content-Range
+    # starting at 0, not at the requested offset) must be treated as an
+    # ordinary restart, not appended onto the existing partial bytes.
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    part.write_bytes(b"stale-partial-bytes-not-a-real-prefix-of-the-body")
+
+    def urlopen(request, timeout=0):
+        assert request.get_header("Range")  # a resume was actually attempted
+        return _ChunkedResponse(DOWNLOAD_BODY, status=206,
+                                content_range=f"bytes 0-{len(DOWNLOAD_BODY) - 1}/{len(DOWNLOAD_BODY)}")
+
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
+    actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert actual == DOWNLOAD_SHA256
+    assert destination.read_bytes() == DOWNLOAD_BODY
+    assert not part.exists()
+
+
+def test_download_treats_a_416_as_an_already_complete_part(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    part.write_bytes(DOWNLOAD_BODY)  # the whole file is already on disk
+
+    def urlopen(request, timeout=0):
+        assert request.get_header("Range") == f"bytes={len(DOWNLOAD_BODY)}-"
+        raise urllib.error.HTTPError(request.full_url, 416, "Range Not Satisfiable", {}, None)
+
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
+    actual = llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert actual == DOWNLOAD_SHA256
+    assert destination.read_bytes() == DOWNLOAD_BODY
+    assert not part.exists()
+
+
+def test_download_closes_the_416_response_before_discarding_it(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    part.write_bytes(DOWNLOAD_BODY)
+    closed = {"value": False}
+
+    class _TrackedHTTPError(urllib.error.HTTPError):
+        def close(self):
+            closed["value"] = True
+            super().close()
+
+    def urlopen(request, timeout=0):
+        raise _TrackedHTTPError(request.full_url, 416, "Range Not Satisfiable", {}, None)
+
+    monkeypatch.setattr(llm_model_download, "_urlopen", urlopen)
+    llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert closed["value"] is True
+
+
+def test_download_quarantines_a_checksum_mismatch_without_leaking_a_path(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    corrupt = destination.with_suffix(destination.suffix + ".corrupt")
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
+    wrong_sha = "0" * 64
+    with pytest.raises(LifecycleError) as failure:
+        llm_lifecycle._download(DOWNLOAD_URL, destination, wrong_sha)
+    message = str(failure.value)
+    assert message == "model checksum mismatch; the download was quarantined and will restart"
+    assert str(destination) not in message and str(tmp_path) not in message
+    assert corrupt.exists()
+    assert corrupt.read_bytes() == DOWNLOAD_BODY
+    assert not part.exists()
+    assert not destination.exists()
+
+
+def test_download_size_guard_rejects_a_body_larger_than_pinned(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        _fake_urlopen(DOWNLOAD_BODY, honor_range=True))
+    with pytest.raises(LifecycleError, match="exceeded the pinned size"):
+        llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256, size_bytes=1024)
+    assert not part.exists()
+    assert not destination.exists()
+
+
+def test_download_keeps_the_part_on_a_network_error(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+
+    class _FlakyResponse(_ChunkedResponse):
+        def read(self, _size: int = -1) -> bytes:
+            if self._pos >= 1024:
+                raise OSError("connection reset")
+            return super().read(_size)
+
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        lambda request, timeout=0: _FlakyResponse(DOWNLOAD_BODY, status=200))
+    with pytest.raises(LifecycleError, match="download failed"):
+        llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    assert part.exists()
+    assert 0 < part.stat().st_size < len(DOWNLOAD_BODY)
+
+
+def test_download_network_error_message_never_includes_a_path(tmp_path, monkeypatch):
+    destination = tmp_path / "model.gguf"
+    part = destination.with_suffix(destination.suffix + ".part")
+    secret_path = str(tmp_path / "secret-owner-file.gguf")
+
+    class _PathLeakingResponse(_ChunkedResponse):
+        def read(self, _size: int = -1) -> bytes:
+            raise OSError(2, "No such file or directory", secret_path)
+
+    monkeypatch.setattr(llm_model_download, "_urlopen",
+                        lambda request, timeout=0: _PathLeakingResponse(DOWNLOAD_BODY, status=200))
+    with pytest.raises(LifecycleError) as failure:
+        llm_lifecycle._download(DOWNLOAD_URL, destination, DOWNLOAD_SHA256)
+    message = str(failure.value)
+    # `OSError(2, ...)` is auto-mapped to `FileNotFoundError` by Python, so the
+    # exact type name varies — what matters is that only the type name (never
+    # `str(exc)`, which would include the filename) reaches the message.
+    assert message.startswith("download failed: ")
+    assert "/" not in message and "\\" not in message
+    assert secret_path not in message
+    assert not destination.exists()
+    assert part.exists()  # a network error must never discard the resumable part
+
+
+def test_the_model_download_refuses_a_redirect_off_https(tmp_path, monkeypatch):
+    """An HTTPS start is not enough: the whole redirect chain has to stay HTTPS."""
+    destination = tmp_path / "model.gguf"
+    plaintext = "http://mirror.invalid/model.gguf"
+    followed: list[str] = []
+
+    class _RecordingHandler(llm_https_only.HttpsOnlyRedirect):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            followed.append(newurl)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    handler = _RecordingHandler()
+    with pytest.raises(LifecycleError) as refused:
+        handler.redirect_request(
+            urllib.request.Request(DOWNLOAD_URL), None, 302, "Found", {}, plaintext,
+        )
+    assert followed == [plaintext]
+    message = str(refused.value)
+    assert "non-HTTPS" in message
+    assert plaintext not in message and "mirror.invalid" not in message
+    assert "/" not in message and "\\" not in message
+    assert not destination.exists()
+
+
+def test_the_model_download_opens_through_the_https_only_opener(monkeypatch):
+    """The redirect guard is only real if the download actually installs it."""
+    seen: dict[str, object] = {}
+
+    class _Opener:
+        def open(self, request, timeout=0):
+            return _ChunkedResponse(DOWNLOAD_BODY, status=200)
+
+    def fake_build_opener(*handlers):
+        seen["handlers"] = handlers
+        return _Opener()
+
+    monkeypatch.setattr(llm_https_only.urllib.request, "build_opener", fake_build_opener)
+    llm_model_download._urlopen(urllib.request.Request(DOWNLOAD_URL))
+    assert llm_https_only.HttpsOnlyRedirect in seen["handlers"]
+
+
+# --------------------------------------------------------------------------
+# install_managed with an explicit profile
+# --------------------------------------------------------------------------
+
+_FAKE_LLAMA_SERVER_BODY = """
+import json, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ARGS = sys.argv[1:]
+
+
+def option(name, default=""):
+    return ARGS[ARGS.index(name) + 1] if name in ARGS else default
+
+
+PORT = int(option("--port", "0"))
+ALIAS = option("--alias", "fake-alias")
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self._send({"status": "ok"})
+        elif self.path == "/v1/models":
+            self._send({"object": "list", "data": [{"id": ALIAS}]})
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path != "/v1/chat/completions":
+            self.send_error(404)
+            return
+        self.rfile.read(int(self.headers.get("content-length", "0")))
+        self._send({
+            "choices": [{"message": {"content": "RYNMESH SELF TEST OK"}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 5},
+        })
+
+    def log_message(self, *_args):
+        pass
+
+    def _send(self, value):
+        raw = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+server.serve_forever()
+"""
+
+
+def _write_fake_llama_server(path: Path) -> Path:
+    import sys
+
+    path.write_text(f"#!{sys.executable}\n{_FAKE_LLAMA_SERVER_BODY}", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _free_tcp_port() -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the fake llama-server is a POSIX script")
+def test_install_managed_with_an_explicit_profile_uses_the_catalog_entry(tmp_path, monkeypatch):
+    import dataclasses
+
+    root = tmp_path / "llm"
+    server = _write_fake_llama_server(tmp_path / "llama-server")
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    payload = b"GGUF" + bytes(96)
+
+    def fake_download(_url, destination, expected_sha256, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return expected_sha256
+
+    monkeypatch.setattr(llm_lifecycle, "_download", fake_download)
+    # `_download` is faked to write a tiny stub GGUF rather than the real
+    # multi-GB file, so the pinned catalog checksum (of the real bytes) is
+    # swapped for the stub's actual digest — everything else about the
+    # "balanced" profile (alias, context window, ...) stays the pinned value,
+    # and `runtime_native.start`'s own checksum check still runs for real.
+    real_balanced = llm_catalog.profile_by_name("balanced")
+    stub_balanced = dataclasses.replace(real_balanced, sha256=hashlib.sha256(payload).hexdigest())
+    original_profile_by_name = llm_catalog.profile_by_name
+    monkeypatch.setattr(
+        llm_lifecycle.catalog, "profile_by_name",
+        lambda name: stub_balanced if name == "balanced" else original_profile_by_name(name),
+    )
+    result = llm_lifecycle.install_managed(
+        package_id="profile-balanced", root=root, port=_free_tcp_port(),
+        accept_risk=True, runtime="native", profile="balanced",
+    )
+    manifest = load_manifest(result["manifest"])
+    try:
+        assert manifest.public_model_alias == "rynmesh-qwen2.5-1.5b-q4"
+        assert manifest.model == "rynmesh-qwen2.5-1.5b-q4"
+        assert Path(manifest.model_path).name == "balanced.gguf"
+        assert manifest.install_source["profile"] == "balanced"
+        assert manifest.install_source["model_url"] == llm_catalog.profile_by_name("balanced").url
+        assert manifest.context_window == llm_catalog.profile_by_name("balanced").context_window
+        assert manifest.max_concurrent == llm_catalog.profile_by_name("balanced").max_concurrent
+        assert result["self_test"]["ok"] is True
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the fake llama-server is a POSIX script")
+def test_install_managed_reuses_a_verified_legacy_model_gguf_without_downloading(tmp_path,
+                                                                                monkeypatch):
+    """A pre-profiles `model.gguf` that still matches is reused, not re-fetched."""
+    root = tmp_path / "llm"
+    server = _write_fake_llama_server(tmp_path / "llama-server")
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    payload = b"GGUF" + bytes(96)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    legacy = root / "models" / "legacy-reuse" / "model.gguf"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_bytes(payload)
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("an already-verified model must never be downloaded again")
+
+    monkeypatch.setattr(llm_lifecycle, "_download", refuse)
+    stages: list[tuple[str, int, str]] = []
+    result = llm_lifecycle.install_managed(
+        package_id="legacy-reuse", root=root, port=_free_tcp_port(),
+        model_url="https://huggingface.co/example/example/resolve/main/example.gguf",
+        expected_sha256=digest, accept_risk=True, runtime="native",
+        progress=lambda *event: stages.append(event),
+    )
+    manifest = load_manifest(result["manifest"])
+    try:
+        assert Path(manifest.model_path) == legacy
+        assert manifest.checksum == fingerprint_file(legacy)
+        assert legacy.read_bytes() == payload  # untouched on disk
+        assert not (root / "models" / "legacy-reuse" / "custom.gguf").exists()
+        assert ("download_model", 60, "Verified model already present") in stages
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the fake llama-server is a POSIX script")
+def test_install_managed_with_auto_profile_picks_the_recommended_catalog_entry(tmp_path, monkeypatch):
+    import dataclasses
+
+    root = tmp_path / "llm"
+    server = _write_fake_llama_server(tmp_path / "llama-server")
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    payload = b"GGUF" + bytes(96)
+
+    def fake_download(_url, destination, expected_sha256, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return expected_sha256
+
+    monkeypatch.setattr(llm_lifecycle, "_download", fake_download)
+
+    # Fixed hardware: enough memory for "light" and "balanced" but not
+    # "quality" (900 / 2300 / 4200 MB respectively), so "auto" deterministically
+    # recommends "balanced" — the largest profile that still fits.
+    fake_report = llm_lifecycle.HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test", logical_cpus=8,
+        ram_total_mb=8000, ram_available_mb=4000, disk_free_mb=10_000, nvidia_gpus=[],
+        nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
+    )
+    monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
+    sanity_choices = llm_lifecycle.recommend(fake_report)
+    assert next(c["profile"] for c in sanity_choices if c.get("recommended")) == "balanced"
+
+    real_balanced = llm_catalog.profile_by_name("balanced")
+    stub_balanced = dataclasses.replace(real_balanced, sha256=hashlib.sha256(payload).hexdigest())
+    original_profile_by_name = llm_catalog.profile_by_name
+    monkeypatch.setattr(
+        llm_lifecycle.catalog, "profile_by_name",
+        lambda name: stub_balanced if name == "balanced" else original_profile_by_name(name),
+    )
+    result = llm_lifecycle.install_managed(
+        package_id="profile-auto", root=root, port=_free_tcp_port(),
+        runtime="native", profile="auto",
+    )
+    manifest = load_manifest(result["manifest"])
+    try:
+        # The manifest records which concrete profile "auto" resolved to, not
+        # the literal string "auto".
+        assert manifest.install_source["profile"] == "balanced"
+        assert manifest.public_model_alias == "rynmesh-qwen2.5-1.5b-q4"
+        assert Path(manifest.model_path).name == "balanced.gguf"
+        assert result["self_test"]["ok"] is True
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+def test_resolve_install_profile_raises_a_lifecycle_error_when_recommend_marks_nothing(monkeypatch):
+    # Defensive path: if `recommend()` ever returned a fitting list with no
+    # entry flagged `recommended`, the old `next(...)` without a default
+    # raised a bare StopIteration (a 500 through the HTTP route) instead of
+    # a clean LifecycleError.
+    choices = [{"can_run": True, "profile": "light"}]  # no "recommended" key set
+    with pytest.raises(LifecycleError, match="no recommended profile was available"):
+        llm_lifecycle._resolve_install_profile(
+            profile="auto", model_url="", expected_sha256="", expected_size_bytes=None,
+            accept_risk=False, report=object(), choices=choices,
+        )
+
+
+def test_resolve_install_profile_custom_override_derives_metadata_from_choices(monkeypatch):
+    fitting_choice = {
+        "can_run": True, "context_window": 4096, "max_concurrent": 2, "estimated_memory_mb": 900,
+    }
+    selected = llm_lifecycle._resolve_install_profile(
+        profile="auto",
+        model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+        expected_sha256="a" * 64, expected_size_bytes=123456,
+        accept_risk=False, report=object(), choices=[fitting_choice],
+    )
+    assert selected["name"] == "custom"
+    assert selected["size_bytes"] == 123456
+    assert selected["context_window"] == 4096
+    assert selected["max_concurrent"] == 2
+    assert selected["estimated_memory_mb"] == 900
+    assert selected["license_id"] == "unknown"
+
+
+def test_resolve_install_profile_custom_override_respects_the_hardware_gate(monkeypatch):
+    no_fit_choices = [{"can_run": False, "reason": "No bundled profile safely fits detected available RAM/disk."}]
+    with pytest.raises(LifecycleError, match="No bundled profile safely fits"):
+        llm_lifecycle._resolve_install_profile(
+            profile="auto",
+            model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+            expected_sha256="a" * 64, expected_size_bytes=None,
+            accept_risk=False, report=object(), choices=no_fit_choices,
+        )
+    # With accept_risk it proceeds, falling back to the old conservative floor.
+    selected = llm_lifecycle._resolve_install_profile(
+        profile="auto",
+        model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+        expected_sha256="a" * 64, expected_size_bytes=None,
+        accept_risk=True, report=object(), choices=no_fit_choices,
+    )
+    assert selected["name"] == "custom"
+    assert selected["context_window"] == 2048
+    assert selected["max_concurrent"] == 1
+    assert selected["estimated_memory_mb"] == 1024
+
+
+def test_install_managed_custom_override_on_a_no_fit_hardware_report_raises_without_downloading(tmp_path, monkeypatch):
+    def refuse_download(*_args, **_kwargs):
+        raise AssertionError("a custom override on unfit hardware must never download without accept_risk")
+
+    monkeypatch.setattr(llm_lifecycle, "_download", refuse_download)
+    fake_report = llm_lifecycle.HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
+        ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
+        nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
+    )
+    monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
+    with pytest.raises(LifecycleError, match="No bundled profile safely fits"):
+        llm_lifecycle.install_managed(
+            package_id="custom-no-fit", root=tmp_path / "llm",
+            model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+            expected_sha256="a" * 64,
+        )
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="the fake llama-server is a POSIX script")
+def test_install_managed_custom_override_with_accept_risk_proceeds_on_no_fit_hardware(tmp_path, monkeypatch):
+    root = tmp_path / "llm"
+    server = _write_fake_llama_server(tmp_path / "llama-server")
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    payload = b"GGUF" + bytes(96)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fake_download(_url, destination, expected_sha256, **_kwargs):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return expected_sha256
+
+    monkeypatch.setattr(llm_lifecycle, "_download", fake_download)
+    fake_report = llm_lifecycle.HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
+        ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
+        nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
+    )
+    monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
+    result = llm_lifecycle.install_managed(
+        package_id="custom-accept-risk", root=root, port=_free_tcp_port(),
+        model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+        expected_sha256=digest, accept_risk=True, runtime="native",
+    )
+    manifest = load_manifest(result["manifest"])
+    try:
+        assert manifest.install_source["profile"] == "custom"
+        # Falls back to the old single-model conservative floor, not a
+        # hardcoded value disconnected from `choices[0]`.
+        assert manifest.context_window == 2048
+        assert manifest.max_concurrent == 1
+        assert manifest.hardware_requirements["estimated_memory_mb"] == 1024
+        assert result["self_test"]["ok"] is True
+    finally:
+        llm_runtime_native.stop(manifest)
+
+
+def test_install_managed_with_an_unfitting_explicit_profile_raises_without_downloading(tmp_path, monkeypatch):
+    def refuse_download(*_args, **_kwargs):
+        raise AssertionError("a profile that does not fit must never be downloaded")
+
+    monkeypatch.setattr(llm_lifecycle, "_download", refuse_download)
+    # An impossibly small disk/RAM report guarantees no catalog profile fits.
+    fake_report = llm_lifecycle.HardwareReport(
+        os="Linux", architecture="x86_64", cpu="test", logical_cpus=1,
+        ram_total_mb=1, ram_available_mb=1, disk_free_mb=1, nvidia_gpus=[],
+        nvidia_probe="nvidia-smi not found", container_runtime="", container_available=False,
+        native_runtime_available=True, native_runtime_present=True, warnings=[],
+    )
+    monkeypatch.setattr(llm_lifecycle, "detect_hardware", lambda _base: fake_report)
+    with pytest.raises(LifecycleError, match="profile quality needs about"):
+        llm_lifecycle.install_managed(
+            package_id="profile-too-big", root=tmp_path / "llm",
+            runtime="native", profile="quality",
+        )
+
+
+def test_install_managed_requires_both_model_url_and_expected_sha256_together(tmp_path):
+    with pytest.raises(LifecycleError, match="requires both model_url and expected_sha256"):
+        llm_lifecycle.install_managed(
+            package_id="partial-override", root=tmp_path / "llm",
+            model_url="https://huggingface.co/example/example/resolve/pin/example.gguf",
+        )
+
+
+def test_profile_by_name_unknown_name_propagates_as_value_error(tmp_path):
+    with pytest.raises(ValueError, match="unknown model profile"):
+        llm_lifecycle.install_managed(
+            package_id="bad-profile", root=tmp_path / "llm",
+            runtime="native", profile="does-not-exist", accept_risk=True,
+        )
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.001])
@@ -168,7 +811,7 @@ def test_managed_container_drops_privileges(monkeypatch, tmp_path):
         package_id="safe", mode="managed", public_model_alias="safe",
         runtime="docker_llama_cpp", model_path=str(model),
         checksum=fingerprint_file(model), base_url="http://127.0.0.1:18080",
-        install_source={"runtime_image": llm_lifecycle.DEFAULT_IMAGE},
+        install_source={"runtime_image": llm_runtime_docker.DEFAULT_IMAGE},
     )
     commands = []
 
@@ -176,14 +819,14 @@ def test_managed_container_drops_privileges(monkeypatch, tmp_path):
         commands.append(command)
         return type("Result", (), {"returncode": 0})()
 
-    monkeypatch.setattr(llm_lifecycle, "_docker", lambda: "docker")
-    monkeypatch.setattr(llm_lifecycle.subprocess, "run", fake_run)
-    llm_lifecycle._run_container(manifest)
+    monkeypatch.setattr(llm_runtime_docker, "_docker", lambda: "docker")
+    monkeypatch.setattr(llm_runtime_docker.subprocess, "run", fake_run)
+    llm_runtime_docker.start(manifest)
     run_command = commands[-1]
     assert run_command[0:2] == ["docker", "run"]
     assert run_command[run_command.index("--cap-drop") + 1] == "ALL"
     assert run_command[run_command.index("--security-opt") + 1] == "no-new-privileges"
-    assert llm_lifecycle.DEFAULT_IMAGE in run_command
+    assert llm_runtime_docker.DEFAULT_IMAGE in run_command
 
 
 def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, openai_server):
@@ -396,11 +1039,38 @@ def test_interrupted_setup_status_is_recovered_as_retryable_failure(tmp_path):
     assert status["retryable"] is True
 
 
+def test_node_shutdown_stops_every_owned_inference_server(tmp_path, monkeypatch):
+    """Quitting the node must not orphan a `llama-server` child."""
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    stopped: list[bool] = []
+    monkeypatch.setattr(llm_runtime_native, "stop_owned_children",
+                        lambda: stopped.append(True))
+
+    with TestClient(app) as client:
+        client.get("/api/local/llm/service/status")
+        assert stopped == []
+    assert stopped == [True]
+
+    # The node's own app replaces Starlette's shutdown handling with a custom
+    # lifespan, so it reaches the same hook through `app.state`.
+    assert app.state.llm_shutdown is not None
+    app.state.llm_shutdown()
+    assert stopped == [True, True]
+
+
 def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):
     manifest = LLMPackageManifest(
         package_id="private-model", mode="import_gguf", public_model_alias="private-alias",
         base_url="http://127.0.0.1:8080", api_key_env="VERY_SECRET_KEY",
         model_path=str(tmp_path / "commercial-secret.gguf"), runtime_command=["secret-bin"],
+        runtime_api_key="a-loopback-bearer-token",
         model_fingerprint="sha256:" + "a" * 64,
     )
     public = json.dumps(manifest.public_dict())
@@ -408,6 +1078,8 @@ def test_manifest_public_view_has_no_paths_urls_or_key_names(tmp_path):
     assert "VERY_SECRET_KEY" not in public
     assert "127.0.0.1" not in public
     assert "secret-bin" not in public
+    assert "runtime_api_key" not in public
+    assert "a-loopback-bearer-token" not in public
     assert "private-alias" in public
 
 
