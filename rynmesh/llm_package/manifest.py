@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rynmesh.atomic_io import atomic_write_json
 from rynmesh.crypto import sha256_file
 
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
@@ -168,17 +168,15 @@ def load_manifest(path: str | Path) -> LLMPackageManifest:
 def save_manifest(manifest: LLMPackageManifest, path: str | Path) -> Path:
     manifest.validate()
     target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(target.suffix + ".tmp")
-    temporary.write_text(json.dumps(manifest.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     # Owner-only: this file carries the loopback runtime bearer token, local
-    # model paths, and the runtime command line.
-    if os.name != "nt":
-        try:
-            os.chmod(temporary, 0o600)
-        except OSError:
-            pass
-    temporary.replace(target)
+    # model paths, and the runtime command line. `atomic_write_json` durably
+    # writes it via a uniquely named temp file (no cross-write collision),
+    # fsyncs before the rename (no crash-truncated manifest), and applies
+    # 0600 on every platform (previously skipped on Windows). `AtomicIOError`
+    # is an `OSError` subclass, so callers that already catch `OSError`
+    # around `save_manifest` (e.g. lifecycle's install rollback) keep working
+    # unchanged.
+    atomic_write_json(target, manifest.to_dict(), indent=2, sort_keys=True)
     return target
 
 

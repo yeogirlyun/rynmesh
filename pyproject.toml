@@ -43,7 +43,10 @@ dependencies = [
 recap = ["reportlab>=4.0.0"]
 dev = [
     "pytest>=7.0.0",
-    "ruff>=0.1.0",
+    # Bounded deliberately: an unpinned linter means CI enforces a different
+    # rulebook than any developer's checkout, and a new release can turn a
+    # green tree red with no code change. Raise the ceiling on purpose.
+    "ruff>=0.12,<0.17",
     "httpx>=0.27.0",  # required by starlette.testclient (test_peer_http_*)
 ]
 # REALITY-style TLS fingerprint mimicry (defeats GFW active probing).
@@ -95,3 +98,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4"]
 ignore = ["E501", "N818", "N815"]
+
+[tool.ruff.lint.isort]
+# Stated rather than inferred. Ruff normally decides `rynmesh` is first-party
+# by finding the directory next to this file, which silently stops working for
+# a file being checked from outside the tree (the route-package generator's
+# tests check freshly generated files in a temp directory) and has changed
+# between ruff releases. Naming it here makes the grouping identical for every
+# file, every working directory, and every ruff version.
+known-first-party = ["rynmesh"]
