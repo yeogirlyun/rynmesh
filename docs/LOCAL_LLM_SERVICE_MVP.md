@@ -66,7 +66,10 @@ account. It is not money, a deposit, or a production payment system.
    endpoint. It never uses the model runtime URL.
 3. Consumer creates a stable task ID and idempotency key, freezes a worst-case
    amount in Task Balance, signs and encrypts the prompt to the Provider's node
-   messaging key, then POSTs ciphertext to the Provider peer API.
+   messaging key, then POSTs ciphertext to the Provider peer API through the
+   active `Transport`. Task creation, settlement acknowledgement, and
+   cancellation all follow this route; none bypasses transport selection with
+   a direct `urllib` call.
 4. Provider verifies the node signature, enforces recipient/service/health/
    capacity/expiry/idempotency, records metadata-only lifecycle transitions,
    decrypts in memory, calls the adapter, encrypts the response to Consumer,
