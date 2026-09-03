@@ -280,3 +280,82 @@ def test_consumption_store_format_unchanged(tmp_path: Path) -> None:
     raw = path.read_text(encoding="utf-8")
     parsed = json.loads(raw)
     assert raw == json.dumps(parsed, indent=2, sort_keys=True, ensure_ascii=False)
+
+
+def test_llm_manifest_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.llm_package.manifest import LLMPackageManifest, save_manifest
+
+    manifest = LLMPackageManifest(
+        package_id="test-pkg",
+        mode="openai_compatible",
+        public_model_alias="alias",
+        base_url="http://127.0.0.1:8080",
+        model="test-model",
+        runtime_api_key="loopback-secret-token",
+    )
+    path = tmp_path / "manifest.json"
+    save_manifest(manifest, path)
+
+    raw = path.read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+    if os.name != "nt":
+        assert _mode(path) == 0o600
+        assert _mode(path.parent) == 0o700
+
+
+def test_task_order_store_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.llm_package.task_protocol import TaskOrderStore
+
+    store = TaskOrderStore(tmp_path / "orders")
+    record, created = store.claim(task_id="task-1", bindings={"a": "b"})
+    assert created is True
+
+    raw = (tmp_path / "orders" / "task-1.json").read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+    assert parsed == record
+
+
+def test_task_balance_ledger_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.llm_package.task_balance import TaskBalanceLedger
+
+    path = tmp_path / "task-balance.json"
+    TaskBalanceLedger(path)  # standalone mode writes its fresh state on construction
+
+    raw = path.read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+
+
+def test_reader_cache_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.services.reader import ReaderCache
+
+    cache = ReaderCache(tmp_path / "cache")
+    cache.put("https://example.com/a", {"title": "t", "blocks": []}, now=123.0)
+
+    raw = cache._path("https://example.com/a").read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, ensure_ascii=False)
+
+
+def test_digest_service_sources_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.services.digest import DigestService
+
+    DigestService(tmp_path, bootstrap_defaults=True)
+
+    raw = (tmp_path / "digest" / "sources.json").read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+
+
+def test_relay_store_meta_format_unchanged(tmp_path: Path) -> None:
+    from rynmesh.relay import FileRelayStore
+
+    store = FileRelayStore(tmp_path / "relay")
+    record = store.put_chunks(iter([b"hello world"]), filename="a.txt")
+
+    meta_path = store._meta_path(record.content_hash)
+    raw = meta_path.read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)

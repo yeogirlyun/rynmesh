@@ -20,6 +20,7 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
+from rynmesh.atomic_io import atomic_write_json
 from rynmesh.background_workers import (
     BackgroundWorkerRegistry,
     BackgroundWorkerSpec,
@@ -722,10 +723,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     manager_path = ""
 
     def write_setup_job(value: dict[str, Any]) -> dict[str, Any]:
-        setup_job_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = setup_job_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(setup_job_path)
+        atomic_write_json(setup_job_path, value, indent=2, sort_keys=True)
         return value
 
     def read_setup_job() -> dict[str, Any]:
@@ -761,10 +759,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {**defaults, **dict(value or {})}
 
     def write_consumer_settings(value: dict[str, Any]) -> dict[str, Any]:
-        consumer_settings_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = consumer_settings_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(consumer_settings_path)
+        atomic_write_json(consumer_settings_path, value, indent=2, sort_keys=True)
         return value
 
     def response_retention() -> int:
@@ -792,10 +787,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {**defaults, **saved}
 
     def write_provider_settings(value: dict[str, Any]) -> dict[str, Any]:
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = settings_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(settings_path)
+        atomic_write_json(settings_path, value, indent=2, sort_keys=True)
         return value
 
     def active_manager(path: str = "") -> ProviderService | None:

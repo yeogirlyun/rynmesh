@@ -1038,6 +1038,42 @@ def test_interrupted_setup_status_is_recovered_as_retryable_failure(tmp_path):
     assert status["error_code"] == "setup_interrupted"
     assert status["retryable"] is True
 
+    # `write_setup_job` (the recovery write above) must still produce the same
+    # on-disk bytes now that it goes through `atomic_write_json`.
+    raw = job_path.read_text(encoding="utf-8")
+    parsed = json.loads(raw)
+    assert raw == json.dumps(parsed, indent=2, sort_keys=True)
+
+
+def test_provider_and_consumer_settings_format_unchanged(tmp_path):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+
+    with TestClient(app) as client:
+        # No manifest is configured, so this just persists publication_enabled=False.
+        paused = client.post("/api/local/llm/services/pause")
+        assert paused.status_code == 200
+
+        privacy = client.put(
+            "/api/local/llm/privacy", json={"result_retention_seconds": 86400}
+        )
+        assert privacy.status_code == 200
+
+    provider_raw = (home / "llm" / "provider-settings.json").read_text(encoding="utf-8")
+    provider_parsed = json.loads(provider_raw)
+    assert provider_raw == json.dumps(provider_parsed, indent=2, sort_keys=True)
+
+    consumer_raw = (home / "llm" / "consumer-settings.json").read_text(encoding="utf-8")
+    consumer_parsed = json.loads(consumer_raw)
+    assert consumer_raw == json.dumps(consumer_parsed, indent=2, sort_keys=True)
+    assert consumer_parsed["result_retention_seconds"] == 86400
+
 
 def test_node_shutdown_stops_every_owned_inference_server(tmp_path, monkeypatch):
     """Quitting the node must not orphan a `llama-server` child."""
