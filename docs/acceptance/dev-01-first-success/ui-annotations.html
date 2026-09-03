@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEV-01 UI 验收标注</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Segoe UI", sans-serif; background: #071019; color: #eff8f4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 42px; background: radial-gradient(circle at 10% 0%, #12332d, #071019 34%); }
+    header { max-width: 1360px; margin: 0 auto 28px; }
+    h1 { margin: 0 0 8px; font-size: 34px; }
+    header p { margin: 0; color: #a9bbb4; }
+    figure { max-width: 1360px; margin: 0 auto 32px; padding: 18px; border: 1px solid #284139; border-radius: 20px; background: #0b151e; }
+    .frame { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; align-items: start; }
+    .shot { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid #24353f; }
+    .shot img { display: block; width: 100%; height: auto; }
+    .pin { position: absolute; display: grid; place-items: center; width: 32px; height: 32px; border: 3px solid #fff; border-radius: 50%; background: #00d084; color: #06100d; font-weight: 900; box-shadow: 0 4px 20px #000; }
+    .notes { display: grid; gap: 12px; }
+    .note { padding: 14px; border-left: 4px solid #00d084; border-radius: 8px; background: #101f27; color: #bcd0c8; line-height: 1.45; }
+    .note b { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-right: 7px; border-radius: 50%; background: #00d084; color: #06100d; }
+    figcaption { margin: 14px 2px 0; font-weight: 700; color: #f0f8f5; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DEV-01 · 首次启动三分钟获得价值</h1>
+    <p>本页只标注 UI 改造点；截图来自本地 fixture 验收，不包含真实用户内容或路径。</p>
+  </header>
+
+  <figure>
+    <div class="frame">
+      <div class="shot">
+        <img src="screenshots/01-ready.png" alt="首次推荐就绪">
+        <span class="pin" style="left:20%;top:17%">1</span>
+        <span class="pin" style="left:58%;top:54%">2</span>
+        <span class="pin" style="left:80%;top:84%">3</span>
+      </div>
+      <div class="notes">
+        <div class="note"><b>1</b>用真实 node 里程碑显示进度；未完成步骤不伪装成成功。</div>
+        <div class="note"><b>2</b>首屏直接给出三条可打开的真实推荐，不要求账号、模型或 Peer。</div>
+        <div class="note"><b>3</b>明确“只存里程碑”的隐私边界，并允许稍后继续。</div>
+      </div>
+    </div>
+    <figcaption>状态 A：内容已就绪，用户只需选择一项。</figcaption>
+  </figure>
+
+  <figure>
+    <div class="frame">
+      <div class="shot">
+        <img src="screenshots/02-opened.png" alt="真实内容已打开">
+        <span class="pin" style="left:18%;top:19%">1</span>
+        <span class="pin" style="left:48%;top:49%">2</span>
+      </div>
+      <div class="notes">
+        <div class="note"><b>1</b>复用现有 ContentViewer 打开选中内容，而不是用“下一步”按钮伪造完成。</div>
+        <div class="note"><b>2</b>打开动作通过 `/api/local/consumption` 写入，前端随后重新读取聚合状态。</div>
+      </div>
+    </div>
+    <figcaption>状态 B：真实内容已打开，`first_item_opened` 由 node 判定。</figcaption>
+  </figure>
+
+  <figure>
+    <div class="frame">
+      <div class="shot">
+        <img src="screenshots/03-complete.png" alt="首次成功完成">
+        <span class="pin" style="left:54%;top:25%">1</span>
+        <span class="pin" style="left:32%;top:68%">2</span>
+      </div>
+      <div class="notes">
+        <div class="note"><b>1</b>打开与偏好两项都完成后才显示成功；重启后由本地状态恢复。</div>
+        <div class="note"><b>2</b>下一步导向“更多推荐”或可选本地 AI，不阻断基础内容能力。</div>
+      </div>
+    </div>
+    <figcaption>状态 C：保存本地偏好，首次价值闭环完成。</figcaption>
+  </figure>
+</body>
+</html>
