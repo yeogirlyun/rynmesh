@@ -45,9 +45,48 @@
 
 因此“后端切片通过”有证据；“跨平台全量通过”和“整 Issue 通过”仍不得勾选。
 
-2026-09-03 Webapp 证据：聚焦 `2 files / 7 tests`，全量 `10 files / 43 tests`，TypeScript
+2026-09-03 Webapp 证据：聚焦 `2 files / 9 tests`，全量 `10 files / 45 tests`，TypeScript
 lint、生产 build 和 0-vulnerability audit 全部通过。增量内存边界、Stop/incomplete、
 sequence/snapshot/reconnect、完整响应 fallback 和 terminal 单次持久化均有确定性测试。
+
+完成审计新增证据：后端聚焦/相关回归及 E2E verifier 单测 `99 passed, 1 warning`；显式 Relay/P2P 的
+complete-response 选择、第二次断线与 sequence gap 的同 task 轮询、cancel terminal 前后
+持久化边界均新增自动化覆盖。Ruff、Webapp lint 与 1,739-module build 通过。
+
+## GitHub Issue 边界映射
+
+| Issue #23 原始要求 | 当前证据 | 结论 |
+|---|---|---|
+| adapter → Provider → Consumer API → Web chat 的 direct streaming | adapter/Provider/Consumer/SSE/UI 自动化，首 delta 先于生成完成 | 切片通过；真实双节点时间戳待补 |
+| Relay/P2P 保持完整响应并平滑回退 | 显式 transport 选择测试、完整路径既有回归、UI complete-event fallback | 自动化通过；真实路由矩阵待补 |
+| Node 是唯一网关 | EventSource URL 仅 `/api/local`，浏览器无 Provider endpoint | 通过 |
+| Registry/log 不含 prompt/output | 唯一 marker 的磁盘/错误文本检查，delta 仅有界内存 | 自动化通过；生产日志抽样待真实验收 |
+| 最终计量只结算一次 | terminal-only settlement/earning idempotency tests | 通过 |
+
+## 尚需外部环境的精确证据
+
+先在装有 Docker Linux engine 的 exact-commit runner 执行自动矩阵；脚本会把 submit、
+first-delta、terminal/total 单调时间、路由、事件摘要和 exactly-once 账本证据写入
+`deploy/llm-e2e/results/*.json`：
+
+```bash
+python scripts/llm_e2e.py stream-run
+python scripts/llm_e2e.py run
+python scripts/llm_e2e.py relay-run
+python scripts/llm_e2e.py down
+```
+
+deterministic direct 必须满足 `first_delta_before_terminal=true`；P2P/Relay 必须
+`stream_event_count=0`；三者都必须满足 Consumer hold/settlement 与 Provider earning 各一次。
+当前本机 Docker 探测的精确阻塞是 Linux engine named pipe 不存在：
+`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`。
+
+最终真实验收仍需在两个独立节点/主机检出同一候选 `<sha>`，Provider 使用真实支持 OpenAI
+SSE 的模型。矩阵至少包含：direct streaming、Provider 不声明 streaming 的 complete
+fallback、显式 Relay、严格 P2P、direct 中途断开后同 task 恢复、Consumer SSE 断开重连/
+快照。严格 P2P 需要两条不同公网出口；Relay 需要独立密文 relay。保存 exact commit、OS、
+Python/Node/Rust 版本、网络拓扑、task ID、脚本 JSON、body-free 双端日志、账本事件，以及
+Registry/日志 prompt/output marker 扫描结果。
 
 ## 发布门槛
 

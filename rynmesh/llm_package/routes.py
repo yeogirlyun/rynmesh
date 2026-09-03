@@ -77,6 +77,21 @@ CAPABILITY = "rynmesh.llm.private.v1"
 OPERATION = "rynmesh.llm.private.infer.v1"
 
 
+def _direct_stream_enabled(
+    *, response_mode: str, delivery_protocols: list[str], requested_transport: str,
+) -> bool:
+    """Select stream-v1 only for a route that can use the direct endpoint.
+
+    Explicit Relay and strict P2P orders deliberately retain their complete
+    response protocol even when discovery advertises direct streaming.
+    """
+    return (
+        response_mode == "stream-v1"
+        and "stream-v1" in delivery_protocols
+        and requested_transport in {"auto", "direct"}
+    )
+
+
 def _positive_env(name: str, default: int) -> int:
     try:
         value = int(os.environ.get(name, str(default)))
@@ -1649,9 +1664,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         response_mode = str(body.get("response_mode") or "complete-v1").strip().lower()
         if response_mode not in {"complete-v1", "stream-v1"}:
             raise HTTPException(status_code=400, detail="response_mode must be complete-v1 or stream-v1")
-        stream_direct = (
-            response_mode == "stream-v1"
-            and "stream-v1" in list(selected.get("delivery_protocols") or [])
+        requested_transport = str(body.get("transport") or "auto").strip().lower()
+        if requested_transport not in {"auto", "direct", "p2p", "relay"}:
+            raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
+        stream_direct = _direct_stream_enabled(
+            response_mode=response_mode,
+            delivery_protocols=list(selected.get("delivery_protocols") or []),
+            requested_transport=requested_transport,
         )
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
@@ -1698,9 +1717,6 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=409, detail="insufficient development Task Balance")
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         idempotency_key = str(body.get("idempotency_key") or task_id)
-        requested_transport = str(body.get("transport") or "auto").strip().lower()
-        if requested_transport not in {"auto", "direct", "p2p", "relay"}:
-            raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
         transport_mode = requested_transport
         request_fingerprint = _request_fingerprint({
             "task_id": task_id,

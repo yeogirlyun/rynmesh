@@ -12,7 +12,12 @@ from fastapi.testclient import TestClient
 from rynmesh.crypto import sign_payload
 from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter
 from rynmesh.llm_package.manifest import LLMPackageManifest
-from rynmesh.llm_package.routes import CAPABILITY, ProviderService, install_llm_routes
+from rynmesh.llm_package.routes import (
+    CAPABILITY,
+    ProviderService,
+    _direct_stream_enabled,
+    install_llm_routes,
+)
 from rynmesh.llm_package.stream_protocol import (
     DEFAULT_MAX_EVENT_BYTES,
     DEFAULT_MAX_OUTPUT_BYTES,
@@ -36,6 +41,27 @@ from rynmesh.transport import StdlibHttpsTransport, TransportProfile
 
 def _expires() -> str:
     return (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+
+
+@pytest.mark.parametrize(
+    ("response_mode", "protocols", "transport", "expected"),
+    [
+        ("stream-v1", ["complete-v1", "stream-v1"], "auto", True),
+        ("stream-v1", ["complete-v1", "stream-v1"], "direct", True),
+        ("stream-v1", ["complete-v1", "stream-v1"], "relay", False),
+        ("stream-v1", ["complete-v1", "stream-v1"], "p2p", False),
+        ("stream-v1", ["complete-v1"], "direct", False),
+        ("complete-v1", ["complete-v1", "stream-v1"], "direct", False),
+    ],
+)
+def test_direct_stream_selection_preserves_complete_relay_and_p2p(
+    response_mode: str, protocols: list[str], transport: str, expected: bool,
+) -> None:
+    assert _direct_stream_enabled(
+        response_mode=response_mode,
+        delivery_protocols=protocols,
+        requested_transport=transport,
+    ) is expected
 
 
 class _ChunkTransport:

@@ -69,6 +69,8 @@ sequence 从 0 开始严格连续。重复、缺口、乱序、错误 task/servi
 ## Consumer 状态机
 
 1. 仅当调用方请求 `stream-v1` 且发现记录声明支持时启用直连流式。
+   显式 `relay`/`p2p` 请求由 `_direct_stream_enabled` 固定为完整响应；只有 `auto`/`direct`
+   可以选择 direct stream。
 2. 使用 Transport seam POST，逐行验证 SignedPayload。
 3. `StreamSequenceVerifier` 验证后才把 delta 放入内存 broker。
 4. 收到并验证终态后执行原 hold settle/release 流程。

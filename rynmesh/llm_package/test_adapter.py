@@ -8,9 +8,12 @@ the Provider to llama.cpp instead.
 from __future__ import annotations
 
 import hashlib
+import json
+import time
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="Rynmesh deterministic test LLM")
 
@@ -26,18 +29,42 @@ def models() -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
-def complete(body: dict[str, Any]) -> dict[str, Any]:
+def complete(body: dict[str, Any]) -> Any:
     messages = body.get("messages") or []
     prompt = str(messages[-1].get("content") if messages else "")
     digest = hashlib.sha256(prompt.encode()).hexdigest()[:12]
     text = "rynmesh encrypted e2e ok " + digest
+    usage = {
+        "prompt_tokens": max(1, len(prompt) // 4),
+        "completion_tokens": max(1, len(text) // 4),
+        "total_tokens": max(2, len(prompt) // 4 + len(text) // 4),
+    }
+    if body.get("stream"):
+        parts = ("rynmesh encrypted ", "e2e ok ", digest)
+
+        def events():
+            for part in parts:
+                event = {
+                    "id": "test-" + digest,
+                    "object": "chat.completion.chunk",
+                    "model": "rynmesh-test-adapter",
+                    "choices": [{"index": 0, "delta": {"content": part}}],
+                }
+                yield "data: " + json.dumps(event, separators=(",", ":")) + "\n\n"
+                # Keep a measurable gap between first delta and terminal so the
+                # two-node verifier proves live delivery rather than replay.
+                time.sleep(0.08)
+            yield "data: " + json.dumps(
+                {"choices": [], "usage": usage}, separators=(",", ":"),
+            ) + "\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
     return {
         "id": "test-" + digest, "object": "chat.completion", "model": "rynmesh-test-adapter",
         "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
                      "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": max(1, len(prompt) // 4),
-                  "completion_tokens": max(1, len(text) // 4),
-                  "total_tokens": max(2, len(prompt) // 4 + len(text) // 4)},
+        "usage": usage,
     }
 
 
