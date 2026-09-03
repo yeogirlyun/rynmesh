@@ -30,15 +30,13 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _node(tmp_path, name: str):
+def _node(tmp_path, name: str, monkeypatch):
     """A node app on its own home, built with the environment as it stands."""
-    import os
-
     from rynmesh.peer_http import create_app
     from rynmesh.store import RynmeshStore
 
     home = tmp_path / name
-    os.environ["RYNMESH_HOME"] = str(home)
+    monkeypatch.setenv("RYNMESH_HOME", str(home))
     store = RynmeshStore(home=home, network_dir=tmp_path / f"{name}-net")
     return create_app(store), store
 
@@ -76,8 +74,8 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
             time.sleep(0.05)
         assert server.started, "registry server did not start"
 
-        alice_app, alice_store = _node(tmp_path, "alice")
-        bob_app, bob_store = _node(tmp_path, "bob")
+        alice_app, alice_store = _node(tmp_path, "alice", monkeypatch)
+        bob_app, bob_store = _node(tmp_path, "bob", monkeypatch)
 
         received: list[tuple[str, dict]] = []
 

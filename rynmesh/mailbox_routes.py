@@ -8,6 +8,7 @@ is the second half of messaging-key discovery, used to wrap the node's direct
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +23,8 @@ from .background_workers import (
 )
 from .mailbox_client import MailboxClient
 
+log = logging.getLogger("rynmesh.mailbox_routes")
+
 MAILBOX_WORKER_NAME = "mailbox.poll"
 
 MAILBOX_POLL_POLICY = BackoffPolicy(
@@ -35,6 +38,16 @@ MAILBOX_POLL_POLICY = BackoffPolicy(
 MAILBOX_POLL_INITIAL_DELAY_S = 3.0
 
 
+def _poll_worker(client: MailboxClient) -> Callable[[], WorkerRunResult]:
+    """One poll, reported to the supervisor as busy or idle."""
+
+    def run_once() -> WorkerRunResult:
+        handled = client.poll_once()
+        return WorkerRunResult(activity=(handled + client.last_poll_dropped) > 0)
+
+    return run_once
+
+
 def install_mailbox(
     app: Any,
     *,
@@ -45,12 +58,22 @@ def install_mailbox(
     workers: BackgroundWorkerRegistry,
     local_control: Callable[[Request], None] | None = None,
 ) -> MailboxClient:
-    """Create the client, supervise its poll worker, expose its status."""
+    """Create the client, supervise its poll worker, expose its status.
+
+    ``home`` is the configured node home; the *store's* home wins when they
+    disagree. The store owns the identity these messages are sealed to, so
+    splitting the two would put the seen cache beside a different identity.
+    """
+
+    resolved_home = Path(getattr(store, "home", None) or home)
+    if Path(home) != resolved_home:
+        # Named paths are private; the operator can compare them themselves.
+        log.warning("RYNMESH_HOME differs from the store home; using the store home")
 
     client = MailboxClient(
         store=store,
         messaging_key=messaging_key,
-        home=home,
+        home=resolved_home,
         resolve_messaging_pub=resolve_pubkey,
     )
     app.state.mailbox = client
@@ -63,9 +86,11 @@ def install_mailbox(
             BackgroundWorkerSpec(
                 name=MAILBOX_WORKER_NAME,
                 # The supervisor reads activity from a bool/WorkerRunResult, so
-                # the handled count has to be turned into one for the busy/idle
-                # backoff to work at all.
-                run_once=lambda: WorkerRunResult(activity=client.poll_once() > 0),
+                # the counts have to be turned into one for the busy/idle
+                # backoff to work at all. Drops count as activity: a batch of
+                # nothing but replays or unknown kinds still has to drain, and
+                # backing off would leave the box filling faster than it empties.
+                run_once=_poll_worker(client),
                 initial_delay_s=MAILBOX_POLL_INITIAL_DELAY_S,
                 policy=MAILBOX_POLL_POLICY,
                 error_sink=lambda value: setattr(app.state, "mailbox_error", value),

@@ -552,7 +552,7 @@ def test_install_mailbox_registers_the_supervised_poll_worker(tmp_path) -> None:
     assert spec.policy.error_max_s == 120.0
 
     # The supervisor reads busy/idle from a bool or a WorkerRunResult, so the
-    # handled count has to arrive as one.
+    # counts have to arrive as one.
     alice = _Node(tmp_path, "alice", registry)
     client.register_handler(KIND, _Recorder())
     alice.client().deposit(
@@ -560,6 +560,40 @@ def test_install_mailbox_registers_the_supervised_poll_worker(tmp_path) -> None:
     )
     assert spec.run_once().activity is True
     assert spec.run_once().activity is False
+
+
+def test_a_batch_of_only_drops_still_counts_as_activity(tmp_path) -> None:
+    """A box full of unhandled kinds must drain at the busy delay, not idle."""
+
+    fastapi = pytest.importorskip("fastapi")
+
+    from rynmesh.mailbox_routes import install_mailbox
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    alice = _Node(tmp_path, "alice", registry)
+    bob = _Node(tmp_path, "bob", registry)
+    workers = _worker_registry()
+
+    client = install_mailbox(
+        fastapi.FastAPI(),
+        store=bob.store,
+        messaging_key=bob.messaging_key,
+        home=bob.home,
+        resolve_pubkey=lambda peer_id: bob.messaging_pub,
+        workers=workers,
+    )
+    [spec] = workers.specs()
+    alice.client().deposit(
+        bob.peer_id, "nobody.handles.this", {"x": 1}, to_messaging_pub=bob.messaging_pub
+    )
+
+    result = spec.run_once()
+    assert result.activity is True, "a dropped message is still work"
+    assert client.status()["handled_total"] == 0
+    assert client.status()["dropped_total"] == 1
+    assert client.last_poll_dropped == 1
+    assert spec.run_once().activity is False
+    assert client.last_poll_dropped == 0
 
 
 def test_install_mailbox_skips_the_worker_without_a_registry(tmp_path) -> None:
@@ -635,6 +669,85 @@ def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
 
         tunnel = {"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9"}
         assert client.get("/api/local/mailbox/status", headers=tunnel).status_code == 401
+
+
+def test_the_store_home_owns_the_messaging_key(tmp_path, monkeypatch) -> None:
+    """One key, whatever $RYNMESH_HOME says.
+
+    `create_app` is routinely handed a store whose home is not $RYNMESH_HOME.
+    If the advertised key and the decrypting key came from different files,
+    every message a peer sealed would be dropped as `open_failed`.
+    """
+
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    store_home = tmp_path / "store-home"
+    env_home = tmp_path / "env-home"
+    env_home.mkdir()
+    monkeypatch.setenv("RYNMESH_HOME", str(env_home))
+    monkeypatch.setenv("RYNMESH_NETWORK_ID", "splitnet")
+    monkeypatch.delenv("RYNMESH_LOCAL_TOKEN", raising=False)
+    monkeypatch.delenv("RYNMESH_PEER_PORT", raising=False)
+    monkeypatch.delenv("RYNMESH_PEER_ENDPOINT", raising=False)
+
+    registry = FilePeerRegistry(tmp_path / "registry")
+    store = RynmeshStore(home=store_home, network_dir=tmp_path / "network")
+    store.registry = registry
+    app = create_app(store)
+
+    with TestClient(app) as client:
+        served = client.get("/api/peer/pubkey").json()["x25519_pub"]
+    assert served == store.messaging_public_key()
+    assert not (env_home / "messaging.x25519").exists()
+
+    store.register_node(network_id="splitnet")
+    [record] = [
+        item
+        for item in store.discover_peers(network_id="splitnet", include_self=True)["peers"]
+        if item["peer_id"] == store.peer_id
+    ]
+    advertised = record["metadata"]["messaging_pub"]
+    assert advertised == served
+
+    # A peer that only ever saw the advertised key can reach this node.
+    alice = _Node(tmp_path, "alice", registry)
+    handler = _Recorder()
+    app.state.mailbox.register_handler(KIND, handler)
+    alice.client().deposit(
+        store.peer_id, KIND, {"invite_id": "split-home"}, to_messaging_pub=advertised
+    )
+    assert app.state.mailbox.poll_once() == 1
+    assert handler.calls[0][1] == {"invite_id": "split-home"}
+    # The seen cache followed the identity, not the environment.
+    assert (store_home / "mailbox" / "seen.json").is_file()
+    assert not (env_home / "mailbox").exists()
+
+
+def test_install_mailbox_warns_when_the_homes_disagree(tmp_path, caplog) -> None:
+    import logging
+
+    fastapi = pytest.importorskip("fastapi")
+
+    from rynmesh.mailbox_routes import install_mailbox
+
+    bob = _Node(tmp_path, "bob", FilePeerRegistry(tmp_path / "registry"))
+    with caplog.at_level(logging.DEBUG, logger="rynmesh.mailbox_routes"):
+        install_mailbox(
+            fastapi.FastAPI(),
+            store=bob.store,
+            messaging_key=bob.messaging_key,
+            home=tmp_path / "somewhere-else",
+            resolve_pubkey=lambda peer_id: "",
+            workers=_worker_registry(),
+        )
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "RYNMESH_HOME differs from the store home" in text
+    assert str(tmp_path) not in text, "the warning must not name either path"
+    assert not (tmp_path / "somewhere-else").exists(), "the store home is what is used"
 
 
 # ---------------------------------------------------- 9. messaging-key lookup

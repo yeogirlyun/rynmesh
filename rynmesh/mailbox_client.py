@@ -100,6 +100,7 @@ class MailboxClient:
         self._seen: OrderedDict[str, float] = OrderedDict()
         self._handled_total = 0
         self._dropped_total = 0
+        self._last_poll_dropped = 0
         self._pending_last = 0
         self._last_poll_at = ""
         self._last_error = ""
@@ -150,6 +151,19 @@ class MailboxClient:
         result.setdefault("message_id", str(signed.payload.get("message_id", "")))
         return result
 
+    @property
+    def last_poll_dropped(self) -> int:
+        """Messages dropped by the most recent poll.
+
+        The supervised worker adds this to the handled count when it decides
+        whether the box was busy: a batch of nothing but replays, bad
+        envelopes or unknown kinds is still work, and must drain at the busy
+        delay rather than backing off as if the box were empty.
+        """
+
+        with self._lock:
+            return self._last_poll_dropped
+
     def poll_once(self) -> int:
         """Fetch, dispatch and ack one batch. Returns the number handled."""
 
@@ -157,6 +171,7 @@ class MailboxClient:
         if registry is None:
             with self._lock:
                 self._last_error = "no_registry"
+                self._last_poll_dropped = 0
             return 0
 
         with self._lock:
@@ -185,7 +200,7 @@ class MailboxClient:
             # request was in flight stays pending.
             acked = set(acks)
             self._pending_acks = [item for item in self._pending_acks if item not in acked]
-            handled = self._dispatch(messages)
+            handled, self._last_poll_dropped = self._dispatch(messages)
             self._pending_last = len(messages)
             self._last_poll_at = rfc3339(self._resolve_now())
             self._last_error = ""
@@ -206,10 +221,11 @@ class MailboxClient:
 
     # --------------------------------------------------------------- private
 
-    def _dispatch(self, messages: Any) -> int:
-        """Open, dispatch and ack every message in one polled batch."""
+    def _dispatch(self, messages: Any) -> tuple[int, int]:
+        """Open, dispatch and ack one polled batch. Returns (handled, dropped)."""
 
         handled = 0
+        dropped_before = self._dropped_total
         changed = False
         for signed_message in messages or ():
             payload = getattr(signed_message, "payload", None)
@@ -282,7 +298,7 @@ class MailboxClient:
 
         if changed:
             self._save_seen()
-        return handled
+        return handled, self._dropped_total - dropped_before
 
     def _ack(self, message_id: str) -> None:
         """Queue an ack for the next poll (ids are deduped and order-stable)."""

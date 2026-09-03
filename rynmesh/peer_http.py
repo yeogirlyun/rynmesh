@@ -2220,7 +2220,9 @@ def create_app(store: RynmeshStore | None = None):
     from .services.messaging_store import MessagingStore as _MsgStore
     from .services.peer_messenger import PeerMessenger as _PeerMessenger
 
-    _msg_priv = _peer_box.load_or_create_messaging_key(_home / "messaging.x25519")
+    # Beside the identity key, not $RYNMESH_HOME: the store owns the peer id
+    # these messages are sealed to, and `register_node` advertises this key.
+    _msg_priv = _peer_box.load_or_create_messaging_key(active_store.home / "messaging.x25519")
     _msg_store = _MsgStore(_home)
     _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
     _msg_subscribers: list = []  # asyncio.Queue per SSE client

@@ -387,8 +387,10 @@ class RynmeshStore:
     def messaging_public_key(self) -> str:
         """This node's X25519 messaging public key, base64.
 
-        Same file the peer HTTP layer serves from ``/api/peer/pubkey``, so a
-        record and a live lookup can never disagree.
+        Lives beside the identity key under ``self.home``. ``create_app`` loads
+        the same path for ``/api/peer/pubkey`` and for the mailbox client, so
+        the advertised key, the served key and the decrypting key are one key
+        even when ``$RYNMESH_HOME`` points somewhere else.
         """
         from .services import peer_box
 
