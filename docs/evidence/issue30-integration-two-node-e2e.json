@@ -1,0 +1,121 @@
+{
+  "cleanup": {
+    "all_child_processes_stopped": true
+  },
+  "completed_at": "2026-09-03T02:36:50.555560+00:00",
+  "decision": "development_acceptance_passed",
+  "duration_seconds": 37.922,
+  "endpoint_dns_socket": {
+    "node_a": {
+      "address_class": "private-lan",
+      "answer_count": 1,
+      "dns_or_literal_answers": [
+        "<private-lan-ip>"
+      ],
+      "endpoint": "http://<private-lan-ip>:<node-a-port>",
+      "socket_address_was_reviewed": true,
+      "socket_peer": "<private-lan-ip>:<node-a-port>",
+      "socket_port_matches": true,
+      "url_host_matches_socket_address": true
+    },
+    "node_b": {
+      "address_class": "private-lan",
+      "answer_count": 1,
+      "dns_or_literal_answers": [
+        "<private-lan-ip>"
+      ],
+      "endpoint": "http://<private-lan-ip>:<node-b-port>",
+      "socket_address_was_reviewed": true,
+      "socket_peer": "<private-lan-ip>:<node-b-port>",
+      "socket_port_matches": true,
+      "url_host_matches_socket_address": true
+    }
+  },
+  "flows": {
+    "offline_restart": {
+      "identity_preserved": true,
+      "new_process": true,
+      "next_order_denied_before_inference": true,
+      "next_order_http_status": 502,
+      "relationship": {
+        "both_relationships_active": true,
+        "invite_ref": "sha256:8d7af9cdbedaf3af",
+        "offline_review_before_contact": true,
+        "phase": "offline-revocation",
+        "reviewed_endpoint_count": 1,
+        "reviewed_network": "rynmesh-issue30-local-e2e",
+        "reviewed_permission": [
+          "private-ai.use"
+        ]
+      },
+      "remote_state": "revoked",
+      "retry_delivery": "delivered",
+      "revoke_initial_delivery": "remote_unreachable"
+    },
+    "online": {
+      "next_order_denied_before_inference": true,
+      "next_order_http_status": 409,
+      "private_ai_complete": {
+        "output_sha256": "dd0efd1dbe8a128fe3ff305770d190bf188175c80ae942a84d670719c20dc9d3",
+        "status": "succeeded",
+        "transport": "peer_http_direct"
+      },
+      "relationship": {
+        "both_relationships_active": true,
+        "invite_ref": "sha256:62ac631a7048fe78",
+        "offline_review_before_contact": true,
+        "phase": "online-revocation",
+        "reviewed_endpoint_count": 1,
+        "reviewed_network": "rynmesh-issue30-local-e2e",
+        "reviewed_permission": [
+          "private-ai.use"
+        ]
+      },
+      "revoke_delivery": "delivered"
+    }
+  },
+  "identities": {
+    "node_a": "sha256:d058fdc15f50f17e",
+    "node_b": "sha256:6b1e66a8a06defce"
+  },
+  "limitations": [
+    "Both node processes ran on one host over its private LAN interface.",
+    "This proves source-build development acceptance, not installed desktop deep-link dispatch.",
+    "The canonical branch exercises complete-v1; stream-v1 remains an integration-branch check."
+  ],
+  "release_acceptance": "not_claimed",
+  "schema": "rynmesh.issue30.local-two-node-e2e.v1",
+  "secret_scan": {
+    "invite_link_occurrences": 0,
+    "invite_secret_occurrences": 0,
+    "privacy_export_sensitive_occurrences": 0,
+    "relationship_keys_after_convergence": {
+      "node_a": [],
+      "node_b": []
+    },
+    "scanned": [
+      "node-a-home",
+      "node-b-home",
+      "sanitized-process-logs"
+    ],
+    "secret_values_recorded": false
+  },
+  "source": {
+    "command": "python scripts/issue30_two_node_e2e.py --output docs/evidence/issue30-local-two-node-e2e.json",
+    "docker_used": false,
+    "git_base_commit": "9bee9336c9bbd0e61bd006ee0d48ff4fdf0d848f",
+    "harness_sha256": "sha256:ec887a8b830db2491f34010fa7ece448cebe3604858a42e3b7e41c8d44ee8f1e",
+    "harness_sources_clean": true
+  },
+  "started_at": "2026-09-03T02:36:12.630275+00:00",
+  "topology": {
+    "advertised_address": "<private-lan-ip>",
+    "independent_homes": true,
+    "independent_ports": true,
+    "model": "deterministic-local-http-stub",
+    "node_b_restart_new_process": true,
+    "node_process_count": 2,
+    "node_processes_distinct": true,
+    "registry": "local-http-process"
+  }
+}

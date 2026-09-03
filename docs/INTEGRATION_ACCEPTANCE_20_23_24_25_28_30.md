@@ -1,130 +1,141 @@
-# Issues 20, 23, 24, 25, 28, and 30 integration acceptance
+# Issues 30, 25, 24, 23, and 20 local integration acceptance
 
 Date: 2026-09-03
 
 Branch: `codex/integration-issues-20-23-24-25-30`
 
-Validated implementation/evidence HEAD: `254f550`
-
 ## Decision
 
-The combined branch is **locally accepted for integration**. Issue 20, 23, 24, 25,
-28, and 30 changes coexist without a known feature regression in the available
-Windows development environment. Issue 24 and Issue 25 meet their local acceptance
-standards. Issue 20, Issue 23, Issue 28, and Issue 30 remain explicitly unaccepted
-until their external gates below have primary evidence.
+Issues 30, 25, 24, and 23 are **accepted for local source-build development**.
+Issue 20 is **development complete and locally contract-tested**; its two explicitly
+remote release criteria (Linux CI lifecycle verification and publishing the `.deb`
+plus checksum through the release workflow) remain pending release evidence.
 
-Release acceptance remains **pending external evidence**. The remaining gates need
-remote CI or hardware that is not available on this host; they are not unresolved
-implementation defects found by the local integration suite.
+Remote Git, a push, or a pull request is not required for the functional acceptance
+recorded here. The remaining remote items are release verification, not known product
+implementation defects and not blockers for continuing local development.
+
+Issue 28 is included only because its authenticated Transport changes are a prerequisite
+for Issues 23 and 30. It was rechecked with the combined feature suite.
 
 ## Included changes
 
-- Issue 28: authenticated Transport POST and error hardening.
-- Issue 24: Private AI provider switching, per-provider conversation buckets, and
-  storage-failure recovery.
-- Issue 25: grounded Ask handoff, bounded context, draft restoration, and stable
-  conversation ordering when two conversations are created in the same millisecond;
-  a reproducible local-Consumer browser fixture and sanitized evidence bundle are
-  included.
-- Issue 23: encrypted streaming, SSE delivery, Stop, sequence recovery, snapshot
-  replacement, poll fallback, terminal-only assistant persistence, and a two-node
-  `stream-run` verifier that records first-delta/terminal timing and exactly-once
-  ledger evidence.
-- Issue 30: Friend Mesh invite/join/review/revoke flows, endpoint pinning, friend
-  credentials, friends-only Private AI access, privacy erasure, and desktop deep links.
-- Issue 20: Linux desktop process management, XDG paths, `.deb` packaging checks,
-  install smoke workflow, and managed-node shutdown.
+- Issue 30: Friend Mesh invite review/join/revoke, endpoint pinning, friend credentials,
+  friends-only Private AI access, privacy erasure, and desktop deep-link handling.
+- Issue 25: grounded Ask handoff, bounded and visibly truncated context, context removal,
+  draft restoration, and stable conversation ordering.
+- Issue 24: provider/model switching inside a conversation, visibly separated provider
+  histories, discovery refresh recovery, and encrypted-storage failure recovery.
+- Issue 23: encrypted direct streaming, SSE delivery, Stop, sequence recovery, snapshot
+  replacement, capability fallback, poll fallback, terminal-only persistence, and
+  exactly-once settlement.
+- Issue 20: Linux desktop process management, XDG paths, `.deb` packaging contracts,
+  install smoke workflow, documentation, and managed-node shutdown.
+- Issue 28 prerequisite: authenticated Transport POST and error hardening.
 
-## Integration defects found and resolved
+## Real local end-to-end evidence
 
-1. Grounded Ask and an initial empty conversation could share the same millisecond
-   sort key after provider switching. The grounded conversation now receives a
-   strictly newer timestamp.
-2. Friend Mesh passed an empty `headers` argument to clients that predated header
-   support, which could prevent streaming settlement delivery. Empty headers are no
-   longer passed.
-3. The friends-only policy originally authenticated the complete-response task path
-   but not Issue 23's streaming task path. Streaming requests now carry a friend HMAC
-   bound to the exact `/api/peer/llm/tasks/stream` path and request body, and the
-   provider validates it before inference or capacity work.
-4. The Tauri merge preserves both desktop requirements: single-instance is registered
-   before deep-link handling, while Linux SIGTERM/SIGINT and normal exit all stop the
-   managed node.
-5. Provider discovery refresh failures now retain the last successful snapshot, and a
-   first encrypted write failure in an empty target bucket releases switching without
-   losing the original provider, history, or draft.
-6. A grounded context too large for the selected model previously disabled Send without
-   an explanation. The UI now tells the user to remove the article or select a model
-   with a larger context window.
-7. A proxy-specific endpoint-pinning refusal previously escaped Friend Join as an HTTP
-   500. It now fails closed as `friend_join_failed` before an outbound client is built,
-   a local relationship is stored, or the remote invite is consumed.
+### Issue 23: four-process Private AI
 
-## Exact local evidence
+`python scripts/llm_e2e.py local-run` starts an isolated Registry, adapter, Provider,
+and Consumer on dynamic loopback ports. On the combined branch it passed both profiles:
 
-### Feature and cross-feature suites
+- direct `stream-v1`: 3 delta events, first delta at 141 ms, terminal state at 907 ms;
+- capability fallback: Provider advertised only `complete-v1`, effective mode was
+  `complete-v1`, and no delta was emitted;
+- duplicate submission reused the same terminal task;
+- Consumer and Provider each persisted one task, with one hold, one settlement, and
+  one earning;
+- all four processes stopped;
+- prompt/output markers were absent from process logs and all 20 scanned persistent
+  files in each profile.
 
-- Combined backend Friend/Transport/LLM/Linux-contract/stream verifier suite:
-  `132 passed, 1 skipped`.
-- Friend authorization across complete and streaming HTTP routes: included in the
-  combined suite; cross-route replay and post-revocation use are rejected before the
-  LLM service entry point.
-- Web full suite: `17 files`, `85 tests passed`.
-- Private AI combined focused suite: `22 passed`.
-- Issue 25 browser-focused suite after evidence integration: `40 passed`.
+The run also exposed and fixed a real incremental-transport defect: `read(64 KiB)`
+could wait for EOF on a small live stream. Stdlib and fronted transports now use
+incremental `read1`, with delayed real-HTTP regression coverage.
+
+Dedicated-Relay and distinct-public-network strict-P2P routes were not available on
+this host and are not represented as having passed.
+
+### Issue 30: two real node processes
+
+`python scripts/issue30_two_node_e2e.py` starts two nodes with independent homes,
+identities, ports, and a real local HTTP Registry. The exact combined code HEAD passed:
+
+- offline invite review did not consume the invite;
+- join produced active relationships on both nodes;
+- the invited friend discovered and completed the published friends-only Private AI
+  service over direct peer HTTP;
+- online revoke converged on both nodes and the next order was rejected before model
+  inference;
+- after rejoining, stopping node B, revoking on node A, and restarting node B with the
+  same home, retry delivery converged to revoked and the next order was again rejected
+  before inference;
+- DNS/literal resolution, the reviewed endpoint, and the connected socket address were
+  checked and recorded in sanitized form;
+- invite-link/secret/privacy-export scans found zero sensitive occurrences, relationship
+  keys were erased after convergence, and all child processes stopped.
+
+The canonical #30 harness was stable for 10 consecutive runs after waiting for the real
+Registry capacity refresh. On the integration branch, the Friend HMAC is additionally
+bound to the exact `/api/peer/llm/tasks/stream` route and body; focused tests verify that
+cross-route replay and post-revocation stream access are rejected before LLM dispatch.
+
+This proves source-build behavior on one host using its private-LAN interface. Installed
+desktop QR/deep-link dispatch remains release QA, not a failed local feature test.
+
+### Issue 25: browser acceptance
+
+A real local Consumer and Vite app were driven through Reader -> Ask -> visible context
+truncation -> grounded response -> Remove context. Four screenshots and sanitized JSON
+records are under `docs/evidence/issue-25/`. The console contained zero warnings/errors,
+request evidence stored hashes rather than prompt bodies, and the final URL retained only
+peer/service/network routing fields.
+
+## Combined regression results
+
+- Selected combined backend suite: `177 passed, 1 skipped`.
+- Issue 23 focused suite before integration: `104 passed`; after integration its focused
+  Transport/stream/LLM suite: `107 passed`.
+- Issue 30 canonical focused suite: `49 passed`; expanded Friend/Transport/LLM suite:
+  `101 passed, 1 skipped`.
+- Web full suite: `17 files`, `85 passed`.
 - Web TypeScript lint: passed.
 - Web production build: passed (`1775 modules`).
-- Ruff: passed.
-- `npm audit`: `0 vulnerabilities`.
-- `cargo metadata --locked --no-deps`: passed.
-- Four Linux shell scripts: `bash -n` passed and Git mode remained `100755`.
-- CI and release workflow YAML parsing: passed.
-- `git diff --check`: passed.
-- Issue 25 browser evidence: four screenshots, three parseable JSON records, zero
-  console warnings/errors, sanitized request hashes/paths, and a final URL containing
-  only `peer`, `service`, and `network` parameters.
+- Ruff on the changed Issue 23 and Issue 30 files: passed.
+- Issue 23 CI YAML: parsed successfully.
+- Issue 30 harness: Ruff and `py_compile` passed.
 
-### Full backend suite
+The full repository suite is also run as a portability diagnostic. Platform-specific
+failures from the Windows checkout are listed separately and do not overlap the selected
+Issue 20/23/24/25/30 feature assertions.
 
-With Python 3.12 and UTF-8 mode on implementation/evidence HEAD `254f550`, the full
-suite reached `589 passed, 3 skipped, 8 failed`. The failures are Windows/platform
-limitations outside the selected feature paths:
+With Python 3.12 UTF-8 mode, that diagnostic reached `599 passed, 3 skipped, 7 failed`.
+The seven failures are Windows/POSIX incompatibilities in pre-existing tests: two NTFS
+executable-bit assertions, one unavailable WSL `/bin/bash`, three POSIX `0600` mode
+assertions, and one `select()`-on-pipe MCP smoke test unsupported on Windows. None is a
+selected feature failure. Without UTF-8 mode, Windows' GBK locale adds decoding failures
+for UTF-8 deployment examples, so UTF-8 mode is the meaningful portable result.
 
-- two POSIX executable-bit assertions on an NTFS checkout;
-- one shell syntax test selecting a broken local WSL `bash.exe`;
-- three POSIX `0600` mode assertions on Windows;
-- one pre-existing Windows `os.replace` reader race in Signal50 media-ops; and
-- one `select()`-on-pipe MCP smoke test unsupported by Windows.
+## Issue 20 acceptance boundary
 
-No Issue 20, 23, 24, 25, 28, or 30 feature assertion failed.
+The original Issue 20 criteria split naturally into development and release evidence:
 
-## External acceptance gates
+- locally passed: selected/documented Linux format, bundled sidecar/webapp with no
+  system Python/Node dependency, sidecar/package architecture contract, Linux install/
+  update/requirements/limitations documentation, and preservation of macOS verification;
+- release-only pending: run startup/health/UI/shutdown/restart in repository Linux CI,
+  then publish the `.deb` and checksum through the existing release workflow.
 
-The following evidence is still required before release acceptance:
+No remote operation has been performed. The pending release checks should be executed
+only when the branch is intentionally pushed for release verification.
 
-- run the exact branch in repository CI after it is pushed;
-- run Issue 28 direct and encrypted-Relay E2E plus packaged-node and both desktop
-  architecture jobs on the exact reviewed hardening commit;
-- build, install, launch, and remove the Issue 20 `.deb` on Ubuntu 24.04 x86_64;
-- verify installed-app QR/deep-link behavior on Windows, Linux, and macOS;
-- run Issue 23 streaming and Issue 30 join/revoke convergence across two physical
-  nodes, covering direct, fallback, and relay paths;
-- record the validated DNS answer, connected socket peer, and preserved TLS SNI/Host
-  for Friend Join, and make an explicit V1 product decision for outbound proxies;
-- complete maintainer protocol/security review for the Friend Mesh authentication and
-  revocation design;
-- produce tagged release artifacts and checksums through the release workflow.
+## Non-blocking release follow-up
 
-## Local toolchain limitation
+- Issue 20 Linux CI lifecycle job and release artifact/checksum publication.
+- Installed-package deep-link/QR dispatch smoke tests for Issue 30.
+- Dedicated Relay and distinct-network strict-P2P coverage for Issue 23 when that
+  infrastructure is available.
 
-`cargo check --locked` resolves dependencies and starts compilation, then stops because
-the host does not have the MSVC linker:
-
-```text
-error: linker `link.exe` not found
-the msvc targets depend on the msvc linker but `link.exe` was not found
-```
-
-Installing Visual Studio Build Tools with the Visual C++ workload will remove this
-local compile gate. It does not replace the required Linux and macOS CI evidence.
+These are release/route coverage items. They do not invalidate the local development
+acceptance above.
