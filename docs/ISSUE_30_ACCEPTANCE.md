@@ -2,7 +2,7 @@
 
 Decision: **NOT YET ACCEPTED**
 
-Branch: `codex/issue-30-friend-mesh`
+Branch: `feature/issue-30-friend-mesh-core`
 
 Date: 2026-09-02
 

@@ -1,6 +1,6 @@
 # Issue #30 product specification: Friend Mesh
 
-Status: implementation in progress on `codex/issue-30-friend-mesh`
+Status: core implementation slice on `feature/issue-30-friend-mesh-core`
 Issue: https://github.com/yeogirlyun/rynmesh/issues/30
 
 ## User outcome
