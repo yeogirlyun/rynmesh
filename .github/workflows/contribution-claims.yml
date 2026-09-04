@@ -21,7 +21,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           script: |
             const bot = require('./.github/scripts/contribution-claims.cjs');
@@ -35,7 +35,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         with:
           script: |
             const bot = require('./.github/scripts/contribution-claims.cjs');
