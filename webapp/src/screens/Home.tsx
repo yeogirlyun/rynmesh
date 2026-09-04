@@ -1,4 +1,4 @@
-import { Bot, Compass, Settings2, Sparkles, UploadCloud } from "lucide-react";
+import { Bot, Compass, FolderOpen, Settings2, Sparkles, UploadCloud } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAppContext } from "../appContext";
@@ -112,6 +112,9 @@ export default function Home() {
           </Button>
           <Button icon={Sparkles} onClick={() => navigate("/ask")}>
             Ask AI
+          </Button>
+          <Button icon={FolderOpen} onClick={() => navigate("/library")}>
+            My Content
           </Button>
           <Button icon={UploadCloud} variant="primary" onClick={() => navigate("/publish")}>
             Publish

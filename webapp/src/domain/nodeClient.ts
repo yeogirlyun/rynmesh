@@ -32,6 +32,7 @@ import type {
   AssistantRunRequest,
   AssistantTarget,
 } from "./assistantTypes";
+import type { LibraryAction, LibraryItem, LibraryPage, LibrarySource, LibraryView, LibraryWatcher } from "./libraryTypes";
 
 export interface LLMServiceRecord {
   peer_id: string;
@@ -222,6 +223,19 @@ export interface NodeClient {
   createAssistantRun(req: AssistantRunRequest): Promise<AssistantRun>;
   getAssistantRun(runId: string): Promise<AssistantRun>;
   cancelAssistantRun(runId: string): Promise<AssistantRun>;
+  listLibrary(filters?: { view?: LibraryView; query?: string; kind?: string; source?: string; cursor?: string; limit?: number }): Promise<LibraryPage>;
+  getLibraryItem(libraryId: string): Promise<LibraryItem>;
+  importLibraryFile(req: { filename: string; mime: string; data_base64: string }): Promise<LibraryItem>;
+  getLibraryImportPreview(importId: string): Promise<{ import_id: string; title: string; text: string; truncated: boolean }>;
+  deleteLibraryImport(importId: string): Promise<{ ok: boolean }>;
+  runLibraryAction(req: { action: LibraryAction; library_ids: string[]; tag?: string }): Promise<{ ok: boolean; results: Array<{ library_id: string; ok: boolean; error?: string }> }>;
+  listLibrarySources(): Promise<{ sources: LibrarySource[]; watchers: LibraryWatcher[] }>;
+  addLibrarySource(url: string): Promise<LibrarySource>;
+  removeLibrarySource(sourceId: string): Promise<{ ok: boolean }>;
+  addLibraryWatcher(url: string, note?: string): Promise<LibraryWatcher>;
+  removeLibraryWatcher(watcherId: string): Promise<{ ok: boolean }>;
+  setLibrarySourcePaused(sourceId: string, paused: boolean): Promise<LibrarySource>;
+  setLibraryWatcherPaused(watcherId: string, paused: boolean): Promise<LibraryWatcher>;
   runLLMServiceAction(
     action: "start" | "stop" | "restart" | "update" | "self-test" | "uninstall",
     options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },

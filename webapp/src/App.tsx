@@ -29,6 +29,7 @@ import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
 import AskRyn from "./screens/AskRyn";
+import MyContent from "./screens/MyContent";
 import SearchAsk from "./screens/SearchAsk";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
@@ -46,6 +47,7 @@ const navItems = [
   { path: "/digest", label: "For You", icon: NavIcons.digest },
   { path: "/explore", label: "Explore", icon: NavIcons.explore },
   { path: "/ask", label: "Ask Ryn", icon: NavIcons.searchAsk },
+  { path: "/library", label: "My Content", icon: NavIcons.library },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
   { path: "/services", label: "Services", icon: NavIcons.services },
@@ -55,6 +57,7 @@ const navItems = [
 
 const LOCAL_AI_V1_ENABLED = import.meta.env.VITE_RYN_LOCAL_AI_V1_ENABLED !== "0";
 const ASSISTANT_WORKSPACE_V1_ENABLED = import.meta.env.VITE_RYN_ASSISTANT_WORKSPACE_V1 !== "0";
+const LIBRARY_WORKSPACE_V1_ENABLED = import.meta.env.VITE_RYN_LIBRARY_WORKSPACE_V1 !== "0";
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -405,6 +408,7 @@ export function AppRoutes() {
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route path="recommendations" element={<Navigate replace to="/digest" />} />
           <Route path="ask" element={ASSISTANT_WORKSPACE_V1_ENABLED ? <AskRyn /> : <Navigate replace to="/search-ask-legacy" />} />
+          <Route path="library" element={LIBRARY_WORKSPACE_V1_ENABLED ? <MyContent /> : <Navigate replace to="/digest" />} />
           <Route path="search-ask" element={<Navigate replace to="/ask?mode=search" />} />
           <Route path="search-ask-legacy" element={<SearchAsk />} />
           <Route path="publish" element={<Publish />} />

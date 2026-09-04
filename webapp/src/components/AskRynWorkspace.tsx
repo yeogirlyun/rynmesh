@@ -187,6 +187,26 @@ export default function AskRynWorkspace({ compact = false, appContext }: { compa
     void addContext({ source_kind: "content-item", content_id: contentId });
   }, [active, addContext, searchParams]);
 
+  useEffect(() => {
+    if (!active) return;
+    const pending = searchParams.getAll("library").slice(0, 20).filter((libraryId) => {
+      const key = `${active.id}:library:${libraryId}`;
+      if (preparedHandoffs.has(key)) return false;
+      preparedHandoffs.add(key);
+      return true;
+    });
+    if (!pending.length) return;
+    void Promise.all(pending.map((libraryId) => client.prepareAssistantContext({
+      conversation_id: active.id, source_kind: "library-item", library_id: libraryId,
+    }))).then(async (prepared) => {
+      const latest = (await listAssistantConversations()).find((item) => item.id === active.id) ?? active;
+      const known = new Set(latest.contexts.map((context) => context.id));
+      const contexts = [...latest.contexts, ...prepared.filter((context) => !known.has(context.id))];
+      await persist({ ...latest, contexts, updatedAt: new Date().toISOString() });
+      notify("ok", `${prepared.length} Library item${prepared.length === 1 ? " is" : "s are"} ready as private context`);
+    }).catch(() => notify("danger", "Ryn could not prepare one or more Library items"));
+  }, [active, client, notify, persist, searchParams]);
+
   const createNew = (target = targets[0]) => {
     if (!target) return;
     const conversation = createAssistantConversation(target);

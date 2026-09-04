@@ -161,6 +161,7 @@ function PrivacySection({
           { label: "Discovery cache", value: `${status.cached_discovery_items} items · ${status.reader_cache_files} reader pages` },
           { label: "Assistant audit", value: `${status.audit_events} events` },
           { label: "Assistant workspace", value: `${status.assistant_run_records} runs · ${status.assistant_context_records} contexts` },
+          { label: "My Content", value: `${status.library_import_records} managed files · ${status.library_metadata_records} metadata records` },
           { label: "Cloud AI", value: status.cloud_ai_enabled ? "enabled" : "disabled" },
         ]} />
       ) : <p className="muted">Inspecting local data…</p>}
@@ -182,6 +183,9 @@ function PrivacySection({
         </Button>
         <Button icon={Trash2} variant="danger" onClick={() => erase(["assistant"], "Clear Ask Ryn workspace?", "This permanently erases encrypted Ask Ryn conversations in this browser and assistant run/context records from this node.")}>
           Clear Ask Ryn
+        </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["library_imports", "library_metadata", "library_index"], "Clear My Content data?", "This deletes Ryn-managed file copies, Library tags/archive metadata, and the rebuildable local index. Your original files are never deleted.")}>
+          Clear My Content
         </Button>
       </div>
       <div className="privacy-audit">

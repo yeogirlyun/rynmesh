@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 __all__ = ["ConsumptionError", "ConsumptionStore"]
 
-_ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
+_ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed", "restart"}
 _ITEM_FIELDS = {
     "item_id",
     "source_id",
@@ -100,6 +100,9 @@ class ConsumptionStore:
         elif action == "completed":
             record["progress"] = 1.0
             record["completed"] = True
+        elif action == "restart":
+            record["progress"] = 0.0
+            record["completed"] = False
         records[item_id] = record
         ordered = sorted(
             records.values(),
@@ -111,6 +114,13 @@ class ConsumptionStore:
 
     def clear(self) -> None:
         self._write({})
+
+    def remove(self, item_id: str) -> bool:
+        records = self._load()
+        removed = records.pop(str(item_id), None) is not None
+        if removed:
+            self._write(records)
+        return removed
 
     def _load(self) -> dict[str, dict[str, Any]]:
         try:

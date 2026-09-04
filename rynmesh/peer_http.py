@@ -1411,6 +1411,9 @@ def create_app(store: RynmeshStore | None = None):
     from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
     from .services.first_success import FirstSuccessStore
+    from .services.library import LibraryError, LibraryService
+    from .services.library_imports import MAX_IMPORT_BYTES, LibraryImportError, LibraryImportStore
+    from .services.library_metadata import LibraryMetadataError, LibraryMetadataStore
     from .services.reader import ReaderCache, ReaderError, read_article
 
     desktop_discovery = os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower() in {
@@ -1428,6 +1431,14 @@ def create_app(store: RynmeshStore | None = None):
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
+    app.state.library_imports = LibraryImportStore(active_store.home / "library" / "imports")
+    app.state.library_metadata = LibraryMetadataStore(active_store.home / "library" / "metadata.json")
+    app.state.library_service = LibraryService(
+        consumption=app.state.consumption_store,
+        imports=app.state.library_imports,
+        metadata=app.state.library_metadata,
+    )
+    app.state.library_enabled = os.environ.get("RYNMESH_LIBRARY_WORKSPACE_V1", "1") != "0"
     app.state.first_success_store = FirstSuccessStore(active_store.home / "first-success.json")
     app.state.first_success_enabled = os.environ.get("RYNMESH_FIRST_SUCCESS_V1_ENABLED", "1") != "0"
     app.state.assistant_audit = AssistantAuditStore(active_store.home / "assistant-audit.json")
@@ -1436,6 +1447,9 @@ def create_app(store: RynmeshStore | None = None):
 
     def _digest_service() -> DigestService:
         return app.state.digest_service
+
+    def _library_service() -> LibraryService:
+        return app.state.library_service
 
     def _audit() -> AssistantAuditStore:
         return app.state.assistant_audit
@@ -1728,10 +1742,32 @@ def create_app(store: RynmeshStore | None = None):
                         str(block.get("text", "")) for block in article.get("blocks", [])
                     ),
                 })
+            elif source_kind == "library-item":
+                library_id = str(body.get("library_id", ""))
+                item = _library_service().get(library_id)
+                if not item["capabilities"]["ask"]:
+                    raise AssistantContextError(
+                        "assistant_context_missing", "That Library item is not available locally."
+                    )
+                if library_id.startswith("import:"):
+                    text = app.state.library_imports.extracted_text(library_id.split(":", 1)[1])
+                    source_url = ""
+                else:
+                    source_url = str(item.get("source", {}).get("url", ""))
+                    article = read_article(
+                        source_url, fetcher=_digest_service().fetcher, cache=app.state.reader_cache
+                    )
+                    text = "\n\n".join(
+                        str(block.get("text", "")) for block in article.get("blocks", [])
+                    )
+                body.update({
+                    "kind": "library-item", "title": item["title"],
+                    "source_ref": library_id, "source_url": source_url, "text": text,
+                })
             return app.state.assistant_contexts.prepare(body)
         except AssistantContextError as exc:
             raise HTTPException(status_code=400, detail=exc.code) from exc
-        except (FileNotFoundError, StoreError, UnicodeDecodeError) as exc:
+        except (FileNotFoundError, StoreError, UnicodeDecodeError, LibraryError, LibraryImportError) as exc:
             raise HTTPException(status_code=404, detail="assistant_context_missing") from exc
         except ReaderError as exc:
             raise HTTPException(status_code=400, detail="assistant_context_missing") from exc
@@ -2080,6 +2116,141 @@ def create_app(store: RynmeshStore | None = None):
         _audit().append("verify", "Reading history cleared", details={"scope": "history"})
         return {"ok": True}
 
+    def _library_enabled() -> None:
+        if not app.state.library_enabled:
+            raise HTTPException(status_code=404, detail="library_workspace_disabled")
+
+    @app.get("/api/local/library")
+    def local_library(
+        request: FastAPIRequest,
+        view: str = "all",
+        query: str = "",
+        kind: str = "",
+        source: str = "",
+        cursor: str = "",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            return _library_service().list(
+                view=view, query=query, kind=kind, source=source, cursor=cursor, limit=limit
+            )
+        except LibraryError as exc:
+            raise HTTPException(status_code=400, detail=exc.code) from exc
+
+    @app.post("/api/local/library/imports")
+    async def local_library_import(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            content_length = int(request.headers.get("content-length", "0") or 0)
+        except ValueError:
+            content_length = 0
+        if content_length > ((MAX_IMPORT_BYTES + 2) // 3) * 4 + 128 * 1024:
+            raise HTTPException(status_code=413, detail="library_import_size_limit")
+        try:
+            imported = app.state.library_imports.import_bytes(dict(await request.json()))
+            return _library_service().get(f"import:{imported['import_id']}")
+        except LibraryImportError as exc:
+            raise HTTPException(status_code=400, detail=exc.code) from exc
+
+    @app.get("/api/local/library/imports/{import_id}/status")
+    def local_library_import_status(import_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            return app.state.library_imports.get(import_id)
+        except LibraryImportError as exc:
+            raise HTTPException(status_code=404, detail=exc.code) from exc
+
+    @app.get("/api/local/library/imports/{import_id}/preview")
+    def local_library_import_preview(import_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            metadata = app.state.library_imports.get(import_id)
+            text = app.state.library_imports.extracted_text(import_id)
+            return {"import_id": import_id, "title": metadata["filename"], "text": text[:64 * 1024], "truncated": len(text) > 64 * 1024}
+        except LibraryImportError as exc:
+            raise HTTPException(status_code=404, detail=exc.code) from exc
+
+    @app.delete("/api/local/library/imports/{import_id}")
+    def local_library_import_delete(import_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            if not app.state.library_imports.delete(import_id):
+                raise LibraryImportError("library_import_not_found", "Import not found")
+            return {"ok": True}
+        except LibraryImportError as exc:
+            raise HTTPException(status_code=404, detail=exc.code) from exc
+
+    @app.post("/api/local/library/actions")
+    async def local_library_actions(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            return _library_service().actions(dict(await request.json()))
+        except LibraryError as exc:
+            raise HTTPException(status_code=400, detail=exc.code) from exc
+
+    @app.get("/api/local/library/sources")
+    def local_library_sources(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        health = {
+            str(item.get("id", "")): item
+            for item in _digest_service().discovery_status().get("source_health", [])
+        }
+        sources = []
+        for source_item in _digest_service().list_sources():
+            source_id = str(source_item.get("id", ""))
+            sources.append({**source_item, "paused": bool(source_item.get("paused")), "health": health.get(source_id, {})})
+        return {"sources": sources, "watchers": _digest_service().list_watchers()}
+
+    @app.patch("/api/local/library/sources/{source_id}")
+    async def local_library_source_patch(source_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        body = dict(await request.json())
+        if set(body) != {"paused"}:
+            raise HTTPException(status_code=400, detail="library_source_patch_invalid")
+        try:
+            return _digest_service().set_source_paused(source_id, bool(body["paused"]))
+        except DigestError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.patch("/api/local/library/watchers/{watcher_id}")
+    async def local_library_watcher_patch(watcher_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        body = dict(await request.json())
+        if set(body) != {"paused"}:
+            raise HTTPException(status_code=400, detail="library_watcher_patch_invalid")
+        try:
+            return _digest_service().set_watcher_paused(watcher_id, bool(body["paused"]))
+        except DigestError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/local/library/{library_id:path}")
+    def local_library_item(library_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            return _library_service().get(library_id)
+        except LibraryError as exc:
+            raise HTTPException(status_code=404, detail=exc.code) from exc
+
+    @app.patch("/api/local/library/{library_id:path}")
+    async def local_library_item_patch(library_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _library_enabled()
+        try:
+            return _library_service().patch(library_id, dict(await request.json()))
+        except (LibraryError, LibraryMetadataError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/local/digest/steer")
     def local_digest_steering(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
@@ -2416,6 +2587,8 @@ def create_app(store: RynmeshStore | None = None):
             "assistant_context_records": sum(
                 1 for path in (active_store.home / "assistant" / "contexts").glob("ctx_*.json")
             ),
+            "library_import_records": len(app.state.library_imports.list()),
+            "library_metadata_records": len(app.state.library_metadata.all()),
             "cloud_ai_enabled": bool(_settings.get().get("cloud_access", False)),
         }
 
@@ -2437,6 +2610,11 @@ def create_app(store: RynmeshStore | None = None):
                 "contexts": _assistant_metadata("contexts/ctx_*.json", {"conversation_id"}),
                 "note": "Prompt, context bodies, model output, credentials, and absolute paths are excluded.",
             },
+            "library": {
+                "metadata": app.state.library_metadata.all(),
+                "imports": app.state.library_imports.list(),
+                "note": "Managed file bytes and extracted text are excluded from the default export.",
+            },
             "first_success": app.state.first_success_store.get(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
@@ -2452,7 +2630,10 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         requested = body.get("scopes", []) if isinstance(body, dict) else []
         scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit", "onboarding", "assistant"}
+        allowed = {
+            "history", "profile", "cache", "audit", "onboarding", "assistant",
+            "library_metadata", "library_imports", "library_index",
+        }
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
         if "history" in scopes:
@@ -2477,6 +2658,14 @@ def create_app(store: RynmeshStore | None = None):
                 for path in directory.glob("*"):
                     if path.is_file() and path.resolve().parent == directory.resolve():
                         path.unlink(missing_ok=True)
+        if "library_metadata" in scopes:
+            app.state.library_metadata.clear()
+        if "library_imports" in scopes:
+            app.state.library_imports.clear()
+        if "library_index" in scopes:
+            index_path = active_store.home / "library" / "index.sqlite3"
+            if index_path.resolve().parent == (active_store.home / "library").resolve():
+                index_path.unlink(missing_ok=True)
         if "audit" not in scopes:
             _audit().append(
                 "verify",

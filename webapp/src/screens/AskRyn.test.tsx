@@ -88,6 +88,12 @@ describe("Ask Ryn workspace", () => {
     expect(screen.getByText(/Compute: on this device/)).toBeInTheDocument();
   });
 
+  it("prepares multiple Library selections without a last-write-wins race", async () => {
+    renderAsk(makeFixtureNodeClient(), "/ask?library=import%3Aimp_fixture_notes&library=import%3Aimp_fixture_pdf");
+    expect(await screen.findByText("Research notes.md")).toBeInTheDocument();
+    expect(await screen.findByText("Product review.pdf")).toBeInTheDocument();
+  });
+
   it("offers the in-app setup flow instead of a dead composer when no model exists", async () => {
     const client = makeFixtureNodeClient();
     vi.spyOn(client, "listAssistantTargets").mockResolvedValue([]);

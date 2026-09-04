@@ -37,13 +37,13 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
 def _read_json(path: Path) -> dict[str, Any]:
     """Read through the short Windows replace/share-lock window."""
     last_error: OSError | ValueError | TypeError | None = None
-    for attempt in range(5):
+    for attempt in range(20):
         try:
             return dict(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError) as exc:
             last_error = exc
-            if attempt < 4:
-                time.sleep(0.005 * (attempt + 1))
+            if attempt < 19:
+                time.sleep(0.01 * (attempt + 1))
     assert last_error is not None
     raise last_error
 

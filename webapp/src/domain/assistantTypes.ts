@@ -113,7 +113,8 @@ export interface AssistantContextPrepareRequest {
   title?: string;
   text?: string;
   data_base64?: string;
-  source_kind?: "content-item" | "reader-article";
+  source_kind?: "content-item" | "reader-article" | "library-item";
   content_id?: string;
+  library_id?: string;
   url?: string;
 }

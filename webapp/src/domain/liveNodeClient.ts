@@ -93,6 +93,29 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getAssistantRun: (runId) => requestJson(`${baseUrl}/assistant/runs/${encodeURIComponent(runId)}`),
     cancelAssistantRun: (runId) =>
       requestJson(`${baseUrl}/assistant/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }),
+    listLibrary: (filters) => requestJson(`${baseUrl}/library${qs(filters)}`),
+    getLibraryItem: (libraryId) => requestJson(`${baseUrl}/library/${encodeURIComponent(libraryId)}`),
+    importLibraryFile: (req) =>
+      requestJson(`${baseUrl}/library/imports`, { method: "POST", body: JSON.stringify(req) }),
+    getLibraryImportPreview: (importId) =>
+      requestJson(`${baseUrl}/library/imports/${encodeURIComponent(importId)}/preview`),
+    deleteLibraryImport: (importId) =>
+      requestJson(`${baseUrl}/library/imports/${encodeURIComponent(importId)}`, { method: "DELETE" }),
+    runLibraryAction: (req) =>
+      requestJson(`${baseUrl}/library/actions`, { method: "POST", body: JSON.stringify(req) }),
+    listLibrarySources: () => requestJson(`${baseUrl}/library/sources`),
+    addLibrarySource: (url) => requestJson(`${baseUrl}/sources`, { method: "POST", body: JSON.stringify({ url }) }),
+    removeLibrarySource: (sourceId) => requestJson(`${baseUrl}/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" }),
+    addLibraryWatcher: (url, note = "") => requestJson(`${baseUrl}/watchers`, { method: "POST", body: JSON.stringify({ url, note }) }),
+    removeLibraryWatcher: (watcherId) => requestJson(`${baseUrl}/watchers/${encodeURIComponent(watcherId)}`, { method: "DELETE" }),
+    setLibrarySourcePaused: (sourceId, paused) =>
+      requestJson(`${baseUrl}/library/sources/${encodeURIComponent(sourceId)}`, {
+        method: "PATCH", body: JSON.stringify({ paused }),
+      }),
+    setLibraryWatcherPaused: (watcherId, paused) =>
+      requestJson(`${baseUrl}/library/watchers/${encodeURIComponent(watcherId)}`, {
+        method: "PATCH", body: JSON.stringify({ paused }),
+      }),
     runLLMServiceAction: (action, options) =>
       requestJson(`${baseUrl}/llm/service/actions/${encodeURIComponent(action)}`, {
         method: "POST",

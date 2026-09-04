@@ -996,6 +996,51 @@ export function makeFixtureNodeClient(): NodeClient {
   let localAiReady = false;
   const assistantContexts = new Map<string, import("./assistantTypes").AssistantContextRef>();
   const assistantRuns = new Map<string, import("./assistantTypes").AssistantRun & { polls?: number }>();
+  let libraryItems: import("./libraryTypes").LibraryItem[] = [
+    { version: "ryn.library-item.v1", library_id: "url:fixture-saved", kind: "article",
+      title: "Designing private assistants people can trust", summary: "A practical guide to visible privacy boundaries and local-first interaction.",
+      source: { id: "local-first", title: "Local First", url: "https://example.test/private-assistants" },
+      state: { saved: true, progress: 0, completed: false, archived: false },
+      capabilities: { open: true, ask: true, share: true }, local_copy: { available: false, size_bytes: 0 },
+      last_activity_unix: Date.now() / 1000, tags: ["privacy", "design"] },
+    { version: "ryn.library-item.v1", library_id: "url:fixture-continue", kind: "video",
+      title: "Local AI from first launch to first answer", summary: "Continue from 42% on this device.",
+      source: { id: "ryn-labs", title: "Ryn Labs", url: "https://example.test/local-ai" },
+      state: { saved: true, progress: 0.42, completed: false, archived: false },
+      capabilities: { open: true, ask: true, share: true }, local_copy: { available: false, size_bytes: 0 },
+      last_activity_unix: Date.now() / 1000 - 300, tags: ["local-ai"] },
+    { version: "ryn.library-item.v1", library_id: "url:fixture-history", kind: "article",
+      title: "A calm guide to friend-to-friend sharing", summary: "Previously opened and completed.",
+      source: { id: "mesh-notes", title: "Mesh Notes", url: "https://example.test/friend-sharing" },
+      state: { saved: false, progress: 1, completed: true, archived: false },
+      capabilities: { open: true, ask: true, share: true }, local_copy: { available: false, size_bytes: 0 },
+      last_activity_unix: Date.now() / 1000 - 900, tags: ["sharing"] },
+    { version: "ryn.library-item.v1", library_id: "import:imp_fixture_notes", import_id: "imp_fixture_notes", kind: "markdown",
+      title: "Research notes.md", summary: "Private markdown import · ready for Ask Ryn",
+      source: { id: "local-import", title: "Local file", url: "" },
+      state: { saved: true, progress: 0, completed: false, archived: false },
+      capabilities: { open: true, ask: true, share: true }, local_copy: { available: true, size_bytes: 2460 },
+      last_activity_unix: Date.now() / 1000 - 120, tags: ["research"], import_state: "ready" },
+    { version: "ryn.library-item.v1", library_id: "import:imp_fixture_pdf", import_id: "imp_fixture_pdf", kind: "pdf",
+      title: "Product review.pdf", summary: "Private PDF import · 8 pages extracted",
+      source: { id: "local-import", title: "Local file", url: "" },
+      state: { saved: true, progress: 0, completed: false, archived: false },
+      capabilities: { open: true, ask: true, share: true }, local_copy: { available: true, size_bytes: 82400 },
+      last_activity_unix: Date.now() / 1000 - 600, tags: [], import_state: "ready" },
+  ];
+  let librarySources: import("./libraryTypes").LibrarySource[] = [
+    { id: "local-first", title: "Local First", kind: "rss", feed_url: "https://example.test/feed.xml", paused: false,
+      health: { ok: true, item_count: 18, last_success_unix: Date.now() / 1000 - 60 } },
+    { id: "ryn-labs", title: "Ryn Labs", kind: "youtube", feed_url: "https://example.test/videos.xml", paused: false,
+      health: { ok: true, item_count: 12, last_success_unix: Date.now() / 1000 - 90 } },
+  ];
+  let libraryWatchers: import("./libraryTypes").LibraryWatcher[] = [
+    { id: "watch-fixture", title: "Ryn release notes", url: "https://example.test/releases", note: "Product changes", paused: false },
+  ];
+  const libraryPreviews = new Map<string, string>([
+    ["imp_fixture_notes", "# Research notes\n\nPrivate local-first research material."],
+    ["imp_fixture_pdf", "Product review\n\nThe review recommends a simpler first-use flow."],
+  ]);
 
   return {
     mode: "fixture",
@@ -1212,10 +1257,13 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       const id = `ctx_fixture_${assistantContexts.size + 1}`;
       const size = req.data_base64 ? Math.round(req.data_base64.length * 0.75) : (req.text?.length ?? 640);
+      const libraryTitle = req.library_id
+        ? libraryItems.find((item) => item.library_id === req.library_id)?.title
+        : undefined;
       const context: import("./assistantTypes").AssistantContextRef = {
         version: "ryn.assistant-context.v1", id, local_ref: id,
-        kind: req.kind ?? req.source_kind ?? "text", title: req.title ?? "Ryn content item",
-        source_ref: req.content_id ?? null, source_url: req.url ?? null,
+        kind: req.kind ?? req.source_kind ?? "text", title: req.title ?? libraryTitle ?? "Ryn content item",
+        source_ref: req.content_id ?? req.library_id ?? null, source_url: req.url ?? null,
         content_hash: `sha256:fixture${assistantContexts.size + 1}`, size_bytes: size,
         expires_at: Date.now() / 1000 + 86400,
       };
@@ -1279,6 +1327,112 @@ export function makeFixtureNodeClient(): NodeClient {
       run.error_code = "assistant_cancelled";
       run.safe_error = "This run was cancelled.";
       return { ...run };
+    },
+    async listLibrary(filters) {
+      await delay();
+      const view = filters?.view ?? "all";
+      const query = (filters?.query ?? "").toLowerCase();
+      let values = libraryItems.filter((item) => {
+        if (view === "saved" && !item.state.saved) return false;
+        if (view === "continue" && !(item.state.progress > 0 && item.state.progress < 1 && !item.state.completed)) return false;
+        if (view === "files" && !item.import_id) return false;
+        if (view === "archived" && !item.state.archived) return false;
+        if (view !== "archived" && item.state.archived) return false;
+        if (filters?.kind && item.kind !== filters.kind) return false;
+        if (filters?.source && item.source.id !== filters.source) return false;
+        return !query || `${item.title} ${item.summary} ${item.tags.join(" ")}`.toLowerCase().includes(query);
+      });
+      values = values.sort((a, b) => b.last_activity_unix - a.last_activity_unix);
+      const offset = Number(filters?.cursor ?? 0) || 0;
+      const limit = Math.min(filters?.limit ?? 50, 100);
+      return { version: "ryn.library-page.v1", items: values.slice(offset, offset + limit),
+        next_cursor: values.length > offset + limit ? String(offset + limit) : null, limit };
+    },
+    async getLibraryItem(libraryId) {
+      await delay();
+      const item = libraryItems.find((value) => value.library_id === libraryId);
+      if (!item) throw new Error("library_item_not_found");
+      return item;
+    },
+    async importLibraryFile(req) {
+      await delay();
+      const importId = `imp_fixture_${libraryItems.length + 1}`;
+      const item: import("./libraryTypes").LibraryItem = {
+        version: "ryn.library-item.v1", library_id: `import:${importId}`, import_id: importId,
+        kind: req.filename.toLowerCase().endsWith(".pdf") ? "pdf" : req.filename.toLowerCase().endsWith(".md") ? "markdown" : "text",
+        title: req.filename.split(/[\\/]/).pop() ?? "imported-file", summary: "Private managed copy · ready for Ask Ryn",
+        source: { id: "local-import", title: "Local file", url: "" },
+        state: { saved: true, progress: 0, completed: false, archived: false },
+        capabilities: { open: true, ask: true, share: true },
+        local_copy: { available: true, size_bytes: Math.round(req.data_base64.length * 0.75) },
+        last_activity_unix: Date.now() / 1000, tags: [], import_state: "ready",
+      };
+      libraryItems = [item, ...libraryItems];
+      libraryPreviews.set(importId, "Imported private text preview on this device.");
+      return item;
+    },
+    async getLibraryImportPreview(importId) {
+      await delay();
+      const item = libraryItems.find((value) => value.import_id === importId);
+      if (!item) throw new Error("library_import_not_found");
+      return { import_id: importId, title: item.title, text: libraryPreviews.get(importId) ?? "", truncated: false };
+    },
+    async deleteLibraryImport(importId) {
+      await delay();
+      libraryItems = libraryItems.filter((item) => item.import_id !== importId);
+      libraryPreviews.delete(importId);
+      return { ok: true };
+    },
+    async runLibraryAction(req) {
+      await delay();
+      for (const id of req.library_ids) {
+        const item = libraryItems.find((value) => value.library_id === id);
+        if (!item) continue;
+        if (req.action === "archive" || req.action === "unarchive") item.state.archived = req.action === "archive";
+        if (req.action === "mark_completed") { item.state.progress = 1; item.state.completed = true; }
+        if (req.action === "restart") { item.state.progress = 0; item.state.completed = false; }
+        if (req.action === "remove_saved") item.state.saved = false;
+        if (req.action === "add_tag" && req.tag && !item.tags.includes(req.tag)) item.tags.push(req.tag);
+        if (req.action === "remove_tag" && req.tag) item.tags = item.tags.filter((tag) => tag !== req.tag);
+      }
+      if (req.action === "delete_import") libraryItems = libraryItems.filter((item) => !req.library_ids.includes(item.library_id));
+      return { ok: true, results: req.library_ids.map((library_id) => ({ library_id, ok: true })) };
+    },
+    async listLibrarySources() {
+      await delay();
+      return { sources: librarySources, watchers: libraryWatchers };
+    },
+    async addLibrarySource(url) {
+      await delay();
+      const source: import("./libraryTypes").LibrarySource = { id: `source-${librarySources.length + 1}`, title: "New private source", kind: "rss", feed_url: url, paused: false, health: { ok: true, item_count: 0 } };
+      librarySources = [...librarySources, source];
+      return source;
+    },
+    async removeLibrarySource(sourceId) {
+      await delay();
+      librarySources = librarySources.filter((source) => source.id !== sourceId);
+      return { ok: true };
+    },
+    async addLibraryWatcher(url, note = "") {
+      await delay();
+      const watcher: import("./libraryTypes").LibraryWatcher = { id: `watch-${libraryWatchers.length + 1}`, title: "New page monitor", url, note, paused: false };
+      libraryWatchers = [...libraryWatchers, watcher];
+      return watcher;
+    },
+    async removeLibraryWatcher(watcherId) {
+      await delay();
+      libraryWatchers = libraryWatchers.filter((watcher) => watcher.id !== watcherId);
+      return { ok: true };
+    },
+    async setLibrarySourcePaused(sourceId, paused) {
+      await delay();
+      librarySources = librarySources.map((source) => source.id === sourceId ? { ...source, paused } : source);
+      return librarySources.find((source) => source.id === sourceId)!;
+    },
+    async setLibraryWatcherPaused(watcherId, paused) {
+      await delay();
+      libraryWatchers = libraryWatchers.map((watcher) => watcher.id === watcherId ? { ...watcher, paused } : watcher);
+      return libraryWatchers.find((watcher) => watcher.id === watcherId)!;
     },
     async runLLMServiceAction(action) {
       await delay();
@@ -1527,6 +1681,8 @@ export function makeFixtureNodeClient(): NodeClient {
         audit_events: ACTIVITY.length,
         assistant_run_records: 2,
         assistant_context_records: 1,
+        library_import_records: libraryItems.filter((item) => item.import_id).length,
+        library_metadata_records: libraryItems.filter((item) => item.tags.length || item.state.archived).length,
         cloud_ai_enabled: settings.cloud_access,
       };
     },
