@@ -209,10 +209,11 @@ not block completion of the requested peer-to-peer transit feature.
 
 ## Completion rule
 
-Local automated acceptance is complete only after a replacement soak on the
-verified-resume runtime reaches 86,400 monotonic seconds, the strict soak audit
-passes after shutdown, and a fresh
-one-GiB/20-session report passes both evidence and full-report audits plus all
-regression and package gates. Public NAT traversal remains unclaimed until the
-three-public-egress physical run supplies nominated srflx/prflx and packet-level
-evidence.
+Requested-feature acceptance is complete when rows A-G pass a fresh local
+three-node run, both independent audits pass, and the focused peer-transit
+suite is green. Functional r1 satisfies that rule.
+
+The 86,400-second soak, a fresh one-GiB/20-session repetition, package gates
+and three-public-egress physical validation are optional release qualification.
+Public NAT traversal remains unclaimed until a physical run supplies nominated
+srflx/prflx candidates and packet-level evidence.

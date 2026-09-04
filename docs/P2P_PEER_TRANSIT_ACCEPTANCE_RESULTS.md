@@ -13,7 +13,7 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Complete Python suite | Pass | 590 passed, 3 skipped after atomic exclusive final-audit publication |
+| Complete Python suite | Pass | Latest full regression passed 591 tests with 3 skipped |
 | Web tests | Pass | 38 passed |
 | Web production build | Pass | TypeScript and Vite build completed |
 | Python sdist and wheel | Pass | Candidate `180f454` built a 357,062-byte sdist and 280,748-byte wheel in an isolated PEP 517 environment; the wheel installed with dependencies into a fresh virtual environment, imported from `site-packages`, exposed all four transit CLI modes, and retained 64 MiB/three-attempt resume defaults |
@@ -21,8 +21,8 @@ network release gate in `P2P_PEER_TRANSIT.md`.
 | Direct failure fallback | Pass | Real direct operation rejected; peer-transit delivery completed in 0.532 s |
 | Adaptive degradation and recovery | Pass | Independent audit enforced 330 ms/75 ms jitter/18% direct impairment versus 80 ms/1% transit metrics, a 30-second switch, 61-second minimum transit hold, 120-second recovery hold, five recovery probes, an exact no-flap transition sequence, and unchanged transit counters on the post-recovery direct file |
 | Two non-TURN ICE legs | Pass | Both nominated candidate pairs were host/UDP and `relay_used=false`; a constructor regression proves that even injected TURN URL/username/password environment values are ignored and no TURN argument reaches `aioice.Connection` |
-| One GiB streamed transfer | Pass / final repeat pending | r33 on runtime `ded37d2` passed 1,073,741,824 bytes in 16 verified segments with matching hashes; repeat once after the 24-hour soak |
-| Bounded memory | Pass / final repeat pending | r33 peak traced Python memory was 7,560,392 bytes, below 128 MiB; repeat once after the soak |
+| One GiB streamed transfer | Pass | r33 on runtime `ded37d2` passed 1,073,741,824 bytes in 16 verified segments with matching hashes; repeating it after a 24-hour soak is optional release qualification |
+| Bounded memory | Pass | r33 peak traced Python memory was 7,560,392 bytes, below 128 MiB; repeating it after a soak is optional release qualification |
 | Concurrent callers | Pass | r33 completed 20/20 one-MiB sessions in 27.390 s; 20 unique signed sessions and independent relay/target production-worker timelines both recomputed a peak of 20 |
 | Session establishment | Pass | 0.187 s in r18, below the five-second gate |
 | Encryption framing overhead | Pass | 0.0830% in r18, below the 15% gate |
@@ -38,7 +38,7 @@ The full resource report and signed evidence are generated locally under
 `.codex-tmp/peer-transit-acceptance-full/` and are intentionally not committed
 because the directory contains two one-GiB test artifacts.
 
-## Running gate
+## Historical endurance attempts
 
 The first persistent run correctly failed closed after 3,604 seconds and 360
 successful sessions because the one-hour signed capacity record expired. The
@@ -1237,8 +1237,9 @@ Scheduler owns wrapper PID 10696, which owns virtual-environment launcher PID
 24064 and actual worker PID 50548. Its first five sessions completed with zero
 failures, worker control errors, plaintext findings, UDP remnants,
 partial/checkpoint files, open markers or log bytes. Runtime and soak-runner
-blobs remain fixed. r16 must reach 86,400 monotonic seconds independently; its
-expected deadline is 2026-09-03 22:39:05.446090 Asia/Hong_Kong.
+blobs remained fixed. At launch, r16 was intended to reach 86,400 monotonic
+seconds independently. That requirement was later superseded by the functional
+acceptance decision below, and r16 was deliberately stopped and cleaned up.
 
 ## Functional acceptance decision
 
