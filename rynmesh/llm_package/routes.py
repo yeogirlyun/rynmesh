@@ -1080,6 +1080,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     app.state.llm_relay_once = relay_once
     app.state.llm_publish_once = publish_once
+    app.state.llm_discover_services = discover
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
@@ -1937,6 +1938,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     if isinstance(v, dict) and float(v.get("_recorded_at") or 0) < cutoff
                     and "_recorded_at" in v]:
             background_orders.pop(key, None)
+
+    app.state.llm_execute_order = execute_order
 
     @app.post("/api/local/llm/orders/async")
     async def local_llm_order_async(request: Request) -> dict[str, Any]:

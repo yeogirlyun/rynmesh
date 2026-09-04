@@ -994,6 +994,8 @@ export function makeFixtureNodeClient(): NodeClient {
     state: "idle", stage: "idle", progress: 0,
   };
   let localAiReady = false;
+  const assistantContexts = new Map<string, import("./assistantTypes").AssistantContextRef>();
+  const assistantRuns = new Map<string, import("./assistantTypes").AssistantRun & { polls?: number }>();
 
   return {
     mode: "fixture",
@@ -1193,6 +1195,90 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { ok: true, answer: "Ryn is running privately on this device.",
         model_alias: "rynmesh-qwen2.5-0.5b-q4", duration_ms: 84 };
+    },
+    async listAssistantTargets() {
+      await delay();
+      return [{
+        key: "local:fixture:ryn-light", label: "This device · Ryn Light",
+        privacy_boundary: "device" as const, provider_id: "fixture", model_id: "ryn-light",
+        online: true, route_modes: ["local_chat", "local_search", "local_context"] as const,
+      }, {
+        key: "friend:fixture-alice", label: "Friend device · Alice's Ryn",
+        privacy_boundary: "friend" as const, provider_peer_id: "peer:alice", package_id: "alice-private-ai",
+        model_id: "friend-model", online: true, route_modes: ["remote_provider"] as const,
+      }];
+    },
+    async prepareAssistantContext(req) {
+      await delay();
+      const id = `ctx_fixture_${assistantContexts.size + 1}`;
+      const size = req.data_base64 ? Math.round(req.data_base64.length * 0.75) : (req.text?.length ?? 640);
+      const context: import("./assistantTypes").AssistantContextRef = {
+        version: "ryn.assistant-context.v1", id, local_ref: id,
+        kind: req.kind ?? req.source_kind ?? "text", title: req.title ?? "Ryn content item",
+        source_ref: req.content_id ?? null, source_url: req.url ?? null,
+        content_hash: `sha256:fixture${assistantContexts.size + 1}`, size_bytes: size,
+        expires_at: Date.now() / 1000 + 86400,
+      };
+      assistantContexts.set(id, context);
+      return context;
+    },
+    async createAssistantRun(req) {
+      await delay();
+      const existing = [...assistantRuns.values()].find((run) => (
+        run.conversation_id === req.conversation_id && run.run_id.endsWith(req.idempotency_key.slice(-8))
+      ));
+      if (existing) return existing;
+      const suffix = req.idempotency_key.replace(/[^a-z0-9]/gi, "").slice(-8) || Math.random().toString(16).slice(2, 10);
+      const now = new Date().toISOString();
+      const run: import("./assistantTypes").AssistantRun & { polls?: number } = {
+        version: "ryn.assistant-run.v1", run_id: `run_fixture_${suffix}`,
+        conversation_id: req.conversation_id, target_key: req.target_key,
+        privacy_boundary: req.privacy_boundary, mode: req.mode, state: "queued", attempt: req.attempt ?? 1,
+        created_at: now, updated_at: now, retryable: false, polls: 0,
+      };
+      assistantRuns.set(run.run_id, run);
+      return run;
+    },
+    async getAssistantRun(runId) {
+      await delay();
+      const run = assistantRuns.get(runId);
+      if (!run) throw new Error("assistant_run_not_found");
+      if (["queued", "running"].includes(run.state)) {
+        run.polls = (run.polls ?? 0) + 1;
+        if (run.polls < 2) run.state = "running";
+        else {
+          run.state = "completed";
+          run.output = run.mode === "remote_provider"
+            ? "Alice's Ryn completed this explicitly authorized friend-device request."
+            : run.mode === "local_search"
+            ? "Your local Ryn evidence points to privacy-first assistants, verified content, and device-owned history."
+            : run.mode === "local_context"
+              ? "The selected material says Ryn keeps assistant context on this device and cites the exact local source."
+              : "I’m ready on this device. Ask a question, search your Ryn content, or add a private file.";
+          const context = [...assistantContexts.values()][0];
+          run.citations = context ? [{
+            citation_id: "cite_1", context_id: context.id, title: context.title,
+            source_ref: context.source_ref, source_url: context.source_url,
+            locator: { kind: "character", start: 0, end: Math.min(120, context.size_bytes) },
+            quote: "Verified local material supplied to this answer.", content_hash: context.content_hash,
+          }] : [];
+          run.context_budget = {
+            original_bytes: context?.size_bytes ?? 0, included_bytes: context?.size_bytes ?? 0,
+            estimated_tokens_upper_bound: context?.size_bytes ?? 0, truncated: false,
+          };
+        }
+        run.updated_at = new Date().toISOString();
+      }
+      return { ...run };
+    },
+    async cancelAssistantRun(runId) {
+      await delay();
+      const run = assistantRuns.get(runId);
+      if (!run) throw new Error("assistant_run_not_found");
+      run.state = "cancelled";
+      run.error_code = "assistant_cancelled";
+      run.safe_error = "This run was cancelled.";
+      return { ...run };
     },
     async runLLMServiceAction(action) {
       await delay();
@@ -1439,6 +1525,8 @@ export function makeFixtureNodeClient(): NodeClient {
         cached_discovery_items: 84,
         reader_cache_files: 3,
         audit_events: ACTIVITY.length,
+        assistant_run_records: 2,
+        assistant_context_records: 1,
         cloud_ai_enabled: settings.cloud_access,
       };
     },

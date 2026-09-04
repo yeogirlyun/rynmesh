@@ -5,6 +5,8 @@ import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
 import type { NodeClient } from "../domain/nodeClient";
 import { requestDesktopNotificationPermission, sendTestNotification } from "../domain/notifications";
+import { assistantSession } from "../domain/assistantStore";
+import { clearConversations } from "../domain/llmConversationStore";
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
@@ -131,6 +133,11 @@ function PrivacySection({
       confirmLabel: "Erase local data",
       onConfirm: async () => {
         await client.erasePersonalData(scopes);
+        if (scopes.includes("assistant")) {
+          await clearConversations("assistant");
+          assistantSession.setActive(null);
+          assistantSession.touchData();
+        }
         await reload();
         notify("ok", "Selected personal data erased from this node");
       },
@@ -153,6 +160,7 @@ function PrivacySection({
           { label: "Recommendation learning", value: `${status.feedback_items} feedback · ${status.learned_signals} signals` },
           { label: "Discovery cache", value: `${status.cached_discovery_items} items · ${status.reader_cache_files} reader pages` },
           { label: "Assistant audit", value: `${status.audit_events} events` },
+          { label: "Assistant workspace", value: `${status.assistant_run_records} runs · ${status.assistant_context_records} contexts` },
           { label: "Cloud AI", value: status.cloud_ai_enabled ? "enabled" : "disabled" },
         ]} />
       ) : <p className="muted">Inspecting local data…</p>}
@@ -171,6 +179,9 @@ function PrivacySection({
         </Button>
         <Button icon={Trash2} variant="danger" onClick={() => erase(["audit"], "Clear assistant audit?", "This permanently erases the local record of assistant activity.")}>
           Clear audit
+        </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["assistant"], "Clear Ask Ryn workspace?", "This permanently erases encrypted Ask Ryn conversations in this browser and assistant run/context records from this node.")}>
+          Clear Ask Ryn
         </Button>
       </div>
       <div className="privacy-audit">

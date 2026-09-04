@@ -119,16 +119,23 @@ export default function ItemDetail() {
               </Button>
             ) : null}
             {isStoredLocally ? (
-              <Button
-                variant="primary"
-                icon={isReadableDocument ? FileText : Eye}
-                onClick={() => {
-                  if (isReadableDocument || isInlineMedia) setTab("overview");
-                  else window.open(localContentBytesUrl(item.content_id), "_blank", "noopener,noreferrer");
-                }}
-              >
-                {isReadableDocument ? "Read Document" : "View Content"}
-              </Button>
+              <>
+                {(isReadableDocument || item.content_type === "application/pdf") ? (
+                  <Button icon={Sparkles} onClick={() => navigate(`/ask?context=content:${encodeURIComponent(item.content_id)}`)}>
+                    Ask Ryn about this
+                  </Button>
+                ) : null}
+                <Button
+                  variant="primary"
+                  icon={isReadableDocument ? FileText : Eye}
+                  onClick={() => {
+                    if (isReadableDocument || isInlineMedia) setTab("overview");
+                    else window.open(localContentBytesUrl(item.content_id), "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  {isReadableDocument ? "Read Document" : "View Content"}
+                </Button>
+              </>
             ) : (
               <Button variant="primary" icon={Download} onClick={fetchFull}>
                 Fetch Full

@@ -25,6 +25,13 @@ import type {
   WorkOrder,
   WorkResult,
 } from "./types";
+import type {
+  AssistantContextPrepareRequest,
+  AssistantContextRef,
+  AssistantRun,
+  AssistantRunRequest,
+  AssistantTarget,
+} from "./assistantTypes";
 
 export interface LLMServiceRecord {
   peer_id: string;
@@ -210,6 +217,11 @@ export interface NodeClient {
   getLocalAIRecommendations(): Promise<LocalAIRecommendations>;
   getLocalAIReadiness(): Promise<LocalAIReadiness>;
   testLocalAI(): Promise<{ ok: boolean; answer: string; model_alias: string; duration_ms: number }>;
+  listAssistantTargets(): Promise<AssistantTarget[]>;
+  prepareAssistantContext(req: AssistantContextPrepareRequest): Promise<AssistantContextRef>;
+  createAssistantRun(req: AssistantRunRequest): Promise<AssistantRun>;
+  getAssistantRun(runId: string): Promise<AssistantRun>;
+  cancelAssistantRun(runId: string): Promise<AssistantRun>;
   runLLMServiceAction(
     action: "start" | "stop" | "restart" | "update" | "self-test" | "uninstall",
     options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },

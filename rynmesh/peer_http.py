@@ -1401,6 +1401,13 @@ def create_app(store: RynmeshStore | None = None):
     from .services import model_provider as model_provider_module
     from .services import recap as recap_service
     from .services.assistant_audit import AssistantAuditStore
+    from .services.assistant_context import (
+        MAX_CONTEXT_BYTES,
+        AssistantContextError,
+        AssistantContextStore,
+    )
+    from .services.assistant_router import AssistantRouteError, local_targets
+    from .services.assistant_runs import AssistantRunService
     from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
     from .services.first_success import FirstSuccessStore
@@ -1541,6 +1548,222 @@ def create_app(store: RynmeshStore | None = None):
     def _reset_model_provider() -> None:
         app.state.model_provider = None
         app.state.model_provider_checked_at = 0.0
+
+    def _assistant_search_contexts(query: str) -> list[dict[str, Any]]:
+        words = [word for word in re.findall(r"[\w']+", query.lower()) if len(word) > 2]
+        candidates: list[tuple[int, dict[str, Any]]] = []
+        digest = _digest_service().last_digest() or {}
+        for item in digest.get("items", []):
+            text = " ".join([
+                str(item.get("title", "")),
+                str(item.get("ai_summary") or item.get("summary") or ""),
+            ])
+            score = sum(1 for word in words if word in text.lower())
+            if score or not words:
+                candidates.append((score, {
+                    "title": str(item.get("title", "Result")),
+                    "text": text[:1200],
+                    "source_url": str(item.get("link", "")) or None,
+                    "source_ref": None,
+                }))
+        for item in network_content(control_network_id()):
+            text = " ".join([
+                str(item.get("title", "")), str(item.get("description", "")),
+                " ".join(str(tag) for tag in item.get("tags", [])),
+            ])
+            score = sum(1 for word in words if word in text.lower())
+            if score:
+                candidates.append((score, {
+                    "title": str(item.get("title", "Result")),
+                    "text": text[:1200],
+                    "source_url": None,
+                    "source_ref": str(item.get("content_id", "")) or None,
+                }))
+        candidates.sort(key=lambda item: -item[0])
+        contexts: list[dict[str, Any]] = []
+        for index, (_score, item) in enumerate(candidates[:6], start=1):
+            text = str(item["text"])
+            contexts.append({
+                "version": "ryn.assistant-context.v1",
+                "id": f"search_{index}_{hashlib.sha256(text.encode('utf-8')).hexdigest()[:12]}",
+                "kind": "search-result",
+                "title": item["title"],
+                "source_url": item["source_url"],
+                "source_ref": item["source_ref"],
+                "content_hash": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "text": text,
+                "included_bytes": len(text.encode("utf-8")),
+                "original_bytes": len(text.encode("utf-8")),
+                "truncated": False,
+            })
+        return contexts
+
+    def _assistant_targets() -> list[dict[str, Any]]:
+        targets = local_targets(_model_provider)
+        discover_services = getattr(app.state, "llm_discover_services", None)
+        if not callable(discover_services):
+            return targets
+        try:
+            services = discover_services(control_network_id())
+        except Exception:  # noqa: BLE001
+            return targets
+        for record in services:
+            service_record = dict(record.get("service") or {})
+            peer_id = str(record.get("peer_id", ""))
+            package_id = str(service_record.get("package_id", ""))
+            if not peer_id or not package_id:
+                continue
+            targets.append({
+                "key": "friend:" + hashlib.sha256(
+                    f"{peer_id}\0{package_id}".encode("utf-8")
+                ).hexdigest()[:24],
+                "label": f"Friend device · {record.get('node_name') or peer_id[:12]}",
+                "privacy_boundary": "friend",
+                "provider_peer_id": peer_id,
+                "package_id": package_id,
+                "model_id": str(service_record.get("model_alias", "")),
+                "online": bool(record.get("online", False)),
+                "route_modes": ["remote_provider"],
+                "pricing": service_record.get("pricing"),
+            })
+        return targets
+
+    class _AssistantRemoteProvider:
+        id = "friend"
+
+        def __init__(self, target: dict[str, Any]):
+            self.target = target
+            self.model = str(target.get("model_id", ""))
+
+        def generate(self, prompt: str, *, max_tokens: int, **_kwargs: Any) -> str:
+            execute = getattr(app.state, "llm_execute_order", None)
+            if not callable(execute):
+                raise RuntimeError("friend provider is unavailable")
+            result = _asyncio.run(execute({
+                "network_id": control_network_id(),
+                "provider_peer_id": self.target["provider_peer_id"],
+                "service_id": self.target["package_id"],
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "transport": "auto",
+            }))
+            if result.get("state") not in {"succeeded", "completed"}:
+                raise RuntimeError("friend provider did not complete")
+            return str(result.get("output", ""))
+
+    def _assistant_provider(target_key: str):
+        target = next((item for item in _assistant_targets() if item["key"] == target_key), None)
+        if target is None:
+            return None
+        if target["privacy_boundary"] == "device":
+            return _model_provider()
+        if target["privacy_boundary"] == "friend":
+            return _AssistantRemoteProvider(target)
+        return None
+
+    app.state.assistant_enabled = os.environ.get("RYNMESH_ASSISTANT_WORKSPACE_V1", "1") != "0"
+    app.state.assistant_contexts = AssistantContextStore(active_store.home / "assistant" / "contexts")
+    app.state.assistant_runs = AssistantRunService(
+        active_store.home / "assistant" / "runs",
+        contexts=app.state.assistant_contexts,
+        targets=_assistant_targets,
+        provider=_assistant_provider,
+        search_contexts=_assistant_search_contexts,
+    )
+
+    def _assistant_enabled() -> None:
+        if not app.state.assistant_enabled:
+            raise HTTPException(status_code=404, detail="assistant_workspace_disabled")
+
+    @app.get("/api/local/assistant/targets")
+    def local_assistant_targets(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _assistant_enabled()
+        return {"version": "ryn.assistant-targets.v1", "targets": app.state.assistant_runs.list_targets()}
+
+    @app.post("/api/local/assistant/context/prepare")
+    async def local_assistant_context_prepare(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _assistant_enabled()
+        body = dict(await request.json())
+        source_kind = str(body.get("source_kind", ""))
+        try:
+            if source_kind == "content-item":
+                content_id = route_id(str(body.get("content_id", "")))
+                manifest = active_store.get_local_manifest(content_id)
+                validation = active_store._validate_peer_manifest(manifest)
+                if validation.manifest is None:
+                    raise FileNotFoundError(content_id)
+                path = active_store.get_local_content_path(content_id)
+                media_type = str(validation.manifest.asset.media_type)
+                body.update({
+                    "title": str(validation.manifest.title or content_id),
+                    "source_ref": content_id,
+                    "kind": "pdf" if media_type == "application/pdf" else "content-item",
+                })
+                if body["kind"] == "pdf":
+                    import base64
+
+                    if path.stat().st_size > MAX_CONTEXT_BYTES:
+                        raise AssistantContextError(
+                            "assistant_context_too_large", "The selected PDF is too large."
+                        )
+                    body["data_base64"] = base64.b64encode(path.read_bytes()).decode("ascii")
+                else:
+                    if path.stat().st_size > MAX_CONTEXT_BYTES:
+                        raise AssistantContextError(
+                            "assistant_context_too_large", "The selected document is too large."
+                        )
+                    body["text"] = path.read_text(encoding="utf-8")
+            elif source_kind == "reader-article":
+                url = str(body.get("url", ""))
+                article = read_article(
+                    url, fetcher=_digest_service().fetcher, cache=app.state.reader_cache
+                )
+                body.update({
+                    "kind": "reader-article",
+                    "title": str(article.get("title", "Article")),
+                    "source_url": url,
+                    "text": "\n\n".join(
+                        str(block.get("text", "")) for block in article.get("blocks", [])
+                    ),
+                })
+            return app.state.assistant_contexts.prepare(body)
+        except AssistantContextError as exc:
+            raise HTTPException(status_code=400, detail=exc.code) from exc
+        except (FileNotFoundError, StoreError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=404, detail="assistant_context_missing") from exc
+        except ReaderError as exc:
+            raise HTTPException(status_code=400, detail="assistant_context_missing") from exc
+
+    @app.post("/api/local/assistant/runs")
+    async def local_assistant_run_create(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _assistant_enabled()
+        try:
+            return app.state.assistant_runs.create(dict(await request.json()))
+        except AssistantRouteError as exc:
+            raise HTTPException(status_code=409, detail=exc.code) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/local/assistant/runs/{run_id}")
+    def local_assistant_run_get(run_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _assistant_enabled()
+        try:
+            return app.state.assistant_runs.get(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="assistant_run_not_found") from exc
+
+    @app.post("/api/local/assistant/runs/{run_id}/cancel")
+    def local_assistant_run_cancel(run_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        _assistant_enabled()
+        try:
+            return app.state.assistant_runs.cancel(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="assistant_run_not_found") from exc
 
     @app.get("/api/local/ai/status")
     def local_ai_status(request: FastAPIRequest) -> dict[str, Any]:
@@ -2160,6 +2383,18 @@ def create_app(store: RynmeshStore | None = None):
             event["t"] = _dt.fromtimestamp(stamp, _UTC).isoformat() if stamp else ""
         return events
 
+    def _assistant_metadata(pattern: str, excluded: set[str]) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for path in (active_store.home / "assistant").glob(pattern):
+            if path.name.endswith(".result.json"):
+                continue
+            try:
+                record = dict(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, TypeError, ValueError):
+                continue
+            records.append({key: value for key, value in record.items() if key not in excluded})
+        return records
+
     @app.get("/api/local/privacy/status")
     def local_privacy_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
@@ -2174,6 +2409,13 @@ def create_app(store: RynmeshStore | None = None):
                 1 for path in app.state.reader_cache.dir.glob("*.json") if path.is_file()
             ),
             "audit_events": len(_audit().list()),
+            "assistant_run_records": sum(
+                1 for path in (active_store.home / "assistant" / "runs").glob("run_*.json")
+                if not path.name.endswith(".result.json")
+            ),
+            "assistant_context_records": sum(
+                1 for path in (active_store.home / "assistant" / "contexts").glob("ctx_*.json")
+            ),
             "cloud_ai_enabled": bool(_settings.get().get("cloud_access", False)),
         }
 
@@ -2190,6 +2432,11 @@ def create_app(store: RynmeshStore | None = None):
             "reading_history": app.state.consumption_store.list(),
             "sources": _digest_service().list_sources(),
             "assistant_audit": _audit().list(),
+            "assistant_workspace": {
+                "runs": _assistant_metadata("runs/run_*.json", {"idempotency_key", "context_refs"}),
+                "contexts": _assistant_metadata("contexts/ctx_*.json", {"conversation_id"}),
+                "note": "Prompt, context bodies, model output, credentials, and absolute paths are excluded.",
+            },
             "first_success": app.state.first_success_store.get(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
@@ -2205,7 +2452,7 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         requested = body.get("scopes", []) if isinstance(body, dict) else []
         scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit", "onboarding"}
+        allowed = {"history", "profile", "cache", "audit", "onboarding", "assistant"}
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
         if "history" in scopes:
@@ -2220,6 +2467,16 @@ def create_app(store: RynmeshStore | None = None):
             _audit().clear()
         if "onboarding" in scopes:
             app.state.first_success_store.reset()
+        if "assistant" in scopes:
+            assistant_root = (active_store.home / "assistant").resolve()
+            if assistant_root.parent != active_store.home.resolve():
+                raise HTTPException(status_code=409, detail="assistant_storage_root_invalid")
+            for directory in (assistant_root / "contexts", assistant_root / "runs"):
+                if directory.resolve().parent != assistant_root:
+                    raise HTTPException(status_code=409, detail="assistant_storage_root_invalid")
+                for path in directory.glob("*"):
+                    if path.is_file() and path.resolve().parent == directory.resolve():
+                        path.unlink(missing_ok=True)
         if "audit" not in scopes:
             _audit().append(
                 "verify",

@@ -226,6 +226,21 @@ export async function listConversations(serviceKey: string) {
   }
 }
 
+export async function listAllConversations() {
+  try {
+    const database = await openDatabase();
+    const transaction = database.transaction(CONVERSATION_STORE, "readonly");
+    const done = transactionDone(transaction);
+    const records = await requestResult(transaction.objectStore(CONVERSATION_STORE).getAll()) as EncryptedConversationRecord[];
+    await done;
+    const decryptedResults = await Promise.allSettled(records.map(decryptConversation));
+    const decrypted = decryptedResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    return decrypted.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  } catch {
+    return [...memoryFallback.values()].map(cloneConversation).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+}
+
 export async function deleteConversation(conversationId: string) {
   memoryFallback.delete(conversationId);
   try {

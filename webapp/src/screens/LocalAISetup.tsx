@@ -156,7 +156,7 @@ export default function LocalAISetup() {
             <Button variant="primary" icon={Sparkles} onClick={() => void runFirstAnswer()} disabled={busy}>
               {busy ? "Asking…" : answer ? "Ask the test question again" : "Get my first answer"}
             </Button>
-            <Button onClick={() => window.location.assign("/search-ask")}>Continue to Ask Ryn</Button>
+            <Button onClick={() => window.location.assign("/ask")}>Continue to Ask Ryn</Button>
           </div>
           <small>The fixed readiness question is not added to your conversations or recommendation profile.</small>
         </Panel>

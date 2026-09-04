@@ -288,7 +288,7 @@ export default function Explore() {
             icon={Sparkles}
             title="No items match your filters"
             body="Ask the AI curator to search from the node or loosen the filters."
-            action={<Button onClick={() => navigate("/search-ask")}>Ask AI curator</Button>}
+            action={<Button onClick={() => navigate("/ask?mode=search")}>Ask Ryn</Button>}
           />
         )}
       </Panel>

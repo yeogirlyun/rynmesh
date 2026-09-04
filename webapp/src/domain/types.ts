@@ -210,10 +210,12 @@ export interface PrivacyStatus {
   cached_discovery_items: number;
   reader_cache_files: number;
   audit_events: number;
+  assistant_run_records: number;
+  assistant_context_records: number;
   cloud_ai_enabled: boolean;
 }
 
-export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding";
+export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding" | "assistant";
 export type PersonalDataExport = Record<string, unknown> & {
   version: number;
   exported_at: string;

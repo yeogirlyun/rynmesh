@@ -80,6 +80,19 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getLocalAIRecommendations: () => requestJson(`${baseUrl}/llm/recommendations`),
     getLocalAIReadiness: () => requestJson(`${baseUrl}/llm/readiness`),
     testLocalAI: () => requestJson(`${baseUrl}/llm/readiness/test`, { method: "POST" }),
+    listAssistantTargets: async () => {
+      const payload = await requestJson<{ targets: import("./assistantTypes").AssistantTarget[] }>(
+        `${baseUrl}/assistant/targets`,
+      );
+      return payload.targets;
+    },
+    prepareAssistantContext: (req) =>
+      requestJson(`${baseUrl}/assistant/context/prepare`, { method: "POST", body: JSON.stringify(req) }),
+    createAssistantRun: (req) =>
+      requestJson(`${baseUrl}/assistant/runs`, { method: "POST", body: JSON.stringify(req) }),
+    getAssistantRun: (runId) => requestJson(`${baseUrl}/assistant/runs/${encodeURIComponent(runId)}`),
+    cancelAssistantRun: (runId) =>
+      requestJson(`${baseUrl}/assistant/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" }),
     runLLMServiceAction: (action, options) =>
       requestJson(`${baseUrl}/llm/service/actions/${encodeURIComponent(action)}`, {
         method: "POST",
