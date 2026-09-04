@@ -1,6 +1,6 @@
 Ryn five user requirements final regression
 Date: 2026-09-04 Asia/Hong_Kong
-Branch: codex/user-requirements-suite
+Branch: feature/user-requirements-suite
 
 Backend lint
   .\.venv\Scripts\python.exe -m ruff check rynmesh tests qa

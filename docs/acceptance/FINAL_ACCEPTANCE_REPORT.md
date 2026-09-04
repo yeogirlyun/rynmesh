@@ -2,7 +2,7 @@
 
 日期：2026-09-04
 
-分支：`codex/user-requirements-suite`
+分支：`feature/user-requirements-suite`
 
 结论：Windows 候选版本及三轮跨需求旅程通过；跨平台最终签字暂不关闭
 

@@ -1,14 +1,14 @@
 # User requirements suite baseline
 
 Date: 2026-09-04  
-Branch: `codex/user-requirements-suite`  
+Branch: `feature/user-requirements-suite`  
 Baseline commit: `85eeb6792ac099f05dcb362e83278de2cebdfad7`  
 Worktree: `D:\code\rynmesh-user-requirements`
 
 ## Isolation
 
 - The suite is developed in one local Git branch and one dedicated worktree.
-- The original `D:\code\rynmesh` worktree remains on `codex/p2p-peer-transit`.
+- The original `D:\code\rynmesh` worktree and its existing branch remain unchanged.
 - Existing modified and untracked files in the original worktree were not staged or committed.
 - No remote push or deployment is part of this work.
 
@@ -57,4 +57,3 @@ Result:
 The isolated branch starts from a green backend, lint, Webapp test, TypeScript, and production
 build baseline. New failures after this point are treated as suite regressions unless separately
 documented with evidence.
-

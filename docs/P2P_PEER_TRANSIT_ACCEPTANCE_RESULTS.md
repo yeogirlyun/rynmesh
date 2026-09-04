@@ -1,6 +1,6 @@
 # P2P peer-transit acceptance results
 
-Branch: `codex/p2p-peer-transit`
+Branch: `feature/p2p-peer-transit`
 
 Protocol: `rynmesh.peer-transit.v1`
 

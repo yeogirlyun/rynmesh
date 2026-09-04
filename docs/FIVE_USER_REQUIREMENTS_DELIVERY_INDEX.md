@@ -4,7 +4,7 @@
 
 日期：2026-09-04
 
-本地分支：`codex/user-requirements-suite`
+本地分支：`feature/user-requirements-suite`
 
 用途：产品、研发、测试和老板审核的统一入口
 

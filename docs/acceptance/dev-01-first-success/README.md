@@ -4,7 +4,7 @@
 
 ## 实现基线
 
-- 分支：`codex/user-requirements-suite`
+- 分支：`feature/user-requirements-suite`
 - 实现 commit：`28bc4f55776694db8e1a05bf2a83f37347517aa6`
 - 开发环境：Windows，Python 3.12.10，Node 22.22.1
 - feature flag：backend `RYNMESH_FIRST_SUCCESS_V1_ENABLED`；Webapp
