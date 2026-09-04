@@ -7,7 +7,7 @@
 
 | 范围 | 命令 | 结果 |
 |---|---|---|
-| DEV-02 focused backend | `.venv/Scripts/python.exe -m pytest tests/test_local_ai_setup_recovery.py tests/test_llm_package.py tests/test_llm_hardening.py -q` | 60 passed，2 warnings |
+| DEV-02 focused backend | `.venv/Scripts/python.exe -m pytest tests/test_local_ai_setup_recovery.py tests/test_llm_package.py tests/test_llm_hardening.py -q` | 62 passed，2 warnings，7.21s |
 | 全量 backend | `.venv/Scripts/python.exe -m pytest -q` | 606 passed，1 skipped，6 warnings，83.39s |
 | Python lint | `.venv/Scripts/ruff.exe check ...` | All checks passed |
 | Webapp unit/component | `npm test -- --run` | 11 files，42 tests passed |
@@ -27,6 +27,14 @@ Warnings 来自既有 FastAPI/Starlette deprecated API，不是本次失败，�
 - 原有取消、GGUF 只读导入、managed update/uninstall 和 Provider API 回归。
 - 受管/已配置 Provider 直接驱动 Assistant Run；同一 manifest 在 node 重启后恢复为
   device target；managed runtime startup/shutdown hooks 经过故障隔离测试。
+
+## 最终集成回归
+
+- 最终 backend：642 passed，1 skipped，6 warnings，93.36s。
+- 最终 Webapp：15 files / 60 tests；typecheck 与 production build 通过。
+- 三个独立干净目录的 12 步 E2E 均通过；每轮都重新下载并安装真实 Qwen2.5-0.5B
+  Q4，安装后的 Provider 驱动 Ask Ryn，node 重启后 runtime 自动恢复。
+- 脱敏结果见 [跨需求 E2E](../CROSS_REQUIREMENT_E2E.md)。
 
 ## 物理 Windows E2E
 

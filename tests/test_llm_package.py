@@ -321,14 +321,17 @@ def test_configured_local_model_powers_assistant_and_survives_node_restart(
                 "max_output_tokens": 16,
             },
         ).json()
-        deadline = time.monotonic() + 3
+        # Keep this deterministic under a loaded CI/acceptance host.  The fake
+        # provider normally completes immediately, but thread scheduling can be
+        # delayed while another process verifies a real model archive.
+        deadline = time.monotonic() + 10
         result = {}
         while time.monotonic() < deadline:
             result = client.get(f"/api/local/assistant/runs/{queued['run_id']}").json()
             if result.get("state") == "completed":
                 break
             time.sleep(0.02)
-        assert result["state"] == "completed"
+        assert result["state"] == "completed", result
         assert result["output"] == "test adapter completion"
 
     restarted = create_app(store)

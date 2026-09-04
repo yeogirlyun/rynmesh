@@ -5,7 +5,7 @@
 
 ## 结果摘要
 
-- 自动化：focused backend `9 passed`；全量结果以本目录最终 `TEST_RESULTS.txt` 为准。
+- 自动化：focused backend `13 passed`；全量结果以本目录最终 `TEST_RESULTS.txt` 为准。
 - 真实双节点：pair/message/attachment/card/offline/restart/retry/revoke/cancel 全部通过。
 - `trusted_roots` 前后 canonical `[]` SHA-256 均为 `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`。
 - 新 friend outbound 全部调用 `HttpPeerClient.post_json` → selected Transport；代码搜索显示裸 urllib 只存在旧消息兼容、Updater/Relay 路径。
@@ -17,7 +17,9 @@
 - [x] 首次网络接触前 Review 显示签名身份/指纹、network、全部端点、地址类别、权限、有效期。
 - [x] consume 后轮换独立 relationship secret，原 invite 第二次使用失败。
 - [x] 文字、exact 5 MiB 附件和 Library metadata card 可发送。
-- [x] content card 不自动下载正文/文件。
+- [x] content card 不自动下载正文/文件；Review 显示来源、发布者、文件/MIME/大小与完整 SHA-256。
+- [x] 用户明确确认后才向 active friend 拉取加密正文；大小和 SHA-256 二次校验通过后导入 My Content。
+- [x] 同一卡片重复拉取返回同一 Library item，不重复导入。
 - [x] offline → queued → restart → retry → delivered 对用户可见。
 - [x] local revoke 立即拒绝；remote offline 时不阻塞，并可安全重试通知。
 - [x] restart/discovery 无代码路径可把 revoked 改回 active。
@@ -38,6 +40,7 @@
 
 ```json
 {"alice_friend_count":1,"bob_friend_count":1,"relationship":"active","message_count":2,"received_text":"你好 Alice，真实双节点消息","received_attachment":"acceptance.txt","received_card":"老板验收内容"}
+{"content_body_before_review":false,"sha256_verified":true,"library_imported":1,"repeat_fetch_idempotent":true}
 {"restart_relationship":"active","retry_attempted":1,"retry_delivered":1,"restored_message":"offline queued then restored"}
 {"local_status":"revoked","remote_status":"revoked","post_revoke_send":"active_friend_required"}
 {"after_restart_status":"revoked","secret_file_contains_relationship":false}
@@ -50,9 +53,16 @@
 - [一次性 QR](screenshots/01-invite-qr.png)
 - [加入前 Review](screenshots/02-join-review.png)
 - [active-only 私密聊天与内容卡片](screenshots/03-private-chat.png)
+- [内容卡片拉取前 Review](screenshots/04-content-card-review.png)
+- [SHA-256 验证并保存到 My Content](screenshots/05-content-card-fetched.png)
+- [内容拉取带标注总图](screenshots/dev05-content-fetch-annotated.png)
 
 标注图说明本地 QR、Review-before-network、可见权限边界与禁止隐藏扩权。Raw invite 仅使用 fixture 文本，截图不含真实 secret。
 
 ## 平台说明
 
 Windows 已完成真实双进程与浏览器验收。macOS 的核心 fallback 是同一个 `<textarea>` paste/review 流程，自动化无 OS 分支；但 macOS 实机进程/文件权限仍放入五项需求的最终跨平台总验收清单，不在本报告中伪称已执行。
+
+此外，五项需求的 12 步真实 HTTP 旅程已在三个独立干净目录连续通过；每轮均包含
+双节点配对、文字/附件/内容卡片 delivered、确认前无正文、确认后哈希校验与幂等导入、
+revoke 后下一次请求拒绝。详见 [跨需求 E2E](../CROSS_REQUIREMENT_E2E.md)。

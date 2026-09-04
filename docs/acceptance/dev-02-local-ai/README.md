@@ -40,13 +40,14 @@ macOS runtime 摘要已经固定在代码中，但在获得对应实体设备验
 
 ## 质量验收
 
-- [x] focused pytest：60 passed。
-- [x] full pytest：606 passed，1 skipped。
+- [x] focused pytest：62 passed。
+- [x] 最终 full pytest：642 passed，1 skipped。
 - [x] Ruff：通过。
-- [x] Webapp tests：11 files / 42 tests passed。
+- [x] 最终 Webapp tests：15 files / 60 tests passed。
 - [x] Webapp TypeScript lint：通过。
 - [x] Webapp production build：通过。
 - [x] Windows 干净安装、首次回答、跨进程 start/status/stop：通过。
+- [x] 三个独立干净目录均完成真实下载/安装/Ask Ryn 回答/重启恢复：通过。
 - [x] UI 三态截图和带标注总览：已归档。
 
 ## UI 验收证据

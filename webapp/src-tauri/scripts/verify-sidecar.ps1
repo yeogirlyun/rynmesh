@@ -35,7 +35,10 @@ try {
     throw "sidecar did not become healthy within 30 seconds"
 } finally {
     if ($process -and -not $process.HasExited) {
-        Stop-Process -Id $process.Id -Force
+        # PyInstaller one-file executables launch a child process that owns the
+        # HTTP listener. Stop the complete tree so verification never leaves a
+        # frozen sidecar running after the bootloader exits.
+        & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
         $null = $process.WaitForExit(5000)
     }
     if ($process) { $process.Dispose(); $process = $null }

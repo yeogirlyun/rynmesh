@@ -49,6 +49,12 @@
 3. [DEV-03 Ask Ryn](acceptance/dev-03-assistant/screenshots/dev03-ui-annotated.png)
 4. [DEV-04 我的内容](acceptance/dev-04-library/screenshots/dev04-ui-annotated.png)
 5. [DEV-05 好友配对](acceptance/dev-05-friends/screenshots/dev05-ui-annotated.png)
+6. [DEV-05 内容卡片确认拉取](acceptance/dev-05-friends/screenshots/dev05-content-fetch-annotated.png)
+
+跨需求证据：
+
+- [12 步 E2E 连续三次报告](acceptance/CROSS_REQUIREMENT_E2E.md)
+- [12 步 E2E 三轮脱敏 JSON](acceptance/CROSS_REQUIREMENT_E2E_3_RUNS.json)
 
 ## 四、审核建议
 

@@ -1,16 +1,16 @@
 DEV-05 final regression — 2026-09-04 Asia/Hong_Kong
 
 Backend lint
-  command: .\.venv\Scripts\python.exe -m ruff check rynmesh tests
+  command: .\.venv\Scripts\python.exe -m ruff check rynmesh tests qa
   result:  All checks passed!
 
 Backend full suite
   command: .\.venv\Scripts\python.exe -m pytest -q
-  result:  639 passed, 1 skipped, 6 warnings in 94.79s
+  result:  642 passed, 1 skipped, 6 warnings in 93.36s
 
 Webapp full suite
   command: npm test
-  result:  15 files passed, 59 tests passed
+  result:  15 files passed, 60 tests passed
 
 Webapp typecheck
   command: npm run lint
@@ -20,9 +20,15 @@ Webapp production build
   command: npm run build
   result:  passed; 1777 modules transformed
 
-Focused friend suite
-  tests/test_friends.py + tests/test_friend_http.py
-  result:  9 passed
+Focused friend/content suite
+  tests/test_friends.py + tests/test_friend_http.py + tests/test_library_imports.py
+  result:  13 passed, 2 warnings in 6.14s
+
+Cross-requirement real HTTP E2E
+  command: qa/run_five_user_requirements_journey.py
+  result:  3 independent clean runs passed; 12/12 steps each
+  coverage: reviewed content fetch, encrypted body, SHA-256, idempotent Library import,
+            revoke denial and secret-free exports
 
 Warnings are pre-existing FastAPI/Starlette deprecations. The single skipped test
 is the existing environment-conditional project test, not a DEV-05 failure.

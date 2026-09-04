@@ -6,9 +6,10 @@
 - 五份完整开发与验收条件文档；
 - 总体开发顺序和 Definition of Done；
 - 五项测试、回滚、安全/隐私和 UI 标注证据；
-- 总体验收报告与最终回归摘要。
+- DEV-05 内容卡片确认拉取的原始/标注截图；
+- 总体验收报告、最终回归摘要与三轮跨需求 E2E 脱敏证据。
 
-包内共 69 个文件，不含源代码、模型、构建工具链、安装器、用户正文、API key、
+包内共 75 个文件，不含源代码、模型、构建工具链、安装器、用户正文、API key、
 local token、真实 invite/relationship secret 或本机绝对路径。
 
-SHA-256：`aade66ca3ac4ce7932de50680ea4be51ef1f3a7c21b3f3f13af396c8cca4117c`
+SHA-256：`637e1e30fa15b0b945ba65cdcf0013edb83c63ed7d61b50d1d969c3c77c4efad`

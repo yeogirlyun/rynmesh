@@ -4,7 +4,7 @@
 
 分支：`codex/user-requirements-suite`
 
-结论：Windows 候选版本通过本轮实现与回归；跨平台最终签字暂不关闭
+结论：Windows 候选版本及三轮跨需求旅程通过；跨平台最终签字暂不关闭
 
 ## 1. 交付范围
 
@@ -25,7 +25,7 @@
 ## 3. 最终质量门禁
 
 - [x] Ruff 全仓通过。
-- [x] Backend 全量：639 passed、1 skipped；skip 为既有环境条件项。
+- [x] Backend 全量：642 passed、1 skipped；skip 为既有环境条件项。
 - [x] Webapp：15 个测试文件、60 个测试通过。
 - [x] TypeScript typecheck 通过。
 - [x] Vite production build 通过。
@@ -35,6 +35,7 @@
 - [x] 打包 `app.exe` 在干净 home 启动真实冻结 sidecar。
 - [x] sidecar 健康、桌面窗口出现、真实来源内容进入 ready。
 - [x] 关闭验收进程后 sidecar 无残留，端口释放。
+- [x] 完整 12 步跨需求 E2E 在三个互不复用的干净目录连续通过。
 
 完整命令、摘要和二进制 SHA-256 见 [FINAL_TEST_RESULTS.txt](FINAL_TEST_RESULTS.txt)。
 
@@ -51,18 +52,23 @@
 | 用户数据可导出/擦除，秘密默认不导出 | 通过 | unique marker 与 secret-free export 测试通过 |
 | 只宣传真实验证的平台/网络 | 通过 | Local AI 只开放 Windows；Friend v1 只承诺 LAN/直接 IP |
 | 旧数据与旧 URL 有兼容/回滚 | 通过 | 每项 migration/rollback 文档已归档 |
-| 完整 12 步跨需求 E2E 连续三次 | 未完成 | 各需求真实证据已通过，但尚未在同一物理桌面脚本中连续跑三次 |
+| 完整 12 步跨需求 E2E 连续三次 | 通过 | 三个干净 home，均为 12/12；真实模型下载/安装、重启、双节点和隐私导出均通过 |
+
+完整步骤、三轮耗时和脱敏结果见
+[跨需求 E2E 报告](CROSS_REQUIREMENT_E2E.md) 与
+[机器可读证据](CROSS_REQUIREMENT_E2E_3_RUNS.json)。
 
 ## 5. Windows 桌面物理证据
 
 从干净 `RYNMESH_HOME` 启动最终 GNU release `app.exe`：
 
 ```json
-{"health":"ok","desktop_managed":true,"first_success_phase":"ready","content_ready":true,"item_count":30,"source_count":14,"healthy_sources":12,"failed_sources":2,"using_cache":false}
+{"health":"ok","desktop_managed":true,"first_success_phase":"ready","content_ready":true,"item_count":30,"source_count":14,"healthy_sources":11,"failed_sources":3,"using_cache":false,"window_title":"Ryn"}
 ```
 
 本轮桌面审计同时修复了 Windows 的 `.exe` sidecar 查找、`where.exe` 命令发现、
-`cmd.exe /C` 高级覆盖、`%LOCALAPPDATA%` 日志目录、进程退出和日志菜单打开方式。
+`cmd.exe /C` 高级覆盖、`%LOCALAPPDATA%` 日志目录、进程退出、冻结 sidecar 验证进程树
+清理和日志菜单打开方式。
 构建工具链全部放在隔离 worktree 临时目录，没有修改系统 Rust、Visual Studio 或 PATH。
 
 ## 6. UI 验收
@@ -75,6 +81,7 @@
 - [DEV-03 标注图](dev-03-assistant/screenshots/dev03-ui-annotated.png)
 - [DEV-04 标注图](dev-04-library/screenshots/dev04-ui-annotated.png)
 - [DEV-05 标注图](dev-05-friends/screenshots/dev05-ui-annotated.png)
+- [DEV-05 内容卡片确认拉取标注图](dev-05-friends/screenshots/dev05-content-fetch-annotated.png)
 
 ## 7. 发布阻断项
 
@@ -82,8 +89,6 @@
 
 1. 在 Apple Silicon 和仍宣称支持的 Intel Mac 上执行干净安装/冷启动。
 2. 在 macOS 上验证 managed import 删除不影响原文件，以及 friend secret 文件权限。
-3. 在物理桌面环境把总体计划的 12 步旅程连续执行三次并保存脱敏结果。
-
 这些是缺少当前宿主硬件/运行环境的验收缺口，不是已知功能测试失败。未完成前，发布说明
 只能写“Windows x86_64 CPU / Friend LAN 候选版本已验证”，不能写“全平台完成”。
 
