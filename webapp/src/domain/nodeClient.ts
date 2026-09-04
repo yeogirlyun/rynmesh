@@ -317,6 +317,13 @@ export interface NodeClient {
   retryFriendMessages(peerId: string): Promise<{ attempted: number; delivered: number }>;
   listFriendContentCards(): Promise<import("./friendTypes").FriendContentCard[]>;
   sendFriendContentCard(req: { peer_id: string; card: Record<string, string> }): Promise<{ delivered: boolean }>;
+  fetchFriendContentCard(cardId: string): Promise<{
+    ok: boolean;
+    card_id: string;
+    library_id: string;
+    sha256_verified: boolean;
+    already_fetched: boolean;
+  }>;
 }
 
 export class NodeClientError extends Error {

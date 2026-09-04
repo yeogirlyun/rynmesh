@@ -984,6 +984,31 @@ export function makeFixtureNodeClient(): NodeClient {
   const fixtureFriendMessages: import("./friendTypes").FriendMessage[] = [
     { msg_id: "fixture_friend_1", dir: "in", from: "peer-aether", to: "self", text: "I sent you the reading list.", kind: "text", ts: new Date(Date.now() - 300_000).toISOString(), delivered: true, delivery_state: "delivered" },
   ];
+  let fixtureFriendCards: import("./friendTypes").FriendContentCard[] = [
+    {
+      card_id: "card_fixture",
+      from: "peer-aether",
+      to: "self",
+      dir: "in",
+      created_at: new Date().toISOString(),
+      fetch_state: "available",
+      card: {
+        version: "ryn.shared-content-card.v1",
+        library_id: "import:reading",
+        title: "Practical Local AI",
+        summary: "A private reading note shared as a reviewable content card.",
+        kind: "markdown",
+        source: "Maya's Library",
+        publisher_peer_id: "peer-aether",
+        manifest_ref: "sha256:8a4e…49c1",
+        filename: "practical-local-ai.md",
+        mime: "text/markdown",
+        size_bytes: 18432,
+        sha256: "8a4eaafec9efbb0d5d4ae401c58eaca4d8c945739ad4f3055585fd19986149c1",
+        fetch_available: true,
+      },
+    },
+  ];
   let firstSuccess: FirstSuccessStatus = {
     version: "ryn.first-success.v1",
     phase: "ready",
@@ -1854,10 +1879,19 @@ export function makeFixtureNodeClient(): NodeClient {
       return { attempted: 0, delivered: 0 };
     },
     async listFriendContentCards() {
-      return [{ card_id: "card_fixture", from: "peer-aether", created_at: new Date().toISOString(), card: { library_id: "import:reading", title: "Practical Local AI", summary: "A private reading note shared as metadata only.", kind: "document", source: "Maya's Library" } }];
+      return [...fixtureFriendCards];
     },
     async sendFriendContentCard() {
       return { delivered: true };
+    },
+    async fetchFriendContentCard(cardId) {
+      fixtureFriendCards = fixtureFriendCards.map((row) => row.card_id === cardId ? {
+        ...row,
+        fetch_state: "fetched",
+        fetched_library_id: "import:received-fixture",
+        sha256_verified: true,
+      } : row);
+      return { ok: true, card_id: cardId, library_id: "import:received-fixture", sha256_verified: true, already_fetched: false };
     },
   };
 }

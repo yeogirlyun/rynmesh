@@ -11,10 +11,10 @@ from rynmesh.store import RynmeshStore
 
 class RecordingTransport:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, bytes, dict[str, str]]] = []
+        self.calls: list[tuple[str, bytes, dict[str, str], int]] = []
 
     def post_bytes(self, url, body, *, timeout_s, max_bytes, headers=None):
-        self.calls.append((url, body, dict(headers or {})))
+        self.calls.append((url, body, dict(headers or {}), max_bytes))
         return canonical_json({"ok": True})
 
 
@@ -24,10 +24,16 @@ def test_http_peer_post_json_uses_transport_and_preserves_headers() -> None:
         "/api/peer/friends/message", {"hello": "world"}, headers={"X-Ryn-Friend-MAC": "proof"}
     )
     assert result == {"ok": True}
-    url, body, headers = transport.calls[0]
+    url, body, headers, max_bytes = transport.calls[0]
     assert url == "http://192.168.1.20:8791/api/peer/friends/message"
     assert json.loads(body) == {"hello": "world"}
     assert headers["X-Ryn-Friend-MAC"] == "proof"
+    assert max_bytes == 2 * 1024 * 1024
+
+    HttpPeerClient("http://192.168.1.20:8791", transport=transport).post_json(
+        "/api/peer/friends/content-card/fetch", {}, max_response_bytes=7 * 1024 * 1024
+    )
+    assert transport.calls[-1][3] == 7 * 1024 * 1024
 
 
 def test_friend_local_api_review_is_offline_and_secrets_stay_private(tmp_path, monkeypatch) -> None:

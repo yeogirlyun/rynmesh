@@ -5,8 +5,9 @@
 ### 后端
 
 - `rynmesh/friends/crypto.py`：invite 编解码/验签、端点 fail-closed、HKDF domain separation、canonical request HMAC、±120 秒时钟窗。
-- `rynmesh/friends/store.py`：public state 与 secret 分文件，临时文件 + fsync + atomic replace，线程/跨进程文件锁，bounded nonce cache。
-- `rynmesh/friends/service.py`：create/inspect/cancel/join、独立 relationship secret、固定 X25519 key、消息/附件/卡片、离线重试、本地优先撤销。
+- `rynmesh/friends/store.py`：public state 与 secret 分文件，临时文件 + fsync + atomic replace，线程/跨进程文件锁，bounded nonce cache，以及最多 500 条内容卡片状态。
+- `rynmesh/friends/service.py`：create/inspect/cancel/join、独立 relationship secret、固定 X25519 key、消息/附件/卡片、确认后主动获取、正文哈希校验、幂等导入、离线重试、本地优先撤销。
+- `rynmesh/services/library_imports.py`：读取受管原始字节时再次校验记录的 size/SHA-256；被修改的本地副本不能作为好友分享源。
 - `rynmesh/peer_http.py`：local control API、通用 404 peer API、body/rate 限制、privacy status/export/erase。
 - `rynmesh/transport.py` / `transport_plugins.py`：Transport 增加 `post_bytes`，`HttpPeerClient.post_json` 是新好友 outbound 的唯一 HTTP seam。
 - `rynmesh/services/messaging_store.py`：锁、flush、尾部损坏跳过。
@@ -14,7 +15,7 @@
 ### Webapp
 
 - `Friends.tsx`：本地 QR、copy/cancel、paste/review/join、active list、revoke。
-- `Chat.tsx`：数据源从 discovered peers 改为 active friends；消息 delivery state、附件边界、内容卡片选择。
+- `Chat.tsx`：数据源从 discovered peers 改为 active friends；消息 delivery state、附件边界、内容卡片选择；收到卡片后明确显示“正文未下载”，Review 确认后才获取并显示“SHA-256 verified · Saved to My Content”。
 - `qrcode` 作为打包依赖，仅在浏览器内生成 data URL；运行时代码不含 fetch/XHR。
 - `/peers` 仍保留为高级网络诊断路由，但不再作为 Chat 联系人来源。
 
@@ -36,7 +37,7 @@ X-Ryn-Friend-MAC
 
 MAC key 由 relationship secret 经 HKDF(`rynmesh-friend-request-mac-v1`) 派生；canonical request 绑定 version、sender、receiver、method、path、timestamp、nonce 和 SHA-256(body)。接收端使用 constant-time compare，并在认证成功后把 nonce 写入每关系 512 项有界缓存。
 
-消息与内容卡片都用双方配对时固定的 X25519 key + ChaCha20-Poly1305 密封。消息携带的 `from_pub` 不参与 key 更新，避免退回 TOFU。内容卡片只含 title/summary/kind/source/opaque Library ID，不会自动 fetch。
+消息与内容卡片都用双方配对时固定的 X25519 key + ChaCha20-Poly1305 密封。消息携带的 `from_pub` 不参与 key 更新，避免退回 TOFU。内容卡片只含有界元数据和可验证引用；接收卡片不会传输正文。用户确认后，接收端向原发送关系发出带 HMAC 的 fetch 请求，发送端重新读取受管内容并核对卡片承诺的 size/SHA-256，再把正文以同一 X25519 关系密封返回。接收端二次核对 card ID、大小和 SHA-256 后才调用 Library import；成功记录 `fetched_library_id`，重复操作幂等返回已有副本。
 
 撤销先把关系标记 revoked 并移走 active secret，再 best-effort 发送 Ed25519 signed revocation。远端离线时仅保留隔离的 pending-revocation secret 和有界 wire record；它不能通过 active auth，送达后删除。
 
@@ -51,9 +52,9 @@ MAC key 由 relationship secret 经 HKDF(`rynmesh-friend-request-mac-v1`) 派生
 
 ## API
 
-Local：`POST/GET /api/local/friends/invites`、`inspect`、`DELETE invite`、`join`、`GET friends`、`DELETE friend`、revocation retry、messages send/list/retry、content-cards send/list。
+Local：`POST/GET /api/local/friends/invites`、`inspect`、`DELETE invite`、`join`、`GET friends`、`DELETE friend`、revocation retry、messages send/list/retry、content-cards send/list，以及 `POST /api/local/friends/content-cards/{card_id}/fetch`。
 
-Peer：`accept`、relationship-authenticated `message`、`content-card`、`revoke`。旧 `/api/peer/msg` 保留兼容，但新 Friends UI 不调用。
+Peer：`accept`、relationship-authenticated `message`、`content-card`、`content-card/fetch`、`revoke`。fetch 响应上限约 7 MiB，仅承载最大 5 MiB 正文的 base64 密文；无效关系、卡片或已撤销关系继续返回通用 404。旧 `/api/peer/msg` 保留兼容，但新 Friends UI 不调用。
 
 ## 回滚
 

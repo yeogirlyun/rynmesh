@@ -25,6 +25,8 @@ Warnings 来自既有 FastAPI/Starlette deprecated API，不是本次失败，�
 - 安装任务 v2 的字节进度、安全错误、attempt 与重试；
 - setup/readiness 响应与 retry 文件的 prompt/path marker 负面检查；
 - 原有取消、GGUF 只读导入、managed update/uninstall 和 Provider API 回归。
+- 受管/已配置 Provider 直接驱动 Assistant Run；同一 manifest 在 node 重启后恢复为
+  device target；managed runtime startup/shutdown hooks 经过故障隔离测试。
 
 ## 物理 Windows E2E
 
@@ -46,4 +48,3 @@ runtime archive；两个摘要均与固定 manifest 一致。
 2. 进度屏：显示后端阶段、百分比、字节数、取消与“离开页面不会中止”；
 3. 完成屏：显示 ready 和第一次回答；
 4. 带标注截图逐项指出用户决策点与状态反馈。
-

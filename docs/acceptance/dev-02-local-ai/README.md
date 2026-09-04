@@ -23,6 +23,8 @@ macOS runtime 摘要已经固定在代码中，但在获得对应实体设备验
 - [x] 下载展示真实字节进度，支持取消、失败重试和经校验的 Range 续传。
 - [x] App/node 中断后任务给出可执行的重试状态，并复用已验证 partial/checkpoint。
 - [x] 安装完成条件包含 health check 和真实 local-node 问答自检。
+- [x] 安装完成的 Provider 立即成为统一 Ask Ryn 的 device target；node 重启时受管 runtime
+  自动恢复，退出时 best-effort 停止，避免安装自检与日常助手形成两套孤立入口。
 - [x] 完成页展示第一次回答，并可进入 Ask Ryn。
 - [x] 未安装/安装失败不会阻断 For You、Reader、Library 等非 AI 路由。
 
@@ -62,4 +64,3 @@ macOS runtime 摘要已经固定在代码中，但在获得对应实体设备验
 - [隐私负面验证](PRIVACY_NEGATIVE.md)
 - [支持矩阵与许可证](SUPPORT_MATRIX_AND_LICENSES.md)
 - [迁移与回滚](MIGRATION_ROLLBACK.md)
-

@@ -23,6 +23,7 @@ from rynmesh.llm_package.manifest import (
     ManifestError,
     Pricing,
     fingerprint_file,
+    save_manifest,
 )
 from rynmesh.llm_package.p2p import (
     IceSignal,
@@ -49,6 +50,7 @@ from rynmesh.llm_package.task_protocol import (
     open_task,
     seal_task,
 )
+from rynmesh.peer_http import create_app
 from rynmesh.services import peer_box
 from rynmesh.store import RynmeshStore
 
@@ -282,6 +284,108 @@ def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, ope
     assert Path(settings["manifest"]).parts[-2:] == ("configured-api", "manifest.json")
     assert settings["publication_enabled"] is False
     assert settings["network_id"] == "provider-test"
+
+
+def test_configured_local_model_powers_assistant_and_survives_node_restart(
+    tmp_path, openai_server
+):
+    home = tmp_path / "assistant-node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    app = create_app(store)
+    with TestClient(app) as client:
+        setup = client.post(
+            "/api/local/llm/setup",
+            json={
+                "mode": "openai-compatible",
+                "package_id": "assistant-api",
+                "alias": "assistant-local",
+                "base_url": openai_server,
+                "model": "test-real-api",
+            },
+        )
+        assert setup.status_code == 200
+        target = client.get("/api/local/assistant/targets").json()["targets"][0]
+        assert target["privacy_boundary"] == "device"
+        assert target["model_id"] == "assistant-local"
+        queued = client.post(
+            "/api/local/assistant/runs",
+            json={
+                "version": "ryn.assistant-run.v1",
+                "conversation_id": "installed-model",
+                "idempotency_key": "first-answer",
+                "target_key": target["key"],
+                "privacy_boundary": "device",
+                "mode": "local_chat",
+                "messages": [{"role": "user", "content": "Say ready", "status": "complete"}],
+                "contexts": [],
+                "max_output_tokens": 16,
+            },
+        ).json()
+        deadline = time.monotonic() + 3
+        result = {}
+        while time.monotonic() < deadline:
+            result = client.get(f"/api/local/assistant/runs/{queued['run_id']}").json()
+            if result.get("state") == "completed":
+                break
+            time.sleep(0.02)
+        assert result["state"] == "completed"
+        assert result["output"] == "test adapter completion"
+
+    restarted = create_app(store)
+    with TestClient(restarted) as client:
+        targets = client.get("/api/local/assistant/targets").json()["targets"]
+        assert targets[0]["model_id"] == "assistant-local"
+
+
+def test_configured_managed_runtime_has_startup_and_shutdown_hooks(tmp_path, monkeypatch):
+    home = tmp_path / "managed-node"
+    manifest_path = home / "llm" / "manifests" / "managed-local" / "manifest.json"
+    manifest = LLMPackageManifest(
+        package_id="managed-local",
+        mode="managed",
+        public_model_alias="managed-alias",
+        runtime="native_llama_cpp",
+        base_url="http://127.0.0.1:19080",
+        model="managed-alias",
+    )
+    save_manifest(manifest, manifest_path)
+    settings_path = home / "llm" / "provider-settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"manifest": str(manifest_path), "publication_enabled": False}),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        llm_routes,
+        "runtime_status",
+        lambda _path: {"health": {"ok": False}},
+    )
+    monkeypatch.setattr(
+        llm_routes,
+        "start_runtime",
+        lambda _path: calls.append("start") or {"managed": True},
+    )
+    monkeypatch.setattr(
+        llm_routes,
+        "stop_runtime",
+        lambda _path: calls.append("stop") or {"managed": True, "stopped": True},
+    )
+    app = FastAPI()
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    install_llm_routes(
+        app,
+        store=store,
+        home=home,
+        messaging_key=peer_box.load_or_create_messaging_key(home / "messaging.x25519"),
+        resolve_endpoint=lambda _peer_id: "",
+        resolve_pubkey=lambda _peer_id: "",
+    )
+    app.state.llm_startup()
+    assert calls == ["start"]
+    assert app.state.llm_provider.model == "managed-alias"
+    app.state.llm_shutdown()
+    assert calls == ["start", "stop"]
 
 
 def test_async_setup_reports_progress_and_exposes_safe_lifecycle_actions(tmp_path, openai_server):

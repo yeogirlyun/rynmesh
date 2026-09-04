@@ -243,5 +243,6 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     retryFriendMessages: (peerId) => requestJson(`${baseUrl}/friends/messages/retry`, { method: "POST", body: JSON.stringify({ peer_id: peerId }) }),
     listFriendContentCards: async () => (await requestJson<{ cards: import("./friendTypes").FriendContentCard[] }>(`${baseUrl}/friends/content-cards`)).cards,
     sendFriendContentCard: (req) => requestJson(`${baseUrl}/friends/content-cards`, { method: "POST", body: JSON.stringify(req) }),
+    fetchFriendContentCard: (cardId) => requestJson(`${baseUrl}/friends/content-cards/${encodeURIComponent(cardId)}/fetch`, { method: "POST" }),
   };
 }

@@ -23,7 +23,14 @@ class Mesh:
         self.nodes[endpoint] = node
         self.online.add(endpoint)
 
-    def post(self, endpoint: str, path: str, payload: dict, headers: dict | None) -> dict:
+    def post(
+        self,
+        endpoint: str,
+        path: str,
+        payload: dict,
+        headers: dict | None,
+        **_kwargs,
+    ) -> dict:
         if endpoint not in self.online:
             raise OSError("offline")
         node = self.nodes[endpoint]
@@ -31,13 +38,17 @@ class Mesh:
             return node.accept(payload)
         assert headers is not None
         self.last_headers = dict(headers)
-        node.verify_request(path=path, body=canonical_json(payload), headers=headers)
+        relationship = node.verify_request(
+            path=path, body=canonical_json(payload), headers=headers
+        )
         if path == "/api/peer/friends/message":
             row = node.receive_message(payload)
             return {"ok": True, "msg_id": row["msg_id"]}
         if path == "/api/peer/friends/content-card":
             node.receive_content_card(payload)
             return {"ok": True}
+        if path == "/api/peer/friends/content-card/fetch":
+            return node.serve_content_card(payload, relationship)
         if path == "/api/peer/friends/revoke":
             node.receive_revoke(payload)
             return {"ok": True}
@@ -96,12 +107,42 @@ def test_pair_message_attachment_card_restart_and_revoke(tmp_path) -> None:
     assert attachment["delivered"] is True
     assert alice.messages.load_attachment(attachment["msg_id"]) == b"private"
 
+    shared = b"# Private reading note\n\nOnly fetched after explicit review."
+    imported: list[dict] = []
+    bob.resolve_content = lambda _library_id: {
+        "data": shared,
+        "publisher_peer_id": bob.peer_id,
+        "filename": "reading.md",
+        "mime": "text/markdown",
+        "manifest_ref": "sha256:source-manifest",
+    }
+
+    def import_shared(resource: dict) -> dict:
+        imported.append(resource)
+        return {"library_id": "import:received", "title": "reading.md"}
+
+    alice.import_content = import_shared
     result = bob.send_content_card(
         alice.peer_id,
         {"library_id": "import:1", "title": "A card", "summary": "metadata only", "kind": "file"},
     )
     assert result["delivered"] is True
-    assert alice.content_cards()[-1]["card"]["title"] == "A card"
+    received = next(row for row in alice.content_cards() if row["dir"] == "in")
+    assert received["card"]["title"] == "A card"
+    assert received["fetch_state"] == "available"
+    assert received["card"]["sha256"]
+    assert imported == []  # Receiving a metadata card never fetches its body.
+    fetched = alice.fetch_content_card(received["card_id"])
+    assert fetched["library_id"] == "import:received"
+    assert fetched["sha256_verified"] is True
+    assert imported[0]["data"] == shared
+    assert alice.fetch_content_card(received["card_id"])["already_fetched"] is True
+
+    denied = bob.send_content_card(
+        alice.peer_id,
+        {"library_id": "import:2", "title": "After revoke", "kind": "file"},
+    )
+    denied_card_id = denied["card_id"]
 
     alice_relation = alice.store.relationship_for_peer(bob.peer_id)
     assert alice_relation
@@ -114,6 +155,8 @@ def test_pair_message_attachment_card_restart_and_revoke(tmp_path) -> None:
     assert restarted.store.relationship_for_peer(bob.peer_id) is None
     with pytest.raises(FriendError, match="active_friend_required"):
         bob.send_message(alice.peer_id, text="blocked")
+    with pytest.raises(FriendError, match="active_friend_required"):
+        restarted.fetch_content_card(denied_card_id)
     after_roots = RynmeshStore(
         home=tmp_path / "Alice", network_dir=tmp_path / "network"
     ).trusted_root_peer_ids

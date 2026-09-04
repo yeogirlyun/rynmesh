@@ -58,7 +58,7 @@ class FriendStore:
 
     @staticmethod
     def _empty() -> dict[str, Any]:
-        return {"invites": {}, "relationships": {}, "nonces": {}}
+        return {"invites": {}, "relationships": {}, "nonces": {}, "cards": {}}
 
     def _read(self, path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
         if not path.exists():
@@ -217,3 +217,39 @@ class FriendStore:
             state["nonces"][relationship_id] = seen[-limit:]
             self._write(self.state_path, state)
             return True
+
+    def put_card(self, record: dict[str, Any], *, limit: int = 500) -> None:
+        card_id = str(record.get("card_id", ""))
+        if not card_id:
+            raise ValueError("friend_card_id_required")
+        with self._guard():
+            state = self._read(self.state_path, self._empty())
+            cards = state.setdefault("cards", {})
+            cards[card_id] = deepcopy(record)
+            if len(cards) > limit:
+                ordered = sorted(
+                    cards.items(),
+                    key=lambda item: (str(item[1].get("created_at", "")), item[0]),
+                    reverse=True,
+                )
+                state["cards"] = dict(ordered[:limit])
+            self._write(self.state_path, state)
+
+    def card(self, card_id: str) -> dict[str, Any] | None:
+        record = self.state().get("cards", {}).get(card_id)
+        return deepcopy(record) if isinstance(record, dict) else None
+
+    def list_cards(self) -> list[dict[str, Any]]:
+        values = self.state().get("cards", {}).values()
+        rows = [deepcopy(row) for row in values if isinstance(row, dict)]
+        return sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)
+
+    def patch_card(self, card_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+        with self._guard():
+            state = self._read(self.state_path, self._empty())
+            record = state.setdefault("cards", {}).get(card_id)
+            if not isinstance(record, dict):
+                return None
+            record.update(deepcopy(changes))
+            self._write(self.state_path, state)
+            return deepcopy(record)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -26,6 +28,10 @@ from .crypto import (
 from .store import FriendStore
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_SHARED_CONTENT_BYTES = 5 * 1024 * 1024
+MAX_SHARED_RESPONSE_BYTES = ((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 256 * 1024
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_CARD_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class FriendError(RuntimeError):
@@ -46,7 +52,9 @@ class FriendService:
         endpoint: str,
         identity_private: bytes,
         messaging_private: Any,
-        post_json: Callable[[str, str, dict[str, Any], dict[str, str] | None], dict[str, Any]],
+        post_json: Callable[..., dict[str, Any]],
+        resolve_content: Callable[[str], dict[str, Any] | None] | None = None,
+        import_content: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         allow_loopback: bool = False,
         clock: Callable[[], datetime] = _now,
     ) -> None:
@@ -57,6 +65,8 @@ class FriendService:
         self.identity_private = identity_private
         self.messaging_private = messaging_private
         self.post_json = post_json
+        self.resolve_content = resolve_content
+        self.import_content = import_content
         self.allow_loopback = allow_loopback
         self.clock = clock
         self.store = FriendStore(home)
@@ -220,7 +230,15 @@ class FriendService:
             raise FriendError("active_friend_required")
         return record, secret
 
-    def _send_wire(self, record: dict[str, Any], secret: bytes, path: str, wire: dict[str, Any]) -> bool:
+    def _request_wire(
+        self,
+        record: dict[str, Any],
+        secret: bytes,
+        path: str,
+        wire: dict[str, Any],
+        *,
+        max_response_bytes: int | None = None,
+    ) -> dict[str, Any]:
         body = canonical_json(wire)
         headers = auth_headers(
             secret,
@@ -233,9 +251,12 @@ class FriendService:
             timestamp=int(time.time()),
             nonce=uuid.uuid4().hex,
         )
+        kwargs = {"max_response_bytes": max_response_bytes} if max_response_bytes else {}
+        return self.post_json(str(record["endpoint"]), path, wire, headers, **kwargs)
+
+    def _send_wire(self, record: dict[str, Any], secret: bytes, path: str, wire: dict[str, Any]) -> bool:
         try:
-            response = self.post_json(str(record["endpoint"]), path, wire, headers)
-            return bool(response.get("ok"))
+            return bool(self._request_wire(record, secret, path, wire).get("ok"))
         except Exception:
             return False
 
@@ -307,13 +328,82 @@ class FriendService:
             raise FriendError("friend_auth_failed") from exc
         return relationship
 
+    @staticmethod
+    def _clean_card(card: dict[str, Any]) -> dict[str, Any]:
+        clean: dict[str, Any] = {
+            "version": "ryn.shared-content-card.v1",
+            "library_id": str(card.get("library_id", ""))[:320],
+            "content_id": str(card.get("content_id", ""))[:256],
+            "title": str(card.get("title", ""))[:300],
+            "summary": str(card.get("summary", ""))[:500],
+            "kind": str(card.get("kind", ""))[:64],
+            "source": str(card.get("source", ""))[:300],
+            "source_url": str(card.get("source_url", ""))[:2048],
+            "publisher_peer_id": str(card.get("publisher_peer_id", ""))[:256],
+            "manifest_ref": str(card.get("manifest_ref", ""))[:256],
+            "filename": str(card.get("filename", ""))[:180],
+            "mime": str(card.get("mime", "application/octet-stream"))[:127],
+            "size_bytes": max(0, min(int(card.get("size_bytes", 0) or 0), MAX_SHARED_CONTENT_BYTES)),
+            "sha256": str(card.get("sha256", "")).lower(),
+            "fetch_available": bool(card.get("fetch_available")),
+        }
+        if clean["fetch_available"] and (
+            not clean["library_id"]
+            or not clean["filename"]
+            or not _SHA256.fullmatch(clean["sha256"])
+            or not 0 < clean["size_bytes"] <= MAX_SHARED_CONTENT_BYTES
+        ):
+            raise FriendError("friend_card_reference_invalid")
+        return clean
+
     def send_content_card(self, peer_id: str, card: dict[str, Any]) -> dict[str, Any]:
         record, secret = self._relationship(peer_id)
-        clean = {key: str(card.get(key, ""))[:2048] for key in ("library_id", "title", "summary", "kind", "source")}
-        inner = {"card_id": uuid.uuid4().hex, "created_at": self.clock().isoformat(), "card": clean}
+        clean = self._clean_card(card)
+        if self.resolve_content and clean["library_id"]:
+            resource = self.resolve_content(str(clean["library_id"]))
+            if resource:
+                data = bytes(resource.get("data", b""))
+                if 0 < len(data) <= MAX_SHARED_CONTENT_BYTES:
+                    clean.update(
+                        {
+                            "content_id": str(resource.get("content_id", clean["content_id"]))[:256],
+                            "publisher_peer_id": str(
+                                resource.get("publisher_peer_id", self.peer_id)
+                            )[:256],
+                            "manifest_ref": str(resource.get("manifest_ref", ""))[:256],
+                            "filename": str(resource.get("filename", "shared-content"))[:180],
+                            "mime": str(
+                                resource.get("mime", "application/octet-stream")
+                            )[:127],
+                            "size_bytes": len(data),
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "fetch_available": True,
+                        }
+                    )
+        clean = self._clean_card(clean)
+        inner = {
+            "version": "ryn.shared-content-card.v1",
+            "card_id": uuid.uuid4().hex,
+            "created_at": self.clock().isoformat(),
+            "card": clean,
+        }
+        self.store.put_card(
+            {
+                **inner,
+                "from": self.peer_id,
+                "to": peer_id,
+                "dir": "out",
+                "relationship_id": record["relationship_id"],
+                "delivery_state": "sending",
+            }
+        )
         nonce, ciphertext = peer_box.seal(self.messaging_private, str(record["messaging_pub"]), canonical_json(inner))
         wire = {"v": 1, "relationship_id": record["relationship_id"], "from": self.peer_id, "to": peer_id, "nonce": nonce, "ciphertext": ciphertext}
         delivered = self._send_wire(record, secret, "/api/peer/friends/content-card", wire)
+        self.store.patch_card(
+            inner["card_id"],
+            {"delivery_state": "delivered" if delivered else "queued"},
+        )
         return {**inner, "from": self.peer_id, "to": peer_id, "delivered": delivered}
 
     def receive_content_card(self, wire: dict[str, Any]) -> dict[str, Any]:
@@ -322,24 +412,180 @@ class FriendService:
             raise FriendError("friend_auth_failed")
         plain = peer_box.open_sealed(self.messaging_private, str(relationship["messaging_pub"]), str(wire["nonce"]), str(wire["ciphertext"]))
         inner = json.loads(plain.decode("utf-8"))
-        root = self.home / "friends" / "content-cards.jsonl"
-        root.parent.mkdir(parents=True, exist_ok=True)
-        row = {**inner, "from": wire["from"], "to": self.peer_id, "dir": "in"}
-        with root.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
+        if (
+            inner.get("version") != "ryn.shared-content-card.v1"
+            or not _CARD_ID.fullmatch(str(inner.get("card_id", "")))
+            or not isinstance(inner.get("card"), dict)
+        ):
+            raise FriendError("friend_card_invalid")
+        clean = self._clean_card(dict(inner["card"]))
+        row = {
+            **inner,
+            "card": clean,
+            "from": wire["from"],
+            "to": self.peer_id,
+            "dir": "in",
+            "relationship_id": relationship["relationship_id"],
+            "fetch_state": "available" if clean["fetch_available"] else "metadata_only",
+        }
+        self.store.put_card(row)
         return row
 
     def content_cards(self) -> list[dict[str, Any]]:
+        rows = self.store.list_cards()
         path = self.home / "friends" / "content-cards.jsonl"
-        if not path.exists():
-            return []
-        rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return rows[-500:]
+        if path.exists():
+            known = {str(row.get("card_id", "")) for row in rows}
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    legacy = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(legacy, dict) and str(legacy.get("card_id", "")) not in known:
+                    rows.append(legacy)
+        return sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)[:500]
+
+    def serve_content_card(
+        self, request: dict[str, Any], relationship: dict[str, Any]
+    ) -> dict[str, Any]:
+        card_id = str(request.get("card_id", ""))
+        row = self.store.card(card_id)
+        if (
+            request.get("v") != 1
+            or not row
+            or row.get("dir") != "out"
+            or row.get("from") != self.peer_id
+            or row.get("to") != relationship.get("peer_id")
+            or row.get("relationship_id") != relationship.get("relationship_id")
+            or request.get("from") != relationship.get("peer_id")
+            or request.get("to") != self.peer_id
+            or request.get("relationship_id") != relationship.get("relationship_id")
+        ):
+            raise FriendError("friend_card_not_found")
+        card = self._clean_card(dict(row.get("card") or {}))
+        if not card["fetch_available"] or not self.resolve_content:
+            raise FriendError("friend_card_content_unavailable")
+        resource = self.resolve_content(str(card["library_id"]))
+        data = bytes((resource or {}).get("data", b""))
+        if (
+            len(data) != card["size_bytes"]
+            or hashlib.sha256(data).hexdigest() != card["sha256"]
+        ):
+            raise FriendError("friend_card_content_changed")
+        response = {
+            "version": "ryn.shared-content-fetch.v1",
+            "card_id": card_id,
+            "filename": card["filename"],
+            "mime": card["mime"],
+            "size_bytes": len(data),
+            "sha256": card["sha256"],
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        }
+        nonce, ciphertext = peer_box.seal(
+            self.messaging_private,
+            str(relationship["messaging_pub"]),
+            canonical_json(response),
+        )
+        return {
+            "ok": True,
+            "v": 1,
+            "relationship_id": relationship["relationship_id"],
+            "from": self.peer_id,
+            "to": relationship["peer_id"],
+            "nonce": nonce,
+            "ciphertext": ciphertext,
+        }
+
+    def fetch_content_card(self, card_id: str) -> dict[str, Any]:
+        row = self.store.card(card_id)
+        if not row or row.get("dir") != "in":
+            raise FriendError("friend_card_not_found")
+        if row.get("fetch_state") == "fetched" and row.get("fetched_library_id"):
+            return {
+                "ok": True,
+                "card_id": card_id,
+                "library_id": row["fetched_library_id"],
+                "sha256_verified": True,
+                "already_fetched": True,
+            }
+        peer_id = str(row.get("from", ""))
+        relationship, secret = self._relationship(peer_id)
+        if row.get("relationship_id") != relationship.get("relationship_id"):
+            raise FriendError("friend_card_not_found")
+        card = self._clean_card(dict(row.get("card") or {}))
+        if not card["fetch_available"] or not self.import_content:
+            raise FriendError("friend_card_content_unavailable")
+        request = {
+            "v": 1,
+            "relationship_id": relationship["relationship_id"],
+            "card_id": card_id,
+            "from": self.peer_id,
+            "to": peer_id,
+        }
+        try:
+            wire = self._request_wire(
+                relationship,
+                secret,
+                "/api/peer/friends/content-card/fetch",
+                request,
+                max_response_bytes=MAX_SHARED_RESPONSE_BYTES,
+            )
+            if (
+                wire.get("v") != 1
+                or wire.get("relationship_id") != relationship["relationship_id"]
+                or wire.get("from") != peer_id
+                or wire.get("to") != self.peer_id
+            ):
+                raise FriendError("friend_card_fetch_invalid")
+            plain = peer_box.open_sealed(
+                self.messaging_private,
+                str(relationship["messaging_pub"]),
+                str(wire["nonce"]),
+                str(wire["ciphertext"]),
+            )
+            content = json.loads(plain.decode("utf-8"))
+            data = base64.b64decode(str(content.get("data_base64", "")), validate=True)
+        except FriendError:
+            raise
+        except Exception as exc:
+            raise FriendError("friend_card_fetch_failed") from exc
+        if (
+            content.get("version") != "ryn.shared-content-fetch.v1"
+            or content.get("card_id") != card_id
+            or int(content.get("size_bytes", -1)) != len(data)
+            or len(data) != card["size_bytes"]
+            or str(content.get("sha256", "")) != card["sha256"]
+            or hashlib.sha256(data).hexdigest() != card["sha256"]
+        ):
+            raise FriendError("friend_card_hash_mismatch")
+        imported = self.import_content(
+            {
+                "filename": card["filename"],
+                "mime": card["mime"],
+                "data": data,
+                "card": card,
+            }
+        )
+        library_id = str(imported.get("library_id", ""))
+        if not library_id:
+            raise FriendError("friend_card_import_failed")
+        self.store.patch_card(
+            card_id,
+            {
+                "fetch_state": "fetched",
+                "fetched_library_id": library_id,
+                "fetched_at": self.clock().isoformat(),
+                "sha256_verified": True,
+            },
+        )
+        return {
+            "ok": True,
+            "card_id": card_id,
+            "library_id": library_id,
+            "library_item": imported,
+            "sha256_verified": True,
+            "already_fetched": False,
+        }
 
     def revoke(self, relationship_id: str, *, notify: bool = True) -> dict[str, Any]:
         relationship = self.store.relationship(relationship_id)

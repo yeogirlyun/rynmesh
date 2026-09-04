@@ -196,6 +196,38 @@ class ProviderService:
         if manifest.debug_log_bodies or os.environ.get("RYNMESH_LLM_DEBUG_BODIES", "") == "1":
             print("WARNING: RYNMESH LLM task-body debug logging is enabled; prompts/outputs may be exposed.")
 
+    @property
+    def id(self) -> str:
+        return "managed-local"
+
+    @property
+    def model(self) -> str:
+        return self.manifest.public_model_alias
+
+    def generate(self, prompt: str, *, system: str = "", max_tokens: int = 1024) -> str:
+        """Use the configured private runtime for first-party Assistant work."""
+        if not prompt:
+            raise AdapterError("prompt is required")
+        if not self._slots.acquire(blocking=False):
+            raise AdapterError("local model capacity is busy")
+        with self._lock:
+            self._running += 1
+        combined = f"{system.strip()}\n\n{prompt}" if system.strip() else prompt
+        try:
+            result = self.adapter.infer(
+                prompt=combined,
+                max_tokens=min(max(1, int(max_tokens)), self.manifest.max_output_tokens),
+                task_id="assistant-" + uuid.uuid4().hex,
+                timeout_s=self.manifest.timeout_seconds,
+            )
+            return str(result.get("text", "")).strip()
+        finally:
+            combined = ""
+            prompt = ""
+            with self._lock:
+                self._running -= 1
+            self._slots.release()
+
     def _refresh_provider_record_counts(self, *, prune: bool = False) -> None:
         if prune:
             boundary = datetime.now(timezone.utc) - timedelta(
@@ -877,6 +909,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         settings.update({"manifest": configured, "publication_enabled": False})
         write_provider_settings(settings)
         current = active_manager(configured)
+        app.state.llm_provider = current
         if current is not None:
             current.accepting_orders = False
         public_result = json.loads(json.dumps(result))
@@ -1392,6 +1425,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 manager.adapter.shutdown()
                 manager = None
                 manager_path = ""
+                app.state.llm_provider = None
+            elif action in {"start", "restart", "update"}:
+                app.state.llm_provider = active_manager(configured)
             public_result = json.loads(json.dumps(result))
             if isinstance(public_result.get("self_test"), dict):
                 public_result["self_test"].pop("output_preview", None)
@@ -2102,4 +2138,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         except TaskProtocolError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    def start_configured_runtime() -> None:
+        settings = read_provider_settings()
+        configured = str(settings.get("manifest") or "")
+        if not configured:
+            app.state.llm_provider = None
+            return
+        manifest = load_manifest(configured)
+        if manifest.runtime != "external":
+            status = runtime_status(configured)
+            if not bool(dict(status.get("health") or {}).get("ok")):
+                start_runtime(configured)
+        app.state.llm_provider = active_manager(configured)
+
+    def stop_configured_runtime() -> None:
+        settings = read_provider_settings()
+        configured = str(settings.get("manifest") or "")
+        if not configured:
+            return
+        manifest = load_manifest(configured)
+        if manifest.runtime != "external":
+            stop_runtime(configured)
+
     app.state.llm_provider = active_manager()
+    app.state.llm_startup = start_configured_runtime
+    app.state.llm_shutdown = stop_configured_runtime

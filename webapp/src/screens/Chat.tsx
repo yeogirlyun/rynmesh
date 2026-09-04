@@ -1,4 +1,4 @@
-import { BookOpen, Paperclip, RefreshCw, SendHorizontal, UserPlus } from "lucide-react";
+import { BookOpen, CheckCircle2, Download, Paperclip, RefreshCw, SendHorizontal, ShieldCheck, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
@@ -12,6 +12,12 @@ function formatTime(ts?: string): string {
   const value = new Date(ts);
   return Number.isNaN(value.getTime()) ? ts : value.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+function formatBytes(value?: number): string {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
 async function fileToBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer()); let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -19,7 +25,7 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function Chat() {
-  const { client, notify } = useAppContext();
+  const { client, confirm, notify } = useAppContext();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
@@ -32,6 +38,7 @@ export default function Chat() {
   const [attachment, setAttachment] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [fetchingCardId, setFetchingCardId] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<FriendRecord | null>(null);
@@ -80,9 +87,45 @@ export default function Chat() {
     const result = await client.sendFriendContentCard({ peer_id: selected.peer_id, card: { library_id: item.library_id, title: item.title, summary: item.summary, kind: item.kind, source: item.source.title } });
     notify(result.delivered ? "ok" : "warn", result.delivered ? "Content card delivered" : "Friend is offline; try again later");
   };
+  const reviewAndFetch = (row: FriendContentCard) => {
+    const card = row.card;
+    const sender = friends.find((friend) => friend.peer_id === row.from)?.node_name ?? "Paired friend";
+    confirm({
+      title: `Get ${card.title}?`,
+      body: "Only metadata has been received so far. After you confirm, Ryn will fetch the sealed file from this paired friend, verify its SHA-256 hash, then save a managed copy in My Content.",
+      risk: "medium",
+      confirmLabel: "Get and save",
+      details: [
+        { label: "Sent by", value: `${sender} · ${row.from}` },
+        { label: "Publisher", value: card.publisher_peer_id || "Not declared" },
+        { label: "Source", value: card.source || "Not declared" },
+        { label: "File", value: `${card.filename || card.title} · ${card.mime || card.kind} · ${formatBytes(card.size_bytes)}` },
+        { label: "Integrity", value: card.sha256 ? `SHA-256 ${card.sha256}` : "No downloadable body advertised" },
+      ],
+      onConfirm: async () => {
+        setFetchingCardId(row.card_id);
+        try {
+          const result = await client.fetchFriendContentCard(row.card_id);
+          setCards((current) => current.map((item) => item.card_id === row.card_id ? {
+            ...item,
+            fetch_state: "fetched",
+            fetched_library_id: result.library_id,
+            sha256_verified: result.sha256_verified,
+          } : item));
+          const page = await client.listLibrary({ view: "all", limit: 100 });
+          setLibrary(page.items);
+          notify("ok", "Hash verified; content saved to My Content");
+        } catch (cause) {
+          notify("danger", cause instanceof Error ? cause.message : "Content could not be fetched safely");
+        } finally {
+          setFetchingCardId("");
+        }
+      },
+    });
+  };
 
   return <div className="screen-stack">
-    <PageHeader eyebrow="Friends" title="Private messages" context="Only people you explicitly paired with appear here. Messages and attachments are sealed for that friend; content sharing sends metadata only." />
+    <PageHeader eyebrow="Friends" title="Private messages" context="Only explicitly paired people appear here. Shared content arrives as metadata first; its body is fetched only after you review and confirm." />
     <div className="chat-grid">
       <Panel className="chat-peer-list"><span className="eyebrow">Active friends</span>{friends.length === 0 ? <div className="empty-state"><h3>No friends yet</h3><p>A discovered peer is not automatically a friend.</p><Button icon={UserPlus} onClick={() => navigate("/friends")}>Pair a friend</Button></div> : <ul className="chat-peer-items">{friends.map((friend) => <li key={friend.relationship_id}><button type="button" className={`chat-peer-item${selected?.peer_id === friend.peer_id ? " active" : ""}`} onClick={() => setSelected(friend)}><span className="friend-chat-avatar">{friend.node_name.slice(0, 1)}</span><span><strong>{friend.node_name}</strong><small>Explicitly paired</small></span></button></li>)}</ul>}</Panel>
       <Panel className="chat-conversation">{!selected ? <div className="empty-state"><h3>Select a friend</h3><p>Pair a friend before starting a private conversation.</p></div> : <>
@@ -92,6 +135,6 @@ export default function Chat() {
         <div className="chat-composer"><input ref={inputRef} type="file" className="chat-file-input" onChange={(event) => setAttachment(event.target.files?.[0] ?? null)} /><Button icon={Paperclip} onClick={() => inputRef.current?.click()}>{attachment ? attachment.name : "Attach"}</Button><input className="chat-input" value={text} placeholder="Message your friend" onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }} /><Button variant="primary" icon={SendHorizontal} disabled={sending} onClick={() => void send()}>Send</Button></div>
       </>}</Panel>
     </div>
-    {cards.length ? <Panel><span className="eyebrow">Shared with you</span><div className="friend-content-cards">{cards.map((row) => <article key={row.card_id}><BookOpen size={18} /><div><strong>{row.card.title}</strong><p>{row.card.summary}</p><small>Metadata card from {friends.find((friend) => friend.peer_id === row.from)?.node_name ?? "a friend"}</small></div></article>)}</div></Panel> : null}
+    {cards.some((row) => row.dir !== "out") ? <Panel><span className="eyebrow">Shared with you · review before fetching</span><div className="friend-content-cards">{cards.filter((row) => row.dir !== "out").map((row) => <article key={row.card_id}><BookOpen size={18} /><div className="friend-card-body"><strong>{row.card.title}</strong><p>{row.card.summary}</p><small>From {friends.find((friend) => friend.peer_id === row.from)?.node_name ?? "a paired friend"} · Publisher {row.card.publisher_peer_id || "not declared"}</small><small>{row.card.source || "Unknown source"} · {row.card.filename || row.card.kind} · {formatBytes(row.card.size_bytes)}</small>{row.fetch_state === "fetched" ? <div className="friend-card-status verified"><CheckCircle2 size={14} /> SHA-256 verified · Saved to My Content <Button onClick={() => navigate("/library")}>Open</Button></div> : row.card.fetch_available ? <div className="friend-card-status"><ShieldCheck size={14} /> Body not downloaded <Button icon={Download} disabled={fetchingCardId === row.card_id} onClick={() => reviewAndFetch(row)}>Review &amp; get</Button></div> : <div className="friend-card-status">Metadata only · no downloadable body advertised</div>}</div></article>)}</div></Panel> : null}
   </div>;
 }

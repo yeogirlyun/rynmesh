@@ -10,10 +10,10 @@
 | Endpoint | scheme/userinfo、loopback、link-local、metadata、unspecified、hostname/DNS rebinding、redirect seam |
 | Message | Unicode、32 KiB cap、duplicate protection、queued/delivered、restart/retry、torn JSONL |
 | Attachment | exact 5 MiB accepted、5 MiB + 1 rejected、encrypted blob round-trip |
-| Card | bounded metadata、encrypted wire、no automatic body/file fetch |
+| Card | bounded metadata、encrypted wire、no automatic fetch、Review 后主动 fetch、size/SHA-256 校验、Library 导入、重复 fetch 幂等、撤销后拒绝 |
 | Revoke | local-first、online delivery、offline pending、restart/retry、secret removed、post-revoke send rejected |
 | HTTP | generic 404、local-control auth、secret-free privacy export、Transport POST/header preservation |
-| UI | local QR、copy/cancel、paste-review-join、active-only Chat、message/card actions、5 MiB warning |
+| UI | local QR、copy/cancel、paste-review-join、active-only Chat、message/card actions、内容 fetch Review、verified/saved 状态、5 MiB warning |
 
 ## 命令
 
@@ -33,12 +33,13 @@ Focused tests：`tests/test_friends.py`、`tests/test_friend_http.py`、`webapp/
 在 Windows 上启动两个独立 uvicorn 进程、独立 `RYNMESH_HOME`、独立 network dir 和端口。仅为同机验收显式设置 `RYNMESH_FRIEND_ALLOW_LOOPBACK=1`；生产默认拒绝 loopback。
 
 1. A create invite；B 本地 inspect；B join。
-2. B 发 Unicode text、附件、content card；A 查询 history/card。
-3. 停止 A；B 发消息并断言 queued。
-4. 使用原 home 重启 A；B retry，断言 delivered 且 A 收到。
-5. B revoke；断言 B/A 都 revoked，B 再发被拒绝。
-6. 重启 B；断言仍 revoked 且 active secret 不存在。
-7. A create + cancel 新 invite；B join 被拒绝。
+2. B 发 Unicode text、附件、content card；A 查询 history/card，断言此时 Library 尚无正文。
+3. A 审阅卡片并主动 fetch；断言密文解封、size/SHA-256 匹配、只导入一次。
+4. 停止 A；B 发消息并断言 queued。
+5. 使用原 home 重启 A；B retry，断言 delivered 且 A 收到。
+6. B revoke；断言 B/A 都 revoked，消息与未获取卡片的后续 fetch 被拒绝。
+7. 重启 B；断言仍 revoked 且 active secret 不存在。
+8. A create + cancel 新 invite；B join 被拒绝。
 
 ## QR 网络审计
 

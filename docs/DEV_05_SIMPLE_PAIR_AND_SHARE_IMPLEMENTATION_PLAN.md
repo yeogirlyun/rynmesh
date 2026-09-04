@@ -225,6 +225,7 @@ POST /api/peer/friends/revoke
 GET  /api/peer/friends/pubkey
 POST /api/peer/friends/messages
 POST /api/peer/friends/content-cards
+POST /api/peer/friends/content-card/fetch
 ```
 
 - accept 使用 invite credential；
@@ -260,6 +261,8 @@ POST /api/peer/friends/content-cards
 - 安全/来源/大小 Review；
 - 用户点击后才 fetch preview/full；
 - fetch 继续走现有 Transport、provenance 和 safety；
+- 当前实现只对 Ryn 受管的 TXT/Markdown/PDF 本地副本开放最大 5 MiB 的 full fetch；发送端
+  在响应前复核受管文件，接收端复核卡片承诺的 card ID、size 和 SHA-256 后再幂等导入；
 - 卡片不能自动提升 trust 或推荐权重。
 
 ## 8. 端点安全与可达性
@@ -396,6 +399,8 @@ Invite Review 将端点分类为 loopback、link-local、LAN private、public、
 - [ ] 邀请使用后轮换为独立关系 secret，原邀请不能再次使用。
 - [ ] 配对后可发送文字、≤5 MiB 小附件和 Library 内容卡片。
 - [ ] 内容卡片默认不自动获取正文/文件。
+- [ ] 接收方 Review 显示发送者、原发布者、来源、文件类型/大小和 SHA-256；确认后才能
+  获取，校验成功只导入一次，关系撤销后 fetch 被拒绝。
 - [ ] 离线状态、待发送、恢复和失败对用户可理解。
 - [ ] 本地撤销立即阻止后续请求，远端离线不阻塞。
 - [ ] 重新发现同一 peer 不会复活撤销关系。

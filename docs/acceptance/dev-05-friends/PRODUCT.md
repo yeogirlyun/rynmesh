@@ -14,14 +14,16 @@
 
 - v1 支持同一 LAN 或已经直接可达的 IP 端点；不承诺 NAT 穿透或 Relay。
 - 二维码和复制文本编码同一个 15 分钟、一次性邀请；粘贴是 Windows/macOS/Linux 的必备 fallback。
-- 好友只能发消息、最大 5 MiB 附件、My Content 元数据卡片。
+- 好友只能发消息、最大 5 MiB 附件、My Content 内容卡片；卡片先收元数据，接收方
+  审阅并确认后才拉取最大 5 MiB 的正文/文件，校验成功后进入自己的 My Content。
 - 好友不能使用 Private AI、VPN、文件系统、trust root、Credits 或推荐权重。
 - 发现节点不会自动成为好友，旧 TOFU 消息也不会自动迁移为已验证关系。
 
 ## 核心界面
 
 - Friends：创建/复制/取消邀请，粘贴并审阅邀请，查看 active friends，移除关系。
-- Friend messages：只列 active friends；显示 queued/delivered；可重试离线消息并选择 My Content 卡片。
+- Friend messages：只列 active friends；显示 queued/delivered；可重试离线消息、选择
+  My Content 卡片，并在卡片上审阅发送者/发布者/来源/文件大小/SHA-256 后主动获取。
 - Settings / Privacy：公开关系元数据可导出，secret、消息正文、附件和 raw invite 默认不导出；可本地撤销并清除。
 
 ## 用户可见失败状态

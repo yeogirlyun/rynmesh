@@ -45,6 +45,27 @@ export interface FriendMessage {
 export interface FriendContentCard {
   card_id: string;
   from: string;
+  to?: string;
+  dir?: "in" | "out";
   created_at: string;
-  card: { library_id: string; title: string; summary: string; kind: string; source: string };
+  fetch_state?: "available" | "metadata_only" | "fetched";
+  fetched_library_id?: string;
+  sha256_verified?: boolean;
+  card: {
+    version?: "ryn.shared-content-card.v1";
+    library_id: string;
+    content_id?: string;
+    title: string;
+    summary: string;
+    kind: string;
+    source: string;
+    source_url?: string;
+    publisher_peer_id?: string;
+    manifest_ref?: string;
+    filename?: string;
+    mime?: string;
+    size_bytes?: number;
+    sha256?: string;
+    fetch_available?: boolean;
+  };
 }

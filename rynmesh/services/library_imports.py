@@ -115,6 +115,25 @@ class LibraryImportStore:
         except (OSError, ValueError, TypeError) as exc:
             raise LibraryImportError("library_import_not_ready", "The managed import is not ready for Ask Ryn.") from exc
 
+    def read_bytes(self, import_id: str) -> bytes:
+        directory = self._directory(import_id)
+        metadata = self.get(import_id)
+        try:
+            data = (directory / "original.bin").read_bytes()
+        except OSError as exc:
+            raise LibraryImportError(
+                "library_import_not_ready", "The managed import bytes are unavailable."
+            ) from exc
+        if len(data) != int(metadata.get("size_bytes", -1)):
+            raise LibraryImportError(
+                "library_import_size_mismatch", "The managed import size no longer matches."
+            )
+        if hashlib.sha256(data).hexdigest() != str(metadata.get("sha256", "")):
+            raise LibraryImportError(
+                "library_import_hash_mismatch", "The managed import hash no longer matches."
+            )
+        return data
+
     def import_bytes(self, body: Mapping[str, Any]) -> dict[str, Any]:
         filename = _clean_filename(str(body.get("filename", "")))
         mime = str(body.get("mime", "application/octet-stream")).lower().split(";", 1)[0]

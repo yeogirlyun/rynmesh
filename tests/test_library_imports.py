@@ -26,7 +26,27 @@ def test_pdf_import_extracts_text_and_has_no_paths_in_metadata(tmp_path):
     assert record["kind"] == "pdf"
     assert record["page_count"] == 1
     assert "Grounded PDF evidence" in store.extracted_text(record["import_id"])
+    assert store.read_bytes(record["import_id"]) == data
     assert str(tmp_path) not in str(record)
+
+
+def test_read_bytes_rejects_tampered_managed_content(tmp_path):
+    store = LibraryImportStore(tmp_path / "imports")
+    record = store.import_bytes(
+        {
+            "filename": "shared.md",
+            "mime": "text/markdown",
+            "data_base64": base64.b64encode(b"# original").decode(),
+        }
+    )
+    original = store.root / record["import_id"] / "original.bin"
+    original.write_bytes(b"# modified")
+    with pytest.raises(LibraryImportError) as raised:
+        store.read_bytes(record["import_id"])
+    assert raised.value.code in {
+        "library_import_size_mismatch",
+        "library_import_hash_mismatch",
+    }
 
 
 def test_oversize_base64_and_temporary_cleanup_fail_closed(tmp_path, monkeypatch):

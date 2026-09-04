@@ -37,6 +37,7 @@ class PeerTransportError(RuntimeError):
 
 
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_POST_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_PREVIEW_BYTES = 32 * 1024 * 1024
 MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
 BLOCKED_HOSTS = {
@@ -241,10 +242,17 @@ class HttpPeerClient:
         return self._download(_content_path(content_id, "bytes"), destination)
 
     def post_json(
-        self, path: str, payload: dict[str, Any], *, headers: dict[str, str] | None = None
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+        max_response_bytes: int = MAX_JSON_BYTES,
     ) -> dict[str, Any]:
         if not path.startswith("/"):
             raise PeerTransportError("peer_path_invalid")
+        if not 1 <= int(max_response_bytes) <= MAX_POST_RESPONSE_BYTES:
+            raise PeerTransportError("peer_response_limit_invalid")
         sender = getattr(self.transport, "post_bytes", None)
         if not callable(sender):
             raise PeerTransportError("transport_post_unsupported")
@@ -253,7 +261,7 @@ class HttpPeerClient:
                 self.endpoint + path,
                 canonical_json(payload),
                 timeout_s=self.timeout_s,
-                max_bytes=MAX_JSON_BYTES,
+                max_bytes=int(max_response_bytes),
                 headers={"Content-Type": "application/json", **(headers or {})},
             )
             value = json.loads(raw.decode("utf-8") or "{}")
@@ -425,6 +433,13 @@ def create_app(store: RynmeshStore | None = None):
     @asynccontextmanager
     async def lifespan(lifespan_app):
         updater.on_startup()  # may os.execv away on crash-loop rollback
+        llm_starter = getattr(lifespan_app.state, "llm_startup", None)
+        if callable(llm_starter):
+            try:
+                await _asyncio.to_thread(llm_starter)
+                lifespan_app.state.llm_startup_error = ""
+            except Exception as exc:  # noqa: BLE001 - degraded startup is intentional
+                lifespan_app.state.llm_startup_error = str(exc)
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
@@ -564,6 +579,12 @@ def create_app(store: RynmeshStore | None = None):
         recap_task.cancel()
         llm_relay_task.cancel()
         llm_publish_task.cancel()
+        llm_stopper = getattr(lifespan_app.state, "llm_shutdown", None)
+        if callable(llm_stopper):
+            try:
+                await _asyncio.to_thread(llm_stopper)
+            except Exception:  # noqa: BLE001 - shutdown must remain best effort
+                pass
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     started_at = time.monotonic()
@@ -1570,6 +1591,18 @@ def create_app(store: RynmeshStore | None = None):
         # so starting Ollama (or exporting a key) is picked up without restart.
         # A changed model preference invalidates the cache immediately.
         provider = app.state.model_provider
+        managed = getattr(app.state, "llm_provider", None)
+        if getattr(provider, "id", "") == "managed-local" and managed is None:
+            provider = app.state.model_provider = None
+        if managed is not None:
+            try:
+                if managed.adapter.health().get("ok"):
+                    app.state.model_provider = managed
+                    return managed
+            except Exception:  # noqa: BLE001 - fall through to other local providers
+                pass
+            if provider is managed:
+                provider = app.state.model_provider = None
         preferred = _preferred_model()
         if provider is not None and preferred and getattr(provider, "model", "") != preferred:
             provider = app.state.model_provider = None
@@ -2825,9 +2858,48 @@ def create_app(store: RynmeshStore | None = None):
     from .friends import FriendService as _FriendService
 
     def _friend_post(
-        endpoint: str, path: str, payload: dict[str, Any], headers: dict[str, str] | None
+        endpoint: str,
+        path: str,
+        payload: dict[str, Any],
+        headers: dict[str, str] | None,
+        *,
+        max_response_bytes: int = MAX_JSON_BYTES,
     ) -> dict[str, Any]:
-        return HttpPeerClient(endpoint, timeout_s=15).post_json(path, payload, headers=headers)
+        return HttpPeerClient(endpoint, timeout_s=15).post_json(
+            path,
+            payload,
+            headers=headers,
+            max_response_bytes=max_response_bytes,
+        )
+
+    def _friend_resolve_content(library_id: str) -> dict[str, Any] | None:
+        if not library_id.startswith("import:"):
+            return None
+        import_id = library_id.split(":", 1)[1]
+        metadata = app.state.library_imports.get(import_id)
+        data = app.state.library_imports.read_bytes(import_id)
+        return {
+            "data": data,
+            "content_id": "",
+            "publisher_peer_id": active_store.peer_id,
+            "manifest_ref": f"sha256:{metadata['sha256']}",
+            "filename": metadata["filename"],
+            "mime": metadata["mime"],
+        }
+
+    def _friend_import_content(resource: dict[str, Any]) -> dict[str, Any]:
+        import base64 as _friend_base64
+
+        imported = app.state.library_imports.import_bytes(
+            {
+                "filename": str(resource.get("filename", "shared-content")),
+                "mime": str(resource.get("mime", "application/octet-stream")),
+                "data_base64": _friend_base64.b64encode(bytes(resource.get("data", b""))).decode(
+                    "ascii"
+                ),
+            }
+        )
+        return _library_service().get(f"import:{imported['import_id']}")
 
     _friend_endpoint = (
         os.environ.get("RYNMESH_PEER_ENDPOINT", "").strip()
@@ -2841,6 +2913,8 @@ def create_app(store: RynmeshStore | None = None):
         identity_private=active_store.private_key_bytes,
         messaging_private=_msg_priv,
         post_json=_friend_post,
+        resolve_content=_friend_resolve_content,
+        import_content=_friend_import_content,
         allow_loopback=os.environ.get("RYNMESH_FRIEND_ALLOW_LOOPBACK", "").lower()
         in {"1", "true", "yes"},
     )
@@ -2910,7 +2984,9 @@ def create_app(store: RynmeshStore | None = None):
     def _friend_not_found() -> HTTPException:
         return HTTPException(status_code=404, detail="Not Found")
 
-    async def _friend_wire(request: FastAPIRequest, path: str) -> dict[str, Any]:
+    async def _friend_wire(
+        request: FastAPIRequest, path: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             length = int(request.headers.get("content-length", "0") or 0)
             if length > 8 * 1024 * 1024:
@@ -2918,11 +2994,11 @@ def create_app(store: RynmeshStore | None = None):
             raw = await request.body()
             if len(raw) > 8 * 1024 * 1024:
                 raise ValueError("large")
-            _friends.verify_request(path=path, body=raw, headers=request.headers)
+            relationship = _friends.verify_request(path=path, body=raw, headers=request.headers)
             value = json.loads(raw.decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError("body")
-            return value
+            return value, relationship
         except Exception as exc:
             raise _friend_not_found() from exc
 
@@ -2950,7 +3026,7 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/peer/friends/message")
     async def peer_friend_message(request: FastAPIRequest) -> dict[str, Any]:
-        body = await _friend_wire(request, "/api/peer/friends/message")
+        body, _ = await _friend_wire(request, "/api/peer/friends/message")
         try:
             record = _friends.receive_message(body)
             _publish(record)
@@ -2960,16 +3036,26 @@ def create_app(store: RynmeshStore | None = None):
 
     @app.post("/api/peer/friends/content-card")
     async def peer_friend_content_card(request: FastAPIRequest) -> dict[str, Any]:
-        body = await _friend_wire(request, "/api/peer/friends/content-card")
+        body, _ = await _friend_wire(request, "/api/peer/friends/content-card")
         try:
             _friends.receive_content_card(body)
             return {"ok": True, "card_id": body.get("card_id")}
         except Exception as exc:
             raise _friend_not_found() from exc
 
+    @app.post("/api/peer/friends/content-card/fetch")
+    async def peer_friend_content_card_fetch(request: FastAPIRequest) -> dict[str, Any]:
+        body, relationship = await _friend_wire(
+            request, "/api/peer/friends/content-card/fetch"
+        )
+        try:
+            return _friends.serve_content_card(body, relationship)
+        except Exception as exc:
+            raise _friend_not_found() from exc
+
     @app.post("/api/peer/friends/revoke")
     async def peer_friend_revoke(request: FastAPIRequest) -> dict[str, Any]:
-        body = await _friend_wire(request, "/api/peer/friends/revoke")
+        body, _ = await _friend_wire(request, "/api/peer/friends/revoke")
         _friends.receive_revoke(body)
         return {"ok": True}
 
@@ -3084,16 +3170,41 @@ def create_app(store: RynmeshStore | None = None):
     async def local_friend_send_card(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
-        return await _asyncio.to_thread(
-            _friends.send_content_card,
-            str(body.get("peer_id", "")),
-            dict(body.get("card") or {}),
-        )
+        try:
+            requested = dict(body.get("card") or {})
+            item = _library_service().get(str(requested.get("library_id", "")))
+            source = dict(item.get("source") or {})
+            card = {
+                "library_id": item["library_id"],
+                "content_id": item.get("content_id") or "",
+                "title": item["title"],
+                "summary": item.get("summary", ""),
+                "kind": item["kind"],
+                "source": source.get("title", ""),
+                "source_url": source.get("url", ""),
+            }
+            return await _asyncio.to_thread(
+                _friends.send_content_card,
+                str(body.get("peer_id", "")),
+                card,
+            )
+        except (LibraryError, LibraryImportError, _FriendError) as exc:
+            code = getattr(exc, "code", str(exc))
+            raise HTTPException(status_code=400, detail=code) from exc
 
     @app.get("/api/local/friends/content-cards")
     def local_friend_cards(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         return {"cards": _friends.content_cards()}
+
+    @app.post("/api/local/friends/content-cards/{card_id}/fetch")
+    async def local_friend_fetch_card(card_id: str, request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        try:
+            return await _asyncio.to_thread(_friends.fetch_content_card, card_id)
+        except (_FriendError, LibraryImportError) as exc:
+            code = getattr(exc, "code", str(exc))
+            raise HTTPException(status_code=409, detail=code) from exc
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:

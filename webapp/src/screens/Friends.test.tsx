@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
@@ -53,5 +53,18 @@ describe("friend pairing and private chat", () => {
     await user.click(screen.getByRole("button", { name: "Share card" }));
     expect(appContext.notify).toHaveBeenCalledWith("ok", "Content card delivered");
     expect(screen.getByText("Practical Local AI")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Review & get" }));
+    expect(appContext.confirm).toHaveBeenCalledOnce();
+    const review = vi.mocked(appContext.confirm).mock.calls[0][0];
+    expect(review.title).toBe("Get Practical Local AI?");
+    expect(review.body).toMatch(/metadata has been received/i);
+    expect(review.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Publisher", value: "peer-aether" }),
+      expect.objectContaining({ label: "Integrity", value: expect.stringMatching(/^SHA-256 [0-9a-f]{64}$/) }),
+    ]));
+    await act(async () => { await review.onConfirm(); });
+    expect(await screen.findByText(/SHA-256 verified · Saved to My Content/)).toBeInTheDocument();
+    expect(appContext.notify).toHaveBeenCalledWith("ok", "Hash verified; content saved to My Content");
   });
 });

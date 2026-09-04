@@ -3117,3 +3117,8 @@ button.digest-title:hover {
 .friend-content-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .friend-content-cards article { display: flex; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; }
 .friend-content-cards p { margin: 5px 0; color: var(--text-muted); }
+.friend-card-body { min-width: 0; flex: 1; display: grid; gap: 5px; }
+.friend-card-body small { color: var(--text-muted); overflow-wrap: anywhere; }
+.friend-card-status { margin-top: 7px; padding-top: 9px; border-top: 1px solid var(--line); display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: var(--accent-yellow); font-size: 12px; }
+.friend-card-status .btn { margin-left: auto; }
+.friend-card-status.verified { color: var(--accent-green); }
