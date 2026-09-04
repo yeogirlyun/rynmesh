@@ -128,7 +128,7 @@ IDs and exact request bodies.
 
 ## Webapp evidence on 2026-09-02
 
-Executed in `codex/issue-30-friend-mesh-ui`:
+Executed in `feature/issue-30-friend-mesh-ui`:
 
 ```powershell
 npm test -- --run src/domain/friendMesh.test.ts src/domain/liveNodeClient.friendMesh.test.ts src/screens/Peers.friendMesh.test.tsx
