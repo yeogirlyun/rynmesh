@@ -179,3 +179,100 @@ def test_child_applies_an_address_space_limit(tmp_path: Path) -> None:
     )
     assert probe.returncode == 0, probe.stderr
     assert 0 < int(probe.stdout.strip())
+
+
+def test_extract_document_reads_a_real_file(tmp_path: Path) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text("# heading\n\nbody\n", encoding="utf-8")
+    result = de.extract_document(path)
+    assert result["status"] == "parsed"
+    assert result["kind"] == "markdown"
+    assert "heading" in result["text"]
+
+
+def test_extract_document_refuses_an_oversized_file_without_spawning(tmp_path: Path) -> None:
+    path = tmp_path / "big.txt"
+    path.write_text("a" * 4096, encoding="utf-8")
+    spawned: list[object] = []
+
+    def _never(*args, **kwargs):
+        spawned.append(args)
+        raise AssertionError("must not spawn for an oversized input")
+
+    result = de.extract_document(path, max_input_bytes=10, spawn=_never)
+    assert result["status"] == de.FAILED_TOO_LARGE
+    assert result["text"] == ""
+    assert spawned == []
+
+
+def test_extract_document_times_out_and_kills_the_child(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("ok", encoding="utf-8")
+
+    def _sleeper(*args, **kwargs):
+        return subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    result = de.extract_document(path, timeout_s=0.5, spawn=_sleeper)
+    assert result["status"] == de.FAILED_TIMEOUT
+
+
+def test_extract_document_reports_a_crashed_child(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("ok", encoding="utf-8")
+
+    def _crasher(*args, **kwargs):
+        return subprocess.Popen(
+            [sys.executable, "-c", "import os; os._exit(3)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    result = de.extract_document(path, spawn=_crasher)
+    assert result["status"] == de.FAILED_CRASHED
+
+
+def test_extract_document_reports_internal_for_unparseable_output(tmp_path: Path) -> None:
+    path = tmp_path / "notes.txt"
+    path.write_text("ok", encoding="utf-8")
+
+    def _garbage(*args, **kwargs):
+        return subprocess.Popen(
+            [sys.executable, "-c", "print('not json')"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    result = de.extract_document(path, spawn=_garbage)
+    assert result["status"] == de.FAILED_INTERNAL
+
+
+@posix_only
+def test_a_memory_bomb_is_contained(tmp_path: Path) -> None:
+    """The child dies; the node keeps running and gets a code back."""
+    path = tmp_path / "notes.txt"
+    path.write_text("ok", encoding="utf-8")
+
+    def _bomb(*args, **kwargs):
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import resource;"
+                "resource.setrlimit(resource.RLIMIT_AS,(64*1024*1024,)*2);"
+                "b=bytearray();\n"
+                "while True: b.extend(b'x'*(1024*1024))",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    result = de.extract_document(path, timeout_s=30, spawn=_bomb)
+    assert result["status"] in {de.FAILED_CRASHED, de.FAILED_MEMORY}

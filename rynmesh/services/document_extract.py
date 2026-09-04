@@ -15,9 +15,14 @@ of a closed set of fixed literals.
 
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
+import subprocess
+import sys
+import time
 from pathlib import Path
+from typing import Any, Callable
 
 __all__ = [
     "FAILED_CRASHED",
@@ -36,6 +41,7 @@ __all__ = [
     "STATUS_UNSUPPORTED",
     "TIMEOUT_S",
     "classify",
+    "extract_document",
 ]
 
 
@@ -122,3 +128,110 @@ def classify(path: str | Path) -> str:
     if guessed and guessed.startswith("text/"):
         return "text"
     return "unknown"
+
+
+_CHILD_ARGV = [sys.executable, "-m", "rynmesh.services.document_extract_child"]
+# A child that answers correctly writes well under a kilobyte per 1000 chars of
+# text; this ceiling only exists so a compromised child cannot stream forever.
+_MAX_CHILD_STDOUT_BYTES = 8 * 1024 * 1024
+_KILL_GRACE_S = 2.0
+
+
+def _failure(code: str, kind: str) -> dict[str, Any]:
+    return {"status": code, "kind": kind, "text": "", "chars": 0}
+
+
+def _stop(process: subprocess.Popen) -> None:
+    """Terminate, then kill after a grace period. Never raises."""
+
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+    except OSError:
+        pass
+    deadline = time.monotonic() + _KILL_GRACE_S
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=_KILL_GRACE_S)
+        except subprocess.TimeoutExpired:  # pragma: no cover - unkillable child
+            pass
+
+
+def extract_document(
+    path: str | Path,
+    *,
+    max_input_bytes: int = MAX_INPUT_BYTES,
+    max_output_chars: int = MAX_OUTPUT_CHARS,
+    timeout_s: float = TIMEOUT_S,
+    memory_bytes: int = MEMORY_BYTES,
+    spawn: Callable[..., subprocess.Popen] | None = None,
+) -> dict[str, Any]:
+    """Extract bounded plain text from ``path`` in a child process.
+
+    Returns the result contract described in this module's work plan. Never
+    raises for a bad document: every failure is one of ``FAILURE_CODES``.
+    """
+
+    target = Path(path)
+    kind = classify(target)
+    try:
+        stat = target.stat()
+    except OSError:
+        return _failure(FAILED_UNREADABLE, kind)
+    if not target.is_file():
+        return _failure(FAILED_UNREADABLE, kind)
+    if stat.st_size > max_input_bytes:
+        return _failure(FAILED_TOO_LARGE, kind)
+
+    child_env = dict(os.environ)
+    child_env["RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS"] = str(max_output_chars)
+    child_env["RYNMESH_DOC_EXTRACT_MEMORY_BYTES"] = str(memory_bytes)
+    launcher = spawn or subprocess.Popen
+    try:
+        process = launcher(
+            _CHILD_ARGV,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=child_env,
+        )
+    except OSError:
+        return _failure(FAILED_INTERNAL, kind)
+
+    try:
+        try:
+            raw, _ = process.communicate(
+                input=f"{target}\n".encode("utf-8"), timeout=timeout_s
+            )
+        except subprocess.TimeoutExpired:
+            return _failure(FAILED_TIMEOUT, kind)
+        except (OSError, ValueError):
+            return _failure(FAILED_INTERNAL, kind)
+    finally:
+        _stop(process)
+
+    if process.returncode != 0:
+        return _failure(FAILED_CRASHED, kind)
+    if not raw or len(raw) > _MAX_CHILD_STDOUT_BYTES:
+        return _failure(FAILED_INTERNAL, kind)
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _failure(FAILED_INTERNAL, kind)
+    if not isinstance(parsed, dict) or "status" not in parsed:
+        return _failure(FAILED_INTERNAL, kind)
+    status = parsed.get("status")
+    known = {STATUS_PARSED, STATUS_TRUNCATED, STATUS_UNSUPPORTED} | set(FAILURE_CODES)
+    if status not in known:
+        return _failure(FAILED_INTERNAL, kind)
+    text = parsed.get("text") or ""
+    if not isinstance(text, str) or len(text) > max_output_chars:
+        return _failure(FAILED_INTERNAL, kind)
+    return {"status": status, "kind": kind, "text": text, "chars": len(text)}
