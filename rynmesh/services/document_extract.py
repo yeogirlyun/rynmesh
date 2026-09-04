@@ -38,14 +38,39 @@ __all__ = [
     "classify",
 ]
 
+
+def _env_int(name: str, default: int) -> int:
+    """An override from the environment, or ``default`` if it is absent or unparseable.
+
+    A malformed value must not stop the node from starting: the cap simply
+    stays at its default.
+    """
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """An override from the environment, or ``default`` if it is absent or unparseable.
+
+    A malformed value must not stop the node from starting: the cap simply
+    stays at its default.
+    """
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
 # A 32 MiB ceiling on what is worth opening at all. The parent stats the file
 # and refuses before spawning, so an oversized input costs no process.
-MAX_INPUT_BYTES = int(os.environ.get("RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES", 32 * 1024 * 1024))
+MAX_INPUT_BYTES = _env_int("RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES", 32 * 1024 * 1024)
 # Matches RYNMESH_LOCAL_BODY_MAX_BYTES, the cap the local content-body route
 # already applies, so a caller that shows both sees one consistent bound.
-MAX_OUTPUT_CHARS = int(os.environ.get("RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS", 1024 * 1024))
-TIMEOUT_S = float(os.environ.get("RYNMESH_DOC_EXTRACT_TIMEOUT_S", "20"))
-MEMORY_BYTES = int(os.environ.get("RYNMESH_DOC_EXTRACT_MEMORY_BYTES", 512 * 1024 * 1024))
+MAX_OUTPUT_CHARS = _env_int("RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS", 1024 * 1024)
+TIMEOUT_S = _env_float("RYNMESH_DOC_EXTRACT_TIMEOUT_S", 20.0)
+MEMORY_BYTES = _env_int("RYNMESH_DOC_EXTRACT_MEMORY_BYTES", 512 * 1024 * 1024)
 
 FAILED_TOO_LARGE = "failed:too_large"
 FAILED_TIMEOUT = "failed:timeout"
