@@ -40,8 +40,48 @@ export default function FirstSuccessFlow({
   const [viewing, setViewing] = useState<ContentItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const backdropRef = useRef<HTMLDivElement>(null);
   const statusGeneration = useRef(0);
   const candidates = useMemo(() => mergeItems(recommendations, content), [recommendations, content]);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = [
+      "button:not([disabled])",
+      "a[href]",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(",");
+    const focusable = () => Array.from(
+      backdropRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? [],
+    ).filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    focusable()[0]?.focus();
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      if (!elements.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !backdropRef.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !backdropRef.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      document.removeEventListener("keydown", trapFocus);
+      opener?.focus();
+    };
+  }, []);
 
   const refreshStatus = async () => {
     const generation = ++statusGeneration.current;
@@ -128,7 +168,7 @@ export default function FirstSuccessFlow({
   const openedItem = viewing ?? candidates[0] ?? null;
 
   return (
-    <div className="first-success-backdrop" role="presentation">
+    <div ref={backdropRef} className="first-success-backdrop" role="presentation">
       <section className="first-success-dialog" role="dialog" aria-modal="true" aria-labelledby="first-success-title">
         <header className="first-success-header">
           <div>

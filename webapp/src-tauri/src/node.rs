@@ -7,7 +7,7 @@
 
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,30 +34,66 @@ fn capture(program: &str, args: &[&str]) -> Option<String> {
 }
 
 fn machine_name() -> String {
+    #[cfg(target_os = "windows")]
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        if !name.trim().is_empty() {
+            return name;
+        }
+    }
     capture("/usr/sbin/scutil", &["--get", "ComputerName"])
         .or_else(|| capture("/bin/hostname", &["-s"]))
         .unwrap_or_else(|| "ryn-node".to_string())
 }
 
 fn lan_ip() -> String {
-    let iface = capture("/sbin/route", &["-n", "get", "default"]).and_then(|s| {
-        s.lines().find_map(|l| {
-            l.trim()
-                .strip_prefix("interface:")
-                .map(|v| v.trim().to_string())
-        })
-    });
-    if let Some(iface) = iface {
-        if let Some(ip) = capture("/usr/sbin/ipconfig", &["getifaddr", &iface]) {
-            return ip;
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("1.1.1.1:80").is_ok() {
+            if let Ok(address) = socket.local_addr() {
+                if !address.ip().is_unspecified() {
+                    return address.ip().to_string();
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let iface = capture("/sbin/route", &["-n", "get", "default"]).and_then(|s| {
+            s.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix("interface:")
+                    .map(|v| v.trim().to_string())
+            })
+        });
+        if let Some(iface) = iface {
+            if let Some(ip) = capture("/usr/sbin/ipconfig", &["getifaddr", &iface]) {
+                return ip;
+            }
         }
     }
     "127.0.0.1".to_string()
 }
 
 pub fn log_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let dir = PathBuf::from(home).join("Library/Logs/Rynmesh");
+    let dir = if let Ok(home) = std::env::var("RYNMESH_HOME") {
+        PathBuf::from(home).join("logs")
+    } else {
+        #[cfg(target_os = "windows")]
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
+        #[cfg(target_os = "macos")]
+        let base = std::env::var("HOME")
+            .map(|home| {
+                PathBuf::from(home)
+                    .join("Library/Logs")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| ".".to_string());
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let base = std::env::var("XDG_STATE_HOME")
+            .or_else(|_| std::env::var("HOME").map(|home| format!("{home}/.local/state")))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join("Rynmesh/Logs")
+    };
     let _ = create_dir_all(&dir);
     dir
 }
@@ -78,23 +114,57 @@ fn node_env(port: u16) -> Vec<(String, String)> {
         "https://registry.rynmesh.ai".to_string()
     });
     vec![
-        ("RYNMESH_NODE_NAME".into(), env_or("RYNMESH_NODE_NAME", || mname.clone())),
-        ("RYNMESH_MACHINE_NAME".into(), env_or("RYNMESH_MACHINE_NAME", || mname.clone())),
-        ("RYNMESH_MACHINE_IP".into(), env_or("RYNMESH_MACHINE_IP", || ip.clone())),
+        (
+            "RYNMESH_NODE_NAME".into(),
+            env_or("RYNMESH_NODE_NAME", || mname.clone()),
+        ),
+        (
+            "RYNMESH_MACHINE_NAME".into(),
+            env_or("RYNMESH_MACHINE_NAME", || mname.clone()),
+        ),
+        (
+            "RYNMESH_MACHINE_IP".into(),
+            env_or("RYNMESH_MACHINE_IP", || ip.clone()),
+        ),
         ("RYNMESH_DESKTOP_MODE".into(), "1".to_string()),
-        ("RYNMESH_NETWORK_ID".into(), env_or("RYNMESH_NETWORK_ID", || "rynmesh-main".to_string())),
-        ("RYNMESH_PEER_HOST".into(), env_or("RYNMESH_PEER_HOST", || "0.0.0.0".to_string())),
-        ("RYNMESH_PEER_PORT".into(), env_or("RYNMESH_PEER_PORT", || port.to_string())),
-        ("RYNMESH_PEER_PUBLIC_HOST".into(), env_or("RYNMESH_PEER_PUBLIC_HOST", || ip.clone())),
-        ("RYNMESH_PEER_ENDPOINT".into(), env_or("RYNMESH_PEER_ENDPOINT", || format!("http://{ip}:{port}"))),
-        ("RYNMESH_AUTO_REGISTER".into(), env_or("RYNMESH_AUTO_REGISTER", || "1".to_string())),
+        (
+            "RYNMESH_NETWORK_ID".into(),
+            env_or("RYNMESH_NETWORK_ID", || "rynmesh-main".to_string()),
+        ),
+        (
+            "RYNMESH_PEER_HOST".into(),
+            env_or("RYNMESH_PEER_HOST", || "0.0.0.0".to_string()),
+        ),
+        (
+            "RYNMESH_PEER_PORT".into(),
+            env_or("RYNMESH_PEER_PORT", || port.to_string()),
+        ),
+        (
+            "RYNMESH_PEER_PUBLIC_HOST".into(),
+            env_or("RYNMESH_PEER_PUBLIC_HOST", || ip.clone()),
+        ),
+        (
+            "RYNMESH_PEER_ENDPOINT".into(),
+            env_or("RYNMESH_PEER_ENDPOINT", || format!("http://{ip}:{port}")),
+        ),
+        (
+            "RYNMESH_AUTO_REGISTER".into(),
+            env_or("RYNMESH_AUTO_REGISTER", || "1".to_string()),
+        ),
         ("RYNMESH_REGISTRY_URL".into(), registry.clone()),
-        ("RYNMESH_RELAY_URL".into(), env_or("RYNMESH_RELAY_URL", || registry.clone())),
+        (
+            "RYNMESH_RELAY_URL".into(),
+            env_or("RYNMESH_RELAY_URL", || registry.clone()),
+        ),
     ]
 }
 
 fn which(bin: &str) -> bool {
-    Command::new("/usr/bin/which")
+    #[cfg(target_os = "windows")]
+    let program = "where.exe";
+    #[cfg(not(target_os = "windows"))]
+    let program = "/usr/bin/which";
+    Command::new(program)
         .arg(bin)
         .output()
         .map(|o| o.status.success())
@@ -115,9 +185,11 @@ fn open_log() -> std::io::Result<File> {
 fn sidecar_path() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p = dir.join("rynmesh-peer");
-            if p.is_file() {
-                return Some(p);
+            for name in ["rynmesh-peer", "rynmesh-peer.exe"] {
+                let p = dir.join(name);
+                if p.is_file() {
+                    return Some(p);
+                }
             }
         }
     }
@@ -134,8 +206,17 @@ fn sidecar_path() -> Option<std::path::PathBuf> {
 
 fn build_command(port: u16) -> Command {
     let mut cmd = if let Ok(custom) = std::env::var("RYNMESH_PEER_CMD") {
+        #[cfg(target_os = "windows")]
+        let mut c = {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/C");
+            command
+        };
+        #[cfg(not(target_os = "windows"))]
         let mut c = Command::new("/bin/sh");
-        c.arg("-c").arg(custom);
+        #[cfg(not(target_os = "windows"))]
+        c.arg("-c");
+        c.arg(custom);
         c
     } else if let Some(sidecar) = sidecar_path() {
         Command::new(sidecar)
@@ -191,15 +272,18 @@ pub fn start(state: &NodeState) -> std::io::Result<()> {
 fn stop_child(state: &NodeState) {
     let mut guard = state.child.lock().unwrap();
     if let Some(mut child) = guard.take() {
-        let pid = child.id() as i32;
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-        for _ in 0..30 {
-            match child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(_) => break,
+        #[cfg(unix)]
+        {
+            let pid = child.id() as i32;
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+            for _ in 0..30 {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                    Err(_) => break,
+                }
             }
         }
         let _ = child.kill();

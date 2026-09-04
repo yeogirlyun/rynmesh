@@ -28,6 +28,31 @@ const ready: FirstSuccessStatus = {
 };
 
 describe("FirstSuccessFlow", () => {
+  it("traps keyboard focus and restores the opener when closed", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Open first success";
+    document.body.appendChild(opener);
+    opener.focus();
+    const user = userEvent.setup();
+    const view = render(
+      <MemoryRouter>
+        <FirstSuccessFlow client={makeFixtureNodeClient()} status={ready} onStatusChange={vi.fn()} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    const closeButtons = screen.getAllByRole("button", { name: "Continue later" });
+    expect(closeButtons[0]).toHaveFocus();
+    closeButtons[closeButtons.length - 1].focus();
+    await user.tab();
+    expect(closeButtons[0]).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(closeButtons[closeButtons.length - 1]).toHaveFocus();
+
+    view.unmount();
+    expect(opener).toHaveFocus();
+    opener.remove();
+  });
+
   it("moves from a real recommendation to a saved local signal", async () => {
     const client = makeFixtureNodeClient();
     const user = userEvent.setup();

@@ -15,6 +15,17 @@ fn focus_main(app: &tauri::AppHandle) {
     }
 }
 
+fn open_log_dir() {
+    let path = node::log_dir();
+    #[cfg(target_os = "windows")]
+    let command = ("explorer", path);
+    #[cfg(target_os = "macos")]
+    let command = ("/usr/bin/open", path);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let command = ("xdg-open", path);
+    let _ = std::process::Command::new(command.0).arg(command.1).spawn();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let port: u16 = std::env::var("RYNMESH_PEER_PORT")
@@ -57,9 +68,7 @@ pub fn run() {
             tray.on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => focus_main(app),
                 "logs" => {
-                    let _ = std::process::Command::new("/usr/bin/open")
-                        .arg(node::log_dir())
-                        .spawn();
+                    open_log_dir();
                 }
                 "restart" => {
                     let app = app.clone();
@@ -127,18 +136,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    app.run(|app_handle, event| {
-        match event {
-            RunEvent::Resumed => {
-                let handle = app_handle.clone();
-                std::thread::spawn(move || {
-                    let _ = node::recover_if_unhealthy(handle.state::<NodeState>().inner());
-                });
-            }
-            RunEvent::ExitRequested { .. } => {
-                node::stop(app_handle.state::<NodeState>().inner());
-            }
-            _ => {}
+    app.run(|app_handle, event| match event {
+        RunEvent::Resumed => {
+            let handle = app_handle.clone();
+            std::thread::spawn(move || {
+                let _ = node::recover_if_unhealthy(handle.state::<NodeState>().inner());
+            });
         }
+        RunEvent::ExitRequested { .. } => {
+            node::stop(app_handle.state::<NodeState>().inner());
+        }
+        _ => {}
     });
 }

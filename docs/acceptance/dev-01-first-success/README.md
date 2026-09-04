@@ -1,6 +1,6 @@
 # DEV-01 验收记录：首次启动三分钟获得价值
 
-状态：工程实现完成；自动化与浏览器 UI 验收通过；桌面物理验收待完成。
+状态：工程实现完成；自动化、浏览器 UI 与 Windows 桌面物理验收通过；macOS 物理验收待完成。
 
 ## 实现基线
 
@@ -21,6 +21,10 @@
 - 个人数据导出与 `onboarding` 范围擦除；
 - fixture 浏览器 E2E：ready → opened → saved signal → completed；
 - full backend、Webapp test、TypeScript、production build、Ruff 通过。
+- Windows GNU Tauri/NSIS 构建成功；打包后的 `app.exe` 使用干净 home 启动真实
+  `rynmesh-peer.exe`，健康检查通过并从 14 个来源获得 30 项真实内容。
+- 首次流程键盘焦点限制在 modal 内，关闭组件后恢复到原触发元素；组件测试覆盖
+  正向 Tab、Shift+Tab 和焦点恢复。
 
 ## UI 证据与标注
 
@@ -45,11 +49,11 @@
 
 ## 尚未关闭的验收项
 
-- Windows Tauri 打包后的干净 `RYNMESH_HOME` 冷启动；
 - macOS 干净安装冷启动；
-- 真实公网来源的三分钟耗时录制；
 - 部分来源失败、离线缓存的桌面录屏；
-- 键盘焦点陷阱与关闭后的焦点恢复专项检查。
+
+Windows 冷启动中 12/14 来源健康、2 个来源失败，应用仍在三分钟内进入 `ready`，
+证明部分来源失败不阻断首次价值；离线缓存已有自动化覆盖，但没有伪造桌面录屏。
 
 这些属于物理环境/桌面层验收，不能用 fixture 或 CI 替代，因此本记录不把 DEV-01
 标成最终 accepted。代码已保持可继续开发，不阻断 DEV-02。
