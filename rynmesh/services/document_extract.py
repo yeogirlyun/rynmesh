@@ -187,10 +187,15 @@ def extract_document(
     target = Path(path)
     kind = classify(target)
     try:
+        # A hostile path -- e.g. one with an embedded NUL byte -- makes
+        # `stat`/`is_file` raise `ValueError` rather than `OSError`; both are
+        # a bad-path signal here, so both fall into the same failure, never
+        # out of this function.
         stat = target.stat()
-    except OSError:
+        is_file = target.is_file()
+    except (OSError, ValueError):
         return _failure(FAILED_UNREADABLE, kind)
-    if not target.is_file():
+    if not is_file:
         return _failure(FAILED_UNREADABLE, kind)
     if stat.st_size > max_input_bytes:
         return _failure(FAILED_TOO_LARGE, kind)

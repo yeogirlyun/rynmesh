@@ -522,6 +522,29 @@ def test_extract_document_reads_a_real_file(tmp_path: Path) -> None:
     assert "heading" in result["text"]
 
 
+def test_extract_document_rejects_a_path_with_an_embedded_nul() -> None:
+    """A NUL byte makes `Path.stat`/`Path.is_file` raise `ValueError`, not
+    `OSError`. `extract_document` must still answer from the closed
+    `FAILURE_CODES` set instead of letting that `ValueError` escape and break
+    the "never raises" contract documented at the top of this module.
+    """
+    hostile = "a\x00b.txt"
+    spawned: list[object] = []
+
+    def _never(*args, **kwargs):
+        spawned.append(args)
+        raise AssertionError("must not spawn for an un-stat-able path")
+
+    result = de.extract_document(hostile, spawn=_never)
+    assert result["status"] in de.FAILURE_CODES
+    assert result["status"] == de.FAILED_UNREADABLE
+    assert result["text"] == ""
+    assert spawned == []
+    serialized = json.dumps(result)
+    assert hostile not in serialized
+    assert "b.txt" not in serialized
+
+
 def test_extract_document_refuses_an_oversized_file_without_spawning(tmp_path: Path) -> None:
     path = tmp_path / "big.txt"
     path.write_text("a" * 4096, encoding="utf-8")

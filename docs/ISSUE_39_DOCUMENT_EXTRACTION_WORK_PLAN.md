@@ -41,6 +41,55 @@ evidence requirements in [`TESTING_STRATEGY.md`](TESTING_STRATEGY.md) §2 and §
 - The child's stderr is discarded, never captured: parsers print document
   fragments in warnings.
 
+## As delivered: where the implementation diverges from this plan
+
+This document is the pre-execution snapshot written before Task 1 started;
+the final review wave (#39) changed several things the embedded code samples
+below still show the old way. The samples are left as they were written —
+the modules themselves (`rynmesh/services/document_extract.py`,
+`rynmesh/services/document_extract_child.py`) are the source of truth, in the
+same spirit `docs/ROUTE_PACKAGES.md` uses for `install_llm_routes`: described
+as it is, not as the plan said it should be. Known divergences:
+
+- **Stdin framing (:267, :442):** the child no longer reads one UTF-8 path
+  line via `sys.stdin.readline().strip()`. It reads the whole of stdin with
+  `sys.stdin.buffer.read()` and decodes it with `os.fsdecode`; the parent
+  writes it with `os.fsencode`. Newlines and edge whitespace are legal in
+  POSIX filenames, and `readline().strip()` let the parent validate one file
+  while the child opened another.
+- **The rlimit-probe assertion (:350-357):** `assert 0 < int(probe.stdout.strip())`
+  is satisfied by `resource.RLIM_INFINITY` (a very large sentinel int), so it
+  passed even when the limit was never actually applied — the false-green
+  that hid the macOS bug where `RLIMIT_AS` is refused outright.
+- **`apply_limits` (:400-422):** the loop that set each limit and silently
+  `continue`d past a refused `setrlimit` is gone. `apply_limits` now reads
+  each limit back with `getrlimit` after setting it and only trusts a limit
+  that reads back as applied; whether the address-space ceiling actually took
+  is exposed via `memory_limit_active()`.
+- **Platform coverage (:1022):** the plan names Windows as the only platform
+  missing the resource limits. macOS is also affected: Darwin honours
+  neither `RLIMIT_AS` nor `RLIMIT_DATA`, so there is no address-space
+  ceiling there either. `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE` do
+  still apply on Darwin.
+- **Input-size enforcement (Task 2's `_read_text`):** the child no longer
+  trusts the parent's pre-spawn `stat()` for the size cap. The parent's stat
+  is a courtesy that avoids spawning a process for an already-oversized file,
+  not a bound — a file can grow between that check and the child's open. The
+  child now enforces `max_input_bytes` itself with a bounded
+  `read(limit + 1)`, closing that TOCTOU gap.
+- **`failed:memory` reachability (Task 2/3's memory-bomb tests):** the plan's
+  own integration test tolerated either `failed:crashed` or `failed:memory`
+  for a real memory bomb, because a `MemoryError` handler that itself has to
+  allocate a JSON payload can fail under the pressure that triggered it. The
+  delivered child pre-serializes each kind's `failed:memory` payload at
+  import time, while the process is still healthy, so the handler only
+  writes bytes it already has. `failed:memory` is now deterministically
+  reachable (see `test_child_reports_memory_when_the_extractor_runs_out` and
+  `test_extract_document_surfaces_failed_memory_from_the_child` in
+  `tests/test_document_extract.py`); the real-bomb integration test still
+  allows either outcome, since a live OS-level bomb's exact failure mode
+  still depends on host timing.
+
 ## Result contract
 
 ```python
