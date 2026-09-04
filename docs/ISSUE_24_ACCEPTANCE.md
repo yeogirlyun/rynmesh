@@ -2,7 +2,7 @@
 
 验收日期：2026-09-02
 
-分支：`codex/issue-24-provider-switching`
+分支：`feature/issue-24-provider-switching`
 
 ## 验收结论
 
