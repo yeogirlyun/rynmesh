@@ -11,4 +11,4 @@
 包内共 69 个文件，不含源代码、模型、构建工具链、安装器、用户正文、API key、
 local token、真实 invite/relationship secret 或本机绝对路径。
 
-SHA-256：`4cb09317f4960fcdec7096a04e266bbc3f5b289b34faf8f422d309b0e63e9ec7`
+SHA-256：`aade66ca3ac4ce7932de50680ea4be51ef1f3a7c21b3f3f13af396c8cca4117c`

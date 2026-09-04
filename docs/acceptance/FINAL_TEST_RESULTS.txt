@@ -50,4 +50,3 @@ Final artifacts
 Platform gap
   NOT RUN — macOS physical cold start and file permission semantics.
   NOT RUN — three consecutive full 12-step cross-requirement journeys on physical desktop environments.
-
