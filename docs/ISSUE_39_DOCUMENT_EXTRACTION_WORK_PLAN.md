@@ -58,7 +58,7 @@ Closed failure-code set — nothing else may ever be returned:
 |---|---|
 | `failed:too_large` | input exceeds `max_input_bytes` (checked before any spawn) |
 | `failed:timeout` | wall-clock deadline hit; child was terminated |
-| `failed:memory` | child hit `RLIMIT_AS` and reported `MemoryError` |
+| `failed:memory` | child hit `RLIMIT_AS` and reported `MemoryError` (only where the ceiling exists — see the acceptance doc's non-goals; macOS has none, so there a bomb reaches the wall-clock deadline or the input cap instead) |
 | `failed:crashed` | child died on a signal or exited non-zero |
 | `failed:unreadable` | the path does not exist, is not a regular file, or cannot be opened |
 | `failed:not_text` | a text/markdown file that is not valid UTF-8 |

@@ -34,3 +34,11 @@ hex editor.
 - On Windows the address-space and CPU limits are absent (`resource` is POSIX
   only). The wall-clock deadline and the output cap still apply, so a bomb is
   bounded in time and output but not in memory. Named here rather than hidden.
+- On macOS there is no address-space ceiling either. Darwin honours neither
+  `RLIMIT_AS` nor `RLIMIT_DATA`, so `setrlimit` is refused and the child runs
+  with unbounded address space; the CPU, file-size, and open-file limits do
+  apply there. A parser that balloons memory on macOS is bounded only by the
+  wall-clock deadline and by the input-size cap the child enforces on its own
+  read — not by a memory ceiling. `document_extract_child.memory_limit_active()`
+  reports which behaviour the running host gives. This is a real gap on a
+  shipping platform, named here rather than hidden.

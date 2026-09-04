@@ -5,7 +5,10 @@ malformed cross-reference table, or a parser bug can exhaust memory or crash
 the interpreter. Nothing here parses in the node process. `extract_document`
 validates and supervises; the real work happens in
 `rynmesh.services.document_extract_child`, a short-lived child that applies its
-own address-space and CPU limits before it opens anything.
+own resource limits and its own input-size cap before it opens anything. Where
+the host refuses an address-space ceiling -- macOS refuses both `RLIMIT_AS` and
+`RLIMIT_DATA` -- the wall-clock deadline and that input cap are what remain;
+see the acceptance doc's non-goals.
 
 Privacy rule for everything in both modules: no filesystem path, no byte of
 document content, and no third-party exception message may appear in a returned
@@ -70,7 +73,9 @@ def _env_float(name: str, default: float) -> float:
 
 
 # A 32 MiB ceiling on what is worth opening at all. The parent stats the file
-# and refuses before spawning, so an oversized input costs no process.
+# and refuses before spawning, so an oversized input costs no process; that
+# check is a saving, not the bound -- the child re-enforces this cap on its own
+# bounded read, because a file can grow between the stat and the open.
 MAX_INPUT_BYTES = _env_int("RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES", 32 * 1024 * 1024)
 # Matches RYNMESH_LOCAL_BODY_MAX_BYTES, the cap the local content-body route
 # already applies, so a caller that shows both sees one consistent bound.
@@ -191,6 +196,7 @@ def extract_document(
         return _failure(FAILED_TOO_LARGE, kind)
 
     child_env = dict(os.environ)
+    child_env["RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES"] = str(max_input_bytes)
     child_env["RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS"] = str(max_output_chars)
     child_env["RYNMESH_DOC_EXTRACT_MEMORY_BYTES"] = str(memory_bytes)
     launcher = spawn or subprocess.Popen
@@ -207,9 +213,11 @@ def extract_document(
 
     try:
         try:
-            raw, _ = process.communicate(
-                input=f"{target}\n".encode("utf-8"), timeout=timeout_s
-            )
+            # The whole of stdin is the path: no delimiter to inject and no
+            # trimming, so the child cannot open a file other than the one
+            # validated above. Newlines and edge whitespace are legal in POSIX
+            # filenames.
+            raw, _ = process.communicate(input=os.fsencode(target), timeout=timeout_s)
         except subprocess.TimeoutExpired:
             return _failure(FAILED_TIMEOUT, kind)
         except (OSError, ValueError):
@@ -231,7 +239,9 @@ def extract_document(
     known = {STATUS_PARSED, STATUS_TRUNCATED, STATUS_UNSUPPORTED} | set(FAILURE_CODES)
     if status not in known:
         return _failure(FAILED_INTERNAL, kind)
-    text = parsed.get("text") or ""
+    # `.get(name) or ""` would coerce a falsy non-string (0, False, [], {})
+    # into "" before the type guard below could ever reject it.
+    text = parsed.get("text", "")
     if not isinstance(text, str) or len(text) > max_output_chars:
         return _failure(FAILED_INTERNAL, kind)
     return {"status": status, "kind": kind, "text": text, "chars": len(text)}
