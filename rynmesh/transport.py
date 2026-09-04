@@ -196,6 +196,11 @@ class Transport(Protocol):
         headers: dict[str, str] | None = None,
     ) -> Path: ...
 
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes: ...
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Suppress redirects: a peer must not bounce us to an unvalidated host
@@ -266,6 +271,22 @@ class StdlibHttpsTransport:
             raise TransportError("response too large", reason="too_large")
         return data
 
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        merged = self._headers(headers)
+        merged.setdefault("Content-Type", "application/json")
+        req = urllib.request.Request(url, data=body, method="POST", headers=merged)
+        try:
+            with self._opener.open(req, timeout=timeout_s) as resp:
+                data = resp.read(max_bytes + 1)
+        except (HTTPError, URLError, TimeoutError, ssl.SSLError, OSError) as exc:
+            raise TransportError(f"http error: {exc}", reason="http_error") from exc
+        if len(data) > max_bytes:
+            raise TransportError("response too large", reason="too_large")
+        return data
+
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
@@ -324,7 +345,10 @@ class FrontedHttpsTransport:
             merged.update(extra)
         return merged
 
-    def _open(self, url: str, timeout_s: float, extra_headers: dict[str, str] | None):
+    def _open(
+        self, url: str, timeout_s: float, extra_headers: dict[str, str] | None,
+        *, method: str = "GET", body: bytes | None = None,
+    ):
         import http.client
         import socket
 
@@ -347,7 +371,7 @@ class FrontedHttpsTransport:
                 raw = self._ctx.wrap_socket(raw, server_hostname=sni)
             conn = http.client.HTTPConnection(host, port, timeout=timeout_s)
             conn.sock = raw  # use our pre-dialed (and TLS-wrapped) socket
-            conn.request("GET", path, headers=self._headers(host_header, extra_headers))
+            conn.request(method, path, body=body, headers=self._headers(host_header, extra_headers))
             resp = conn.getresponse()
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
             try:
@@ -368,6 +392,19 @@ class FrontedHttpsTransport:
             data = resp.read(max_bytes + 1)
         except (OSError, ssl.SSLError) as exc:
             raise TransportError(f"http error: {exc}", reason="http_error") from exc
+        finally:
+            conn.close()
+        if len(data) > max_bytes:
+            raise TransportError("response too large", reason="too_large")
+        return data
+
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        conn, resp = self._open(url, timeout_s, headers, method="POST", body=body)
+        try:
+            data = resp.read(max_bytes + 1)
         finally:
             conn.close()
         if len(data) > max_bytes:
@@ -548,8 +585,9 @@ class CdnWebSocketTransport:
         return recv_exact(length)
 
     def _do_request(self, url: str, timeout_s: float, max_bytes: int,
-                    extra_headers: dict[str, str] | None) -> bytes:
-        """Tunnel one HTTP GET through a WebSocket connection."""
+                    extra_headers: dict[str, str] | None, *, method: str = "GET",
+                    body: bytes | None = None) -> bytes:
+        """Tunnel one HTTP request through a WebSocket connection."""
         parts = urlparse(url)
         path = (parts.path or "/") + (("?" + parts.query) if parts.query else "")
         host = parts.hostname or ""
@@ -561,10 +599,12 @@ class CdnWebSocketTransport:
         if extra_headers:
             req_headers.update(extra_headers)
         req_headers["Host"] = host_header
-        req_lines = [f"GET {path} HTTP/1.1"]
+        if body is not None:
+            req_headers["Content-Length"] = str(len(body))
+        req_lines = [f"{method} {path} HTTP/1.1"]
         req_lines.extend(f"{k}: {v}" for k, v in req_headers.items())
         req_lines += ["", ""]
-        raw_request = "\r\n".join(req_lines).encode("utf-8")
+        raw_request = "\r\n".join(req_lines).encode("utf-8") + (body or b"")
 
         sock = self._ws_connect(timeout_s)
         try:
@@ -587,6 +627,19 @@ class CdnWebSocketTransport:
     ) -> bytes:
         try:
             return self._do_request(url, timeout_s, max_bytes, headers)
+        except TransportError:
+            raise
+        except (OSError, ssl.SSLError) as exc:
+            raise TransportError(f"cdn-ws error: {exc}", reason="http_error") from exc
+
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        try:
+            return self._do_request(
+                url, timeout_s, max_bytes, headers, method="POST", body=body
+            )
         except TransportError:
             raise
         except (OSError, ssl.SSLError) as exc:

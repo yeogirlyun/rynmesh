@@ -162,6 +162,7 @@ function PrivacySection({
           { label: "Assistant audit", value: `${status.audit_events} events` },
           { label: "Assistant workspace", value: `${status.assistant_run_records} runs · ${status.assistant_context_records} contexts` },
           { label: "My Content", value: `${status.library_import_records} managed files · ${status.library_metadata_records} metadata records` },
+          { label: "Friends", value: `${status.friend_relationships ?? 0} relationships` },
           { label: "Cloud AI", value: status.cloud_ai_enabled ? "enabled" : "disabled" },
         ]} />
       ) : <p className="muted">Inspecting local data…</p>}
@@ -186,6 +187,9 @@ function PrivacySection({
         </Button>
         <Button icon={Trash2} variant="danger" onClick={() => erase(["library_imports", "library_metadata", "library_index"], "Clear My Content data?", "This deletes Ryn-managed file copies, Library tags/archive metadata, and the rebuildable local index. Your original files are never deleted.")}>
           Clear My Content
+        </Button>
+        <Button icon={Trash2} variant="danger" onClick={() => erase(["friends"], "Clear friends and messages?", "This locally revokes every active friendship, then permanently removes friend records, messages, and attachments from this node. Offline friends may retain their own history.")}>
+          Clear friends
         </Button>
       </div>
       <div className="privacy-audit">

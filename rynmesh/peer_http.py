@@ -24,7 +24,7 @@ from urllib.parse import quote, urlencode, urlparse
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
 from .credits import CreditEvent, CreditLedgerError
-from .crypto import SignedPayload
+from .crypto import SignedPayload, canonical_json
 from .recommendation_profile import RecommendationProfileStore, starter_items
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
@@ -239,6 +239,31 @@ class HttpPeerClient:
 
     def download_content(self, content_id: str, destination: str | Path) -> Path:
         return self._download(_content_path(content_id, "bytes"), destination)
+
+    def post_json(
+        self, path: str, payload: dict[str, Any], *, headers: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        if not path.startswith("/"):
+            raise PeerTransportError("peer_path_invalid")
+        sender = getattr(self.transport, "post_bytes", None)
+        if not callable(sender):
+            raise PeerTransportError("transport_post_unsupported")
+        try:
+            raw = sender(
+                self.endpoint + path,
+                canonical_json(payload),
+                timeout_s=self.timeout_s,
+                max_bytes=MAX_JSON_BYTES,
+                headers={"Content-Type": "application/json", **(headers or {})},
+            )
+            value = json.loads(raw.decode("utf-8") or "{}")
+        except TransportError as exc:
+            raise PeerTransportError(f"peer_http_error: {exc}") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PeerTransportError("peer_invalid_json") from exc
+        if not isinstance(value, dict):
+            raise PeerTransportError("peer_response_not_object")
+        return value
 
     def _download(self, path: str, destination: str | Path) -> Path:
         url = self.endpoint + path
@@ -2589,6 +2614,7 @@ def create_app(store: RynmeshStore | None = None):
             ),
             "library_import_records": len(app.state.library_imports.list()),
             "library_metadata_records": len(app.state.library_metadata.all()),
+            "friend_relationships": len(_friends.list_friends()),
             "cloud_ai_enabled": bool(_settings.get().get("cloud_access", False)),
         }
 
@@ -2615,6 +2641,11 @@ def create_app(store: RynmeshStore | None = None):
                 "imports": app.state.library_imports.list(),
                 "note": "Managed file bytes and extracted text are excluded from the default export.",
             },
+            "friends": {
+                "relationships": _friends.list_friends(),
+                "content_cards": _friends.content_cards(),
+                "note": "Relationship secrets, invitations, message bodies, and attachments are excluded.",
+            },
             "first_success": app.state.first_success_store.get(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
@@ -2632,7 +2663,7 @@ def create_app(store: RynmeshStore | None = None):
         scopes = {str(scope) for scope in requested if str(scope)}
         allowed = {
             "history", "profile", "cache", "audit", "onboarding", "assistant",
-            "library_metadata", "library_imports", "library_index",
+            "library_metadata", "library_imports", "library_index", "friends",
         }
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
@@ -2666,6 +2697,18 @@ def create_app(store: RynmeshStore | None = None):
             index_path = active_store.home / "library" / "index.sqlite3"
             if index_path.resolve().parent == (active_store.home / "library").resolve():
                 index_path.unlink(missing_ok=True)
+        if "friends" in scopes:
+            import shutil as _friend_shutil
+
+            for relationship in _friends.list_friends():
+                if relationship.get("status") == "active":
+                    _friends.revoke(str(relationship["relationship_id"]), notify=False)
+            for directory in (active_store.home / "friends", active_store.home / "messages"):
+                resolved = directory.resolve()
+                if resolved.parent != active_store.home.resolve():
+                    raise HTTPException(status_code=409, detail="friend_storage_root_invalid")
+                if resolved.exists():
+                    _friend_shutil.rmtree(resolved)
         if "audit" not in scopes:
             _audit().append(
                 "verify",
@@ -2778,6 +2821,33 @@ def create_app(store: RynmeshStore | None = None):
     _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
     _msg_subscribers: list = []  # asyncio.Queue per SSE client
 
+    from .friends import FriendError as _FriendError
+    from .friends import FriendService as _FriendService
+
+    def _friend_post(
+        endpoint: str, path: str, payload: dict[str, Any], headers: dict[str, str] | None
+    ) -> dict[str, Any]:
+        return HttpPeerClient(endpoint, timeout_s=15).post_json(path, payload, headers=headers)
+
+    _friend_endpoint = (
+        os.environ.get("RYNMESH_PEER_ENDPOINT", "").strip()
+        or str(active_store.node_info().get("peer_endpoint", ""))
+    )
+    _friends = _FriendService(
+        home=active_store.home,
+        peer_id=active_store.peer_id,
+        node_name=active_store.node_name,
+        endpoint=_friend_endpoint,
+        identity_private=active_store.private_key_bytes,
+        messaging_private=_msg_priv,
+        post_json=_friend_post,
+        allow_loopback=os.environ.get("RYNMESH_FRIEND_ALLOW_LOOPBACK", "").lower()
+        in {"1", "true", "yes"},
+    )
+    app.state.friend_service = _friends
+    _friend_accept_enabled = os.environ.get("RYNMESH_FRIEND_PAIRING_V1", "1") != "0"
+    _invite_attempts: dict[str, list[float]] = {}
+
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
             active_store.discover_peers(network_id=control_network_id(), include_self=False) or {}
@@ -2836,6 +2906,194 @@ def create_app(store: RynmeshStore | None = None):
                 q.put_nowait(record)
             except Exception:
                 pass
+
+    def _friend_not_found() -> HTTPException:
+        return HTTPException(status_code=404, detail="Not Found")
+
+    async def _friend_wire(request: FastAPIRequest, path: str) -> dict[str, Any]:
+        try:
+            length = int(request.headers.get("content-length", "0") or 0)
+            if length > 8 * 1024 * 1024:
+                raise ValueError("large")
+            raw = await request.body()
+            if len(raw) > 8 * 1024 * 1024:
+                raise ValueError("large")
+            _friends.verify_request(path=path, body=raw, headers=request.headers)
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("body")
+            return value
+        except Exception as exc:
+            raise _friend_not_found() from exc
+
+    @app.post("/api/peer/friends/accept")
+    async def peer_friend_accept(request: FastAPIRequest) -> dict[str, Any]:
+        if not _friend_accept_enabled:
+            raise _friend_not_found()
+        client_host = (request.client.host if request.client else "") or "unknown"
+        now = time.monotonic()
+        recent = [stamp for stamp in _invite_attempts.get(client_host, []) if now - stamp < 60]
+        if len(recent) >= 20:
+            raise _friend_not_found()
+        recent.append(now)
+        _invite_attempts[client_host] = recent
+        try:
+            raw = await request.body()
+            if len(raw) > 128 * 1024:
+                raise ValueError("large")
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError("body")
+            return _friends.accept(body)
+        except Exception as exc:
+            raise _friend_not_found() from exc
+
+    @app.post("/api/peer/friends/message")
+    async def peer_friend_message(request: FastAPIRequest) -> dict[str, Any]:
+        body = await _friend_wire(request, "/api/peer/friends/message")
+        try:
+            record = _friends.receive_message(body)
+            _publish(record)
+            return {"ok": True, "msg_id": record["msg_id"]}
+        except Exception as exc:
+            raise _friend_not_found() from exc
+
+    @app.post("/api/peer/friends/content-card")
+    async def peer_friend_content_card(request: FastAPIRequest) -> dict[str, Any]:
+        body = await _friend_wire(request, "/api/peer/friends/content-card")
+        try:
+            _friends.receive_content_card(body)
+            return {"ok": True, "card_id": body.get("card_id")}
+        except Exception as exc:
+            raise _friend_not_found() from exc
+
+    @app.post("/api/peer/friends/revoke")
+    async def peer_friend_revoke(request: FastAPIRequest) -> dict[str, Any]:
+        body = await _friend_wire(request, "/api/peer/friends/revoke")
+        _friends.receive_revoke(body)
+        return {"ok": True}
+
+    @app.post("/api/local/friends/invites")
+    async def local_friend_invite(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        if not _friend_accept_enabled:
+            raise HTTPException(status_code=503, detail="friend_pairing_disabled")
+        body = await request.json()
+        try:
+            return _friends.create_invite(ttl_minutes=int(body.get("ttl_minutes", 15)))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/local/friends/invites/inspect")
+    async def local_friend_inspect(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        try:
+            return _friends.inspect_invite(str((await request.json()).get("invite_uri", "")))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/local/friends/invites")
+    def local_friend_invites(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        return {"invites": _friends.list_invites()}
+
+    @app.delete("/api/local/friends/invites/{invite_id}")
+    def local_friend_cancel_invite(request: FastAPIRequest, invite_id: str) -> dict[str, Any]:
+        local_control(request)
+        try:
+            return _friends.cancel_invite(invite_id)
+        except _FriendError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/local/friends/join")
+    async def local_friend_join(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        if not _friend_accept_enabled:
+            raise HTTPException(status_code=503, detail="friend_pairing_disabled")
+        try:
+            uri = str((await request.json()).get("invite_uri", ""))
+            return await _asyncio.to_thread(_friends.join, uri)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/local/friends")
+    def local_friends(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        return {"friends": _friends.list_friends()}
+
+    @app.delete("/api/local/friends/{relationship_id}")
+    async def local_friend_revoke(request: FastAPIRequest, relationship_id: str) -> dict[str, Any]:
+        local_control(request)
+        try:
+            return await _asyncio.to_thread(_friends.revoke, relationship_id)
+        except _FriendError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/local/friends/{relationship_id}/retry")
+    async def local_friend_retry_revocation(
+        request: FastAPIRequest, relationship_id: str
+    ) -> dict[str, Any]:
+        local_control(request)
+        try:
+            return await _asyncio.to_thread(_friends.retry_revocation, relationship_id)
+        except _FriendError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/local/friends/messages/send")
+    async def local_friend_send(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        body = await request.json()
+        attachment = body.get("attachment")
+        if attachment and attachment.get("bytes_b64"):
+            import base64 as _friend_b64
+
+            try:
+                attachment = {
+                    "filename": attachment.get("filename", "file"),
+                    "mime": attachment.get("mime", "application/octet-stream"),
+                    "bytes": _friend_b64.b64decode(attachment["bytes_b64"], validate=True),
+                }
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="attachment_invalid") from exc
+        else:
+            attachment = None
+        try:
+            return await _asyncio.to_thread(
+                _friends.send_message,
+                str(body.get("peer_id", "")),
+                text=str(body.get("text", ""))[:20000],
+                attachment=attachment,
+            )
+        except _FriendError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/local/friends/messages")
+    def local_friend_history(request: FastAPIRequest, peer_id: str) -> list[dict[str, Any]]:
+        local_control(request)
+        if not _friends.store.relationship_for_peer(peer_id):
+            raise HTTPException(status_code=404, detail="active_friend_required")
+        return _friends.history(peer_id)
+
+    @app.post("/api/local/friends/messages/retry")
+    async def local_friend_retry(request: FastAPIRequest) -> dict[str, int]:
+        local_control(request)
+        peer_id = str((await request.json()).get("peer_id", ""))
+        return await _asyncio.to_thread(_friends.retry, peer_id)
+
+    @app.post("/api/local/friends/content-cards")
+    async def local_friend_send_card(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        body = await request.json()
+        return await _asyncio.to_thread(
+            _friends.send_content_card,
+            str(body.get("peer_id", "")),
+            dict(body.get("card") or {}),
+        )
+
+    @app.get("/api/local/friends/content-cards")
+    def local_friend_cards(request: FastAPIRequest) -> dict[str, Any]:
+        local_control(request)
+        return {"cards": _friends.content_cards()}
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:

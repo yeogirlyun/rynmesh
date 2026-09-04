@@ -214,10 +214,11 @@ export interface PrivacyStatus {
   assistant_context_records: number;
   library_import_records: number;
   library_metadata_records: number;
+  friend_relationships: number;
   cloud_ai_enabled: boolean;
 }
 
-export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding" | "assistant" | "library_metadata" | "library_imports" | "library_index";
+export type PrivacyEraseScope = "history" | "profile" | "cache" | "audit" | "onboarding" | "assistant" | "library_metadata" | "library_imports" | "library_index" | "friends";
 export type PersonalDataExport = Record<string, unknown> & {
   version: number;
   exported_at: string;

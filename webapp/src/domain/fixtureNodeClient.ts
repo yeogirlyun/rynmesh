@@ -970,6 +970,20 @@ export function makeFixtureNodeClient(): NodeClient {
     connectedAt: null, uptimeSeconds: null,
   };
   let _autoUpdate = true;
+  let fixtureFriends: import("./friendTypes").FriendRecord[] = [
+    {
+      relationship_id: "friend_fixture_aether",
+      peer_id: "peer-aether",
+      node_name: "Maya's Ryn",
+      endpoint: "http://192.168.1.42:8791",
+      permissions: ["friend.message", "friend.attachment.small", "friend.content-card"],
+      status: "active",
+      created_at: new Date(Date.now() - 86_400_000).toISOString(),
+    },
+  ];
+  const fixtureFriendMessages: import("./friendTypes").FriendMessage[] = [
+    { msg_id: "fixture_friend_1", dir: "in", from: "peer-aether", to: "self", text: "I sent you the reading list.", kind: "text", ts: new Date(Date.now() - 300_000).toISOString(), delivered: true, delivery_state: "delivered" },
+  ];
   let firstSuccess: FirstSuccessStatus = {
     version: "ryn.first-success.v1",
     phase: "ready",
@@ -1683,6 +1697,7 @@ export function makeFixtureNodeClient(): NodeClient {
         assistant_context_records: 1,
         library_import_records: libraryItems.filter((item) => item.import_id).length,
         library_metadata_records: libraryItems.filter((item) => item.tags.length || item.state.archived).length,
+        friend_relationships: fixtureFriends.length,
         cloud_ai_enabled: settings.cloud_access,
       };
     },
@@ -1766,6 +1781,83 @@ export function makeFixtureNodeClient(): NodeClient {
     },
     messagesStreamUrl() {
       return "/api/local/messages/stream";
+    },
+    async listFriends() {
+      await delay();
+      return [...fixtureFriends];
+    },
+    async createFriendInvite() {
+      await delay();
+      return {
+        invite_uri: "rynmesh://join/fixture-local-signed-invite",
+        invite: {
+          invite_id: "invite_fixture",
+          peer_id: "self",
+          node_name: "My Ryn Node",
+          endpoint: "http://192.168.1.10:8791",
+          permissions: ["friend.message", "friend.attachment.small", "friend.content-card"],
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+        },
+      };
+    },
+    async cancelFriendInvite() {
+      return { status: "cancelled" };
+    },
+    async inspectFriendInvite() {
+      await delay();
+      return {
+        invite_id: "invite_review",
+        peer_id: "peer-new",
+        node_name: "Alex's MacBook",
+        endpoint: "http://192.168.1.77:8791",
+        permissions: ["friend.message", "friend.attachment.small", "friend.content-card"],
+        network_id: "rynmesh-main",
+        address_category: "LAN private",
+        fingerprint: "peer-new…verified",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 720_000).toISOString(),
+      };
+    },
+    async joinFriend() {
+      await delay();
+      const row: import("./friendTypes").FriendRecord = {
+        relationship_id: "friend_fixture_new",
+        peer_id: "peer-new",
+        node_name: "Alex's MacBook",
+        endpoint: "http://192.168.1.77:8791",
+        permissions: ["friend.message", "friend.attachment.small", "friend.content-card"],
+        status: "active",
+        created_at: new Date().toISOString(),
+      };
+      fixtureFriends = [...fixtureFriends.filter((item) => item.peer_id !== row.peer_id), row];
+      return row;
+    },
+    async revokeFriend(relationshipId) {
+      const current = fixtureFriends.find((item) => item.relationship_id === relationshipId)!;
+      const revoked = { ...current, status: "revoked" as const, revoked_at: new Date().toISOString(), revocation_delivery: "delivered" as const };
+      fixtureFriends = fixtureFriends.map((item) => item.relationship_id === relationshipId ? revoked : item);
+      return revoked;
+    },
+    async retryFriendRevocation() {
+      return { delivered: true };
+    },
+    async listFriendMessages() {
+      return [...fixtureFriendMessages];
+    },
+    async sendFriendMessage(req) {
+      const row: import("./friendTypes").FriendMessage = { msg_id: `friend_${Date.now()}`, dir: "out", from: "self", to: req.peer_id, text: req.text, kind: req.attachment ? "file" : "text", ts: new Date().toISOString(), delivered: true, delivery_state: "delivered" };
+      fixtureFriendMessages.push(row);
+      return row;
+    },
+    async retryFriendMessages() {
+      return { attempted: 0, delivered: 0 };
+    },
+    async listFriendContentCards() {
+      return [{ card_id: "card_fixture", from: "peer-aether", created_at: new Date().toISOString(), card: { library_id: "import:reading", title: "Practical Local AI", summary: "A private reading note shared as metadata only.", kind: "document", source: "Maya's Library" } }];
+    },
+    async sendFriendContentCard() {
+      return { delivered: true };
     },
   };
 }

@@ -231,5 +231,17 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     sendMessage: (req) =>
       requestJson(`${baseUrl}/messages/send`, { method: "POST", body: JSON.stringify(req) }),
     messagesStreamUrl: () => `${baseUrl}/messages/stream`,
+    listFriends: async () => (await requestJson<{ friends: import("./friendTypes").FriendRecord[] }>(`${baseUrl}/friends`)).friends,
+    createFriendInvite: (ttlMinutes = 15) => requestJson(`${baseUrl}/friends/invites`, { method: "POST", body: JSON.stringify({ ttl_minutes: ttlMinutes }) }),
+    cancelFriendInvite: (inviteId) => requestJson(`${baseUrl}/friends/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }),
+    inspectFriendInvite: (inviteUri) => requestJson(`${baseUrl}/friends/invites/inspect`, { method: "POST", body: JSON.stringify({ invite_uri: inviteUri }) }),
+    joinFriend: (inviteUri) => requestJson(`${baseUrl}/friends/join`, { method: "POST", body: JSON.stringify({ invite_uri: inviteUri }) }),
+    revokeFriend: (relationshipId) => requestJson(`${baseUrl}/friends/${encodeURIComponent(relationshipId)}`, { method: "DELETE" }),
+    retryFriendRevocation: (relationshipId) => requestJson(`${baseUrl}/friends/${encodeURIComponent(relationshipId)}/retry`, { method: "POST" }),
+    listFriendMessages: (peerId) => requestJson(`${baseUrl}/friends/messages?peer_id=${encodeURIComponent(peerId)}`),
+    sendFriendMessage: (req) => requestJson(`${baseUrl}/friends/messages/send`, { method: "POST", body: JSON.stringify(req) }),
+    retryFriendMessages: (peerId) => requestJson(`${baseUrl}/friends/messages/retry`, { method: "POST", body: JSON.stringify({ peer_id: peerId }) }),
+    listFriendContentCards: async () => (await requestJson<{ cards: import("./friendTypes").FriendContentCard[] }>(`${baseUrl}/friends/content-cards`)).cards,
+    sendFriendContentCard: (req) => requestJson(`${baseUrl}/friends/content-cards`, { method: "POST", body: JSON.stringify(req) }),
   };
 }

@@ -305,6 +305,18 @@ export interface NodeClient {
   listMessages(peerId: string): Promise<any[]>;
   sendMessage(req: { peer_id: string; text?: string; attachment?: { filename: string; mime: string; bytes_b64: string } }): Promise<any>;
   messagesStreamUrl(): string;
+  listFriends(): Promise<import("./friendTypes").FriendRecord[]>;
+  createFriendInvite(ttlMinutes?: number): Promise<import("./friendTypes").FriendInviteResult>;
+  cancelFriendInvite(inviteId: string): Promise<{ status: string }>;
+  inspectFriendInvite(inviteUri: string): Promise<import("./friendTypes").FriendInvitePreview>;
+  joinFriend(inviteUri: string): Promise<import("./friendTypes").FriendRecord>;
+  revokeFriend(relationshipId: string): Promise<import("./friendTypes").FriendRecord>;
+  retryFriendRevocation(relationshipId: string): Promise<{ delivered: boolean }>;
+  listFriendMessages(peerId: string): Promise<import("./friendTypes").FriendMessage[]>;
+  sendFriendMessage(req: { peer_id: string; text?: string; attachment?: { filename: string; mime: string; bytes_b64: string } }): Promise<import("./friendTypes").FriendMessage>;
+  retryFriendMessages(peerId: string): Promise<{ attempted: number; delivered: number }>;
+  listFriendContentCards(): Promise<import("./friendTypes").FriendContentCard[]>;
+  sendFriendContentCard(req: { peer_id: string; card: Record<string, string> }): Promise<{ delivered: boolean }>;
 }
 
 export class NodeClientError extends Error {

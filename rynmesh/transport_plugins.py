@@ -139,6 +139,24 @@ class RealityTransport:
             raise TransportError("response too large", reason="too_large")
         return data
 
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        session, connect_host, sni = self._session()
+        rewritten, extra = self._resolve_url(url, connect_host, sni)
+        if headers:
+            extra.update(headers)
+        try:
+            resp = session.post(rewritten, data=body, headers=extra, timeout=timeout_s)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise TransportError(f"reality: {exc}", reason="http_error") from exc
+        data = resp.content
+        if len(data) > max_bytes:
+            raise TransportError("response too large", reason="too_large")
+        return data
+
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
@@ -262,6 +280,22 @@ class MeekTransport:
             raise TransportError("meek response too large", reason="too_large")
         return response
 
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        import base64
+        import json
+
+        envelope = json.dumps({
+            "method": "POST", "url": url, "headers": headers or {},
+            "body_b64": base64.b64encode(body).decode("ascii"),
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        response = self._post_to_bridge(envelope, timeout_s)
+        if len(response) > max_bytes:
+            raise TransportError("meek response too large", reason="too_large")
+        return response
+
     def download(
         self, url: str, dest: Path, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
@@ -373,9 +407,31 @@ class EchTransport:
             url, dest, timeout_s=timeout_s, max_bytes=max_bytes, headers=headers
         )
 
+    def post_bytes(
+        self, url: str, body: bytes, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
+        if not self._ech_active:
+            return self._delegate.post_bytes(
+                url, body, timeout_s=timeout_s, max_bytes=max_bytes, headers=headers
+            )
+        return self._ech_request(
+            url, timeout_s=timeout_s, max_bytes=max_bytes, headers=headers,
+            method="POST", body=body,
+        )
+
     def _ech_get(
         self, url: str, *, timeout_s: float, max_bytes: int,
         headers: dict[str, str] | None = None,
+    ) -> bytes:
+        return self._ech_request(
+            url, timeout_s=timeout_s, max_bytes=max_bytes, headers=headers
+        )
+
+    def _ech_request(
+        self, url: str, *, timeout_s: float, max_bytes: int,
+        headers: dict[str, str] | None = None, method: str = "GET",
+        body: bytes | None = None,
     ) -> bytes:
         """Make a request using the ECH-enabled SSL context."""
         import http.client
@@ -396,7 +452,7 @@ class EchTransport:
             if headers:
                 merged.update(headers)
             merged["Host"] = host if port in (80, 443) else f"{host}:{port}"
-            conn.request("GET", path, headers=merged)
+            conn.request(method, path, body=body, headers=merged)
             resp = conn.getresponse()
             data = resp.read(max_bytes + 1)
         except (OSError, ssl.SSLError) as exc:

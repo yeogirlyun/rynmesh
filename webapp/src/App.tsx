@@ -39,6 +39,7 @@ import LocalAISetup from "./screens/LocalAISetup";
 import VideoRendering from "./screens/VideoRendering";
 import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
+import Friends from "./screens/Friends";
 import Settings from "./screens/Settings";
 import UnlockGate from "./screens/components/UnlockGate";
 
@@ -49,7 +50,7 @@ const navItems = [
   { path: "/ask", label: "Ask Ryn", icon: NavIcons.searchAsk },
   { path: "/library", label: "My Content", icon: NavIcons.library },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
-  { path: "/peers", label: "Peers", icon: NavIcons.peers },
+  { path: "/friends", label: "Friends", icon: NavIcons.peers },
   { path: "/services", label: "Services", icon: NavIcons.services },
   { path: "/chat", label: "Friend messages", icon: NavIcons.chat },
   { path: "/settings", label: "Settings", icon: NavIcons.settings },
@@ -413,6 +414,7 @@ export function AppRoutes() {
           <Route path="search-ask-legacy" element={<SearchAsk />} />
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />
+          <Route path="friends" element={<Friends />} />
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
           <Route path="services/private-ai/chat" element={<Navigate replace to="/ask" />} />

@@ -3107,3 +3107,13 @@ button.digest-title:hover {
   font-size: 12px;
   color: var(--muted, #97a3b6);
 }
+.friend-chat-avatar {
+  display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto;
+  border-radius: 50%; background: var(--accent); color: #06120d; font-weight: 800;
+}
+.chat-peer-item small { display: block; color: var(--text-muted); margin-top: 3px; }
+.chat-share-row { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.chat-share-row select { min-width: 0; flex: 1; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-elevated); color: var(--text); }
+.friend-content-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.friend-content-cards article { display: flex; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; }
+.friend-content-cards p { margin: 5px 0; color: var(--text-muted); }
