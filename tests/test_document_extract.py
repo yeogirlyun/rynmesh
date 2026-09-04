@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -321,3 +322,97 @@ def test_pdf_is_unsupported_when_the_parser_is_absent(tmp_path: Path, monkeypatc
     result = de.extract_document(path)
     assert result["status"] == "unsupported"
     assert result["kind"] == "pdf"
+
+
+def _pdf_with_extractable_text(paragraph_count: int = 200) -> bytes:
+    """A one-page PDF whose content stream actually draws text.
+
+    `_minimal_pdf` above builds a blank page, so its extracted text is always
+    empty and the truncation branch in `document_extract_child.main` is never
+    exercised. This builds a minimal content stream by hand — one `Tj` on a
+    standard Helvetica font, no embedding required — so pypdf's extractor
+    returns the literal string back out, long enough that a small
+    `max_output_chars` cap truncates it.
+    """
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    text = "Lorem ipsum dolor sit amet consectetur " * paragraph_count
+    content = f"BT /F1 12 Tf 10 750 Td ({text}) Tj ET".encode("latin-1")
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+
+    stream_obj = DecodedStreamObject()
+    stream_obj.set_data(content)
+    page[NameObject("/Contents")] = writer._add_object(stream_obj)
+
+    font = DictionaryObject()
+    font[NameObject("/Type")] = NameObject("/Font")
+    font[NameObject("/Subtype")] = NameObject("/Type1")
+    font[NameObject("/BaseFont")] = NameObject("/Helvetica")
+    font_dict = DictionaryObject()
+    font_dict[NameObject("/F1")] = writer._add_object(font)
+    resources = DictionaryObject()
+    resources[NameObject("/Font")] = font_dict
+    page[NameObject("/Resources")] = resources
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+@pdf_only
+def test_a_pdf_with_real_text_truncates_to_exactly_the_cap(tmp_path: Path) -> None:
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(_pdf_with_extractable_text())
+    result = de.extract_document(path, max_output_chars=500)
+    assert result["status"] == "truncated"
+    assert result["chars"] == 500
+    assert len(result["text"]) == 500
+
+
+def test_no_path_or_content_reaches_the_result_or_logs(tmp_path: Path, caplog) -> None:
+    """The one defect class that using the product cannot reveal."""
+    marker_path = "SECRET_PATH_MARKER"
+    marker_content = "SECRET_CONTENT_MARKER"
+    directory = tmp_path / marker_path
+    directory.mkdir()
+
+    cases = [
+        (directory / f"{marker_path}.zip", marker_content.encode("utf-8")),
+        (directory / f"{marker_path}.txt", b"\xff\xfe" + marker_content.encode("utf-8")),
+        (directory / f"{marker_path}.pdf", b"%PDF-1.7 " + marker_content.encode("utf-8")),
+        (directory / f"{marker_path}.absent.txt", None),
+    ]
+    with caplog.at_level(logging.DEBUG):
+        for path, data in cases:
+            if data is not None:
+                path.write_bytes(data)
+            result = de.extract_document(path)
+            blob = json.dumps(result)
+            assert marker_path not in blob
+            assert marker_content not in blob
+            assert str(path) not in blob
+            if result["status"] in de.FAILURE_CODES:
+                assert "/" not in result["status"] and "\\" not in result["status"]
+
+    logged = "\n".join(record.message for record in caplog.records)
+    assert marker_path not in logged
+    assert marker_content not in logged
+
+
+def test_oversized_result_never_exceeds_the_caller_s_cap(tmp_path: Path) -> None:
+    path = tmp_path / "big.txt"
+    path.write_text("b" * 20_000, encoding="utf-8")
+    result = de.extract_document(path, max_output_chars=500)
+    assert result["status"] == "truncated"
+    assert result["chars"] <= 500
+
+
+def test_works_on_a_cold_home_with_no_prior_state(tmp_path: Path, monkeypatch) -> None:
+    """No node home, no store, no config: the helper owns no state at all."""
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "empty-home"))
+    path = tmp_path / "first.md"
+    path.write_text("# cold\n", encoding="utf-8")
+    assert de.extract_document(path)["status"] == "parsed"
