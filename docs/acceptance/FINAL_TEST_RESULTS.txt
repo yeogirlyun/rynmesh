@@ -1,0 +1,53 @@
+Ryn five user requirements final regression
+Date: 2026-09-04 Asia/Hong_Kong
+Branch: codex/user-requirements-suite
+
+Backend lint
+  .\.venv\Scripts\python.exe -m ruff check rynmesh tests
+  PASS — All checks passed
+
+Backend full suite
+  .\.venv\Scripts\python.exe -m pytest -q
+  PASS — 639 passed, 1 skipped, 6 pre-existing deprecation warnings in 116.87s
+
+Webapp full suite
+  npm test
+  PASS — 15 files, 60 tests
+
+Webapp typecheck
+  npm run lint
+  PASS
+
+Webapp production build
+  npm run build
+  PASS — 1777 modules transformed
+
+Rust / Tauri
+  cargo fmt --check --manifest-path src-tauri/Cargo.toml
+  PASS
+  npm run tauri build -- --target x86_64-pc-windows-gnu --bundles nsis
+  PASS — Ryn_0.6.2_x64-setup.exe
+  NOTE — GNU linker emits a non-fatal duplicate resource manifest warning.
+
+Windows packaged desktop cold start
+  PASS — app.exe opened a Ryn window and started packaged rynmesh-peer.exe
+  PASS — /health status=ok, desktop_managed=true
+  PASS — clean-home first success reached ready
+  PASS — 30 items, 14 sources, 12 healthy, 2 failed, no cache required
+  PASS — explicit app/sidecar process tree stopped and port was released
+
+Final artifacts
+  app.exe
+    bytes: 23672274
+    sha256: bdf7b67e80da0d8c97780bb9f52688fc7b84bfcd42e3e5bc06b061114666a3c5
+  rynmesh-peer.exe
+    bytes: 33507143
+    sha256: b99dd37b5ae0cc15a2faf88f7df0f5e5f3d5a622611f9d4421a112dc0799b3cc
+  Ryn_0.6.2_x64-setup.exe
+    bytes: 37840517
+    sha256: 53b76f4c5989674e4dd2e904cd1d88e2bddfa1a52716de31db738b874db6b533
+
+Platform gap
+  NOT RUN — macOS physical cold start and file permission semantics.
+  NOT RUN — three consecutive full 12-step cross-requirement journeys on physical desktop environments.
+
