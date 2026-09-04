@@ -5,7 +5,7 @@
 ### 后端
 
 - `rynmesh/friends/crypto.py`：invite 编解码/验签、端点 fail-closed、HKDF domain separation、canonical request HMAC、±120 秒时钟窗。
-- `rynmesh/friends/store.py`：public state 与 secret 分文件，临时文件 + fsync + atomic replace，进程内锁，bounded nonce cache。
+- `rynmesh/friends/store.py`：public state 与 secret 分文件，临时文件 + fsync + atomic replace，线程/跨进程文件锁，bounded nonce cache。
 - `rynmesh/friends/service.py`：create/inspect/cancel/join、独立 relationship secret、固定 X25519 key、消息/附件/卡片、离线重试、本地优先撤销。
 - `rynmesh/peer_http.py`：local control API、通用 404 peer API、body/rate 限制、privacy status/export/erase。
 - `rynmesh/transport.py` / `transport_plugins.py`：Transport 增加 `post_bytes`，`HttpPeerClient.post_json` 是新好友 outbound 的唯一 HTTP seam。

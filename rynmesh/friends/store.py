@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[str, threading.RLock] = {}
 
 
 class FriendStore:
@@ -15,7 +19,42 @@ class FriendStore:
         self.root = Path(home) / "friends"
         self.state_path = self.root / "state.json"
         self.secrets_path = self.root / "secrets.json"
-        self._lock = threading.RLock()
+        key = str(self.root.resolve())
+        with _LOCKS_GUARD:
+            self._lock = _PROCESS_LOCKS.setdefault(key, threading.RLock())
+
+    @contextmanager
+    def _guard(self):
+        """Serialize atomic read-modify-write across threads and processes."""
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            lock_path = self.root / ".store.lock"
+            with lock_path.open("a+b") as handle:
+                handle.seek(0, os.SEEK_END)
+                if handle.tell() == 0:
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _empty() -> dict[str, Any]:
@@ -42,15 +81,15 @@ class FriendStore:
         os.replace(tmp, path)
 
     def state(self) -> dict[str, Any]:
-        with self._lock:
+        with self._guard():
             return self._read(self.state_path, self._empty())
 
     def secrets(self) -> dict[str, str]:
-        with self._lock:
+        with self._guard():
             return self._read(self.secrets_path, {})
 
     def put_invite(self, invite_id: str, record: dict[str, Any]) -> None:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             state["invites"][invite_id] = deepcopy(record)
             self._write(self.state_path, state)
@@ -59,7 +98,7 @@ class FriendStore:
         return [deepcopy(row) for row in self.state()["invites"].values() if isinstance(row, dict)]
 
     def cancel_invite(self, invite_id: str, cancelled_at: str) -> dict[str, Any] | None:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             invite = state["invites"].get(invite_id)
             if not isinstance(invite, dict):
@@ -71,7 +110,7 @@ class FriendStore:
             return deepcopy(invite)
 
     def consume_invite(self, invite_id: str, secret_hash: str, now_iso: str) -> bool:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             invite = state["invites"].get(invite_id)
             if not invite or invite.get("status") != "active" or invite.get("secret_hash") != secret_hash:
@@ -89,7 +128,7 @@ class FriendStore:
         import base64
 
         rid = str(record["relationship_id"])
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             state["relationships"][rid] = deepcopy(record)
             secrets = self._read(self.secrets_path, {})
@@ -125,7 +164,7 @@ class FriendStore:
     def revoke(
         self, relationship_id: str, revoked_at: str, *, retain_secret: bool = False
     ) -> dict[str, Any] | None:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             record = state["relationships"].get(relationship_id)
             if not isinstance(record, dict):
@@ -152,7 +191,7 @@ class FriendStore:
     def set_revocation_delivery(
         self, relationship_id: str, *, state_value: str, wire: dict[str, Any] | None = None
     ) -> None:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             record = state["relationships"].get(relationship_id)
             if not isinstance(record, dict):
@@ -169,7 +208,7 @@ class FriendStore:
             self._write(self.state_path, state)
 
     def remember_nonce(self, relationship_id: str, nonce: str, *, limit: int = 512) -> bool:
-        with self._lock:
+        with self._guard():
             state = self._read(self.state_path, self._empty())
             seen = list(state["nonces"].get(relationship_id, []))
             if nonce in seen:

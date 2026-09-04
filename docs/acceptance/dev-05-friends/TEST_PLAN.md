@@ -4,7 +4,7 @@
 
 | 范围 | 覆盖 |
 |---|---|
-| Invite | sign/verify、tamper、expiry、cancel、one-time、并发 consume 单 winner |
+| Invite | sign/verify、tamper、expiry、cancel、one-time、两个 store 实例并发 consume 单 winner |
 | Relationship | invite/relationship secret 分离、restart、trusted roots 不变、revoked 不复活 |
 | MAC | HKDF、method/path/body/sender/receiver、wrong peer、replay、±120s、512 nonce bound |
 | Endpoint | scheme/userinfo、loopback、link-local、metadata、unspecified、hostname/DNS rebinding、redirect seam |

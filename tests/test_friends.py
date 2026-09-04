@@ -8,6 +8,7 @@ import pytest
 from rynmesh.crypto import canonical_json
 from rynmesh.friends.crypto import FriendCryptoError, auth_headers, parse_invite, validate_endpoint
 from rynmesh.friends.service import FriendError, FriendService
+from rynmesh.friends.store import FriendStore
 from rynmesh.services import peer_box
 from rynmesh.store import RynmeshStore
 
@@ -166,11 +167,13 @@ def test_invite_one_time_expiry_tamper_and_concurrent_winner(tmp_path) -> None:
     wins: list[bool] = []
     barrier = threading.Barrier(3)
 
-    def consume() -> None:
-        barrier.wait()
-        wins.append(alice.store.consume_invite(signed.payload["invite_id"], signed.payload["secret_hash"], datetime.now(UTC).isoformat()))
+    stores = [alice.store, FriendStore(alice.home)]
 
-    threads = [threading.Thread(target=consume) for _ in range(2)]
+    def consume(store: FriendStore) -> None:
+        barrier.wait()
+        wins.append(store.consume_invite(signed.payload["invite_id"], signed.payload["secret_hash"], datetime.now(UTC).isoformat()))
+
+    threads = [threading.Thread(target=consume, args=(store,)) for store in stores]
     for thread in threads:
         thread.start()
     barrier.wait()
