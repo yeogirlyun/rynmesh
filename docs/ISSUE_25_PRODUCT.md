@@ -1,6 +1,6 @@
 # Issue #25 product specification — Ask about this item
 
-Status: implemented and accepted on `codex/issue-25-ask-about-item`
+Status: implemented and accepted on `feature/issue-25-ask-about-item`
 
 Depends on: Issue #24 provider/model switching (`ef817bc`)
 
