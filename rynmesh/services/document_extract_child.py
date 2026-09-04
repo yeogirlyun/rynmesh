@@ -14,6 +14,7 @@ fragments of document content in their warnings.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -70,6 +71,40 @@ def _read_text(path: Path) -> tuple[str, str]:
         return "", FAILED_NOT_TEXT
 
 
+def pdf_available() -> bool:
+    """True when a PDF extractor is installed and not disabled."""
+
+    if os.environ.get("RYNMESH_DOC_EXTRACT_DISABLE_PDF") == "1":
+        return False
+    try:
+        import pypdf  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _read_pdf(path: Path, limit: int) -> tuple[str, str]:
+    """Bounded text from a PDF. Returns (text, failure_code)."""
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(str(path))
+    parts: list[str] = []
+    total = 0
+    for page in reader.pages:
+        # A page's own extractor is the untrusted part; a failure on one page
+        # must not discard the pages already read.
+        try:
+            piece = page.extract_text() or ""
+        except Exception:  # noqa: BLE001 - third-party detail must not leak
+            continue
+        parts.append(piece)
+        total += len(piece)
+        if total > limit:
+            break
+    return "\n".join(parts), ""
+
+
 def main() -> int:
     apply_limits()
     raw = sys.stdin.readline().strip()
@@ -95,8 +130,19 @@ def main() -> int:
         if failure:
             _emit(failure, kind)
             return 0
+    elif kind == "pdf" and pdf_available():
+        try:
+            text, failure = _read_pdf(path, MAX_OUTPUT_CHARS)
+        except OSError:
+            _emit(FAILED_UNREADABLE, kind)
+            return 0
+        except Exception:  # noqa: BLE001 - a malformed document is not a crash
+            _emit(FAILED_UNREADABLE, kind)
+            return 0
+        if failure:
+            _emit(failure, kind)
+            return 0
     else:
-        # PDF arrives in Task 4; every other kind has no extractor at all.
         _emit(STATUS_UNSUPPORTED, kind)
         return 0
 

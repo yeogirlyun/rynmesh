@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from rynmesh.services import document_extract as de
+from rynmesh.services import document_extract_child as child
 
 CHILD = [sys.executable, "-m", "rynmesh.services.document_extract_child"]
 
@@ -276,3 +278,46 @@ def test_a_memory_bomb_is_contained(tmp_path: Path) -> None:
 
     result = de.extract_document(path, timeout_s=30, spawn=_bomb)
     assert result["status"] in {de.FAILED_CRASHED, de.FAILED_MEMORY}
+
+
+pdf_only = pytest.mark.skipif(
+    not child.pdf_available(), reason="pypdf is not installed (the documents extra)"
+)
+
+
+def _minimal_pdf() -> bytes:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+@pdf_only
+def test_a_valid_pdf_parses(tmp_path: Path) -> None:
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(_minimal_pdf())
+    result = de.extract_document(path)
+    assert result["status"] in {"parsed", "truncated"}
+    assert result["kind"] == "pdf"
+
+
+def test_a_corrupt_pdf_fails_without_taking_the_node_down(tmp_path: Path) -> None:
+    path = tmp_path / "broken.pdf"
+    path.write_bytes(b"%PDF-1.7\nnot really a pdf at all\n%%EOF\n")
+    result = de.extract_document(path)
+    assert result["kind"] == "pdf"
+    assert result["status"] in {"unsupported", de.FAILED_UNREADABLE, de.FAILED_CRASHED}
+    # The node is still here to make the next call.
+    assert de.extract_document(path)["kind"] == "pdf"
+
+
+def test_pdf_is_unsupported_when_the_parser_is_absent(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(b"%PDF-1.7\n%%EOF\n")
+    monkeypatch.setenv("RYNMESH_DOC_EXTRACT_DISABLE_PDF", "1")
+    result = de.extract_document(path)
+    assert result["status"] == "unsupported"
+    assert result["kind"] == "pdf"

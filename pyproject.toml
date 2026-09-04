@@ -41,6 +41,11 @@ dependencies = [
 # PDF rendering for the daily recap email. Optional: without it the recap
 # still sends, just without the attachment.
 recap = ["reportlab>=4.0.0"]
+# Text extraction from user PDFs, used by the sandboxed document helper.
+# Optional: without it a PDF import reports `unsupported` rather than failing,
+# and plain text and Markdown are unaffected. pypdf is pure Python (BSD-3),
+# so it adds no build step to the desktop sidecar.
+documents = ["pypdf>=5.0.0"]
 dev = [
     "pytest>=7.0.0",
     # Bounded deliberately: an unpinned linter means CI enforces a different
