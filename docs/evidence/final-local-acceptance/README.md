@@ -2,7 +2,7 @@
 
 Generated: 2026-09-03
 
-Integration branch: `codex/integration-issues-20-23-24-25-30`
+Integration branch: `integration/issues-20-23-24-25-30`
 
 Evidence/documentation HEAD before these screenshots: `72e4be6b4238c684b0e1482c010f1341df880475`
 

@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Branch: `codex/integration-issues-20-23-24-25-30`
+Branch: `integration/issues-20-23-24-25-30`
 
 Validated implementation HEAD: `4bd2b8b56df6f69bd4aac2b995245b1205e98e0a`
 

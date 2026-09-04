@@ -4,9 +4,9 @@ Development decision: **ACCEPTED (LOCAL SOURCE BUILD)**
 
 Release decision: **NOT YET ACCEPTED**
 
-Core branch: `codex/issue-30-friend-mesh`
-Webapp slice branch: `codex/issue-30-friend-mesh-ui`
-Canonical audit branch: `codex/issue-30-friend-mesh-integration`
+Core branch: `feature/issue-30-friend-mesh-core`
+Webapp slice branch: `feature/issue-30-friend-mesh-ui`
+Canonical branch: `feature/issue-30-friend-mesh`
 
 Date: 2026-09-03
 
