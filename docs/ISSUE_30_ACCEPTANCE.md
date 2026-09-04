@@ -2,8 +2,8 @@
 
 Decision: **NOT YET ACCEPTED**
 
-Core branch: `codex/issue-30-friend-mesh`
-Webapp slice branch: `codex/issue-30-friend-mesh-ui`
+Core branch: `feature/issue-30-friend-mesh-core`
+Webapp slice branch: `feature/issue-30-friend-mesh-ui`
 
 Date: 2026-09-02
 
