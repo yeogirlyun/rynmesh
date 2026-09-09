@@ -10,6 +10,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -1267,6 +1268,160 @@ def test_public_nat_mode_refuses_to_fall_back_to_host_candidate(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_public_nat_mode_accepts_peer_reflexive_nominated_candidate(monkeypatch):
+    monkeypatch.setenv("RYNMESH_P2P_REQUIRE_PUBLIC", "1")
+    local = SimpleNamespace(type="srflx", transport="udp", host="117.50.189.73", port=3000)
+    remote = SimpleNamespace(type="prflx", transport="udp", host="14.154.222.55", port=52066)
+    pair = SimpleNamespace(local_candidate=local, remote_candidate=remote)
+    connection = SimpleNamespace(_nominated={1: pair})
+
+    evidence = selected_pair(connection)
+
+    assert evidence["transport"] == "ice_udp_direct"
+    assert evidence["relay_used"] is False
+    assert evidence["peer_public_mapping_nominated"] is True
+    assert evidence["path_kind"] == "peer_reflexive"
+
+
+def test_strict_p2p_connection_never_passes_turn_configuration(monkeypatch):
+    monkeypatch.delenv("RYNMESH_P2P_BIND_PORT", raising=False)
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "stun.example.test:3478")
+    monkeypatch.setenv("RYNMESH_P2P_TURN", "turn.example.test:3478")
+    monkeypatch.setenv("RYNMESH_P2P_TURN_USERNAME", "must-be-ignored")
+    monkeypatch.setenv("RYNMESH_P2P_TURN_PASSWORD", "must-be-ignored")
+    captured = {}
+    sentinel = object()
+
+    def fake_connection(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(llm_p2p.aioice, "Connection", fake_connection)
+
+    assert llm_p2p.new_connection(controlling=True) is sentinel
+    assert captured == {
+        "ice_controlling": True,
+        "components": 1,
+        "stun_server": ("stun.example.test", 3478),
+        "use_ipv4": True,
+        "use_ipv6": True,
+    }
+    assert all("turn" not in key.lower() for key in captured)
+
+
+def test_provider_can_bind_ice_to_one_firewall_port(monkeypatch):
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", "3000")
+    connection = new_connection(controlling=False)
+    assert connection._rynmesh_bind_port == 3000
+
+
+def test_invalid_fixed_ice_port_fails_closed(monkeypatch):
+    monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", "70000")
+    with pytest.raises(P2PError, match="between 1 and 65535"):
+        new_connection(controlling=False)
+
+
+def test_ice_signal_rejects_turn_relay_candidate_before_connecting():
+    with pytest.raises(P2PError, match="TURN/relay"):
+        IceSignal.from_dict({
+            "username": "remote",
+            "password": "remote-password",
+            "candidates": [
+                "relay 1 udp 1677734910 203.0.113.10 50000 typ relay "
+                "raddr 0.0.0.0 rport 0",
+            ],
+        })
+
+    with pytest.raises(P2PError, match="non-UDP"):
+        IceSignal.from_dict({
+            "username": "remote",
+            "password": "remote-password",
+            "candidates": [
+                "tcp 1 tcp 1518280447 192.0.2.1 9 typ host tcptype active",
+            ],
+        })
+
+    async def scenario():
+        connection = new_connection(controlling=True)
+        signal = IceSignal(
+            username="remote",
+            password="remote-password",
+            candidates=(
+                "relay 1 udp 1677734910 203.0.113.10 50000 typ relay "
+                "raddr 0.0.0.0 rport 0",
+            ),
+        )
+        try:
+            with pytest.raises(P2PError, match="TURN/relay"):
+                await apply_remote_signal(connection, signal)
+        finally:
+            await connection.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("candidate", "error"),
+    [
+        (
+            "host-name 1 udp 2130706431 example.invalid 50000 typ host",
+            "host must be an IP literal",
+        ),
+        (
+            "related-name 1 udp 1694498815 203.0.113.10 50000 typ srflx "
+            "raddr internal.invalid rport 50000",
+            "related host must be an IP literal",
+        ),
+        (
+            "component 2 udp 2130706431 192.0.2.10 50000 typ host",
+            "component must be 1",
+        ),
+        (
+            "zero-port 1 udp 2130706431 192.0.2.10 0 typ host",
+            "port is invalid",
+        ),
+        (
+            "unspecified 1 udp 2130706431 0.0.0.0 50000 typ host",
+            "not a usable unicast address",
+        ),
+        (
+            "multicast 1 udp 2130706431 239.1.2.3 50000 typ host",
+            "not a usable unicast address",
+        ),
+        (
+            "broadcast 1 udp 2130706431 255.255.255.255 50000 typ host",
+            "not a usable unicast address",
+        ),
+    ],
+)
+def test_ice_signal_rejects_non_literal_or_non_unicast_destination(candidate, error):
+    with pytest.raises(P2PError, match=error):
+        IceSignal.from_dict({
+            "username": "strict",
+            "password": "strict-password",
+            "candidates": [candidate],
+        })
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "ipv4 1 udp 2130706431 192.0.2.10 50000 typ host",
+        "ipv6 1 udp 2130706431 2001:db8::10 50000 typ host",
+        "srflx 1 udp 1694498815 203.0.113.10 50000 typ srflx "
+        "raddr 10.0.0.10 rport 50000",
+    ],
+)
+def test_ice_signal_accepts_bounded_ip_literal_candidates(candidate):
+    signal = IceSignal.from_dict({
+        "username": "strict",
+        "password": "strict-password",
+        "candidates": [candidate],
+    })
+    assert signal.candidates == (candidate,)
+
+
 def test_distinct_public_egress_acceptance_fails_fast_for_shared_mapping(monkeypatch):
     monkeypatch.setenv("RYNMESH_P2P_REQUIRE_DISTINCT_PUBLIC", "1")
     local = IceSignal(
@@ -1542,6 +1697,42 @@ def test_p2p_receiver_bounds_simultaneous_messages():
         asyncio.run(receive_json(_PacketConnection(packets), timeout_s=1))
 
 
+def test_reliable_p2p_send_bounds_each_udp_burst_to_its_window():
+    class Connection:
+        def __init__(self) -> None:
+            self.acks: list[bytes] = []
+            self.sent_since_recv = 0
+            self.peak_burst = 0
+
+        async def send(self, packet: bytes) -> None:
+            kind, message_id, sequence, total, digest, _body = llm_p2p._decode_header(
+                packet
+            )
+            assert kind == llm_p2p._DATA
+            self.sent_since_recv += 1
+            self.peak_burst = max(self.peak_burst, self.sent_since_recv)
+            self.acks.append(
+                llm_p2p._HEADER.pack(
+                    llm_p2p._MAGIC,
+                    llm_p2p._ACK,
+                    message_id,
+                    sequence,
+                    total,
+                    digest,
+                )
+            )
+
+        async def recv(self) -> bytes:
+            self.sent_since_recv = 0
+            return self.acks.pop(0)
+
+    connection = Connection()
+    payload = b"x" * (llm_p2p._CHUNK_BYTES * (llm_p2p._SEND_WINDOW + 2))
+    sent = asyncio.run(llm_p2p.send_bytes(connection, payload, timeout_s=2))
+    assert sent == len(payload)
+    assert connection.peak_burst == llm_p2p._SEND_WINDOW == 8
+
+
 def test_provider_concurrent_duplicate_executes_once(tmp_path):
     net = tmp_path / "net"
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
@@ -1689,3 +1880,62 @@ def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):
     assert service.cancel("cancel_me") is True
     assert orders.get("cancel_me")["state"] == "cancelled"
     assert adapter.cancelled == ["cancel_me"]
+
+
+def test_fixed_port_overlap_is_rejected_and_port_reusable_after_close(monkeypatch):
+    import socket
+
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", str(port))
+
+    async def scenario():
+        first = new_connection(controlling=False)
+        second = new_connection(controlling=False)
+        try:
+            assert len(await first.get_component_candidates(1, ["127.0.0.1"])) == 1
+            # Use another thread/event loop, as provider offer handlers do.
+            def overlap():
+                with pytest.raises(llm_p2p.P2PCapacityError) as caught:
+                    asyncio.run(second.get_component_candidates(1, ["127.0.0.1"]))
+                assert _delivery_error_code(caught.value, transport="p2p") == "p2p_capacity_exhausted"
+            await asyncio.to_thread(overlap)
+        finally:
+            await second.close()
+            await first.close()
+        third = new_connection(controlling=False)
+        try:
+            assert len(await third.get_component_candidates(1, ["127.0.0.1"])) == 1
+        finally:
+            await third.close()
+
+    asyncio.run(scenario())
+
+
+def test_fixed_port_failed_bind_releases_reservation(monkeypatch):
+    import socket
+
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        port = occupied.getsockname()[1]
+        monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", str(port))
+
+        async def fail():
+            connection = new_connection(controlling=False)
+            try:
+                with pytest.raises(P2PError, match="fixed_port_unavailable"):
+                    await connection.get_component_candidates(1, ["127.0.0.1"])
+            finally:
+                await connection.close()
+        asyncio.run(fail())
+
+    async def retry():
+        connection = new_connection(controlling=False)
+        try:
+            assert await connection.get_component_candidates(1, ["127.0.0.1"])
+        finally:
+            await connection.close()
+    asyncio.run(retry())

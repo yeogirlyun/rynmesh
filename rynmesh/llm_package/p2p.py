@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import math
 import os
+import socket
 import struct
+import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -23,6 +27,14 @@ import aioice
 
 class P2PError(RuntimeError):
     pass
+
+
+class P2PCapacityError(P2PError):
+    """The configured fixed UDP port already belongs to an active session."""
+
+
+_FIXED_PORTS: set[int] = set()
+_FIXED_PORTS_LOCK = threading.Lock()
 
 
 _MAGIC = b"RYNP2P1"
@@ -34,6 +46,54 @@ _MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 _MAX_CHUNKS = math.ceil(_MAX_MESSAGE_BYTES / _CHUNK_BYTES)
 _MAX_IN_FLIGHT_MESSAGES = 8
 _MAX_BUFFERED_BYTES = _MAX_MESSAGE_BYTES * 2
+_RECENT_MESSAGE_IDS = 128
+# Keep each connection's burst small enough that 20 concurrent two-hop streams
+# do not starve ICE consent/STUN traffic or overflow the UDP receive queue.
+_SEND_WINDOW = 8
+_ACK_WAIT_S = 0.25
+
+
+def _candidate_ip_literal(value: Any, *, label: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    host = str(value or "").strip().strip("[]")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise P2PError(f"ICE candidate {label} must be an IP literal") from exc
+    if address.is_unspecified or address.is_multicast:
+        raise P2PError(f"ICE candidate {label} is not a usable unicast address")
+    if isinstance(address, ipaddress.IPv4Address) and address == ipaddress.IPv4Address(
+        "255.255.255.255"
+    ):
+        raise P2PError(f"ICE candidate {label} is not a usable unicast address")
+    return address
+
+
+def _direct_candidate_from_sdp(value: str) -> aioice.Candidate:
+    try:
+        candidate = aioice.Candidate.from_sdp(value)
+    except (AttributeError, ValueError) as exc:
+        raise P2PError("invalid ICE candidate") from exc
+    candidate_type = str(getattr(candidate, "type", "")).lower()
+    transport = str(getattr(candidate, "transport", "")).lower()
+    if candidate_type == "relay":
+        raise P2PError("TURN/relay ICE candidate is forbidden in strict P2P mode")
+    if candidate_type not in {"host", "srflx", "prflx"}:
+        raise P2PError(f"non-direct ICE candidate is forbidden: {candidate_type}")
+    if transport != "udp":
+        raise P2PError(f"non-UDP ICE candidate is forbidden: {transport}")
+    if int(getattr(candidate, "component", 0)) != 1:
+        raise P2PError("ICE candidate component must be 1")
+    port = int(getattr(candidate, "port", 0))
+    if port < 1 or port > 65535:
+        raise P2PError("ICE candidate port is invalid")
+    _candidate_ip_literal(getattr(candidate, "host", ""), label="host")
+    related_address = getattr(candidate, "related_address", None)
+    if related_address:
+        _candidate_ip_literal(related_address, label="related host")
+        related_port = int(getattr(candidate, "related_port", 0) or 0)
+        if related_port < 1 or related_port > 65535:
+            raise P2PError("ICE candidate related port is invalid")
+    return candidate
 
 
 @dataclass(frozen=True)
@@ -58,6 +118,8 @@ class IceSignal:
             raise P2PError("incomplete ICE signal")
         if len(candidates) > 64 or any(len(item) > 1024 for item in candidates):
             raise P2PError("ICE candidate list exceeds safe limits")
+        for candidate in candidates:
+            _direct_candidate_from_sdp(candidate)
         return cls(username=username, password=password, candidates=candidates)
 
 
@@ -76,13 +138,121 @@ def stun_server_from_env() -> tuple[str, int] | None:
 
 def new_connection(*, controlling: bool) -> aioice.Connection:
     # No TURN server is accepted here: strict P2P must never nominate a relay.
-    return aioice.Connection(
+    bind_port = _bind_port_from_env()
+    connection_type = _FixedPortConnection if bind_port is not None else aioice.Connection
+    return connection_type(
         ice_controlling=controlling,
         components=1,
         stun_server=stun_server_from_env(),
         use_ipv4=True,
         use_ipv6=True,
+        **({"bind_port": bind_port} if bind_port is not None else {}),
     )
+
+
+def _bind_port_from_env() -> int | None:
+    value = os.environ.get("RYNMESH_P2P_BIND_PORT", "").strip()
+    if not value:
+        return None
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise P2PError("RYNMESH_P2P_BIND_PORT must be an integer") from exc
+    if port < 1 or port > 65535:
+        raise P2PError("RYNMESH_P2P_BIND_PORT must be between 1 and 65535")
+    return port
+
+
+class _FixedPortConnection(aioice.Connection):
+    """aioice connection whose host sockets use a firewall-friendly port.
+
+    aioice normally binds an ephemeral UDP port. Cloud security groups cannot
+    safely allow an unknown port, so Providers may opt into one UDP port while
+    Consumers keep the normal ephemeral behavior.
+    """
+
+    def __init__(self, *, bind_port: int, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._rynmesh_bind_port = bind_port
+        self._port_reserved = False
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            # Even a cancelled close must release every socket before another
+            # session is admitted. Reservations span event loops and threads.
+            for protocol in self._protocols:
+                protocol.transport.close()
+            with _FIXED_PORTS_LOCK:
+                if self._port_reserved:
+                    _FIXED_PORTS.discard(self._rynmesh_bind_port)
+                    self._port_reserved = False
+
+    async def get_component_candidates(
+        self, component: int, addresses: list[str], timeout: int = 5
+    ) -> list[aioice.Candidate]:
+        from aioice.ice import (
+            StunProtocol,
+            candidate_foundation,
+            candidate_priority,
+            server_reflexive_candidate,
+        )
+
+        with _FIXED_PORTS_LOCK:
+            if not self._port_reserved:
+                if self._rynmesh_bind_port in _FIXED_PORTS:
+                    raise P2PCapacityError("p2p_fixed_port_busy")
+                _FIXED_PORTS.add(self._rynmesh_bind_port)
+                self._port_reserved = True
+
+        candidates: list[aioice.Candidate] = []
+        host_protocols = []
+        loop = asyncio.get_event_loop()
+        port = self._rynmesh_bind_port + component - 1
+        for address in addresses:
+            try:
+                transport, protocol = await loop.create_datagram_endpoint(
+                    lambda: StunProtocol(self), local_addr=(address, port)
+                )
+            except OSError:
+                continue
+            self._protocols.append(protocol)
+            sock = transport.get_extra_info("socket")
+            if sock is not None:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+            host_protocols.append(protocol)
+            candidate_address = transport.get_extra_info("sockname")
+            protocol.local_candidate = aioice.Candidate(
+                foundation=candidate_foundation("host", "udp", candidate_address[0]),
+                component=component,
+                transport="udp",
+                priority=candidate_priority(component, "host"),
+                host=candidate_address[0],
+                port=candidate_address[1],
+                type="host",
+            )
+            candidates.append(protocol.local_candidate)
+        if not host_protocols:
+            raise P2PError("p2p_fixed_port_unavailable")
+        tasks = [
+            asyncio.create_task(server_reflexive_candidate(protocol, self.stun_server))
+            for protocol in host_protocols
+            if self.stun_server
+            and ipaddress.ip_address(protocol.local_candidate.host).version == 4
+        ]
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            for task in done:
+                if task.exception() is None:
+                    candidate, protocol = task.result()
+                    candidates.append(candidate)
+                    if protocol is not None:
+                        self._protocols.append(protocol)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        return candidates
 
 
 def public_nat_traversal_required() -> bool:
@@ -100,7 +270,7 @@ def distinct_public_egress_required() -> bool:
 def _public_mapping_hosts(signal: IceSignal) -> set[str]:
     hosts: set[str] = set()
     for value in signal.candidates:
-        candidate = aioice.Candidate.from_sdp(value)
+        candidate = _direct_candidate_from_sdp(value)
         if str(getattr(candidate, "type", "")) == "srflx":
             host = str(getattr(candidate, "host", "")).strip()
             if host:
@@ -150,7 +320,7 @@ async def apply_remote_signal(connection: aioice.Connection, signal: IceSignal) 
     connection.remote_username = signal.username
     connection.remote_password = signal.password
     for value in signal.candidates:
-        await connection.add_remote_candidate(aioice.Candidate.from_sdp(value))
+        await connection.add_remote_candidate(_direct_candidate_from_sdp(value))
     await connection.add_remote_candidate(None)
 
 
@@ -175,9 +345,9 @@ def selected_pair(connection: aioice.Connection) -> dict[str, Any]:
     remote = getattr(pair, "remote_candidate", None)
     if str(getattr(local, "type", "")) == "relay" or str(getattr(remote, "type", "")) == "relay":
         raise P2PError("TURN/relay candidate was nominated in strict P2P mode")
-    if public_nat_traversal_required() and str(getattr(remote, "type", "")) != "srflx":
-        raise P2PError("strict public NAT traversal did not nominate the peer's STUN mapping")
     remote_type = str(getattr(remote, "type", ""))
+    if public_nat_traversal_required() and remote_type not in {"srflx", "prflx"}:
+        raise P2PError("strict public NAT traversal did not nominate a public peer mapping")
     return {
         "transport": "ice_udp_direct",
         "relay_used": False,
@@ -333,6 +503,117 @@ async def receive_json(
             message_id_out.append(message_id)
         return value, len(payload)
     raise P2PError("timed out receiving P2P message")
+
+
+async def send_bytes(connection: aioice.Connection, payload: bytes, *, timeout_s: float) -> int:
+    """Reliably send one bounded opaque message over an ICE datagram pair.
+
+    This is intentionally payload-agnostic so the peer-transit layer can
+    forward end-to-end ciphertext without teaching the transit peer how to
+    parse it.  Reliability remains hop-by-hop and bounded by
+    ``_MAX_MESSAGE_BYTES``.
+    """
+
+    message_id, frames = _encode_frames(payload)
+    deadline = time.monotonic() + timeout_s
+    pending = set(range(len(frames)))
+    while pending and time.monotonic() < deadline:
+        window = sorted(pending)[:_SEND_WINDOW]
+        for sequence in window:
+            await connection.send(frames[sequence])
+        ack_deadline = min(deadline, time.monotonic() + _ACK_WAIT_S)
+        while pending.intersection(window) and time.monotonic() < ack_deadline:
+            try:
+                packet = await asyncio.wait_for(
+                    connection.recv(),
+                    timeout=max(0.01, ack_deadline - time.monotonic()),
+                )
+            except asyncio.TimeoutError:
+                break
+            try:
+                kind, received_id, sequence, total, _digest, _body = _decode_header(packet)
+            except P2PError:
+                continue
+            if (
+                kind == _ACK
+                and received_id == message_id
+                and total == len(frames)
+                and sequence in pending
+            ):
+                pending.remove(sequence)
+    if not pending:
+        return len(payload)
+    raise P2PError("timed out waiting for P2P message acknowledgement")
+
+
+async def receive_bytes(connection: aioice.Connection, *, timeout_s: float) -> tuple[bytes, int]:
+    """Receive and acknowledge one bounded opaque ICE message."""
+
+    deadline = time.monotonic() + timeout_s
+    messages: dict[bytes, dict[str, Any]] = {}
+    buffered_bytes = 0
+    recent = getattr(connection, "_rynmesh_recent_message_ids", None)
+    if recent is None:
+        recent = deque(maxlen=_RECENT_MESSAGE_IDS)
+        connection._rynmesh_recent_message_ids = recent
+    while time.monotonic() < deadline:
+        try:
+            packet = await asyncio.wait_for(
+                connection.recv(), timeout=max(0.05, deadline - time.monotonic())
+            )
+        except asyncio.TimeoutError as exc:
+            raise P2PError("timed out receiving P2P message") from exc
+        try:
+            kind, message_id, sequence, total, digest, body = _decode_header(packet)
+        except P2PError:
+            continue
+        if kind != _DATA or total < 1 or sequence >= total:
+            continue
+        if message_id in recent:
+            # A sender may retransmit just before our ACK arrives.  ACK the
+            # already delivered message again but never surface it to the next
+            # application receive call.
+            ack = _HEADER.pack(_MAGIC, _ACK, message_id, sequence, total, digest)
+            await _send_ack(connection, ack)
+            continue
+        if total > _MAX_CHUNKS or len(body) > _CHUNK_BYTES:
+            raise P2PError("P2P message declaration exceeds safe limits")
+        ack = _HEADER.pack(_MAGIC, _ACK, message_id, sequence, total, digest)
+        await _send_ack(connection, ack)
+        if message_id not in messages:
+            if len(messages) >= _MAX_IN_FLIGHT_MESSAGES:
+                raise P2PError("too many simultaneous P2P messages")
+            messages[message_id] = {"total": total, "digest": digest, "chunks": {}}
+        state = messages[message_id]
+        if state["total"] != total or state["digest"] != digest:
+            continue
+        if sequence not in state["chunks"]:
+            buffered_bytes += len(body)
+            if buffered_bytes > _MAX_BUFFERED_BYTES:
+                raise P2PError("P2P buffered data exceeds safe limits")
+        state["chunks"][sequence] = body
+        if len(state["chunks"]) != total:
+            continue
+        payload = b"".join(state["chunks"][index] for index in range(total))
+        if len(payload) > _MAX_MESSAGE_BYTES or hashlib.sha256(payload).digest() != digest:
+            raise P2PError("P2P message integrity check failed")
+        # Duplicate the final acknowledgement because the receiver will now
+        # return to its caller and may switch direction on the same ICE pair.
+        # If the first final ACK is lost, this avoids a needless whole-session
+        # timeout while keeping retransmission selective.
+        for _ in range(2):
+            await _send_ack(connection, ack)
+        recent.append(message_id)
+        return payload, len(payload)
+    raise P2PError("timed out receiving P2P message")
+
+
+async def _send_ack(connection: Any, ack: bytes) -> None:
+    """Send an ACK while preserving receive-only protocol-test doubles."""
+
+    sender = getattr(connection, "send", None)
+    if sender is not None:
+        await sender(ack)
 
 
 async def consumer_exchange(

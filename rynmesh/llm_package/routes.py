@@ -59,7 +59,7 @@ from .lifecycle import (
     update as update_runtime,
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
-from .p2p import IceSignal, P2PError, consumer_exchange, provider_exchange
+from .p2p import IceSignal, P2PCapacityError, P2PError, consumer_exchange, provider_exchange
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -82,6 +82,8 @@ def _positive_env(name: str, default: int) -> int:
 
 
 def _delivery_error_code(exc: Exception, *, transport: str) -> str:
+    if isinstance(exc, P2PCapacityError):
+        return "p2p_capacity_exhausted"
     message = str(exc).strip().lower()
     if transport == "p2p" or isinstance(exc, P2PError) or "p2p" in message:
         if "distinct public egress" in message:
@@ -1634,6 +1636,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             None,
                         )
                         if failed:
+                            if dict(failed.get("result_refs") or {}).get("error_code") == "p2p_capacity_exhausted":
+                                raise P2PCapacityError("provider fixed UDP port is busy; retry later")
                             raise TaskProtocolError("provider rejected strict P2P signaling")
                         accepted = next(
                             (item for item in results if item.get("status") == "accepted"),
