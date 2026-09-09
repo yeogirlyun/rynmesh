@@ -22,15 +22,17 @@ while retaining the contributor's open-order index and serialized media job I/O.
 ## Verification
 
 - Focused runtime/LLM tests passed before broad validation.
-- Full backend run: 964 passed; five route-generator checks were initially
-  blocked by a missing `ruff` executable in the isolated environment. The
-  environment was repaired and those checks are rerun before merge.
+- Full backend run: 970 passed after repairing a missing `ruff` executable in
+  the isolated environment. The same backend suite and lint also passed in PR CI.
 - Frontend: 53 tests across 10 files passed; TypeScript and production build passed.
 - Repository Python lint and whitespace checks passed.
 - Three-node acceptance: 8 MiB payload; three concurrent sessions completed;
   both the signed-evidence audit and complete-report audit passed. Coverage
   includes degraded UDP, direct-path failure fallback, recovery after disconnect,
   signaling blackout, and absence of plaintext in transit/control records.
+- The initial CI worker smoke completed its transfers but the audit rejected
+  missing stdout/stderr artifacts. CI now captures both real process streams
+  under the audited root, preserving the strict completeness check.
 - Docker is not running locally. Docker service E2E and packaged/desktop gates
   are delegated to the PR's configured CI. This is a one-time integration check.
 

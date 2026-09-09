@@ -89,10 +89,13 @@ jobs:
             "$RUNNER_TEMP/peer-transit-report.json"
       - name: Persistent worker soak smoke
         run: |
+          mkdir -p "$RUNNER_TEMP/peer-transit-soak"
           python scripts/run_peer_transit_soak.py \
             --duration-seconds 10 --interval-seconds 0.5 --payload-kib 4 \
             --work-root "$RUNNER_TEMP/peer-transit-soak" \
-            --progress "$RUNNER_TEMP/peer-transit-soak/progress.json"
+            --progress "$RUNNER_TEMP/peer-transit-soak/progress.json" \
+            > "$RUNNER_TEMP/peer-transit-soak/stdout.log" \
+            2> "$RUNNER_TEMP/peer-transit-soak/stderr.log"
           python scripts/audit_peer_transit.py --soak-report \
             --require-duration-seconds 10 --min-sessions 3 \
             "$RUNNER_TEMP/peer-transit-soak/progress.json"
