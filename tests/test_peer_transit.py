@@ -2075,3 +2075,42 @@ def test_target_final_paths_are_namespaced_by_authenticated_source(tmp_path) -> 
     assert [path.read_bytes() for path in paths] == [body for body, _receipt in stored]
     assert not list(inbox.rglob("*.part"))
     assert not list(inbox.rglob("*.resume.json"))
+
+
+def test_rejected_overlapping_resume_cannot_delete_active_partial_file(tmp_path):
+    body = b"active-transfer" * 1024
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    active = set()
+
+    def claim(key):
+        if key in active:
+            raise PeerTransitError("transit resume transfer is already active")
+        active.add(key)
+
+    def sink():
+        return peer_transit_service._TargetFileSink(
+            tmp_path / "inbox", session_id=new_session_id(), source_peer_id="same-source",
+            max_file_bytes=1024 * 1024, claim_transfer=claim, release_transfer=active.remove,
+        )
+
+    manifest = {
+        "kind": "file", "filename": "test.bin", "transfer_id": new_session_id(),
+        "size_bytes": len(body), "sha256": digest, "offset_bytes": 0,
+        "segment_size_bytes": len(body), "segment_sha256": digest,
+        "prefix_sha256": digest, "final": True,
+    }
+    first, second = sink(), sink()
+    try:
+        first.write(b"M" + json.dumps(manifest).encode())
+        first.write(b"D" + body)
+        first._handle.flush()
+        with pytest.raises(PeerTransitError, match="already active"):
+            second.write(b"M" + json.dumps(manifest).encode())
+        second.abort()
+        assert first._path.read_bytes() == body
+        receipt = first.finish()
+        first.acknowledge_receipt()
+        assert Path(receipt["stored_path"]).read_bytes() == body
+        assert active == set()
+    finally:
+        first.abort()

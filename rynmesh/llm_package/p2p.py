@@ -15,6 +15,7 @@ import math
 import os
 import socket
 import struct
+import threading
 import time
 import uuid
 from collections import deque
@@ -26,6 +27,14 @@ import aioice
 
 class P2PError(RuntimeError):
     pass
+
+
+class P2PCapacityError(P2PError):
+    """The configured fixed UDP port already belongs to an active session."""
+
+
+_FIXED_PORTS: set[int] = set()
+_FIXED_PORTS_LOCK = threading.Lock()
 
 
 _MAGIC = b"RYNP2P1"
@@ -165,6 +174,20 @@ class _FixedPortConnection(aioice.Connection):
     def __init__(self, *, bind_port: int, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._rynmesh_bind_port = bind_port
+        self._port_reserved = False
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            # Even a cancelled close must release every socket before another
+            # session is admitted. Reservations span event loops and threads.
+            for protocol in self._protocols:
+                protocol.transport.close()
+            with _FIXED_PORTS_LOCK:
+                if self._port_reserved:
+                    _FIXED_PORTS.discard(self._rynmesh_bind_port)
+                    self._port_reserved = False
 
     async def get_component_candidates(
         self, component: int, addresses: list[str], timeout: int = 5
@@ -175,6 +198,13 @@ class _FixedPortConnection(aioice.Connection):
             candidate_priority,
             server_reflexive_candidate,
         )
+
+        with _FIXED_PORTS_LOCK:
+            if not self._port_reserved:
+                if self._rynmesh_bind_port in _FIXED_PORTS:
+                    raise P2PCapacityError("p2p_fixed_port_busy")
+                _FIXED_PORTS.add(self._rynmesh_bind_port)
+                self._port_reserved = True
 
         candidates: list[aioice.Candidate] = []
         host_protocols = []
@@ -187,6 +217,7 @@ class _FixedPortConnection(aioice.Connection):
                 )
             except OSError:
                 continue
+            self._protocols.append(protocol)
             sock = transport.get_extra_info("socket")
             if sock is not None:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
@@ -202,7 +233,8 @@ class _FixedPortConnection(aioice.Connection):
                 type="host",
             )
             candidates.append(protocol.local_candidate)
-        self._protocols += host_protocols
+        if not host_protocols:
+            raise P2PError("p2p_fixed_port_unavailable")
         tasks = [
             asyncio.create_task(server_reflexive_candidate(protocol, self.stun_server))
             for protocol in host_protocols
@@ -219,6 +251,7 @@ class _FixedPortConnection(aioice.Connection):
                         self._protocols.append(protocol)
             for task in pending:
                 task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         return candidates
 
 

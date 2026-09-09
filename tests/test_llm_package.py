@@ -1880,3 +1880,62 @@ def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):
     assert service.cancel("cancel_me") is True
     assert orders.get("cancel_me")["state"] == "cancelled"
     assert adapter.cancelled == ["cancel_me"]
+
+
+def test_fixed_port_overlap_is_rejected_and_port_reusable_after_close(monkeypatch):
+    import socket
+
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", str(port))
+
+    async def scenario():
+        first = new_connection(controlling=False)
+        second = new_connection(controlling=False)
+        try:
+            assert len(await first.get_component_candidates(1, ["127.0.0.1"])) == 1
+            # Use another thread/event loop, as provider offer handlers do.
+            def overlap():
+                with pytest.raises(llm_p2p.P2PCapacityError) as caught:
+                    asyncio.run(second.get_component_candidates(1, ["127.0.0.1"]))
+                assert _delivery_error_code(caught.value, transport="p2p") == "p2p_capacity_exhausted"
+            await asyncio.to_thread(overlap)
+        finally:
+            await second.close()
+            await first.close()
+        third = new_connection(controlling=False)
+        try:
+            assert len(await third.get_component_candidates(1, ["127.0.0.1"])) == 1
+        finally:
+            await third.close()
+
+    asyncio.run(scenario())
+
+
+def test_fixed_port_failed_bind_releases_reservation(monkeypatch):
+    import socket
+
+    monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        port = occupied.getsockname()[1]
+        monkeypatch.setenv("RYNMESH_P2P_BIND_PORT", str(port))
+
+        async def fail():
+            connection = new_connection(controlling=False)
+            try:
+                with pytest.raises(P2PError, match="fixed_port_unavailable"):
+                    await connection.get_component_candidates(1, ["127.0.0.1"])
+            finally:
+                await connection.close()
+        asyncio.run(fail())
+
+    async def retry():
+        connection = new_connection(controlling=False)
+        try:
+            assert await connection.get_component_candidates(1, ["127.0.0.1"])
+        finally:
+            await connection.close()
+    asyncio.run(retry())
