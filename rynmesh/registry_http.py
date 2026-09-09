@@ -15,10 +15,22 @@ from typing import Any, Optional
 
 from .crypto import SignedPayload
 from .jobs import JobError
+from .mailbox import MailboxError
 from .registry import FilePeerRegistry, PeerRegistry, RegistryError
 from .relay import FileRelayStore, RelayError
 
 MAX_REGISTRY_REQUEST_BYTES = 1024 * 1024
+# No lifespan/background-task pattern exists in this app, so expired mail is
+# reaped opportunistically instead of on a timer. Deposits are the only event
+# that grows the spool, which makes them the right place to hang the sweep.
+MAILBOX_SWEEP_EVERY_DEPOSITS = 50
+_MAILBOX_STATUS = {
+    "duplicate": 409,
+    "replay": 409,
+    "recipient_full": 429,
+    "sender_quota": 429,
+    "rate_limited": 429,
+}
 
 
 def create_app(
@@ -185,6 +197,42 @@ def create_app(
         except (RegistryError, JobError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"network_id": network_id, "work_results": work_results}
+
+    _deposits = {"count": 0}
+
+    @app.post("/api/v1/mailbox/deposit")
+    async def deposit_mailbox(request: Request) -> dict[str, Any]:
+        signed = await _signed_request(request)
+        try:
+            result = active_registry.deposit_mailbox(signed)
+        except MailboxError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=_MAILBOX_STATUS.get(code, 400), detail=code) from exc
+        except (RegistryError, OSError, KeyError, TypeError, ValueError) as exc:
+            # Nothing but a short code goes back: registry-side detail could
+            # describe a stored envelope belonging to somebody else.
+            raise HTTPException(status_code=400, detail="mailbox_request_invalid") from exc
+        _deposits["count"] += 1
+        if _deposits["count"] % MAILBOX_SWEEP_EVERY_DEPOSITS == 0:
+            sweeper = getattr(active_registry, "sweep_mailbox", None)
+            if callable(sweeper):
+                try:
+                    sweeper()
+                except (OSError, ValueError):
+                    pass
+        return result
+
+    @app.post("/api/v1/mailbox/poll")
+    async def poll_mailbox(request: Request) -> dict[str, Any]:
+        signed = await _signed_request(request)
+        try:
+            messages = active_registry.poll_mailbox(signed)
+        except MailboxError as exc:
+            code = str(exc)
+            raise HTTPException(status_code=_MAILBOX_STATUS.get(code, 400), detail=code) from exc
+        except (RegistryError, OSError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="mailbox_request_invalid") from exc
+        return {"messages": [item.to_dict() for item in messages]}
 
     @app.post("/api/v1/relay/blobs")
     async def upload_relay_blob(request: Request) -> dict[str, Any]:

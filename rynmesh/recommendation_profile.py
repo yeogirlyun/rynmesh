@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
+
+from .atomic_io import atomic_write_json
 
 __all__ = [
     "PLATFORM_CHOICES",
@@ -223,10 +224,7 @@ class RecommendationProfileStore:
         }
 
     def _write(self, data: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(dict(data), indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, self.path)
+        atomic_write_json(self.path, dict(data), indent=2, sort_keys=True)
 
 
 _STARTERS: tuple[dict[str, Any], ...] = (

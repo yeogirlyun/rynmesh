@@ -9,6 +9,11 @@ Rynmesh is alpha software. “Implemented” below means the behavior exists in
 the repository and is covered by the current release process; it does not mean
 the behavior has completed production hardening or broad field validation.
 
+The evidence each milestone must produce before it is claimed, and what a
+feature ships with beyond working code, are defined in
+[`TESTING_STRATEGY.md`](TESTING_STRATEGY.md). Its §5 records where coverage is
+currently short of the claims on this page.
+
 ## Current release: P1 Ryn Companion
 
 The personal-assistant milestone is implemented and available in the public
@@ -91,6 +96,9 @@ Implemented foundations:
 - encrypted direct messages and small attachments
 - signed publication and verified peer fetches
 - credit and serve-receipt primitives
+- peer mailbox (delivered, #35): sealed, signed, short-TTL registry
+  store-and-forward so pairing and chat reach an offline or endpoint-less node
+  (`docs/PEER_MAILBOX.md`)
 
 Planned product work:
 

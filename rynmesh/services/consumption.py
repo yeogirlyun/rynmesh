@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
-__all__ = ["ConsumptionError", "ConsumptionStore"]
+from ..atomic_io import atomic_write_json
+
+__all__ = ["MAX_HISTORY_BYTES", "ConsumptionError", "ConsumptionStore"]
 
 _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
+# This store writes its whole history as one JSON record, so its own bound
+# (max_items, below) and its own per-field caps (_ITEM_FIELDS' 4000-char
+# string fields, tags/reasons at 64 entries of 160 chars) must stay under
+# this store's own cap, not atomic_io.MAX_RECORD_BYTES (that 16 MiB default
+# is a generic per-record ceiling atomic_io picked to bound memory/disk; it
+# says nothing about how much reading history a node should keep, so this
+# store gets its own explicit budget instead of borrowing that one).
+#
+# Worst case at max_items=1000, every field _clean_item actually truncates
+# maxed out: 12 string fields (including `link`) at 4000 chars + tags/reasons
+# (2 x 64 entries x 160 chars) + item_id at its real 256-char cap (appearing
+# twice per record: top-level and nested in `item`), x1000 records, plus
+# JSON structure/indent overhead measures to ~68.2 MiB (see
+# tests/test_consumption.py::test_consumption_store_worst_case_stays_under_atomic_cap,
+# which builds exactly this — item_id and link included at their real caps,
+# not shortened — and asserts it against MAX_HISTORY_BYTES). That leaves
+# ~40% headroom under the 96 MiB cap below (worst case is ~71% of the cap).
+# If you raise `max_items` or any `_ITEM_FIELDS` truncation length, re-run
+# that test and raise MAX_HISTORY_BYTES together with it — the two move as a
+# pair, and the test's own field-maxing must be kept in sync with whatever
+# `_clean_item` actually truncates.
+MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured true worst case at 1000 items is ~68.2 MiB
 _ITEM_FIELDS = {
     "item_id",
     "source_id",
@@ -126,13 +149,10 @@ class ConsumptionStore:
         }
 
     def _write(self, payload: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(dict(payload), indent=2, sort_keys=True, ensure_ascii=False),
-            encoding="utf-8",
+        atomic_write_json(
+            self.path, dict(payload), indent=2, sort_keys=True, ensure_ascii=False,
+            max_bytes=MAX_HISTORY_BYTES,
         )
-        os.replace(tmp, self.path)
 
     @staticmethod
     def _clean_progress(value: float | None) -> float:

@@ -38,6 +38,13 @@ from .registry import HttpPeerRegistry, PeerRegistry, RegistryError, verify_peer
 
 log = logging.getLogger("rynmesh.registry_resilience")
 
+#: HTTP statuses a mailbox route uses to render a verdict about *this message*
+#: (see `_MAILBOX_STATUS` in `registry_http`, plus 413 from a proxy in front of
+#: it). A chain must not retry these on the next mirror. Every other status —
+#: 404 from a mirror without the network key or without the mailbox routes,
+#: 401/403, 501, any 5xx — describes the mirror, so the chain moves on.
+MAILBOX_VERDICT_STATUSES = frozenset({400, 409, 413, 429})
+
 # ---------------------------------------------------------------------------
 # 1. Multi-registry fallback chain
 # ---------------------------------------------------------------------------
@@ -94,6 +101,14 @@ class FallbackRegistryChain:
     def list_work_results(self, **kwargs: Any) -> list[SignedPayload]:
         return self._try_all("list_work_results", **kwargs)
 
+    # Mailbox traffic falls through on transport failure like everything else,
+    # but *only* on transport failure — see `_try_mailbox`.
+    def deposit_mailbox(self, signed: SignedPayload) -> dict[str, Any]:
+        return self._try_mailbox("deposit_mailbox", signed)
+
+    def poll_mailbox(self, signed_poll: SignedPayload) -> list[SignedPayload]:
+        return self._try_mailbox("poll_mailbox", signed_poll)
+
     # -------------------------------------------------------------------------
 
     def _try_all(self, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -106,6 +121,40 @@ class FallbackRegistryChain:
                 return fn(*args, **kwargs)
             except RegistryError as exc:
                 log.warning("registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc)
+                last = exc
+        raise last
+
+    def _try_mailbox(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Fall through on a dead registry, never on a verdict about the message.
+
+        A local backend raises `MailboxError` ("duplicate", "rate_limited",
+        "poll_skew", ...) which is not a `RegistryError` and so was never
+        retried. `HttpPeerRegistry` turns the same verdicts into a
+        `RegistryError` carrying the HTTP status, and retrying *that* on the
+        next mirror would deposit one message into every registry in the chain
+        — the exact fan-out the local path is careful to avoid.
+
+        Only the statuses in `MAILBOX_VERDICT_STATUSES` end the attempt. The
+        rest of the 4xx range says something about the *mirror*, not about the
+        message: 404 is what a registry without the network key (or without the
+        mailbox routes at all) returns, and 401/403/501 are the same kind of
+        answer. Those are exactly the case the chain exists for, so they fall
+        through — as do transport failures (no status) and 5xx.
+        """
+
+        last: Exception = RegistryError("no registries configured")
+        for reg in self.registries:
+            fn = getattr(reg, method, None)
+            if fn is None:
+                continue
+            try:
+                return fn(*args, **kwargs)
+            except RegistryError as exc:
+                if getattr(exc, "status", None) in MAILBOX_VERDICT_STATUSES:
+                    raise
+                log.warning(
+                    "registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc
+                )
                 last = exc
         raise last
 

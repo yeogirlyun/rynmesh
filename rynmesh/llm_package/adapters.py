@@ -61,10 +61,14 @@ class AdapterMetrics:
 
 class OpenAICompatibleAdapter:
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
-                 allow_non_loopback: bool = False, timeout_s: float = 120.0) -> None:
+                 api_key: str = "", allow_non_loopback: bool = False,
+                 timeout_s: float = 120.0) -> None:
         self.base_url = validate_local_url(base_url, allow_non_loopback=allow_non_loopback)
         self.model = model
         self.api_key_env = api_key_env
+        # A literal loopback token for a Rynmesh-owned runtime (never logged,
+        # never echoed in an error). An owner-configured `api_key_env` wins.
+        self.api_key = api_key
         self.timeout_s = timeout_s
         self._cancelled: set[str] = set()
         self._active_responses: dict[str, Any] = {}
@@ -78,6 +82,8 @@ class OpenAICompatibleAdapter:
             if not secret:
                 raise AdapterError(f"API key environment variable {self.api_key_env!r} is not set")
             headers["Authorization"] = "Bearer " + secret
+        elif self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
         return headers
 
     def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float,
@@ -228,7 +234,9 @@ class OllamaAdapter(OpenAICompatibleAdapter):
 def adapter_from_manifest(manifest: Any) -> LLMAdapter:
     kwargs = {
         "base_url": manifest.base_url, "model": manifest.model,
-        "api_key_env": manifest.api_key_env, "allow_non_loopback": manifest.allow_non_loopback,
+        "api_key_env": manifest.api_key_env,
+        "api_key": str(getattr(manifest, "runtime_api_key", "") or ""),
+        "allow_non_loopback": manifest.allow_non_loopback,
         "timeout_s": manifest.timeout_seconds,
     }
     return OllamaAdapter(**kwargs) if manifest.adapter == "ollama" else OpenAICompatibleAdapter(**kwargs)

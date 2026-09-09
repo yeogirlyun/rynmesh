@@ -26,6 +26,7 @@ webapp/.vite/
 *.tsbuildinfo
 rynnet/runs/
 webapp/src-tauri/binaries/
+webapp/src-tauri/resources/
 deploy/env/*.env
 !deploy/env/*.env.example
 

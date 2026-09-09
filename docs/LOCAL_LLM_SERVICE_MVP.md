@@ -16,9 +16,12 @@ The Provider necessarily decrypts a request to run inference. Process isolation,
 short-lived in-memory values, disabled body logging, and cleanup reduce exposure;
 they are not confidential computing and do not promise absolute privacy.
 
-Rynmesh Credits remain non-transferable contribution/reputation signals. The new
-development-only **Task Balance** ledger is a separate simulated spend/earn
-account. It is not money, a deposit, or a production payment system.
+Rynmesh Credits remain non-transferable contribution/reputation signals. The
+development-only **Task Balance** is a simulated spend/earn account. It is not
+money, a deposit, or a production payment system. On a node it is persisted as
+signed events in the credit ledger's `dev:task_balance` category — one
+auditable escrow history for every service — which reputation scoring never
+reads; the JSON file next to it is a rebuildable snapshot.
 
 ## Components and files
 
@@ -56,6 +59,19 @@ account. It is not money, a deposit, or a production payment system.
    discovers models/capabilities, and sends a real test request. API keys are
    named by environment variable and are never copied into normal config/logs.
 
+## Runtime backends
+
+Managed and GGUF-import modes select a runtime backend (`lifecycle.select_runtime`,
+`runtime: "auto" | "native" | "docker"`): `native_llama_cpp`
+(`rynmesh/llm_package/runtime_native.py`) is the default and resolves a bundled or
+downloaded `llama-server` binary with no container engine required; `docker_llama_cpp`
+(`rynmesh/llm_package/runtime_docker.py`) is an opt-in backend for server operators who
+prefer container isolation. Managed installs additionally pick one of three pinned
+catalog profiles (`light`, `balanced`, `quality`, `rynmesh/llm_package/catalog.py`),
+each with a conservative estimated-memory/disk footprint used by
+`GET /api/local/llm/hardware` to recommend a profile for the detected hardware. See
+`docs/ISSUE_34_NATIVE_RUNTIME_WORK_PLAN.md` for the native-runtime delivery plan.
+
 ## Order flow
 
 1. Provider publishes a signed `JobCapacityRecord` containing only the public
@@ -66,7 +82,10 @@ account. It is not money, a deposit, or a production payment system.
    endpoint. It never uses the model runtime URL.
 3. Consumer creates a stable task ID and idempotency key, freezes a worst-case
    amount in Task Balance, signs and encrypts the prompt to the Provider's node
-   messaging key, then POSTs ciphertext to the Provider peer API.
+   messaging key, then POSTs ciphertext to the Provider peer API through the
+   active `Transport`. Task creation, settlement acknowledgement, and
+   cancellation all follow this route; none bypasses transport selection with
+   a direct `urllib` call.
 4. Provider verifies the node signature, enforces recipient/service/health/
    capacity/expiry/idempotency, records metadata-only lifecycle transitions,
    decrypts in memory, calls the adapter, encrypts the response to Consumer,
@@ -90,6 +109,25 @@ amounts, and error codes only. Prompt/response logging requires the explicit
 written to temporary files. Terminal cleanup removes request keys, partial
 files, and controllable adapter caches. Python cannot guarantee erasure of every
 in-memory copy; the documentation and UI must not claim otherwise.
+
+## Background worker lifecycle
+
+The LLM package registers two supervised workers with the node's
+`BackgroundWorkerRegistry` while installing its routes:
+
+- `llm.relay-poll` processes signaling, settlement, cancellation, and optional
+  encrypted Relay work. It polls every second while active and backs off to 10
+  seconds while idle or 30 seconds after repeated failures.
+- `llm.publish-refresh` refreshes an enabled Provider's short-lived discovery
+  record every 30 seconds, with bounded failure backoff.
+
+The node lifespan starts and stops the registry; the LLM package does not own
+detached asyncio tasks. Synchronous worker calls run in a thread, failures are
+isolated per worker, and shutdown cancels and awaits all registered workers.
+Registry status contains scheduling metadata and exception classes only. It
+never stores worker arguments, results, prompts, outputs, keys, URLs, or private
+paths. Existing local service status fields remain `publication_error` and
+`relay_poll_error`.
 
 ## Change plan
 
