@@ -315,6 +315,7 @@ class _TargetFileSink:
         self._finished = False
         self._state: dict[str, Any] = {}
         self._claimed_key = ""
+        self._owns_partial = False
 
     def _release_claim(self) -> None:
         if self._claimed_key and self._release_transfer is not None:
@@ -358,6 +359,11 @@ class _TargetFileSink:
                 raise PeerTransitError(f"transit manifest {field} is invalid")
 
         slug = _resume_slug(self.source_peer_id, transfer_id)
+        # Claim before inspecting checkpoints: another session may otherwise
+        # finish between our read and claim, leaving us with stale state.
+        if self._claim_transfer is not None:
+            self._claim_transfer(slug)
+            self._claimed_key = slug
         self._path = self.tmp_dir / f"{slug}.part"
         self._state_path = self.tmp_dir / f"{slug}.resume.json"
         # Namespace the committed artifact by the authenticated source as well
@@ -440,17 +446,15 @@ class _TargetFileSink:
         elif state.get("status") == "complete":
             duplicate = True
 
-        if self._claim_transfer is not None:
-            self._claim_transfer(slug)
-            self._claimed_key = slug
-
         if not duplicate:
             if self._path.exists() and self._path.stat().st_size < verified_offset:
                 raise PeerTransitError("transit partial file is shorter than its checkpoint")
             if not self._path.exists() and verified_offset:
                 raise PeerTransitError("transit partial file is missing")
             mode = "r+b" if self._path.exists() else "w+b"
+            self._verified_offset = verified_offset
             self._handle = self._path.open(mode)
+            self._owns_partial = True
             self._handle.seek(verified_offset)
             self._handle.truncate(verified_offset)
 
@@ -551,7 +555,7 @@ class _TargetFileSink:
         if self._handle is not None and not self._handle.closed:
             self._handle.close()
         self._handle = None
-        if self._finished or self._duplicate or self._path is None:
+        if self._finished or self._duplicate or self._path is None or not self._owns_partial:
             self._release_claim()
             return
         if self._path.exists():

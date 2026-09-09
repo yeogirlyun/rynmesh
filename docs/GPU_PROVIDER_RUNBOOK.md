@@ -64,6 +64,21 @@ The cloud firewall/security group must allow both TCP `3000` and UDP `3000`.
 The Provider binds ICE to UDP `3000`; the Consumer remains on an ephemeral UDP
 port and only needs normal outbound UDP/stateful-return access.
 
+The fixed-port profile admits one active ICE session per process and port.
+Overlapping LLM offers fail promptly with `p2p_capacity_exhausted`; the Consumer
+can retry after the current session finishes. This is transport capacity,
+independent of the model's inference limit. Leave `RYNMESH_P2P_BIND_PORT` unset
+for the general transit worker, which needs two simultaneous ICE sockets per
+forwarded session. Fixed-port socket demultiplexing is not implemented.
+
+The Qwen runtime loads and validates the model during startup before advertising
+it through `/v1/models`. If weights, CUDA, or dependencies are unavailable, the
+process stays alive with degraded `/health` and `/v1/models` returns 503, so
+the Provider will not publish it as ready. Correct the configuration and restart
+the runtime to retry startup. Inference runs off the HTTP event loop; health
+and model checks remain responsive while it runs. A concurrent inference
+request returns 503 `runtime_busy` instead of allocating additional GPU tensors.
+
 Public liveness and authenticated video health:
 
 ```bash
