@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from xml.etree import ElementTree
 
+from ..atomic_io import atomic_write_json
 from ..recommendation_evidence import build_evidence_packet
 from ..recommendation_profile import RecommendationProfileStore
 from ..recommender import (
@@ -582,10 +583,7 @@ class DigestService:
             return fallback
 
     def _save(self, name: str, payload: Any) -> None:
-        path = self.dir / name
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        atomic_write_json(self.dir / name, payload, indent=2, sort_keys=True)
 
     # -- sources ----------------------------------------------------------
     def list_sources(self) -> list[dict[str, Any]]:

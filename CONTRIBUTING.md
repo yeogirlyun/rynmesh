@@ -104,6 +104,11 @@ milestone, priority, area, size, acceptance criteria, and whether design review
 is required. Large work should be split into independently testable issues
 before implementation begins.
 
+[`docs/TESTING_STRATEGY.md`](docs/TESTING_STRATEGY.md) defines the evidence a
+change ships with, what a user-facing feature needs beyond working code, and
+the gate each milestone must clear. Read it before opening a pull request: a
+review will ask for what it lists.
+
 ### Claiming work
 
 1. Choose an available issue labeled `good first issue` or `help wanted` from

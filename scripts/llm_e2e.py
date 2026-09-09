@@ -11,11 +11,15 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from rynmesh.transport import network_key_header
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deploy" / "llm-e2e" / "docker-compose.yml"
+REGISTRY = "http://127.0.0.1:18890"
+PROVIDER = "http://127.0.0.1:18891"
+CONSUMER = "http://127.0.0.1:18892"
 TOKEN_HEADERS = {
     "Content-Type": "application/json",
     "Authorization": "Bearer rynmesh-e2e-browser-token",
@@ -50,7 +54,8 @@ def _wait(url: str, timeout: float = 120) -> None:
 
 def up(mode: str) -> None:
     env = os.environ.copy()
-    profile = "real" if mode == "real" else "test" if mode in {"test", "relay-test"} else ""
+    profile = ("real" if mode == "real"
+               else "test" if mode in {"test", "relay-test", "mailbox"} else "")
     if mode == "real":
         if not env.get("RYNMESH_REAL_MODEL_PATH"):
             raise RuntimeError("set RYNMESH_REAL_MODEL_PATH to a readable GGUF file")
@@ -59,13 +64,18 @@ def up(mode: str) -> None:
         env["RYNMESH_LLM_MANIFEST"] = "/config/host-real-manifest.json"
     if mode == "relay-test":
         env["RYNMESH_LLM_FORCE_RELAY"] = "1"
+    if mode == "mailbox":
+        # Direct peer delivery is switched off on the consumer only, so the send
+        # has to take the registry mailbox. The provider stays normal, proving the
+        # store-and-forward path end to end rather than a symmetric outage.
+        env["RYNMESH_MESSAGING_FORCE_MAILBOX"] = "1"
     args = ["up", "-d", "--build"]
     if profile:
         args = ["--profile", profile, *args]
     _compose(*args, env=env)
-    _wait("http://127.0.0.1:18890/health")
-    _wait("http://127.0.0.1:18891/health")
-    _wait("http://127.0.0.1:18892/health")
+    _wait(REGISTRY + "/health")
+    _wait(PROVIDER + "/health")
+    _wait(CONSUMER + "/health")
 
 
 def verify(mode: str) -> dict[str, Any]:
@@ -143,21 +153,108 @@ def verify(mode: str) -> dict[str, Any]:
     return report
 
 
+# The provider's `mailbox.poll` worker starts at a 3 s delay and drops to a 2 s
+# busy delay, but an idle worker backs off to a 60 s cap — and the provider is
+# not recreated between E2E steps, so by the time this runs it has usually been
+# idle for the whole preceding LLM flow. 60 s is therefore exactly the worst
+# case with no margin; this budget is that worst case plus room for the poll,
+# the dispatch and the ack.
+MAILBOX_DELIVERY_TIMEOUT_S = 90
+
+
+def mailbox_verify() -> dict[str, Any]:
+    """Peer message from consumer to provider with direct delivery switched off.
+
+    Only the marker text ever leaves this function; message bodies (and the
+    history entries that carry them) are never printed.
+    """
+
+    provider_id = str(_json(PROVIDER + "/health")["peer_id"])
+    consumer_id = str(_json(CONSUMER + "/health")["peer_id"])
+    marker = f"mailbox-e2e-{int(time.time())}"
+    sent = _json(CONSUMER + "/api/local/messages/send",
+                 {"peer_id": provider_id, "text": marker})
+    if sent.get("via") != "mailbox" or sent.get("delivered") is not False:
+        raise RuntimeError(
+            "E2E mailbox send did not queue: "
+            f"via={sent.get('via')!r} delivered={sent.get('delivered')!r}"
+        )
+    # peer ids are base64 and contain '/', '+' and '=' — the node takes them as a
+    # query parameter, so they have to be fully escaped.
+    history_url = (PROVIDER + "/api/local/messages?peer_id="
+                   + quote(consumer_id, safe=""))
+    deadline = time.monotonic() + MAILBOX_DELIVERY_TIMEOUT_S
+    delivered_at = 0.0
+    started = time.monotonic()
+    while time.monotonic() < deadline:
+        history = _json(history_url)
+        if any(item.get("text") == marker and item.get("dir") == "in"
+               for item in history):
+            delivered_at = time.monotonic() - started
+            break
+        time.sleep(2)
+    consumer_status = _json(CONSUMER + "/api/local/mailbox/status")
+    provider_status = _json(PROVIDER + "/api/local/mailbox/status")
+    report = {
+        "profile": "mailbox-store-and-forward",
+        "marker": marker,
+        "consumer_peer_id": consumer_id,
+        "provider_peer_id": provider_id,
+        "send_via": sent.get("via"),
+        "send_delivered": sent.get("delivered"),
+        "delivered_after_s": round(delivered_at, 1) if delivered_at else None,
+        "consumer_mailbox": {k: consumer_status.get(k)
+                             for k in ("handled_total", "dropped_total",
+                                       "undecryptable", "last_error")},
+        "provider_mailbox": {k: provider_status.get(k)
+                             for k in ("handled_total", "dropped_total",
+                                       "undecryptable", "last_error")},
+    }
+    if not delivered_at:
+        raise RuntimeError(f"E2E mailbox message never arrived: {report}")
+    # The consumer only deposits, so it should have handled nothing and, more to
+    # the point, hit no errors and dropped nothing while its own box stayed empty.
+    if consumer_status.get("last_error") != "":
+        raise RuntimeError(f"E2E consumer mailbox reported an error: {report}")
+    if int(consumer_status.get("dropped_total") or 0) != 0:
+        raise RuntimeError(f"E2E consumer mailbox dropped mail: {report}")
+    if int(provider_status.get("handled_total") or 0) < 1:
+        raise RuntimeError(f"E2E provider mailbox handled nothing: {report}")
+    # An unopenable envelope is neither handled nor dropped; it would otherwise
+    # sit in the box until its TTL with nothing else in this report noticing.
+    if int(provider_status.get("undecryptable") or 0) != 0:
+        raise RuntimeError(f"E2E provider mailbox could not open mail: {report}")
+    results_dir = ROOT / "deploy" / "llm-e2e" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "mailbox-result.json").write_text(
+        json.dumps(report, indent=2), encoding="utf-8",
+    )
+    print(json.dumps(report, indent=2))
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=[
         "up", "verify", "run", "real-up", "real-verify", "real-run",
         "host-real-up", "host-real-verify", "host-real-run", "down", "clean",
         "relay-up", "relay-verify", "relay-run",
+        "mailbox-up", "mailbox-verify", "mailbox-run",
     ])
     args = parser.parse_args()
     mode = ("host-real" if args.command.startswith("host-real-") else "real"
             if args.command.startswith("real-") else "relay-test"
-            if args.command.startswith("relay-") else "test")
-    if args.command in {"up", "real-up", "host-real-up", "relay-up"}:
+            if args.command.startswith("relay-") else "mailbox"
+            if args.command.startswith("mailbox-") else "test")
+    if args.command in {"up", "real-up", "host-real-up", "relay-up", "mailbox-up"}:
         up(mode)
     elif args.command in {"verify", "real-verify", "host-real-verify", "relay-verify"}:
         verify(mode)
+    elif args.command == "mailbox-verify":
+        mailbox_verify()
+    elif args.command == "mailbox-run":
+        up(mode)
+        mailbox_verify()
     elif args.command in {"run", "real-run", "host-real-run", "relay-run"}:
         up(mode)
         verify(mode)

@@ -11,7 +11,6 @@ import os
 import tempfile
 import threading
 import time
-import urllib.request
 import uuid
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
@@ -21,10 +20,16 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
+from rynmesh.atomic_io import atomic_write_json
+from rynmesh.background_workers import (
+    BackgroundWorkerRegistry,
+    BackgroundWorkerSpec,
+    BackoffPolicy,
+)
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
-from rynmesh.transport import network_key_header
 
+from . import runtime_native
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
 from .lifecycle import (
     LifecycleError,
@@ -537,24 +542,17 @@ def _record_is_stale(updated_at: Any) -> bool:
     return (datetime.now(timezone.utc) - stamp).total_seconds() > _DISCOVERY_STALE_AFTER_S
 
 
-def _peer_post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> dict[str, Any]:
-    """POST JSON to a peer endpoint with a bounded response read.
+def _peer_post_json(
+    endpoint: str, path: str, payload: dict[str, Any], *, timeout_s: float,
+) -> dict[str, Any]:
+    """POST bounded JSON through the peer client's configured Transport."""
+    # Late import avoids the peer_http -> install_llm_routes import cycle while
+    # retaining one authoritative peer transport/error implementation.
+    from rynmesh.peer_http import HttpPeerClient
 
-    Raw json.load over a peer socket would let a hostile provider stream an
-    unbounded body into memory; every peer response in this module is small.
-    """
-    request = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", **network_key_header()}, method="POST",
+    return HttpPeerClient(endpoint, timeout_s=timeout_s).post_json(
+        path, payload, max_bytes=_MAX_PEER_RESPONSE_BYTES,
     )
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
-        raw = response.read(_MAX_PEER_RESPONSE_BYTES + 1)
-    if len(raw) > _MAX_PEER_RESPONSE_BYTES:
-        raise TaskProtocolError("peer response exceeds size limit")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise TaskProtocolError("peer response must be a JSON object")
-    return value
 
 
 def _upload_relay_ciphertext(store: RynmeshStore, envelope: dict[str, Any], *,
@@ -609,8 +607,9 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
     }, private_key_bytes=store.private_key_bytes)
     if endpoint:
         try:
-            _peer_post_json(endpoint + "/api/peer/llm/settlements",
-                            settlement.to_dict(), timeout_s=15)
+            _peer_post_json(
+                endpoint, "/api/peer/llm/settlements", settlement.to_dict(), timeout_s=15,
+            )
             return True
         except Exception:
             pass
@@ -700,7 +699,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                        resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
-    balance = TaskBalanceLedger(home / "llm" / "task-balance.json")
+    # Ledger-backed: every hold/settle/release/earning is a signed event in
+    # the node's credit ledger (category dev:task_balance, invisible to
+    # reputation scoring), with this file as the O(1) snapshot.
+    balance = TaskBalanceLedger(
+        home / "llm" / "task-balance.json",
+        credit_ledger=store.credit_ledger, peer_id=store.peer_id,
+        private_key_bytes=store.private_key_bytes,
+    )
     _recover_consumer_orders(consumer_orders, balance, store)
     manager: ProviderService | None = None
     manager_lock = threading.Lock()
@@ -717,10 +723,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     manager_path = ""
 
     def write_setup_job(value: dict[str, Any]) -> dict[str, Any]:
-        setup_job_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = setup_job_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(setup_job_path)
+        atomic_write_json(setup_job_path, value, indent=2, sort_keys=True)
         return value
 
     def read_setup_job() -> dict[str, Any]:
@@ -756,10 +759,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {**defaults, **dict(value or {})}
 
     def write_consumer_settings(value: dict[str, Any]) -> dict[str, Any]:
-        consumer_settings_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = consumer_settings_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(consumer_settings_path)
+        atomic_write_json(consumer_settings_path, value, indent=2, sort_keys=True)
         return value
 
     def response_retention() -> int:
@@ -787,10 +787,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {**defaults, **saved}
 
     def write_provider_settings(value: dict[str, Any]) -> dict[str, Any]:
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = settings_path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(settings_path)
+        atomic_write_json(settings_path, value, indent=2, sort_keys=True)
         return value
 
     def active_manager(path: str = "") -> ProviderService | None:
@@ -830,6 +827,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 package_id=package_id, root=root,
                 port=int(body.get("port") or 18080),
                 accept_risk=bool(body.get("accept_risk", False)),
+                runtime=str(body.get("runtime") or "auto"),
+                profile=str(body.get("profile") or "auto"),
                 progress=progress, cancel_check=cancel_check,
             )
         if mode == "import-gguf":
@@ -837,6 +836,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 source=str(body.get("model_path") or ""), package_id=package_id,
                 alias=alias, root=root, port=int(body.get("port") or 18080),
                 accept_risk=bool(body.get("accept_risk", False)),
+                runtime=str(body.get("runtime") or "auto"),
                 progress=progress, cancel_check=cancel_check,
             )
         if mode in {"openai-compatible", "ollama"}:
@@ -1057,8 +1057,63 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
         return processed
 
-    app.state.llm_relay_once = relay_once
-    app.state.llm_publish_once = publish_once
+    registry = getattr(app.state, "background_workers", None)
+    if registry is None:
+        # Standalone package tests and embedders may install the routes on a
+        # plain FastAPI app. The full node lifespan owns start/stop.
+        registry = BackgroundWorkerRegistry()
+        app.state.background_workers = registry
+    if not isinstance(registry, BackgroundWorkerRegistry):
+        raise TypeError("app.state.background_workers must be a BackgroundWorkerRegistry")
+    registry.register(BackgroundWorkerSpec(
+        name="llm.relay-poll",
+        run_once=lambda: bool(relay_once()),
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(
+            busy_delay_s=1.0,
+            idle_initial_s=1.0,
+            idle_multiplier=1.5,
+            idle_max_s=10.0,
+            error_multiplier=2.0,
+            error_max_s=30.0,
+        ),
+        error_sink=lambda value: setattr(app.state, "llm_relay_error", value),
+    ))
+    registry.register(BackgroundWorkerSpec(
+        name="llm.publish-refresh",
+        run_once=publish_once,
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(
+            busy_delay_s=30.0,
+            idle_initial_s=30.0,
+            idle_multiplier=1.0,
+            idle_max_s=30.0,
+            error_multiplier=2.0,
+            error_max_s=120.0,
+        ),
+        error_sink=lambda value: setattr(app.state, "llm_publication_error", value),
+    ))
+
+    def shutdown_owned_runtimes() -> None:
+        """Never orphan an inference server when the node exits.
+
+        A native-runtime `llama-server` is a child of this process; without
+        this it would outlive the node, keeping the loopback port bound and
+        the model resident. `runtime_native` also registers the same call with
+        `atexit`, for exits that never run an application shutdown at all.
+        """
+        nonlocal manager
+        if manager is not None:
+            manager.adapter.shutdown()
+            manager = None
+        runtime_native.stop_owned_children()
+
+    # Two registrations, because Starlette runs `on_shutdown` only for an app
+    # that kept the default lifespan: this covers embedders and the package
+    # tests, while the node's own lifespan calls `app.state.llm_shutdown`.
+    # `stop_owned_children` is idempotent, so running both is harmless.
+    app.state.llm_shutdown = shutdown_owned_runtimes
+    app.router.on_shutdown.append(shutdown_owned_runtimes)
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
@@ -1291,9 +1346,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/service/status")
     def local_llm_service_status(request: Request) -> dict[str, Any]:
         # Background publication/relay failures are recorded on app.state by
-        # the lifespan loops; without surfacing them here a provider whose
-        # registry publication is failing looks healthy while its discovery
-        # record silently expires.
+        # the registered worker error sinks. Without surfacing them here, a
+        # provider whose registry publication is failing looks healthy while
+        # its discovery record silently expires.
         background = {
             "publication_error": str(getattr(request.app.state, "llm_publication_error", "") or ""),
             "relay_poll_error": str(getattr(request.app.state, "llm_relay_error", "") or ""),
@@ -1602,7 +1657,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
                     encrypted_response = await asyncio.to_thread(
-                        _peer_post_json, endpoint + "/api/peer/llm/tasks",
+                        _peer_post_json, endpoint, "/api/peer/llm/tasks",
                         signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
                     )
                     transport_evidence = {
@@ -1878,8 +1933,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             endpoint = resolve_endpoint(provider_peer_id)
             if endpoint:
                 try:
-                    _peer_post_json(endpoint + "/api/peer/llm/cancellations",
-                                    signed_cancel.to_dict(), timeout_s=5)
+                    _peer_post_json(
+                        endpoint, "/api/peer/llm/cancellations",
+                        signed_cancel.to_dict(), timeout_s=5,
+                    )
                     delivered = True
                 except Exception:
                     pass

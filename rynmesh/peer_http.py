@@ -23,6 +23,7 @@ from urllib.parse import quote, urlencode, urlparse
 
 from . import recommendation_service
 from . import transport_plugins as _transport_plugins  # noqa: F401 — registers reality/meek/ech
+from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
 from .recommendation_profile import RecommendationProfileStore, starter_items
@@ -261,6 +262,38 @@ class HttpPeerClient:
             raise PeerTransportError("peer_response_not_object")
         return payload
 
+    def post_json(
+        self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+    ) -> dict[str, Any]:
+        """POST one JSON object through the configured bounded Transport."""
+        post = getattr(self.transport, "post_bytes", None)
+        if not callable(post):
+            raise PeerTransportError("peer_transport_post_unsupported")
+        body = json.dumps(
+            payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")
+        try:
+            raw = post(
+                self.endpoint + path,
+                body,
+                timeout_s=self.timeout_s,
+                max_bytes=max_bytes,
+                headers={"Content-Type": "application/json"},
+            )
+        except TransportError as exc:
+            if exc.reason == "too_large":
+                raise PeerTransportError("peer_response_too_large") from exc
+            # Keep plugin exception text out of the public error surface: a
+            # third-party transport may include request/response bytes there.
+            raise PeerTransportError(f"peer_http_error:{exc.reason}") from exc
+        try:
+            value = json.loads(raw.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PeerTransportError("peer_invalid_json") from exc
+        if not isinstance(value, dict):
+            raise PeerTransportError("peer_response_not_object")
+        return value
+
     def _bytes(self, path: str, *, max_bytes: int) -> bytes:
         try:
             return self.transport.get_bytes(
@@ -399,6 +432,11 @@ def create_app(store: RynmeshStore | None = None):
 
     @asynccontextmanager
     async def lifespan(lifespan_app):
+        # Background workers run their bodies in threads (`asyncio.to_thread`),
+        # and the mailbox poll worker publishes to the SSE queues from there.
+        # `asyncio.Queue` is not thread-safe, so the fan-out needs a handle on
+        # the loop that owns those queues.
+        lifespan_app.state.loop = _asyncio.get_running_loop()
         updater.on_startup()  # may os.execv away on crash-loop rollback
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
@@ -418,75 +456,30 @@ def create_app(store: RynmeshStore | None = None):
             await _asyncio.sleep(grace)
             updater.mark_serving()
 
-        async def _poll():
-            interval = int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
-            while True:
-                await _asyncio.sleep(interval)
-                try:
-                    res = await _asyncio.to_thread(updater.check)
-                    if res.get("available") and updater.status()["autoUpdate"]:
-                        await _asyncio.to_thread(updater.apply, updater.check_manifest())
-                except Exception:
-                    pass
+        def _update_poll_once() -> bool:
+            res = updater.check()
+            if res.get("available") and updater.status()["autoUpdate"]:
+                updater.apply(updater.check_manifest())
+                return True
+            return False
 
-        async def _recap_daily():
+        def _recap_once() -> bool:
             """Send the recap once per day, at the configured UTC hour.
 
             Deliberately a poll rather than a timer: the machine sleeps, and a
             laptop that was closed at the send hour should still get its recap
             when it wakes rather than skipping the day.
             """
-            await _asyncio.sleep(20)
-            while True:
-                try:
-                    stored = dict(_settings.get().get("recap", {}) or {})
-                    if stored.get("enabled") and stored.get("smtp_host"):
-                        now = time.time()
-                        hour = int(stored.get("send_hour_utc", 13))
-                        last = float(stored.get("last_sent_unix", 0) or 0)
-                        due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
-                        if due:
-                            await _asyncio.to_thread(_send_recap_now)
-                except Exception:
-                    pass
-                await _asyncio.sleep(900)
-
-        async def _llm_relay_poll():
-            # Poll fast while orders are flowing, back off when idle or when no
-            # provider is configured, and surface persistent failures instead of
-            # silently dropping them (a provider that cannot poll is offline in
-            # every way that matters, yet used to look healthy).
-            await _asyncio.sleep(1)
-            interval = 1.0
-            while True:
-                worker = getattr(lifespan_app.state, "llm_relay_once", None)
-                if worker is None:
-                    await _asyncio.sleep(5)
-                    continue
-                try:
-                    processed = await _asyncio.to_thread(worker)
-                    lifespan_app.state.llm_relay_error = ""
-                    interval = 1.0 if processed else min(interval * 1.5, 10.0)
-                except Exception as exc:
-                    lifespan_app.state.llm_relay_error = str(exc)
-                    interval = min(max(interval, 1.0) * 2, 30.0)
-                await _asyncio.sleep(interval)
-
-        async def _llm_publish_refresh():
-            # LLM discovery records are intentionally short lived. Keep a configured,
-            # healthy provider visible without requiring an operator to republish it.
-            await _asyncio.sleep(1)
-            while True:
-                publisher = getattr(lifespan_app.state, "llm_publish_once", None)
-                if publisher is not None:
-                    try:
-                        await _asyncio.to_thread(publisher)
-                        lifespan_app.state.llm_publication_error = ""
-                    except Exception as exc:
-                        # A registry or runtime outage must not take down the node;
-                        # the Services screen still provides a manual retry.
-                        lifespan_app.state.llm_publication_error = str(exc)
-                await _asyncio.sleep(30)
+            stored = dict(_settings.get().get("recap", {}) or {})
+            if stored.get("enabled") and stored.get("smtp_host"):
+                now = time.time()
+                hour = int(stored.get("send_hour_utc", 13))
+                last = float(stored.get("last_sent_unix", 0) or 0)
+                due = _dt.now(_UTC).hour >= hour and (now - last) > 20 * 3600
+                if due:
+                    _send_recap_now()
+                    return True
+            return False
 
         async def _discover():
             service = getattr(lifespan_app.state, "digest_service", None)
@@ -526,24 +519,67 @@ def create_app(store: RynmeshStore | None = None):
                 )
                 await _asyncio.sleep(delay)
 
-        confirm_task = _asyncio.create_task(_confirm_after_grace())
-        poll_task = _asyncio.create_task(_poll())
-        discovery_task = _asyncio.create_task(_discover())
-        recap_task = _asyncio.create_task(_recap_daily())
-        llm_relay_task = _asyncio.create_task(_llm_relay_poll())
-        llm_publish_task = _asyncio.create_task(_llm_publish_refresh())
-        yield
-        confirm_task.cancel()
-        poll_task.cancel()
-        discovery_task.cancel()
-        recap_task.cancel()
-        llm_relay_task.cancel()
-        llm_publish_task.cancel()
+        registry = lifespan_app.state.background_workers
+        update_poll_interval = float(
+            int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
+        )
+        registry.register(
+            BackgroundWorkerSpec(
+                name="updates.poll",
+                run_once=_update_poll_once,
+                policy=BackoffPolicy.fixed(update_poll_interval),
+                # Preserves today's sleep-then-check order: a boot must not
+                # trigger an update check while the crash-loop rollback
+                # window (`_confirm_after_grace`) is still open.
+                initial_delay_s=update_poll_interval,
+                error_sink=lambda value: setattr(lifespan_app.state, "update_error", value),
+            ),
+            # `stop()` never removes a spec from the registry's own bookkeeping
+            # (only its task), so a process that re-enters this lifespan on the
+            # same app (startup -> shutdown -> startup) must be able to
+            # re-register without raising "already registered".
+            replace=True,
+        )
+        registry.register(
+            BackgroundWorkerSpec(
+                name="recap.daily",
+                run_once=_recap_once,
+                policy=BackoffPolicy.fixed(900.0),
+                initial_delay_s=20.0,
+                error_sink=lambda value: setattr(lifespan_app.state, "recap_error", value),
+            ),
+            replace=True,
+        )
+        await registry.start()
+        tasks = (
+            _asyncio.create_task(_confirm_after_grace()),
+            _asyncio.create_task(_discover()),
+        )
+        try:
+            yield
+        finally:
+            await registry.stop()
+            for task in tasks:
+                task.cancel()
+            await _asyncio.gather(*tasks, return_exceptions=True)
+            # A custom lifespan replaces Starlette's `on_shutdown` handling, so
+            # the LLM routes' own hook has to be called from here; without it
+            # an owned `llama-server` child outlives the node.
+            llm_shutdown = getattr(lifespan_app.state, "llm_shutdown", None)
+            if callable(llm_shutdown):
+                await _asyncio.to_thread(llm_shutdown)
+            lifespan_app.state.loop = None
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
+    app.state.background_workers = BackgroundWorkerRegistry()
+    # Set by the lifespan; until then there is no loop and no SSE subscriber.
+    app.state.loop = None
     started_at = time.monotonic()
     app.state.registration_error = ""
     app.state.llm_publication_error = ""
+    app.state.llm_relay_error = ""
+    app.state.update_error = ""
+    app.state.recap_error = ""
     app.state.publish_drafts = {}
     app.add_middleware(
         CORSMiddleware,
@@ -1119,6 +1155,11 @@ def create_app(store: RynmeshStore | None = None):
             "pending_recs": 0,
             "version": f"ryn-node {RYNMESH_VERSION}",
             "uptime_seconds": int(time.monotonic() - started_at),
+            "workers": app.state.background_workers.status(),
+            "worker_errors": {
+                "updates.poll": app.state.update_error,
+                "recap.daily": app.state.recap_error,
+            },
         }
 
     @app.get("/api/local/registry/status")
@@ -2214,10 +2255,15 @@ def create_app(store: RynmeshStore | None = None):
     from .services.messaging_store import MessagingStore as _MsgStore
     from .services.peer_messenger import PeerMessenger as _PeerMessenger
 
-    _msg_priv = _peer_box.load_or_create_messaging_key(_home / "messaging.x25519")
-    _msg_store = _MsgStore(_home)
+    # Beside the identity key, not $RYNMESH_HOME: the store owns the peer id
+    # these messages are sealed to, and `register_node` advertises this key.
+    _msg_priv = _peer_box.load_or_create_messaging_key(active_store.home / "messaging.x25519")
+    # Beside the key that decrypts them, for the same reason: history belongs to
+    # the identity the store owns, not to whatever $RYNMESH_HOME happens to say.
+    _msg_store = _MsgStore(active_store.home)
     _pubkey_cache: dict[str, str] = {}  # peer_id -> x25519 pub (TOFU)
     _msg_subscribers: list = []  # asyncio.Queue per SSE client
+    app.state.message_subscribers = _msg_subscribers
 
     def _resolve_endpoint(peer_id: str) -> str:
         discovered = (
@@ -2247,7 +2293,15 @@ def create_app(store: RynmeshStore | None = None):
         _pubkey_cache[peer_id] = pub
         return pub
 
+    from . import mailbox_routes as _mailbox_routes
+
+    _resolve_pubkey = _mailbox_routes.with_registry_fallback(
+        _resolve_pubkey, store=active_store, cache=_pubkey_cache, network_id=control_network_id
+    )
+
     def _transport(peer_id: str, header: dict) -> int:
+        if os.environ.get("RYNMESH_MESSAGING_FORCE_MAILBOX", "").strip() == "1":
+            return 0  # test/E2E aid: skip direct delivery so the mailbox path runs
         ep = _resolve_endpoint(peer_id)
         if not ep:
             return 0
@@ -2269,14 +2323,44 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
         transport=_transport,
         now=lambda: _dt.now(_UTC).isoformat(timespec="seconds"),
+        fallback=_mailbox_routes.peer_message_fallback(app, store=active_store),
+    )
+
+    _mailbox = _mailbox_routes.install_mailbox(
+        app, store=active_store, messaging_key=_msg_priv, home=_home,
+        resolve_pubkey=_resolve_pubkey, workers=app.state.background_workers,
+        local_control=local_control,
     )
 
     def _publish(record: dict) -> None:
+        """Fan one record out to every SSE subscriber, from any thread.
+
+        The direct `/api/peer/msg` route calls this on the event loop; the
+        mailbox poll worker calls it from the thread `asyncio.to_thread` ran it
+        in. `asyncio.Queue.put_nowait` is not thread-safe — off-loop it wakes a
+        waiting getter through a non-thread-safe `call_soon`, which can leave
+        the record sitting in the queue unnoticed — so an off-loop caller hands
+        the put to the loop instead.
+        """
+
+        try:
+            _asyncio.get_running_loop()
+            on_loop = True
+        except RuntimeError:
+            on_loop = False
+        loop = getattr(app.state, "loop", None)
         for q in list(_msg_subscribers):
             try:
-                q.put_nowait(record)
+                if on_loop or loop is None:
+                    q.put_nowait(record)
+                else:
+                    loop.call_soon_threadsafe(q.put_nowait, record)
             except Exception:
                 pass
+
+    _mailbox_routes.install_peer_message_relay(
+        _mailbox, _messenger, _publish, pubkey_cache=_pubkey_cache
+    )
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
@@ -2289,7 +2373,8 @@ def create_app(store: RynmeshStore | None = None):
         if fp and header.get("from"):
             _pubkey_cache.setdefault(str(header["from"]), str(fp))  # TOFU
         record = _messenger.receive(header)
-        _publish(record)
+        if not record.get("duplicate"):  # a retried POST must not double the stream
+            _publish(record)
         return {"ok": True, "msg_id": record["msg_id"]}
 
     @app.post("/api/local/messages/send")

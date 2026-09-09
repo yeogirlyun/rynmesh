@@ -10,6 +10,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from rynmesh.atomic_io import atomic_write_json
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.services import peer_box
 
@@ -250,6 +251,4 @@ class TaskOrderStore:
 
     def _write(self, value: dict[str, Any]) -> None:
         path = self._path(str(value["task_id"]))
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        temporary.replace(path)
+        atomic_write_json(path, value, indent=2, sort_keys=True)
