@@ -135,7 +135,8 @@ def test_two_nodes_exchange_mail_through_a_registry_server(tmp_path, monkeypatch
             assert status["dropped_total"] == 0
             assert status["last_error"] == ""
             # `create_app` also registers the peer-message relay handler.
-            assert status["handlers"] == sorted([KIND, PEER_MESSAGE_KIND])
+            from rynmesh.friends.mailbox import OPERATION_KIND, RECEIPT_KIND
+            assert status["handlers"] == sorted([KIND, PEER_MESSAGE_KIND, OPERATION_KIND, RECEIPT_KIND])
             assert status["worker"]["name"] == "mailbox.poll"
 
             # The peer surface really is keyed: the same registry refuses a

@@ -264,6 +264,7 @@ class HttpPeerClient:
 
     def post_json(
         self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST one JSON object through the configured bounded Transport."""
         post = getattr(self.transport, "post_bytes", None)
@@ -278,7 +279,7 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={"Content-Type": "application/json"},
+                headers={**(headers or {}), "Content-Type": "application/json"},
             )
         except TransportError as exc:
             if exc.reason == "too_large":
@@ -1438,13 +1439,13 @@ def create_app(store: RynmeshStore | None = None):
             return events
         return []
 
+    from .first_run_routes import install_first_run
     from .services import ask as ask_service
     from .services import model_provider as model_provider_module
     from .services import recap as recap_service
     from .services.assistant_audit import AssistantAuditStore
     from .services.consumption import ConsumptionError, ConsumptionStore
     from .services.digest import DigestError, DigestService
-    from .first_run_routes import install_first_run
     from .services.reader import ReaderCache, ReaderError, read_article
 
     desktop_discovery = os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower() in {
@@ -2389,6 +2390,13 @@ def create_app(store: RynmeshStore | None = None):
 
     _mailbox_routes.install_peer_message_relay(
         _mailbox, _messenger, _publish, pubkey_cache=_pubkey_cache
+    )
+
+    from .friends.routes import install_friends
+
+    install_friends(
+        app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
     )
 
     @app.get("/api/peer/pubkey")

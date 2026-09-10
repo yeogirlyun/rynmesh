@@ -30,6 +30,7 @@ import ItemDetail from "./screens/ItemDetail";
 import SearchAsk from "./screens/SearchAsk";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
+import Friends from "./screens/Friends";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
 import PrivateAIChat from "./screens/PrivateAIChat";
@@ -46,6 +47,7 @@ const navItems = [
   { path: "/search-ask", label: "Search & Ask", icon: NavIcons.searchAsk },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
+  { path: "/friends", label: "Friends", icon: Users },
   { path: "/services", label: "Services", icon: NavIcons.services },
   { path: "/chat", label: "Chat", icon: NavIcons.chat },
   { path: "/settings", label: "Settings", icon: NavIcons.settings },
@@ -427,6 +429,7 @@ export function AppRoutes() {
           <Route path="search-ask" element={<SearchAsk />} />
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />
+          <Route path="friends" element={<Friends />} />
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
           <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
