@@ -7,6 +7,7 @@ import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import type { FirstSuccessStatus } from "../domain/types";
 import FirstSuccessFlow from "./FirstSuccessFlow";
+import { makeDigestItem } from "../test/fixtures";
 
 const ready: FirstSuccessStatus = {
   version: "ryn.first-success.v1",
@@ -35,7 +36,8 @@ describe("FirstSuccessFlow", () => {
     const client = { ...makeFixtureNodeClient(), mode: "live" as const };
     vi.spyOn(digestApi, "listConsumption").mockResolvedValue([{
       item_id: "earlier", last_opened_unix: 100, progress: 0.4,
-      item: { item_id: "earlier", title: "Earlier real article", link: "https://example.test/earlier", content_kind: "document", tags: [], source_title: "Earlier source" },
+      first_opened_unix: 100, last_activity_unix: 100, open_count: 1, bookmarked: false, completed: false,
+      item: makeDigestItem({ item_id: "earlier", title: "Earlier real article", link: "https://example.test/earlier", content_kind: "document", tags: [], source_title: "Earlier source" }),
     } as ConsumptionRecord]);
     const bookmark = vi.spyOn(client, "recordContentConsumption")
       .mockRejectedValueOnce(new Error("disk full")).mockResolvedValue(undefined);
