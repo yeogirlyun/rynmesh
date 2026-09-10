@@ -31,6 +31,7 @@ export interface LLMConversation {
   createdAt: string;
   updatedAt: string;
   messages: LLMChatMessage[];
+  revision?: number;
 }
 
 interface EncryptedConversationRecord {
@@ -266,4 +267,18 @@ export async function conversationStorageMode(): Promise<"encrypted" | "session-
   } catch {
     return "session-only";
   }
+}
+
+/** Read old encrypted history for explicit migration. Never erase originals here. */
+export async function readLegacyConversations(): Promise<{ conversations: LLMConversation[]; unreadable: number }> {
+  const database = await openDatabase();
+  const transaction = database.transaction(CONVERSATION_STORE, "readonly");
+  const done = transactionDone(transaction);
+  const records = await requestResult(transaction.objectStore(CONVERSATION_STORE).getAll()) as EncryptedConversationRecord[];
+  await done;
+  const decoded = await Promise.allSettled(records.map(decryptConversation));
+  const conversations = new Map<string, LLMConversation>();
+  for (const result of decoded) if (result.status === "fulfilled") conversations.set(result.value.id, result.value);
+  for (const [id, value] of memoryFallback) if (!conversations.has(id)) conversations.set(id, cloneConversation(value));
+  return { conversations: [...conversations.values()], unreadable: decoded.filter((result) => result.status === "rejected").length };
 }

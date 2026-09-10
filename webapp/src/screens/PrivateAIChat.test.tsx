@@ -1,18 +1,21 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { clearConversations } from "../domain/llmConversationStore";
 import PrivateAIChat from "./PrivateAIChat";
+import { askHistory } from "../domain/askHistory";
 
 beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
 });
+afterEach(() => vi.restoreAllMocks());
 
-function renderChat() {
+function renderChat(mode: "fixture" | "live" = "fixture") {
   const client = makeFixtureNodeClient();
+  client.mode = mode;
   const submit = vi.spyOn(client, "submitLLMOrder");
   const confirm = vi.fn();
   const context: AppOutletContext = {
@@ -38,6 +41,39 @@ function renderChat() {
 }
 
 describe("Private AI chat", () => {
+  it("keeps input and does not submit when node history cannot be saved", async () => {
+    vi.spyOn(askHistory, "list").mockResolvedValue([]);
+    const save = vi.spyOn(askHistory, "save").mockImplementationOnce(async (row) => ({ ...row, revision: 1 }))
+      .mockRejectedValue(new Error("Node history unavailable"));
+    const { submit, user } = renderChat("live");
+    await screen.findByRole("heading", { name: "Private AI" });
+    await user.type(screen.getByLabelText("Message Private AI"), "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Node history unavailable");
+    expect(screen.getByLabelText("Message Private AI")).toHaveValue("Keep this draft");
+    expect(submit).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists task identity before submitting and checks it after a lost response", async () => {
+    vi.spyOn(askHistory, "list").mockResolvedValue([]);
+    const save = vi.spyOn(askHistory, "save").mockImplementation(async (row) => ({ ...row, revision: (row.revision ?? 0) + 1 }));
+    const { submit, client, user } = renderChat("live");
+    submit.mockRejectedValue(new Error("Response lost"));
+    const check = vi.spyOn(client, "getLLMOrder").mockRejectedValue(new Error("Unreachable"));
+    await screen.findByRole("heading", { name: "Private AI" });
+    await user.type(screen.getByLabelText("Message Private AI"), "Original request");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    const retry = await screen.findByRole("button", { name: "Check original task" });
+    const task = submit.mock.calls[0][0].task_id;
+    expect(task).toMatch(/^task_/);
+    expect(save.mock.calls[1][0].messages[0].taskId).toBe(task);
+    expect(submit.mock.calls[0][0].idempotency_key).toBe(task);
+    await user.click(retry);
+    expect(check).toHaveBeenCalledWith(task);
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();
     expect(await screen.findByRole("heading", { name: "Private AI" })).toBeInTheDocument();

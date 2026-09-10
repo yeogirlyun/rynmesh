@@ -269,9 +269,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "页面提问，从侧栏打开，再重启",
       "expected": "同一会话 ID、相同历史与任务状态，完成的回答可继续",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -279,9 +281,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "迁移旧会话，重复执行并模拟失败",
       "expected": "不重复、不丢服务键；失败保留原数据，重试可完成",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -309,9 +313,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "从服务 A 切换 B",
       "expected": "显示 B 接收方；A 历史保持绑定；未经确认 B 收不到旧内容",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -329,9 +335,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -349,9 +357,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "删除/导出会话并检查日志",
       "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
