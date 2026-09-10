@@ -2718,6 +2718,10 @@ button.digest-title:hover {
   backdrop-filter: blur(12px);
 }
 
+.first-success-dialog[hidden] { display: none; }
+.content-document-stage[aria-live] { text-align: left; white-space: pre-wrap; }
+.content-document-stage[aria-live] p { max-width: 72ch; }
+
 .first-success-dialog {
   width: min(900px, 100%);
   max-height: min(820px, calc(100vh - 56px));

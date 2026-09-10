@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { digestApi, type DigestItem, type ReaderArticle } from "../domain/digestClient";
 import { Button, Chip, EvidenceDetails } from "./ui";
 
-export type ViewerAction = "up" | "down" | "opened" | "more_like_this";
+export type ViewerAction = "up" | "down" | "hide" | "opened" | "more_like_this";
 
 function youtubeId(url: string): string {
   try {
@@ -55,11 +55,11 @@ export default function DigestViewer({
   index: number;
   onIndexChange: (next: number) => void;
   onClose: () => void;
-  onFeedback: (item: DigestItem, action: ViewerAction) => void;
+  onFeedback: (item: DigestItem, action: ViewerAction) => Promise<void> | void;
   onSteer: (text: string) => Promise<void>;
   bookmarked: boolean;
   onBookmark: (item: DigestItem, bookmarked: boolean) => Promise<void>;
-  onProgress: (item: DigestItem, progress: number) => void;
+  onProgress: (item: DigestItem, progress: number) => Promise<void> | void;
   initialProgress: number;
 }) {
   const item = items[index];
@@ -69,9 +69,18 @@ export default function DigestViewer({
   const [steerText, setSteerText] = useState("");
   const [steerSaved, setSteerSaved] = useState(false);
   const [saved, setSaved] = useState(bookmarked);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [readerAttempt, setReaderAttempt] = useState(0);
+  const feedbackCallback = useRef(onFeedback);
+  feedbackCallback.current = onFeedback;
+  const currentItem = useRef(item?.item_id);
+  currentItem.current = item?.item_id;
   const bodyRef = useRef<HTMLDivElement>(null);
   const lastProgress = useRef(0);
   const restoredProgress = useRef(false);
+  const progressWrites = useRef<Promise<void>>(Promise.resolve());
+  const closeCallback = useRef<() => Promise<void>>(async () => undefined);
 
   const kind = item?.content_kind ?? "document";
   const isArticle = kind !== "video" && kind !== "audio" && kind !== "image";
@@ -84,6 +93,8 @@ export default function DigestViewer({
     setArticle(null);
     setReaderState("idle");
     setSaved(bookmarked);
+    setActionError("");
+    setPending(false);
     lastProgress.current = initialProgress;
     restoredProgress.current = false;
     bodyRef.current?.scrollTo({ top: 0 });
@@ -96,22 +107,20 @@ export default function DigestViewer({
     setSaved(bookmarked);
   }, [bookmarked, item?.item_id]);
 
-  // Opening an item is itself a signal, exactly as it is in a feed reader.
-  useEffect(() => {
-    if (item) onFeedback(item, "opened");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item?.item_id]);
-
   useEffect(() => {
     if (!item || !isArticle) return;
     let cancelled = false;
     setReaderState("loading");
     digestApi
       .readArticle(item.link)
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) return;
         setArticle(result);
         setReaderState(result.blocks.length ? "idle" : "failed");
+        if (result.blocks.length) {
+          try { await feedbackCallback.current(item, "opened"); }
+          catch { if (!cancelled) setActionError("The article is open, but its reading record could not be saved. Retry reading to save it."); }
+        }
       })
       .catch(() => {
         if (!cancelled) setReaderState("failed");
@@ -119,7 +128,7 @@ export default function DigestViewer({
     return () => {
       cancelled = true;
     };
-  }, [item?.item_id, item?.link, isArticle]);
+  }, [item?.item_id, item?.link, isArticle, readerAttempt]);
 
   useEffect(() => {
     if (!isArticle || !article || restoredProgress.current || initialProgress <= 0) return;
@@ -141,21 +150,27 @@ export default function DigestViewer({
   );
 
   const rate = useCallback(
-    (action: ViewerAction) => {
-      if (!item) return;
-      setRated(action);
-      onFeedback(item, action);
-      // Rating is a "done with this one" gesture; advance like a feed does.
-      window.setTimeout(() => go(1), 320);
+    async (action: ViewerAction) => {
+      if (!item || pending) return;
+      setPending(true);
+      setActionError("");
+      try {
+        await onFeedback(item, action);
+        if (currentItem.current === item.item_id) setRated(action);
+      } catch {
+        if (currentItem.current === item.item_id) setActionError("Feedback could not be confirmed. Please retry.");
+      } finally {
+        if (currentItem.current === item.item_id) setPending(false);
+      }
     },
-    [item, onFeedback, go],
+    [item, onFeedback, pending],
   );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") void closeCallback.current();
       else if (event.key === "ArrowRight" || event.key === "j") go(1);
       else if (event.key === "ArrowLeft" || event.key === "k") go(-1);
       else if (event.key === "l") rate("up");
@@ -170,25 +185,49 @@ export default function DigestViewer({
   const submitSteer = async () => {
     const text = steerText.trim();
     if (!text) return;
-    await onSteer(text);
-    setSteerText("");
-    setSteerSaved(true);
-    window.setTimeout(() => setSteerSaved(false), 2600);
+    setActionError("");
+    try {
+      await onSteer(text);
+      setSteerText("");
+      setSteerSaved(true);
+      window.setTimeout(() => setSteerSaved(false), 2600);
+    } catch { setActionError("Your preference could not be saved. Please retry."); }
   };
 
-  const reportProgress = (progress: number) => {
+  const reportProgress = (progress: number, force = false) => {
     const normalized = Math.max(0, Math.min(1, progress));
-    if (normalized < 0.95 && normalized - lastProgress.current < 0.05) return;
+    if (!force && Math.abs(normalized - lastProgress.current) < 0.05) return progressWrites.current;
     lastProgress.current = normalized;
-    onProgress(item, normalized);
+    const write = progressWrites.current.catch(() => undefined).then(() => onProgress(item, normalized));
+    progressWrites.current = write;
+    return write.catch(() => {
+      if (currentItem.current === item.item_id) {
+        lastProgress.current = -1;
+        setActionError("Your reading position could not be saved. Retry closing to save it.");
+      }
+      throw new Error("reading_progress_failed");
+    });
   };
+
+  const closeViewer = async () => {
+    try {
+      const element = bodyRef.current;
+      if (isArticle && article && element) {
+        const height = element.scrollHeight - element.clientHeight;
+        if (height > 0) await reportProgress(element.scrollTop / height, true);
+      }
+      await progressWrites.current;
+      onClose();
+    } catch { /* Keep the reader open with its recoverable save error. */ }
+  };
+  closeCallback.current = closeViewer;
 
   return (
     <div
       className="viewer-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) void closeViewer();
       }}
     >
       <section className="viewer" role="dialog" aria-modal="true" aria-label={item.title}>
@@ -202,7 +241,7 @@ export default function DigestViewer({
             <span className="viewer-count">
               {index + 1} of {items.length}
             </span>
-            <button type="button" className="viewer-close" onClick={onClose} aria-label="Close">
+            <button type="button" className="viewer-close" onClick={() => void closeViewer()} aria-label="Close">
               <X size={18} />
             </button>
           </div>
@@ -214,7 +253,7 @@ export default function DigestViewer({
           onScroll={(event) => {
             const element = event.currentTarget;
             const available = element.scrollHeight - element.clientHeight;
-            if (available > 0) reportProgress(element.scrollTop / available);
+            if (available > 0 && article && readerState === "idle") void reportProgress(element.scrollTop / available).catch(() => undefined);
           }}
         >
           <h1 className="viewer-title">{item.title}</h1>
@@ -242,7 +281,7 @@ export default function DigestViewer({
                   onTimeUpdate={(event) => {
                     const media = event.currentTarget;
                     if (Number.isFinite(media.duration) && media.duration > 0) {
-                      reportProgress(media.currentTime / media.duration);
+                      void reportProgress(media.currentTime / media.duration).catch(() => undefined);
                     }
                   }}
                   onLoadedMetadata={(event) => {
@@ -279,7 +318,7 @@ export default function DigestViewer({
             </div>
           ) : null}
 
-          <EvidenceDetails packet={item.evidence_packet} />
+          {item.evidence_packet ? <EvidenceDetails packet={item.evidence_packet} /> : null}
 
           {isArticle ? (
             <div className="viewer-article">
@@ -306,7 +345,7 @@ export default function DigestViewer({
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
                     Open the original
                   </a>
-                  .
+                  . <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button>
                 </p>
               ) : null}
             </div>
@@ -314,10 +353,12 @@ export default function DigestViewer({
         </div>
 
         <footer className="viewer-foot">
+          {actionError ? <p role="alert">{actionError} <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button></p> : null}
           <div className="viewer-rate">
             <Button
               icon={ThumbsUp}
               variant={rated === "up" ? "primary" : "standard"}
+              disabled={pending}
               onClick={() => rate("up")}
             >
               More like this
@@ -325,17 +366,28 @@ export default function DigestViewer({
             <Button
               icon={ThumbsDown}
               variant={rated === "down" ? "danger" : "standard"}
+              disabled={pending}
               onClick={() => rate("down")}
             >
               Less
             </Button>
+            <Button disabled={pending} onClick={() => void rate("hide")}>Hide</Button>
             <Button
               icon={Bookmark}
               variant={saved ? "primary" : "standard"}
-              onClick={() => {
+              disabled={pending}
+              onClick={async () => {
                 const next = !saved;
-                setSaved(next);
-                void onBookmark(item, next);
+                setPending(true);
+                setActionError("");
+                try {
+                  await onBookmark(item, next);
+                  if (currentItem.current === item.item_id) setSaved(next);
+                } catch {
+                  if (currentItem.current === item.item_id) setActionError("The bookmark could not be confirmed. Please retry.");
+                } finally {
+                  if (currentItem.current === item.item_id) setPending(false);
+                }
               }}
             >
               {saved ? "Saved" : "Save"}

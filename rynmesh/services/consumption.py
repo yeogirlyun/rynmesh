@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import math
+import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import quote
 
-from ..atomic_io import atomic_write_json
+from ..atomic_io import atomic_write_json, read_json
 
 __all__ = ["MAX_HISTORY_BYTES", "ConsumptionError", "ConsumptionStore"]
 
@@ -65,6 +67,7 @@ class ConsumptionStore:
     def __init__(self, path: str | Path, *, max_items: int = 1000) -> None:
         self.path = Path(path)
         self.max_items = max(1, int(max_items))
+        self._lock = threading.RLock()
 
     def list(self) -> list[dict[str, Any]]:
         records = list(self._load().values())
@@ -82,12 +85,19 @@ class ConsumptionStore:
         progress: float | None = None,
         now_unix: float | None = None,
     ) -> dict[str, Any]:
+        with self._lock:
+            return self._record(item, action, progress=progress, now_unix=now_unix)
+
+    def _record(self, item: Mapping[str, Any], action: str, *, progress: float | None,
+                now_unix: float | None) -> dict[str, Any]:
         action = str(action or "").strip().lower()
         if action not in _ACTIONS:
             raise ConsumptionError("consumption_action_invalid")
         clean_item = self._clean_item(item)
         item_id = clean_item["item_id"]
         stamp = time.time() if now_unix is None else float(now_unix)
+        if not math.isfinite(stamp) or stamp < 0:
+            raise ConsumptionError("consumption_timestamp_invalid")
         records = self._load()
         record = dict(
             records.get(
@@ -115,9 +125,7 @@ class ConsumptionStore:
         elif action == "unbookmark":
             record["bookmarked"] = False
         elif action == "progress":
-            record["progress"] = max(
-                float(record.get("progress", 0.0) or 0.0), self._clean_progress(progress)
-            )
+            record["progress"] = self._clean_progress(progress)
             if record["progress"] >= 0.95:
                 record["completed"] = True
         elif action == "completed":
@@ -133,15 +141,13 @@ class ConsumptionStore:
         return record
 
     def clear(self) -> None:
-        self._write({})
+        with self._lock:
+            self._write({})
 
     def _load(self) -> dict[str, dict[str, Any]]:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
+        payload = read_json(self.path, max_bytes=MAX_HISTORY_BYTES) if self.path.exists() else {}
         if not isinstance(payload, dict):
-            return {}
+            raise ConsumptionError("consumption_history_invalid")
         return {
             str(key): dict(value)
             for key, value in payload.items()
@@ -157,6 +163,8 @@ class ConsumptionStore:
     @staticmethod
     def _clean_progress(value: float | None) -> float:
         try:
+            if not math.isfinite(float(value)):
+                raise ValueError
             return round(min(1.0, max(0.0, float(value))), 4)
         except (TypeError, ValueError):
             raise ConsumptionError("consumption_progress_invalid") from None
@@ -180,6 +188,7 @@ class ConsumptionStore:
                     clean[key] = 0.0
             else:
                 clean[key] = str(value or "")[:4000]
-        if not clean.get("link", "").startswith(("http://", "https://")):
+        link = clean.get("link", "")
+        if not link.startswith(("http://", "https://")) and link != f"rynmesh://content/{quote(item_id, safe='')}":
             raise ConsumptionError("consumption_item_link_invalid")
         return clean

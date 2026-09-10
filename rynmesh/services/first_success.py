@@ -7,16 +7,18 @@ stores and are never duplicated here.
 
 from __future__ import annotations
 
-import json
-import os
+import math
 import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from rynmesh.atomic_io import atomic_write_json, migration_backup, read_json
+
 __all__ = ["FIRST_SUCCESS_VERSION", "FirstSuccessStore"]
 
 FIRST_SUCCESS_VERSION = "ryn.first-success.v1"
+MAX_RECORD_BYTES = 64 * 1024
 _MILESTONES = (
     "node_ready",
     "content_ready",
@@ -24,6 +26,14 @@ _MILESTONES = (
     "first_signal_recorded",
     "completed",
 )
+
+
+def _stamp(value: Any) -> float:
+    try:
+        result = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return result if math.isfinite(result) and result > 0 else 0.0
 
 
 def _empty() -> dict[str, Any]:
@@ -51,7 +61,7 @@ class FirstSuccessStore:
         name = str(milestone or "").strip()
         if name not in _MILESTONES:
             raise ValueError("first_success_milestone_invalid")
-        stamp = time.time() if now_unix is None else max(0.0, float(now_unix))
+        stamp = _stamp(time.time() if now_unix is None else now_unix)
         with self._lock:
             data = self._load()
             if not float(data["milestones"].get(name, 0.0) or 0.0):
@@ -69,7 +79,7 @@ class FirstSuccessStore:
         now_unix: float | None = None,
     ) -> dict[str, Any]:
         """Persist newly observed milestones without ever moving progress backwards."""
-        stamp = time.time() if now_unix is None else max(0.0, float(now_unix))
+        stamp = _stamp(time.time() if now_unix is None else now_unix)
         observed = {
             "node_ready": bool(node_ready),
             "content_ready": bool(content_ready),
@@ -95,7 +105,7 @@ class FirstSuccessStore:
             return data
 
     def dismiss(self, *, now_unix: float | None = None) -> dict[str, Any]:
-        stamp = time.time() if now_unix is None else max(0.0, float(now_unix))
+        stamp = _stamp(time.time() if now_unix is None else now_unix)
         with self._lock:
             data = self._load()
             data["dismissed"] = True
@@ -105,49 +115,40 @@ class FirstSuccessStore:
             return data
 
     def reset(self, *, now_unix: float | None = None) -> dict[str, Any]:
-        stamp = time.time() if now_unix is None else max(0.0, float(now_unix))
+        stamp = _stamp(time.time() if now_unix is None else now_unix)
         with self._lock:
-            data = _empty()
+            data = self._load()
+            data.update(_empty())
             data["replay_started_at_unix"] = stamp
             self._write(data)
             return data
 
     def _load(self) -> dict[str, Any]:
-        data = _empty()
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        if not self.path.exists():
+            return _empty()
+        if self.path.stat().st_size > MAX_RECORD_BYTES:
+            raise ValueError("first_success_record_too_large")
+        # A malformed snapshot is recoverable, but preserve it before rebuilding.
+        raw = read_json(self.path, default=None, max_bytes=MAX_RECORD_BYTES)
+        if not isinstance(raw, dict):
+            migration_backup(self.path, suffix=".corrupt")
+            data = _empty()
+            self._write(data)
             return data
-        if not isinstance(raw, Mapping) or raw.get("version") != FIRST_SUCCESS_VERSION:
-            return data
+        if raw.get("version") != FIRST_SUCCESS_VERSION:
+            # A downgrade must never destroy a newer record, including on reset.
+            raise ValueError("first_success_version_unsupported")
+        data = {**_empty(), **raw}
         data["dismissed"] = bool(raw.get("dismissed", False))
-        try:
-            data["dismissed_at_unix"] = max(
-                0.0, float(raw.get("dismissed_at_unix", 0.0) or 0.0)
-            )
-        except (TypeError, ValueError):
-            data["dismissed_at_unix"] = 0.0
-        try:
-            data["replay_started_at_unix"] = max(
-                0.0, float(raw.get("replay_started_at_unix", 0.0) or 0.0)
-            )
-        except (TypeError, ValueError):
-            data["replay_started_at_unix"] = 0.0
+        data["dismissed_at_unix"] = _stamp(raw.get("dismissed_at_unix"))
+        data["replay_started_at_unix"] = _stamp(raw.get("replay_started_at_unix"))
         raw_milestones = raw.get("milestones", {})
-        if isinstance(raw_milestones, Mapping):
-            for name in _MILESTONES:
-                try:
-                    data["milestones"][name] = max(
-                        0.0, float(raw_milestones.get(name, 0.0) or 0.0)
-                    )
-                except (TypeError, ValueError):
-                    data["milestones"][name] = 0.0
+        data["milestones"] = dict(raw_milestones) if isinstance(raw_milestones, dict) else {}
+        for name in _MILESTONES:
+            data["milestones"][name] = _stamp(data["milestones"].get(name))
         return data
 
     def _write(self, data: Mapping[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(dict(data), indent=2, sort_keys=True), encoding="utf-8"
+        atomic_write_json(
+            self.path, dict(data), indent=2, max_bytes=MAX_RECORD_BYTES,
         )
-        os.replace(temporary, self.path)

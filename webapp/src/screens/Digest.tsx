@@ -1,3 +1,7 @@
+import SourceHealthPanel from "../components/SourceHealthPanel";
+import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
+import ContentViewer from "../components/ContentViewer";
+import { contentFromHistory } from "../domain/readingHistory";
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
@@ -13,7 +17,7 @@ import {
   type DigestSource,
   type Watcher,
 } from "../domain/digestClient";
-import type { RecommendationProfile } from "../domain/types";
+import type { ContentItem, RecommendationProfile } from "../domain/types";
 
 function timeAgo(unix: number): string {
   if (!unix) return "";
@@ -38,10 +42,18 @@ function DigestCard({
   onOpen,
 }: {
   item: DigestItem;
-  onFeedback: (item: DigestItem, action: ViewerAction) => void;
+  onFeedback: (item: DigestItem, action: ViewerAction) => Promise<void>;
   onOpen: (item: DigestItem) => void;
 }) {
-  const [voted, setVoted] = useState<"up" | "down" | null>(null);
+  const [pending, setPending] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
+  const feedback = async (action: ViewerAction) => {
+    setPending(true);
+    setFeedbackError("");
+    try { await onFeedback(item, action); }
+    catch { setFeedbackError("Feedback could not be confirmed. Please retry."); }
+    finally { setPending(false); }
+  };
   return (
     <Panel className="digest-card">
       <div className="digest-card-main">
@@ -82,21 +94,16 @@ function DigestCard({
               <IconButton
                 icon={ThumbsUp}
                 label="More like this"
-                onClick={() => {
-                  setVoted("up");
-                  onFeedback(item, "up");
-                }}
-                disabled={voted !== null}
+                onClick={() => void feedback("up")}
+                disabled={pending}
               />
               <IconButton
                 icon={ThumbsDown}
                 label="Less like this"
-                onClick={() => {
-                  setVoted("down");
-                  onFeedback(item, "down");
-                }}
-                disabled={voted !== null}
+                onClick={() => void feedback("down")}
+                disabled={pending}
               />
+              <Button disabled={pending} onClick={() => void feedback("hide")}>Hide</Button>
               <IconButton
                 icon={ExternalLink}
                 label="Open"
@@ -106,6 +113,7 @@ function DigestCard({
               />
             </div>
           </div>
+          {feedbackError ? <p role="alert">{feedbackError}</p> : null}
           <EvidenceDetails packet={item.evidence_packet} />
         </div>
       </div>
@@ -127,9 +135,10 @@ export default function Digest() {
   const [saveUrl, setSaveUrl] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [feedbackRevision, setFeedbackRevision] = useState(0);
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [viewer, setViewer] = useState<{ items: DigestItem[]; index: number } | null>(null);
+  const [meshViewer, setMeshViewer] = useState<ContentItem | null>(null);
   const [consumption, setConsumption] = useState<ConsumptionRecord[]>([]);
   const [profile, setProfile] = useState<RecommendationProfile | null>(null);
   const [direction, setDirection] = useState("");
@@ -174,7 +183,6 @@ export default function Digest() {
       const result = await digestApi.refreshDigest();
       setDigest(result.digest);
       setDiscovery(result.status);
-      setHidden(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Refresh failed.");
     } finally {
@@ -209,23 +217,24 @@ export default function Digest() {
     }
   };
 
-  const onFeedback = (item: DigestItem, action: ViewerAction) => {
+  const refreshFeedback = async () => {
+    const [nextProfile, nextDigest] = await Promise.all([
+      client.getRecommendationProfile(), digestApi.getDigest(),
+    ]);
+    setProfile(nextProfile);
+    setDigest(nextDigest);
+  };
+
+  const onFeedback = async (item: DigestItem, action: ViewerAction) => {
     if (action === "opened") {
-      void digestApi.recordConsumption(item, "opened").then(async () => {
-        setConsumption(await digestApi.listConsumption());
-      }).catch(() => undefined);
+      await digestApi.recordConsumption(item, "opened");
+      await digestApi.sendFeedback(item.item_id, "opened");
+      setConsumption(await digestApi.listConsumption());
+      return;
     }
-    void digestApi.sendFeedback(item.item_id, action).then(async () => {
-      const [nextProfile, nextDigest] = await Promise.all([
-        client.getRecommendationProfile(),
-        digestApi.getDigest(),
-      ]);
-      setProfile(nextProfile);
-      setDigest(nextDigest);
-    }).catch(() => undefined);
-    if (action === "down") {
-      setHidden((current) => new Set(current).add(item.item_id));
-    }
+    await digestApi.sendFeedback(item.item_id, action);
+    setFeedbackRevision((value) => value + 1);
+    await refreshFeedback();
   };
 
   const updateConsumption = async (
@@ -301,7 +310,7 @@ export default function Digest() {
 
   if (loading) return <LoadingPanel />;
 
-  const items = (digest?.items ?? []).filter((item) => !hidden.has(item.item_id));
+  const items = digest?.items ?? [];
   const generated = digest?.generated_at_unix ? timeAgo(digest.generated_at_unix) : null;
 
   return (
@@ -437,6 +446,11 @@ export default function Digest() {
       ) : null}
 
       <Panel title="Sources Ryn watches">
+        <FeedbackSignalsPanel revision={feedbackRevision} onRefresh={refreshFeedback} />
+        <SourceHealthPanel status={discovery} onRefresh={async () => {
+          const [nextDigest, nextStatus] = await Promise.all([digestApi.getDigest(), digestApi.getDiscoveryStatus()]);
+          setDigest(nextDigest); setDiscovery(nextStatus);
+        }} />
         <p className="digest-hint digest-default-note">
           Ryn starts with a broad public catalog automatically. Add a source only when you want more from a particular channel, community, or publication.
         </p>
@@ -540,7 +554,9 @@ export default function Digest() {
                 key={record.item_id}
                 type="button"
                 className="digest-title"
-                onClick={() => setViewer({ items: [record.item], index: 0 })}
+                onClick={() => record.item.link.startsWith("rynmesh://content/")
+                  ? setMeshViewer(contentFromHistory(record))
+                  : setViewer({ items: [record.item], index: 0 })}
               >
                 {record.item.title}
                 {record.bookmarked ? " · saved" : ""}
@@ -560,15 +576,17 @@ export default function Digest() {
           bookmarked={Boolean(consumption.find((record) => record.item_id === viewer.items[viewer.index].item_id)?.bookmarked)}
           initialProgress={consumption.find((record) => record.item_id === viewer.items[viewer.index].item_id)?.progress ?? 0}
           onBookmark={(item, bookmarked) => updateConsumption(item, bookmarked ? "bookmark" : "unbookmark")}
-          onProgress={(item, progress) => {
-            void updateConsumption(item, progress >= 0.95 ? "completed" : "progress", progress);
-          }}
+          onProgress={(item, progress) => updateConsumption(item, "progress", progress)}
           onSteer={async (text) => {
             await digestApi.steer(text);
             setNotice("Got it — Ryn will use that from the next refresh.");
           }}
         />
       ) : null}
+      {meshViewer ? <ContentViewer item={meshViewer} client={client} onRead={async () => {
+        await client.recordContentConsumption(meshViewer, "opened");
+        setConsumption(await digestApi.listConsumption());
+      }} onClose={() => setMeshViewer(null)} /> : null}
     </div>
   );
 }
