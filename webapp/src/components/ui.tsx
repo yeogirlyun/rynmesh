@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -710,10 +711,25 @@ export function ConfirmDialog({
   request: import("../domain/types").ConfirmRequest | null;
   onCancel: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const active = useRef(request);
+  active.current = request;
+  const running = useRef(false);
+  useEffect(() => { running.current = false; setBusy(false); setError(""); }, [request]);
   if (!request) return null;
   const run = async () => {
-    await request.onConfirm();
-    onCancel();
+    if (running.current) return;
+    const current = request;
+    running.current = true; setBusy(true); setError("");
+    try {
+      await current.onConfirm();
+      if (active.current === current) onCancel();
+    } catch (cause) {
+      if (active.current === current) setError(cause instanceof Error ? cause.message : "This operation could not be confirmed. Retry.");
+    } finally {
+      if (active.current === current) { running.current = false; setBusy(false); }
+    }
   };
   return (
     <div className="modal-backdrop" role="presentation">
@@ -725,13 +741,14 @@ export function ConfirmDialog({
         </div>
         <h2 id="confirm-title">{request.title}</h2>
         <p>{request.body}</p>
+        {error ? <p role="alert">{error}</p> : null}
         {request.details?.length ? <KV rows={request.details} /> : null}
         <div className="dialog-actions">
-          <Button variant="ghost" onClick={onCancel}>
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant={request.risk === "high" ? "danger" : "primary"} onClick={run}>
-            {request.confirmLabel ?? "Confirm"}
+          <Button variant={request.risk === "high" ? "danger" : "primary"} disabled={busy} onClick={run}>
+            {busy ? "Working…" : request.confirmLabel ?? "Confirm"}
           </Button>
         </div>
       </div>

@@ -48,7 +48,7 @@ export interface FriendContentCard {
   to?: string;
   dir?: "in" | "out";
   created_at: string;
-  fetch_state?: "available" | "metadata_only" | "fetched";
+  fetch_state?: "available" | "metadata_only" | "fetched" | "unavailable";
   fetched_library_id?: string;
   sha256_verified?: boolean;
   delivered?: boolean;

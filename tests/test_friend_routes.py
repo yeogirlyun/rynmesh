@@ -84,6 +84,13 @@ def test_owner_pairing_message_receipt_and_signed_refusal(tmp_path, monkeypatch)
     document_url = f"/api/local/friends/documents/{imported_id}/body"
     assert alice.get(document_url, headers=auth).json()["text"] == "Private article body, sent only on request."
     assert len(alice_app.state.consumption_store.list()) == 1
+    cleared = alice.delete(f"/api/local/friends/documents/{imported_id}", headers=auth)
+    assert cleared.status_code == 200 and cleared.json()["removed"] == 1
+    assert alice.get("/api/local/friends/cards", headers=auth).json()["cards"][0]["fetch_state"] == "unavailable"
+    repaired = alice.post(f"/api/local/friends/cards/{'b' * 32}/fetch", json={"repair": True}, headers=auth)
+    assert repaired.status_code == 200, repaired.text
+    assert repaired.json()["library_id"].removeprefix("import:") == imported_id
+    assert len(alice_app.state.consumption_store.list()) == 1
     assert bob.post("/api/local/friends/share", json=share_body, headers=auth).json()["card_id"] == "b" * 32
     assert len(alice.get("/api/local/friends/cards", headers=auth).json()["cards"]) == 1
     assert bob.post("/api/local/friends/share", json={**share_body, "item_id": "another-article"}, headers=auth).status_code == 409

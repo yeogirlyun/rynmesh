@@ -7,6 +7,7 @@ import type { NodeClient } from "../domain/nodeClient";
 import { requestDesktopNotificationPermission, sendTestNotification } from "../domain/notifications";
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
+import PrivateCopiesPanel from "./components/PrivateCopiesPanel";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
@@ -174,6 +175,7 @@ function PrivacySection({
         </Button>
       </div>
       <div className="privacy-audit">
+        {client.mode === "live" ? <PrivateCopiesPanel /> : null}
         <div className="privacy-audit-head"><Activity size={16} /><b>Recent assistant activity</b></div>
         {events.slice(0, 8).map((event) => (
           <div className="privacy-audit-row" key={event.id ?? `${event.t}-${event.text}`}>

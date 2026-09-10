@@ -17,6 +17,9 @@ const explanations: Record<string, string> = {
   friend_card_content_too_large: "This document exceeds the 5 MiB sharing limit.",
   friend_card_content_unavailable: "This document is not available locally. Open it and retry sharing.",
   friend_card_id_conflict: "This share attempt belongs to different content. Reopen the share dialog.",
+  friend_copy_unavailable: "This saved copy is missing or damaged. Choose Download again to restore it from your friend.",
+  library_import_cancelled_by_cleanup: "Local copies were cleared while this download was running. Nothing was restored. Start a new download if you want this copy back.",
+  library_import_version_unsupported: "This saved data needs a newer version of Ryn. It has been kept unchanged.",
 };
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -46,9 +49,12 @@ export const friendsApi = {
   retry: (peer: string) => request(`/${encodeURIComponent(peer)}/retry-messages`, "POST"),
   cards: () => request<{ cards: FriendContentCard[] }>("/cards"),
   share: (body: { peer_id: string; item_id: string; card_id: string }) => request<FriendContentCard>("/share", "POST", body),
-  fetchCard: (id: string) => request<{ library_id: string; sha256_verified: boolean }>(`/cards/${encodeURIComponent(id)}/fetch`, "POST"),
+  fetchCard: (id: string, repair = false) => request<{ library_id: string; sha256_verified: boolean }>(`/cards/${encodeURIComponent(id)}/fetch`, "POST", { repair }),
   retryCard: (id: string) => request<FriendContentCard>(`/cards/${encodeURIComponent(id)}/retry`, "POST"),
   document: (id: string) => request<{ text: string; truncated: boolean; filename: string; mime: string }>(`/documents/${encodeURIComponent(id)}/body`),
+  documents: () => request<{ documents: { import_id: string; filename: string; state: string; size_bytes?: number; created_at_unix: number }[] }>("/documents"),
+  removeDocument: (id: string) => request<{ removed: number }>(`/documents/${encodeURIComponent(id)}`, "DELETE"),
+  clearDocuments: () => request<{ removed: number }>("/documents/clear", "POST"),
   attachmentUrl: (peer: string, message: string) => nodeControlUrl(`/friends/${encodeURIComponent(peer)}/attachments/${encodeURIComponent(message)}`),
 };
 
