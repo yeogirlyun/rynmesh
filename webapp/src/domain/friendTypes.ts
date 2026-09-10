@@ -51,6 +51,8 @@ export interface FriendContentCard {
   fetch_state?: "available" | "metadata_only" | "fetched";
   fetched_library_id?: string;
   sha256_verified?: boolean;
+  delivered?: boolean;
+  delivery_state?: FriendMessage["delivery_state"];
   card: {
     version?: "ryn.shared-content-card.v1";
     library_id: string;

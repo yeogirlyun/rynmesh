@@ -5,6 +5,7 @@ import { Button, PageHeader, Panel } from "../components/ui";
 import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
 import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
+import FriendCards from "./components/FriendCards";
 import styles from "./Friends.module.css";
 
 export default function Friends() {
@@ -105,5 +106,6 @@ export default function Friends() {
       {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: removed locally; waiting to notify their device.</p><Button disabled={busy} onClick={() => void act(async () => { await friendsApi.retryRevocation(friend.relationship_id); await load(); })}>Retry removal notice</Button></div>)}
     </Panel>
     {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} /> : null}
+    <FriendCards friends={friends} />
   </div>;
 }

@@ -1,5 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
-import type { FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
+import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
   invite_expired: "This invite expired. Ask your friend for a new invite.",
@@ -13,6 +13,10 @@ const explanations: Record<string, string> = {
   attachment_too_large: "This attachment exceeds the 5 MiB limit. Choose a smaller file.",
   message_id_conflict: "This send attempt already contains different content. Refresh the conversation before sending again.",
   friend_queue_full: "The outgoing queue is full. Wait for pending messages before sending more.",
+  friend_card_read_first: "Open this article again to prepare a local copy, then retry sharing.",
+  friend_card_content_too_large: "This document exceeds the 5 MiB sharing limit.",
+  friend_card_content_unavailable: "This document is not available locally. Open it and retry sharing.",
+  friend_card_id_conflict: "This share attempt belongs to different content. Reopen the share dialog.",
 };
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -40,6 +44,11 @@ export const friendsApi = {
   send: (peer: string, body: { message_id: string; text: string; attachment?: { filename: string; mime: string; data_base64: string } }) =>
     request<FriendMessage>(`/${encodeURIComponent(peer)}/messages`, "POST", body),
   retry: (peer: string) => request(`/${encodeURIComponent(peer)}/retry-messages`, "POST"),
+  cards: () => request<{ cards: FriendContentCard[] }>("/cards"),
+  share: (body: { peer_id: string; item_id: string; card_id: string }) => request<FriendContentCard>("/share", "POST", body),
+  fetchCard: (id: string) => request<{ library_id: string; sha256_verified: boolean }>(`/cards/${encodeURIComponent(id)}/fetch`, "POST"),
+  retryCard: (id: string) => request<FriendContentCard>(`/cards/${encodeURIComponent(id)}/retry`, "POST"),
+  document: (id: string) => request<{ text: string; truncated: boolean; filename: string; mime: string }>(`/documents/${encodeURIComponent(id)}/body`),
   attachmentUrl: (peer: string, message: string) => nodeControlUrl(`/friends/${encodeURIComponent(peer)}/attachments/${encodeURIComponent(message)}`),
 };
 

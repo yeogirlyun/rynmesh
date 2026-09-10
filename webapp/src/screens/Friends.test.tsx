@@ -14,6 +14,7 @@ const preview: FriendInvitePreview = { ...friend, invite_id: "i1", expires_at: "
 beforeEach(() => {
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
   vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
+  vi.spyOn(friendsApi, "cards").mockResolvedValue({ cards: [] });
   vi.spyOn(friendsApi, "history").mockResolvedValue({ messages: [] });
 });
 afterEach(() => vi.restoreAllMocks());
