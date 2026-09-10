@@ -183,6 +183,8 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    task_id?: string;
+    idempotency_key?: string;
     network_id?: string;
     provider_peer_id: string;
     service_id: string;

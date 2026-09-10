@@ -2399,6 +2399,13 @@ def create_app(store: RynmeshStore | None = None):
         local_control=local_control, messaging_key=_msg_priv,
     )
 
+    from .ask_ryn.routes import install_ask_ryn
+
+    install_ask_ryn(
+        app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+    )
+
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}

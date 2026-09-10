@@ -20,16 +20,12 @@ import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import {
   buildConversationPrompt,
-  clearConversations,
-  conversationStorageMode,
   createConversation,
-  deleteConversation,
-  listConversations,
-  saveConversation,
   titleFromPrompt,
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
+import { askHistory, conversationRepository } from "../domain/askHistory";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
 
@@ -66,8 +62,10 @@ function historyBucket(value: string) {
 }
 
 function resultMessage(result: LLMOrderResult) {
-  if (result.state === "cancelled") return "Generation stopped.";
-  if (result.state === "timed_out") return "The model took too long to respond. Try again.";
+  if (result.state === "cancelled") return "Cancellation was recorded. The provider may still be finishing computation.";
+  if (result.state === "timed_out") return "The request timed out. Check its original task before submitting another request.";
+  if (result.error_code === "runtime_busy" || result.error_code === "capacity_exhausted") return "The provider is busy. Wait for its current request to finish or choose another service.";
+  if (result.error_code === "p2p_capacity_exhausted") return "The connection has no free session capacity. Wait for the active session to close, then retry.";
   if (result.error_code === "insufficient_balance") return "There are not enough credits to run this request.";
   if (result.error_code === "p2p_distinct_public_egress_required") return "The provider needs a different public network. Change networks and try again.";
   return result.output || (result.error_code ? `The request failed: ${result.error_code.replaceAll("_", " ")}.` : "The model did not return a response.");
@@ -75,10 +73,15 @@ function resultMessage(result: LLMOrderResult) {
 
 export default function PrivateAIChat() {
   const { client, confirm, notify } = useAppContext();
+  const history = useMemo(() => conversationRepository(client.mode), [client.mode]);
   const [searchParams] = useSearchParams();
   const [services, setServices] = useState<LLMServiceRecord[]>([]);
   const [selectedService, setSelectedService] = useState<LLMServiceRecord | null>(null);
+  const selectedServiceKeyRef = useRef("");
+  selectedServiceKeyRef.current = selectedService ? serviceKey(selectedService) : "";
   const [networkId, setNetworkId] = useState(searchParams.get("network") || "rynmesh-main");
+  const activeNetworkRef = useRef(networkId);
+  activeNetworkRef.current = networkId;
   const [conversations, setConversations] = useState<LLMConversation[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
@@ -87,7 +90,8 @@ export default function PrivateAIChat() {
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [error, setError] = useState("");
-  const [storageMode, setStorageMode] = useState<"encrypted" | "session-only">("encrypted");
+  const [storageMode, setStorageMode] = useState<"node-encrypted" | "encrypted" | "session-only">("node-encrypted");
+  const [migrationNotice, setMigrationNotice] = useState("");
   const [helpfulMessages, setHelpfulMessages] = useState<Set<string>>(new Set());
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
@@ -105,7 +109,11 @@ export default function PrivateAIChat() {
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setConversations([]);
+    setSelectedId("");
     void (async () => {
+      try {
       const settings = await client.getSettings().catch(() => null);
       const network = searchParams.get("network") || settings?.network_id?.trim() || "rynmesh-main";
       const discovered = await client.listLLMServices(network).catch(() => []);
@@ -119,10 +127,10 @@ export default function PrivateAIChat() {
         ?? discovered[0]
         ?? null;
       setSelectedService(selected);
-      setStorageMode(await conversationStorageMode());
+      setStorageMode(await history.storageMode());
       if (selected) {
         const key = serviceKey(selected);
-        let stored = await listConversations(key);
+        let stored = (await history.list(key)).filter((row) => row.networkId === network);
         if (!stored.length) {
           const fresh = createConversation({
             serviceKey: key,
@@ -130,18 +138,19 @@ export default function PrivateAIChat() {
             providerPeerId: selected.peer_id,
             networkId: network,
           });
-          await saveConversation(fresh);
-          stored = [fresh];
+          stored = [await history.save(fresh)];
         }
         if (active) {
           setConversations(stored);
           setSelectedId(stored[0].id);
         }
       }
-      if (active) setLoading(false);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : "Could not load conversation history.");
+      } finally { if (active) setLoading(false); }
     })();
     return () => { active = false; };
-  }, [client, searchParams]);
+  }, [client, history, searchParams]);
 
   useEffect(() => {
     const element = messageScrollRef.current;
@@ -159,12 +168,14 @@ export default function PrivateAIChat() {
   }, [conversations, query]);
 
   const replaceConversation = async (conversation: LLMConversation) => {
+    const saved = await history.save(conversation);
+    if (saved.serviceKey !== selectedServiceKeyRef.current || saved.networkId !== activeNetworkRef.current) return saved;
     setConversations((current) => [
-      conversation,
-      ...current.filter((item) => item.id !== conversation.id),
+      saved,
+      ...current.filter((item) => item.id !== saved.id),
     ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
     setSelectedId(conversation.id);
-    await saveConversation(conversation);
+    return saved;
   };
 
   const newConversation = async () => {
@@ -181,8 +192,10 @@ export default function PrivateAIChat() {
   };
 
   const removeConversation = async (conversationId: string) => {
+    const row = conversations.find((item) => item.id === conversationId);
+    if (!row) return;
+    await history.remove(row);
     deletedIdsRef.current.add(conversationId);
-    await deleteConversation(conversationId);
     const remaining = conversations.filter((conversation) => conversation.id !== conversationId);
     if (remaining.length) {
       setConversations(remaining);
@@ -198,12 +211,12 @@ export default function PrivateAIChat() {
     if (!selectedService) return;
     confirm({
       title: "Clear Private AI conversation history?",
-      body: "This permanently removes locally encrypted conversations and retained LLM results. Running requests are not affected.",
+      body: "This removes conversation history for this provider, service and network from the node. Retained order results and older browser recovery copies are separate. Running requests may continue.",
       risk: "high",
       confirmLabel: "Clear history",
       onConfirm: async () => {
-        await clearConversations(serviceKey(selectedService));
-        await client.clearLLMOrders().catch(() => ({ ok: false, removed: 0 }));
+        await history.clear(serviceKey(selectedService), networkId);
+        conversations.forEach((row) => deletedIdsRef.current.add(row.id));
         setConversations([]);
         setSelectedId("");
         await newConversation();
@@ -216,6 +229,10 @@ export default function PrivateAIChat() {
     const text = promptText.trim();
     if (!text || !selectedService || sending) return;
     let conversation = selectedConversation;
+    if (conversation && (conversation.serviceKey !== serviceKey(selectedService) || conversation.networkId !== networkId)) {
+      setError("This conversation belongs to another provider. Open a separate conversation for the selected service.");
+      return;
+    }
     if (!conversation) {
       conversation = createConversation({
         serviceKey: serviceKey(selectedService),
@@ -225,21 +242,24 @@ export default function PrivateAIChat() {
       });
     }
     const now = new Date().toISOString();
-    const userMessage: LLMChatMessage = { id: messageId(), role: "user", content: text, createdAt: now, status: "complete" };
-    const withUser: LLMConversation = {
+    const taskId = "task_" + messageId().replaceAll("-", "");
+    const userMessage: LLMChatMessage = { id: messageId(), role: "user", content: text, createdAt: now, status: "complete", taskId };
+    let withUser: LLMConversation = {
       ...conversation,
       title: conversation.messages.length ? conversation.title : titleFromPrompt(text),
       updatedAt: now,
       messages: [...conversation.messages, userMessage],
     };
-    setInput("");
     setError("");
     setSending(true);
     cancelRequestedRef.current = false;
-    await replaceConversation(withUser);
-
+    let userSaved = false;
     try {
+      withUser = await replaceConversation(withUser);
+      userSaved = true;
+      setInput("");
       let result = await client.submitLLMOrder({
+        task_id: taskId, idempotency_key: taskId,
         network_id: networkId,
         provider_peer_id: selectedService.peer_id,
         service_id: selectedService.service.package_id,
@@ -284,10 +304,13 @@ export default function PrivateAIChat() {
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Private AI request failed";
       const failedMessage: LLMChatMessage = {
-        id: messageId(), role: "assistant", content: message, createdAt: new Date().toISOString(), status: "failed",
+        id: messageId(), role: "assistant", content: message, createdAt: new Date().toISOString(), status: "failed", taskId,
       };
       if (mountedRef.current && !deletedIdsRef.current.has(withUser.id)) {
-        await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] });
+        if (userSaved) {
+          try { await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] }); }
+          catch { setInput(text); }
+        } else setInput(text);
         setError(message);
         notify("danger", message);
       }
@@ -314,7 +337,11 @@ export default function PrivateAIChat() {
   const retryLast = () => {
     const messages = selectedConversation?.messages ?? [];
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    if (lastUser) void runPrompt(lastUser.content);
+    if (lastUser?.taskId) {
+      void client.getLLMOrder(lastUser.taskId).then((result) => {
+        setError(`Original task ${result.state}. ${resultMessage(result)} No new request was submitted.`);
+      }).catch(() => setError("The original task could not be verified. No new request was submitted. Reconnect and check again."));
+    } else if (lastUser) setInput(lastUser.content);
   };
 
   if (loading) return <LoadingPanel label="Opening Private AI" />;
@@ -325,6 +352,7 @@ export default function PrivateAIChat() {
         <Bot size={28} />
         <h3>No Private AI provider is available</h3>
         <p>Return to Services and manage a local model or wait for a provider to come online.</p>
+        {error ? <p role="alert">{error}</p> : null}
       </div>
     );
   }
@@ -332,7 +360,7 @@ export default function PrivateAIChat() {
   return (
     <div className={styles.page}>
       <aside className={styles.history} aria-label="Private AI conversations">
-        <button className={styles.newButton} type="button" onClick={() => void newConversation()}>
+        <button className={styles.newButton} type="button" onClick={() => void newConversation().catch((cause: Error) => setError(cause.message))}>
           <MessageSquarePlus size={17} /> New chat
         </button>
         <label className={styles.historySearch}>
@@ -349,7 +377,7 @@ export default function PrivateAIChat() {
                     <strong>{conversation.title}</strong>
                     <small>{formatTime(conversation.updatedAt)}</small>
                   </button>
-                  <button className={styles.deleteButton} type="button" aria-label={`Delete ${conversation.title}`} onClick={() => void removeConversation(conversation.id)}>
+                  <button className={styles.deleteButton} type="button" aria-label={`Delete ${conversation.title}`} onClick={() => confirm({ title: "Delete this conversation?", body: "This removes this node's conversation history. Running requests and older browser recovery copies are separate.", risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(conversation.id) })}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -361,6 +389,12 @@ export default function PrivateAIChat() {
         <button className={styles.clearButton} type="button" onClick={clearHistory}>
           <Trash2 size={14} /> Clear history
         </button>
+        {client.mode === "live" ? <button type="button" onClick={() => confirm({ title: "Import older browser conversations?", body: "This reads encrypted history from this browser and saves it on your node. Original provider bindings are retained. Browser originals stay available as recovery copies.", confirmLabel: "Import conversations", risk: "medium", onConfirm: async () => {
+          const result = await askHistory.importLegacy();
+          setMigrationNotice(`${result.imported} conversations confirmed on the node; ${result.retained} need recovery. Browser originals have been kept.`);
+          setConversations((await history.list(serviceKey(selectedService))).filter((row) => row.networkId === networkId));
+        } })}>Import older browser conversations</button> : null}
+        {migrationNotice ? <p role="status">{migrationNotice}</p> : null}
       </aside>
 
       <main className={styles.workspace}>
@@ -371,7 +405,7 @@ export default function PrivateAIChat() {
               <h1>Private AI</h1>
               <span>{selectedService.service.model_alias}</span>
               <div className={styles.modelStatus}>
-                <span className={styles.statusBadge}><Check size={11} /> Ready</span>
+                <span className={styles.statusBadge}>{selectedService.online ? selectedService.capacity?.available === 0 ? "Busy" : "Available in discovery" : "Not ready or unreachable"}</span>
                 <span className={styles.statusBadge}><LockKeyhole size={11} /> Encrypted</span>
               </div>
             </div>
@@ -387,7 +421,7 @@ export default function PrivateAIChat() {
                 <div><dt>Context</dt><dd>{selectedService.service.context_window} tokens</dd></div>
               </dl>
               <p className={styles.privacyCopy}>
-                Requests are encrypted in transit and conversation history is encrypted on this device. The selected provider necessarily sees plaintext while generating a response.
+                Requests are encrypted in transit. History is saved on your node; its files are encrypted using the node's identity. The selected provider sees plaintext while generating a response.
               </p>
             </div>
           </details>
@@ -398,7 +432,7 @@ export default function PrivateAIChat() {
             <div className={styles.welcome}>
               <span className={styles.welcomeIcon}><Bot size={27} /></span>
               <h2>Start a private conversation</h2>
-              <p>Your history stays encrypted on this device. Rynmesh selects the provider and route automatically.</p>
+              <p>Your history stays with this provider and service. The provider shown above receives the messages you send.</p>
               <div className={styles.suggestions}>
                 {SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}
               </div>
@@ -415,7 +449,7 @@ export default function PrivateAIChat() {
                     <button type="button" onClick={() => setHelpfulMessages((current) => new Set(current).add(message.id))}>
                       {helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />} {helpfulMessages.has(message.id) ? "Helpful" : "Good response"}
                     </button>
-                    {message.status !== "complete" ? <button type="button" onClick={retryLast}><RotateCcw size={12} /> Try again</button> : null}
+                    {message.status !== "complete" ? <button type="button" onClick={retryLast}><RotateCcw size={12} /> Check original task</button> : null}
                   </div>
                 ) : null}
               </div>
@@ -452,8 +486,8 @@ export default function PrivateAIChat() {
             )}
           </div>
           <div className={styles.composerMeta}>
-            <span><ShieldCheck size={12} /> {storageMode === "encrypted" ? "Encrypted on this device" : "History kept for this session"}</span>
-            <span>Estimated minimum {selectedService.service.pricing.minimum} credits</span>
+            <span><ShieldCheck size={12} /> {storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session"}</span>
+            <span>{selectedService.service.pricing?.minimum === undefined ? "Price unavailable" : `Estimated minimum ${selectedService.service.pricing.minimum} credits`}</span>
           </div>
         </div>
       </main>
