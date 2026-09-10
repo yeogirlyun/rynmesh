@@ -4,6 +4,8 @@ import { digestApi } from "../domain/digestClient";
 import type { NodeClient } from "../domain/nodeClient";
 import type { ContentItem } from "../domain/types";
 import { Button, Chip } from "./ui";
+import ShareContentButton from "./ShareContentButton";
+import { friendsApi } from "../domain/friendsClient";
 
 function youtubeEmbed(url: string | undefined): string {
   if (!url) return "";
@@ -57,7 +59,11 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
     positionLoaded.current = client.mode !== "live";
     const read = async () => {
       let blocks: string[];
-      if (item.external_url) {
+      if (item.content_id.startsWith("import:")) {
+        const result = await friendsApi.document(item.content_id.slice(7));
+        blocks = [result.text];
+        if (active) setTruncated(result.truncated);
+      } else if (item.external_url) {
         blocks = (await digestApi.readArticle(item.external_url)).blocks.map((block) => block.text);
       } else {
         const result = await client.getContentBody(item.content_id);
@@ -124,7 +130,7 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
         <header className="content-viewer-header">
           <div>
             <div className="content-viewer-kicker">
-              <Chip tone="info">{item.source_platform || "public web"}</Chip>
+              <Chip tone="info">{item.content_id.startsWith("import:") ? "private saved copy" : item.source_platform || (item.external_url ? "public web" : "Ryn content")}</Chip>
               <Chip tone="muted">{item.content_kind}</Chip>
               <span>{item.source_peer_name}</span>
             </div>
@@ -171,6 +177,7 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
         <footer className="content-viewer-footer">
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
           <p>{item.description}</p>
+          {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton itemId={item.digest_item_id ?? item.content_id} title={item.title} /> : null}
           {item.external_url ? (
             <Button
               variant="primary"

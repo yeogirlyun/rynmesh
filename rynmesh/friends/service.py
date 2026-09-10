@@ -29,7 +29,8 @@ from .store import FriendStore
 
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_SHARED_CONTENT_BYTES = 5 * 1024 * 1024
-MAX_SHARED_RESPONSE_BYTES = ((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 256 * 1024
+# The document is base64 inside JSON, then that encrypted JSON is base64 again.
+MAX_SHARED_RESPONSE_BYTES = ((((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 65536 + 2) // 3) * 4 + 65536
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CARD_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -336,7 +337,7 @@ class FriendService:
         if local.get("expires_at") and local["expires_at"] <= self.clock().isoformat():
             local.update(delivered=False, delivery_state="expired", error="message_expired")
             return
-        path = "/api/peer/friends/message"
+        path = str(local.get("delivery_path") or "/api/peer/friends/message")
         local["last_attempt_unix"] = self.clock().timestamp()
         if self._send_wire(record, secret, path, local["wire"]):
             local.update(delivered=True, delivery_state="delivered", wire=None, error="")
@@ -485,9 +486,28 @@ class FriendService:
             raise FriendError("friend_card_reference_invalid")
         return clean
 
-    def send_content_card(self, peer_id: str, card: dict[str, Any]) -> dict[str, Any]:
+    def send_content_card(self, peer_id: str, card: dict[str, Any], *, card_id: str | None = None) -> dict[str, Any]:
+        with file_transaction(self.store.root / ".cards.lock"):
+            local = self._prepare_content_card(peer_id, card, card_id=card_id)
         record, secret = self._relationship(peer_id)
+        if isinstance(local.get("wire"), dict):
+            self._deliver_message(record, secret, local)
+            self.store.patch_card(local["card_id"], local)
+        return self.public_card(self.store.card(local["card_id"]) or local)
+
+    def _prepare_content_card(self, peer_id: str, card: dict[str, Any], *, card_id: str | None) -> dict[str, Any]:
+        record, _ = self._relationship(peer_id)
         clean = self._clean_card(card)
+        card_id = card_id or uuid.uuid4().hex
+        if not _CARD_ID.fullmatch(card_id):
+            raise FriendError("friend_card_invalid")
+        digest = hashlib.sha256(canonical_json(clean)).hexdigest()
+        prior = self.store.card(card_id)
+        if prior:
+            if (prior.get("dir") != "out" or prior.get("to") != peer_id or prior.get("request_digest") != digest
+                or prior.get("source_item_id", "") != str(card.get("source_item_id", ""))):
+                raise FriendError("friend_card_id_conflict")
+            return prior
         if self.resolve_content and clean["library_id"]:
             resource = self.resolve_content(str(clean["library_id"]))
             if resource:
@@ -512,28 +532,46 @@ class FriendService:
         clean = self._clean_card(clean)
         inner = {
             "version": "ryn.shared-content-card.v1",
-            "card_id": uuid.uuid4().hex,
+            "card_id": card_id,
             "created_at": self.clock().isoformat(),
             "card": clean,
         }
-        self.store.put_card(
-            {
+        nonce, ciphertext = peer_box.seal(self.messaging_private, str(record["messaging_pub"]), canonical_json(inner))
+        wire = {"v": 1, "relationship_id": record["relationship_id"], "from": self.peer_id, "to": peer_id, "nonce": nonce, "ciphertext": ciphertext}
+        local = {
                 **inner,
                 "from": self.peer_id,
                 "to": peer_id,
                 "dir": "out",
                 "relationship_id": record["relationship_id"],
-                "delivery_state": "sending",
+                "delivery_state": "queued", "delivered": False,
+                "wire": wire, "request_digest": digest,
+                "request_sha256": hashlib.sha256(canonical_json(wire)).hexdigest(),
+                "delivery_path": "/api/peer/friends/content-card",
+                "source_item_id": str(card.get("source_item_id", "")),
+                "expires_at": (self.clock() + timedelta(hours=1)).isoformat(),
             }
-        )
-        nonce, ciphertext = peer_box.seal(self.messaging_private, str(record["messaging_pub"]), canonical_json(inner))
-        wire = {"v": 1, "relationship_id": record["relationship_id"], "from": self.peer_id, "to": peer_id, "nonce": nonce, "ciphertext": ciphertext}
-        delivered = self._send_wire(record, secret, "/api/peer/friends/content-card", wire)
-        self.store.patch_card(
-            inner["card_id"],
-            {"delivery_state": "delivered" if delivered else "queued"},
-        )
-        return {**inner, "from": self.peer_id, "to": peer_id, "delivered": delivered}
+        self.store.put_card(local)
+        return local
+
+    def retry_card(self, card_id: str) -> dict[str, Any]:
+        local = self.store.card(card_id)
+        if not local or local.get("dir") != "out":
+            raise FriendError("friend_card_not_found")
+        record, secret = self._relationship(str(local.get("to", "")))
+        if isinstance(local.get("wire"), dict):
+            if local.get("delivery_state") in {"failed", "mailbox"}:
+                local["delivery_state"] = "queued"
+            self._deliver_message(record, secret, local)
+            self.store.patch_card(card_id, local)
+        return self.public_card(self.store.card(card_id) or local)
+
+    @staticmethod
+    def public_card(row: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in row.items() if key in {
+            "version", "card_id", "card", "from", "to", "dir", "created_at", "delivery_state",
+            "delivered", "fetch_state", "fetched_library_id", "sha256_verified", "error", "expires_at"
+        }}
 
     def receive_content_card(self, wire: dict[str, Any]) -> dict[str, Any]:
         relationship = self.store.relationship(str(wire.get("relationship_id", "")))
@@ -575,7 +613,7 @@ class FriendService:
                     continue
                 if isinstance(legacy, dict) and str(legacy.get("card_id", "")) not in known:
                     rows.append(legacy)
-        return sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)[:500]
+        return [self.public_card(row) for row in sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)[:500]]
 
     def serve_content_card(
         self, request: dict[str, Any], relationship: dict[str, Any]
@@ -695,6 +733,8 @@ class FriendService:
             raise FriendError("friend_card_hash_mismatch")
         imported = self.import_content(
             {
+                "peer_id": peer_id,
+                "card_id": card_id,
                 "filename": card["filename"],
                 "mime": card["mime"],
                 "data": data,
@@ -793,6 +833,14 @@ class FriendService:
             self.store.set_revocation_delivery(record["relationship_id"], state_value="delivered")
             return
         if payload.get("path") != "/api/peer/friends/message":
+            if payload.get("path") != "/api/peer/friends/content-card":
+                raise FriendError("friend_receipt_invalid")
+            for row in self.store.list_cards():
+                if (row.get("dir") == "out" and row.get("to") == sender
+                    and row.get("relationship_id") == payload.get("relationship_id")
+                    and row.get("request_sha256") == payload.get("request_sha256")):
+                    self.store.patch_card(row["card_id"], {"delivered": True, "delivery_state": "delivered", "wire": None, "error": ""})
+                    return
             raise FriendError("friend_receipt_invalid")
         with file_transaction(self.store.root / ".delivery.lock"):
             latest = {str(row.get("msg_id")): row for row in self.messages.history(sender)}
@@ -816,7 +864,8 @@ class FriendService:
         relationship, secret = self._relationship(peer_id)
         attempted = delivered = 0
         latest = {str(row.get("msg_id")): row for row in self.messages.history(peer_id)}
-        for row in sorted(latest.values(), key=lambda row: float(row.get("last_attempt_unix", 0))):
+        cards = [row for row in self.store.list_cards() if row.get("dir") == "out" and row.get("to") == peer_id]
+        for row in sorted([*latest.values(), *cards], key=lambda row: float(row.get("last_attempt_unix", 0))):
             if attempted >= limit:
                 break
             wire = row.get("wire")
@@ -829,5 +878,8 @@ class FriendService:
             self._deliver_message(relationship, secret, row)
             if row.get("delivered"):
                 delivered += 1
-            self._commit_delivery(peer_id, row)
+            if row.get("card_id"):
+                self.store.patch_card(row["card_id"], row)
+            else:
+                self._commit_delivery(peer_id, row)
         return {"attempted": attempted, "delivered": delivered}

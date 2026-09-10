@@ -14,17 +14,22 @@ from typing import Any, Callable
 from fastapi import HTTPException, Request, Response
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
+from ..services.library_imports import LibraryImportStore
+from .content import FriendContent
 from .crypto import FriendCryptoError, validate_endpoint
 from .mailbox import wire_mailbox
 from .service import MAX_ATTACHMENT_BYTES, FriendError, FriendService
 
-MAX_WIRE_BYTES = 8 * 1024 * 1024
+# A 5 MiB attachment is base64 inside encrypted JSON, then base64 on the wire.
+# Include bounded text/envelope overhead without advertising an unreachable limit.
+MAX_WIRE_BYTES = ((((MAX_ATTACHMENT_BYTES + 2) // 3) * 4 + 131072 + 2) // 3) * 4 + 131072
 
 
 @dataclass
 class FriendsState:
     service: FriendService
     local_control: Callable
+    content: FriendContent
     attempts: dict[str, list[float]] = field(default_factory=dict)
     poll_index: int = 0
 
@@ -36,6 +41,7 @@ SAFE_ERRORS = {
     "message_too_large", "attachment_too_large", "message_id_invalid", "message_id_conflict",
     "friend_card_not_found", "friend_card_content_unavailable", "friend_card_hash_mismatch",
     "friend_card_fetch_failed", "friend_capacity_exhausted", "friend_store_version_unsupported",
+    "friend_card_read_first", "friend_card_content_too_large", "friend_card_id_conflict", "friend_card_capacity_exhausted",
 }
 
 
@@ -72,7 +78,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         messaging_private=messaging_key, post_json=post_json or post,
         allow_loopback=os.environ.get("RYNMESH_FRIEND_ALLOW_LOOPBACK", "0") == "1",
     )
-    app.state.friends = FriendsState(service, local_control)
+    content = FriendContent(store=store, imports=LibraryImportStore(Path(getattr(store, "home", None) or home) / "library-imports"),
+                            cache=lambda: app.state.reader_cache,
+                            consumption=lambda: app.state.consumption_store)
+    app.state.friends = FriendsState(service, local_control, content)
+    service.resolve_content = lambda library_id: app.state.friends.content.resolve(library_id)
+    service.import_content = lambda resource: app.state.friends.content.import_card(resource)
 
     def current():
         return app.state.friends.service
@@ -185,6 +196,54 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def retry_messages(peer_id: str, request: Request):
         control(request)
         return await call(current().retry, peer_id, limit=1)
+
+    @app.get("/api/local/friends/cards")
+    async def cards(request: Request):
+        control(request)
+        return {"cards": await call(current().content_cards)}
+
+    @app.post("/api/local/friends/share")
+    async def share(request: Request):
+        control(request)
+        body = await _body(request, 4096)
+        peer_id, card_id = str(body.get("peer_id", "")), str(body.get("card_id", ""))
+        item_id = str(body.get("item_id", ""))
+        if not card_id:
+            raise HTTPException(400, detail="friend_card_invalid")
+        await call(current()._relationship, peer_id)
+        prior = await call(current().store.card, card_id)
+        if prior:
+            if prior.get("to") != peer_id or prior.get("dir") != "out" or prior.get("source_item_id") != item_id:
+                raise HTTPException(409, detail="friend_card_id_conflict")
+            return await call(current().retry_card, card_id)
+        card = await call(app.state.friends.content.prepare, {"item_id": item_id})
+        card["source_item_id"] = item_id
+        return await call(current().send_content_card, peer_id, card, card_id=card_id)
+
+    @app.post("/api/local/friends/cards/{card_id}/fetch")
+    async def fetch_card(card_id: str, request: Request):
+        control(request)
+        return await call(current().fetch_content_card, card_id)
+
+    @app.post("/api/local/friends/cards/{card_id}/retry")
+    async def retry_card(card_id: str, request: Request):
+        control(request)
+        return await call(current().retry_card, card_id)
+
+    @app.get("/api/local/friends/documents/{import_id}/body")
+    async def document_body(import_id: str, request: Request):
+        control(request)
+        return await call(app.state.friends.content.imports.body, import_id)
+
+    @app.post("/api/peer/friends/content-card/fetch")
+    async def peer_card_fetch(request: Request):
+        from ..crypto import canonical_json
+        body = await _body(request, 4096)
+        try:
+            relationship = await asyncio.to_thread(current().verify_request, path="/api/peer/friends/content-card/fetch", body=canonical_json(body), headers=request.headers)
+            return await asyncio.to_thread(current().serve_content_card, body, relationship)
+        except (ValueError, OSError):
+            raise HTTPException(403, detail="friend_request_rejected") from None
 
     @app.get("/api/local/friends/{peer_id:path}/attachments/{message_id}")
     async def attachment(peer_id: str, message_id: str, request: Request):

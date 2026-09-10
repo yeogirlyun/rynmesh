@@ -128,7 +128,7 @@
       "scenario": "A 已安装，B 未安装",
       "expected": "B 凭邀请文本完成安装/打开、审核、接受和分享，无需手工改配置",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -140,7 +140,7 @@
       "scenario": "粘贴邀请但不确认",
       "expected": "身份、权限可检查，未向待审核端点请求",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -152,7 +152,7 @@
       "scenario": "两个接收者并发接受",
       "expected": "仅建立一次关系，另一方得到已使用提示",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -164,7 +164,7 @@
       "scenario": "过期、取消、重复接受分别测试",
       "expected": "状态准确且可恢复；同一成功请求重试返回原关系",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -176,7 +176,7 @@
       "scenario": "双方互发文本、小附件、内容卡片",
       "expected": "内容完整；确认前不获取私有正文；超限附件发送前被阻止",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -188,7 +188,7 @@
       "scenario": "B 离线，A 发送可入邮箱消息，B 再上线",
       "expected": "先显示入队，接收确认后显示送达；重复投递仅一条",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -200,7 +200,7 @@
       "scenario": "邮箱满、消息过期、断网、重启后重试",
       "expected": "无伪造送达，状态可恢复，不重复分享",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -212,7 +212,7 @@
       "scenario": "B 在线/离线时 A 分别撤销",
       "expected": "A 立即拒绝下一次受保护请求，重启或重新发现不复活关系",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -224,7 +224,7 @@
       "scenario": "撤销后访问私有卡片",
       "expected": "新的正文获取被拒绝，界面说明已保存副本无法远程收回",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -236,7 +236,7 @@
       "scenario": "检查权限、日志、诊断、导出",
       "expected": "不获得额外服务/根信任，邀请和关系秘密不泄露",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],
@@ -248,7 +248,7 @@
       "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
       "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
       "status": "in_progress",
-      "actual": "Pairing, messages and revocation have automated and local-browser evidence; content-card flow, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/friends-development/README.md"
       ],

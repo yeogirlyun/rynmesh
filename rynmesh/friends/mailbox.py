@@ -28,10 +28,13 @@ def wire_mailbox(*, mailbox: Any, service: Callable) -> None:
             raise ValueError("friend_mailbox_sender_mismatch")
         # The mailbox signature binds the sender; the recipient still enforces
         # the live relationship and decrypts using its pinned messaging key.
-        if path not in {MESSAGE_PATH, "/api/peer/friends/revoke"}:
+        if path not in {MESSAGE_PATH, "/api/peer/friends/revoke", "/api/peer/friends/content-card"}:
             raise ValueError("friend_mailbox_operation_unsupported")
-        if path == MESSAGE_PATH:
-            current.receive_message(wire)
+        if path in {MESSAGE_PATH, "/api/peer/friends/content-card"}:
+            if path == MESSAGE_PATH:
+                current.receive_message(wire)
+            else:
+                current.receive_content_card(wire)
             record, _ = current._relationship(envelope.from_peer_id)
         else:
             record = current.store.relationship(str(wire.get("relationship_id", "")), active_only=False)

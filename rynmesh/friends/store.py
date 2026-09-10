@@ -311,6 +311,8 @@ class FriendStore:
             record = state.setdefault("cards", {}).get(card_id)
             if not isinstance(record, dict):
                 return None
+            if record.get("delivered") and changes.get("delivered") is False:
+                return deepcopy(record)
             record.update(deepcopy(changes))
             self._write(self.state_path, state)
             return deepcopy(record)
