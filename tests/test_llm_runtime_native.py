@@ -434,8 +434,9 @@ def test_a_redirect_off_https_is_refused_mid_download():
 
 
 def test_the_runtime_fetch_installs_the_https_only_redirect_handler(tmp_path, monkeypatch):
-    payload = _tar_archive(TAR_ENTRIES)
-    _pin(monkeypatch, payload)
+    payload = _zip_archive(ZIP_ENTRIES) if os.name == "nt" else _tar_archive(TAR_ENTRIES)
+    name = "llama-test-bin.zip" if os.name == "nt" else "llama-test-bin.tar.gz"
+    _pin(monkeypatch, payload, name=name)
     seen = _serve(monkeypatch, payload)
     llm_runtime_native.prepare(root=tmp_path / "llm")
     assert llm_https_only.HttpsOnlyRedirect in seen["handlers"]

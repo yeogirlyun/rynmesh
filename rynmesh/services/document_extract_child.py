@@ -187,7 +187,7 @@ def _extract(path: Path, kind: str) -> tuple[str, str]:
         return "", FAILED_TOO_LARGE
     if kind in {"text", "markdown"}:
         try:
-            return data.decode("utf-8"), ""
+            return data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"), ""
         except UnicodeDecodeError:
             return "", FAILED_NOT_TEXT
     try:
