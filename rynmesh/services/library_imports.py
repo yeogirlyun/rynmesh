@@ -10,11 +10,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..atomic_io import atomic_write_bytes, atomic_write_json, read_json
+from ..atomic_io import atomic_write_bytes, atomic_write_json, migration_backup, read_json
 from ..file_transactions import file_transaction
 from .document_extract import extract_document
 
@@ -39,9 +40,51 @@ class LibraryImportStore:
         if not _ID.fullmatch(import_id):
             raise LibraryImportError("library_import_not_found")
         directory = (self.root / import_id).resolve()
-        if directory.parent != self.root:
+        if directory.parent != self.root or directory.name != import_id:
             raise LibraryImportError("library_import_not_found")
         return directory
+
+    def generation(self) -> int:
+        path = self.root / "control.json"
+        if not path.exists():
+            return 0
+        record = read_json(path, max_bytes=4096)
+        if not isinstance(record, dict) or record.get("version") != 1:
+            raise LibraryImportError("library_import_version_unsupported")
+        value = record.get("generation")
+        if type(value) is not int or value < 0:
+            raise LibraryImportError("library_import_corrupt")
+        return value
+
+    def remove(self, import_id: str | None = None) -> dict[str, int]:
+        """Erase selected managed copies and invalidate older in-flight downloads."""
+        with file_transaction(self.root / ".imports.lock"):
+            targets = [self._directory(import_id)] if import_id else [self._directory(path.name) for path in self.root.glob("imp_*") if _ID.fullmatch(path.name)]
+            # Resolve every target before deletion. Future metadata remains intact.
+            for directory in targets:
+                metadata = directory / "metadata.json"
+                if metadata.exists():
+                    # An explicit cleanup can erase a corrupt managed copy,
+                    # including an interrupted import. Recognizable future
+                    # versions still require an upgrade instead of destruction.
+                    try:
+                        raw = read_json(metadata, max_bytes=65536)
+                    except OSError:
+                        raw = None
+                    if isinstance(raw, dict) and raw.get("version") not in {VERSION, "ryn.library-import.v1"}:
+                        raise LibraryImportError("library_import_version_unsupported")
+            control = self.root / "control.json"
+            generation = self.generation() + 1
+            previous = read_json(control, max_bytes=4096) if control.exists() else {}
+            atomic_write_json(control, {**previous, "version": 1, "generation": generation}, max_bytes=4096)
+            removed = 0
+            for directory in targets:
+                if directory.exists():
+                    # _directory has checked the resolved absolute target is one
+                    # direct child with exactly the requested managed import id.
+                    shutil.rmtree(directory)
+                    removed += 1
+            return {"removed": removed, "generation": generation}
 
     def get(self, import_id: str) -> dict[str, Any]:
         directory = self._directory(import_id)
@@ -85,7 +128,9 @@ class LibraryImportStore:
         record = self.get(import_id)
         self.read_bytes(import_id)
         payload = read_json(self._directory(import_id) / "extracted.json", max_bytes=8 * 1024 * 1024)
-        if not isinstance(payload, dict) or payload.get("version") != 1 or not isinstance(payload.get("text"), str):
+        if isinstance(payload, dict) and payload.get("version") != 1:
+            raise LibraryImportError("library_import_version_unsupported")
+        if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
             raise LibraryImportError("library_import_corrupt")
         if record.get("extracted_sha256") and hashlib.sha256(payload["text"].encode()).hexdigest() != record["extracted_sha256"]:
             raise LibraryImportError("library_import_hash_mismatch")
@@ -104,7 +149,8 @@ class LibraryImportStore:
             raise LibraryImportError("library_import_invalid_base64") from None
         return self.save(data, filename=str(body.get("filename", "document.txt")), mime=str(body.get("mime", "text/plain")))
 
-    def save(self, data: bytes, *, filename: str, mime: str, source: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def save(self, data: bytes, *, filename: str, mime: str, source: Mapping[str, Any] | None = None,
+             repair: bool = False, expected_generation: int | None = None) -> dict[str, Any]:
         if not data or len(data) > MAX_IMPORT_BYTES:
             raise LibraryImportError("library_import_size_limit")
         filename = Path(filename.replace("\\", "/")).name[:180]
@@ -126,10 +172,32 @@ class LibraryImportStore:
         import_id = "imp_" + identity
         directory = self._directory(import_id)
         with file_transaction(self.root / ".imports.lock"):
+            generation = self.generation()
+            if expected_generation is not None and expected_generation != generation:
+                raise LibraryImportError("library_import_cancelled_by_cleanup")
+            prior: dict[str, Any] = {}
+            prior_extracted: dict[str, Any] = {}
             if (directory / "metadata.json").exists():
-                prior = self.get(import_id)
-                self.body(import_id)
-                return prior
+                try:
+                    prior = self.get(import_id)
+                except (OSError, LibraryImportError) as exc:
+                    if not repair or str(exc) == "library_import_version_unsupported":
+                        raise
+                try:
+                    self.body(import_id)
+                    return prior
+                except (OSError, LibraryImportError) as exc:
+                    if not repair or str(exc) == "library_import_version_unsupported":
+                        raise
+                extracted_path = directory / "extracted.json"
+                if extracted_path.exists():
+                    stored = read_json(extracted_path, default={}, max_bytes=8 * 1024 * 1024)
+                    if isinstance(stored, dict):
+                        if stored and stored.get("version") != 1:
+                            raise LibraryImportError("library_import_version_unsupported")
+                        prior_extracted = stored
+                    migration_backup(extracted_path, suffix=".repaired")
+                migration_backup(directory / "metadata.json", suffix=".repaired")
             existing = list(self.root.glob("imp_*/original.*"))
             if len(existing) >= 2000:
                 raise LibraryImportError("library_import_quota")
@@ -142,11 +210,11 @@ class LibraryImportStore:
             if extracted["status"] not in {"parsed", "truncated"} or not extracted.get("text", "").strip():
                 raise LibraryImportError("library_import_extract_unavailable")
             text = str(extracted["text"])
-            atomic_write_json(directory / "extracted.json", {"version": 1, "text": text}, max_bytes=8 * 1024 * 1024)
-            record = {"version": VERSION, "import_id": import_id, "filename": filename, "blob_name": blob.name,
+            atomic_write_json(directory / "extracted.json", {**prior_extracted, "version": 1, "text": text}, max_bytes=8 * 1024 * 1024)
+            record = {**prior, "version": VERSION, "import_id": import_id, "filename": filename, "blob_name": blob.name,
                       "mime": mime, "kind": extracted["kind"], "state": "ready", "size_bytes": len(data),
                       "sha256": digest, "extracted_sha256": hashlib.sha256(text.encode()).hexdigest(),
                       "extraction_status": extracted["status"], "extracted_bytes": len(text.encode()),
-                      "created_at_unix": time.time(), "source": origin}
+                      "created_at_unix": prior.get("created_at_unix", time.time()), "source": origin}
             atomic_write_json(directory / "metadata.json", record, max_bytes=65536)
             return record

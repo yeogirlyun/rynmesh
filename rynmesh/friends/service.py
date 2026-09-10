@@ -71,6 +71,8 @@ class FriendService:
         self.allow_loopback = allow_loopback
         self.clock = clock
         self.queue_mail: Callable | None = None
+        self.import_generation: Callable | None = None
+        self.verify_import: Callable | None = None
         self.store = FriendStore(home)
         self.messages = MessagingStore(home)
 
@@ -669,11 +671,17 @@ class FriendService:
             "ciphertext": ciphertext,
         }
 
-    def fetch_content_card(self, card_id: str) -> dict[str, Any]:
+    def fetch_content_card(self, card_id: str, *, repair: bool = False) -> dict[str, Any]:
         row = self.store.card(card_id)
         if not row or row.get("dir") != "in":
             raise FriendError("friend_card_not_found")
-        if row.get("fetch_state") == "fetched" and row.get("fetched_library_id"):
+        if row.get("fetch_state") == "fetched" and row.get("fetched_library_id") and not repair:
+            if self.verify_import:
+                try:
+                    self.verify_import(str(row["fetched_library_id"]))
+                except (OSError, ValueError):
+                    self.store.patch_card(card_id, {"fetch_state": "unavailable", "sha256_verified": False})
+                    raise FriendError("friend_copy_unavailable") from None
             return {
                 "ok": True,
                 "card_id": card_id,
@@ -688,6 +696,7 @@ class FriendService:
         card = self._clean_card(dict(row.get("card") or {}))
         if not card["fetch_available"] or not self.import_content:
             raise FriendError("friend_card_content_unavailable")
+        generation = self.import_generation() if self.import_generation else None
         request = {
             "v": 1,
             "relationship_id": relationship["relationship_id"],
@@ -735,6 +744,8 @@ class FriendService:
             {
                 "peer_id": peer_id,
                 "card_id": card_id,
+                "repair": repair,
+                "generation": generation,
                 "filename": card["filename"],
                 "mime": card["mime"],
                 "data": data,

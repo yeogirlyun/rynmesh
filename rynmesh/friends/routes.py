@@ -42,6 +42,7 @@ SAFE_ERRORS = {
     "friend_card_not_found", "friend_card_content_unavailable", "friend_card_hash_mismatch",
     "friend_card_fetch_failed", "friend_capacity_exhausted", "friend_store_version_unsupported",
     "friend_card_read_first", "friend_card_content_too_large", "friend_card_id_conflict", "friend_card_capacity_exhausted",
+    "friend_copy_unavailable", "library_import_cancelled_by_cleanup", "library_import_version_unsupported",
 }
 
 
@@ -84,6 +85,8 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     app.state.friends = FriendsState(service, local_control, content)
     service.resolve_content = lambda library_id: app.state.friends.content.resolve(library_id)
     service.import_content = lambda resource: app.state.friends.content.import_card(resource)
+    service.import_generation = lambda: app.state.friends.content.imports.generation()
+    service.verify_import = lambda library_id: app.state.friends.content.imports.body(library_id.removeprefix("import:"))
 
     def current():
         return app.state.friends.service
@@ -223,7 +226,10 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.post("/api/local/friends/cards/{card_id}/fetch")
     async def fetch_card(card_id: str, request: Request):
         control(request)
-        return await call(current().fetch_content_card, card_id)
+        body = await _body(request, 4096)
+        if "repair" in body and not isinstance(body["repair"], bool):
+            raise HTTPException(400, detail="friend_request_invalid")
+        return await call(current().fetch_content_card, card_id, repair=body.get("repair", False))
 
     @app.post("/api/local/friends/cards/{card_id}/retry")
     async def retry_card(card_id: str, request: Request):
@@ -234,6 +240,30 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def document_body(import_id: str, request: Request):
         control(request)
         return await call(app.state.friends.content.imports.body, import_id)
+
+    @app.get("/api/local/friends/documents")
+    async def documents(request: Request):
+        control(request)
+        rows = await call(app.state.friends.content.imports.list)
+        return {"documents": [{key: row[key] for key in ("import_id", "filename", "state", "size_bytes", "created_at_unix") if key in row} for row in rows]}
+
+    @app.delete("/api/local/friends/documents/{import_id}")
+    async def remove_document(import_id: str, request: Request):
+        control(request)
+        return await call(remove_copies, import_id)
+
+    @app.post("/api/local/friends/documents/clear")
+    async def clear_documents(request: Request):
+        control(request)
+        return await call(remove_copies)
+
+    def remove_copies(import_id: str | None = None):
+        result = app.state.friends.content.imports.remove(import_id)
+        for card in current().store.list_cards():
+            library_id = card.get("fetched_library_id")
+            if library_id and (import_id is None or library_id == "import:" + import_id):
+                current().store.patch_card(card["card_id"], {"fetch_state": "unavailable", "sha256_verified": False})
+        return result
 
     @app.post("/api/peer/friends/content-card/fetch")
     async def peer_card_fetch(request: Request):

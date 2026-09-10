@@ -86,7 +86,8 @@ class FriendContent:
         card = resource["card"]
         source = {"peer_id": resource["peer_id"], "card_id": resource["card_id"],
                   "title": card["title"], "source_url": card["source_url"], "publisher_peer_id": card["publisher_peer_id"]}
-        imported = self.imports.save(resource["data"], filename=resource["filename"], mime=resource["mime"], source=source)
+        imported = self.imports.save(resource["data"], filename=resource["filename"], mime=resource["mime"], source=source,
+                                     repair=bool(resource.get("repair")), expected_generation=resource.get("generation"))
         library_id = "import:" + imported["import_id"]
         self.consumption().record({"item_id": library_id, "title": card["title"], "summary": card["summary"],
                                    "link": "rynmesh://content/" + quote(library_id, safe=""),
