@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { DigestItem } from "../domain/digestClient";
 import { renderDigest } from "../test/digestScenario";
@@ -20,7 +20,7 @@ describe("DigestViewer formats", () => {
       await screen.findByText("This article body came from the mocked local node."),
     ).toBeInTheDocument();
     expect(screen.getByText("Rynmesh Test Author")).toBeInTheDocument();
-    expect(scenario.requests.feedback).toContainEqual({ item_id: item.item_id, action: "opened" });
+    await waitFor(() => expect(scenario.requests.feedback).toContainEqual({ item_id: item.item_id, action: "opened" }));
   });
 
   it("opens an image item without fetching live media", async () => {

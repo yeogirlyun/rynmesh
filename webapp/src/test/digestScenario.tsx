@@ -73,6 +73,7 @@ export function createDigestScenario(options: DigestScenarioOptions = {}) {
   const client = profileClient as NodeClient;
 
   const handlers: HttpHandler[] = [
+    http.get(`${TEST_API_BASE}/recommendations/signals`, () => HttpResponse.json({ items: [], total: 0, offset: 0, limit: 20 })),
     http.get(`${TEST_API_BASE}/digest`, () => HttpResponse.json(digest)),
     http.get(`${TEST_API_BASE}/sources`, () => HttpResponse.json(sources)),
     http.get(`${TEST_API_BASE}/watchers`, () => HttpResponse.json(watchers)),
@@ -85,6 +86,7 @@ export function createDigestScenario(options: DigestScenarioOptions = {}) {
     http.post(`${TEST_API_BASE}/digest/feedback`, async ({ request }) => {
       const body = (await request.json()) as { item_id: string; action: string };
       requests.feedback.push(body);
+      if (body.action === "hide") digest = { ...digest, items: digest.items.filter((item) => item.item_id !== body.item_id) };
       return HttpResponse.json({ ok: true });
     }),
     http.get(`${TEST_API_BASE}/consumption`, () => HttpResponse.json(consumption)),

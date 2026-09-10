@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { NodeClient } from "../domain/nodeClient";
 import { digestApi } from "../domain/digestClient";
+import { contentFromHistory } from "../domain/readingHistory";
 import type { ContentItem, FirstSuccessStatus, Recommendation } from "../domain/types";
 import ContentViewer from "./ContentViewer";
 import { Button, Chip, IconButton } from "./ui";
@@ -20,6 +21,7 @@ function mergeItems(recommendations: Recommendation[], items: ContentItem[]): Co
       recommendation.item ?? items.find((item) => item.content_id === recommendation.contentId),
     )
     .filter((item): item is ContentItem => Boolean(item))
+    .filter((item) => !item.starter && !["video", "audio", "image"].includes(item.content_kind))
     .filter((item, index, all) => all.findIndex((candidate) => candidate.content_id === item.content_id) === index)
     .slice(0, 3);
 }
@@ -38,25 +40,65 @@ export default function FirstSuccessFlow({
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [content, setContent] = useState<ContentItem[]>([]);
   const [viewing, setViewing] = useState<ContentItem | null>(null);
+  const [lastRead, setLastRead] = useState<ContentItem | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const statusGeneration = useRef(0);
+  const candidatesGeneration = useRef(0);
+  const mounted = useRef(true);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const candidates = useMemo(() => mergeItems(recommendations, content), [recommendations, content]);
+
+  useEffect(() => {
+    mounted.current = true;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]',
+    ) ?? []).filter((element) => !element.closest("[hidden]"));
+    focusable()[0]?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      const current = elements.indexOf(document.activeElement as HTMLElement);
+      if (!elements.length) { event.preventDefault(); return; }
+      if (event.shiftKey && current <= 0) { event.preventDefault(); elements[elements.length - 1]?.focus(); }
+      else if (!event.shiftKey && (current < 0 || current === elements.length - 1)) {
+        event.preventDefault(); elements[0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", trap);
+    return () => {
+      mounted.current = false;
+      document.removeEventListener("keydown", trap);
+      opener?.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLElement>(viewing ? ".content-viewer-close" : ".first-success-header button")?.focus();
+  }, [viewing]);
 
   const refreshStatus = async () => {
     const generation = ++statusGeneration.current;
     const next = await client.getFirstSuccess();
-    if (generation === statusGeneration.current) onStatusChange(next);
+    if (mounted.current && generation === statusGeneration.current) onStatusChange(next);
     return next;
   };
 
   const loadCandidates = async () => {
-    const [nextRecommendations, nextContent] = await Promise.all([
+    const generation = ++candidatesGeneration.current;
+    const [nextRecommendations, nextContent, history] = await Promise.all([
       client.requestRecommendations({ limit: 6 }),
       client.listContent(),
+      client.mode === "live" ? digestApi.listConsumption() : Promise.resolve([]),
     ]);
-    setRecommendations(nextRecommendations);
-    setContent(nextContent);
+    if (mounted.current && generation === candidatesGeneration.current) {
+      setRecommendations(nextRecommendations);
+      setContent(nextContent);
+      const read = history.filter((row) => row.last_opened_unix > 0)
+        .sort((a, b) => b.last_opened_unix - a.last_opened_unix)[0];
+      if (read) setLastRead(contentFromHistory(read));
+    }
   };
 
   useEffect(() => {
@@ -88,13 +130,19 @@ export default function FirstSuccessFlow({
 
   const openItem = async (item: ContentItem) => {
     setViewing(item);
+    setError("");
+  };
+
+  const recordRead = async (item: ContentItem) => {
     setBusy(true);
     setError("");
     try {
       await client.recordContentConsumption(item, "opened");
+      setLastRead(item);
       await refreshStatus();
     } catch {
       setError("The item opened, but Ryn could not save this step. You can retry without losing the item.");
+      throw new Error("reading_record_failed");
     } finally {
       setBusy(false);
     }
@@ -105,7 +153,6 @@ export default function FirstSuccessFlow({
     setError("");
     try {
       await client.recordContentConsumption(item, "bookmark");
-      await client.submitRecommendationFeedback(item.content_id, "more");
       await refreshStatus();
     } catch {
       setError("Ryn could not save that choice yet. Try again; the item remains open.");
@@ -120,20 +167,22 @@ export default function FirstSuccessFlow({
       const next = await client.dismissFirstSuccess();
       onStatusChange(next);
       onClose();
+    } catch {
+      setError("Ryn could not save your choice to continue later. Please retry.");
     } finally {
       setBusy(false);
     }
   };
 
-  const openedItem = viewing ?? candidates[0] ?? null;
+  const openedItem = lastRead;
 
   return (
-    <div className="first-success-backdrop" role="presentation">
-      <section className="first-success-dialog" role="dialog" aria-modal="true" aria-labelledby="first-success-title">
+    <div ref={dialogRef} className="first-success-backdrop" role="presentation">
+      <section hidden={Boolean(viewing)} className="first-success-dialog" role="dialog" aria-modal="true" aria-labelledby="first-success-title">
         <header className="first-success-header">
           <div>
             <span className="eyebrow">First useful result</span>
-            <strong>{status.completed ? "Ready to explore" : "About two minutes"}</strong>
+            <strong>{status.completed ? "Ready to explore" : "Read something, then save it"}</strong>
           </div>
           <IconButton icon={X} label="Continue later" onClick={() => void dismiss()} disabled={busy} />
         </header>
@@ -193,17 +242,21 @@ export default function FirstSuccessFlow({
           {status.phase === "awaiting_signal" ? (
             <div className="first-success-state">
               <Bookmark size={34} />
-              <h1 id="first-success-title">Save one useful signal</h1>
-              <p>This stays on your device and immediately shapes what Ryn ranks next.</p>
+              <h1 id="first-success-title">Save your first read</h1>
+              <p>Keep this item in your saved list so you can find it again.</p>
               {openedItem ? (
                 <div className="first-success-signal-card">
                   <strong>{openedItem.title}</strong>
                   <Button variant="primary" icon={Bookmark} onClick={() => void saveSignal(openedItem)} disabled={busy}>
-                    {busy ? "Saving…" : "Save and show me more like this"}
+                    {busy ? "Saving…" : "Save for later"}
                   </Button>
                 </div>
               ) : (
-                <Button onClick={() => void loadCandidates()}>Load the item again</Button>
+                <div>
+                  <p>The earlier reading item is unavailable. Open an article to continue.</p>
+                  {candidates.map((item) => <Button key={item.content_id} onClick={() => void openItem(item)}>{item.title}</Button>)}
+                  <Button onClick={() => void loadCandidates().catch(() => setError("Your reading history could not be loaded. Please retry."))}>Reload reading history</Button>
+                </div>
               )}
             </div>
           ) : null}
@@ -211,11 +264,11 @@ export default function FirstSuccessFlow({
           {status.phase === "completed" ? (
             <div className="first-success-state first-success-complete">
               <span className="first-success-check"><Check size={34} /></span>
-              <h1 id="first-success-title">Your Ryn is already learning</h1>
-              <p>You opened a real item and saved a preference locally. Your next recommendations can now adapt.</p>
+              <h1 id="first-success-title">Your first read is saved</h1>
+              <p>You read a real item and saved it on this device.</p>
               <div className="first-success-actions">
                 <Button variant="primary" icon={Sparkles} onClick={() => { onClose(); navigate("/digest"); }}>See more For You</Button>
-                <Button onClick={() => { onClose(); navigate("/settings"); }}>Optional: set up private AI</Button>
+                <Button onClick={() => { onClose(); navigate("/friends"); }}>Connect a friend</Button>
               </div>
             </div>
           ) : null}
@@ -230,7 +283,7 @@ export default function FirstSuccessFlow({
           </footer>
         ) : null}
       </section>
-      {viewing ? <ContentViewer item={viewing} onClose={() => setViewing(null)} /> : null}
+      {viewing ? <ContentViewer item={viewing} client={client} onRead={() => recordRead(viewing)} onClose={() => setViewing(null)} /> : null}
     </div>
   );
 }

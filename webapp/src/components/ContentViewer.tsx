@@ -1,4 +1,7 @@
 import { ExternalLink, FileText, Headphones, Image as ImageIcon, Play, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { digestApi } from "../domain/digestClient";
+import type { NodeClient } from "../domain/nodeClient";
 import type { ContentItem } from "../domain/types";
 import { Button, Chip } from "./ui";
 
@@ -22,7 +25,92 @@ function actionLabel(item: ContentItem) {
   return "Read original";
 }
 
-export default function ContentViewer({ item, onClose }: { item: ContentItem; onClose: () => void }) {
+export default function ContentViewer({ item, onClose, client, onRead }: {
+  item: ContentItem;
+  onClose: () => void;
+  client?: NodeClient;
+  onRead?: () => Promise<void>;
+}) {
+  const [body, setBody] = useState<string[]>([]);
+  const [bodyState, setBodyState] = useState<"loading" | "ready" | "failed">("loading");
+  const [retry, setRetry] = useState(0);
+  const [truncated, setTruncated] = useState(false);
+  const [progressError, setProgressError] = useState("");
+  const stageRef = useRef<HTMLDivElement>(null);
+  const savedProgress = useRef(0);
+  const progressWrites = useRef<Promise<void>>(Promise.resolve());
+  const restore = useRef(0);
+  const positionReady = useRef(false);
+  const positionLoaded = useRef(false);
+  const readCallback = useRef(onRead);
+  readCallback.current = onRead;
+  const textContent = !["video", "audio", "image"].includes(item.content_kind);
+  useEffect(() => {
+    if (!client || !textContent) return;
+    let active = true;
+    setBodyState("loading");
+    setBody([]);
+    setTruncated(false);
+    setProgressError("");
+    savedProgress.current = 0;
+    positionReady.current = false;
+    positionLoaded.current = client.mode !== "live";
+    const read = async () => {
+      let blocks: string[];
+      if (item.external_url) {
+        blocks = (await digestApi.readArticle(item.external_url)).blocks.map((block) => block.text);
+      } else {
+        const result = await client.getContentBody(item.content_id);
+        if (!result.ok) throw new Error("reader_unavailable");
+        blocks = [result.text];
+        if (active) setTruncated(result.truncated);
+      }
+      if (!blocks.some((block) => block?.trim())) throw new Error("reader_empty");
+      if (!active) return;
+      if (client.mode === "live") {
+        try {
+          const history = await digestApi.listConsumption();
+          restore.current = history.find((row) => row.item_id === (item.digest_item_id ?? item.content_id))?.progress ?? 0;
+          savedProgress.current = restore.current;
+          positionLoaded.current = true;
+        } catch { if (active) setProgressError("Your saved reading position could not be loaded. Retry reading to restore it."); }
+      }
+      if (!active) return;
+      setBody(blocks);
+      setBodyState("ready");
+      await readCallback.current?.();
+    };
+    void read().catch(() => { if (active) setBodyState("failed"); });
+    return () => { active = false; };
+  }, [client, item.content_id, item.external_url, textContent, retry]);
+  useEffect(() => {
+    if (bodyState !== "ready") return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = stageRef.current;
+      if (element) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight) * restore.current;
+      positionReady.current = positionLoaded.current;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [bodyState]);
+
+  const saveProgress = (force = false) => {
+    const element = stageRef.current;
+    if (!client || client.mode !== "live" || !element || !textContent || bodyState !== "ready" || !positionReady.current) return Promise.resolve();
+    const height = element.scrollHeight - element.clientHeight;
+    const progress = height > 0 ? Math.max(0, Math.min(1, element.scrollTop / height)) : 0;
+    if (!force && Math.abs(progress - savedProgress.current) < 0.05) return progressWrites.current;
+    savedProgress.current = progress;
+    const write = progressWrites.current.catch(() => undefined).then(() => client.recordContentConsumption(item, "progress", progress));
+    progressWrites.current = write;
+    return write.then(() => setProgressError(""), () => {
+      savedProgress.current = -1;
+      setProgressError("Your reading position could not be saved. Please retry before closing.");
+      throw new Error("reading_progress_failed");
+    });
+  };
+  const close = async () => {
+    try { await saveProgress(true); onClose(); } catch { /* Keep the retry visible. */ }
+  };
   const embed = item.source_platform === "youtube" ? youtubeEmbed(item.external_url) : "";
   const image = item.media_url || item.thumbnail_url || "";
   const directAudio = item.content_kind === "audio" && item.media_url;
@@ -30,7 +118,7 @@ export default function ContentViewer({ item, onClose }: { item: ContentItem; on
 
   return (
     <div className="content-viewer-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) onClose();
+      if (event.target === event.currentTarget) void close();
     }}>
       <section className="content-viewer" role="dialog" aria-modal="true" aria-label={item.title}>
         <header className="content-viewer-header">
@@ -42,13 +130,20 @@ export default function ContentViewer({ item, onClose }: { item: ContentItem; on
             </div>
             <h1>{item.title}</h1>
           </div>
-          <button type="button" className="content-viewer-close" onClick={onClose} aria-label="Close content viewer">
+          <button type="button" className="content-viewer-close" onClick={() => void close()} aria-label="Close content viewer">
             <X size={20} />
           </button>
         </header>
 
-        <div className="content-viewer-stage">
-          {embed ? (
+        <div className="content-viewer-stage" ref={stageRef} onScroll={() => void saveProgress().catch(() => undefined)}>
+          {client && textContent ? (
+            <article className="content-document-stage" aria-live="polite">
+              {bodyState === "loading" ? <p role="status">Loading the article through your Ryn…</p> : null}
+              {body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+              {truncated ? <p>This is a shortened preview. The full content has not been loaded.</p> : null}
+              {bodyState === "failed" ? <div role="alert"><p>The article or its reading record could not be loaded. Try again, or open the original.</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
+            </article>
+          ) : embed ? (
             <iframe
               src={embed}
               title={item.title}
@@ -74,6 +169,7 @@ export default function ContentViewer({ item, onClose }: { item: ContentItem; on
         </div>
 
         <footer className="content-viewer-footer">
+          {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
           <p>{item.description}</p>
           {item.external_url ? (
             <Button

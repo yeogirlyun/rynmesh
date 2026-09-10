@@ -7,9 +7,11 @@
       "document": "01-first-reading.md",
       "scenario": "干净安装、正常网络、无模型与好友",
       "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -17,9 +19,11 @@
       "document": "01-first-reading.md",
       "scenario": "关闭未完成引导后重启",
       "expected": "应用可用，首页可继续，未错误标记完成",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -27,9 +31,11 @@
       "document": "01-first-reading.md",
       "scenario": "收藏并阅读后重启",
       "expected": "收藏仅一条，阅读位置可恢复",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -37,9 +43,11 @@
       "document": "01-first-reading.md",
       "scenario": "一个来源失败，单独重试",
       "expected": "显示对应错误与失败次数；正常来源内容保留且不强制重抓",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -47,9 +55,11 @@
       "document": "01-first-reading.md",
       "scenario": "全部来源断网，分别准备有缓存和无缓存",
       "expected": "有缓存可读且有标记；无缓存有恢复入口，联网重试后可用",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -57,9 +67,11 @@
       "document": "01-first-reading.md",
       "scenario": "查看内置和自定义来源",
       "expected": "所有健康字段真实，从未检查或从未成功有明确文字",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -67,9 +79,11 @@
       "document": "01-first-reading.md",
       "scenario": "分别反馈 More/Less/Hide，再撤销一条",
       "expected": "操作、时间和信号可见；仅撤销指定操作，重新计算排名，重启保持",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -77,9 +91,11 @@
       "document": "01-first-reading.md",
       "scenario": "收藏/反馈写入失败，恢复后重试",
       "expected": "不伪造成功；恢复后只有一条记录",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -87,9 +103,11 @@
       "document": "01-first-reading.md",
       "scenario": "完成后再次启动",
       "expected": "不强制重复引导，能继续阅读并找到连接朋友入口",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -97,9 +115,11 @@
       "document": "01-first-reading.md",
       "scenario": "导出/擦除推荐数据，检查日志与网络",
       "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "evidence": [
+        "docs/acceptance/first-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {

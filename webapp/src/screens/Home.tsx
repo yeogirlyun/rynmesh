@@ -75,7 +75,7 @@ export default function Home() {
             <h2>Get your first useful result</h2>
             <p>Open one recommendation and save one choice. Ryn uses that local signal to improve what comes next.</p>
           </div>
-          <Button variant="primary" icon={Sparkles} onClick={() => openFirstSuccess?.()}>Continue · about 2 minutes</Button>
+          <Button variant="primary" icon={Sparkles} onClick={() => openFirstSuccess?.()}>Continue first reading</Button>
         </Panel>
       ) : null}
       {firstSuccess?.completed ? (
@@ -159,8 +159,6 @@ export default function Home() {
                   onInspect={() => navigate(`/items/${item.content_id}`)}
                   onOpen={() => {
                     setViewing(item);
-                    void client.recordContentConsumption(item, "opened").then(() => refreshFirstSuccess?.()).catch(() => undefined);
-                    if (item.digest_item_id) void digestApi.sendFeedback(item.digest_item_id, "opened").catch(() => undefined);
                   }}
                   onFetchPreview={() => notify("info", "Preview fetch requested through local node")}
                   onFetchFull={() => notify("warn", "Full fetch requires confirmation from item detail")}
@@ -181,7 +179,11 @@ export default function Home() {
           <EmptyState title="No recommendations yet" body="Ask the AI curator to review visible node evidence." />
         )}
       </Panel>
-      {viewing ? <ContentViewer item={viewing} onClose={() => setViewing(null)} /> : null}
+      {viewing ? <ContentViewer item={viewing} client={client} onRead={async () => {
+        await client.recordContentConsumption(viewing, "opened");
+        if (viewing.digest_item_id) await digestApi.sendFeedback(viewing.digest_item_id, "opened");
+        await refreshFirstSuccess?.();
+      }} onClose={() => setViewing(null)} /> : null}
 
       <Panel title="Recent Activity" className="activity-panel">
         <div className="activity-list">

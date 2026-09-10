@@ -16,7 +16,7 @@ describe("For You feedback and consumption", () => {
     );
   });
 
-  it("records Less feedback and hides the item from the current view", async () => {
+  it("records Less feedback without promising to hide the article", async () => {
     const { user, scenario } = renderDigest();
 
     expect(await screen.findByRole("button", { name: ITEM_TITLE })).toBeInTheDocument();
@@ -25,7 +25,15 @@ describe("For You feedback and consumption", () => {
     await waitFor(() =>
       expect(scenario.requests.feedback).toContainEqual({ item_id: "item-article", action: "down" }),
     );
-    expect(screen.queryByRole("button", { name: ITEM_TITLE })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: ITEM_TITLE })).toBeInTheDocument();
+  });
+
+  it("removes Hide items only after the node confirms its refreshed ranking", async () => {
+    const { user, scenario } = renderDigest();
+    await screen.findByRole("button", { name: ITEM_TITLE });
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+    await waitFor(() => expect(scenario.requests.feedback).toContainEqual({ item_id: "item-article", action: "hide" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: ITEM_TITLE })).not.toBeInTheDocument());
   });
 
   it("records opening an item and displays its viewer", async () => {

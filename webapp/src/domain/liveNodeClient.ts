@@ -123,18 +123,19 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getFirstSuccess: () => requestJson(`${baseUrl}/first-success`),
     dismissFirstSuccess: () => requestJson(`${baseUrl}/first-success/dismiss`, { method: "POST" }),
     resetFirstSuccess: () => requestJson(`${baseUrl}/first-success/reset`, { method: "POST" }),
-    recordContentConsumption: async (item, action) => {
+    recordContentConsumption: async (item, action, progress) => {
       await requestJson(`${baseUrl}/consumption`, {
         method: "POST",
         body: JSON.stringify({
           action,
+          progress,
           item: {
             item_id: item.digest_item_id ?? item.content_id,
             source_id: item.publisher_peer_id,
             source_title: item.source_peer_name ?? item.source_platform ?? "Ryn source",
             source_kind: item.source_platform ?? "rynmesh",
             title: item.title,
-            link: item.external_url ?? "",
+            link: item.external_url || `rynmesh://content/${encodeURIComponent(item.content_id)}`,
             summary: item.description,
             content_kind: item.content_kind,
             content_type: item.content_type,

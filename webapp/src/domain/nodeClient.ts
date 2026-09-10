@@ -210,7 +210,8 @@ export interface NodeClient {
   resetFirstSuccess(): Promise<FirstSuccessStatus>;
   recordContentConsumption(
     item: ContentItem,
-    action: "opened" | "bookmark" | "unbookmark" | "completed",
+    action: "opened" | "bookmark" | "unbookmark" | "completed" | "progress",
+    progress?: number,
   ): Promise<void>;
   getRecommendationProfile(): Promise<RecommendationProfile>;
   updateRecommendationProfile(
