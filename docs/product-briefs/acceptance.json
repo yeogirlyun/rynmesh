@@ -1,0 +1,956 @@
+{
+  "version": 1,
+  "baseline": "094f03ac673b84e571052c2dda1910b67e7b98e8",
+  "cases": [
+    {
+      "id": "READ01",
+      "document": "01-first-reading.md",
+      "scenario": "干净安装、正常网络、无模型与好友",
+      "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ02",
+      "document": "01-first-reading.md",
+      "scenario": "关闭未完成引导后重启",
+      "expected": "应用可用，首页可继续，未错误标记完成",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ03",
+      "document": "01-first-reading.md",
+      "scenario": "收藏并阅读后重启",
+      "expected": "收藏仅一条，阅读位置可恢复",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ04",
+      "document": "01-first-reading.md",
+      "scenario": "一个来源失败，单独重试",
+      "expected": "显示对应错误与失败次数；正常来源内容保留且不强制重抓",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ05",
+      "document": "01-first-reading.md",
+      "scenario": "全部来源断网，分别准备有缓存和无缓存",
+      "expected": "有缓存可读且有标记；无缓存有恢复入口，联网重试后可用",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ06",
+      "document": "01-first-reading.md",
+      "scenario": "查看内置和自定义来源",
+      "expected": "所有健康字段真实，从未检查或从未成功有明确文字",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ07",
+      "document": "01-first-reading.md",
+      "scenario": "分别反馈 More/Less/Hide，再撤销一条",
+      "expected": "操作、时间和信号可见；仅撤销指定操作，重新计算排名，重启保持",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ08",
+      "document": "01-first-reading.md",
+      "scenario": "收藏/反馈写入失败，恢复后重试",
+      "expected": "不伪造成功；恢复后只有一条记录",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ09",
+      "document": "01-first-reading.md",
+      "scenario": "完成后再次启动",
+      "expected": "不强制重复引导，能继续阅读并找到连接朋友入口",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "READ10",
+      "document": "01-first-reading.md",
+      "scenario": "导出/擦除推荐数据，检查日志与网络",
+      "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE01",
+      "document": "02-pair-and-share.md",
+      "scenario": "A 已安装，B 未安装",
+      "expected": "B 凭邀请文本完成安装/打开、审核、接受和分享，无需手工改配置",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE02",
+      "document": "02-pair-and-share.md",
+      "scenario": "粘贴邀请但不确认",
+      "expected": "身份、权限可检查，未向待审核端点请求",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE03",
+      "document": "02-pair-and-share.md",
+      "scenario": "两个接收者并发接受",
+      "expected": "仅建立一次关系，另一方得到已使用提示",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE04",
+      "document": "02-pair-and-share.md",
+      "scenario": "过期、取消、重复接受分别测试",
+      "expected": "状态准确且可恢复；同一成功请求重试返回原关系",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE05",
+      "document": "02-pair-and-share.md",
+      "scenario": "双方互发文本、小附件、内容卡片",
+      "expected": "内容完整；确认前不获取私有正文；超限附件发送前被阻止",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE06",
+      "document": "02-pair-and-share.md",
+      "scenario": "B 离线，A 发送可入邮箱消息，B 再上线",
+      "expected": "先显示入队，接收确认后显示送达；重复投递仅一条",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE07",
+      "document": "02-pair-and-share.md",
+      "scenario": "邮箱满、消息过期、断网、重启后重试",
+      "expected": "无伪造送达，状态可恢复，不重复分享",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE08",
+      "document": "02-pair-and-share.md",
+      "scenario": "B 在线/离线时 A 分别撤销",
+      "expected": "A 立即拒绝下一次受保护请求，重启或重新发现不复活关系",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE09",
+      "document": "02-pair-and-share.md",
+      "scenario": "撤销后访问私有卡片",
+      "expected": "新的正文获取被拒绝，界面说明已保存副本无法远程收回",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE10",
+      "document": "02-pair-and-share.md",
+      "scenario": "检查权限、日志、诊断、导出",
+      "expected": "不获得额外服务/根信任，邀请和关系秘密不泄露",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SHARE11",
+      "document": "02-pair-and-share.md",
+      "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
+      "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK01",
+      "document": "03-ask-ryn.md",
+      "scenario": "全新安装打开入口",
+      "expected": "无伪造历史，有模型可问答，无模型有设置入口",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK02",
+      "document": "03-ask-ryn.md",
+      "scenario": "页面提问，从侧栏打开，再重启",
+      "expected": "同一会话 ID、相同历史与任务状态，完成的回答可继续",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK03",
+      "document": "03-ask-ryn.md",
+      "scenario": "迁移旧会话，重复执行并模拟失败",
+      "expected": "不重复、不丢服务键；失败保留原数据，重试可完成",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK04",
+      "document": "03-ask-ryn.md",
+      "scenario": "从文章进入问答",
+      "expected": "来源可见，引用对应实际提供材料，并可返回打开",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK05",
+      "document": "03-ask-ryn.md",
+      "scenario": "超长正文叠加长历史",
+      "expected": "总预算不越界，截断或删减提示发送前可见",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK06",
+      "document": "03-ask-ryn.md",
+      "scenario": "从服务 A 切换 B",
+      "expected": "显示 B 接收方；A 历史保持绑定；未经确认 B 收不到旧内容",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK07",
+      "document": "03-ask-ryn.md",
+      "scenario": "模拟未就绪、runtime_busy、p2p_capacity_exhausted、不可达",
+      "expected": "原因和动作分别正确，不全部显示节点离线",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK08",
+      "document": "03-ask-ryn.md",
+      "scenario": "生成中取消、超时、重启后重试",
+      "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK09",
+      "document": "03-ask-ryn.md",
+      "scenario": "文章含要求泄露数据或执行操作的文字",
+      "expected": "不触发自动授权、切换接收者或执行外部操作；文章按引用处理",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "ASK10",
+      "document": "03-ask-ryn.md",
+      "scenario": "删除/导出会话并检查日志",
+      "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI01",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "支持平台的干净桌面，无 Docker",
+      "expected": "不用终端完成模型安装和真实问答",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI02",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "查看推荐并安装",
+      "expected": "来源、许可、大小和空间需求可见，确认后下载",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI03",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "下载中断、取消、重启后继续",
+      "expected": "依据验证进度恢复，无重复安装，未完成不标就绪",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI04",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "校验失败、移走模型、依赖缺失",
+      "expected": "错误明确且可恢复，不发布假健康服务",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI05",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "就绪后重启问答",
+      "expected": "配置保留，重新核对健康，可获得真实回答",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI06",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "未授权好友直接请求",
+      "expected": "Provider 拒绝，好友关系本身不开放 AI",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI07",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "仅允许 B 用模型 X，C 未授权",
+      "expected": "B 可发现使用 X；C 及 B 对其他未授权模型的请求被拒绝",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI08",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "B 执行中被撤销，再发新任务",
+      "expected": "新请求立即拒绝，旧任务状态真实且只结算一次",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI09",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "重放旧凭证、重启、重新发现好友",
+      "expected": "旧权限不复活，需新的明确授权",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "AI10",
+      "document": "04-ai-setup-and-permissions.md",
+      "scenario": "停止/移除模型后查看历史",
+      "expected": "运行状态和空间更新，会话保留，对应模型入口显示不可用",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH01",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "四类数据分别放入不同合成关键词",
+      "expected": "每类均可找到，点击打开正确内容或命中消息",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH02",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "中文词组、英文及中英混合查询",
+      "expected": "按约定匹配，不因中文无空格而完全失效，匹配片段正确",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH03",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "切换类型/时间/好友筛选，再返回列表",
+      "expected": "仅保留符合条件结果，关键词、筛选和位置保持",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH04",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "同一内容同时收藏、读过、被分享",
+      "expected": "一个内容结果包含多个来源入口；不同消息不被误合并",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH05",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "修改、增加和删除记录",
+      "expected": "索引正常时建议 5 秒内更新；删除后旧索引也不能继续返回正文片段",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH06",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "失去好友访问授权，保留旧索引",
+      "expected": "受保护结果与片段立即被权限检查过滤，直接打开也拒绝",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH07",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "未获取正文、断网、来源删除分别测试",
+      "expected": "不假装搜过未取得正文；本地数据可搜；不能打开时有真实原因",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH08",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "连续快速输入并使旧请求晚返回",
+      "expected": "页面最终显示最新关键词结果，不被旧响应覆盖",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH09",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "索引损坏后重建，期间重启",
+      "expected": "原数据无损，状态可见，重建完成后查询恢复",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH10",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "参考桌面、1 万条已索引合成记录，20 次查询",
+      "expected": "记录 p95，建议首屏不超过 2 秒；分页无重复遗漏",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SEARCH11",
+      "document": "05-search-and-retrieve.md",
+      "scenario": "查询含私有关键词，检查网络和日志",
+      "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW01",
+      "document": "06-follow-friends.md",
+      "scenario": "建立好友后不关注，再主动关注",
+      "expected": "默认不订阅，主动关注后显示最近可见内容并可分页",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW02",
+      "document": "06-follow-friends.md",
+      "scenario": "A 仅向 B 发布，B/C 均关注 A",
+      "expected": "B 可见；C 的列表和直接获取均无权读取",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW03",
+      "document": "06-follow-friends.md",
+      "scenario": "选择全部好友，然后新增好友 D",
+      "expected": "选择时已明确含以后好友；D 按范围有权访问，指定好友发布不会自动扩大",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW04",
+      "document": "06-follow-friends.md",
+      "scenario": "收藏/阅读一条私有内容但不发布",
+      "expected": "好友看不到，也不出现自动发布记录",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW05",
+      "document": "06-follow-friends.md",
+      "scenario": "A 发布，双方前台在线且链路正常",
+      "expected": "建议 60 秒内出现一次；手动刷新可拉取，记录发布到可见耗时",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW06",
+      "document": "06-follow-friends.md",
+      "scenario": "同一更新重复投递、修订、重启",
+      "expected": "无重复条目，修订显示更新状态，关注与已读状态保持",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW07",
+      "document": "06-follow-friends.md",
+      "scenario": "取消关注后继续发布",
+      "expected": "不自动收取新内容；已有私聊、独立收藏和下载副本不误删",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW08",
+      "document": "06-follow-friends.md",
+      "scenario": "收窄受众、删除好友、停止分享",
+      "expected": "Provider 立即拒绝新获取；接收端联网刷新后更新可见列表",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW09",
+      "document": "06-follow-friends.md",
+      "scenario": "撤销时接收端离线",
+      "expected": "有最后同步标记，不承诺远程抹除；重连后执行新权限",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "FOLLOW10",
+      "document": "06-follow-friends.md",
+      "scenario": "发布失败、好友离线、无更新",
+      "expected": "草稿可恢复，离线可重试，空状态明确，不显示假发布或假已读",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE01",
+      "document": "07-offline-reading.md",
+      "scenario": "对支持的文章下载，随后断网并重启",
+      "expected": "本地正文可打开，来源/下载时间可见，无需发外网请求加载正文",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE02",
+      "document": "07-offline-reading.md",
+      "scenario": "普通收藏但未下载，在断网时打开",
+      "expected": "清楚显示正文未下载，不错误显示可离线",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE03",
+      "document": "07-offline-reading.md",
+      "scenario": "正文成功、部分图片失败",
+      "expected": "正文可读，图片缺失有标记，不显示完整资源已下载",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE04",
+      "document": "07-offline-reading.md",
+      "scenario": "中途断网、取消、重启、连续点击下载",
+      "expected": "状态恢复正确，仅一份结果；未校验片段不标可读",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE05",
+      "document": "07-offline-reading.md",
+      "scenario": "已有旧版，更新时断网或校验失败",
+      "expected": "旧版仍能读；新版本验证后才替换，并更新下载时间",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE06",
+      "document": "07-offline-reading.md",
+      "scenario": "空间不足或超过单项/总预算",
+      "expected": "提示清理/超限，其他下载不静默丢失，应用仍可阅读",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE07",
+      "document": "07-offline-reading.md",
+      "scenario": "单条/全部清理下载",
+      "expected": "对应磁盘空间释放，列表更新；收藏、进度、会话保留，正文索引及时移除",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE08",
+      "document": "07-offline-reading.md",
+      "scenario": "无正文、需登录、已失权内容尝试下载",
+      "expected": "返回实际失败原因，不产生空的成功记录，不绕过授权",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE09",
+      "document": "07-offline-reading.md",
+      "scenario": "已获授权下载，再撤销好友权限",
+      "expected": "本地副本仍按保存规则可读，界面不承诺远程回收；新版本获取被拒绝",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "OFFLINE10",
+      "document": "07-offline-reading.md",
+      "scenario": "离线阅读后退出重开，再联网",
+      "expected": "阅读进度保持，外链仅主动打开时访问；无追踪脚本自动执行",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC01",
+      "document": "08-device-sync.md",
+      "scenario": "A/B 首次配对，确认前抓取传输行为",
+      "expected": "未确认不传个人数据；过期/重复邀请不能加入额外设备",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC02",
+      "document": "08-device-sync.md",
+      "scenario": "只选收藏，再分别开启进度与会话",
+      "expected": "仅所选范围同步，未选数据、模型、正文、密钥和好友权限不传",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC03",
+      "document": "08-device-sync.md",
+      "scenario": "两端原有不同数据，首次同步",
+      "expected": "合并不覆盖，重复收藏/消息仅一份，原服务键保留",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC04",
+      "document": "08-device-sync.md",
+      "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
+      "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC05",
+      "document": "08-device-sync.md",
+      "scenario": "离线修改→中途断开→重启→重连，重复/乱序投递",
+      "expected": "变化补齐，原数据无损，不重复；接收成功前不显示已同步",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC06",
+      "document": "08-device-sync.md",
+      "scenario": "收藏新增/取消并发，随后明确重新收藏",
+      "expected": "按表中规则合并，旧记录不复活，新明确操作可恢复",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC07",
+      "document": "08-device-sync.md",
+      "scenario": "先后及并发修改阅读位置，并让 B 时钟偏差一天",
+      "expected": "先后操作按因果顺序；并发保留选择，时钟差不造成静默覆盖",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC08",
+      "document": "08-device-sync.md",
+      "scenario": "同一会话两端离线继续，另测删除与新增并发",
+      "expected": "分支完整可见；删除冲突进入待处理项，不混入主历史或静默丢弃",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC09",
+      "document": "08-device-sync.md",
+      "scenario": "目标空间不足、写入失败后恢复",
+      "expected": "不错误确认，源记录保留，重试可完成",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC10",
+      "document": "08-device-sync.md",
+      "scenario": "暂停/关闭会话同步，随后恢复",
+      "expected": "暂停期间不继续传相应数据，旧副本保留；恢复后正确补齐",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC11",
+      "document": "08-device-sync.md",
+      "scenario": "移除设备，重放旧凭证并重新发现",
+      "expected": "后续同步拒绝，须重新审核配对；界面说明旧副本无法自动收回",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC12",
+      "document": "08-device-sync.md",
+      "scenario": "B 无模型/权限时打开同步的旧会话",
+      "expected": "历史可读；新提问被明确阻止或提示选择，不静默换 Provider",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "SYNC13",
+      "document": "08-device-sync.md",
+      "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
+      "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G01",
+      "document": "README.md",
+      "scenario": "干净安装",
+      "expected": "全新数据目录，无历史、无模型、无好友时有正确入口和空状态",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G02",
+      "document": "README.md",
+      "scenario": "完整流程",
+      "expected": "从实际页面入口完成用户任务，无需手工改配置文件或数据库",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G03",
+      "document": "README.md",
+      "scenario": "页面状态",
+      "expected": "加载、空、错误、有内容均有测试；错误提供恢复动作，不无限转圈",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G04",
+      "document": "README.md",
+      "scenario": "重启恢复",
+      "expected": "已保存数据仍在，中途操作可恢复或明确失败，不伪造完成",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G05",
+      "document": "README.md",
+      "scenario": "重复与并发",
+      "expected": "连点、重试、重复投递不产生重复记录或结算；并发符合各文档规则",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G06",
+      "document": "README.md",
+      "scenario": "权限与隐私",
+      "expected": "未授权请求由节点拒绝；私有内容、会话和秘密不进入普通日志、诊断或公开注册信息",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G07",
+      "document": "README.md",
+      "scenario": "可访问性",
+      "expected": "主要流程可仅用键盘完成；弹窗焦点正确；状态不只靠颜色表达",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G08",
+      "document": "README.md",
+      "scenario": "数据维护",
+      "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G09",
+      "document": "README.md",
+      "scenario": "故障隔离",
+      "expected": "搜索、AI、好友或同步失败不使整个应用和已可用阅读一起失效",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    },
+    {
+      "id": "G10",
+      "document": "README.md",
+      "scenario": "发布证据",
+      "expected": "记录提交、平台、环境、步骤、预期/实际结果、耗时及限制；只声明实测范围",
+      "status": "pending",
+      "actual": "",
+      "evidence": [],
+      "implementation_commit": ""
+    }
+  ]
+}
