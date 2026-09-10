@@ -7,6 +7,7 @@ import os
 import stat
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -179,6 +180,61 @@ def test_concurrent_writers_leave_one_valid_value_and_no_tmp(tmp_path: Path) -> 
     assert final["writer"] in {"a", "b"}
     assert 0 <= final["i"] < 50
     assert _tmp_files(path.parent) == []
+
+
+def test_windows_transient_rename_is_retried_but_permanent_failure_preserves_data(tmp_path, monkeypatch):
+    import rynmesh.atomic_io as module
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    real_replace = module.os.replace
+    attempts = []
+
+    def transient(*args):
+        attempts.append(args)
+        if len(attempts) < 3:
+            error = PermissionError("sharing violation")
+            error.winerror = 32
+            raise error
+        return real_replace(*args)
+
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(module.os, "replace", transient)
+    module._replace(source, target)
+    assert target.read_bytes() == b"new" and len(attempts) == 3
+    source.write_bytes(b"next")
+    calls = []
+
+    def denied(*args):
+        calls.append(args)
+        error = PermissionError("denied")
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(module.os, "replace", denied)
+    with pytest.raises(PermissionError):
+        module._replace(source, target)
+    assert len(calls) == 8
+    assert target.read_bytes() == b"new" and source.read_bytes() == b"next"
+
+
+def test_private_acl_failure_prevents_new_data_and_cleans_temporary_file(tmp_path, monkeypatch):
+    import rynmesh.atomic_io as module
+
+    path = tmp_path / "private.json"
+    atomic_write_json(path, {"original": True})
+    before = path.read_bytes()
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32"))
+    def refuse(path):
+        assert path.stat().st_size == 0  # No secret bytes before access is restricted.
+        raise OSError("private_acl_write_failed")
+    monkeypatch.setattr(module, "restrict_windows_acl", refuse)
+    with pytest.raises(AtomicIOError):
+        atomic_write_json(path, {"secret": "do not write"})
+    assert path.read_bytes() == before
+    assert _tmp_files(tmp_path) == []
 
 
 # ------------------------------------------------------------------------ 8

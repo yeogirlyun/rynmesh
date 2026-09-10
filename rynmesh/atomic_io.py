@@ -3,8 +3,9 @@
 One write path: a uniquely named temp file in the destination's own directory,
 written with a 0600 descriptor, flushed, fsynced, then renamed into place with
 `os.replace` (atomic on POSIX and Windows within one filesystem). The parent
-directory is fsynced too, so the rename itself survives a crash, not just the
-file's bytes.
+directory is fsynced where supported, so the rename itself survives a crash,
+not just the file's bytes. On Windows, private files receive a protected DACL
+before bytes are written; chmod alone cannot enforce owner-only access there.
 
 Nothing here ever puts a filesystem path or record content into an exception
 message: these errors can reach a log line or an HTTP response verbatim.
@@ -21,9 +22,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from .private_permissions import restrict_windows_acl
 
 _logger = logging.getLogger(__name__)
 
@@ -68,6 +73,8 @@ def atomic_write_bytes(
         tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         with os.fdopen(fd, "wb") as handle:
+            if sys.platform == "win32" and mode == FILE_MODE:
+                restrict_windows_acl(tmp)  # Restrict access before writing private bytes.
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
@@ -75,7 +82,7 @@ def atomic_write_bytes(
             os.chmod(tmp, mode)
         except OSError:
             pass  # the open() mode above is masked by umask on some platforms
-        os.replace(tmp, path)
+        _replace(tmp, path)
         tmp = None
         if fsync_dir:
             _fsync_dir(parent)
@@ -87,6 +94,19 @@ def atomic_write_bytes(
         if tmp is not None:
             tmp.unlink(missing_ok=True)
         raise
+
+
+def _replace(source: Path, destination: Path) -> None:
+    # Windows sharing violations can be transient (concurrent rename/read or
+    # antivirus). Bound retries; permanent denial still leaves the old value.
+    for attempt in range(8):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            if sys.platform != "win32" or getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 7:
+                raise
+            time.sleep(min(0.005 * 2 ** attempt, 0.08))
 
 
 def atomic_write_json(
