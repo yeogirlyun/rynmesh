@@ -145,3 +145,54 @@ def test_owner_routes_reject_stale_offline_material_and_retry_the_original_share
     conflict = client.post('/api/local/friends/share', json=changed, headers=auth)
     assert conflict.status_code == 409 and conflict.json()['detail'] == 'friend_card_id_conflict'
     assert len(bob.content_cards()) == 1
+
+
+def test_friend_publication_versions_require_permission_while_downloaded_copies_survive_revocation(tmp_path):
+    from test_friend_feed import publish, selected, setup
+
+    from rynmesh.offline_reading.service import OfflineReading, OfflineSources
+    from rynmesh.offline_reading.store import OfflineStore
+
+    mesh, nodes, feeds, contents, reference, _ = setup(tmp_path)
+    author, bob = nodes[:2]
+    publisher, receiver = feeds[:2]
+    content = contents[1]
+    rid = bob.store.relationship_for_peer(author.peer_id)['relationship_id']
+    first = publish(publisher, reference, selected(author, bob))
+    receiver.subscribe(rid, enabled=True, expected_revision=0)
+    receiver.refresh(rid)
+    imported = receiver.fetch(rid, first['id'], expected_revision=first['published']['revision'])
+    offline = OfflineReading(store=OfflineStore(bob.home, messaging_key=bob.messaging_private),
+        sources=OfflineSources(consumption=content.consumption, imports=lambda: content.imports, native=lambda: content.store,
+            fetch=lambda *args, **kwargs: pytest.fail('Private saved copies must not request a public URL')))
+    offline.request(imported['library_id'])
+    assert offline.run_once()
+    saved = offline.read(imported['library_id'])
+    assert saved['source_mode'] == 'independent_local_copy'
+    assert saved['text'] == content.imports.body(imported['import_id'])['text']
+    # A newer version is explicitly reviewed and fetched through the same private publication.
+    replacement = contents[0].imports.save(b'Authorized second version.', filename='next.txt', mime='text/plain')
+    second = publish(publisher, {'item_id': 'import:' + replacement['import_id']}, selected(author, bob),
+                     identifier=first['id'], expected_revision=first['revision'])
+    receiver.refresh(rid)
+    new_copy = receiver.fetch(rid, second['id'], expected_revision=second['published']['revision'])
+    assert new_copy['import_id'] != imported['import_id']
+    assert content.imports.body(new_copy['import_id'])['text'] == 'Authorized second version.'
+    # The author withdraws access while the receiver retains cached version metadata.
+    author.revoke(author.store.relationship_for_peer(bob.peer_id)['relationship_id'], notify=False)
+    with pytest.raises(FriendError, match='friend_auth_failed'):
+        receiver.fetch(rid, second['id'], expected_revision=second['published']['revision'])
+    third_body = contents[0].imports.save(b'New version after revocation.', filename='third.txt', mime='text/plain')
+    third = publish(publisher, {'item_id': 'import:' + third_body['import_id']}, selected(author, nodes[2]),
+                    identifier=first['id'], expected_revision=second['revision'])
+    with pytest.raises(FriendError, match='friend_auth_failed'):
+        receiver.fetch(rid, third['id'], expected_revision=third['published']['revision'])
+    assert len(content.imports.list()) == 2  # No third unauthorized import or replacement.
+    mesh.online.remove(author.endpoint)
+    restarted = OfflineReading(store=OfflineStore(bob.home, messaging_key=bob.messaging_private), sources=offline.sources)
+    restarted.recover()
+    assert restarted.read(imported['library_id']) == saved
+    # Refreshing the local copy is accurately distinct from getting a new publisher version.
+    restarted.request(imported['library_id'], update=True)
+    assert restarted.run_once()
+    assert restarted.read(imported['library_id'])['text'] == saved['text']

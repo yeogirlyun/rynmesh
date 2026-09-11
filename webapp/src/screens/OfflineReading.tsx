@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import ContentViewer from "../components/ContentViewer";
 import { Button, PageHeader, Panel } from "../components/ui";
@@ -85,6 +86,7 @@ export default function OfflineReading() {
         {row.current ? <p>Saved {new Date(row.current.downloaded_at * 1000).toLocaleString()} · {bytesLabel(row.current.size_bytes)}{offlineActive(row.state) || row.state === "failed" ? " · Previous copy is still available" : ""}</p> : null}
         {row.error_code ? <p>{offlineError(row.error_code)}</p> : null}
         {row.current ? <><Button onClick={() => setReading(row)}>Read offline copy</Button><Button disabled={busy || offlineActive(row.state)} onClick={() => void act(() => offlineApi.download(row.item_id, true))}>{row.item_id.startsWith("import:") ? "Refresh from saved document" : "Download latest from source"}</Button></> : null}
+        {row.item_id.startsWith("import:") ? <p>Refreshing uses your existing saved document. For newer friend content, check <Link to="/friend-updates">Friend updates</Link> or <Link to="/friends">Friends</Link>. Getting a new copy requires the publisher's current permission.</p> : null}
         {["failed", "cancelled"].includes(row.state) ? <Button disabled={busy} onClick={() => void act(() => offlineApi.retry(row.item_id))}>Retry download</Button> : null}
         {offlineActive(row.state) ? <Button disabled={busy || row.state === "cancel_requested"} onClick={() => void act(() => offlineApi.cancel(row.item_id))}>Cancel download</Button> : null}
         {row.state !== "cleared" ? <Button disabled={busy} onClick={() => void clear(row)}>Clear this download</Button> : null}

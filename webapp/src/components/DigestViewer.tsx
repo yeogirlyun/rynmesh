@@ -78,6 +78,9 @@ export default function DigestViewer({
   const [actionError, setActionError] = useState("");
   const [readerAttempt, setReaderAttempt] = useState(0);
   const [offline, setOffline] = useState<{ key: string; body: OfflineBody } | null>(null);
+  const [settledImageJob, setSettledImageJob] = useState("");
+  const readingStarted = useRef(false);
+  const imagesReady = !offline?.body.images.some((image) => image.state === "verified") || settledImageJob === offline?.body.job_id;
   const [readerError, setReaderError] = useState("");
   const [sourceItem, setSourceItem] = useState<string | null>(null);
   const forceSource = sourceItem === item?.item_id;
@@ -122,6 +125,7 @@ export default function DigestViewer({
     let notDownloaded = false;
     setReaderState("loading");
     setArticle(null); setOffline(null); setReaderError("");
+    setSettledImageJob(""); readingStarted.current = false; restoredProgress.current = false;
     const read = async () => {
       const local = forceSource ? null : await offlineApi.resolve(item.item_id);
       notDownloaded = !local && !forceSource;
@@ -153,15 +157,16 @@ export default function DigestViewer({
   }, [item?.item_id, item?.link, isArticle, readerAttempt, forceSource]);
 
   useEffect(() => {
-    if (!isArticle || !article || restoredProgress.current || initialProgress <= 0) return;
-    restoredProgress.current = true;
-    window.requestAnimationFrame(() => {
+    if (!isArticle || !article || restoredProgress.current || !imagesReady) return;
+    const frame = window.requestAnimationFrame(() => {
       const element = bodyRef.current;
       if (!element) return;
       const available = element.scrollHeight - element.clientHeight;
-      if (available > 0) element.scrollTo({ top: available * initialProgress });
+      if (available > 0 && !readingStarted.current) element.scrollTo({ top: available * initialProgress });
+      restoredProgress.current = true;
     });
-  }, [article, initialProgress, isArticle]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [article, initialProgress, isArticle, imagesReady]);
 
   const go = useCallback(
     (delta: number) => {
@@ -217,6 +222,7 @@ export default function DigestViewer({
   };
 
   const reportProgress = (progress: number, force = false) => {
+    if (isArticle && !restoredProgress.current) return Promise.resolve();
     const normalized = Math.max(0, Math.min(1, progress));
     if (!force && Math.abs(normalized - lastProgress.current) < 0.05) return progressWrites.current;
     lastProgress.current = normalized;
@@ -272,6 +278,10 @@ export default function DigestViewer({
         <div
           className="viewer-body"
           ref={bodyRef}
+          onWheel={() => { readingStarted.current = true; }} onTouchStart={() => { readingStarted.current = true; }}
+          onPointerDown={() => { readingStarted.current = true; }} onKeyDown={(event) => {
+            if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) readingStarted.current = true;
+          }}
           onScroll={(event) => {
             const element = event.currentTarget;
             const available = element.scrollHeight - element.clientHeight;
@@ -363,7 +373,8 @@ export default function DigestViewer({
                 ),
               )}
               {article?.truncated ? <p>This is a shortened copy. Some source text was not saved.</p> : null}
-              {offline ? <OfflineImages body={offline.body} itemKey={offline.key} /> : null}
+              {offline ? <OfflineImages body={offline.body} itemKey={offline.key} onReady={setSettledImageJob} /> : null}
+              {!imagesReady ? <p role="status">Loading saved images before restoring your reading position. You can start scrolling now.</p> : null}
               {readerState === "failed" ? (
                 <p className="viewer-note">
                   {readerError || "This page could not be read here."}{" "}
