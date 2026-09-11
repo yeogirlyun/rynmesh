@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from urllib.parse import urlsplit, urlunsplit
 
+from ..crypto import canonical_json
 from . import records
 from .records import SyncError
 
@@ -37,7 +38,7 @@ def metadata(item):
 
 
 class ReadingState:
-    def __init__(self, value):
+    def __init__(self, value, *, validation_cache=None):
         if not isinstance(value, dict) or value.get('version') != VERSION:
             raise SyncError('sync_version_unsupported')
         records.actor_id(value.get('actor'))
@@ -50,8 +51,18 @@ class ReadingState:
                 raise SyncError('sync_record_invalid')
             if entity['scope'] not in value['scopes']:
                 raise SyncError('sync_scope_denied')
-            records.validate(entity['scope'], entity['id'], entity['record'])
-            records.validate(entity['scope'], entity['id'], entity['projected'])
+            if validation_cache is None:
+                records.validate(entity['scope'], entity['id'], entity['record'])
+                current_digest = records.fingerprint(entity['record'])
+            else:
+                current_digest = records.validate_cached(entity['scope'], entity['id'], entity['record'], validation_cache, max_entries=MAX_ENTITIES * 2)
+            # Equal canonical bytes have already passed the same validation.
+            # Python equality alone conflates distinct numeric encodings.
+            if current_digest != records.fingerprint(entity['projected']):
+                if validation_cache is None:
+                    records.validate(entity['scope'], entity['id'], entity['projected'])
+                else:
+                    records.validate_cached(entity['scope'], entity['id'], entity['projected'], validation_cache, max_entries=MAX_ENTITIES * 2)
 
     @classmethod
     def create(cls, actor):
@@ -177,13 +188,16 @@ class ReadingState:
             raise SyncError('sync_capacity_exhausted')
         return receipts
 
-    def project(self, original):
+    def project(self, original, *, identifiers=None):
         """Overlay selected fields only; never overwrite unrelated local history."""
         result = deepcopy(original)
-        for entity in self.value['entities'].values():
+        entities = self.value['entities'].values() if identifiers is None else (
+            self.value['entities'][key] for identifier in identifiers for scope in sorted(SCOPES)
+            if (key := self.key(scope, identifier)) in self.value['entities'])
+        for entity in entities:
             scope, identifier = entity['scope'], entity['id']
             current = records.view(scope, identifier, entity['record'])
-            projected = records.view(scope, identifier, entity['projected'])
+            projected = current if canonical_json(entity['record']) == canonical_json(entity['projected']) else records.view(scope, identifier, entity['projected'])
             candidate = next((row['value'] for row in projected['candidates'] if row['value'] is not None), None)
             # Metadata may label a conflict, but must not silently choose its position.
             description = candidate or next((row['value'] for row in current['candidates'] if row['value'] is not None), None)

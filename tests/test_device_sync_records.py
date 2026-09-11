@@ -19,6 +19,30 @@ def reading(progress):
     return {'item': ITEM, 'progress': progress, 'completed': False, 'content_version': 'sha256:' + 'd' * 64}
 
 
+def test_validation_fingerprints_bind_scope_identifier_and_exact_encoded_value():
+    cache = set()
+    record = r.write('reading', 'article', r.empty(), A, reading(0))
+    assert r.validate_cached('reading', 'article', record, cache, max_entries=3) == r.fingerprint(record)
+    altered = deepcopy(record)
+    altered['heads'][0]['value']['progress'] = False
+    with pytest.raises(r.SyncError, match='sync_value_invalid'):
+        r.validate_cached('reading', 'article', altered, cache, max_entries=3)
+    with pytest.raises(r.SyncError, match='sync_item_invalid'):
+        r.validate_cached('reading', 'different-article', record, cache, max_entries=3)
+    with pytest.raises(r.SyncError):
+        r.validate_cached('bookmarks', 'article', record, cache, max_entries=3)
+    assert len(cache) == 1
+
+
+def test_validation_fingerprints_are_bounded_and_do_not_retain_record_values():
+    cache = set()
+    for index in range(20):
+        record = r.write('reading', 'article', r.empty(), A, reading(index / 20))
+        r.validate_cached('reading', 'article', record, cache, max_entries=3)
+        assert len(cache) <= 3
+    assert ITEM['title'] not in repr(cache) and ITEM['link'] not in repr(cache)
+
+
 def conversation(*messages):
     stamp = '2026-09-11T00:00:00Z'
     return {'id': 'chat', 'title': 'Conversation', 'serviceKey': 'provider::model', 'serviceName': 'Model',

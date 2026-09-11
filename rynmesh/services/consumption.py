@@ -74,6 +74,7 @@ class ConsumptionStore:
         self.path = Path(path)
         self.max_items = max(1, int(max_items))
         self.lock_path = self.path.with_name(self.path.name + ".lock")
+        self._sync_validation = set()
 
     def list(self) -> list[dict[str, Any]]:
         records = list(self._load().values())
@@ -109,7 +110,14 @@ class ConsumptionStore:
         if not math.isfinite(stamp) or stamp < 0:
             raise ConsumptionError("consumption_timestamp_invalid")
         document, local, sync = self._document()
-        records = sync.project(local) if sync else local
+        # Only this item's derived fields participate in the edit. Other local
+        # rows remain intact and remote-only rows remain in the causal source;
+        # projecting every synced item twice made one scroll write scale with
+        # the full synchronized library's display work.
+        records = dict(local)
+        if sync:
+            target = {item_id: records[item_id]} if item_id in records else {}
+            records.update(sync.project(target, identifiers=[item_id]))
         record = dict(
             records.get(
                 item_id,
@@ -166,7 +174,7 @@ class ConsumptionStore:
         saved = {str(value["item_id"]): {key: item for key, item in value.items()
                  if key not in {"sync_revisions", "sync_conflicts", "sync_reading_available"}} for value in ordered}
         self._save_document(document, saved, sync)
-        return sync.project({item_id: record})[item_id] if sync else record
+        return sync.project({item_id: record}, identifiers=[item_id])[item_id] if sync else record
 
     def clear(self) -> None:
         with file_transaction(self.lock_path):
@@ -189,7 +197,7 @@ class ConsumptionStore:
                 raise SyncError("sync_version_unsupported")
             if not isinstance(payload.get("records"), dict) or "sync" not in payload:
                 raise ConsumptionError("consumption_history_invalid")
-            return payload, payload["records"], ReadingState(payload["sync"])
+            return payload, payload["records"], ReadingState(payload["sync"], validation_cache=self._sync_validation)
         return payload, {
             str(key): dict(value)
             for key, value in payload.items()
@@ -199,7 +207,7 @@ class ConsumptionStore:
     def _save_document(self, document, local, sync):
         if sync:
             atomic_write_json(self.path, {**document, "version": SYNC_VERSION, "records": local, "sync": sync.value},
-                              indent=2, sort_keys=True, ensure_ascii=False, max_bytes=MAX_SYNC_HISTORY_BYTES)
+                              sort_keys=True, ensure_ascii=False, max_bytes=MAX_SYNC_HISTORY_BYTES)
         else:
             self._write(local)
 
@@ -224,6 +232,16 @@ class ConsumptionStore:
             _, _, sync = self._document()
             if sync is None:
                 raise SyncError("sync_not_enabled")
+            return sync.export(scopes)
+
+    def sync_snapshot(self, scopes, *, expected_actor):
+        """Validate the source once for an identity-bound bridge snapshot."""
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            if sync is None:
+                raise SyncError("sync_not_enabled")
+            if sync.value['actor'] != expected_actor:
+                raise SyncError("sync_device_identity_changed")
             return sync.export(scopes)
 
     def sync_identity(self):
@@ -253,7 +271,11 @@ class ConsumptionStore:
                 raise SyncError("sync_not_enabled")
             receipts = sync.merge(rows, scopes)
             # Validate the actual projected source before acknowledging a batch.
-            sync.project(local)
+            # Unchanged entities were validated by _document and are not part
+            # of this commit's projection. Rechecking the whole library for
+            # every 100-row batch made initial transfer quadratic.
+            identifiers = {row['id'] for row in rows}
+            sync.project({key: value for key, value in local.items() if key in identifiers}, identifiers=identifiers)
             self._save_document(document, local, sync)
             return receipts
 
@@ -268,7 +290,7 @@ class ConsumptionStore:
             if sync is None:
                 raise SyncError('sync_not_enabled')
             result = sync.resolve(scope, identifier, choice_id=choice_id, expected_revision=expected_revision)
-            sync.project(local)
+            sync.project({identifier: local[identifier]} if identifier in local else {}, identifiers=[identifier])
             self._save_document(document, local, sync)
             return result
 
