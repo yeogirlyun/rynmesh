@@ -43,6 +43,18 @@ state and worker callbacks without duplicating handlers.
 `scripts/new_route_package.py` generates a new package that follows every
 convention here. Read this document before hand-editing what it produces.
 
+`device_sync/routes.py` owns `app.state.device_sync` and the encrypted private
+`home / "device-sync" / "pairings.json"` container. Owner endpoints review
+invitations, approve identities, configure bilateral scope and remove devices.
+Peer pairing/control endpoints accept at most 64 KiB, verify signed encrypted
+messages with separate channels, and limit request frequency. No personal
+source transfer endpoint is installed yet. The `device-sync.pairing` worker
+rotates join confirmations, policy updates and durable removal notices; it
+starts after three seconds and backs off to thirty seconds on failure.
+Reinstallation replaces state, guard and worker without duplicating handlers.
+All network and storage work runs off the HTTP event loop. Missing endpoint
+configuration prevents new invitations but leaves local device removal usable.
+
 ## Why not add it to `peer_http.py`
 
 `rynmesh/peer_http.py` is already well past 2000 lines against this repo's
