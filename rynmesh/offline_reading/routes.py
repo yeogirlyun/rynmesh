@@ -79,6 +79,10 @@ def install_offline_reading(app, *, home, messaging_key, consumption, imports, n
             return await call(request, 'clear_preview', value.get('item_id'))
         if action == 'clear':
             return await call(request, 'clear', item_id=value.get('item_id'), review_token=value.get('review_token'))
+        if action == 'clear-remaining-preview':
+            return await call(request, 'clear_remaining_preview')
+        if action == 'clear-remaining':
+            return await call(request, 'clear_remaining', review_token=value.get('review_token'))
         raise HTTPException(404, detail='offline_action_unavailable')
 
     @app.get('/api/local/offline-reading/copies/{key}/{job_id}/images/{index}')

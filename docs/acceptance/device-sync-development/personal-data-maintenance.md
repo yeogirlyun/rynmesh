@@ -102,3 +102,9 @@ ZIP 内 `manifest.json` 记录所选范围、每个文件的相对路径/字节�
 完整回归 **1333 passed / 29 skipped / 5 warnings，248.51 秒**；前端 **198 passed / 40 files，31.91 秒**；TypeScript、生产构建、Ruff 和差异空白检查通过。后端测试期间后端产品代码不变。浏览器检查发现复选框继承全宽样式，修正 CSS 后重新构建并实测，最终资源 `index-DiKyx6M3.js`（620.27 kB）、`index-LzLFuvnz.css`。原有 500 kB 包体警告保留。
 
 真实 loopback HTTP 归档见 [product-export-http.json](product-export-http.json)：9 个范围、11 个数据文件，ZIP 5674 字节，全部文件校验通过，会话草稿和恢复项存在。浏览器步骤见 [product-export-browser.json](product-export-browser.json)，覆盖键盘触发、排除说明、断开节点、保留选择、同节点重启后重试和结果焦点。只确认浏览器请求下载，不声称检查了用户下载目录。仍需完善其他数据擦除范围、旧导出统一、完整账户数据边界及打包/远端验收，G08/SYNC13 保持原状态。
+
+## 离线副本清理恢复增量
+
+进一步核对确认：阅读旧接口 `ConsumptionStore.clear` 只处理来源内的已知因果删除，不协调独立同步副本、迁移备份与搜索重建，不能当作全部阅读数据的擦除完成。该协调流程仍待实现。
+
+离线清理发现并修复“元数据已清、文件删除失败后原请求无法重试”的问题。新的加密清理凭据与下载写入屏障一起提交，按已审核文件及 SHA256 删除；重启、响应丢失、新下载、变化文件重新审核和 GC 边界都有覆盖。真实 Windows 文件占用后重启、重新下载、继续清理只删除旧文件，新副本正文/图片仍可读。全后端 **1341 passed / 29 skipped**，前端 **201 passed**；详见[离线清理证据](../offline-reading-development/README.md)。未将这项修复视为完整 G08 验收。
