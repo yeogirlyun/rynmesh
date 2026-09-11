@@ -31,6 +31,7 @@ import AskRyn, { AskRynQuickPanel } from "./screens/AskRyn";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
+import Devices from "./screens/Devices";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
 import OfflineReading from "./screens/OfflineReading";
@@ -414,6 +415,7 @@ export function AppRoutes() {
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />
           <Route path="friends" element={<Friends />} />
+          <Route path="devices" element={<Devices />} />
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
           <Route path="services/private-ai/chat" element={<LegacyAskRedirect />} />

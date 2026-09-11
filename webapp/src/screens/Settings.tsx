@@ -1,6 +1,7 @@
 import { Activity, BellRing, Cloud, Download, DownloadCloud, HardDrive, History, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
 import type { NodeClient } from "../domain/nodeClient";
@@ -58,6 +59,7 @@ export default function Settings() {
         actions={<Chip tone="info">local control API</Chip>}
       />
       <aside className="settings-rail">
+        <Link to="/devices">My devices</Link>
         {sections.map((section) => (
           <button key={section} type="button" className={active === section ? "active" : ""} onClick={() => setActive(section)}>
             {section}

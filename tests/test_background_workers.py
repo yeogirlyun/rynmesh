@@ -352,6 +352,7 @@ _KNOWN_WORKER_NAMES = {
     "local-search.index",
     "friend-feed.refresh",
     "offline-reading.download",
+    "device-sync.pairing",
 }
 
 

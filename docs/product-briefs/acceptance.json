@@ -911,9 +911,11 @@
       "document": "08-device-sync.md",
       "scenario": "A/B 首次配对，确认前抓取传输行为",
       "expected": "未确认不传个人数据；过期/重复邀请不能加入额外设备",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -922,7 +924,7 @@
       "scenario": "只选收藏，再分别开启进度与会话",
       "expected": "仅所选范围同步，未选数据、模型、正文、密钥和好友权限不传",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -934,7 +936,7 @@
       "scenario": "两端原有不同数据，首次同步",
       "expected": "合并不覆盖，重复收藏/消息仅一份，原服务键保留",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -946,7 +948,7 @@
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -958,7 +960,7 @@
       "scenario": "离线修改→中途断开→重启→重连，重复/乱序投递",
       "expected": "变化补齐，原数据无损，不重复；接收成功前不显示已同步",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -970,7 +972,7 @@
       "scenario": "收藏新增/取消并发，随后明确重新收藏",
       "expected": "按表中规则合并，旧记录不复活，新明确操作可恢复",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -982,7 +984,7 @@
       "scenario": "先后及并发修改阅读位置，并让 B 时钟偏差一天",
       "expected": "先后操作按因果顺序；并发保留选择，时钟差不造成静默覆盖",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -994,7 +996,7 @@
       "scenario": "同一会话两端离线继续，另测删除与新增并发",
       "expected": "分支完整可见；删除冲突进入待处理项，不混入主历史或静默丢弃",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -1006,7 +1008,7 @@
       "scenario": "目标空间不足、写入失败后恢复",
       "expected": "不错误确认，源记录保留，重试可完成",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -1017,9 +1019,11 @@
       "document": "08-device-sync.md",
       "scenario": "暂停/关闭会话同步，随后恢复",
       "expected": "暂停期间不继续传相应数据，旧副本保留；恢复后正确补齐",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -1027,9 +1031,11 @@
       "document": "08-device-sync.md",
       "scenario": "移除设备，重放旧凭证并重新发现",
       "expected": "后续同步拒绝，须重新审核配对；界面说明旧副本无法自动收回",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -1038,7 +1044,7 @@
       "scenario": "B 无模型/权限时打开同步的旧会话",
       "expected": "历史可读；新提问被明确阻止或提示选择，不静默换 Provider",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
@@ -1050,7 +1056,7 @@
       "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
       "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
       "status": "in_progress",
-      "actual": "Reading/bookmark and encrypted conversation source adapters have automated coverage, including background result capture, source-before-replica confirmation, branches, deletion recovery and local unsent drafts. Ask Ryn branch review and stable-identity recovery have component and isolated loopback browser evidence. Device pairing, transport, sync settings and complete erasure remain incomplete; packaged dual-device acceptance has not been performed.",
+      "actual": "Source adapters, conflict recovery, authenticated bilateral device pairing, policy controls and durable removal are implemented. Automated checks and isolated two-node loopback browser pairing/pause/restart/removal provide development evidence. Personal data transport, convergence status, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md"
       ],
