@@ -886,9 +886,9 @@
       "document": "07-offline-reading.md",
       "scenario": "已获授权下载，再撤销好友权限",
       "expected": "本地副本仍按保存规则可读，界面不承诺远程回收；新版本获取被拒绝",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Encrypted friend-publication integration verifies authorized version retrieval, explicit offline save, revocation refusal for both cached and newly published versions, and restart reading of the independent copy. Full two-device desktop UI acceptance remains pending.",
+      "evidence": ["docs/acceptance/offline-reading-development/README.md"],
       "implementation_commit": ""
     },
     {

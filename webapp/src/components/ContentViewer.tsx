@@ -47,6 +47,9 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   const [offlineBody, setOfflineBody] = useState<OfflineBody | null>(null);
   const [bodyError, setBodyError] = useState("");
   const [resolvedOfflineKey, setResolvedOfflineKey] = useState("");
+  const [settledImageJob, setSettledImageJob] = useState("");
+  const readingStarted = useRef(false);
+  const imagesReady = !offlineBody?.images.some((image) => image.state === "verified") || settledImageJob === offlineBody?.job_id;
   const [sourceItem, setSourceItem] = useState<string | null>(null);
   const readingId = item.digest_item_id ?? item.content_id;
   const forceSource = sourceItem === readingId;
@@ -86,6 +89,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
     setBody([]);
     setTruncated(false);
     setOfflineBody(null); setBodyError(""); setResolvedOfflineKey("");
+    setSettledImageJob(""); readingStarted.current = false;
     setProgressError("");
     savedProgress.current = 0;
     positionReady.current = false;
@@ -139,14 +143,14 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
     return () => { active = false; };
   }, [client, item.content_id, item.external_url, textContent, retry, loadBody, offlineKey, readingId, forceSource]);
   useEffect(() => {
-    if (bodyState !== "ready") return;
+    if (bodyState !== "ready" || !imagesReady) return;
     const frame = window.requestAnimationFrame(() => {
       const element = stageRef.current;
-      if (element) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight) * restore.current;
+      if (element && !readingStarted.current) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight) * restore.current;
       positionReady.current = positionLoaded.current;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [bodyState]);
+  }, [bodyState, imagesReady]);
 
   const saveProgress = (force = false) => {
     const element = stageRef.current;
@@ -190,14 +194,19 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
           </button>
         </header>
 
-        <div className="content-viewer-stage" ref={stageRef} onScroll={() => void saveProgress().catch(() => undefined)}>
+        <div className="content-viewer-stage" ref={stageRef} onScroll={() => void saveProgress().catch(() => undefined)}
+          onWheel={() => { readingStarted.current = true; }} onTouchStart={() => { readingStarted.current = true; }}
+          onPointerDown={() => { readingStarted.current = true; }} onKeyDown={(event) => {
+            if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) readingStarted.current = true;
+          }}>
           {client && textContent ? (
             <article className="content-document-stage" aria-live="polite">
               {bodyState === "loading" ? <p role="status">{offlineKey ? "Opening the saved offline copy…" : "Loading the article through your Ryn…"}</p> : null}
               {offlineBody ? <p>Offline copy · {offlineBody.source} · Saved {new Date(offlineBody.downloaded_at * 1000).toLocaleString()}{offlineBody.partial ? " · Some resources are missing or shortened" : ""}</p> : null}
               {body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
               {truncated ? <p>This is a shortened preview. The full content has not been loaded.</p> : null}
-              {offlineBody && resolvedOfflineKey ? <OfflineImages body={offlineBody} itemKey={resolvedOfflineKey} /> : null}
+              {offlineBody && resolvedOfflineKey ? <OfflineImages body={offlineBody} itemKey={resolvedOfflineKey} onReady={setSettledImageJob} /> : null}
+              {!imagesReady ? <p role="status">Loading saved images before restoring your reading position. You can start scrolling now.</p> : null}
               {bodyState === "failed" ? <div role="alert"><p>{bodyError || "The article could not be loaded. Try again, or open the original."}</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
               {bodyState === "failed" && !offlineKey && !loadBody && !forceSource ? <Button onClick={() => setSourceItem(readingId)}>Try the source instead</Button> : null}
             </article>
