@@ -62,7 +62,7 @@ export interface LLMOrderResult {
   error_code?: string;
   created_at?: string;
   updated_at?: string;
-  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
@@ -87,6 +87,7 @@ export interface TaskBalanceSummary {
 
 export interface LLMProviderStatus {
   configured?: boolean;
+  ready?: boolean;
   online: boolean;
   service?: LLMServiceRecord["service"];
   capacity?: { available?: number; max_concurrent?: number; running?: number; queue_limit?: number };
@@ -140,6 +141,11 @@ export interface LLMProfileRecommendation {
   quantization?: string;
   estimated_memory_mb?: number;
   estimated_disk_mb?: number;
+  download_bytes?: number;
+  source_url?: string;
+  license_id?: string;
+  license_notice?: string;
+  license_url?: string;
   context_window?: number;
   max_concurrent?: number;
   recommended?: boolean;

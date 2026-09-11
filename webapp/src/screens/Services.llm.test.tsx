@@ -74,6 +74,33 @@ function renderServices(options: {
 }
 
 describe("Services local LLM flow", () => {
+  it("offers a ready unpublished model directly in Ask Ryn", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    renderServices({ providerStatus: { configured: true, ready: true, online: false, publication_enabled: false, service, capacity: { available: 1, max_concurrent: 1 } } });
+    const link = await screen.findByRole("link", { name: "Ask using this device" });
+    expect(link).toHaveAttribute("href", expect.stringContaining("peer=peer%3Atest"));
+    expect(link).toHaveAttribute("href", expect.stringContaining(encodeURIComponent(service.package_id)));
+    expect(screen.getByText("ready on this device")).toBeInTheDocument();
+    expect(screen.getByText(/Remote sharing is off/)).toBeInTheDocument();
+  });
+
+  it("reviews the model source and license and pins the automatic choice before installation", async () => {
+    const { user, client } = renderServices({ hardware: { hardware: { native_runtime_available: true }, recommendations: [
+      { profile: "light", can_run: true, recommended: true, display_name: "Reviewed model", download_bytes: 512 * 1024 * 1024, estimated_disk_mb: 1200, estimated_memory_mb: 900, source_url: "https://example.test/pinned-model.gguf", license_id: "Apache-2.0", license_url: "https://www.apache.org/licenses/LICENSE-2.0", license_notice: "Review the license before use." },
+    ] } });
+    const setup = vi.spyOn(client, "startLLMSetup");
+    await screen.findByRole("heading", { name: "Ryn job capacity" });
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
+    expect(await screen.findByRole("link", { name: "Pinned model source" })).toHaveAttribute("href", "https://example.test/pinned-model.gguf");
+    expect(screen.getByRole("link", { name: "License: Apache-2.0" })).toBeInTheDocument();
+    expect(screen.getByText(/Model download: 512 MiB; required disk: 1200 MiB/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Configure and run self-test" })).toBeDisabled();
+    expect(setup).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: /prepares a local runtime/i }));
+    await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({ mode: "managed", profile: "light" })));
+  });
+
   it("uses the production network default and submits the selected transport policy", async () => {
     const { user, submit } = renderServices();
 

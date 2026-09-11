@@ -265,6 +265,7 @@ class ProviderService:
         health = self.adapter.health()
         result: dict[str, Any] = {
             "configured": True,
+            "ready": bool(health.get("ok")),
             "service": self.manifest.public_dict(),
             "online": bool(health.get("ok")) and self.accepting_orders,
             "accepting_orders": self.accepting_orders,
@@ -318,7 +319,8 @@ class ProviderService:
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
-        if max_amount <= 0:
+        own_request = outer["from_peer_id"] == self.store.peer_id
+        if max_amount < 0 or (max_amount == 0 and not own_request):
             # Reject before inference: without a positive hold every completed
             # generation would fail the price check after burning compute.
             raise TaskProtocolError("max_amount must be a positive hold")
@@ -336,7 +338,7 @@ class ProviderService:
         if existing is not None:
             existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
         else:
-            if not self.accepting_orders:
+            if not self.accepting_orders and not own_request:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused",
                 )
@@ -405,7 +407,7 @@ class ProviderService:
             # prompts routinely tokenize 3-4x denser than the chars/4 guess.
             # The hold is a price ceiling the consumer consented to: bill at
             # most that ceiling instead of failing after inference already ran.
-            amount = min(
+            amount = 0.0 if own_request else min(
                 _price(self.manifest, int(result["input_tokens"]), int(result["output_tokens"])),
                 max_amount,
             )
@@ -605,6 +607,8 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
     One implementation for the live order path and crash recovery — the two
     used to hand-build the same envelope separately and had already diverged.
     """
+    if provider_peer_id == store.peer_id and amount == 0:
+        return True  # Local computation has no transfer to another provider.
     settlement = sign_payload({
         "kind": "llm_settlement", "task_id": task_id, "from_peer_id": store.peer_id,
         "to_peer_id": provider_peer_id, "amount": amount, "service_id": service_id,
@@ -874,15 +878,28 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         }
 
     def discover(network_id: str) -> list[dict[str, Any]]:
-        values = store.list_job_capacities(
-            network_id=network_id, capability=CAPABILITY, max_age_hours=1,
-        ).get("capacities", [])
         services = []
+        current = active_manager()
+        if current is not None:
+            local = current.public_status()
+            local["service"] = {**local["service"], "pricing": {**local["service"]["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}}
+            services.append({**local, "online": local["ready"], "peer_id": store.peer_id,
+                             "node_name": "This device", "access": "self", "updated_at": datetime.now(timezone.utc).isoformat()})
+        try:
+            values = store.list_job_capacities(
+                network_id=network_id, capability=CAPABILITY, max_age_hours=1,
+            ).get("capacities", [])
+        except Exception:
+            if services:
+                return services  # This device does not require a registry connection.
+            raise
         for value in values:
+            if value.get("peer_id") == store.peer_id:
+                continue  # A stale published self-record cannot replace local health.
             public = dict(value.get("metadata") or {}).get("llm_service")
             if isinstance(public, dict):
-                services.append({"peer_id": value.get("peer_id"), "node_name": value.get("node_name"),
-                                 "updated_at": value.get("updated_at"), **public})
+                services.append({**public, "peer_id": value.get("peer_id"), "node_name": value.get("node_name"),
+                                 "updated_at": value.get("updated_at")})
         return services
 
     def publish_once() -> dict[str, Any]:
@@ -1583,7 +1600,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 recipient_messaging_pub=recipient_pub,
                 expires_at=_expires(max(60, manifest.timeout_seconds + 30)),
             )
-            endpoint = resolve_endpoint(provider_peer_id)
+            own_request = provider_peer_id == store.peer_id
+            endpoint = "" if own_request else resolve_endpoint(provider_peer_id)
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -1596,6 +1614,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             }
             if force_relay:
                 transport_mode = "relay"
+            if own_request:
+                transport_mode = "local"
             consumer_orders.transition(
                 task_id=task_id,
                 state="running",
@@ -1606,7 +1626,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "transport": transport_mode,
                 },
             )
-            if transport_mode == "p2p":
+            if own_request:
+                current = active_manager()
+                if current is None or current.manifest.package_id != service_id:
+                    raise TaskProtocolError("local service is no longer configured")
+                encrypted_response = await asyncio.to_thread(current.handle, signed.to_dict())
+                transport_evidence = {"transport": "local_runtime", "relay_used": False}
+            elif transport_mode == "p2p":
                 p2p_work_order_id = ""
 
                 async def publish_offer(offer: IceSignal) -> IceSignal:
@@ -1884,7 +1910,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if pending is None:
                 raise HTTPException(status_code=404, detail="task not found")
             return _public_background(pending)
-        final = dict((record.get("history") or [{}])[-1])
+        # A settlement acknowledgement is a later checkpoint, not a replacement
+        # for the terminal usage/transport metadata needed after restarting UI.
+        final = {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
+                 for key, value in event.items() if key not in {"at", "checkpoint"}}
         result: dict[str, Any] = {
             "task_id": task_id,
             "state": str(record.get("state") or "unknown"),
@@ -1947,6 +1976,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "cancel_id": "cancel:" + task_id,
             }, private_key_bytes=store.private_key_bytes)
             delivered = False
+            if provider_peer_id == store.peer_id:
+                current = active_manager()
+                if current is not None and current.manifest.package_id == service_id:
+                    current.cancel_signed(signed_cancel.to_dict())
+                return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
             endpoint = resolve_endpoint(provider_peer_id)
             if endpoint:
                 try:
@@ -2010,4 +2044,4 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if prior and prior.get("ephemeral"):
                 background_orders.pop(task_id, None)
 
-    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result)
+    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result, discover)

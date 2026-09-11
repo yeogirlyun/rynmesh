@@ -1540,6 +1540,98 @@ class _BlockingAdapter(_FakeAdapter):
                 "output_tokens": 2, "duration_ms": 7}
 
 
+def test_local_model_works_unpublished_without_registry_or_peer_transport(tmp_path, monkeypatch, openai_server):
+    from rynmesh.ask_ryn.context import AskContextService
+    from rynmesh.ask_ryn.runs import AskRunService
+    from rynmesh.ask_ryn.store import ConversationStore
+
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
+    app = FastAPI()
+    def no_peer(*args, **kwargs):
+        raise AssertionError("local inference must not contact peer transport")
+    monkeypatch.setattr(llm_routes, "_peer_post_json", no_peer)
+    # A server's P2P policy must not send same-device computation out to ICE.
+    monkeypatch.setenv("RYNMESH_LLM_TRANSPORT", "p2p")
+    commands = install_llm_routes(app, store=store, home=store.home, messaging_key=key, resolve_endpoint=no_peer, resolve_pubkey=no_peer)
+    client = TestClient(app)
+    setup = client.post("/api/local/llm/setup", json={"mode": "openai-compatible", "package_id": "own-model", "alias": "Only my device", "base_url": openai_server, "model": "test-real-api"})
+    assert setup.status_code == 200, setup.text
+    assert setup.json()["status"]["ready"] and not setup.json()["publication_enabled"]
+    assert store.list_job_capacities(network_id="network", capability=llm_routes.CAPABILITY)["capacities"] == []
+    def offline_registry(**kwargs):
+        raise OSError("registry unavailable")
+    monkeypatch.setattr(store, "list_job_capacities", offline_registry)
+    services = client.get("/api/local/llm/services?network_id=network").json()["services"]
+    assert len(services) == 1 and services[0]["peer_id"] == store.peer_id
+    assert services[0]["online"] and services[0]["service"]["pricing"]["minimum"] == 0
+    history = ConversationStore(store.home / "ask-ryn", key)
+    row = history.save({"id": "own-conversation", "title": "Own model", "serviceKey": store.peer_id + "::own-model", "serviceName": "Only my device", "providerPeerId": store.peer_id, "networkId": "network", "createdAt": "2026-09-11T00:00:00Z", "updatedAt": "2026-09-11T00:00:00Z", "messages": []}, expected_revision=0)
+    context = AskContextService(lambda: None, commands.discover)
+    preview = context.preview(row, "A local question")
+    runs = AskRunService(history, lambda: context, lambda: commands)
+    task_id = "task_" + "d" * 32
+    request = {"task_id": task_id, "conversation_id": row["id"], "expected_revision": 1, "question": "A local question", "prompt_sha256": preview["prompt_sha256"]}
+    calls_before = _OpenAIHandler.calls
+    runs.begin(request)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and runs.get(task_id)["state"] not in {"succeeded", "failed", "interrupted"}:
+        runs.run_once()
+        time.sleep(0.02)
+    assert runs.get(task_id)["state"] == "succeeded", runs.get(task_id)
+    assert history.get(row["id"])["messages"][-1]["content"] == "test adapter completion"
+    assert history.get(row["id"])["messages"][-1]["cost"] == 0
+    assert commands.status(task_id)["transport"] == "local_runtime"
+    assert _OpenAIHandler.calls == calls_before + 1
+    assert client.get("/api/local/task-balance").json()["available"] == 100
+    assert not client.get("/api/local/llm/service/status").json()["publication_enabled"]
+    assert runs.begin(request)["state"] == "succeeded"
+    assert _OpenAIHandler.calls == calls_before + 1
+    # A healthy own model does not admit another signed peer while unpublished.
+    other = RynmeshStore(home=tmp_path / "other", network_dir=tmp_path / "network")
+    foreign = seal_task(body={"task_id": "foreign", "service_id": "own-model", "prompt": "Foreign question", "max_amount": 1, "reply_messaging_pub": peer_box.public_key_b64(key)}, task_id="foreign", kind="llm_request", sender_peer_id=other.peer_id, recipient_peer_id=store.peer_id, sender_signing_key=other.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires()).to_dict()
+    denied = client.post("/api/peer/llm/tasks", json=foreign).json()
+    _, rejection = open_task(denied, recipient_peer_id=other.peer_id, recipient_messaging_key=key, expected_kind="llm_response")
+    assert rejection["error_code"] == "service_paused"
+    assert _OpenAIHandler.calls == calls_before + 1
+    monkeypatch.setattr(OpenAICompatibleAdapter, "health", lambda _: {"ok": False, "error": "model missing"})
+    assert client.get("/api/local/llm/services?network_id=network").json()["services"][0]["online"] is False
+
+
+def test_local_cancellation_uses_the_same_provider_without_peer_delivery(tmp_path, monkeypatch):
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
+    adapter = _BlockingAdapter()
+    manifest = LLMPackageManifest(package_id="own-model", mode="openai_compatible", public_model_alias="Own model", base_url="http://127.0.0.1")
+    monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
+    llm_routes.atomic_write_json(store.home / "llm" / "provider-settings.json", {"manifest": "synthetic-manifest", "publication_enabled": False})
+    monkeypatch.setattr(llm_routes, "load_manifest", lambda _: manifest)
+    monkeypatch.setattr(llm_routes, "adapter_from_manifest", lambda _: adapter)
+    def no_remote(*args, **kwargs):
+        raise AssertionError("local cancellation must not use peer delivery")
+    monkeypatch.setattr(llm_routes, "_peer_post_json", no_remote)
+    app = FastAPI()
+    commands = install_llm_routes(app, store=store, home=store.home, messaging_key=key, resolve_endpoint=no_remote, resolve_pubkey=no_remote)
+    request = {"task_id": "local_cancel", "provider_peer_id": store.peer_id, "service_id": "own-model", "prompt": "Local cancellable question", "max_tokens": 8}
+    commands.submit(request)
+    assert adapter.started.wait(timeout=3)
+    try:
+        commands.cancel(request["task_id"])
+        assert adapter.cancelled == [request["task_id"]]
+        assert commands.status(request["task_id"])["result_pending"] is True
+    finally:
+        adapter.release.set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        result = commands.status(request["task_id"])
+        if not result.get("result_pending"):
+            break
+        time.sleep(0.01)
+    assert result["state"] == "cancelled"
+    assert adapter.calls == 1
+    assert TestClient(app).get("/api/local/task-balance").json()["held"] == 0
+
+
 def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     net = tmp_path / "net"
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
