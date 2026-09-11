@@ -143,6 +143,86 @@ def test_erase_removes_recovery_text_and_old_packets_cannot_restore_it(tmp_path)
     assert b.source.list() == [] and b.source.sync_conflicts() == []
 
 
+def deleted_branch(tmp_path):
+    a, b = device(tmp_path / 'a'), device(tmp_path / 'b')
+    a.source.save(sample(), expected_revision=0)
+    deliver(a, b)
+    append(b.source, sample()['id'], 'b')
+    a.source.remove(sample()['id'], expected_revision=1)
+    deliver(b, a)
+    issue = a.source.sync_conflicts()[0]
+    request = {'choice_id': issue['recovery'][0]['choice_id'], 'expected_revision': issue['revision']}
+    return a, b, issue['id'], request
+
+
+def test_deleted_recovery_copy_requires_explicit_replacement_and_restart_retry(tmp_path):
+    a, b, identifier, request = deleted_branch(tmp_path)
+    first = a.source.sync_restore(identifier, new_id='first-copy', **request)
+    a.source.remove(first['id'], expected_revision=first['revision'])
+    before = a.source.path.read_bytes()
+    with pytest.raises(ConversationError, match='ask_conversation_deleted'):
+        a.source.sync_restore(identifier, new_id='first-copy', **request)
+    assert a.source.path.read_bytes() == before
+    second = a.source.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request)
+    assert second['serviceKey'] == first['serviceKey']
+    assert second['providerPeerId'] == first['providerPeerId']
+    assert second['networkId'] == first['networkId']
+    assert second['messages'] == first['messages']
+    restarted = ConversationStore(a.source.root, a.source.key)
+    assert restarted.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request) == second
+    assert [row['id'] for row in restarted.list()] == ['second-copy']
+    assert {identifier, 'first-copy'} <= restarted._read()[1]['tombstones'].keys()
+    deliver(a, b)
+    assert [row['id'] for row in b.source.list()] == ['second-copy']
+    restarted.remove(second['id'], expected_revision=second['revision'])
+    with pytest.raises(ConversationError, match='ask_conversation_deleted'):
+        restarted.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request)
+    third = restarted.sync_restore(identifier, new_id='third-copy', replaces='second-copy', **request)
+    assert third['messages'] == first['messages']
+    assert [row['id'] for row in restarted.list()] == ['third-copy']
+
+
+def test_replacement_rejects_live_copy_wrong_intent_and_reused_identity(tmp_path):
+    a, _, identifier, request = deleted_branch(tmp_path)
+    first = a.source.sync_restore(identifier, new_id='first-copy', **request)
+    before = a.source.path.read_bytes()
+    with pytest.raises(SyncError, match='sync_restore_copy_not_deleted'):
+        a.source.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request)
+    assert a.source.path.read_bytes() == before
+    a.source.remove(first['id'], expected_revision=first['revision'])
+    before = a.source.path.read_bytes()
+    for replaces, new_id, extra, error in (
+        ('unknown-copy', 'second-copy', {}, 'identity_conflict'),
+        ('first-copy', 'second-copy', {'choice_id': 'another-choice'}, 'identity_conflict'),
+        ('first-copy', 'first-copy', {}, 'new_identity_required'),
+        (identifier, 'second-copy', {}, 'new_identity_required'),
+    ):
+        with pytest.raises(SyncError, match=error):
+            a.source.sync_restore(identifier, new_id=new_id, replaces=replaces, **{**request, **extra})
+        assert a.source.path.read_bytes() == before
+
+
+def test_replacement_failed_write_preserves_retry_and_stale_review_is_rejected(tmp_path, monkeypatch):
+    a, _, identifier, request = deleted_branch(tmp_path)
+    first = a.source.sync_restore(identifier, new_id='first-copy', **request)
+    a.source.remove(first['id'], expected_revision=first['revision'])
+    before = a.source.path.read_bytes()
+    with monkeypatch.context() as patch:
+        def fail(*args, **kwargs):
+            raise OSError('simulated full disk')
+        patch.setattr(history_storage, 'atomic_write_json', fail)
+        with pytest.raises(OSError):
+            a.source.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request)
+    assert a.source.path.read_bytes() == before
+    second = a.source.sync_restore(identifier, new_id='second-copy', replaces='first-copy', **request)
+    a.source.remove(second['id'], expected_revision=second['revision'])
+    a.source.sync_erase(identifier, expected_revision=request['expected_revision'])
+    before = a.source.path.read_bytes()
+    with pytest.raises(SyncError, match='revision_conflict'):
+        a.source.sync_restore(identifier, new_id='third-copy', replaces='second-copy', **request)
+    assert a.source.path.read_bytes() == before
+
+
 @pytest.mark.parametrize('location', ['source', 'replica'])
 def test_failed_receive_does_not_acknowledge_and_can_retry(tmp_path, monkeypatch, location):
     a, b = device(tmp_path / 'a'), device(tmp_path / 'b')
@@ -352,6 +432,17 @@ def test_owner_conflict_api_export_restore_and_auth(tmp_path):
     assert restored.status_code == 200
     assert restored.json()['serviceKey'] == sample()['serviceKey']
     assert client.post('/api/local/ask/sync/restore', headers=headers, json=request).json() == restored.json()
+    replacement = {**request, 'new_id': 'second-copy', 'replaces': 'restored'}
+    assert client.post('/api/local/ask/sync/restore', json=replacement).status_code == 403
+    live = client.post('/api/local/ask/sync/restore', headers=headers, json=replacement)
+    assert live.status_code == 409 and live.json()['detail'] == 'sync_restore_copy_not_deleted'
+    a.source.remove('restored', expected_revision=restored.json()['revision'])
+    deleted = client.post('/api/local/ask/sync/restore', headers=headers, json=request)
+    assert deleted.json()['detail'] == 'ask_conversation_deleted'
+    second = client.post('/api/local/ask/sync/restore', headers=headers, json=replacement)
+    assert second.status_code == 200 and second.json()['id'] == 'second-copy'
+    assert second.json()['serviceKey'] == sample()['serviceKey']
+    assert client.post('/api/local/ask/sync/restore', headers=headers, json=replacement).json() == second.json()
 
 
 def test_remote_delete_keeps_unsent_draft_local_and_explicit_restore_keeps_binding(tmp_path):

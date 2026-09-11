@@ -103,3 +103,59 @@ it("keeps an unsent local draft separate and never sends it to a model", async (
   expect(restored.mock.calls[0][0].draft).toBe(localDraft.draft);
   expect(begin).not.toHaveBeenCalled();
 });
+
+it("requires an explicit choice after a recovery copy was deleted and can cancel", async () => {
+  const restored = vi.fn();
+  const restore = vi.spyOn(askHistory, "restoreBranch")
+    .mockRejectedValue(new AskRequestError(409, "Deleted", "ask_conversation_deleted"));
+  const begin = vi.spyOn(askHistory, "beginRun");
+  render(<AskSyncConflicts onRestored={restored} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
+  const review = await screen.findByRole("region", { name: "Keep another recovery copy" });
+  expect(review).toHaveFocus();
+  expect(review).toHaveTextContent("The deleted conversation stays deleted");
+  expect(review).toHaveTextContent("original-provider");
+  expect(restore).toHaveBeenCalledOnce();
+  expect(restored).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel keeping another copy" }));
+  expect(screen.queryByRole("region", { name: "Keep another recovery copy" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Keep branch 1 as a separate conversation" })).toHaveFocus();
+  expect(restore).toHaveBeenCalledOnce();
+  expect(begin).not.toHaveBeenCalled();
+});
+
+it("retries the same replacement after response loss and after remount", async () => {
+  const restored = vi.fn();
+  let lost = false;
+  const restore = vi.spyOn(askHistory, "restoreBranch").mockImplementation(async (_id, _choice, newId, _revision, replaces) => {
+    if (!replaces) throw new AskRequestError(409, "Deleted", "ask_conversation_deleted");
+    if (!lost) { lost = true; throw new Error("Response lost; result unconfirmed."); }
+    return { ...row, id: newId };
+  });
+  const first = render(<AskSyncConflicts onRestored={restored} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
+  await user.click(await screen.findByRole("button", { name: "Keep another copy" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("result unconfirmed");
+  expect(restored).not.toHaveBeenCalled();
+  const deletedId = await recoveryConversationId(issue, issue.recovery[0]);
+  const replacementId = await recoveryConversationId(issue, issue.recovery[0], deletedId);
+  expect(replacementId).not.toBe(deletedId);
+  expect(restore.mock.calls[1]).toEqual([issue.id, issue.recovery[0].choice_id, replacementId, issue.revision, deletedId]);
+  first.unmount();
+  render(<AskSyncConflicts onRestored={restored} />);
+  await user.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
+  await user.click(await screen.findByRole("button", { name: "Keep another copy" }));
+  await waitFor(() => expect(restored).toHaveBeenCalledOnce());
+  expect(restore.mock.calls[3]).toEqual(restore.mock.calls[1]);
+  expect(screen.queryByRole("region", { name: "Keep another recovery copy" })).not.toBeInTheDocument();
+});
+
+it("does not offer another identity when the node has not confirmed deletion", async () => {
+  vi.spyOn(askHistory, "restoreBranch").mockRejectedValue(new AskRequestError(404, "History unavailable", "ask_conversation_not_found"));
+  render(<AskSyncConflicts onRestored={vi.fn()} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
+  expect(screen.queryByRole("button", { name: "Keep another copy" })).not.toBeInTheDocument();
+});

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { askHistory, recoveryConversationId, type AskSyncChoice, type AskSyncConflict } from "../domain/askHistory";
+import { askHistory, AskRequestError, recoveryConversationId, type AskSyncChoice, type AskSyncConflict } from "../domain/askHistory";
 import type { LLMConversation } from "../domain/llmConversationStore";
 import { Button, Panel } from "./ui";
 import styles from "./AskSyncConflicts.module.css";
@@ -12,6 +12,9 @@ export default function AskSyncConflicts({ refreshKey, onRestored }: {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState("");
+  const [replacement, setReplacement] = useState<{ issue: AskSyncConflict; choice: AskSyncChoice; deletedId: string } | null>(null);
+  const replacementReview = useRef<HTMLElement>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
   const alive = useRef(true);
   const busy = useRef(false);
   const generation = useRef(0);
@@ -20,30 +23,46 @@ export default function AskSyncConflicts({ refreshKey, onRestored }: {
     setLoading(true); setError("");
     try {
       const rows = await askHistory.syncConflicts();
-      if (alive.current && current === generation.current) { setIssues(rows); setExpanded(""); }
+      if (alive.current && current === generation.current) { setIssues(rows); setExpanded(""); setReplacement(null); }
     } catch (cause) {
       if (alive.current && current === generation.current) setError(cause instanceof Error ? cause.message : "Could not load conversation branches.");
     } finally { if (alive.current && current === generation.current) setLoading(false); }
   }, []);
   useEffect(() => { alive.current = true; return () => { alive.current = false; generation.current += 1; }; }, []);
   useEffect(() => { void load(); }, [load, refreshKey]);
+  useEffect(() => { if (replacement) replacementReview.current?.focus(); }, [replacement]);
   useEffect(() => { const refresh = () => { if (!busy.current) void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
-  const restore = async (issue: AskSyncConflict, choice: AskSyncChoice) => {
+  const restore = async (issue: AskSyncConflict, choice: AskSyncChoice, replaces?: string) => {
     if (busy.current) return;
+    if (!replaces) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     busy.current = true; setSaving(true); setError("");
+    if (!replaces) setReplacement(null);
+    let id = "";
     try {
       // Stable across retries and page restarts: a lost response cannot create
       // another copy of the same reviewed branch.
-      const id = await recoveryConversationId(issue, choice);
-      const saved = await askHistory.restoreBranch(issue.id, choice.choice_id, id, issue.revision);
-      if (alive.current) await onRestored(saved);
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : "The node did not confirm keeping this branch. Retry to check the same copy."); }
+      id = await recoveryConversationId(issue, choice, replaces);
+      const saved = replaces ? await askHistory.restoreBranch(issue.id, choice.choice_id, id, issue.revision, replaces)
+        : await askHistory.restoreBranch(issue.id, choice.choice_id, id, issue.revision);
+      if (alive.current) { setReplacement(null); await onRestored(saved); }
+    } catch (cause) {
+      if (alive.current && id && cause instanceof AskRequestError && cause.code === "ask_conversation_deleted") {
+        setReplacement({ issue, choice, deletedId: id });
+      } else if (alive.current) setError(cause instanceof Error ? cause.message : "The node did not confirm keeping this branch. Retry to check the same copy.");
+    }
     finally { busy.current = false; if (alive.current) setSaving(false); }
   };
   if (!loading && !error && !issues.length) return null;
   return <Panel title="Conversation branches and recovery">
     {error ? <p role="alert">{error}</p> : null}
     {loading ? <p role="status">Loading conversation branches…</p> : null}
+    {replacement ? <section ref={replacementReview} tabIndex={-1} aria-label="Keep another recovery copy">
+      <h3>The previously kept copy was deleted</h3>
+      <p>Keep another independent copy of “{replacement.choice.value.title}”? The deleted conversation stays deleted.
+        The new copy keeps the original recipient: {replacement.choice.value.providerPeerId} · {replacement.choice.value.serviceName}. No question will be sent.</p>
+      <Button disabled={saving || loading} onClick={() => void restore(replacement.issue, replacement.choice, replacement.deletedId)}>Keep another copy</Button>
+      <Button disabled={saving || loading} onClick={() => { setReplacement(null); setError(""); returnFocus.current?.focus(); }}>Cancel keeping another copy</Button>
+    </section> : null}
     <Button disabled={loading || saving} onClick={() => void load()}>Refresh branches</Button>
     <div className={styles.issues}>{issues.map((issue) => <section key={issue.id} aria-label={`Branches for ${issue.id}`}>
       <h3>{issue.deleted ? "Deleted conversation with pending recovery" : "Conversation changed on different devices"}</h3>
