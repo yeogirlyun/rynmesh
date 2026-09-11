@@ -287,13 +287,13 @@ class ReaderCache:
 
         return self.dir / (hashlib.sha256(url.encode("utf-8")).hexdigest()[:20] + ".json")
 
-    def get(self, url: str, *, now: float) -> dict[str, Any] | None:
+    def get(self, url: str, *, now: float, allow_stale: bool = False) -> dict[str, Any] | None:
         path = self._path(url)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        if now - float(payload.get("cached_at", 0)) > self.ttl_s:
+        if not allow_stale and now - float(payload.get("cached_at", 0)) > self.ttl_s:
             return None
         if int(payload.get("extractor", 0)) != EXTRACTOR_VERSION:
             return None  # extracted by an older reader: re-fetch

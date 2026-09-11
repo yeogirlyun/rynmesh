@@ -28,11 +28,12 @@ function actionLabel(item: ContentItem) {
   return "Read original";
 }
 
-export default function ContentViewer({ item, onClose, client, onRead }: {
+export default function ContentViewer({ item, onClose, client, onRead, loadBody }: {
   item: ContentItem;
   onClose: () => void;
   client?: NodeClient;
   onRead?: () => Promise<void>;
+  loadBody?: () => Promise<{ text: string; truncated: boolean }>;
 }) {
   const [body, setBody] = useState<string[]>([]);
   const [bodyState, setBodyState] = useState<"loading" | "ready" | "failed">("loading");
@@ -60,7 +61,11 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
     positionLoaded.current = client.mode !== "live";
     const read = async () => {
       let blocks: string[];
-      if (item.content_id.startsWith("import:")) {
+      if (loadBody) {
+        const result = await loadBody();
+        blocks = [result.text];
+        if (active) setTruncated(result.truncated);
+      } else if (item.content_id.startsWith("import:")) {
         const result = await friendsApi.document(item.content_id.slice(7));
         blocks = [result.text];
         if (active) setTruncated(result.truncated);
@@ -89,7 +94,7 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
     };
     void read().catch(() => { if (active) setBodyState("failed"); });
     return () => { active = false; };
-  }, [client, item.content_id, item.external_url, textContent, retry]);
+  }, [client, item.content_id, item.external_url, textContent, retry, loadBody]);
   useEffect(() => {
     if (bodyState !== "ready") return;
     const frame = window.requestAnimationFrame(() => {

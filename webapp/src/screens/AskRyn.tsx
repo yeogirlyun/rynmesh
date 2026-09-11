@@ -72,6 +72,11 @@ function AskRynHome() {
     return () => { active = false; };
   }, [client.mode]);
   useEffect(() => { setTitle(selection?.title ?? ""); }, [selection?.id, selection?.title]);
+  useEffect(() => {
+    if (!selection || !params.get("message")) return;
+    const element = document.getElementById(`ask-message-${params.get("message")}`);
+    element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
+  }, [selection?.id, params, loading]);
   const persistDraft = useCallback((text: string) => {
     if (!draftReady || client.mode !== "live") return Promise.resolve();
     const next = drafts.current.catch(() => undefined).then(async () => {
@@ -124,7 +129,7 @@ function AskRynHome() {
         {selection ? <Panel title={selection.title}>
           <p>Original recipient: {selection.providerPeerId} · {selection.serviceName} · {selection.networkId}</p>
           <small>Conversation ID: {selection.id}</small>
-          <div className={styles.transcript}>{selection.messages.length ? selection.messages.map((message) => <article key={message.id}><strong>{message.role === "user" ? "You" : "Ryn"}</strong><p>{message.content}</p><small>{message.status}</small></article>) : <p>No messages yet.</p>}</div>
+          <div className={styles.transcript}>{selection.messages.length ? selection.messages.map((message) => <article key={message.id} id={`ask-message-${message.id}`} tabIndex={-1} style={message.id === params.get("message") ? { outline: "2px solid currentColor" } : undefined}><strong>{message.role === "user" ? "You" : "Ryn"}</strong><p>{message.content}</p><small>{message.status}</small></article>) : <p>No messages yet.</p>}</div>
           {selection.draft ? <p>Saved draft: {selection.draft}</p> : null}
           {services.some((service) => llmServiceRecordKey(service) === selection.serviceKey) ? <Link to={conversationUrl(selection, true)}>Continue with original provider</Link> : <p>The original service is unavailable. Your history is still readable; a different service starts a separate conversation.</p>}
           {client.mode === "live" ? <>

@@ -2413,6 +2413,16 @@ def create_app(store: RynmeshStore | None = None):
         local_control=local_control, messaging_key=_msg_priv,
     )
 
+    from .local_search.routes import install_local_search
+    from .local_search.sources import LocalSearchSources
+
+    install_local_search(app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+        source=lambda: LocalSearchSources(consumption=lambda: app.state.consumption_store,
+            imports=lambda: app.state.friends.content.imports, reader=lambda: app.state.reader_cache,
+            friends=lambda: app.state.friends.service, conversations=lambda: app.state.ask_ryn.conversations,
+            store=lambda: active_store).snapshot())
+
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}

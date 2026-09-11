@@ -17,7 +17,7 @@ async function encodeAttachment(file: File): Promise<NonNullable<SendBody["attac
   return { filename: file.name, mime: file.type || "application/octet-stream", data_base64: btoa(binary) };
 }
 
-export default function FriendConversation({ friend }: { friend: FriendRecord }) {
+export default function FriendConversation({ friend, focusMessage }: { friend: FriendRecord; focusMessage?: string | null }) {
   const [messages, setMessages] = useState<FriendMessage[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [text, setText] = useState("");
@@ -27,6 +27,11 @@ export default function FriendConversation({ friend }: { friend: FriendRecord })
   const [error, setError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
+  useEffect(() => {
+    if (!loaded || !focusMessage) return;
+    const element = document.getElementById(`friend-message-${focusMessage}`);
+    element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
+  }, [loaded, focusMessage]);
   const refresh = useCallback(async () => {
     const result = await friendsApi.history(friend.peer_id);
     if (alive.current) { setMessages(result.messages); setLoaded(true); }
@@ -75,7 +80,8 @@ export default function FriendConversation({ friend }: { friend: FriendRecord })
     {error ? <p role="alert">{error}</p> : null}
     <Button disabled={busy} onClick={() => void act(refresh)}>Refresh messages</Button>
     {!loaded ? <p>Loading messages…</p> : messages.length === 0 ? <p>Send your first message.</p> : <ol aria-label="Conversation">
-      {messages.map((message) => <li key={message.msg_id}>
+      {messages.map((message) => <li key={message.msg_id} id={`friend-message-${message.msg_id}`} tabIndex={-1}
+        style={message.msg_id === focusMessage ? { outline: "2px solid currentColor" } : undefined}>
         <strong>{message.dir === "in" ? friend.node_name : "You"}</strong>
         <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.text}</p>
         {message.attachment ? <Button disabled={busy} onClick={() => void act(() => download(message))}>Save attachment: {message.attachment.filename} ({message.attachment.size ?? 0} bytes)</Button> : null}

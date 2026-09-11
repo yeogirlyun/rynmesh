@@ -31,6 +31,7 @@ import AskRyn, { AskRynQuickPanel } from "./screens/AskRyn";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
+import Search from "./screens/Search";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
 import VideoRendering from "./screens/VideoRendering";
@@ -43,6 +44,7 @@ const navItems = [
   { path: "/", label: "Home", icon: NavIcons.home },
   { path: "/digest", label: "For You", icon: NavIcons.digest },
   { path: "/explore", label: "Explore", icon: NavIcons.explore },
+  { path: "/search", label: "Search", icon: NavIcons.searchAsk },
   { path: "/ask", label: "Ask Ryn", icon: NavIcons.searchAsk },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
@@ -398,6 +400,7 @@ export function AppRoutes() {
           <Route index element={<Home />} />
           <Route path="digest" element={<Digest />} />
           <Route path="explore" element={<Explore />} />
+          <Route path="search" element={<Search />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route path="recommendations" element={<Navigate replace to="/digest" />} />
           <Route path="ask" element={<AskRyn />} />

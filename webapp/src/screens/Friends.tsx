@@ -1,4 +1,5 @@
 import QRCode from "qrcode";
+import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
@@ -10,6 +11,7 @@ import FriendAI from "./components/FriendAI";
 import styles from "./Friends.module.css";
 
 export default function Friends() {
+  const [params] = useSearchParams();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -60,6 +62,7 @@ export default function Friends() {
   }, [invite]);
   const activeFriends = friends.filter((friend) => friend.status === "active");
   const conversation = activeFriends.find((friend) => friend.peer_id === selected);
+  useEffect(() => { setSelected(params.get("peer")); }, [params]);
 
   return <div className="screen-stack">
     <PageHeader eyebrow="Private sharing" title="Friends" context="Invite someone you know, review their identity, then share your first message." />
@@ -106,8 +109,8 @@ export default function Friends() {
       </div>)}
       {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: removed locally; waiting to notify their device.</p><Button disabled={busy} onClick={() => void act(async () => { await friendsApi.retryRevocation(friend.relationship_id); await load(); })}>Retry removal notice</Button></div>)}
     </Panel>
-    {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} /> : null}
-    <FriendCards friends={friends} />
+    {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} focusMessage={params.get("message")} /> : params.get("peer") && loaded ? <p role="alert">This friend is unavailable or access was removed.</p> : null}
+      <FriendCards friends={friends} focusCard={params.get("card")} />
     <FriendAI friends={friends} />
   </div>;
 }
