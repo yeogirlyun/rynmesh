@@ -26,8 +26,8 @@ CHANNEL = b"rynmesh-ask-history-v1"
 MAX_BYTES = 16 * 1024 * 1024
 MAX_PLAINTEXT = 11 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft")
-MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost")
+FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds")
+MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256")
 
 
 class ConversationError(ValueError):
@@ -90,10 +90,24 @@ def clean_conversation(value: Mapping[str, Any]) -> dict[str, Any]:
         for key in ("inputTokens", "outputTokens", "cost"):
             if key in row and (type(row[key]) not in {int, float} or not math.isfinite(row[key]) or row[key] < 0):
                 raise ConversationError("ask_invalid_conversation")
+        if "contextIds" in row:
+            ids, sizes = row["contextIds"], row.get("contextBytes", [])
+            if not isinstance(ids, list) or len(ids) > 3 or any(not isinstance(value, str) or not re.fullmatch(r"import:imp_[a-f0-9]{32}(?:[a-f0-9]{32})?", value) for value in ids):
+                raise ConversationError("ask_context_unavailable")
+            if not isinstance(sizes, list) or len(sizes) != len(ids) or any(type(size) is not int or not 0 <= size <= 1024 * 1024 for size in sizes):
+                raise ConversationError("ask_context_unavailable")
+        if "promptSha256" in row and (not isinstance(row["promptSha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", row["promptSha256"])):
+            raise ConversationError("ask_invalid_conversation")
         cleaned.append(row)
     result["messages"] = cleaned
     if "draft" in result and (not isinstance(result["draft"], str) or len(result["draft"].encode()) > 64 * 1024):
         raise ConversationError("ask_history_limit")
+    if "contextIds" in result:
+        ids = result["contextIds"]
+        if not isinstance(ids, list) or len(ids) > 3 or any(not isinstance(value, str) or not re.fullmatch(r"import:imp_[a-f0-9]{32}(?:[a-f0-9]{32})?", value) for value in ids):
+            raise ConversationError("ask_context_unavailable")
+        if len(set(ids)) != len(ids):
+            raise ConversationError("ask_context_unavailable")
     if len(_json(result)) > 1024 * 1024:
         raise ConversationError("ask_history_limit")
     return result

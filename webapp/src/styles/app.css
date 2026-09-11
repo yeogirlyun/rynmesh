@@ -1960,6 +1960,8 @@ td small {
 
 .confirm-dialog {
   width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   align-self: center;
   justify-self: center;
   margin: auto;
@@ -2717,6 +2719,8 @@ button.digest-title:hover {
   background: rgba(4, 8, 14, 0.82);
   backdrop-filter: blur(12px);
 }
+
+.confirm-dialog .kv dd { overflow-wrap: anywhere; white-space: pre-wrap; }
 
 .first-success-dialog[hidden] { display: none; }
 .content-document-stage[aria-live] { text-align: left; white-space: pre-wrap; }

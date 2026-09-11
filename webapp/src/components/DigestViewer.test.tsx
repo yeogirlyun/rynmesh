@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ afterEach(() => vi.restoreAllMocks());
 it("records reading only after the article loads and allows a failed read to recover", async () => {
   vi.spyOn(digestApi, "readArticle").mockRejectedValueOnce(new Error("offline")).mockResolvedValue(article);
   const callbacks = props();
-  render(<DigestViewer {...callbacks} />);
+  render(<MemoryRouter><DigestViewer {...callbacks} /></MemoryRouter>);
   const user = userEvent.setup();
   const retry = await screen.findByRole("button", { name: "Retry reading" });
   expect(callbacks.onFeedback).not.toHaveBeenCalled();
@@ -32,7 +33,7 @@ it("does not pretend a failed bookmark or feedback was saved", async () => {
   vi.spyOn(digestApi, "readArticle").mockResolvedValue(article);
   const callbacks = props();
   callbacks.onBookmark.mockRejectedValueOnce(new Error("full"));
-  render(<DigestViewer {...callbacks} />);
+  render(<MemoryRouter><DigestViewer {...callbacks} /></MemoryRouter>);
   const user = userEvent.setup();
   await screen.findByText("Actual text.");
   await user.click(screen.getByRole("button", { name: /^Save$/ }));

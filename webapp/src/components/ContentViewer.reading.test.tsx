@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -17,7 +18,7 @@ it("restores position, reports truncated content and retries a failed position s
   ]);
   const write = vi.spyOn(client, "recordContentConsumption").mockResolvedValue(undefined);
   const close = vi.fn();
-  const { container } = render(<ContentViewer item={item} client={client} onClose={close} />);
+  const { container } = render(<MemoryRouter><ContentViewer item={item} client={client} onClose={close} /></MemoryRouter>);
   const stage = container.querySelector(".content-viewer-stage") as HTMLElement;
   Object.defineProperties(stage, { scrollHeight: { configurable: true, value: 1500 }, clientHeight: { configurable: true, value: 500 } });
   await screen.findByText("A real saved article.");
