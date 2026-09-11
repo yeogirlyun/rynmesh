@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from pathlib import Path
 
 from accept_local_search import configure
@@ -21,6 +22,7 @@ def main():
     parser.add_argument('--reuse', action='store_true')
     parser.add_argument('--seed', action='store_true', help='Seed synthetic saved/progress/history sources on a new node.')
     parser.add_argument('--position', type=float, help='Change the synthetic article position before this reused node starts networking.')
+    parser.add_argument('--body', action='store_true', help='Independently seed synthetic reader text on this node; text is not transferred by sync.')
     args = parser.parse_args()
     home = args.home.resolve()
     if not home.name.startswith('rynmesh-device-pairing-acceptance-') or home.exists() != args.reuse:
@@ -49,6 +51,14 @@ def main():
             'messages': [{'id': 'original-answer', 'role': 'assistant', 'status': 'complete', 'createdAt': stamp,
                           'content': 'This history arrived through encrypted device transfer. 原服务绑定保留，没有调用模型。'}]}, expected_revision=0)
     app.state.first_run.store.dismiss()
+    if args.body:
+        paragraphs = [f'Section {number}. Device reading checkpoint. ' +
+            'This synthetic text checks continuing the same article on another computer. ' * 18 for number in range(1, 21)]
+        app.state.reader_cache.put('https://example.test/device-transfer', {
+            'url': 'https://example.test/device-transfer', 'title': 'Device transfer reading sample',
+            'byline': 'Synthetic acceptance source', 'lead_image': '', 'truncated': False,
+            'blocks': [{'tag': 'p', 'text': paragraph} for paragraph in paragraphs],
+            'word_count': sum(len(paragraph.split()) for paragraph in paragraphs)}, now=time.time())
     if args.position is not None:
         rows = app.state.consumption_store.list()
         original = next((row for row in rows if row['item_id'] == 'device-transfer-article'), None)

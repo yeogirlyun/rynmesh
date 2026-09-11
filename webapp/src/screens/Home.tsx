@@ -107,6 +107,7 @@ export default function Home() {
           <p className="mono">{node.peer_id}</p>
         </div>
         <div className="hero-actions">
+          <Button onClick={() => navigate("/reading")}>Continue reading</Button>
           <Button icon={Compass} onClick={() => navigate("/explore")}>
             Explore
           </Button>

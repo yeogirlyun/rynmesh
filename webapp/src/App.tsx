@@ -35,6 +35,7 @@ import Devices from "./screens/Devices";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
 import OfflineReading from "./screens/OfflineReading";
+import Reading from "./screens/Reading";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
 import VideoRendering from "./screens/VideoRendering";
@@ -46,6 +47,7 @@ import UnlockGate from "./screens/components/UnlockGate";
 const navItems = [
   { path: "/", label: "Home", icon: NavIcons.home },
   { path: "/digest", label: "For You", icon: NavIcons.digest },
+  { path: "/reading", label: "My reading", icon: NavIcons.digest },
   { path: "/explore", label: "Explore", icon: NavIcons.explore },
   { path: "/search", label: "Search", icon: NavIcons.searchAsk },
   { path: "/ask", label: "Ask Ryn", icon: NavIcons.searchAsk },
@@ -408,6 +410,7 @@ export function AppRoutes() {
           <Route path="search" element={<Search />} />
           <Route path="friend-updates" element={<FriendFeed />} />
           <Route path="offline" element={<OfflineReading />} />
+          <Route path="reading" element={<Reading />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route path="recommendations" element={<Navigate replace to="/digest" />} />
           <Route path="ask" element={<AskRyn />} />

@@ -318,6 +318,8 @@ export default function Digest() {
   if (loading) return <LoadingPanel />;
 
   const items = digest?.items ?? [];
+  const syncedReading = viewer ? consumption.find((record) => record.item_id === viewer.items[viewer.index]?.item_id
+    && record.sync_revisions?.reading && !["video", "audio", "image"].includes(record.item.content_kind ?? "document")) : undefined;
   const generated = digest?.generated_at_unix ? timeAgo(digest.generated_at_unix) : null;
 
   return (
@@ -561,9 +563,7 @@ export default function Digest() {
                 key={record.item_id}
                 type="button"
                 className="digest-title"
-                onClick={() => record.item.link.startsWith("rynmesh://content/")
-                  ? setMeshViewer(contentFromHistory(record))
-                  : setViewer({ items: [record.item], index: 0 })}
+                onClick={() => setMeshViewer(contentFromHistory(record))}
               >
                 {record.item.title}
                 {record.bookmarked ? " · saved" : ""}
@@ -573,7 +573,9 @@ export default function Digest() {
           </div>
         </Panel>
       ) : null}
-      {viewer && viewer.items[viewer.index] ? (
+      {syncedReading ? <ContentViewer key={syncedReading.item_id} item={contentFromHistory(syncedReading)} client={client}
+        onRead={() => client.recordContentConsumption(contentFromHistory(syncedReading), "opened")}
+        onClose={() => { setViewer(null); void digestApi.listConsumption().then(setConsumption).catch(() => setError("Reading history could not be refreshed.")); }} /> : viewer && viewer.items[viewer.index] ? (
         <DigestViewer
           items={viewer.items}
           index={viewer.index}

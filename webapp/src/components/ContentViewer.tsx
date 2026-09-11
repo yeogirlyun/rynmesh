@@ -1,5 +1,7 @@
 import { ExternalLink, FileText, Headphones, Image as ImageIcon, Play, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { readingTextVersion } from "../domain/readingHistory";
 import { digestApi } from "../domain/digestClient";
 import type { NodeClient } from "../domain/nodeClient";
 import type { ContentItem } from "../domain/types";
@@ -35,7 +37,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   item: ContentItem;
   onClose: () => void;
   client?: NodeClient;
-  onRead?: () => Promise<void>;
+  onRead?: () => Promise<unknown>;
   loadBody?: () => Promise<{ text: string; truncated: boolean }>;
   offlineKey?: string;
 }) {
@@ -44,6 +46,11 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   const [retry, setRetry] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [progressError, setProgressError] = useState("");
+  const [positionReview, setPositionReview] = useState<"conflict" | "version" | "unknown" | null>(null);
+  const [positionChoice, setPositionChoice] = useState(0);
+  const readingRevision = useRef("");
+  const bodyVersion = useRef("");
+  const writeBlocked = useRef(false);
   const [offlineBody, setOfflineBody] = useState<OfflineBody | null>(null);
   const [bodyError, setBodyError] = useState("");
   const [resolvedOfflineKey, setResolvedOfflineKey] = useState("");
@@ -91,6 +98,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
     setOfflineBody(null); setBodyError(""); setResolvedOfflineKey("");
     setSettledImageJob(""); readingStarted.current = false;
     setProgressError("");
+    setPositionReview(null);
+    restore.current = 0;
     savedProgress.current = 0;
     positionReady.current = false;
     positionLoaded.current = client.mode !== "live";
@@ -126,11 +135,28 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
       if (!active) return;
       if (client.mode === "live") {
         try {
+          // A requested reload must observe any already queued source commits,
+          // before replacing the revision used by those writes.
+          await progressWrites.current.catch(() => undefined);
+          if (!active) return;
+          readingRevision.current = ""; bodyVersion.current = ""; writeBlocked.current = false;
+          setProgressError("");
           const history = await digestApi.listConsumption();
           if (!active) return;
-          restore.current = history.find((row) => row.item_id === (item.digest_item_id ?? item.content_id))?.progress ?? 0;
+          const record = history.find((row) => row.item_id === readingId);
+          restore.current = record?.progress ?? 0;
+          readingRevision.current = record?.sync_revisions?.reading ?? "";
+          if (readingRevision.current) {
+            bodyVersion.current = await readingTextVersion(blocks);
+            if (!active) return;
+            if (record?.sync_conflicts?.reading) {
+              setPositionReview("conflict"); writeBlocked.current = true; restore.current = 0;
+            } else if (restore.current > 0 && record?.content_version !== bodyVersion.current) {
+              setPositionReview(record?.content_version ? "version" : "unknown"); writeBlocked.current = true;
+            }
+          }
           savedProgress.current = restore.current;
-          positionLoaded.current = true;
+          positionLoaded.current = !writeBlocked.current;
         } catch { if (active) setProgressError("Your saved reading position could not be loaded. Retry reading to restore it."); }
       }
       if (!active) return;
@@ -143,32 +169,48 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
     return () => { active = false; };
   }, [client, item.content_id, item.external_url, textContent, retry, loadBody, offlineKey, readingId, forceSource]);
   useEffect(() => {
-    if (bodyState !== "ready" || !imagesReady) return;
+    if (bodyState !== "ready" || !imagesReady || positionReview) return;
     const frame = window.requestAnimationFrame(() => {
       const element = stageRef.current;
       if (element && !readingStarted.current) element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight) * restore.current;
       positionReady.current = positionLoaded.current;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [bodyState, imagesReady]);
+  }, [bodyState, imagesReady, positionReview, positionChoice]);
 
   const saveProgress = (force = false) => {
     const element = stageRef.current;
-    if (!client || client.mode !== "live" || !element || !textContent || bodyState !== "ready" || !positionReady.current) return Promise.resolve();
+    if (!client || client.mode !== "live" || !element || !textContent || bodyState !== "ready" || !positionReady.current || writeBlocked.current) return Promise.resolve();
     const height = element.scrollHeight - element.clientHeight;
     const progress = height > 0 ? Math.max(0, Math.min(1, element.scrollTop / height)) : 0;
+    if (readingRevision.current && Math.abs(progress - savedProgress.current) < 0.001) return progressWrites.current;
     if (!force && Math.abs(progress - savedProgress.current) < 0.05) return progressWrites.current;
     savedProgress.current = progress;
-    const write = progressWrites.current.catch(() => undefined).then(() => client.recordContentConsumption(item, "progress", progress));
+    const write = progressWrites.current.catch(() => undefined).then(async () => {
+      if (writeBlocked.current) throw new Error("reading_review_required");
+      if (readingRevision.current) {
+        const result = await client.recordContentConsumption(item, "progress", progress,
+          { content_version: bodyVersion.current, expected_sync_revision: readingRevision.current });
+        if (!result?.sync_revisions?.reading) throw new Error("reading_receipt_missing");
+        readingRevision.current = result.sync_revisions.reading;
+      } else await client.recordContentConsumption(item, "progress", progress);
+    });
     progressWrites.current = write;
     return write.then(() => setProgressError(""), () => {
       savedProgress.current = -1;
-      setProgressError("Your reading position could not be saved. Please retry before closing.");
+      setProgressError("Your reading position could not be saved. Retry saving, or reload the saved position if another device changed it.");
       throw new Error("reading_progress_failed");
     });
   };
   const close = async () => {
     try { await saveProgress(true); onClose(); } catch { /* Keep the retry visible. */ }
+  };
+  const choosePosition = (keep: boolean) => {
+    if (!keep) restore.current = 0;
+    // The owner explicitly reviewed this body before using an approximate
+    // percentage. Ordinary scrolling still checks the saved causal revision.
+    readingStarted.current = false; writeBlocked.current = false; positionLoaded.current = true;
+    setPositionReview(null); setPositionChoice((value) => value + 1);
   };
   const embed = item.source_platform === "youtube" ? youtubeEmbed(item.external_url) : "";
   const image = item.media_url || item.thumbnail_url || "";
@@ -183,7 +225,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
         <header className="content-viewer-header">
           <div>
             <div className="content-viewer-kicker">
-              <Chip tone="info">{item.content_id.startsWith("import:") ? "private saved copy" : item.source_platform || (item.external_url ? "public web" : "Ryn content")}</Chip>
+              <Chip tone="info">{item.content_id.startsWith("import:") ? bodyState === "ready" ? "private saved copy" : "private document reference" : item.source_platform || (item.external_url ? "public web" : "Ryn content")}</Chip>
               <Chip tone="muted">{item.content_kind}</Chip>
               <span>{item.source_peer_name}</span>
             </div>
@@ -194,7 +236,17 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
           </button>
         </header>
 
-        <div className="content-viewer-stage" ref={stageRef} onScroll={() => void saveProgress().catch(() => undefined)}
+        {positionReview === "conflict" ? <div role="status" style={{ padding: "12px 24px" }}>
+          Reading positions differ between devices. This view keeps both choices and does not save a new position.
+          {" "}<Link to="/devices#reading-sync-conflicts" onClick={onClose}>Review reading choices</Link>
+        </div> : positionReview ? <div role="status" style={{ padding: "12px 24px" }}>
+          <p>{positionReview === "unknown" ? "The saved position has no content version." : "The displayed text differs from the text for your saved position."}
+            {" "}The saved {Math.round(restore.current * 100)}% may point to a different passage. Choose how to continue.</p>
+          <Button onClick={() => choosePosition(true)}>Use saved percentage</Button>
+          <Button onClick={() => choosePosition(false)}>Start at the beginning</Button>
+        </div> : null}
+
+        <div className="content-viewer-stage" ref={stageRef} tabIndex={0} aria-label="Article reading area" onScroll={() => void saveProgress().catch(() => undefined)}
           onWheel={() => { readingStarted.current = true; }} onTouchStart={() => { readingStarted.current = true; }}
           onPointerDown={() => { readingStarted.current = true; }} onKeyDown={(event) => {
             if (["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", " "].includes(event.key)) readingStarted.current = true;
@@ -208,6 +260,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
               {offlineBody && resolvedOfflineKey ? <OfflineImages body={offlineBody} itemKey={resolvedOfflineKey} onReady={setSettledImageJob} /> : null}
               {!imagesReady ? <p role="status">Loading saved images before restoring your reading position. You can start scrolling now.</p> : null}
               {bodyState === "failed" ? <div role="alert"><p>{bodyError || "The article could not be loaded. Try again, or open the original."}</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
+              {bodyState === "failed" && item.content_id.startsWith("import:") ? <p>This computer has a document reference, but the private copy may be missing or unavailable.
+                {" "}<Link to="/friends" onClick={onClose}>Open Friends to download a copy you can access</Link>. Device sync does not grant access or copy document files.</p> : null}
               {bodyState === "failed" && !offlineKey && !loadBody && !forceSource ? <Button onClick={() => setSourceItem(readingId)}>Try the source instead</Button> : null}
             </article>
           ) : embed ? (
@@ -236,7 +290,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
         </div>
 
         <footer className="content-viewer-footer">
-          {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
+          {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button>
+            <Button onClick={() => setRetry((value) => value + 1)}>Reload saved position</Button></p> : null}
           <p>{item.description}</p>
           {client?.mode === "live" && textContent && !offlineKey ? <OfflineDownloadButton key={item.digest_item_id ?? item.content_id} itemId={item.digest_item_id ?? item.content_id} /> : null}
           {offlineBody ? <p>Opening the original requires a connection. This view does not fetch external media automatically. Sharing or asking saves a separate text copy; clearing downloads keeps that copy.</p> : null}

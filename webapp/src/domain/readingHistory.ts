@@ -1,6 +1,14 @@
 import type { DigestItem } from "./digestClient";
 import type { ContentItem } from "./types";
 
+/** Identifies displayed text, independent of paragraph splitting by the loader.
+ * This is a position compatibility hint, never content authenticity evidence. */
+export async function readingTextVersion(blocks: string[]): Promise<string> {
+  const text = blocks.join("\n\n").replace(/\s+/g, " ").trim();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return `reading-text-v1:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 /** Restore metadata without inventing verification evidence absent from history. */
 export function contentFromHistory(record: { item: Partial<DigestItem> & Pick<DigestItem, "item_id" | "title" | "link"> }): ContentItem {
   const item = record.item;

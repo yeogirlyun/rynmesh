@@ -207,7 +207,40 @@ def test_multiple_source_instances_do_not_lose_operations(tmp_path):
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(executor.map(lambda instance: instance.record(ITEM, 'opened'), instances))
     assert source.list()[0]['open_count'] == 8
-    assert source.sync_export(['reading'])[0]['record']['clock'] == {A: 8}
+    # Reopening updates local history without inventing eight position edits.
+    assert source.sync_export(['reading'])[0]['record']['clock'] == {A: 1}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda instance: instance.record(ITEM, 'progress', progress=.4), instances))
+    assert source.sync_export(['reading'])[0]['record']['clock'] == {A: 9}
+
+
+def test_opening_synced_conflict_keeps_candidates_and_review_revision(tmp_path):
+    left, right = store(tmp_path), store(tmp_path, B)
+    left.record(ITEM, 'progress', progress=.8, content_version='text-a')
+    right.record(ITEM, 'progress', progress=.2, content_version='text-b')
+    deliver(left, right)
+    before = right.sync_export(['reading'])
+    issue = right.sync_issues()[0]
+    right.record(ITEM, 'opened')
+    assert right.sync_export(['reading']) == before
+    assert right.sync_issues() == [issue]
+    assert right.list()[0]['open_count'] == 1
+
+
+def test_reader_snapshot_cannot_overwrite_new_remote_position(tmp_path):
+    left, right = store(tmp_path), store(tmp_path, B)
+    left.record(ITEM, 'progress', progress=.6, content_version='same-text')
+    deliver(left, right)
+    revision = right.list()[0]['sync_revisions']['reading']
+    right.record(ITEM, 'opened')
+    assert right.list()[0]['sync_revisions']['reading'] == revision
+    left.record(ITEM, 'progress', progress=.2, content_version='same-text')
+    deliver(left, right)
+    before = right.path.read_bytes()
+    with pytest.raises(SyncError, match='revision_conflict'):
+        right.record(ITEM, 'progress', progress=.7, content_version='same-text', expected_sync_revision=revision)
+    assert right.path.read_bytes() == before
+    assert right.list()[0]['progress'] == .2
 
 
 def test_observed_rereading_may_move_backwards_and_older_snapshot_does_not_restore_it(tmp_path):

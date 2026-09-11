@@ -95,6 +95,10 @@ export interface ConsumptionRecord {
   bookmarked: boolean;
   progress: number;
   completed: boolean;
+  content_version?: string;
+  sync_reading_available?: boolean;
+  sync_revisions?: { reading?: string; bookmarks?: string };
+  sync_conflicts?: { reading?: boolean; bookmarks?: boolean };
 }
 
 export interface Watcher {

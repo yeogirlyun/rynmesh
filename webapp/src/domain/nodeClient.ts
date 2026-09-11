@@ -1,3 +1,4 @@
+import type { ConsumptionRecord } from "./digestClient";
 import type {
   ContentFilters,
   ContentBody,
@@ -221,7 +222,8 @@ export interface NodeClient {
     item: ContentItem,
     action: "opened" | "bookmark" | "unbookmark" | "completed" | "progress",
     progress?: number,
-  ): Promise<void>;
+    reading?: { content_version: string; expected_sync_revision: string },
+  ): Promise<ConsumptionRecord | void>;
   getRecommendationProfile(): Promise<RecommendationProfile>;
   updateRecommendationProfile(
     patch: Partial<Pick<RecommendationProfile, "direction" | "topics" | "platforms">>,

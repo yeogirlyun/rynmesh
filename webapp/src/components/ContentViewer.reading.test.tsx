@@ -6,6 +6,7 @@ import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
 import ContentViewer from "./ContentViewer";
 import { offlineApi, type OfflineBody } from "../domain/offlineReading";
+import { friendsApi } from "../domain/friendsClient";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -60,4 +61,17 @@ it("reports that an ordinary bookmark is not downloaded when the source also fai
   render(<MemoryRouter><ContentViewer client={client} item={item} onClose={vi.fn()} /></MemoryRouter>);
   expect(await screen.findByRole("alert")).toHaveTextContent("has not been downloaded for offline reading");
   expect(screen.queryByText(/Offline copy ·/)).not.toBeInTheDocument();
+});
+
+it("offers an authorized download entry for a missing private reference without claiming a saved copy", async () => {
+  const client = { ...makeFixtureNodeClient(), mode: "live" as const };
+  const item = { ...(await client.listContent()).find((row) => row.content_kind === "document")!, content_id: "import:missing-copy" };
+  vi.spyOn(offlineApi, "resolve").mockResolvedValue(null);
+  vi.spyOn(friendsApi, "document").mockRejectedValue(new Error("Private copy is unavailable"));
+  const opened = vi.fn();
+  render(<MemoryRouter><ContentViewer client={client} item={item} onRead={opened} onClose={vi.fn()} /></MemoryRouter>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Private copy is unavailable");
+  expect(screen.getByRole("link", { name: "Open Friends to download a copy you can access" })).toHaveAttribute("href", "/friends");
+  expect(screen.getByText("private document reference")).toBeInTheDocument();
+  expect(screen.queryByText("private saved copy")).not.toBeInTheDocument(); expect(opened).not.toHaveBeenCalled();
 });
