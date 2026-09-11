@@ -91,7 +91,9 @@ export default function Services() {
   const [llmOrders, setLlmOrders] = useState<LLMOrderResult[]>([]);
   const [llmPrivacy, setLlmPrivacy] = useState<LLMPrivacySettings | null>(null);
   const [llmConfiguring, setLlmConfiguring] = useState(false);
-  const [llmSetupMode, setLlmSetupMode] = useState<LLMSetupRequest["mode"]>("openai-compatible");
+  const [llmSetupMode, setLlmSetupMode] = useState<LLMSetupRequest["mode"] | "">("openai-compatible");
+  const [llmResumeNotice, setLlmResumeNotice] = useState("");
+  const setupFormInitialized = useRef(false);
   const [llmProfile, setLlmProfile] = useState<NonNullable<LLMSetupRequest["profile"]>>("auto");
   const [llmHardware, setLlmHardware] = useState<LLMHardwareReport | null>(null);
   const reviewedProfile = llmHardware?.recommendations.find((row) => row.can_run && (llmProfile === "auto" ? row.recommended : row.profile === llmProfile));
@@ -204,6 +206,26 @@ export default function Services() {
       if (privacyResult.status === "fulfilled") setLlmPrivacy(privacyResult.value);
       if (setupResult.status === "fulfilled") {
         setLlmSetupJob(setupResult.value);
+        if (!setupFormInitialized.current) {
+          setupFormInitialized.current = true;
+          const previous = setupResult.value;
+          if (previous.job_id && previous.state !== "succeeded" && previous.state !== "idle") {
+            const choices = previous.resume_configuration;
+            setLlmSetupConfirmed(false);
+            if (choices?.mode === "managed" && ["light", "balanced", "quality"].includes(choices.profile)
+              && typeof choices.package_id === "string" && /^[a-z0-9][a-z0-9._-]{0,254}$/.test(choices.package_id)
+              && Number.isInteger(choices.port) && choices.port >= 1 && choices.port <= 65535) {
+              setLlmSetupMode("managed");
+              setLlmProfile(choices.profile);
+              setLlmPackageId(choices.package_id);
+              setLlmPort(String(choices.port));
+              setLlmResumeNotice("Previous model choices restored. Review the source and confirm before continuing.");
+            } else {
+              setLlmSetupMode("");
+              setLlmResumeNotice("Previous setup choices are unavailable. Choose the setup mode and review its settings before configuring again.");
+            }
+          }
+        }
         if (setupResult.value.job_id && ["queued", "running", "cancelling"].includes(setupResult.value.state)) {
           void trackSetupJob(setupResult.value.job_id);
         }
@@ -375,6 +397,7 @@ export default function Services() {
   };
 
   const setupLlm = async () => {
+    if (!llmSetupMode) return;
     if (llmSetupMode === "managed" && !reviewedProfile) return;
     setLlmConfiguring(true);
     try {
@@ -642,9 +665,11 @@ export default function Services() {
             </div>
             <Chip tone="info">Publishing stays off after setup</Chip>
           </div>
+          {llmResumeNotice ? <p>{llmResumeNotice}</p> : null}
           <label className="field">
             <span>Setup mode</span>
             <select value={llmSetupMode} onChange={(event) => setLlmSetupMode(event.target.value as LLMSetupRequest["mode"])}>
+              <option value="" disabled>Choose setup mode</option>
               <option value="openai-compatible">OpenAI-compatible local API</option>
               <option value="ollama">Ollama</option>
               <option value="import-gguf">Import a GGUF file read-only</option>
@@ -773,7 +798,7 @@ export default function Services() {
           <div className="button-row">
             <Button
               variant="primary"
-              disabled={llmConfiguring || !packageIdValid || !llmAlias.trim()
+              disabled={llmConfiguring || !llmSetupMode || !packageIdValid || !llmAlias.trim()
                 || (llmSetupMode === "managed" && !reviewedProfile)
                 || (llmSetupMode === "import-gguf" && !llmModelPath.trim())
                 || ((llmSetupMode === "managed" || llmSetupMode === "import-gguf")

@@ -74,6 +74,34 @@ function renderServices(options: {
 }
 
 describe("Services local LLM flow", () => {
+  it("restores the managed model choices after restart and requires a fresh confirmation", async () => {
+    const { client, user } = renderServices({ setupStatuses: [{
+      job_id: "setup_managed_resume", state: "cancelled", stage: "cancelled", progress: 0, retryable: true,
+      resume_configuration: { mode: "managed", profile: "light", package_id: "previous-model", port: 18925 },
+    }] });
+    expect(await screen.findByLabelText("Setup mode")).toHaveValue("managed");
+    expect(screen.getByLabelText("Model profile")).toHaveValue("light");
+    expect(screen.getByLabelText("Package ID")).toHaveValue("previous-model");
+    expect(screen.getByLabelText("Local runtime port")).toHaveValue("18925");
+    const confirm = screen.getByRole("checkbox", { name: /I understand this prepares a local runtime/ });
+    expect(confirm).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    const start = vi.spyOn(client, "startLLMSetup");
+    expect(start).not.toHaveBeenCalled();
+    await user.click(confirm);
+    await user.click(screen.getByRole("button", { name: "Retry configuration" }));
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "managed", profile: "light", package_id: "previous-model", port: 18925, accept_risk: true,
+    }));
+  });
+
+  it("requires choosing a setup mode when an old failed job has no saved choices", async () => {
+    renderServices({ setupStatuses: [{ job_id: "legacy", state: "failed", stage: "recovery", progress: 0, retryable: true }] });
+    expect(await screen.findByLabelText("Setup mode")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    expect(screen.getByText(/Previous setup choices are unavailable/)).toBeInTheDocument();
+  });
+
   it("waits for recovery after cancellation and offers retry when restoration fails", async () => {
     const { client, user, notify } = renderServices({ setupStatuses: [
       { job_id: "setup_restore", state: "running", stage: "download_model", progress: 40 },
@@ -94,6 +122,8 @@ describe("Services local LLM flow", () => {
     expect(await screen.findByRole("button", { name: "Cancelling…" })).toBeDisabled();
     failed = true;
     expect(await screen.findByText(/Previous configuration could not be restored/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "openai-compatible");
     expect(screen.getByRole("button", { name: "Retry configuration" })).toBeEnabled();
     const retry = vi.spyOn(client, "startLLMSetup");
     await user.click(screen.getByRole("button", { name: "Retry configuration" }));

@@ -10,6 +10,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from rynmesh.atomic_io import atomic_write_bytes, atomic_write_json
@@ -19,6 +20,22 @@ from .errors import LifecycleError
 MAX_CONFIG_BYTES = 2 * 1024 * 1024
 MAX_JOURNAL_BYTES = 6 * 1024 * 1024
 RECOVERY_FAILED = "Previous configuration could not be restored. Check local storage and retry configuration."
+
+
+def managed_resume_configuration(body: dict) -> dict | None:
+    """Persist only bounded UI choices, never URLs, paths, keys or consent."""
+    if body.get("mode") != "managed" or body.get("runtime", "auto") != "auto":
+        return None
+    profile = body.get("profile")
+    package = body.get("package_id", "local-small")
+    port = body.get("port", 18080)
+    if not isinstance(profile, str) or profile not in {"light", "balanced", "quality"}:
+        return None
+    if not isinstance(package, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,254}", package):
+        return None
+    if type(port) is not int or not 1 <= port <= 65535:
+        return None
+    return {"mode": "managed", "profile": profile, "package_id": package, "port": port}
 
 
 class SetupRecoveryError(LifecycleError):
