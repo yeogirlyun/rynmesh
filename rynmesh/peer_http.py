@@ -1439,6 +1439,7 @@ def create_app(store: RynmeshStore | None = None):
             return events
         return []
 
+    from .device_sync.records import SyncError
     from .first_run_routes import install_first_run
     from .services import ask as ask_service
     from .services import model_provider as model_provider_module
@@ -1781,10 +1782,13 @@ def create_app(store: RynmeshStore | None = None):
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="consumption_not_object")
         try:
-            record = app.state.consumption_store.record(
+            record = await _asyncio.to_thread(
+                app.state.consumption_store.record,
                 body.get("item", {}),
                 str(body.get("action", "")),
                 progress=body.get("progress"),
+                content_version=body.get("content_version"),
+                expected_sync_revision=body.get("expected_sync_revision"),
             )
             action = str(body.get("action", ""))
             if action == "opened":
@@ -1801,13 +1805,20 @@ def create_app(store: RynmeshStore | None = None):
             return record
         except ConsumptionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SyncError as exc:
+            if str(exc) == "sync_revision_conflict":
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
         except OSError:
             raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
 
     @app.delete("/api/local/consumption")
     def local_consumption_clear(request: FastAPIRequest) -> dict[str, bool]:
         local_control(request)
-        app.state.consumption_store.clear()
+        try:
+            app.state.consumption_store.clear()
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
         _audit().append("verify", "Reading history cleared", details={"scope": "history"})
         return {"ok": True}
 
