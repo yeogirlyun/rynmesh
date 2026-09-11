@@ -949,14 +949,15 @@
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
       "status": "in_progress",
-      "actual": "The original fresh 10000-record-per-source TCP run confirmed source integrity but took 99.682 seconds for 100 changes. After combined transactions, v3 projection storage and compatible encoder reuse, an incremental rerun on copies of the genuinely confirmed baseline took 59.137 seconds: 41.996 seconds of 100 normal source writes, 17.140 seconds of transfer/final confirmation, 200 receipts and 164476 encrypted JSON bytes excluding headers. V2 migration backups match the original files; both sources retain 10000 causal records and the selected changes. This rerun reaches the 60-second reference with little margin, but does not remeasure initial merge. A fresh-baseline run of the latest code and full-node/packaged/cross-network evidence remain required; all intermediate misses and the pre-timing baseline-check failure are retained.",
+      "actual": "Latest complete fresh-directory run on c8cec7a: real pairing and TCP merge of disjoint synthetic legacy sources, migration 2.254 seconds, initial merge 900.479 seconds (200 batches / 20000 receipts), then 100 normal unbookmark writes in 38.966 seconds plus transfer/final confirmation in 16.396 seconds, total 55.361 seconds, 200 incremental receipts and 164740 encrypted JSON bytes excluding HTTP headers. Both sources retain 10000 causal entities and the 100 expected changes; the 60-second reference is met. Initial merge overlapped conversation tests/editing; incremental timing did not overlap those tests. Two route services run on loopback in separate threads of one Python process, without scheduler waits/full-node background load/UI. Full-node, packaged desktop, physical-device and cross-network acceptance remain incomplete. Earlier failed timings and the reused-baseline 59.137-second result are retained.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/device-sync-development/scale-smoke-200.json",
         "docs/acceptance/device-sync-development/scale-initial-before.json",
         "docs/acceptance/device-sync-development/scale-10000-result.json",
         "docs/acceptance/device-sync-development/scale-compact-59s.json",
-        "docs/acceptance/device-sync-development/source-v3-storage.md"
+        "docs/acceptance/device-sync-development/source-v3-storage.md",
+        "docs/acceptance/device-sync-development/scale-v3-fresh-result.json"
       ],
       "implementation_commit": ""
     },
@@ -1064,9 +1065,10 @@
       "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
       "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
       "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete. Internal reviewed conversation-source erasure is implemented in 5198d80. Related tests: 61 passed; stale delivery, terminal-task retry, new work after response loss, recovery copies and atomic failure are covered. Backups, derived indexes, order results, browser copies, complete export and the coordinated Settings flow remain incomplete; this is not full data-maintenance acceptance.",
       "evidence": [
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/device-sync-development/personal-data-maintenance.md"
       ],
       "implementation_commit": ""
     },
@@ -1146,8 +1148,10 @@
       "scenario": "数据维护",
       "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": "Internal reviewed conversation-source erasure is implemented in 5198d80. Related tests: 61 passed; stale delivery, terminal-task retry, new work after response loss, recovery copies and atomic failure are covered. Backups, derived indexes, order results, browser copies, complete export and the coordinated Settings flow remain incomplete; this is not full data-maintenance acceptance.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/personal-data-maintenance.md"
+      ],
       "implementation_commit": ""
     },
     {
