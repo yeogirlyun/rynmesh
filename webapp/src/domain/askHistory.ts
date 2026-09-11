@@ -3,6 +3,10 @@ import type { LLMConversation } from "./llmConversationStore";
 import { nodeControlUrl } from "./nodeUrl";
 
 const errors: Record<string, string> = {
+  ask_run_busy: "This conversation already has an active task. Wait for it or cancel it before sending another question.",
+  ask_preview_changed: "The prepared input changed after review. Review the current question and sources again before sending.",
+  ask_run_identity_conflict: "This task ID belongs to a different request. Check its original result before continuing.",
+  ask_run_not_found: "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.",
   ask_context_unavailable: "This source copy is missing, damaged or no longer readable. Reopen the article to prepare it again, or remove it from this conversation.",
   ask_provider_unavailable: "The original provider is unavailable. Wait for it or start a separate conversation with another service.",
   ask_context_budget_unavailable: "This service has no usable context budget. Choose a service with a larger context window.",
@@ -25,6 +29,15 @@ export interface AskPreview {
   prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
   framing_reserve: number; max_output_tokens: number; history_messages_omitted: number; sources: AskSource[];
 }
+export interface AskRun {
+  task_id: string; conversation_id: string; state: string; cancel_requested: boolean; error_code?: string;
+}
+export interface AskRunRequest {
+  task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
+}
+export class AskRequestError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   let response: Response;
@@ -36,12 +49,15 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   }
   if (!response.ok) {
     const value = await response.json().catch(() => ({})) as { detail?: string };
-    throw new Error(errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.");
+    throw new AskRequestError(response.status, errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.");
   }
   return response.json() as Promise<T>;
 }
 
 export const askHistory = {
+  beginRun: (body: AskRunRequest) => request<AskRun>("/runs", "POST", body),
+  run: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}`),
+  cancelRun: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}/cancel`, "POST"),
   prepareContext: (item_id: string) => request<AskSource>("/contexts", "POST", { item_id }),
   context: (libraryId: string) => request<AskSource>(`/contexts/${encodeURIComponent(libraryId)}`),
   preview: (conversation: LLMConversation, question: string) => request<AskPreview>("/preview", "POST", { conversation_id: conversation.id, expected_revision: conversation.revision, question }),

@@ -31,6 +31,7 @@ from rynmesh.store import RynmeshStore
 
 from . import runtime_native
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
+from .consumer_commands import ConsumerCommands
 from .lifecycle import (
     LifecycleError,
     connect_local_api,
@@ -159,6 +160,8 @@ def _open_provider_response(
     )
     if outer.get("from_peer_id") != provider_peer_id:
         raise TaskProtocolError("LLM response signer is not the selected provider")
+    if outer.get("task_id") != task_id:
+        raise TaskProtocolError("LLM response task mismatch")
     if result.get("service_id") != service_id:
         raise TaskProtocolError("LLM response service mismatch")
     state = str(result.get("state") or "")
@@ -698,7 +701,7 @@ def _recover_consumer_orders(
 
 
 def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_key: Any,
-                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
+                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> ConsumerCommands:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
     # Ledger-backed: every hold/settle/release/earning is a signed event in
@@ -1828,7 +1831,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.post("/api/local/llm/orders/async")
     async def local_llm_order_async(request: Request) -> dict[str, Any]:
-        body = dict(await request.json())
+        return submit_order(dict(await request.json()))
+
+    def submit_order(value: dict[str, Any]) -> dict[str, Any]:
+        body = dict(value)
         if not str(body.get("provider_peer_id") or "") \
                 or not str(body.get("service_id") or "") \
                 or not str(body.get("prompt") or ""):
@@ -1865,6 +1871,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.get("/api/local/llm/orders/{task_id}")
     def local_llm_order_status(task_id: str) -> dict[str, Any]:
+        return order_status(task_id, consume_ephemeral=True)
+
+    def order_status(task_id: str, *, consume_ephemeral: bool = False) -> dict[str, Any]:
         try:
             record = consumer_orders.get(task_id)
         except TaskProtocolError as exc:
@@ -1883,12 +1892,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         }
         with background_orders_lock:
             ephemeral = background_orders.get(task_id)
-            if ephemeral and ephemeral.get("ephemeral"):
+            if consume_ephemeral and ephemeral and ephemeral.get("ephemeral"):
                 background_orders.pop(task_id, None)
         if ephemeral and ephemeral.get("ephemeral"):
             return {key: value for key, value in _public_background(ephemeral).items()
                     if key != "ephemeral"}
         encrypted = record.get("encrypted_response")
+        if not consume_ephemeral and ephemeral is not None and ephemeral.get("state") == "queued":
+            # A terminal ledger entry can precede the background thread's
+            # transient result. Archive only after that result becomes visible.
+            result["result_pending"] = True
         bindings = dict(record.get("bindings") or {})
         if isinstance(encrypted, dict):
             try:
@@ -1990,3 +2003,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     app.state.llm_provider = active_manager()
+
+    def acknowledge_result(task_id: str) -> None:
+        with background_orders_lock:
+            prior = background_orders.get(task_id)
+            if prior and prior.get("ephemeral"):
+                background_orders.pop(task_id, None)
+
+    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result)

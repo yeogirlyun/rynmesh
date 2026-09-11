@@ -346,6 +346,7 @@ _KNOWN_WORKER_NAMES = {
     "recap.daily",
     "mailbox.poll",
     "friends.delivery",
+    "ask-ryn-runs",
 }
 
 

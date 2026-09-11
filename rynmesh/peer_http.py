@@ -2482,7 +2482,7 @@ def create_app(store: RynmeshStore | None = None):
     # The model runtime is never exposed as a peer endpoint.
     from .llm_package.routes import install_llm_routes as _install_llm_routes
 
-    _install_llm_routes(
+    app.state.ask_ryn.orders = _install_llm_routes(
         app,
         store=active_store,
         home=active_store.home,

@@ -1841,6 +1841,11 @@ def test_consumer_rejects_response_signed_by_another_provider(tmp_path):
             response, recipient_peer_id=consumer.peer_id, messaging_key=consumer_msg,
             task_id="task_response", provider_peer_id=expected.peer_id, service_id="svc",
         )
+    with pytest.raises(TaskProtocolError, match="response task mismatch"):
+        _open_provider_response(
+            response, recipient_peer_id=consumer.peer_id, messaging_key=consumer_msg,
+            task_id="different_original_task", provider_peer_id=rogue.peer_id, service_id="svc",
+        )
 
 
 def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):

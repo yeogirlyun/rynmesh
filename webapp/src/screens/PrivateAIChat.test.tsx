@@ -6,7 +6,7 @@ import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { clearConversations, type LLMConversation } from "../domain/llmConversationStore";
 import PrivateAIChat from "./PrivateAIChat";
-import { askHistory } from "../domain/askHistory";
+import { askHistory, AskRequestError } from "../domain/askHistory";
 
 beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
@@ -16,6 +16,15 @@ afterEach(() => vi.restoreAllMocks());
 function liveHistory() {
   const rows = new Map<string, LLMConversation>();
   vi.spyOn(askHistory, "list").mockImplementation(async () => [...rows.values()]);
+  vi.spyOn(askHistory, "run").mockImplementation(async (taskId) => ({ task_id: taskId, conversation_id: "original", state: "succeeded", cancel_requested: false }));
+  vi.spyOn(askHistory, "beginRun").mockImplementation(async (request) => {
+    const prior = rows.get(request.conversation_id)!;
+    rows.set(prior.id, { ...prior, revision: (prior.revision ?? 0) + 1, messages: [
+      { id: "question", taskId: request.task_id, role: "user", content: request.question, status: "complete", createdAt: prior.createdAt },
+      { id: "answer", taskId: request.task_id, role: "assistant", content: "An answer with [1].", status: "complete", createdAt: prior.createdAt, contextIds: ["import:imp_" + "b".repeat(64)], contextBytes: [1000], promptSha256: request.prompt_sha256 },
+    ] });
+    return { task_id: request.task_id, conversation_id: prior.id, state: "succeeded", cancel_requested: false };
+  });
   vi.spyOn(askHistory, "preview").mockImplementation(async (row, question) => ({ conversation_id: row.id, revision: row.revision ?? 1,
     provider_peer_id: row.providerPeerId, service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: question, prompt_sha256: "fixture",
     context_window: 4096, input_token_upper_estimate: question.length, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 0, sources: [] }));
@@ -52,7 +61,25 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
 }
 
 describe("Private AI chat", () => {
-  it("shows source truncation and sends exactly the reviewed node prompt", async () => {
+  it("restores a node-owned running task and reads its archived answer after reopening", async () => {
+    const save = liveHistory();
+    const first = renderChat("live");
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    const prior = save.mock.calls[0][0];
+    const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId: "task_original", createdAt: prior.createdAt }] };
+    await save(running);
+    first.unmount();
+    const reopened = renderChat("live");
+    expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+    await save({ ...running, messages: [{ ...running.messages[0], content: "Archived while the page was closed", status: "complete" }] });
+    expect(await screen.findByText("Archived while the page was closed", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
+    expect(reopened.submit).not.toHaveBeenCalled();
+    expect(askHistory.beginRun).not.toHaveBeenCalled();
+  });
+
+  it("shows source truncation and confirms its fingerprint before node dispatch", async () => {
     liveHistory();
     const { submit, user, confirm } = renderChat("live");
     submit.mockImplementation(async (request) => ({ task_id: request.task_id!, state: "succeeded", output: "An answer with [1]." }));
@@ -71,7 +98,8 @@ describe("Private AI chat", () => {
     expect(review.body).toContain("3 older history messages omitted");
     expect(submit).not.toHaveBeenCalled();
     await act(() => review.onConfirm());
-    expect(submit.mock.calls[0][0].prompt).toBe("A verified prompt with bounded untrusted article material");
+    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ prompt_sha256: "a".repeat(64), question: "Summarize this article" }));
+    expect(submit).not.toHaveBeenCalled();
     expect(await screen.findByText("An answer with [1].")).toBeInTheDocument();
     expect(screen.getByText("Sources supplied for this answer")).toBeInTheDocument();
   });
@@ -80,7 +108,7 @@ describe("Private AI chat", () => {
     const save = liveHistory();
     const { submit, user, confirm } = renderChat("live");
     await screen.findByRole("heading", { name: "Ask Ryn" });
-    save.mockRejectedValue(new Error("Node history unavailable"));
+    vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(409, "Node history unavailable"));
     await user.type(screen.getByLabelText("Message Private AI"), "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
@@ -88,14 +116,14 @@ describe("Private AI chat", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Node history unavailable");
     expect(screen.getByLabelText("Message Private AI")).toHaveValue("Keep this draft");
     expect(submit).not.toHaveBeenCalled();
-    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it("persists task identity before submitting and checks it after a lost response", async () => {
-    const save = liveHistory();
-    const { submit, client, user, confirm } = renderChat("live");
-    submit.mockRejectedValue(new Error("Response lost"));
-    const check = vi.spyOn(client, "getLLMOrder").mockRejectedValue(new Error("Unreachable"));
+  it("reuses the reviewed task identity after a lost response and never calls legacy submission", async () => {
+    liveHistory();
+    const { submit, user, confirm } = renderChat("live");
+    vi.mocked(askHistory.beginRun).mockRejectedValue(new Error("Response lost"));
+    const check = vi.mocked(askHistory.run).mockRejectedValue(new Error("Unreachable"));
     await screen.findByRole("heading", { name: "Ask Ryn" });
     await user.type(screen.getByLabelText("Message Private AI"), "Original request");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -103,13 +131,15 @@ describe("Private AI chat", () => {
     expect(submit).not.toHaveBeenCalled();
     await act(() => confirm.mock.calls[0][0].onConfirm());
     const retry = await screen.findByRole("button", { name: "Check original task" });
-    const task = submit.mock.calls[0][0].task_id;
+    const request = vi.mocked(askHistory.beginRun).mock.calls[0][0];
+    const task = request.task_id;
     expect(task).toMatch(/^task_/);
-    expect(save.mock.calls[1][0].messages[0].taskId).toBe(task);
-    expect(submit.mock.calls[0][0].idempotency_key).toBe(task);
     await user.click(retry);
     expect(check).toHaveBeenCalledWith(task);
-    expect(submit).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Retry same reviewed request" }));
+    expect(askHistory.beginRun).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(askHistory.beginRun).mock.calls[1][0]).toEqual(request);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("creates, switches, searches, and sends independent conversations", async () => {

@@ -25,7 +25,7 @@ import {
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
-import { askHistory, conversationRepository, type AskPreview } from "../domain/askHistory";
+import { askHistory, AskRequestError, conversationRepository, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
@@ -92,6 +92,7 @@ export default function PrivateAIChat() {
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
+  const [unconfirmed, setUnconfirmed] = useState<AskRunRequest | null>(null);
   const [error, setError] = useState("");
   const [storageMode, setStorageMode] = useState<"node-encrypted" | "encrypted" | "session-only">("node-encrypted");
   const [migrationNotice, setMigrationNotice] = useState("");
@@ -104,13 +105,36 @@ export default function PrivateAIChat() {
   // Stop pressed before submitLLMOrder returned a task id.
   const cancelRequestedRef = useRef(false);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
   }, []);
 
-  const selectedConversation = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+  const selectedConversation = (selectedId ? conversations.find((conversation) => conversation.id === selectedId) : conversations[0]) ?? null;
   const selectedConversationRef = useRef(selectedConversation?.id);
   selectedConversationRef.current = selectedConversation?.id;
+  const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && ["queued", "running", "cancel_requested"].includes(message.status))?.taskId : undefined;
+  const isSending = sending || Boolean(nodeTask);
+
+  const refreshNodeHistory = async () => {
+    const rows = await history.list(selectedServiceKeyRef.current);
+    if (mountedRef.current) setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
+  };
+
+  useEffect(() => {
+    if (client.mode !== "live" || !historyReady) return;
+    let active = true;
+    let checking = false;
+    const timer = window.setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void history.list(selectedServiceKeyRef.current).then((rows) => {
+        if (active) setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
+      }).catch(() => { if (active) setError("The node could not be reached. Saved tasks continue on the node; no new request was submitted."); })
+        .finally(() => { checking = false; });
+    }, 1500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [client.mode, history, historyReady]);
 
   useEffect(() => {
     let active = true;
@@ -242,9 +266,40 @@ export default function PrivateAIChat() {
     });
   };
 
+  const submitReviewed = async (request: AskRunRequest) => {
+    setSending(true); setActiveTaskId(request.task_id); setError("");
+    setUnconfirmed(request);
+    try {
+      await askHistory.beginRun(request);
+      if (mountedRef.current) { setUnconfirmed(null); setInput((current) => current.trim() === request.question ? "" : current); }
+      if (cancelRequestedRef.current) { await askHistory.cancelRun(request.task_id); cancelRequestedRef.current = false; }
+      await refreshNodeHistory();
+    } catch (cause) {
+      if (mountedRef.current && cause instanceof AskRequestError && [400, 409].includes(cause.status)) setUnconfirmed(null);
+      if (mountedRef.current) setError(cause instanceof Error ? cause.message : "The node did not confirm this request. Check the original task or retry the same reviewed request.");
+    } finally {
+      if (mountedRef.current) { setSending(false); setActiveTaskId(""); }
+    }
+  };
+
+  const checkOriginal = async (taskId: string) => {
+    if (client.mode === "live") {
+      try {
+        const run = await askHistory.run(taskId);
+        await refreshNodeHistory();
+        if (unconfirmed?.task_id === taskId) setInput((current) => current.trim() === unconfirmed.question ? "" : current);
+        setUnconfirmed((prior) => prior?.task_id === taskId ? null : prior);
+        setError(`Original task: ${run.state}. No new request was submitted.`);
+      } catch (cause) { setError(cause instanceof Error ? cause.message : "The original task could not be verified. No new request was submitted."); }
+    } else {
+      void client.getLLMOrder(taskId).then((result) => setError(`Original task ${result.state}. ${resultMessage(result)} No new request was submitted.`))
+        .catch(() => setError("The original task could not be verified. No new request was submitted."));
+    }
+  };
+
   const runPrompt = async (promptText: string, preview?: AskPreview) => {
     const text = promptText.trim();
-    if (!text || !selectedService || sending || !historyReady) return;
+    if (!text || !selectedService || isSending || unconfirmed || !historyReady) return;
     let conversation = selectedConversation;
     if (client.mode === "live" && (!preview || preview.conversation_id !== selectedConversationRef.current || preview.provider_peer_id + "::" + preview.service_id !== selectedServiceKeyRef.current || preview.revision !== conversation?.revision)) {
       setError("This send review is out of date. Review the current conversation before sending.");
@@ -253,6 +308,11 @@ export default function PrivateAIChat() {
     if (conversation && (conversation.serviceKey !== serviceKey(selectedService) || conversation.networkId !== networkId)) {
       setError("This conversation belongs to another provider. Open a separate conversation for the selected service.");
       return;
+    }
+    if (client.mode === "live" && preview) {
+      cancelRequestedRef.current = false;
+      return submitReviewed({ task_id: "task_" + crypto.randomUUID().replaceAll("-", ""), conversation_id: preview.conversation_id,
+        expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256 });
     }
     if (!conversation) {
       conversation = createConversation({
@@ -345,6 +405,15 @@ export default function PrivateAIChat() {
   };
 
   const stopGeneration = async () => {
+    if (client.mode === "live") {
+      cancelRequestedRef.current = true;
+      const taskId = nodeTask || activeTaskId;
+      if (taskId) {
+        try { await askHistory.cancelRun(taskId); cancelRequestedRef.current = false; await refreshNodeHistory(); }
+        catch { setError("Cancellation has not been confirmed. The task may still be running; check it again."); }
+      }
+      return;
+    }
     if (!activeTaskId) {
       // The submit call has not returned a task id yet. Record the intent so
       // the cancellation is delivered the moment the id exists — otherwise
@@ -360,14 +429,12 @@ export default function PrivateAIChat() {
     const messages = selectedConversation?.messages ?? [];
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     if (lastUser?.taskId) {
-      void client.getLLMOrder(lastUser.taskId).then((result) => {
-        setError(`Original task ${result.state}. ${resultMessage(result)} No new request was submitted.`);
-      }).catch(() => setError("The original task could not be verified. No new request was submitted. Reconnect and check again."));
+      void checkOriginal(lastUser.taskId);
     } else if (lastUser) setInput(lastUser.content);
   };
 
   const reviewAndSend = async () => {
-    if (!selectedConversation || !selectedService || !input.trim() || sending || reviewing || !historyReady) return;
+    if (!selectedConversation || !selectedService || !input.trim() || isSending || unconfirmed || reviewing || !historyReady) return;
     if (client.mode !== "live") return runPrompt(input);
     const question = input.trim();
     setReviewing(true); setError("");
@@ -490,7 +557,7 @@ export default function PrivateAIChat() {
                     <button type="button" onClick={() => setHelpfulMessages((current) => new Set(current).add(message.id))}>
                       {helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />} {helpfulMessages.has(message.id) ? "Helpful" : "Good response"}
                     </button>
-                    {message.status !== "complete" ? <button type="button" onClick={retryLast}><RotateCcw size={12} /> Check original task</button> : null}
+                    {message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} /> Check original task</button> : null}
                   </div>
                 ) : null}
                 {message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}
@@ -508,6 +575,11 @@ export default function PrivateAIChat() {
         <div className={styles.composerWrap}>
           {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async (id) => { await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter((value) => value !== id) }, false); }} /> : null}
           {error ? <div className={styles.error} role="alert">{error}</div> : null}
+          {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
+          {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.
+            <button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button>
+            <button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button>
+          </div> : null}
           <div className={styles.composer}>
             <textarea
               aria-label="Message Private AI"
@@ -522,10 +594,10 @@ export default function PrivateAIChat() {
                 }
               }}
             />
-            {sending ? (
+            {isSending ? (
               <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
             ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady || reviewing} onClick={() => void reviewAndSend()}><SendHorizontal size={17} /></button>
+              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady || reviewing || Boolean(unconfirmed)} onClick={() => void reviewAndSend()}><SendHorizontal size={17} /></button>
             )}
           </div>
           <div className={styles.composerMeta}>

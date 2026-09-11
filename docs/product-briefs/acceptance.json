@@ -259,9 +259,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "全新安装打开入口",
       "expected": "无伪造历史，有模型可问答，无模型有设置入口",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -270,7 +272,7 @@
       "scenario": "页面提问，从侧栏打开，再重启",
       "expected": "同一会话 ID、相同历史与任务状态，完成的回答可继续",
       "status": "in_progress",
-      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md"
       ],
@@ -282,7 +284,7 @@
       "scenario": "迁移旧会话，重复执行并模拟失败",
       "expected": "不重复、不丢服务键；失败保留原数据，重试可完成",
       "status": "in_progress",
-      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md"
       ],
@@ -293,9 +295,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "从文章进入问答",
       "expected": "来源可见，引用对应实际提供材料，并可返回打开",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -303,9 +307,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "超长正文叠加长历史",
       "expected": "总预算不越界，截断或删减提示发送前可见",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -314,7 +320,7 @@
       "scenario": "从服务 A 切换 B",
       "expected": "显示 B 接收方；A 历史保持绑定；未经确认 B 收不到旧内容",
       "status": "in_progress",
-      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md"
       ],
@@ -325,9 +331,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "模拟未就绪、runtime_busy、p2p_capacity_exhausted、不可达",
       "expected": "原因和动作分别正确，不全部显示节点离线",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -336,7 +344,7 @@
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
       "status": "in_progress",
-      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md"
       ],
@@ -347,9 +355,11 @@
       "document": "03-ask-ryn.md",
       "scenario": "文章含要求泄露数据或执行操作的文字",
       "expected": "不触发自动授权、切换接收者或执行外部操作；文章按引用处理",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "evidence": [
+        "docs/acceptance/ask-ryn-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -358,7 +368,7 @@
       "scenario": "删除/导出会话并检查日志",
       "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
       "status": "in_progress",
-      "actual": "Node history, migration and task identity development checks are in progress; full product paths have not passed acceptance.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md"
       ],
