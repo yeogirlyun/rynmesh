@@ -298,6 +298,19 @@ def test_not_json_serializable_raises_atomic_io_error(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_compact_json_is_explicit_and_preserves_byte_limit_atomicity(tmp_path: Path) -> None:
+    path = tmp_path / 'record.json'
+    value = {'b': '内容', 'a': 1}
+    atomic_write_json(path, value, ensure_ascii=False)
+    assert path.read_text(encoding='utf-8') == '{"a": 1, "b": "内容"}'
+    compact = '{"a":1,"b":"内容"}'.encode('utf-8')
+    atomic_write_json(path, value, ensure_ascii=False, separators=(',', ':'), max_bytes=len(compact))
+    assert path.read_bytes() == compact and read_json(path) == value
+    with pytest.raises(AtomicIOError):
+        atomic_write_json(path, value, ensure_ascii=False, separators=(',', ':'), max_bytes=len(compact) - 1)
+    assert path.read_bytes() == compact and _tmp_files(tmp_path) == []
+
+
 # ---------------------------------------------------------- adoption format checks
 
 

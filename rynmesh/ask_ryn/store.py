@@ -358,6 +358,16 @@ class ConversationStore:
             _, data = self._read()
             return self._sync_state(data).issues() if data['version'] == SYNC_VERSION else []
 
+    def sync_snapshot(self, *, expected_actor):
+        from ..device_sync.records import SyncError
+
+        with file_transaction(self.lock):
+            _, data = self._read()
+            state = self._sync_state(data)
+            if state.value['actor'] != expected_actor:
+                raise SyncError('sync_device_identity_changed')
+            return state.export()
+
     def export_owner(self):
         """One snapshot for visible history, unsent draft and conflict recovery."""
         with file_transaction(self.lock):

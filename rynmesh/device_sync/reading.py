@@ -58,11 +58,36 @@ class ReadingState:
                 current_digest = records.validate_cached(entity['scope'], entity['id'], entity['record'], validation_cache, max_entries=MAX_ENTITIES * 2)
             # Equal canonical bytes have already passed the same validation.
             # Python equality alone conflates distinct numeric encodings.
+            if entity['record'] is entity['projected']:
+                continue
             if current_digest != records.fingerprint(entity['projected']):
                 if validation_cache is None:
                     records.validate(entity['scope'], entity['id'], entity['projected'])
                 else:
                     records.validate_cached(entity['scope'], entity['id'], entity['projected'], validation_cache, max_entries=MAX_ENTITIES * 2)
+            else:
+                entity['projected'] = entity['record']
+
+    @staticmethod
+    def decode_compact(value):
+        """Decode only the v3 source's explicit same-record projection marker."""
+        if not isinstance(value, dict) or not isinstance(value.get('entities'), dict):
+            raise SyncError('sync_record_invalid')
+        entities = {}
+        for key, entity in value['entities'].items():
+            if not isinstance(entity, dict):
+                raise SyncError('sync_record_invalid')
+            if entity.get('projected') == 'record':
+                entity = {**entity, 'projected': entity.get('record')}
+            entities[key] = entity
+        return {**value, 'entities': entities}
+
+    def encode_compact(self):
+        # Identity is shared only after canonical-byte validation or a normal
+        # causal write/merge. Concurrent projections retain their entire value.
+        return {**self.value, 'entities': {key: {**entity, 'projected': 'record'}
+                if entity['record'] is entity['projected'] else entity
+                for key, entity in self.value['entities'].items()}}
 
     @classmethod
     def create(cls, actor):
@@ -71,7 +96,7 @@ class ReadingState:
 
     @staticmethod
     def key(scope, identifier):
-        return records.fingerprint([records.scope_id(scope), records.entity_id(identifier)])
+        return records.entity_key(scope, identifier)
 
     def enable(self, actor, selected, rows):
         if self.value['actor'] != actor:
@@ -164,7 +189,7 @@ class ReadingState:
         selected = scopes(selected)
         if not selected <= set(self.value['scopes']):
             raise SyncError('sync_scope_denied')
-        return [deepcopy({key: entity[key] for key in ('scope', 'id', 'record')}) for entity in self.value['entities'].values()
+        return [deepcopy({key: entity[key] for key in ('scope', 'id', 'record')}) for _, entity in sorted(self.value['entities'].items())
                 if entity['scope'] in selected]
 
     def merge(self, rows, selected):
@@ -197,7 +222,7 @@ class ReadingState:
         for entity in entities:
             scope, identifier = entity['scope'], entity['id']
             current = records.view(scope, identifier, entity['record'])
-            projected = current if canonical_json(entity['record']) == canonical_json(entity['projected']) else records.view(scope, identifier, entity['projected'])
+            projected = current if entity['record'] is entity['projected'] or canonical_json(entity['record']) == canonical_json(entity['projected']) else records.view(scope, identifier, entity['projected'])
             candidate = next((row['value'] for row in projected['candidates'] if row['value'] is not None), None)
             # Metadata may label a conflict, but must not silently choose its position.
             description = candidate or next((row['value'] for row in current['candidates'] if row['value'] is not None), None)

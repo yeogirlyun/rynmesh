@@ -266,6 +266,7 @@ def test_equal_python_values_do_not_skip_projected_record_validation(tmp_path):
     source.list()  # Prime the persisted-record validation fingerprints.
     data = read_json(source.path)
     entity = next(iter(data['sync']['entities'].values()))
+    entity['projected'] = deepcopy(entity['record'])
     entity['projected']['heads'][0]['value']['progress'] = False
     atomic_write_json(source.path, data)
     before = source.path.read_bytes()
@@ -401,3 +402,108 @@ def test_scope_capture_continues_for_pause_without_enabling_unselected_data(tmp_
     assert source.sync_export(['bookmarks'])[0]['record']['heads'][0]['value']['bookmarked'] is False
     with pytest.raises(SyncError, match='scope_denied'):
         source.record(ITEM, 'progress', progress=.7, expected_sync_revision=records.fingerprint(records.empty()))
+
+
+def legacy_v2_source(source):
+    document, local, sync = source._document()
+    atomic_write_json(source.path, {**document, 'version': consumption.PREVIOUS_SYNC_VERSION,
+                                   'records': local, 'sync': sync.value})
+    return source.path.read_bytes()
+
+
+def test_compact_projection_migration_backs_up_v2_and_preserves_unknown_fields(tmp_path):
+    source = store(tmp_path)
+    source.record(ITEM, 'bookmark')
+    document, local, sync = source._document()
+    document['extension'] = {'retained': True}
+    sync.value['extension'] = {'retained': True}
+    next(iter(sync.value['entities'].values()))['extension'] = {'retained': True}
+    source._save_document(document, local, sync)
+    original = legacy_v2_source(source)
+    source.list()
+    assert source.path.read_bytes() == original
+    source.record(ITEM, 'unbookmark')
+    assert source.path.with_name(source.path.name + '.v2.migrated').read_bytes() == original
+    compact = read_json(source.path)
+    assert compact['version'] == consumption.SYNC_VERSION
+    entity = next(iter(compact['sync']['entities'].values()))
+    assert entity['projected'] == 'record'
+    assert compact['extension'] == compact['sync']['extension'] == entity['extension'] == {'retained': True}
+    restarted = ConsumptionStore(source.path)
+    assert not restarted.list()[0]['bookmarked']
+    wire = restarted.sync_export(['bookmarks'])
+    assert 'projected' not in wire[0] and wire[0]['record']['clock'] == {A: 2}
+    restarted.record(ITEM, 'bookmark')
+    assert source.path.with_name(source.path.name + '.v2.migrated').read_bytes() == original
+
+
+@pytest.mark.parametrize('failure', ['backup', 'write'])
+def test_compact_migration_failure_retains_original_and_retries_once(tmp_path, monkeypatch, failure):
+    source = store(tmp_path)
+    source.record(ITEM, 'bookmark')
+    original = legacy_v2_source(source)
+    with monkeypatch.context() as patch:
+        if failure == 'backup':
+            patch.setattr(consumption, 'migration_backup', lambda *args, **kwargs: None)
+        else:
+            patch.setattr(consumption, 'atomic_write_json', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('full')))
+        with pytest.raises((consumption.ConsumptionError, OSError)):
+            source.record(ITEM, 'unbookmark')
+    assert source.path.read_bytes() == original
+    source.record(ITEM, 'unbookmark')
+    assert source.sync_export(['bookmarks'])[0]['record']['clock'] == {A: 2}
+    assert source.path.with_name(source.path.name + '.v2.migrated').read_bytes() == original
+
+
+def test_compact_marker_is_versioned_and_cannot_skip_invalid_record_checks(tmp_path):
+    source = store(tmp_path)
+    source.record(ITEM, 'progress', progress=0)
+    valid = read_json(source.path)
+    assert next(iter(valid['sync']['entities'].values()))['projected'] == 'record'
+    source.list()
+    for version, projection, invalid_record in ((consumption.PREVIOUS_SYNC_VERSION, 'record', False),
+                                               (consumption.SYNC_VERSION, 'unknown-reference', False),
+                                               (consumption.SYNC_VERSION, 'record', True)):
+        data = deepcopy(valid)
+        data['version'] = version
+        entity = next(iter(data['sync']['entities'].values()))
+        entity['projected'] = projection
+        if invalid_record:
+            entity['record']['heads'][0]['value']['progress'] = False
+        atomic_write_json(source.path, data)
+        before = source.path.read_bytes()
+        with pytest.raises(SyncError):
+            source.list()
+        assert source.path.read_bytes() == before
+
+
+def test_compact_format_retains_distinct_concurrent_projection_after_restart(tmp_path):
+    a, b = store(tmp_path, A), store(tmp_path, B)
+    a.record(ITEM, 'progress', progress=.2)
+    deliver(a, b)
+    b.record(ITEM, 'progress', progress=.8)
+    a.record(ITEM, 'progress', progress=.4)
+    deliver(b, a)
+    persisted = read_json(a.path)
+    entity = next(iter(persisted['sync']['entities'].values()))
+    assert isinstance(entity['projected'], dict)
+    restarted = ConsumptionStore(a.path)
+    issue = restarted.sync_issues()[0]
+    assert {row['value']['progress'] for row in issue['candidates']} == {.4, .8}
+    assert restarted.list()[0]['progress'] == .4
+
+
+def test_approved_scope_enable_and_receive_preserve_original_v2_backup(tmp_path):
+    a = store(tmp_path, A, selected=['bookmarks'])
+    a.record(ITEM, 'bookmark')
+    original = legacy_v2_source(a)
+    b = store(tmp_path, B, selected=['reading'])
+    b.record(ITEM, 'progress', progress=.7)
+    rows = b.sync_export(['reading'])
+    with pytest.raises(SyncError, match='identity_changed'):
+        a.sync_receive(rows, scopes=['reading'], expected_actor=C, enable=True)
+    assert a.path.read_bytes() == original
+    a.sync_receive(rows, scopes=['reading'], expected_actor=A, enable=True)
+    assert a.path.with_name(a.path.name + '.v2.migrated').read_bytes() == original
+    assert a.list()[0]['progress'] == .7 and a.list()[0]['bookmarked']
+    assert len(a.sync_export(SCOPES)) == 2

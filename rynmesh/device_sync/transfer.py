@@ -70,8 +70,9 @@ class DeviceTransfer:
             source.enable_sync()
             return ConversationBridge(source, self.replica)
         source = self.reading()
-        source.enable_sync(self.replica.actor, [scope])
-        return ReadingBridge(source, self.replica)
+        # This bridge is used only inside the current pairing-policy guard.
+        # Combine approved opt-in checks with the source read for the operation.
+        return ReadingBridge(source, self.replica, ensure_enabled=True)
 
     @staticmethod
     def _pending(bridge, pair_id, scope):
@@ -245,9 +246,9 @@ class DeviceTransfer:
                 pending, conflicts = 0, 0
                 for scope in scopes:
                     bridge = self._initialize(current, scope)
-                    pending += self._pending(bridge, pair_id, scope)['pending']
-                    rows = bridge.source.sync_export() if scope == 'conversations' else bridge.source.sync_export([scope])
-                    conflicts += sum(len({fingerprint(head['value']) for head in item['record']['heads']}) > 1 for item in rows)
+                    state = bridge.status(pair_id) if scope == 'conversations' else bridge.status(pair_id, [scope])
+                    pending += state['pending']
+                    conflicts += state['conflicts']
                     current = self._pair(pair_id)  # _initialize may have reset the epoch.
                 saved = current.get('transfer', {})
                 stamps = saved.get('confirmed', {})
