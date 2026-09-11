@@ -42,6 +42,7 @@ _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
 MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured true worst case at 1000 items is ~68.2 MiB
 PREVIOUS_SYNC_VERSION = "ryn.consumption.v2"
 SYNC_VERSION = "ryn.consumption.v3"
+PRIVACY_VERSION = "ryn.consumption.v4"
 MAX_SYNC_HISTORY_BYTES = 256 * 1024 * 1024
 _ITEM_FIELDS = {
     "item_id",
@@ -160,7 +161,8 @@ class ConsumptionStore:
             # Opening an existing position is a local history event, not a new
             # position. In particular it must not create a third conflict head
             # or supersede a position received while the reader was loading.
-            existing_position = sync.key("reading", item_id) in sync.value["entities"]
+            position = sync.value['entities'].get(sync.key('reading', item_id))
+            existing_position = position is not None and any(head['value'] is not None for head in position['record']['heads'])
             if action != "opened" or not existing_position:
                 sync.capture(record, scope, expected_revision=expected_sync_revision)
         elif expected_sync_revision is not None:
@@ -194,11 +196,19 @@ class ConsumptionStore:
         if not isinstance(payload, dict):
             raise ConsumptionError("consumption_history_invalid")
         if isinstance(payload.get("version"), str):
-            if payload["version"] not in {PREVIOUS_SYNC_VERSION, SYNC_VERSION}:
+            if payload["version"] not in {PREVIOUS_SYNC_VERSION, SYNC_VERSION, PRIVACY_VERSION}:
                 raise SyncError("sync_version_unsupported")
             if not isinstance(payload.get("records"), dict) or "sync" not in payload:
                 raise ConsumptionError("consumption_history_invalid")
-            value = ReadingState.decode_compact(payload["sync"]) if payload["version"] == SYNC_VERSION else payload["sync"]
+            if payload['version'] == PRIVACY_VERSION:
+                from .reading_privacy import validate_receipt
+
+                receipt = validate_receipt(payload.get('privacy_erasure'))
+                if payload['sync'] is None:
+                    return payload, payload['records'], None
+                if not isinstance(payload['sync'], dict) or payload['sync'].get('actor') != receipt['actor']:
+                    raise SyncError('sync_device_identity_changed')
+            value = ReadingState.decode_compact(payload["sync"]) if payload["version"] != PREVIOUS_SYNC_VERSION else payload["sync"]
             return payload, payload["records"], ReadingState(value, validation_cache=self._sync_validation)
         return payload, {
             str(key): dict(value)
@@ -207,6 +217,10 @@ class ConsumptionStore:
         }, None
 
     def _save_document(self, document, local, sync):
+        if document.get('version') == PRIVACY_VERSION:
+            atomic_write_json(self.path, {**document, 'records': local, 'sync': sync.encode_compact() if sync else None},
+                              sort_keys=False, ensure_ascii=False, separators=(',', ':'), max_bytes=MAX_SYNC_HISTORY_BYTES)
+            return
         if sync:
             if document.get('version') == PREVIOUS_SYNC_VERSION:
                 if migration_backup(self.path, suffix='.v2.migrated', max_bytes=MAX_SYNC_HISTORY_BYTES) is None:
@@ -224,6 +238,16 @@ class ConsumptionStore:
             self._enable_sync(document, local, sync, actor, scopes)
 
     def _enable_sync(self, document, local, sync, actor, scopes):
+        if document.get('version') == PRIVACY_VERSION:
+            from .reading_privacy import seed_barriers
+
+            if actor != document['privacy_erasure']['actor']:
+                raise SyncError('sync_device_identity_changed')
+            if sync is not None and reading_scopes(scopes) <= set(sync.value['scopes']):
+                return document, local, sync
+            sync = seed_barriers(document['privacy_erasure'], sync, actor, scopes, local)
+            self._save_document(document, local, sync)
+            return document, local, sync
         if sync is not None and sync.value['actor'] == actor and reading_scopes(scopes) <= set(sync.value['scopes']):
             return document, local, sync
         if sync is None:

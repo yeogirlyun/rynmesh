@@ -1,5 +1,17 @@
 # Versioned records
 
+Reviewed reading cleanup introduces `ryn.consumption.v4` only when the owner
+commits that cleanup. It retains the v3 compact projection encoding, permits
+`sync: null`, and requires a validated `ryn.reading-source-erasure.v1` receipt.
+Original legacy/v2/v3 bytes are backed up before the upgrade; the coordinated
+cleanup review includes that impending backup. Reading records remain writable
+without enabling sync. On later explicit opt-in, known causal deletion clocks
+are seeded before post-cleanup local edits. Future receipt formats are refused.
+The separate encrypted `ryn.reading-cleanup.v1` journal persists one current or
+latest operation and a monotonic sequence. See
+[`reading-cleanup.md`](acceptance/device-sync-development/reading-cleanup.md)
+for bounds, recovery tests and the exact erasure scope.
+
 Every on-disk record a route package owns follows the convention
 `rynmesh/llm_package/task_balance.py` established: a version tag, a
 forward-only migration at load time, a durable backup before a migration

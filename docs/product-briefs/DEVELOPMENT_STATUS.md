@@ -29,6 +29,8 @@
 
 ## 本轮记录
 
+- 2026-09-11：接入阅读来源、同步副本、已审核备份和搜索索引的协调清理。真实 Windows 文件占用后重启、重新审核变化备份和继续原任务已验证，新收藏保留；修复阅读条数刷新与确认后错误焦点。全后端 1361 passed / 29 skipped，最终前端 207 passed；后续补充容量测试后新增专项 22 passed。见[阅读清理记录](../acceptance/device-sync-development/reading-cleanup.md)，完整数据维护、v4 规模性能与平台验收仍未完成。
+
 - 2026-09-11：修复离线文件删除失败后的原请求重试，加入持久清理凭据、变化文件重新审核和未完成文件的 GC 保护。真实 Windows 文件占用→清理失败→节点重启→重新下载同一文章→继续清理已实测，新副本保留。全后端 1341 passed / 29 skipped，前端 201 passed；见[离线清理记录](../acceptance/offline-reading-development/README.md)。完整数据维护与平台验收仍未完成。
 
 - 2026-09-11：修复清理历史达到 32 条后无法继续；新增 9 个范围的产品 ZIP 导出，包含已保存文档原文件、离线正文/图片和完整性清单。浏览器验证键盘下载、断网错误、保留选择及节点重启重试，修复复选框布局。全后端 1333 passed / 29 skipped，前端 198 passed；具体边界见[数据维护记录](../acceptance/device-sync-development/personal-data-maintenance.md)，完整验收未通过。

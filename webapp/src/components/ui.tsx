@@ -735,6 +735,10 @@ export function ConfirmDialog({
     document.addEventListener("keydown", keyboard);
     return () => {
       document.removeEventListener("keydown", keyboard);
+      const focused = document.activeElement as HTMLElement | null;
+      // An operation may focus its persistent result before this dialog closes.
+      // Keep that destination instead of jumping to a removed/disabled trigger.
+      if (focused?.isConnected && focused.matches('[role="alert"], [role="status"]') && !dialog.current?.contains(focused)) return;
       if (previous?.isConnected && !previous.matches(":disabled")) previous.focus();
       else document.querySelector<HTMLElement>(".app-main button:not(:disabled), .app-main select")?.focus();
     };

@@ -44,3 +44,21 @@ it("moves focus into the review, contains tab navigation, and restores the trigg
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(trigger).toHaveFocus();
   expect(operation).not.toHaveBeenCalled();
 });
+
+it("preserves an operation’s focused result when its confirmation closes", async () => {
+  function Harness() {
+    const [request, setRequest] = useState<ConfirmRequest | null>(null);
+    const operation = async () => {
+      screen.getByRole('alert').focus();
+      await Promise.resolve();
+    };
+    return <div className="app-main"><button onClick={() => setRequest({ title: "Clear?", body: "Reviewed copies", risk: "high", onConfirm: operation })}>Review</button>
+      <p role="alert" tabIndex={-1}>Backup cleanup remains unfinished.</p>
+      <ConfirmDialog request={request} onCancel={() => setRequest(null)} /></div>;
+  }
+  const user = userEvent.setup(); render(<Harness />);
+  await user.click(screen.getByRole('button', { name: 'Review' }));
+  await user.click(screen.getByRole('button', { name: 'Confirm' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveFocus();
+});
