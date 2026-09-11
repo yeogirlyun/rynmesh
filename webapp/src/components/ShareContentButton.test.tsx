@@ -12,7 +12,7 @@ it("requires recipient confirmation and preserves a failed share identity", asyn
   const share = vi.spyOn(friendsApi, "share").mockRejectedValueOnce(new Error("Reply lost"))
     .mockResolvedValue({ card_id: "card", from: "me", created_at: "", delivery_state: "mailbox", card: { library_id: "doc", title: "Article", summary: "", kind: "document", source: "" } });
   const user = userEvent.setup();
-  render(<MemoryRouter><ShareContentButton itemId="article" title="Article" /></MemoryRouter>);
+  render(<MemoryRouter><ShareContentButton itemId="article" title="Article" offlineJobId={"a".repeat(32)} /></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Share with a friend" }));
   await screen.findByRole("option", { name: "Alice" });
   expect(share).not.toHaveBeenCalled();
@@ -25,6 +25,7 @@ it("requires recipient confirmation and preserves a failed share identity", asyn
   await user.click(screen.getByRole("button", { name: "Retry this share" }));
   await waitFor(() => expect(share).toHaveBeenCalledTimes(2));
   expect(share.mock.calls[0]).toEqual(share.mock.calls[1]);
+  expect(share.mock.calls[0][0]).toMatchObject({ item_id: "article", peer_id: "friend", offline_job_id: "a".repeat(32) });
   expect(await screen.findByRole("status")).toHaveTextContent("waiting for confirmation");
 });
 

@@ -479,6 +479,10 @@ class FriendService:
             "sha256": str(card.get("sha256", "")).lower(),
             "fetch_available": bool(card.get("fetch_available")),
         }
+        if 'content_truncated' in card and type(card['content_truncated']) is not bool:
+            raise FriendError('friend_card_reference_invalid')
+        if card.get('content_truncated') is True:
+            clean['content_truncated'] = True
         if clean["fetch_available"] and (
             not clean["library_id"]
             or not clean["filename"]
@@ -507,7 +511,8 @@ class FriendService:
         prior = self.store.card(card_id)
         if prior:
             if (prior.get("dir") != "out" or prior.get("to") != peer_id or prior.get("request_digest") != digest
-                or prior.get("source_item_id", "") != str(card.get("source_item_id", ""))):
+                or prior.get("source_item_id", "") != str(card.get("source_item_id", ""))
+                or prior.get('source_offline_job_id', '') != str(card.get('source_offline_job_id', ''))):
                 raise FriendError("friend_card_id_conflict")
             return prior
         if self.resolve_content and clean["library_id"]:
@@ -551,6 +556,7 @@ class FriendService:
                 "request_sha256": hashlib.sha256(canonical_json(wire)).hexdigest(),
                 "delivery_path": "/api/peer/friends/content-card",
                 "source_item_id": str(card.get("source_item_id", "")),
+                "source_offline_job_id": str(card.get("source_offline_job_id", "")),
                 "expires_at": (self.clock() + timedelta(hours=1)).isoformat(),
             }
         self.store.put_card(local)

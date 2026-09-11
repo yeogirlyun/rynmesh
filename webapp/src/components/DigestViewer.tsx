@@ -15,6 +15,8 @@ import { Button, Chip, EvidenceDetails } from "./ui";
 import ShareContentButton from "./ShareContentButton";
 import AskAboutButton from "./AskAboutButton";
 import OfflineDownloadButton from "./OfflineDownloadButton";
+import OfflineImages from "./OfflineImages";
+import { offlineApi, type OfflineBody } from "../domain/offlineReading";
 
 export type ViewerAction = "up" | "down" | "hide" | "opened" | "more_like_this";
 
@@ -75,6 +77,10 @@ export default function DigestViewer({
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState("");
   const [readerAttempt, setReaderAttempt] = useState(0);
+  const [offline, setOffline] = useState<{ key: string; body: OfflineBody } | null>(null);
+  const [readerError, setReaderError] = useState("");
+  const [sourceItem, setSourceItem] = useState<string | null>(null);
+  const forceSource = sourceItem === item?.item_id;
   const feedbackCallback = useRef(onFeedback);
   feedbackCallback.current = onFeedback;
   const currentItem = useRef(item?.item_id);
@@ -113,11 +119,24 @@ export default function DigestViewer({
   useEffect(() => {
     if (!item || !isArticle) return;
     let cancelled = false;
+    let notDownloaded = false;
     setReaderState("loading");
-    digestApi
-      .readArticle(item.link)
+    setArticle(null); setOffline(null); setReaderError("");
+    const read = async () => {
+      const local = forceSource ? null : await offlineApi.resolve(item.item_id);
+      notDownloaded = !local && !forceSource;
+      if (cancelled) return null;
+      if (local) {
+        setOffline(local);
+        return { url: local.body.url, title: local.body.title, byline: "", lead_image: "", cached: true,
+          word_count: local.body.text.split(/\s+/).length, truncated: local.body.truncated,
+          blocks: local.body.text.split(/\n\n+/).map((text) => ({ tag: "p", text })) };
+      }
+      return digestApi.readArticle(item.link);
+    };
+    read()
       .then(async (result) => {
-        if (cancelled) return;
+        if (cancelled || !result) return;
         setArticle(result);
         setReaderState(result.blocks.length ? "idle" : "failed");
         if (result.blocks.length) {
@@ -125,13 +144,13 @@ export default function DigestViewer({
           catch { if (!cancelled) setActionError("The article is open, but its reading record could not be saved. Retry reading to save it."); }
         }
       })
-      .catch(() => {
-        if (!cancelled) setReaderState("failed");
+      .catch((cause) => {
+        if (!cancelled) { setReaderState("failed"); setReaderError((notDownloaded ? "This body has not been downloaded for offline reading. " : "") + (cause instanceof Error ? cause.message : "The article could not be loaded.")); }
       });
     return () => {
       cancelled = true;
     };
-  }, [item?.item_id, item?.link, isArticle, readerAttempt]);
+  }, [item?.item_id, item?.link, isArticle, readerAttempt, forceSource]);
 
   useEffect(() => {
     if (!isArticle || !article || restoredProgress.current || initialProgress <= 0) return;
@@ -327,10 +346,11 @@ export default function DigestViewer({
             <div className="viewer-article">
               {readerState === "loading" ? (
                 <p className="viewer-note">
-                  <Loader2 size={14} className="viewer-spin" /> Your node is fetching this article…
+                  <Loader2 size={14} className="viewer-spin" /> Your node is opening this article…
                 </p>
               ) : null}
               {article?.byline ? <p className="viewer-byline">{article.byline}</p> : null}
+              {offline ? <p>Offline copy · {offline.body.source} · Saved {new Date(offline.body.downloaded_at * 1000).toLocaleString()}{offline.body.partial ? " · Some resources are missing or shortened" : ""}</p> : null}
               {article?.blocks.map((block, position) =>
                 block.tag.startsWith("h") ? (
                   <h3 key={position}>{block.text}</h3>
@@ -342,13 +362,16 @@ export default function DigestViewer({
                   <p key={position}>{block.text}</p>
                 ),
               )}
+              {article?.truncated ? <p>This is a shortened copy. Some source text was not saved.</p> : null}
+              {offline ? <OfflineImages body={offline.body} itemKey={offline.key} /> : null}
               {readerState === "failed" ? (
                 <p className="viewer-note">
-                  This page couldn't be read here — some sites render entirely in the browser.{" "}
+                  {readerError || "This page could not be read here."}{" "}
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
                     Open the original
                   </a>
                   . <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button>
+                  {!forceSource ? <Button onClick={() => setSourceItem(item.item_id)}>Try the source instead</Button> : null}
                 </p>
               ) : null}
             </div>
@@ -356,8 +379,9 @@ export default function DigestViewer({
         </div>
 
         <footer className="viewer-foot">
-          {article?.blocks?.length ? <ShareContentButton key={item.item_id} itemId={item.item_id} title={item.title} /> : null}
-          {article?.blocks?.length ? <AskAboutButton key={`ask-${item.item_id}`} itemId={item.item_id} /> : null}
+          {offline ? <p>Sharing or asking saves a separate text copy; clearing downloads keeps that copy.</p> : null}
+          {article?.blocks?.length ? <ShareContentButton key={`${item.item_id}:${offline?.body.job_id ?? "source"}`} itemId={item.item_id} title={item.title} offlineJobId={offline?.body.job_id} /> : null}
+          {article?.blocks?.length ? <AskAboutButton key={`ask-${item.item_id}:${offline?.body.job_id ?? "source"}`} itemId={item.item_id} offlineJobId={offline?.body.job_id} /> : null}
           {actionError ? <p role="alert">{actionError} <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button></p> : null}
           <div className="viewer-rate">
             {isArticle ? <OfflineDownloadButton key={item.item_id} itemId={item.item_id} /> : null}

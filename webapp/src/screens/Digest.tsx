@@ -228,8 +228,15 @@ export default function Digest() {
   const onFeedback = async (item: DigestItem, action: ViewerAction) => {
     if (action === "opened") {
       await digestApi.recordConsumption(item, "opened");
-      await digestApi.sendFeedback(item.item_id, "opened");
       setConsumption(await digestApi.listConsumption());
+      try { await digestApi.sendFeedback(item.item_id, "opened"); }
+      catch (cause) {
+        // A saved article can outlive the recommendation that introduced it.
+        // Its durable reading record does not depend on updating feed signals.
+        if (!(cause instanceof Error && cause.message === "feedback_item_unknown")) {
+          setNotice("Reading history was saved, but the recommendation signal could not be updated.");
+        }
+      }
       return;
     }
     await digestApi.sendFeedback(item.item_id, action);

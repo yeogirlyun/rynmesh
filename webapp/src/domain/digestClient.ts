@@ -110,6 +110,7 @@ export interface ReaderBlock {
 }
 
 export interface ReaderArticle {
+  truncated?: boolean;
   url: string;
   title: string;
   byline: string;

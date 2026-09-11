@@ -73,6 +73,7 @@ export function createDigestScenario(options: DigestScenarioOptions = {}) {
   const client = profileClient as NodeClient;
 
   const handlers: HttpHandler[] = [
+    http.post(`${TEST_API_BASE}/offline-reading/resolve`, () => HttpResponse.json(null)),
     http.get(`${TEST_API_BASE}/recommendations/signals`, () => HttpResponse.json({ items: [], total: 0, offset: 0, limit: 20 })),
     http.get(`${TEST_API_BASE}/digest`, () => HttpResponse.json(digest)),
     http.get(`${TEST_API_BASE}/sources`, () => HttpResponse.json(sources)),

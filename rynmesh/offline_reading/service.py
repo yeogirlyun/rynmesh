@@ -9,6 +9,7 @@ import uuid
 from copy import deepcopy
 
 from ..crypto import canonical_json
+from ..file_transactions import file_transaction
 from ..services.document_extract import extract_document
 from ..services.library_imports import LibraryImportError
 from ..services.reader import extract_readable, link_post_target, readable_url
@@ -64,7 +65,7 @@ class OfflineSources:
             if not any(block['tag'] in {'p', 'li', 'blockquote', 'pre'} and block['text'].strip() for block in article['blocks']):
                 raise OfflineError('offline_no_readable_body')
             return {**reference, 'url': resource['url'], 'title': article.get('title') or reference['title'],
-                    'text': '\n\n'.join(block['text'] for block in article['blocks']), 'truncated': False,
+                    'text': '\n\n'.join(block['text'] for block in article['blocks']), 'truncated': bool(article.get('truncated')),
                     'images': article.get('images', []), 'images_omitted': bool(article.get('images_omitted')),
                     'source_mode': 'public_web'}
         native = self.native()
@@ -182,6 +183,15 @@ class OfflineReading:
         return {key: bundle.get(key) for key in ('item_id', 'title', 'source', 'url', 'text', 'truncated', 'images_omitted', 'source_mode')} | {
             'downloaded_at': current['downloaded_at'], 'job_id': current['job_id'], 'partial': current['partial'],
             'images': [{key: image.get(key) for key in ('index', 'alt', 'state', 'error_code', 'mime')} for image in bundle['images']]}
+
+    def resolve(self, item_id):
+        """Distinguish no committed download from an unreadable saved copy."""
+        key = key_for(item_id)
+        with file_transaction(self.store.lock):
+            row = self.store.read()['records'].get(key)
+            if not (row or {}).get('current'):
+                return None
+            return {'key': key, 'body': self.read(item_id)}
 
     def image(self, item_id, index, *, job_id=None):
         if type(index) is not int or not 0 <= index < MAX_IMAGES:

@@ -4,11 +4,11 @@ import type { FriendRecord } from "../domain/friendTypes";
 import { friendsApi } from "../domain/friendsClient";
 import { Button } from "./ui";
 
-export default function ShareContentButton({ itemId, title }: { itemId: string; title: string }) {
+export default function ShareContentButton({ itemId, title, offlineJobId }: { itemId: string; title: string; offlineJobId?: string }) {
   const [open, setOpen] = useState(false);
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [peer, setPeer] = useState("");
-  const [attempt, setAttempt] = useState<{ peer_id: string; item_id: string; card_id: string } | null>(null);
+  const [attempt, setAttempt] = useState<{ peer_id: string; item_id: string; card_id: string; offline_job_id?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
@@ -37,7 +37,7 @@ export default function ShareContentButton({ itemId, title }: { itemId: string; 
     finally { setBusy(false); }
   };
   const send = async () => {
-    const request = attempt ?? { peer_id: peer, item_id: itemId, card_id: crypto.randomUUID().replaceAll("-", "") };
+    const request = attempt ?? { peer_id: peer, item_id: itemId, card_id: crypto.randomUUID().replaceAll("-", ""), ...(offlineJobId ? { offline_job_id: offlineJobId } : {}) };
     setAttempt(request); setBusy(true); setError("");
     try {
       const card = await friendsApi.share(request);

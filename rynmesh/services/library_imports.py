@@ -134,7 +134,8 @@ class LibraryImportStore:
             raise LibraryImportError("library_import_corrupt")
         if record.get("extracted_sha256") and hashlib.sha256(payload["text"].encode()).hexdigest() != record["extracted_sha256"]:
             raise LibraryImportError("library_import_hash_mismatch")
-        return {"text": payload["text"], "truncated": record.get("extraction_status") == "truncated", "filename": record["filename"], "mime": record["mime"]}
+        return {"text": payload["text"], "truncated": record.get("extraction_status") == "truncated" or (record.get("source") or {}).get("content_truncated") is True,
+                "filename": record["filename"], "mime": record["mime"]}
 
     def extracted_text(self, import_id: str) -> str:
         return self.body(import_id)["text"]
@@ -168,6 +169,8 @@ class LibraryImportStore:
         # different friend are not silently assigned the first friend's origin.
         from ..crypto import canonical_json
         origin = {key: str(value)[:2048] for key, value in (source or {}).items() if key in {"peer_id", "card_id", "title", "source_url", "publisher_peer_id"}}
+        if (source or {}).get('content_truncated') is True:
+            origin['content_truncated'] = True
         identity = hashlib.sha256(canonical_json({"sha256": digest, "mime": mime, "suffix": suffix, "source": origin})).hexdigest()
         import_id = "imp_" + identity
         directory = self._directory(import_id)

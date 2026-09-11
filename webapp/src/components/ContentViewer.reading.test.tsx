@@ -5,10 +5,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
 import ContentViewer from "./ContentViewer";
+import { offlineApi, type OfflineBody } from "../domain/offlineReading";
 
 afterEach(() => vi.restoreAllMocks());
 
 it("restores position, reports truncated content and retries a failed position save before closing", async () => {
+  vi.spyOn(offlineApi, 'resolve').mockResolvedValue(null);
   const client = { ...makeFixtureNodeClient(), mode: "live" as const };
   const item = (await client.listContent()).find((row) => row.content_kind === "document")!;
   vi.spyOn(client, "getContentBody").mockResolvedValue({ ok: true, content_id: item.content_id,
@@ -34,4 +36,28 @@ it("restores position, reports truncated content and retries a failed position s
   expect(close).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Close content viewer" }));
   expect(close).toHaveBeenCalledTimes(1);
+});
+
+it("prefers a verified offline copy in the ordinary reading entry", async () => {
+  const client = { ...makeFixtureNodeClient(), mode: "live" as const };
+  const item = { ...(await client.listContent()).find((row) => row.content_kind === "document")!, external_url: "https://example.test/online" };
+  vi.spyOn(offlineApi, 'resolve').mockResolvedValue({ key: "key", body: { item_id: item.content_id, text: "Local-first reading body.",
+    source: "Saved notebook", downloaded_at: 1800000000, job_id: "a".repeat(32), images: [], truncated: false } as unknown as OfflineBody });
+  const external = vi.spyOn(digestApi, 'readArticle').mockRejectedValue(new Error("Source is offline"));
+  const native = vi.spyOn(client, 'getContentBody');
+  vi.spyOn(digestApi, 'listConsumption').mockResolvedValue([]);
+  render(<MemoryRouter><ContentViewer client={client} item={item} onClose={vi.fn()} /></MemoryRouter>);
+  expect(await screen.findByText("Local-first reading body.")).toBeInTheDocument();
+  expect(external).not.toHaveBeenCalled(); expect(native).not.toHaveBeenCalled();
+  expect(screen.getByText(/Offline copy.*Saved notebook/)).toBeInTheDocument();
+});
+
+it("reports that an ordinary bookmark is not downloaded when the source also fails", async () => {
+  const client = { ...makeFixtureNodeClient(), mode: "live" as const };
+  const item = { ...(await client.listContent()).find((row) => row.content_kind === "document")!, external_url: "https://example.test/online" };
+  vi.spyOn(offlineApi, 'resolve').mockResolvedValue(null);
+  vi.spyOn(digestApi, 'readArticle').mockRejectedValue(new Error("Source is offline"));
+  render(<MemoryRouter><ContentViewer client={client} item={item} onClose={vi.fn()} /></MemoryRouter>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("has not been downloaded for offline reading");
+  expect(screen.queryByText(/Offline copy ·/)).not.toBeInTheDocument();
 });

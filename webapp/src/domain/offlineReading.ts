@@ -48,6 +48,7 @@ async function request<T>(action = "", body?: unknown): Promise<T> {
   return response.json();
 }
 export const offlineApi = {
+  resolve: (item_id: string) => request<{ key: string; body: OfflineBody } | null>("resolve", { item_id }),
   status: () => request<OfflineStatus>(),
   download: (item_id: string, update = false) => request<OfflineRecord>("download", { item_id, update }),
   retry: (item_id: string) => request<OfflineRecord>("retry", { item_id }),

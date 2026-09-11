@@ -46,6 +46,10 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   const [progressError, setProgressError] = useState("");
   const [offlineBody, setOfflineBody] = useState<OfflineBody | null>(null);
   const [bodyError, setBodyError] = useState("");
+  const [resolvedOfflineKey, setResolvedOfflineKey] = useState("");
+  const [sourceItem, setSourceItem] = useState<string | null>(null);
+  const readingId = item.digest_item_id ?? item.content_id;
+  const forceSource = sourceItem === readingId;
   const stageRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -77,20 +81,25 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   useEffect(() => {
     if (!client || !textContent) return;
     let active = true;
+    let notDownloaded = false;
     setBodyState("loading");
     setBody([]);
     setTruncated(false);
-    setOfflineBody(null); setBodyError("");
+    setOfflineBody(null); setBodyError(""); setResolvedOfflineKey("");
     setProgressError("");
     savedProgress.current = 0;
     positionReady.current = false;
     positionLoaded.current = client.mode !== "live";
     const read = async () => {
       let blocks: string[];
-      if (offlineKey) {
-        const result = await offlineApi.body(item.digest_item_id ?? item.content_id);
+      const offline = offlineKey ? { key: offlineKey, body: await offlineApi.body(readingId) }
+        : !loadBody && client.mode === "live" && !forceSource ? await offlineApi.resolve(readingId) : null;
+      notDownloaded = !offline && !offlineKey && !loadBody && !forceSource && client.mode === "live";
+      if (!active) return;
+      if (offline) {
+        const result = offline.body;
         blocks = result.text.split(/\n\n+/);
-        if (active) { setOfflineBody(result); setTruncated(result.truncated); }
+        if (active) { setOfflineBody(result); setTruncated(result.truncated); setResolvedOfflineKey(offline.key); }
       } else if (loadBody) {
         const result = await loadBody();
         blocks = [result.text];
@@ -100,7 +109,9 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
         blocks = [result.text];
         if (active) setTruncated(result.truncated);
       } else if (item.external_url) {
-        blocks = (await digestApi.readArticle(item.external_url)).blocks.map((block) => block.text);
+        const result = await digestApi.readArticle(item.external_url);
+        blocks = result.blocks.map((block) => block.text);
+        if (active) setTruncated(Boolean(result.truncated));
       } else {
         const result = await client.getContentBody(item.content_id);
         if (!result.ok) throw new Error("reader_unavailable");
@@ -112,6 +123,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
       if (client.mode === "live") {
         try {
           const history = await digestApi.listConsumption();
+          if (!active) return;
           restore.current = history.find((row) => row.item_id === (item.digest_item_id ?? item.content_id))?.progress ?? 0;
           savedProgress.current = restore.current;
           positionLoaded.current = true;
@@ -123,9 +135,9 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
       try { await readCallback.current?.(); }
       catch { if (active) setProgressError("The article is open, but its reading record could not be saved. Retry reading to save it."); }
     };
-    void read().catch((cause) => { if (active) { setBodyState("failed"); if (offlineKey) setBodyError(cause instanceof Error ? cause.message : "The offline copy could not be opened."); } });
+    void read().catch((cause) => { if (active) { setBodyState("failed"); setBodyError((notDownloaded ? "This body has not been downloaded for offline reading. " : "") + (cause instanceof Error ? cause.message : "The article could not be opened.")); } });
     return () => { active = false; };
-  }, [client, item.content_id, item.external_url, textContent, retry, loadBody, offlineKey]);
+  }, [client, item.content_id, item.external_url, textContent, retry, loadBody, offlineKey, readingId, forceSource]);
   useEffect(() => {
     if (bodyState !== "ready") return;
     const frame = window.requestAnimationFrame(() => {
@@ -185,8 +197,9 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
               {offlineBody ? <p>Offline copy · {offlineBody.source} · Saved {new Date(offlineBody.downloaded_at * 1000).toLocaleString()}{offlineBody.partial ? " · Some resources are missing or shortened" : ""}</p> : null}
               {body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
               {truncated ? <p>This is a shortened preview. The full content has not been loaded.</p> : null}
-              {offlineBody && offlineKey ? <OfflineImages body={offlineBody} itemKey={offlineKey} /> : null}
+              {offlineBody && resolvedOfflineKey ? <OfflineImages body={offlineBody} itemKey={resolvedOfflineKey} /> : null}
               {bodyState === "failed" ? <div role="alert"><p>{bodyError || "The article could not be loaded. Try again, or open the original."}</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
+              {bodyState === "failed" && !offlineKey && !loadBody && !forceSource ? <Button onClick={() => setSourceItem(readingId)}>Try the source instead</Button> : null}
             </article>
           ) : embed ? (
             <iframe
@@ -217,9 +230,9 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
           <p>{item.description}</p>
           {client?.mode === "live" && textContent && !offlineKey ? <OfflineDownloadButton key={item.digest_item_id ?? item.content_id} itemId={item.digest_item_id ?? item.content_id} /> : null}
-          {offlineKey ? <p>Opening the original requires a connection. This view does not fetch external media automatically.</p> : null}
-          {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton itemId={item.digest_item_id ?? item.content_id} title={item.title} /> : null}
-          {client?.mode === "live" && textContent && bodyState === "ready" ? <AskAboutButton itemId={item.digest_item_id ?? item.content_id} /> : null}
+          {offlineBody ? <p>Opening the original requires a connection. This view does not fetch external media automatically. Sharing or asking saves a separate text copy; clearing downloads keeps that copy.</p> : null}
+          {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton key={`${readingId}:${offlineBody?.job_id ?? "source"}`} itemId={readingId} title={item.title} offlineJobId={offlineBody?.job_id} /> : null}
+          {client?.mode === "live" && textContent && bodyState === "ready" ? <AskAboutButton key={`ask:${readingId}:${offlineBody?.job_id ?? "source"}`} itemId={readingId} offlineJobId={offlineBody?.job_id} /> : null}
           {item.external_url ? (
             <Button
               variant="primary"

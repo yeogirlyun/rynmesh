@@ -120,6 +120,7 @@ export default function FriendFeed() {
         {!feed.rows.length ? <p>No visible updates received yet.</p> : feed.rows.map((entry) => <article key={entry.id}>
           <h4>{entry.card.title}</h4><p>{entry.card.summary}</p><p>{entry.card.source || "Source not supplied"} · {stamp(entry.published_at)}</p>
           {entry.card.source_url ? <p style={{ overflowWrap: "anywhere" }}>Source: {entry.card.source_url}</p> : null}
+          {entry.card.content_truncated ? <p>This shared text is shortened; it does not include the full source.</p> : null}
           <p>{entry.read ? "Read" : "Unread"} · Version {entry.revision}{entry.updated_at > entry.published_at ? " · Updated" : ""}</p>
           <Button disabled={busy} onClick={() => void act(() => open(feed.relationship_id, entry))}>Save copy and read {entry.card.title}</Button>
         </article>)}

@@ -69,5 +69,6 @@ export interface FriendContentCard {
     size_bytes?: number;
     sha256?: string;
     fetch_available?: boolean;
+    content_truncated?: boolean;
   };
 }

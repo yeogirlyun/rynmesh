@@ -73,7 +73,7 @@ def install_offline_reading(app, *, home, messaging_key, consumption, imports, n
         value = await body(request)
         if action == 'download':
             return await call(request, 'request', value.get('item_id'), update=value.get('update', False))
-        if action in {'retry', 'cancel', 'body'}:
+        if action in {'retry', 'cancel', 'body', 'resolve'}:
             return await call(request, 'read' if action == 'body' else action, value.get('item_id'))
         if action == 'clear-preview':
             return await call(request, 'clear_preview', value.get('item_id'))
