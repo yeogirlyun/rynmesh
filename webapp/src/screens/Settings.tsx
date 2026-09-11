@@ -13,6 +13,7 @@ import ConversationCleanupPanel from "./components/ConversationCleanupPanel";
 import BrowserConversationCleanup from "./components/BrowserConversationCleanup";
 import ProductExportPanel from "./components/ProductExportPanel";
 import ReadingCleanupPanel from "./components/ReadingCleanupPanel";
+import FeedCleanupPanel from "./components/FeedCleanupPanel";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
@@ -85,7 +86,7 @@ export default function Settings() {
           <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
         ) : null}
         {active === "Privacy & data" ? (
-          <><PrivacySection client={client} confirm={confirm} notify={notify} revision={privacyRevision} />{client.mode === "live" ? <><ProductExportPanel /><ReadingCleanupPanel onChange={readingChanged} /></> : null}<ConversationCleanupPanel /><BrowserConversationCleanup /></>
+          <><PrivacySection client={client} confirm={confirm} notify={notify} revision={privacyRevision} />{client.mode === "live" ? <><ProductExportPanel /><ReadingCleanupPanel onChange={readingChanged} /><FeedCleanupPanel /></> : null}<ConversationCleanupPanel /><BrowserConversationCleanup /></>
         ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}

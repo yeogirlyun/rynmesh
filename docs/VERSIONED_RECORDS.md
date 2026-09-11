@@ -1,5 +1,12 @@
 # Versioned records
 
+Friend-feed state supports `ryn.friend-feed.v2`, with bounded erased publication
+IDs and a validated `ryn.friend-feed-cleanup.v1` receipt. Existing v1 ordinary
+reads/writes retain v1; explicit reviewed cleanup saves exact encrypted
+`.v1.migrated` bytes before upgrading atomically. Fresh stores use v2. Unknown
+top-level extensions survive, unsupported versions fail closed, and capacity
+exhaustion never drops old replay barriers. See [feed cleanup acceptance](acceptance/friend-feed-development/cleanup.md).
+
 Reviewed reading cleanup introduces `ryn.consumption.v4` only when the owner
 commits that cleanup. It retains the v3 compact projection encoding, permits
 `sync: null`, and requires a validated `ryn.reading-source-erasure.v1` receipt.
