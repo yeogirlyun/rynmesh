@@ -2399,6 +2399,12 @@ def create_app(store: RynmeshStore | None = None):
         local_control=local_control, messaging_key=_msg_priv,
     )
 
+    from .friend_feed.routes import install_friend_feed
+
+    install_friend_feed(app, home=active_store.home, messaging_key=_msg_priv,
+        friends=lambda: app.state.friends.service, content=lambda: app.state.friends.content,
+        local_control=local_control, workers=app.state.background_workers)
+
     from .ai_access.routes import install_ai_access
     from .ask_ryn.routes import install_ask_ryn
 
