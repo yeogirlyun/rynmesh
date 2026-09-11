@@ -19,6 +19,7 @@ import time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urljoin
 
 from ..atomic_io import atomic_write_json
 
@@ -108,6 +109,9 @@ class _Extractor(HTMLParser):
         self._block: list[str] = []
         self._block_tag = ""
         self._next_group = 0
+        self._images: dict[int, list[dict[str, str]]] = {}
+        self.best_group: int | None = None
+        self.images_omitted = False
 
     # -- helpers ----------------------------------------------------------
     def _looks_like_chrome(self, attrs: dict[str, str]) -> bool:
@@ -157,6 +161,18 @@ class _Extractor(HTMLParser):
             self._block_tag = tag
         elif tag == "br":
             self._block.append(" ")
+        elif tag == "img" and self._group_stack:
+            # Passive images inside the selected article only; never scripts,
+            # frames, navigation art or explicitly tiny tracking pixels.
+            dimensions = [attrs.get(key, '').removesuffix('px') for key in ('width', 'height')]
+            tiny = any(value.isdigit() and int(value) <= 2 for value in dimensions)
+            source = (attrs.get('src') or attrs.get('data-src') or '').strip()
+            if source and not tiny and not self._looks_like_chrome(attrs):
+                images = self._images.setdefault(self._group_stack[-1], [])
+                if len(images) < 64:
+                    images.append({'url': source[:4096], 'alt': attrs.get('alt', '')[:300]})
+                else:
+                    self.images_omitted = True
         self._stack.append(tag)
 
     def handle_endtag(self, tag: str) -> None:
@@ -202,7 +218,8 @@ class _Extractor(HTMLParser):
             # No prose anywhere (link dumps, JS-rendered pages): fall back to
             # whatever headings/list text we did find, so the reader still
             # shows something rather than an empty panel.
-            best = max(self._groups.values(), key=lambda b: sum(len(t) for _, t in b))
+            best_id, best = max(self._groups.items(), key=lambda row: sum(len(t) for _, t in row[1]))
+        self.best_group = best_id
         out = []
         for tag, text in best[:MAX_BLOCKS]:
             if tag == "p" and len(text) < MIN_PARAGRAPH_CHARS:
@@ -225,6 +242,14 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         # Malformed markup is normal on the open web; keep whatever parsed.
         pass
     blocks = parser.best_blocks()
+    images = parser._images.get(parser.best_group, [])
+    if parser.lead_image:
+        images = [{'url': parser.lead_image, 'alt': ''}, *images]
+    image_urls = {}
+    for image in images:
+        source = urljoin(url, image['url'])
+        if source.startswith(('https://', 'http://')):
+            image_urls.setdefault(source, {**image, 'url': source})
     words = sum(len(block["text"].split()) for block in blocks)
     return {
         "url": url,
@@ -235,6 +260,8 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         "lead_image": parser.lead_image.strip(),
         "blocks": blocks,
         "word_count": words,
+        "images": list(image_urls.values()),
+        "images_omitted": parser.images_omitted,
     }
 
 

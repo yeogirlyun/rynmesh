@@ -2405,6 +2405,12 @@ def create_app(store: RynmeshStore | None = None):
         friends=lambda: app.state.friends.service, content=lambda: app.state.friends.content,
         local_control=local_control, workers=app.state.background_workers)
 
+    from .offline_reading.routes import install_offline_reading
+
+    install_offline_reading(app, home=active_store.home, messaging_key=_msg_priv,
+        consumption=lambda: app.state.consumption_store, imports=lambda: app.state.friends.content.imports,
+        native=lambda: active_store, local_control=local_control, workers=app.state.background_workers)
+
     from .ai_access.routes import install_ai_access
     from .ask_ryn.routes import install_ask_ryn
 
