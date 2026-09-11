@@ -1,5 +1,15 @@
 # Route packages
 
+`privacy_export/routes.py` owns `app.state.privacy_export`. Its current Owner
+guard protects scope discovery and bounded POST archive generation. Exports run
+off the event loop, make no network calls and create no permanent archive job.
+The response closes its private temporary file and releases the per-node busy
+lock on completion or disconnect; cancellation while building arranges cleanup
+when the worker finishes. Reinstallation keeps that busy lock and replaces the
+current source adapters/guard without registering duplicate routes. The ZIP
+manifest states selected scopes, integrity hashes, read intervals and exclusions;
+raw credentials and storage files are not used as an export interface.
+
 A route package is a self-contained module that wires one feature's state,
 background work, and HTTP surface into the node app, without adding handlers to
 `rynmesh/peer_http.py`. The original packages that established these conventions are:

@@ -2457,6 +2457,10 @@ def create_app(store: RynmeshStore | None = None):
     install_conversation_cleanup(app, store=active_store, home=_home,
         workers=app.state.background_workers, local_control=local_control)
 
+    from .privacy_export.routes import install_privacy_export
+
+    install_privacy_export(app, local_control=local_control)
+
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}
