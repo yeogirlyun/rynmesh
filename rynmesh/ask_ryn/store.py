@@ -144,6 +144,12 @@ class ConversationStore:
             raise ConversationError("ask_history_version_unsupported")
         if any(not isinstance(data.get(key), dict) for key in ("conversations", "tombstones", "migrations")):
             raise ConversationError("ask_history_unreadable")
+        if "runs" in data:
+            section = data["runs"]
+            if not isinstance(section, dict) or section.get("version") != 1:
+                raise ConversationError("ask_history_version_unsupported")
+            if not isinstance(section.get("records"), dict):
+                raise ConversationError("ask_history_unreadable")
         return envelope, data
 
     def _write(self, envelope: dict, data: dict) -> None:
@@ -208,6 +214,9 @@ class ConversationStore:
                     return public_conversation(prior)  # Same write after a lost response.
             if (prior or {}).get("revision", 0) != expected_revision:
                 raise ConversationError("ask_revision_conflict")
+            active_runs = [run for run in data.get("runs", {}).get("records", {}).values() if run["conversation_id"] == identifier and run["state"] in {"queued", "dispatching", "running"}]
+            if prior and active_runs and clean["messages"] != clean_conversation(prior)["messages"]:
+                raise ConversationError("ask_run_busy")
             if not prior and len(data["conversations"]) >= 1000:
                 raise ConversationError("ask_history_limit")
             # Preserve unknown fields already on disk, including message fields.
@@ -235,6 +244,13 @@ class ConversationStore:
                 raise ConversationError("ask_history_limit")
             data["tombstones"][conversation_id] = {"deletedAt": datetime.now(timezone.utc).isoformat(), "revision": expected_revision + 1}
             del data["conversations"][conversation_id]
+            for run in data.get("runs", {}).get("records", {}).values():
+                if run["conversation_id"] == conversation_id:
+                    run.pop("body", None)
+                    if run["state"] in {"queued", "dispatching", "running"}:
+                        run["cancel_requested"] = True
+                        if run["state"] == "queued":
+                            run["state"] = "cancelled"
             self._write(envelope, data)
             return {"removed": 1}
 

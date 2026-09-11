@@ -89,14 +89,17 @@ class TaskOrderStore:
         self._lock = threading.RLock()
 
     def get(self, task_id: str) -> dict[str, Any] | None:
-        path = self._path(task_id)
-        if not path.exists():
-            return None
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise TaskProtocolError(f"cannot read task record: {exc}") from exc
-        return value if isinstance(value, dict) else None
+        # Readers share the writer lock: on Windows the atomic replacement and
+        # private ACL update can otherwise transiently deny a concurrent read.
+        with self._lock:
+            path = self._path(task_id)
+            if not path.exists():
+                return None
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise TaskProtocolError(f"cannot read task record: {exc}") from exc
+            return value if isinstance(value, dict) else None
 
     def claim(self, *, task_id: str, bindings: dict[str, str]) -> tuple[dict[str, Any], bool]:
         """Atomically create a task or validate an exact idempotent duplicate."""

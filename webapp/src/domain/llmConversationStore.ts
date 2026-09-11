@@ -7,7 +7,7 @@
  * browser profile, or the inference provider can still access plaintext.
  */
 export type LLMChatRole = "user" | "assistant";
-export type LLMChatMessageStatus = "complete" | "failed" | "cancelled";
+export type LLMChatMessageStatus = "complete" | "failed" | "cancelled" | "queued" | "running" | "cancel_requested" | "interrupted";
 
 export interface LLMChatMessage {
   id: string;

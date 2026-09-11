@@ -9,7 +9,10 @@ from typing import Any, Callable
 
 from fastapi import HTTPException, Request
 
+from ..background_workers import BackgroundWorkerSpec, BackoffPolicy
+from ..llm_package.consumer_commands import ConsumerCommands
 from .context import AskContextService
+from .runs import AskRunService
 from .store import ConversationError, ConversationStore
 
 
@@ -18,6 +21,8 @@ class AskRynState:
     conversations: ConversationStore
     local_control: Callable
     context: AskContextService
+    orders: ConsumerCommands | None = None
+    runs: AskRunService | None = None
 
 
 def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
@@ -27,6 +32,8 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
         return [{**row["metadata"]["llm_service"], "peer_id": row.get("peer_id")} for row in records if isinstance((row.get("metadata") or {}).get("llm_service"), dict)]
     app.state.ask_ryn = AskRynState(ConversationStore(Path(getattr(store, "home", None) or home) / "ask-ryn", messaging_key), local_control,
                                   AskContextService(lambda: app.state.friends.content, catalog))
+    app.state.ask_ryn.runs = AskRunService(app.state.ask_ryn.conversations, lambda: app.state.ask_ryn.context, lambda: app.state.ask_ryn.orders)
+    workers.register(BackgroundWorkerSpec(name="ask-ryn-runs", run_once=lambda: app.state.ask_ryn.runs.run_once(), policy=BackoffPolicy.fixed(1)), replace=True)
 
     async def call(method: str, *args, service: str = "conversations", **kwargs):
         try:
@@ -115,5 +122,19 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
         if conversation["revision"] != value.get("expected_revision"):
             raise HTTPException(409, detail="ask_revision_conflict")
         return await call("preview", conversation, value.get("question"), service="context")
+
+    @app.post("/api/local/ask/runs")
+    async def begin_run(request: Request):
+        return await call("begin", await body(request), service="runs")
+
+    @app.get("/api/local/ask/runs/{task_id}")
+    async def read_run(task_id: str, request: Request):
+        app.state.ask_ryn.local_control(request)
+        return await call("get", task_id, service="runs")
+
+    @app.post("/api/local/ask/runs/{task_id}/cancel")
+    async def cancel_run(task_id: str, request: Request):
+        app.state.ask_ryn.local_control(request)
+        return await call("cancel", task_id, service="runs")
 
     return app.state.ask_ryn
