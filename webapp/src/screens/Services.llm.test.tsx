@@ -276,7 +276,7 @@ describe("Services local LLM flow", () => {
     const { client, user } = renderServices({
       providerStatus,
       setupStatuses: [
-        { job_id: "setup_resume", state: "running", stage: "download_model", progress: 55, message: "Downloading verified model data" },
+        { job_id: "setup_resume", state: "running", stage: "download_model", progress: 55, message: "Downloading model data; verification pending" },
         { job_id: "setup_resume", state: "succeeded", stage: "completed", progress: 100, message: "Local model is ready" },
       ],
     });
@@ -378,6 +378,14 @@ describe("Services local LLM flow", () => {
   });
 
   it.each([
+    {
+      raw: "download incomplete; retry to resume",
+      mapped: "The download was interrupted. Downloaded data is kept; retry to continue. The model still needs verification.",
+    },
+    {
+      raw: "download response has invalid byte range or encoding; retry to resume",
+      mapped: "The source returned an invalid download response. Your previous progress is kept; retry when the source is available.",
+    },
     {
       raw: "no local inference runtime is available: nothing resolvable",
       mapped: "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.",
