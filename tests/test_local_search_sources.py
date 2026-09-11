@@ -112,7 +112,7 @@ def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_pat
     assert len([route for route in app.routes if route.path == "/api/local/search/query"]) == 1
     assert [spec.name for spec in workers.specs()] == ["local-search.index"]
     spec = workers.specs()[0]
-    assert spec.initial_delay_s == 1 and spec.policy.busy_delay_s == 3
+    assert spec.initial_delay_s == 1 and spec.policy.busy_delay_s == 1
     client = TestClient(app)
     for path, method in (("status", "get"), ("query", "post"), ("rebuild", "post"), ("open?identifier=x", "get")):
         assert getattr(client, method)("/api/local/search/" + path).status_code == 401

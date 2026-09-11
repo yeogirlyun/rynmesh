@@ -117,7 +117,8 @@ def test_query_and_failed_rebuild_do_not_log_private_errors(tmp_path, caplog):
     assert marker not in json.dumps(engine.status()) and marker not in caplog.text
 
 
-def test_rebuild_in_progress_is_visible_and_never_serves_removed_snippets(tmp_path):
+@pytest.mark.parametrize("force", [False, True])
+def test_rebuild_in_progress_is_visible_and_never_serves_removed_snippets(tmp_path, force):
     engine, rows, _ = fixture(tmp_path)
     engine.rebuild()
     entered, release = threading.Event(), threading.Event()
@@ -128,10 +129,11 @@ def test_rebuild_in_progress_is_visible_and_never_serves_removed_snippets(tmp_pa
         return rows
     engine.source = source
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="builder") as pool:
-        future = pool.submit(engine.rebuild)
+        future = pool.submit(engine.rebuild, force=force)
         assert entered.wait(3)
         try:
-            assert engine.status()["state"] == "building"
+            assert engine.status()["state"] == ("building" if force else "ready")
+            assert engine.query("Python")["partial"] is force
             with pytest.raises(SearchError, match="busy"):
                 engine.rebuild()
             rows.clear()
@@ -141,6 +143,17 @@ def test_rebuild_in_progress_is_visible_and_never_serves_removed_snippets(tmp_pa
             release.set()
         future.result(timeout=5)
     assert engine.status()["state"] == "ready"
+
+
+def test_explicit_rebuild_regenerates_unchanged_index_but_periodic_check_does_not(tmp_path):
+    engine, _, _ = fixture(tmp_path)
+    engine.rebuild()
+    before = engine.path.read_bytes()
+    assert engine.rebuild() is False
+    assert engine.path.read_bytes() == before
+    assert engine.rebuild(force=True) is True
+    assert engine.path.read_bytes() != before
+    assert engine.query("Python")["total"] == 1
 
 
 def test_pagination_rejects_changed_results_instead_of_skipping_or_repeating(tmp_path):

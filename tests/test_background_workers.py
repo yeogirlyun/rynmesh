@@ -382,7 +382,7 @@ def test_create_app_registers_the_service_and_node_workers(tmp_path, monkeypatch
     assert build_time["llm.friend-permissions"].policy.idle_max_s == 1
     assert build_time["llm.friend-permissions"].policy.error_max_s == 10
     assert build_time["local-search.index"].initial_delay_s == 1
-    assert build_time["local-search.index"].policy.busy_delay_s == 3
+    assert build_time["local-search.index"].policy.busy_delay_s == 1
     assert not hasattr(app.state, "llm_publish_once")
     assert not hasattr(app.state, "llm_relay_once")
 
