@@ -69,7 +69,14 @@ def clean_value(scope, identifier, value):
         # Unfinished requests and their associated user input do not become
         # resumable remote tasks. No order, credentials or runtime state moves.
         unfinished = {row.get('taskId') for row in result['messages'] if row['status'] not in _FINAL and row.get('taskId')}
+        original_count = len(result['messages'])
         result['messages'] = [row for row in result['messages'] if row['status'] in _FINAL and row.get('taskId') not in unfinished]
+        if len(result['messages']) != original_count:
+            # The run service derives the initial title from its question. Do
+            # not leak a filtered in-flight request through title or timestamp.
+            first = next((row['content'] for row in result['messages'] if row['role'] == 'user'), 'Conversation')
+            result['title'] = ''.join(char if ord(char) >= 32 else ' ' for char in first)[:512] or 'Conversation'
+            result['updatedAt'] = result['messages'][-1]['createdAt'] if result['messages'] else result['createdAt']
         return result
     item = value.get('item')
     if not isinstance(item, dict) or item.get('item_id') != identifier:

@@ -11,6 +11,7 @@ import type { LLMServiceRecord } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 import styles from "./AskRyn.module.css";
 import AskMaterials from "../components/AskMaterials";
+import AskSyncConflicts from "../components/AskSyncConflicts";
 
 export function conversationUrl(row: LLMConversation, continueChat = false) {
   const query = new URLSearchParams({ conversation: row.id, network: row.networkId });
@@ -77,6 +78,11 @@ function AskRynHome() {
     const element = document.getElementById(`ask-message-${params.get("message")}`);
     element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
   }, [selection?.id, params, loading]);
+  useEffect(() => {
+    if (!selection || loading || params.get("message")) return;
+    const element = document.getElementById("ask-selected-conversation");
+    element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "start" });
+  }, [selection?.id, params, loading]);
   const persistDraft = useCallback((text: string) => {
     if (!draftReady || client.mode !== "live") return Promise.resolve();
     const next = drafts.current.catch(() => undefined).then(async () => {
@@ -126,7 +132,8 @@ function AskRynHome() {
         </> : null}
       </Panel>
       <div className={styles.workspace}>
-        {selection ? <Panel title={selection.title}>
+        {client.mode === "live" ? <AskSyncConflicts refreshKey={rows} onRestored={async (row) => { await load(); navigate(conversationUrl(row)); }} /> : null}
+        {selection ? <div id="ask-selected-conversation" className={styles.selection} role="region" aria-label="Selected conversation" tabIndex={-1}><Panel title={selection.title}>
           <p>Original recipient: {selection.providerPeerId} · {selection.serviceName} · {selection.networkId}</p>
           <small>Conversation ID: {selection.id}</small>
           <div className={styles.transcript}>{selection.messages.length ? selection.messages.map((message) => <article key={message.id} id={`ask-message-${message.id}`} tabIndex={-1} style={message.id === params.get("message") ? { outline: "2px solid currentColor" } : undefined}><strong>{message.role === "user" ? "You" : "Ryn"}</strong><p>{message.content}</p><small>{message.status}</small></article>) : <p>No messages yet.</p>}</div>
@@ -135,9 +142,9 @@ function AskRynHome() {
           {client.mode === "live" ? <>
             <label>Conversation name<input aria-label="Conversation name" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
             <Button disabled={!title.trim()} onClick={() => void askHistory.save({ ...selection, title: title.trim() }).then(load).catch((cause: Error) => setError(cause.message))}>Save conversation name</Button>
-            <Button onClick={() => confirm({ title: "Delete this conversation?", risk: "high", confirmLabel: "Delete conversation", body: "Remove this node's conversation and saved draft. Older browser recovery copies and order results are separate. Running computation may continue.", onConfirm: async () => { await askHistory.remove(selection); navigate("/ask"); await load(); } })}>Delete conversation</Button>
+            <Button onClick={() => confirm({ title: "Delete this conversation?", risk: "high", confirmLabel: "Delete conversation", body: `${selection.sync ? "Delete this conversation from synchronized history. Approved devices receive the deletion when connected; concurrent replies may remain in recovery. " : "Remove this node's conversation and saved draft. "}Older browser recovery copies and order results are separate. Running computation may continue.`, onConfirm: async () => { await askHistory.remove(selection); navigate("/ask"); await load(); } })}>Delete conversation</Button>
           </> : null}
-        </Panel> : params.get("conversation") && !loading ? <p role="alert">This conversation is unavailable or was deleted. It has not been replaced by another conversation.</p> : null}
+        </Panel></div> : params.get("conversation") && !loading ? <p role="alert">This conversation is unavailable or was deleted. It has not been replaced by another conversation.</p> : null}
         <Panel title="Start a conversation">
           {material ? <AskMaterials ids={[material]} onRemove={() => { const next = new URLSearchParams(params); next.delete("material"); navigate(`/ask?${next}`); }} /> : null}
           <label>Your draft<textarea aria-label="Your draft" rows={4} disabled={!draftReady} value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => void persistDraft(draft).catch(() => undefined)} placeholder="Write a question even before a model is ready…" /></label>

@@ -17,14 +17,17 @@ from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidTag
 
-from ..atomic_io import atomic_write_json, read_json
+from ..atomic_io import atomic_write_json, migration_backup, read_json
 from ..file_transactions import file_transaction
 from ..services import peer_box
 
 VERSION = "ryn.ask-history.v1"
+SYNC_VERSION = "ryn.ask-history.v2"
 CHANNEL = b"rynmesh-ask-history-v1"
 MAX_BYTES = 16 * 1024 * 1024
 MAX_PLAINTEXT = 11 * 1024 * 1024
+MAX_SYNC_BYTES = 88 * 1024 * 1024
+MAX_SYNC_PLAINTEXT = 64 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft", "contextIds")
 MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost", "contextIds", "contextBytes", "promptSha256")
@@ -126,21 +129,22 @@ class ConversationStore:
         self.lock = self.root / ".history.lock"
         self.key = messaging_key
         self.pub = peer_box.public_key_b64(messaging_key)
+        self.actor = hashlib.sha256(_json(self.pub)).hexdigest()
 
     def _read(self) -> tuple[dict, dict]:
         if not self.path.exists():
             return {}, {"version": VERSION, "conversations": {}, "tombstones": {}, "migrations": {}}
-        envelope = read_json(self.path, max_bytes=MAX_BYTES)
-        if not isinstance(envelope, dict) or envelope.get("version") != VERSION:
+        envelope = read_json(self.path, max_bytes=MAX_SYNC_BYTES)
+        if not isinstance(envelope, dict) or envelope.get("version") not in {VERSION, SYNC_VERSION}:
             raise ConversationError("ask_history_version_unsupported")
         try:
             plaintext = peer_box.open_sealed(self.key, self.pub, envelope["nonce"], envelope["ciphertext"], info=CHANNEL)
-            if len(plaintext) > MAX_PLAINTEXT:
+            if len(plaintext) > (MAX_SYNC_PLAINTEXT if envelope['version'] == SYNC_VERSION else MAX_PLAINTEXT):
                 raise ValueError
             data = json.loads(plaintext)
         except (KeyError, TypeError, ValueError, InvalidTag):
             raise ConversationError("ask_history_unreadable") from None
-        if not isinstance(data, dict) or data.get("version") != VERSION:
+        if not isinstance(data, dict) or data.get("version") != envelope['version']:
             raise ConversationError("ask_history_version_unsupported")
         if any(not isinstance(data.get(key), dict) for key in ("conversations", "tombstones", "migrations")):
             raise ConversationError("ask_history_unreadable")
@@ -150,28 +154,53 @@ class ConversationStore:
                 raise ConversationError("ask_history_version_unsupported")
             if not isinstance(section.get("records"), dict):
                 raise ConversationError("ask_history_unreadable")
+        if data['version'] == SYNC_VERSION:
+            self._sync_state(data)
         return envelope, data
 
-    def _write(self, envelope: dict, data: dict) -> None:
+    def _write(self, envelope: dict, data: dict, *, capture_sync=True) -> None:
+        synced = data['version'] == SYNC_VERSION
+        if synced and capture_sync:
+            self._sync_state(data).capture(data)
         plaintext = _json(data)
-        if len(plaintext) > MAX_PLAINTEXT:
+        if len(plaintext) > (MAX_SYNC_PLAINTEXT if synced else MAX_PLAINTEXT):
             raise ConversationError("ask_history_limit")
         nonce, ciphertext = peer_box.seal(self.key, self.pub, plaintext, info=CHANNEL)
-        atomic_write_json(self.path, {**envelope, "version": VERSION, "nonce": nonce, "ciphertext": ciphertext}, max_bytes=MAX_BYTES)
+        atomic_write_json(self.path, {**envelope, "version": data['version'], "nonce": nonce, "ciphertext": ciphertext},
+                          max_bytes=MAX_SYNC_BYTES if synced else MAX_BYTES)
+
+    def _sync_state(self, data):
+        from ..device_sync.conversations import ConversationState
+        from ..device_sync.records import SyncError
+
+        if data['version'] != SYNC_VERSION:
+            raise SyncError('sync_not_enabled')
+        state = ConversationState(data.get('device_sync'))
+        if state.value['actor'] != self.actor:
+            raise SyncError('sync_device_identity_changed')
+        return state
+
+    def _public(self, data, row, *, state=None):
+        result = public_conversation(row)
+        if data['version'] == SYNC_VERSION:
+            result['sync'] = (state or self._sync_state(data)).summary(row['id'])
+        return result
 
     def list(self, service_key: str | None = None) -> list[dict]:
         with file_transaction(self.lock):
             _, data = self._read()
-            rows = [public_conversation(row) for row in data["conversations"].values() if service_key is None or row["serviceKey"] == service_key]
+            state = self._sync_state(data) if data['version'] == SYNC_VERSION else None
+            rows = [self._public(data, row, state=state) for row in data["conversations"].values()
+                    if row['id'] not in data['tombstones'] and (service_key is None or row["serviceKey"] == service_key)]
             return sorted(rows, key=lambda row: row["updatedAt"], reverse=True)
 
     def get(self, conversation_id: str) -> dict:
         _identity(conversation_id)
         with file_transaction(self.lock):
             _, data = self._read()
-            if conversation_id not in data["conversations"]:
+            if conversation_id not in data["conversations"] or conversation_id in data['tombstones']:
                 raise ConversationError("ask_conversation_not_found")
-            return public_conversation(data["conversations"][conversation_id])
+            return self._public(data, data["conversations"][conversation_id])
 
     def draft(self) -> dict:
         with file_transaction(self.lock):
@@ -211,7 +240,7 @@ class ConversationStore:
                 if any(prior[key] != clean[key] for key in ("serviceKey", "providerPeerId", "networkId", "createdAt")):
                     raise ConversationError("ask_service_binding_mismatch")
                 if clean_conversation(prior) == clean:
-                    return public_conversation(prior)  # Same write after a lost response.
+                    return self._public(data, prior)  # Same write after a lost response.
             if (prior or {}).get("revision", 0) != expected_revision:
                 raise ConversationError("ask_revision_conflict")
             active_runs = [run for run in data.get("runs", {}).get("records", {}).values() if run["conversation_id"] == identifier and run["state"] in {"queued", "dispatching", "running"}]
@@ -225,7 +254,7 @@ class ConversationStore:
             saved = {**(prior or {}), **clean, "revision": expected_revision + 1}
             data["conversations"][identifier] = saved
             self._write(envelope, data)
-            return public_conversation(saved)
+            return self._public(data, saved)
 
     def remove(self, conversation_id: str, *, expected_revision: int) -> dict:
         _identity(conversation_id)
@@ -282,3 +311,104 @@ class ConversationStore:
             data["migrations"][identifier] = {"digest": digest}
             self._write(envelope, data)
             return {"id": identifier, "status": "imported", "digest": digest}
+
+    def enable_sync(self):
+        """Internal opt-in after consent; never enabled by constructing the store."""
+        from ..device_sync.conversations import ConversationState
+
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            if data['version'] == SYNC_VERSION:
+                return
+            if 'device_sync' in data:
+                raise ConversationError('ask_history_version_unsupported')
+            state = ConversationState.create(self.actor)
+            state.capture(data, seed=True)
+            if self.path.exists() and migration_backup(self.path, max_bytes=MAX_BYTES) is None:
+                raise ConversationError('ask_history_backup_failed')
+            data.update(version=SYNC_VERSION, device_sync=state.value)
+            self._write(envelope, data, capture_sync=False)
+
+    def sync_identity(self):
+        with file_transaction(self.lock):
+            _, data = self._read()
+            return self._sync_state(data).value['actor']
+
+    def sync_export(self):
+        with file_transaction(self.lock):
+            _, data = self._read()
+            return self._sync_state(data).export()
+
+    def sync_receive(self, rows):
+        from ..device_sync.records import SyncError
+        from ..device_sync.store import MAX_BATCH, MAX_BATCH_BYTES
+
+        if not isinstance(rows, list) or len(rows) > MAX_BATCH or len(_json(rows)) > MAX_BATCH_BYTES:
+            raise SyncError('sync_batch_limit')
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            receipts = self._sync_state(data).merge(data, rows)
+            if len(data['conversations']) > 1000 or len(data['tombstones']) > 10000:
+                raise ConversationError('ask_history_limit')
+            self._write(envelope, data, capture_sync=False)
+            return receipts
+
+    def sync_conflicts(self):
+        with file_transaction(self.lock):
+            _, data = self._read()
+            return self._sync_state(data).issues() if data['version'] == SYNC_VERSION else []
+
+    def export_owner(self):
+        """One snapshot for visible history, unsent draft and conflict recovery."""
+        with file_transaction(self.lock):
+            return {'version': 'ryn.ask-export.v1', 'conversations': self.list(), 'draft': self.draft(),
+                    'sync_conflicts': self.sync_conflicts()}
+
+    def sync_erase(self, identifier, *, expected_revision):
+        _identity(identifier)
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            state = self._sync_state(data)
+            state.erase(data, identifier, expected_revision)
+            self._write(envelope, data, capture_sync=False)
+            return state.summary(identifier)
+
+    def sync_restore(self, identifier, *, choice_id, new_id, expected_revision):
+        from copy import deepcopy
+
+        from ..device_sync import records
+        from ..device_sync.records import SyncError
+
+        _identity(identifier)
+        _identity(new_id)
+        if identifier == new_id:
+            raise SyncError('sync_restore_new_identity_required')
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            state = self._sync_state(data)
+            identity = {'source': identifier, 'choice_id': choice_id, 'revision': expected_revision}
+            previous = state.value['restores'].get(new_id)
+            if previous:
+                if previous != identity:
+                    raise SyncError('sync_restore_identity_conflict')
+                return self.get(new_id)
+            entity = state.value['entities'].get(identifier)
+            if entity is None or records.fingerprint(entity['record']) != expected_revision:
+                raise SyncError('sync_revision_conflict')
+            current = records.view('conversations', identifier, entity['record'])
+            choices = current['branches'] + current['recovery']
+            if entity.get('local_draft'):
+                choices = [*choices, {'choice_id': 'local-draft', 'value': clean_conversation(entity['local_draft'])}]
+            choice = next((row for row in choices if row['choice_id'] == choice_id), None)
+            if choice is None:
+                raise SyncError('sync_choice_unavailable')
+            if new_id in data['conversations'] or new_id in data['tombstones'] or new_id in state.value['entities']:
+                raise SyncError('sync_restore_identity_conflict')
+            if len(data['conversations']) >= 1000 or len(state.value['restores']) >= 10000:
+                raise ConversationError('ask_history_limit')
+            value = deepcopy(choice['value'])
+            value.update(id=new_id, revision=1)
+            data['conversations'][new_id] = value
+            state.value['restores'][new_id] = identity
+            self._write(envelope, data)
+            return self._public(data, data['conversations'][new_id])

@@ -252,7 +252,7 @@ export default function PrivateAIChat() {
     if (!selectedService) return;
     confirm({
       title: "Clear Private AI conversation history?",
-      body: "This removes conversation history for this provider, service and network from the node. Retained order results and older browser recovery copies are separate. Running requests may continue.",
+      body: `This removes conversation history for this provider, service and network from the node. ${conversations.some((row) => row.sync) ? "Approved devices receive synchronized deletions when connected; concurrent replies may remain in recovery. " : ""}Retained order results and older browser recovery copies are separate. Running requests may continue.`,
       risk: "high",
       confirmLabel: "Clear history",
       onConfirm: async () => {
@@ -485,7 +485,7 @@ export default function PrivateAIChat() {
                     <strong>{conversation.title}</strong>
                     <small>{formatTime(conversation.updatedAt)}</small>
                   </button>
-                  <button className={styles.deleteButton} type="button" aria-label={`Delete ${conversation.title}`} onClick={() => confirm({ title: "Delete this conversation?", body: "This removes this node's conversation history. Running requests and older browser recovery copies are separate.", risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(conversation.id) })}>
+                  <button className={styles.deleteButton} type="button" aria-label={`Delete ${conversation.title}`} onClick={() => confirm({ title: "Delete this conversation?", body: `${conversation.sync ? "Delete this conversation from synchronized history. Approved devices receive the deletion when connected; concurrent replies may remain in recovery. " : "This removes this node's conversation history. "}Running requests and older browser recovery copies are separate.`, risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(conversation.id) })}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -536,6 +536,9 @@ export default function PrivateAIChat() {
           </details>
         </header>
 
+        {selectedConversation?.sync && (selectedConversation.sync.conflict || selectedConversation.sync.deferred) ? <p role="status">
+          Other-device changes are saved for review. This conversation keeps its current context. <Link to={`/ask?${new URLSearchParams({ conversation: selectedConversation.id, network: selectedConversation.networkId })}`}>Review conversation branches</Link>
+        </p> : null}
         <div className={styles.messages} ref={messageScrollRef}>
           {!selectedConversation?.messages.length ? (
             <div className={styles.welcome}>

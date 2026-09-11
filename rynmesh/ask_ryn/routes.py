@@ -10,6 +10,7 @@ from typing import Any, Callable
 from fastapi import HTTPException, Request
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy
+from ..device_sync.records import SyncError
 from ..llm_package.consumer_commands import ConsumerCommands
 from .context import AskContextService
 from .runs import AskRunService
@@ -45,6 +46,11 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
             code = str(exc)
             status = 404 if code == "ask_conversation_not_found" else 409
             raise HTTPException(status, detail=code) from None
+        except SyncError as exc:
+            code = str(exc)
+            if code in {'sync_revision_conflict', 'sync_choice_unavailable', 'sync_restore_identity_conflict', 'sync_restore_new_identity_required'}:
+                raise HTTPException(409, detail=code) from None
+            raise HTTPException(503, detail='ask_history_unavailable') from None
         except (OSError, ValueError, TypeError, KeyError):
             raise HTTPException(503, detail="ask_history_unavailable") from None
 
@@ -96,7 +102,18 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.get("/api/local/ask/export")
     async def export(request: Request):
         app.state.ask_ryn.local_control(request)
-        return {"version": "ryn.ask-export.v1", "conversations": await call("list"), "draft": await call("draft")}
+        return await call('export_owner')
+
+    @app.get('/api/local/ask/sync/conflicts')
+    async def sync_conflicts(request: Request):
+        app.state.ask_ryn.local_control(request)
+        return {'conflicts': await call('sync_conflicts')}
+
+    @app.post('/api/local/ask/sync/restore')
+    async def sync_restore(request: Request):
+        value = await body(request)
+        return await call('sync_restore', value.get('conversation_id'), choice_id=value.get('choice_id'),
+                          new_id=value.get('new_id'), expected_revision=value.get('expected_revision'))
 
     @app.get("/api/local/ask/draft")
     async def draft(request: Request):
