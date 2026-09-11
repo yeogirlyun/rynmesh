@@ -8,13 +8,18 @@ import { digestApi } from "../../domain/digestClient";
 import type { FriendContentCard, FriendRecord } from "../../domain/friendTypes";
 import type { ContentItem } from "../../domain/types";
 
-export default function FriendCards({ friends = [] }: { friends?: FriendRecord[] }) {
+export default function FriendCards({ friends = [], focusCard }: { friends?: FriendRecord[]; focusCard?: string | null }) {
   const { client, confirm } = useAppContext();
   const [cards, setCards] = useState<FriendContentCard[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState<ContentItem | null>(null);
+  useEffect(() => {
+    if (!loaded || !focusCard) return;
+    const element = document.getElementById(`friend-card-${focusCard}`);
+    element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
+  }, [loaded, focusCard]);
   const refresh = async () => { setCards((await friendsApi.cards()).cards); setLoaded(true); };
   useEffect(() => {
     let active = true, running = false;
@@ -45,7 +50,8 @@ export default function FriendCards({ friends = [] }: { friends?: FriendRecord[]
     <p>Cards show metadata first. Choose Download and read to save a private copy. Removing a friend cannot recall copies already saved.</p>
     {error ? <p role="alert">{error}</p> : null}
     <Button disabled={busy} onClick={() => void act(refresh)}>Refresh shared content</Button>
-    {!loaded ? <p>Loading shared content…</p> : !cards.length ? <p>No shared content yet. Open an article and choose Share with a friend.</p> : cards.map((card) => <article key={card.card_id}>
+    {!loaded ? <p>Loading shared content…</p> : !cards.length ? <p>No shared content yet. Open an article and choose Share with a friend.</p> : cards.map((card) => <article key={card.card_id} id={`friend-card-${card.card_id}`} tabIndex={-1}
+      style={card.card_id === focusCard ? { outline: "2px solid currentColor" } : undefined}>
       <h3>{card.card.title}</h3><p>{card.card.summary}</p>
       <p>{card.dir === "out" ? "Shared by you" : `Shared by ${friends.find((friend) => friend.peer_id === card.from)?.node_name ?? "a friend"}`} · {card.card.source || "Source not supplied"}</p>
       {card.dir !== "out" ? <details><summary>Sender identity</summary><span style={{ overflowWrap: "anywhere" }}>{card.from}</span></details> : null}

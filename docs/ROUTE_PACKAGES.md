@@ -22,6 +22,14 @@ with error backoff capped at ten seconds. Permission revocation is durable
 before a cancellation attempt; the update response distinguishes `requested`
 from `pending` and never confirms that computation stopped.
 
+`local_search/routes.py` owns `app.state.local_search` and an encrypted,
+rebuildable `home / "local-search" / "index.json"`. Its Owner query endpoint
+uses POST bodies so private keywords do not enter access-log URLs. The shared
+`local-search.index` worker first runs after one second and checks every three
+seconds. Status includes the worker's bounded error metadata. Current local
+source records gate both results and result opening; cached index records are
+never authority to disclose deleted or inaccessible content.
+
 `scripts/new_route_package.py` generates a new package that follows every
 convention here. Read this document before hand-editing what it produces.
 

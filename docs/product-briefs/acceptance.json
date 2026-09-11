@@ -501,9 +501,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "四类数据分别放入不同合成关键词",
       "expected": "每类均可找到，点击打开正确内容或命中消息",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -512,9 +515,10 @@
       "scenario": "中文词组、英文及中英混合查询",
       "expected": "按约定匹配，不因中文无空格而完全失效，匹配片段正确",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
-        "docs/acceptance/search-development/README.md"
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },
@@ -523,9 +527,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "切换类型/时间/好友筛选，再返回列表",
       "expected": "仅保留符合条件结果，关键词、筛选和位置保持",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -533,9 +540,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "同一内容同时收藏、读过、被分享",
       "expected": "一个内容结果包含多个来源入口；不同消息不被误合并",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -544,9 +554,10 @@
       "scenario": "修改、增加和删除记录",
       "expected": "索引正常时建议 5 秒内更新；删除后旧索引也不能继续返回正文片段",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
-        "docs/acceptance/search-development/README.md"
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },
@@ -556,9 +567,10 @@
       "scenario": "失去好友访问授权，保留旧索引",
       "expected": "受保护结果与片段立即被权限检查过滤，直接打开也拒绝",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
-        "docs/acceptance/search-development/README.md"
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },
@@ -567,9 +579,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "未获取正文、断网、来源删除分别测试",
       "expected": "不假装搜过未取得正文；本地数据可搜；不能打开时有真实原因",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -577,9 +592,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "连续快速输入并使旧请求晚返回",
       "expected": "页面最终显示最新关键词结果，不被旧响应覆盖",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -588,9 +606,10 @@
       "scenario": "索引损坏后重建，期间重启",
       "expected": "原数据无损，状态可见，重建完成后查询恢复",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
-        "docs/acceptance/search-development/README.md"
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },
@@ -600,10 +619,11 @@
       "scenario": "参考桌面、1 万条已索引合成记录，20 次查询",
       "expected": "记录 p95，建议首屏不超过 2 秒；分页无重复遗漏",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/core-performance.json"
+        "docs/acceptance/search-development/core-performance.json",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },
@@ -613,9 +633,10 @@
       "scenario": "查询含私有关键词，检查网络和日志",
       "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
       "status": "in_progress",
-      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "actual": "Four real local data stores, owner-only POST search, current-source checks and the unified UI are implemented. Store/route/component tests and a seeded real-node browser flow verified retrieval, article opening and Ask/friend message focus. Complete recovery, multipage UI restoration, production-store 10k performance and packaged desktop acceptance remain unproven.",
       "evidence": [
-        "docs/acceptance/search-development/README.md"
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/windows-browser-node.json"
       ],
       "implementation_commit": ""
     },

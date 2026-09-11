@@ -60,17 +60,23 @@ def _grams(text: str, size: int) -> set[str]:
 def _snippet(text: str, terms: list[str]) -> dict:
     # casefold can expand characters (Straße -> strasse); keep original offsets
     # so the UI can highlight literal text without injecting HTML.
-    folded, positions = [], []
-    for index, char in enumerate(text):
-        part = char.casefold()
-        folded.append(part)
-        positions.extend([index] * len(part))
-    normalized = "".join(folded)
-    matches = []
-    for term in terms:
-        start = normalized.find(term)
-        if start >= 0:
-            matches.append((positions[start], positions[start + len(term) - 1] + 1))
+    normalized = text.casefold()
+    hits = [(normalized.find(term), len(term)) for term in terms if term in normalized]
+    if len(normalized) == len(text):
+        matches = [(start, start + size) for start, size in hits]
+    else:
+        # Keep only match boundaries, not an integer offset for every byte of
+        # a multi-megabyte document.
+        pending = sorted({point for start, size in hits for point in (start, start + size - 1)}, reverse=True)
+        positions, offset = {}, 0
+        for index, char in enumerate(text):
+            end = offset + len(char.casefold())
+            while pending and pending[-1] < end:
+                positions[pending.pop()] = index
+            offset = end
+            if not pending:
+                break
+        matches = [(positions[start], positions[start + size - 1] + 1) for start, size in hits]
     anchor = min((start for start, _ in matches), default=0)
     left = max(0, anchor - 50)
     right = min(len(text), left + 220)
@@ -87,7 +93,7 @@ def _documents(rows: Iterable[dict]) -> dict[str, dict]:
         if not isinstance(value, dict):
             raise SearchError("search_source_invalid")
         row = deepcopy(value)
-        for key, limit in (("id", 512), ("title", 2048), ("text", 256 * 1024), ("source", 2048)):
+        for key, limit in (("id", 512), ("title", 2048), ("text", 8 * 1024 * 1024), ("source", 2048)):
             if not isinstance(row.get(key), str) or len(row[key].encode()) > limit:
                 raise SearchError("search_source_invalid")
         if not row["id"] or row["id"] in result:
@@ -176,7 +182,11 @@ class LocalSearchIndex:
         posting_count = 0
         for identifier, row in rows.items():
             searchable = "\n".join(row[key] for key in ("title", "source", "text")).casefold()
-            for gram in _grams(searchable, 3) | _grams(searchable, 2):
+            seen = set()
+            for gram in (searchable[i:i + size] for size in (3, 2) for i in range(len(searchable) - size + 1)):
+                if gram in seen:
+                    continue
+                seen.add(gram)
                 postings.setdefault(gram, set()).add(identifier)
                 posting_count += 1
                 if posting_count > MAX_POSTINGS or len(postings) > 250_000:
@@ -196,6 +206,15 @@ class LocalSearchIndex:
         with self.lock:
             return {"version": VERSION, "state": self.state, "error_code": self.error,
                     "indexed_count": len(self.rows), "updated_at": self.updated_at}
+
+    def resolve(self, identifier: str) -> dict:
+        try:
+            current = _documents(self.source())
+        except Exception:
+            raise SearchError("search_source_unavailable") from None
+        if identifier not in current:
+            raise SearchError("search_result_unavailable")
+        return current[identifier]
 
     def rebuild(self) -> bool:
         if not self.writer.acquire(blocking=False):
@@ -302,6 +321,8 @@ class LocalSearchIndex:
         results = []
         for _, row in matches[offset:offset + limit]:
             result = {key: row[key] for key in ("id", "title", "source", "timestamp", "kinds", "targets")}
+            result["body_state"] = row.get("body_state", "available")
+            result["text_truncated"] = bool(row.get("text_truncated"))
             result["snippet"] = _snippet(row["text"], terms)
             result["title_match"] = _snippet(row["title"], terms)
             results.append(result)

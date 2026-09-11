@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { friendsApi, invitationText, extractInvite } from "../domain/friendsClient";
 import type { FriendInvitePreview, FriendRecord } from "../domain/friendTypes";
 import Friends from "./Friends";
+import { MemoryRouter } from "react-router-dom";
 import FriendConversation from "./components/FriendConversation";
 
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm: vi.fn() }) }));
@@ -27,7 +28,7 @@ describe("Friend pairing recovery", () => {
       .mockResolvedValue({ ...preview, node_name: "Bob" });
     const join = vi.spyOn(friendsApi, "join").mockResolvedValue(friend);
     const user = userEvent.setup();
-    render(<Friends />);
+    render(<MemoryRouter><Friends /></MemoryRouter>);
     await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/alice");
     await user.click(screen.getByRole("button", { name: "Review invite" }));
     fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "rynmesh://join/bob" } });
@@ -46,7 +47,7 @@ describe("Friend pairing recovery", () => {
     vi.spyOn(friendsApi, "createInvite").mockResolvedValue(value);
     const user = userEvent.setup();
     vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Clipboard unavailable. Select and copy the invitation text."));
-    render(<Friends />);
+    render(<MemoryRouter><Friends /></MemoryRouter>);
     await user.click(screen.getByRole("button", { name: "Create invite" }));
     await user.click(await screen.findByRole("button", { name: "Copy invitation" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Clipboard unavailable");
