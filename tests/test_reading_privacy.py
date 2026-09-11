@@ -1,5 +1,6 @@
 """Reading erasure source transaction: causal replay, consent and failures."""
 import json
+import os
 from copy import deepcopy
 
 import pytest
@@ -166,6 +167,38 @@ def test_unobserved_concurrent_edits_remain_explicit_conflicts(tmp_path):
     # Source-only cleanup cannot claim unseen devices were erased.
     assert source.sync_issues()[0]['scope'] == 'reading'
     assert source.list()[0]['progress'] == 0
+
+
+@pytest.mark.parametrize('damage', ['version', 'actor', 'clock', 'value', 'result'])
+def test_changed_receipt_rejected_after_warm_reads_even_with_old_timestamp(tmp_path, damage):
+    source = make_store(tmp_path)
+    source.record(ITEM, 'bookmark')
+    erase(source)
+    assert source.list() == []
+    source.record(ITEM, 'bookmark')
+    assert source.list()[0]['bookmarked']
+    stamp = source.path.stat()
+    data = read_json(source.path)
+    receipt = data['privacy_erasure']
+    barrier = next(iter(receipt['barriers'].values()))['record']
+    if damage == 'version':
+        receipt['version'] = 'ryn.reading-source-erasure.future'
+    elif damage == 'actor':
+        receipt['actor'] = B
+    elif damage == 'clock':
+        barrier['clock'][A] = -1
+    elif damage == 'value':
+        barrier['heads'][0]['value'] = {'bookmarked': False, 'item': ITEM}
+    else:
+        receipt['result']['source_cleared'] = False
+    atomic_write_json(source.path, data)
+    os.utime(source.path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    damaged = source.path.read_bytes()
+    for owner in (source, ConsumptionStore(source.path)):
+        for action in (owner.list, lambda owner=owner: owner.record(ITEM, 'bookmark')):
+            with pytest.raises((ConsumptionError, records.SyncError)):
+                action()
+            assert source.path.read_bytes() == damaged
 
 
 def test_malformed_replica_rows_and_receipts_are_rejected_without_writes(tmp_path):

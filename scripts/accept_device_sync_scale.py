@@ -122,7 +122,28 @@ def converge(left, right, pair_id, *, expected_changes=None):
     return {'seconds': time.perf_counter() - start, 'batches': rounds, 'acknowledged': confirmed}
 
 
-def measure(home, count, changes, result, *, baseline=None):
+def clear_reading_source(node):
+    """Exercise the production reviewed cleanup on this synthetic source only."""
+    from rynmesh.atomic_io import read_json
+    from rynmesh.local_search.index import LocalSearchIndex
+    from rynmesh.services.consumption import MAX_SYNC_HISTORY_BYTES, PRIVACY_VERSION
+    from rynmesh.services.reading_cleanup import ReadingCleanup
+
+    # Search population is outside this benchmark; use a real empty index.
+    search = LocalSearchIndex(node.home / 'local-search', messaging_key=node.key, source=lambda: [])
+    cleanup = ReadingCleanup(node.home, source=node.reader, replica=node.transfer.replica,
+        pairing_lock=node.home / 'device-sync' / '.pairings.lock', search=search)
+    started = time.perf_counter()
+    review = cleanup.preview()
+    outcome = cleanup.begin(review_token=review['review_token'])
+    assert outcome['local_copies_complete'] and not outcome['remote_confirmed']
+    assert node.reader.list() == []
+    assert read_json(node.reader.path, max_bytes=MAX_SYNC_HISTORY_BYTES)['version'] == PRIVACY_VERSION
+    return {'seconds': time.perf_counter() - started, 'local_copies_complete': True,
+        'source_version': PRIVACY_VERSION, 'search_populated': False}
+
+
+def measure(home, count, changes, result, *, baseline=None, reading_cleanup=False, resume_transfer=False):
     from rynmesh.crypto import canonical_json
 
     ports, pair_id = {}, None
@@ -170,21 +191,35 @@ def measure(home, count, changes, result, *, baseline=None):
             result['phase'] = 'initial_merge'
             result['initial_merge'] = converge(left, right, pair_id)
         else:
+            if resume_transfer:
+                result['phase'] = 'resume_persisted_transfer'
+                result['resumed_transfer'] = converge(left, right, pair_id)
             result['phase'] = 'verify_persisted_baseline'
             assert all(node.transfer.status(pair_id)['state'] == 'confirmed' for node in (left, right))
         for node in (left, right):
             rows = node.reader.sync_export(['bookmarks'])
             assert len(rows) == count
             assert all(len(row['record']['heads']) == 1 for row in rows)
-            saved_ids = {row['id'] for row in rows if row['record']['heads'][0]['value']['bookmarked']}
+            saved_ids = {row['id'] for row in rows if row['record']['heads'][0]['value'] and row['record']['heads'][0]['value']['bookmarked']}
             # A previously cancelled bookmark need not remain in recent history;
             # its causal metadata must still be present in the source above.
             assert {row['item_id'] for row in node.reader.list() if row['bookmarked']} == saved_ids
         initial = left.reader.sync_export(['bookmarks'])
         assert canonical_json(initial) == canonical_json(right.reader.sync_export(['bookmarks']))
+        if reading_cleanup:
+            result['phase'] = 'reviewed_reading_cleanup'
+            result['reading_cleanup'] = clear_reading_source(left)
+            print(json.dumps({'stage': result['phase'], **result['reading_cleanup']}), flush=True)
+            result['phase'] = 'cleanup_transfer'
+            result['cleanup_transfer'] = converge(left, right, pair_id)
+            initial = left.reader.sync_export(['bookmarks'])
+            assert len(initial) == count
+            assert canonical_json(initial) == canonical_json(right.reader.sync_export(['bookmarks']))
+            assert all(len(row['record']['heads']) == 1 and row['record']['heads'][0]['value'] is None for row in initial)
+            assert all(not any(row['bookmarked'] for row in node.reader.list()) for node in (left, right))
         selected = [row for row in initial if int(row['id'].rsplit('-', 1)[1]) < changes]
         assert len(selected) == changes
-        before_values = {row['record']['heads'][0]['value']['bookmarked'] for row in selected}
+        before_values = {bool(row['record']['heads'][0]['value'] and row['record']['heads'][0]['value']['bookmarked']) for row in selected}
         assert len(before_values) == 1
         bookmarked = not before_values.pop()
         result['change_action'] = 'bookmark' if bookmarked else 'unbookmark'
@@ -210,6 +245,11 @@ def measure(home, count, changes, result, *, baseline=None):
             changed = [row for row in rows if int(row['id'].rsplit('-', 1)[1]) < changes]
             assert len(changed) == changes and all(row['record']['heads'][0]['value']['bookmarked'] is bookmarked for row in changed)
         result.update(phase='finished', status='measured', target_met=result['incremental_total_seconds'] <= 60)
+        from rynmesh.atomic_io import read_json
+        from rynmesh.services.consumption import MAX_SYNC_HISTORY_BYTES
+
+        result['source_versions'] = {node.home.name: read_json(node.reader.path,
+            max_bytes=MAX_SYNC_HISTORY_BYTES)['version'] for node in (left, right)}
     finally:
         if right:
             right.close()
@@ -225,12 +265,18 @@ def main():
     parser.add_argument('--records', type=int, default=10000)
     parser.add_argument('--changes', type=int, default=100)
     parser.add_argument('--baseline-home', type=Path, help='Copy a stopped, genuinely confirmed synthetic baseline; do not remeasure initial merge or seed receipts')
+    parser.add_argument('--reading-cleanup', action='store_true',
+        help='Clear A through reviewed production cleanup, confirm deletions, then measure new v4 bookmark writes to B')
+    parser.add_argument('--resume-baseline-transfer', action='store_true',
+        help='Resume incomplete real receipts in a copied baseline before measuring incremental writes; do not repeat cleanup')
     args = parser.parse_args()
     home = args.home.resolve()
     if home.exists() or not home.name.startswith('rynmesh-device-sync-scale-'):
         raise SystemExit('Use a new rynmesh-device-sync-scale-* directory.')
     if not 100 <= args.records <= 10000 or not 1 <= args.changes <= min(100, args.records // 2):
         raise SystemExit('Use 100–10000 records and 1–100 changes, no more than half the baseline.')
+    if args.resume_baseline_transfer and (not args.baseline_home or args.reading_cleanup):
+        raise SystemExit('Resuming requires a baseline and must not repeat reading cleanup.')
     result = {'recorded_at_unix': time.time(), 'platform': platform.platform(), 'python': platform.python_version(),
         'records_per_converged_source': args.records, 'changed_records': args.changes,
         'scope': 'Bookmarks; two loopback route packages; no scheduler wait/UI/other workers/cross-NAT',
@@ -239,10 +285,21 @@ def main():
     if args.baseline_home:
         result['baseline'] = 'Copy of persisted synthetic paired source/replica state from an earlier real TCP run; confirmed state verified, no receipts created by the harness'
         result['initial_merge_remeasured'] = False
+    if args.reading_cleanup:
+        result['storage_scenario'] = 'A upgraded by reviewed reading cleanup to v4; B retains v3; cleanup and deletion transfer measured separately before incremental writes'
+    if args.resume_baseline_transfer:
+        result['baseline'] = 'Copy of interrupted synthetic TCP state; persisted receipts resumed and confirmed before incremental writes; no receipts seeded and no repeated cleanup'
     try:
-        measure(home, args.records, args.changes, result, baseline=args.baseline_home.resolve() if args.baseline_home else None)
+        measure(home, args.records, args.changes, result,
+            baseline=args.baseline_home.resolve() if args.baseline_home else None,
+            reading_cleanup=args.reading_cleanup, resume_transfer=args.resume_baseline_transfer)
     except Exception as exc:
         result.update(status='failed', error_type=type(exc).__name__, target_met=False)
+        causes, error = [], exc
+        while error is not None and len(causes) < 8:
+            causes.append(type(error).__name__)
+            error = error.__cause__
+        result['error_types'] = causes  # No exception text, URLs or request/response bodies.
         print(json.dumps({'stage': result['phase'], 'error_type': result['error_type']}), flush=True)
     finally:
         atomic_write_json(args.output, result)

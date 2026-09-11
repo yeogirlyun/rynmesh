@@ -972,7 +972,7 @@
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
       "status": "in_progress",
-      "actual": "Latest complete fresh-directory run on c8cec7a: real pairing and TCP merge of disjoint synthetic legacy sources, migration 2.254 seconds, initial merge 900.479 seconds (200 batches / 20000 receipts), then 100 normal unbookmark writes in 38.966 seconds plus transfer/final confirmation in 16.396 seconds, total 55.361 seconds, 200 incremental receipts and 164740 encrypted JSON bytes excluding HTTP headers. Both sources retain 10000 causal entities and the 100 expected changes; the 60-second reference is met. Initial merge overlapped conversation tests/editing; incremental timing did not overlap those tests. Two route services run on loopback in separate threads of one Python process, without scheduler waits/full-node background load/UI. Full-node, packaged desktop, physical-device and cross-network acceptance remain incomplete. Earlier failed timings and the reused-baseline 59.137-second result are retained.",
+      "actual": "Latest complete fresh-directory run on c8cec7a: real pairing and TCP merge of disjoint synthetic legacy sources, migration 2.254 seconds, initial merge 900.479 seconds (200 batches / 20000 receipts), then 100 normal unbookmark writes in 38.966 seconds plus transfer/final confirmation in 16.396 seconds, total 55.361 seconds, 200 incremental receipts and 164740 encrypted JSON bytes excluding HTTP headers. Both sources retain 10000 causal entities and the 100 expected changes; the 60-second reference is met. Initial merge overlapped conversation tests/editing; incremental timing did not overlap those tests. Two route services run on loopback in separate threads of one Python process, without scheduler waits/full-node background load/UI. Full-node, packaged desktop, physical-device and cross-network acceptance remain incomplete. Earlier failed timings and the reused-baseline 59.137-second result are retained. Reading-v4 post-cleanup follow-up: initial deletion confirmation failed with PeerTransportError. A copied interrupted baseline resumed 5000 remaining receipts, then 100 rebookmarks took 61.130 seconds, above target. Caching only the complete validated deletion-receipt digest reduced repeated validation; a separate copy of the same interrupted baseline completed recovery and the same 100 changes in 56.831 seconds (44.193 writes + 12.638 transfer/final status), 200 receipts and 164476 encrypted JSON bytes, with all 10000 causal entities and changed values checked. A uses v4, B v3. First failure and over-target evidence remain; initial merge/whole cleanup were not remeasured. AI download overlapped, frontend tests ended before incremental timing, and backend full regression started afterwards. Packaged/physical/cross-network gates remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/device-sync-development/scale-smoke-200.json",
@@ -980,7 +980,11 @@
         "docs/acceptance/device-sync-development/scale-10000-result.json",
         "docs/acceptance/device-sync-development/scale-compact-59s.json",
         "docs/acceptance/device-sync-development/source-v3-storage.md",
-        "docs/acceptance/device-sync-development/scale-v3-fresh-result.json"
+        "docs/acceptance/device-sync-development/scale-v3-fresh-result.json",
+        "docs/acceptance/device-sync-development/source-v4-scale.md",
+        "docs/acceptance/device-sync-development/scale-v4-10000-result.json",
+        "docs/acceptance/device-sync-development/scale-v4-10000-resumed.json",
+        "docs/acceptance/device-sync-development/scale-v4-10000-cached.json"
       ],
       "implementation_commit": ""
     },
