@@ -63,6 +63,7 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PCapacityError, P2PError, consumer_exchange, provider_exchange
+from .setup_recovery import RECOVERY_FAILED, SetupRecovery, SetupRecoveryError
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -772,6 +773,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     consumer_settings_path = home / "llm" / "consumer-settings.json"
     setup_job_path = home / "llm" / "setup-job.json"
     setup_job_lock = threading.Lock()
+    setup_operation_lock = threading.Lock()
     setup_cancel_events: dict[str, threading.Event] = {}
     manager_path = ""
 
@@ -791,14 +793,24 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return value
 
     previous_setup_job = read_setup_job()
-    if previous_setup_job.get("state") in {"queued", "running", "cancelling"}:
+    setup_recovery = SetupRecovery(home)
+    try:
+        recovered_setup = setup_recovery.restore()
+    except SetupRecoveryError:
+        recovered_setup = "failed"
+    if previous_setup_job.get("state") in {"queued", "running", "cancelling"} or recovered_setup != "absent":
         previous_setup_job.update({
             "state": "failed",
             "stage": "recovery",
             "error_code": "setup_interrupted",
             "message": "Setup was interrupted when the node stopped. Review the model service and retry.",
             "retryable": True,
+            "recovery_state": "restored_unchecked" if recovered_setup == "restored" else recovered_setup,
         })
+        if recovered_setup == "restored":
+            previous_setup_job["message"] = "Previous configuration restored after interrupted setup. Check model status or retry configuration."
+        elif recovered_setup == "failed":
+            previous_setup_job.update({"error_code": "setup_recovery_failed", "message": RECOVERY_FAILED})
         write_setup_job(previous_setup_job)
 
     def read_consumer_settings() -> dict[str, Any]:
@@ -843,16 +855,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         atomic_write_json(settings_path, value, indent=2, sort_keys=True)
         return value
 
-    def active_manager(path: str = "") -> ProviderService | None:
+    def active_manager(path: str = "", *, refresh: bool = False) -> ProviderService | None:
         nonlocal manager, manager_path
         # Serialized: this is reached concurrently from async routes, threadpool
         # sync routes, and both background loops. Without the lock two callers
         # can build two ProviderServices (doubling max_concurrent against one
         # runtime) or shut an adapter down while another thread is mid-handle.
         with manager_lock:
+            if (setup_recovery.pending or setup_operation_lock.locked()) and not path:
+                return None  # An incomplete or unrecovered configuration is not a service.
             settings = read_provider_settings()
             configured = str(path or settings.get("manifest") or "")
-            if manager is not None and configured and configured != manager_path:
+            if manager is not None and (refresh or (configured and configured != manager_path)):
                 manager.adapter.shutdown()
                 manager = None
             if manager is None and configured:
@@ -910,7 +924,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         settings = read_provider_settings()
         settings.update({"manifest": configured, "publication_enabled": False})
         write_provider_settings(settings)
-        current = active_manager(configured)
+        current = active_manager(configured, refresh=True)
         if current is not None:
             current.accepting_orders = False
         public_result = json.loads(json.dumps(result))
@@ -1276,11 +1290,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.post("/api/local/llm/setup")
     async def local_llm_setup(request: Request) -> dict[str, Any]:
+        if not setup_operation_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="another local model setup is already running")
         try:
+            if setup_recovery.pending:
+                raise HTTPException(status_code=409, detail=RECOVERY_FAILED)
             result = await asyncio.to_thread(configure_llm, dict(await request.json()))
             return activate_configuration(result)
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            setup_operation_lock.release()
 
     @app.get("/api/local/llm/setup/status")
     def local_llm_setup_status() -> dict[str, Any]:
@@ -1294,6 +1314,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             current_job = read_setup_job()
             if current_job.get("state") in {"queued", "running", "cancelling"}:
                 raise HTTPException(status_code=409, detail="another local model setup is already running")
+            if not setup_operation_lock.acquire(blocking=False):
+                raise HTTPException(status_code=409, detail="another local model setup is already running")
             job_id = "setup_" + uuid.uuid4().hex
             cancel_event = threading.Event()
             setup_cancel_events.clear()
@@ -1306,7 +1328,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "message": "Local model setup is queued",
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
-            write_setup_job(job)
+            try:
+                write_setup_job(job)
+            except BaseException:
+                setup_operation_lock.release()
+                raise
 
         def report(stage: str, percent: int, message: str) -> None:
             with setup_job_lock:
@@ -1314,29 +1340,30 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if latest.get("job_id") != job_id:
                     return
                 latest.update({
-                    "state": "running",
-                    "stage": stage,
+                    "state": "cancelling" if cancel_event.is_set() else "running",
+                    "stage": "cancelling" if cancel_event.is_set() else stage,
                     "progress": percent,
-                    "message": message,
+                    "message": "Cancelling setup; waiting for the current step to stop" if cancel_event.is_set() else message,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
                 write_setup_job(latest)
 
         def run_setup() -> None:
-            previous_settings = read_provider_settings()
-            previous_manifest = Path(str(previous_settings.get("manifest") or ""))
-            previous_manifest_bytes = None
-            if previous_manifest.is_file():
-                try:
-                    previous_manifest_bytes = previous_manifest.read_bytes()
-                except OSError:
-                    previous_manifest_bytes = None
+            captured = False
+            previous_manifest = ""
             try:
                 report("starting", 1, "Starting local model setup")
+                # A retry first finishes the original recovery. Never capture
+                # a partially replaced manifest as the new rollback baseline.
+                setup_recovery.restore()
+                previous_manifest = str(read_provider_settings().get("manifest") or "")
+                setup_recovery.capture(previous_manifest)
+                captured = True
                 result = configure_llm(
                     body, progress=report, cancel_check=cancel_event.is_set,
                 )
                 activation = activate_configuration(result)
+                setup_recovery.commit()
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,
@@ -1350,22 +1377,40 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     })
             except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
                 cancelled = cancel_event.is_set() or "cancelled" in str(exc).lower()
-                if previous_manifest_bytes is not None:
+                recovery_state = "failed" if isinstance(exc, SetupRecoveryError) else "not_started"
+                if captured:
                     try:
-                        previous_manifest.parent.mkdir(parents=True, exist_ok=True)
-                        previous_manifest.write_bytes(previous_manifest_bytes)
-                        start_runtime(previous_manifest)
-                    except (LifecycleError, AdapterError, ManifestError, OSError, ValueError):
-                        pass
+                        recovery_state = setup_recovery.restore()
+                    except SetupRecoveryError:
+                        recovery_state = "failed"
+                    if recovery_state == "restored":
+                        try:
+                            resumed = start_runtime(previous_manifest)
+                            active_manager(previous_manifest, refresh=True)
+                            if not resumed.get("health", {}).get("ok"):
+                                recovery_state = "unavailable"
+                        except (LifecycleError, AdapterError, ManifestError, OSError, ValueError):
+                            recovery_state = "unavailable"
+                message = "Setup cancelled." if cancelled else (str(exc).strip() or "Local model setup failed")
+                if recovery_state == "failed":
+                    message = RECOVERY_FAILED
+                elif recovery_state in {"unavailable", "missing"}:
+                    message += " Previous configuration is unavailable. Check the local model service and retry configuration."
+                elif recovery_state == "restored":
+                    message += " Previous configuration restored and its health check passed."
+                elif recovery_state == "not_needed":
+                    message += " No previous model configuration required restoration."
+                recovery_error = recovery_state in {"failed", "unavailable", "missing"}
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,
-                        "state": "cancelled" if cancelled else "failed",
-                        "stage": "cancelled" if cancelled else "failed",
+                        "state": "cancelled" if cancelled and not recovery_error else "failed",
+                        "stage": "recovery" if recovery_error else "cancelled" if cancelled else "failed",
                         "progress": 0,
-                        "error_code": "setup_cancelled" if cancelled else "setup_failed",
-                        "message": "Setup cancelled; the previous private configuration was restored."
-                        if cancelled else (str(exc).strip() or "Local model setup failed"),
+                        "error_code": "setup_recovery_failed" if recovery_state == "failed" else
+                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else "setup_failed",
+                        "message": message,
+                        "recovery_state": recovery_state,
                         "retryable": True,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
@@ -1373,6 +1418,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 body.clear()
                 with setup_job_lock:
                     setup_cancel_events.pop(job_id, None)
+                setup_operation_lock.release()
 
         threading.Thread(
             target=run_setup, name=f"rynmesh-llm-setup-{job_id[-8:]}", daemon=True,
@@ -1394,7 +1440,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             current_job.update({
                 "state": "cancelling",
                 "stage": "cancelling",
-                "message": "Cancelling setup safely; existing configuration will be preserved",
+                "message": "Cancelling setup; waiting for the current step to stop",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
             return write_setup_job(current_job)
