@@ -653,9 +653,12 @@
       "document": "06-follow-friends.md",
       "scenario": "建立好友后不关注，再主动关注",
       "expected": "默认不订阅，主动关注后显示最近可见内容并可分页",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Default no subscription and explicit follow verified in Bob browser; recent-list pagination covered by 23-item real-store test. Browser pagination and general gates pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -663,9 +666,12 @@
       "document": "06-follow-friends.md",
       "scenario": "A 仅向 B 发布，B/C 均关注 A",
       "expected": "B 可见；C 的列表和直接获取均无权读取",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Three actual independent loopback nodes: B-only publication appeared for Bob, Carol list remained empty and direct fetch was denied. Current encrypted denial maps to Owner 409; packaged/privacy/network gates pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -673,9 +679,12 @@
       "document": "06-follow-friends.md",
       "scenario": "选择全部好友，然后新增好友 D",
       "expected": "选择时已明确含以后好友；D 按范围有权访问，指定好友发布不会自动扩大",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Four synthetic identities with real friendship crypto test require explicit all-friends confirmation; later friend sees all-friends publication but not selected-friend one. Fourth actual node and browser confirmation path pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -683,9 +692,12 @@
       "document": "06-follow-friends.md",
       "scenario": "收藏/阅读一条私有内容但不发布",
       "expected": "好友看不到，也不出现自动发布记录",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Actual nodes kept Bob/Carol lists empty while Author saved a private draft; browser publish was a separate confirmed operation. Broader no-auto-publish/privacy gates pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -693,9 +705,12 @@
       "document": "06-follow-friends.md",
       "scenario": "A 发布，双方前台在线且链路正常",
       "expected": "建议 60 秒内出现一次；手动刷新可拉取，记录发布到可见耗时",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Browser publish automatically appeared at Bob by first observation 51.572s later (upper bound only). Subsequent API audience revision observed by both nodes in 1.703s after response. More subscribers/networks and full desktop pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -703,9 +718,12 @@
       "document": "06-follow-friends.md",
       "scenario": "同一更新重复投递、修订、重启",
       "expected": "无重复条目，修订显示更新状态，关注与已读状态保持",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Real-store tests deduplicate updates and revisions; actual three-process restart preserved publication revision, subscription and Bob read state. Browser multipage revisions and general gates pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -713,9 +731,12 @@
       "document": "06-follow-friends.md",
       "scenario": "取消关注后继续发布",
       "expected": "不自动收取新内容；已有私聊、独立收藏和下载副本不误删",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Actual Bob unsubscribe removed timeline and retained saved-copy hash. Unit test rejects delayed refresh after unsubscribe/re-follow. Continued publication after unsubscribe and full user paths pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -723,9 +744,12 @@
       "document": "06-follow-friends.md",
       "scenario": "收窄受众、删除好友、停止分享",
       "expected": "Provider 立即拒绝新获取；接收端联网刷新后更新可见列表",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Actual audience change removed Bob and added Carol; old Bob fetch denied. Stop-sharing removed Carol and denied further fetch. Real-store test rechecks stop/relationship revoke after body resolution. Broader network cases pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -733,9 +757,12 @@
       "document": "06-follow-friends.md",
       "scenario": "撤销时接收端离线",
       "expected": "有最后同步标记，不承诺远程抹除；重连后执行新权限",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Last-check/offline labels implemented; actual independent saved copy survived revocation. Full recipient-offline-across-remote-revocation/reconnect scenario remains pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -743,9 +770,12 @@
       "document": "06-follow-friends.md",
       "scenario": "发布失败、好友离线、无更新",
       "expected": "草稿可恢复，离线可重试，空状态明确，不显示假发布或假已读",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Atomic failed publication retains draft in storage test; component tests cover failed saves/retry identity and empty/offline states. Browser node disconnect and automatic error clearing on reconnect verified. Full desktop/general gates pending.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/README.md",
+        "docs/acceptance/friend-feed-development/windows-three-node.json"
+      ],
       "implementation_commit": ""
     },
     {
