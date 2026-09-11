@@ -1,7 +1,7 @@
 """Serve an isolated real node for manual two-browser device pairing checks.
 
-Start twice with distinct homes and ports. No personal data is seeded, discovery
-is disabled, and no model runs. This is loopback evidence, not cross-NAT or
+Start twice with distinct homes and ports. Optional seeds are synthetic only;
+discovery is disabled and no model runs. This is loopback evidence, not cross-NAT or
 packaged desktop acceptance. --reuse preserves identity for restart checks.
 """
 from __future__ import annotations
@@ -20,10 +20,13 @@ def main():
     parser.add_argument('--name', required=True)
     parser.add_argument('--reuse', action='store_true')
     parser.add_argument('--seed', action='store_true', help='Seed synthetic saved/progress/history sources on a new node.')
+    parser.add_argument('--position', type=float, help='Change the synthetic article position before this reused node starts networking.')
     args = parser.parse_args()
     home = args.home.resolve()
     if not home.name.startswith('rynmesh-device-pairing-acceptance-') or home.exists() != args.reuse:
         raise SystemExit('Use a new rynmesh-device-pairing-acceptance-* directory, or explicitly --reuse it.')
+    if args.position is not None and (not args.reuse or not 0 <= args.position <= 1):
+        raise SystemExit('--position requires --reuse and a value between 0 and 1.')
     configure(home, args.port)
     os.environ.update(RYNMESH_DEVICE_ENDPOINT=f'http://127.0.0.1:{args.port}', RYNMESH_DEVICE_ALLOW_LOOPBACK='1')
     import uvicorn
@@ -46,6 +49,12 @@ def main():
             'messages': [{'id': 'original-answer', 'role': 'assistant', 'status': 'complete', 'createdAt': stamp,
                           'content': 'This history arrived through encrypted device transfer. 原服务绑定保留，没有调用模型。'}]}, expected_revision=0)
     app.state.first_run.store.dismiss()
+    if args.position is not None:
+        rows = app.state.consumption_store.list()
+        original = next((row for row in rows if row['item_id'] == 'device-transfer-article'), None)
+        if original is None:
+            raise SystemExit('The reused node has no synthetic transfer article.')
+        app.state.consumption_store.record(original['item'], 'progress', progress=args.position)
     uvicorn.run(app, host='127.0.0.1', port=args.port, access_log=False)
 
 

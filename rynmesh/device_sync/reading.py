@@ -113,6 +113,42 @@ class ReadingState:
         for entity in list(self.value['entities'].values()):
             self._write(entity['scope'], entity['id'], None, expected_revision=records.fingerprint(entity['record']))
 
+    def issues(self):
+        result = []
+        for entity in self.value['entities'].values():
+            current = records.view(entity['scope'], entity['id'], entity['record'])
+            if not current['conflict']:
+                continue
+            item = next((choice['value']['item'] for choice in current['candidates'] if choice['value'] is not None), None)
+            result.append({'id': entity['id'], 'scope': entity['scope'], 'revision': current['revision'],
+                           'item': deepcopy(item), 'candidates': current['candidates']})
+        return result
+
+    def resolve(self, scope, identifier, *, choice_id, expected_revision):
+        if not isinstance(scope, str) or scope not in SCOPES:
+            raise SyncError('sync_scope_invalid')
+        entity = self.value['entities'].get(self.key(scope, identifier))
+        if entity is None:
+            raise SyncError('sync_reading_not_found')
+        current = records.view(scope, identifier, entity['record'])
+        previous = entity.get('resolution', {})
+        if (previous.get('from_revision') == expected_revision and previous.get('choice_id') == choice_id
+                and previous.get('to_revision') == current['revision']):
+            return current
+        if not isinstance(expected_revision, str) or expected_revision != current['revision']:
+            raise SyncError('sync_revision_conflict')
+        if not current['conflict']:
+            raise SyncError('sync_reading_not_conflicted')
+        selected = next((choice for choice in current['candidates'] if choice['choice_id'] == choice_id), None)
+        if selected is None:
+            raise SyncError('sync_reading_choice_invalid')
+        # Copy only the stored candidate; never accept a client-supplied position.
+        self._write(scope, identifier, selected['value'], expected_revision=expected_revision)
+        entity = self.value['entities'][self.key(scope, identifier)]
+        result = records.view(scope, identifier, entity['record'])
+        entity['resolution'] = {'from_revision': expected_revision, 'choice_id': choice_id, 'to_revision': result['revision']}
+        return result
+
     def export(self, selected):
         selected = scopes(selected)
         if not selected <= set(self.value['scopes']):

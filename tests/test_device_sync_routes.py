@@ -117,6 +117,7 @@ def test_missing_endpoint_does_not_block_node_or_local_revocation(tmp_path):
     ('POST', '/join'), ('POST', '/devices/' + 'a' * 64 + '/approve'),
     ('PUT', '/devices/' + 'a' * 64 + '/policy'), ('POST', '/devices/' + 'a' * 64 + '/remove'),
     ('POST', '/devices/' + 'a' * 64 + '/retry'),
+    ('GET', '/reading/conflicts'), ('POST', '/reading/resolve'),
 ])
 def test_every_owner_route_checks_guard_before_request_body(tmp_path, method, path):
     node = Node(tmp_path / 'A')
@@ -218,3 +219,27 @@ def test_installed_worker_moves_real_sources_through_encrypted_http_batches(tmp_
     a.reader.record(ITEM, 'unbookmark')
     assert a.request('GET')['devices'][0]['sync']['pending'] == 1
     assert b.client.post('/api/peer/device-sync/batch', json={}).status_code == 403
+
+
+def test_owner_reading_choice_uses_stored_candidate_and_rejects_stale_revision(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    from rynmesh.device_sync import records
+    node = Node(tmp_path / 'A', transfer=True)
+    node.reader.enable_sync(node.service.store.actor, ['reading'])
+    for actor, position in (('b' * 64, .2), ('c' * 64, .8)):
+        record = records.write('reading', ITEM['item_id'], records.empty(), actor,
+            {'item': ITEM, 'progress': position, 'completed': False, 'content_version': ''})
+        node.reader.sync_receive([{'scope': 'reading', 'id': ITEM['item_id'], 'record': record}], scopes=['reading'])
+    result = node.request('GET', '/reading/conflicts')
+    assert result['local_actor'] == node.service.store.actor
+    issue = result['conflicts'][0]
+    choice = next(row for row in issue['candidates'] if row['value']['progress'] == .2)
+    payload = {'id': issue['id'], 'scope': 'reading', 'expected_revision': issue['revision'],
+               'choice_id': choice['choice_id'], 'progress': .99}
+    assert node.request('POST', '/reading/resolve', json=payload)['value']['progress'] == .2
+    assert node.request('POST', '/reading/resolve', json=payload)['value']['progress'] == .2
+    node.reader.record(ITEM, 'progress', progress=.4)
+    response = node.client.post(PREFIX + '/reading/resolve', headers=OWNER, json=payload)
+    assert response.status_code == 409 and response.json()['detail'] == 'sync_revision_conflict'
+    assert node.request('GET', '/reading/conflicts')['conflicts'] == []

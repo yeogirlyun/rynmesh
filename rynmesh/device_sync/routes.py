@@ -36,6 +36,7 @@ SAFE_ERRORS = frozenset({
     'sync_pairing_capacity_exhausted', 'sync_version_unsupported', 'sync_endpoint_unavailable',
     'sync_pairing_invalid', 'sync_pairing_response_invalid', 'sync_pairing_identity_invalid',
     'sync_pairing_store_unavailable',
+    'sync_reading_not_found', 'sync_reading_not_conflicted', 'sync_reading_choice_invalid', 'sync_not_enabled',
 })
 
 
@@ -139,6 +140,30 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
         control(request)
         value = await body(request)
         return await call('create_invite', value.get('scopes'), ttl_seconds=value.get('ttl_seconds', 900))
+
+    async def reading_call(method, *args, **kwargs):
+        transfer = app.state.device_sync.transfer
+        if transfer is None:
+            raise HTTPException(404, detail='sync_action_unavailable')
+        try:
+            return await asyncio.to_thread(getattr(transfer.reading(), method), *args, **kwargs)
+        except SyncError as exc:
+            code = str(exc)
+            raise HTTPException(409, detail=code if code in SAFE_ERRORS else 'sync_operation_unavailable') from None
+        except (OSError, ValueError, TypeError, KeyError):
+            raise HTTPException(503, detail='sync_operation_unavailable') from None
+
+    @app.get('/api/local/device-sync/reading/conflicts')
+    async def reading_conflicts(request: Request):
+        control(request)
+        return {'conflicts': await reading_call('sync_issues'), 'local_actor': current().identity['actor']}
+
+    @app.post('/api/local/device-sync/reading/resolve')
+    async def resolve_reading(request: Request):
+        control(request)
+        value = await body(request)
+        return await reading_call('sync_resolve', value.get('scope'), value.get('id'),
+                                  choice_id=value.get('choice_id'), expected_revision=value.get('expected_revision'))
 
     @app.post('/api/local/device-sync/invites/inspect')
     async def inspect(request: Request):

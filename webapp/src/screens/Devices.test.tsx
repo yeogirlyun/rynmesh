@@ -19,6 +19,7 @@ const show = () => render(<MemoryRouter><Devices /></MemoryRouter>);
 beforeEach(() => {
   state = { pairing_available: true, reason: null, data_transfer_available: false, devices: [], invites: [] };
   vi.spyOn(deviceSyncApi, "status").mockImplementation(async () => structuredClone(state));
+  vi.spyOn(deviceSyncApi, "readingConflicts").mockResolvedValue({ conflicts: [], local_actor: "local" });
   confirm.mockReset();
 });
 afterEach(() => vi.restoreAllMocks());
