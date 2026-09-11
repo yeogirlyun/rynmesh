@@ -5,3 +5,5 @@
 .issues textarea { width: 100%; box-sizing: border-box; }
 .transcript { max-height: 24rem; overflow: auto; padding: .75rem; }
 .transcript p { white-space: pre-wrap; }
+.review { min-width: 0; overflow-wrap: anywhere; }
+.review button { margin: .4rem .5rem .4rem 0; white-space: normal; }

@@ -426,3 +426,28 @@ class ConversationStore:
             state.value['restores'][new_id] = identity
             self._write(envelope, data)
             return self._public(data, data['conversations'][new_id])
+
+    def sync_discard_recovery(self, identifier, *, review_token):
+        from ..device_sync.conversations import active
+        from ..device_sync.records import SyncError
+
+        _identity(identifier)
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            state = self._sync_state(data)
+            entity = state.value['entities'].get(identifier)
+            if not isinstance(review_token, str) or len(review_token) != 64 or entity is None:
+                raise SyncError('sync_revision_conflict')
+            current = state.summary(identifier)
+            if current['erased'] and entity.get('discarded_review') == review_token:
+                return current
+            if state.recovery_review(identifier) != review_token:
+                raise SyncError('sync_revision_conflict')
+            if not current['deleted']:
+                raise SyncError('sync_recovery_not_deleted')
+            if active(data, identifier):
+                raise SyncError('sync_recovery_busy')
+            state.erase(data, identifier, current['revision'])
+            entity['discarded_review'] = review_token
+            self._write(envelope, data, capture_sync=False)
+            return state.summary(identifier)

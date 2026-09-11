@@ -999,10 +999,11 @@
       "scenario": "同一会话两端离线继续，另测删除与新增并发",
       "expected": "分支完整可见；删除冲突进入待处理项，不混入主历史或静默丢弃",
       "status": "in_progress",
-      "actual": "Concurrent branches and deleted-conversation recovery retain original provider bindings. A deleted restored copy now requires an explicit choice to keep a different copy; repeated requests and restart reuse the same replacement identity. Owner API checks reject live-copy replacement, mismatched intents and stale reviews; failed writes preserve retry. A synthetic loopback browser flow covered restore, delete, cancel, keyboard confirmation, node restart and repeated confirmation without duplicate copies. Recovery discard, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "Concurrent branches and deleted-conversation recovery retain original provider bindings. Deleted restored copies require explicit replacement and stable retry identities. Recovery discard now reviews source revision and local draft, blocks pending tasks, preserves independent copies and rejects stale review. Source tests cover write failure, restart retry and old-message replay; synthetic loopback browser flows cover replacement and discard confirmation/cancel, keyboard focus, node restart and readable retained copies. Complete personal-data erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
-        "docs/acceptance/device-sync-development/recovery-replacement-browser.json"
+        "docs/acceptance/device-sync-development/recovery-replacement-browser.json",
+        "docs/acceptance/device-sync-development/recovery-discard-browser.json"
       ],
       "implementation_commit": ""
     },
