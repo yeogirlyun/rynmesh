@@ -26,7 +26,7 @@ CHANNEL = b"rynmesh-ask-history-v1"
 MAX_BYTES = 16 * 1024 * 1024
 MAX_PLAINTEXT = 11 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision")
+FIELDS = ("id", "title", "serviceKey", "serviceName", "providerPeerId", "networkId", "createdAt", "updatedAt", "messages", "revision", "draft")
 MESSAGE_FIELDS = ("id", "role", "content", "createdAt", "status", "taskId", "inputTokens", "outputTokens", "cost")
 
 
@@ -92,6 +92,8 @@ def clean_conversation(value: Mapping[str, Any]) -> dict[str, Any]:
                 raise ConversationError("ask_invalid_conversation")
         cleaned.append(row)
     result["messages"] = cleaned
+    if "draft" in result and (not isinstance(result["draft"], str) or len(result["draft"].encode()) > 64 * 1024):
+        raise ConversationError("ask_history_limit")
     if len(_json(result)) > 1024 * 1024:
         raise ConversationError("ask_history_limit")
     return result
@@ -150,6 +152,30 @@ class ConversationStore:
             if conversation_id not in data["conversations"]:
                 raise ConversationError("ask_conversation_not_found")
             return public_conversation(data["conversations"][conversation_id])
+
+    def draft(self) -> dict:
+        with file_transaction(self.lock):
+            _, data = self._read()
+            record = data.get("draft", {"version": 1, "text": "", "revision": 0})
+            if not isinstance(record, dict) or record.get("version") != 1:
+                raise ConversationError("ask_history_version_unsupported")
+            return {key: record[key] for key in ("text", "revision")}
+
+    def save_draft(self, text: str, *, expected_revision: int) -> dict:
+        if not isinstance(text, str) or len(text.encode()) > 64 * 1024:
+            raise ConversationError("ask_history_limit")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ConversationError("ask_revision_required")
+        with file_transaction(self.lock):
+            envelope, data = self._read()
+            prior = self.draft()
+            if prior["text"] == text:
+                return prior
+            if prior["revision"] != expected_revision:
+                raise ConversationError("ask_revision_conflict")
+            data["draft"] = {**data.get("draft", {}), "version": 1, "text": text, "revision": expected_revision + 1}
+            self._write(envelope, data)
+            return {"text": text, "revision": expected_revision + 1}
 
     def save(self, value: Mapping[str, Any], *, expected_revision: int) -> dict:
         clean = clean_conversation(value)

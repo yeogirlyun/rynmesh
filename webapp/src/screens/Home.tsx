@@ -110,7 +110,7 @@ export default function Home() {
           <Button icon={Compass} onClick={() => navigate("/explore")}>
             Explore
           </Button>
-          <Button icon={Sparkles} onClick={() => navigate("/search-ask")}>
+          <Button icon={Sparkles} onClick={() => navigate("/ask")}>
             Ask AI
           </Button>
           <Button icon={UploadCloud} variant="primary" onClick={() => navigate("/publish")}>

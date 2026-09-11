@@ -4,7 +4,7 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
-import { clearConversations } from "../domain/llmConversationStore";
+import { clearConversations, type LLMConversation } from "../domain/llmConversationStore";
 import PrivateAIChat from "./PrivateAIChat";
 import { askHistory } from "../domain/askHistory";
 
@@ -12,6 +12,14 @@ beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
 });
 afterEach(() => vi.restoreAllMocks());
+
+function liveHistory() {
+  const rows = new Map<string, LLMConversation>();
+  vi.spyOn(askHistory, "list").mockImplementation(async () => [...rows.values()]);
+  return vi.spyOn(askHistory, "save").mockImplementation(async (row) => {
+    const saved = { ...row, revision: (row.revision ?? 0) + 1 }; rows.set(row.id, saved); return saved;
+  });
+}
 
 function renderChat(mode: "fixture" | "live" = "fixture") {
   const client = makeFixtureNodeClient();
@@ -42,11 +50,10 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
 
 describe("Private AI chat", () => {
   it("keeps input and does not submit when node history cannot be saved", async () => {
-    vi.spyOn(askHistory, "list").mockResolvedValue([]);
-    const save = vi.spyOn(askHistory, "save").mockImplementationOnce(async (row) => ({ ...row, revision: 1 }))
-      .mockRejectedValue(new Error("Node history unavailable"));
+    const save = liveHistory();
     const { submit, user } = renderChat("live");
-    await screen.findByRole("heading", { name: "Private AI" });
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    save.mockRejectedValue(new Error("Node history unavailable"));
     await user.type(screen.getByLabelText("Message Private AI"), "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Node history unavailable");
@@ -56,12 +63,11 @@ describe("Private AI chat", () => {
   });
 
   it("persists task identity before submitting and checks it after a lost response", async () => {
-    vi.spyOn(askHistory, "list").mockResolvedValue([]);
-    const save = vi.spyOn(askHistory, "save").mockImplementation(async (row) => ({ ...row, revision: (row.revision ?? 0) + 1 }));
+    const save = liveHistory();
     const { submit, client, user } = renderChat("live");
     submit.mockRejectedValue(new Error("Response lost"));
     const check = vi.spyOn(client, "getLLMOrder").mockRejectedValue(new Error("Unreachable"));
-    await screen.findByRole("heading", { name: "Private AI" });
+    await screen.findByRole("heading", { name: "Ask Ryn" });
     await user.type(screen.getByLabelText("Message Private AI"), "Original request");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     const retry = await screen.findByRole("button", { name: "Check original task" });
@@ -76,7 +82,7 @@ describe("Private AI chat", () => {
 
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Private AI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
 
     const composer = screen.getByLabelText("Message Private AI");
     await user.type(composer, "Why is this request private?");
@@ -84,7 +90,7 @@ describe("Private AI chat", () => {
     expect(await screen.findByText(/Fixture response for: Why is this request private/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "New chat" }));
-    await user.type(composer, "Draft a launch email");
+    await user.type(await screen.findByLabelText("Message Private AI"), "Draft a launch email");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Draft a launch email/)).toBeInTheDocument();
     expect(submit).toHaveBeenCalledTimes(2);
@@ -96,7 +102,7 @@ describe("Private AI chat", () => {
 
   it("includes prior messages in a follow-up and requests destructive confirmation before clearing", async () => {
     const { confirm, submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Private AI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
     const composer = screen.getByLabelText("Message Private AI");
     await user.type(composer, "First question");
     await user.click(screen.getByRole("button", { name: "Send message" }));

@@ -80,6 +80,16 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.get("/api/local/ask/export")
     async def export(request: Request):
         app.state.ask_ryn.local_control(request)
-        return {"version": "ryn.ask-export.v1", "conversations": await call("list")}
+        return {"version": "ryn.ask-export.v1", "conversations": await call("list"), "draft": await call("draft")}
+
+    @app.get("/api/local/ask/draft")
+    async def draft(request: Request):
+        app.state.ask_ryn.local_control(request)
+        return await call("draft")
+
+    @app.put("/api/local/ask/draft")
+    async def save_draft(request: Request):
+        value = await body(request)
+        return await call("save_draft", value.get("text"), expected_revision=value.get("expected_revision"))
 
     return app.state.ask_ryn

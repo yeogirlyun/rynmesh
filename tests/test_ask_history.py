@@ -122,6 +122,37 @@ def test_message_budget_and_invalid_values_fail_before_write(tmp_path):
     assert not history.path.exists()
 
 
+def test_unassigned_draft_is_encrypted_restartable_and_revision_checked(tmp_path):
+    key = X25519PrivateKey.generate()
+    history = ConversationStore(tmp_path, key)
+    assert history.draft() == {"text": "", "revision": 0}
+    saved = history.save_draft("尚未发送的草稿", expected_revision=0)
+    assert saved["revision"] == 1
+    assert history.list() == []  # No fake conversation or model is invented.
+    assert "尚未发送" not in history.path.read_text()
+    restarted = ConversationStore(tmp_path, key)
+    assert restarted.draft() == saved
+    assert restarted.save_draft(saved["text"], expected_revision=0) == saved
+    with pytest.raises(ConversationError, match="ask_revision_conflict"):
+        restarted.save_draft("older view", expected_revision=0)
+    assert restarted.save_draft("", expected_revision=1) == {"text": "", "revision": 2}
+
+
+def test_conversation_draft_keeps_binding_and_future_fields(tmp_path):
+    history = ConversationStore(tmp_path, X25519PrivateKey.generate())
+    saved = history.save({**sample(), "draft": "Review before sending"}, expected_revision=0)
+    assert history.get(saved["id"])["draft"] == "Review before sending"
+    with pytest.raises(ConversationError, match="ask_service_binding_mismatch"):
+        history.save({**saved, "providerPeerId": "new", "serviceKey": "new::model"}, expected_revision=1)
+    envelope, data = history._read()
+    data["draft"] = {"version": 99, "text": "future", "revision": 2}
+    history._write(envelope, data)
+    before = history.path.read_bytes()
+    with pytest.raises(ConversationError, match="version_unsupported"):
+        history.save_draft("overwrite", expected_revision=2)
+    assert history.path.read_bytes() == before
+
+
 def test_owner_routes_reinstall_uses_latest_store_and_auth(tmp_path):
     app = FastAPI()
     key = X25519PrivateKey.generate()

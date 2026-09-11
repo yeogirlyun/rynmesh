@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import {
@@ -74,7 +74,7 @@ function resultMessage(result: LLMOrderResult) {
 export default function PrivateAIChat() {
   const { client, confirm, notify } = useAppContext();
   const history = useMemo(() => conversationRepository(client.mode), [client.mode]);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [services, setServices] = useState<LLMServiceRecord[]>([]);
   const [selectedService, setSelectedService] = useState<LLMServiceRecord | null>(null);
   const selectedServiceKeyRef = useRef("");
@@ -87,6 +87,7 @@ export default function PrivateAIChat() {
   const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
+  const [historyReady, setHistoryReady] = useState(false);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [error, setError] = useState("");
@@ -109,7 +110,9 @@ export default function PrivateAIChat() {
 
   useEffect(() => {
     let active = true;
+    let redirecting = false;
     setLoading(true);
+    setHistoryReady(false);
     setConversations([]);
     setSelectedId("");
     void (async () => {
@@ -122,16 +125,17 @@ export default function PrivateAIChat() {
       setServices(discovered);
       const requestedPeer = searchParams.get("peer");
       const requestedService = searchParams.get("service");
-      const selected = discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService)
-        ?? discovered.find((item) => item.online)
-        ?? discovered[0]
-        ?? null;
+      const selected = requestedPeer && requestedService
+        ? discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
+        : discovered.find((item) => item.online) ?? discovered[0] ?? null;
       setSelectedService(selected);
       setStorageMode(await history.storageMode());
       if (selected) {
         const key = serviceKey(selected);
         let stored = (await history.list(key)).filter((row) => row.networkId === network);
-        if (!stored.length) {
+        const requestedId = searchParams.get("conversation");
+        if (requestedId && !stored.some((row) => row.id === requestedId)) throw new Error("This conversation is unavailable for this provider and network. It has not been replaced by another history.");
+        if (!stored.length && !requestedId) {
           const fresh = createConversation({
             serviceKey: key,
             serviceName: selected.service.model_alias,
@@ -142,15 +146,19 @@ export default function PrivateAIChat() {
         }
         if (active) {
           setConversations(stored);
-          setSelectedId(stored[0].id);
+          const opened = stored.find((row) => row.id === requestedId) ?? stored[0];
+          setSelectedId(opened.id);
+          setInput(opened.draft ?? "");
+          setHistoryReady(true);
+          if (!requestedId) { redirecting = true; setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", opened.id); return next; }, { replace: true }); }
         }
       }
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Could not load conversation history.");
-      } finally { if (active) setLoading(false); }
+      } finally { if (active && !redirecting) setLoading(false); }
     })();
     return () => { active = false; };
-  }, [client, history, searchParams]);
+  }, [client, history, searchParams, setSearchParams]);
 
   useEffect(() => {
     const element = messageScrollRef.current;
@@ -167,26 +175,31 @@ export default function PrivateAIChat() {
     }, {});
   }, [conversations, query]);
 
-  const replaceConversation = async (conversation: LLMConversation) => {
+  const replaceConversation = async (conversation: LLMConversation, select = true) => {
     const saved = await history.save(conversation);
     if (saved.serviceKey !== selectedServiceKeyRef.current || saved.networkId !== activeNetworkRef.current) return saved;
     setConversations((current) => [
       saved,
       ...current.filter((item) => item.id !== saved.id),
     ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
-    setSelectedId(conversation.id);
+    if (select) {
+      setSelectedId(conversation.id);
+      if (searchParams.get("conversation") !== conversation.id) setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", conversation.id); return next; });
+    }
     return saved;
   };
 
   const newConversation = async () => {
     if (!selectedService) return;
+    setLoading(true);
     const fresh = createConversation({
       serviceKey: serviceKey(selectedService),
       serviceName: selectedService.service.model_alias,
       providerPeerId: selectedService.peer_id,
       networkId,
     });
-    await replaceConversation(fresh);
+    try { await replaceConversation(fresh); }
+    catch (cause) { setLoading(false); throw cause; }
     setInput("");
     setError("");
   };
@@ -199,7 +212,7 @@ export default function PrivateAIChat() {
     const remaining = conversations.filter((conversation) => conversation.id !== conversationId);
     if (remaining.length) {
       setConversations(remaining);
-      if (selectedId === conversationId) setSelectedId(remaining[0].id);
+      if (selectedId === conversationId) setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", remaining[0].id); return next; });
     } else {
       setConversations([]);
       setSelectedId("");
@@ -227,7 +240,7 @@ export default function PrivateAIChat() {
 
   const runPrompt = async (promptText: string) => {
     const text = promptText.trim();
-    if (!text || !selectedService || sending) return;
+    if (!text || !selectedService || sending || !historyReady) return;
     let conversation = selectedConversation;
     if (conversation && (conversation.serviceKey !== serviceKey(selectedService) || conversation.networkId !== networkId)) {
       setError("This conversation belongs to another provider. Open a separate conversation for the selected service.");
@@ -245,7 +258,7 @@ export default function PrivateAIChat() {
     const taskId = "task_" + messageId().replaceAll("-", "");
     const userMessage: LLMChatMessage = { id: messageId(), role: "user", content: text, createdAt: now, status: "complete", taskId };
     let withUser: LLMConversation = {
-      ...conversation,
+      ...conversation, draft: "",
       title: conversation.messages.length ? conversation.title : titleFromPrompt(text),
       updatedAt: now,
       messages: [...conversation.messages, userMessage],
@@ -299,7 +312,7 @@ export default function PrivateAIChat() {
         messages: [...withUser.messages, assistantMessage],
       };
       if (deletedIdsRef.current.has(withUser.id)) return;
-      await replaceConversation(completed);
+      await replaceConversation(completed, false);
       notify(success ? "ok" : "warn", success ? "Private AI response complete" : `Private AI request ${result.state}`);
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Private AI request failed";
@@ -308,7 +321,7 @@ export default function PrivateAIChat() {
       };
       if (mountedRef.current && !deletedIdsRef.current.has(withUser.id)) {
         if (userSaved) {
-          try { await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] }); }
+          try { await replaceConversation({ ...withUser, updatedAt: failedMessage.createdAt, messages: [...withUser.messages, failedMessage] }, false); }
           catch { setInput(text); }
         } else setInput(text);
         setError(message);
@@ -350,8 +363,10 @@ export default function PrivateAIChat() {
     return (
       <div className="empty-state">
         <Bot size={28} />
-        <h3>No Private AI provider is available</h3>
-        <p>Return to Services and manage a local model or wait for a provider to come online.</p>
+        <h3>The selected provider is unavailable</h3>
+        <p>Your conversation remains bound to its original provider. Choose another service to start a separate conversation.</p>
+        <Link to={searchParams.get("conversation") ? `/ask?conversation=${encodeURIComponent(searchParams.get("conversation")!)}&network=${encodeURIComponent(networkId)}` : "/ask"}>View history and choose a service</Link>
+        <Link to="/services/manage">Set up a local model</Link>
         {error ? <p role="alert">{error}</p> : null}
       </div>
     );
@@ -373,7 +388,7 @@ export default function PrivateAIChat() {
               <h2>{bucket}</h2>
               {grouped[bucket].map((conversation) => (
                 <div className={`${styles.conversationRow}${selectedConversation?.id === conversation.id ? ` ${styles.conversationRowSelected}` : ""}`} key={conversation.id}>
-                  <button className={styles.conversationButton} type="button" onClick={() => setSelectedId(conversation.id)}>
+                  <button className={styles.conversationButton} type="button" onClick={() => setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", conversation.id); return next; })}>
                     <strong>{conversation.title}</strong>
                     <small>{formatTime(conversation.updatedAt)}</small>
                   </button>
@@ -402,7 +417,8 @@ export default function PrivateAIChat() {
           <div className={styles.modelLockup}>
             <span className={styles.modelIcon}><Bot size={24} /></span>
             <div className={styles.modelCopy}>
-              <h1>Private AI</h1>
+              <h1>Ask Ryn</h1>
+              <Link to="/ask">History and model selection</Link>
               <span>{selectedService.service.model_alias}</span>
               <div className={styles.modelStatus}>
                 <span className={styles.statusBadge}>{selectedService.online ? selectedService.capacity?.available === 0 ? "Busy" : "Available in discovery" : "Not ready or unreachable"}</span>
@@ -482,7 +498,7 @@ export default function PrivateAIChat() {
             {sending ? (
               <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
             ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim()} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
+              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
             )}
           </div>
           <div className={styles.composerMeta}>
