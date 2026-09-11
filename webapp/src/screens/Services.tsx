@@ -52,6 +52,8 @@ function mapKnownLlmErrorText(message: string): string | null {
   if (/engine is not running/i.test(message)) return "Docker is installed but not running. Start Docker Desktop and retry.";
   if (/no local inference runtime is available/i.test(message)) return "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.";
   if (/runtime archive checksum mismatch|model checksum mismatch/i.test(message)) return "A download failed verification and was discarded. Retry to download it again.";
+  if (/download incomplete/i.test(message)) return "The download was interrupted. Downloaded data is kept; retry to continue. The model still needs verification.";
+  if (/download response has invalid byte range or encoding/i.test(message)) return "The source returned an invalid download response. Your previous progress is kept; retry when the source is available.";
   if (/exited during startup/i.test(message)) return "The local model runtime stopped while starting. Retry with a smaller model profile.";
   if (/download exceeded the pinned size/i.test(message)) return "The download did not match the expected size and was discarded. Retry.";
   return null;
