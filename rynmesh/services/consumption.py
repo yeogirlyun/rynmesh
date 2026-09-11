@@ -12,7 +12,7 @@ from ..atomic_io import atomic_write_json, migration_backup, read_json
 from ..crypto import canonical_json
 from ..device_sync.reading import ReadingState
 from ..device_sync.reading import scopes as reading_scopes
-from ..device_sync.records import SyncError, view
+from ..device_sync.records import SyncError, fingerprint, view
 from ..file_transactions import file_transaction
 
 __all__ = ["MAX_HISTORY_BYTES", "ConsumptionError", "ConsumptionStore"]
@@ -77,6 +77,7 @@ class ConsumptionStore:
         self.max_items = max(1, int(max_items))
         self.lock_path = self.path.with_name(self.path.name + ".lock")
         self._sync_validation = set()
+        self._privacy_validation_digest = None
 
     def list(self) -> list[dict[str, Any]]:
         records = list(self._load().values())
@@ -203,7 +204,14 @@ class ConsumptionStore:
             if payload['version'] == PRIVACY_VERSION:
                 from .reading_privacy import validate_receipt
 
-                receipt = validate_receipt(payload.get('privacy_erasure'))
+                receipt = payload.get('privacy_erasure')
+                # A receipt is unchanged across ordinary reading writes. Cache
+                # only one fully validated content digest, never a parsed value
+                # or file timestamp; changed bytes must pass validation again.
+                digest = fingerprint(receipt)
+                if digest != self._privacy_validation_digest:
+                    validate_receipt(receipt)
+                    self._privacy_validation_digest = digest
                 if payload['sync'] is None:
                     return payload, payload['records'], None
                 if not isinstance(payload['sync'], dict) or payload['sync'].get('actor') != receipt['actor']:
