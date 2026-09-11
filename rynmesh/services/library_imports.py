@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 import re
 import time
 from functools import wraps
@@ -91,7 +92,11 @@ class LibraryImportStore:
             if path.parent.name in hidden:
                 continue
             try:
-                records.append(self.get(path.parent.name))
+                row = self.get(path.parent.name)
+                stamp = row.get('created_at_unix', 0)
+                if type(stamp) not in {int, float} or not math.isfinite(stamp) or stamp < 0:
+                    raise LibraryImportError('library_import_corrupt')
+                records.append(row)
             except (OSError, ValueError):
                 records.append({"import_id": path.parent.name, "state": "unavailable", "filename": "Unavailable saved document", "created_at_unix": 0})
         return sorted(records, key=lambda row: float(row.get("created_at_unix", 0)), reverse=True)

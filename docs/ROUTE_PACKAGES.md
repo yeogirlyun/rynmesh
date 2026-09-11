@@ -1,5 +1,11 @@
 # Route packages
 
+Search responses distinguish `indexing_pending` from `unavailable_sources`.
+Only bounded `saved_documents` / `offline_downloads` scope codes can be exposed;
+no exception message, document title or path is used as a diagnostic. Query/open
+still revalidate current sources; isolated source failures never fall back to
+old indexed bodies. Search status reports issues from the latest rebuild.
+
 `services/library_cleanup_routes.py` installs Owner-only
 `/api/local/privacy/documents` review/job/resume and remaining-file approval
 routes. It resolves the current `app.state.friends.content.imports` and guard

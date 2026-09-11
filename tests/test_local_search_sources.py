@@ -204,7 +204,7 @@ def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_pat
     result = client.post("/api/local/search/query", headers=owner, json={"query": marker})
     assert result.status_code == 200 and result.json()["total"] == 1
     status = client.get("/api/local/search/status", headers=owner).json()
-    assert set(status) == {"version", "state", "error_code", "indexed_count", "updated_at", "worker"}
+    assert set(status) == {"version", "state", "error_code", "indexed_count", "updated_at", "unavailable_sources", "worker"}
     assert marker not in caplog.text and marker not in str(status)
     replacement = install(tmp_path / "replacement")
     assert replacement.path != engine.path and replacement.status()["state"] == "needs_rebuild"
