@@ -999,9 +999,10 @@
       "scenario": "同一会话两端离线继续，另测删除与新增并发",
       "expected": "分支完整可见；删除冲突进入待处理项，不混入主历史或静默丢弃",
       "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "Concurrent branches and deleted-conversation recovery retain original provider bindings. A deleted restored copy now requires an explicit choice to keep a different copy; repeated requests and restart reuse the same replacement identity. Owner API checks reject live-copy replacement, mismatched intents and stale reviews; failed writes preserve retry. A synthetic loopback browser flow covered restore, delete, cancel, keyboard confirmation, node restart and repeated confirmation without duplicate copies. Recovery discard, complete erasure and packaged cross-network acceptance remain incomplete.",
       "evidence": [
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/device-sync-development/recovery-replacement-browser.json"
       ],
       "implementation_commit": ""
     },

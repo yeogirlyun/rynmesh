@@ -7,6 +7,7 @@ const errors: Record<string, string> = {
   sync_choice_unavailable: "This branch is no longer available. Refresh the recovery list.",
   sync_restore_identity_conflict: "This recovery identity already belongs to another copy. Refresh history before continuing.",
   sync_restore_new_identity_required: "Keep this branch as a new conversation; the original history cannot be overwritten.",
+  sync_restore_copy_not_deleted: "That copy still exists. Open it from history, or refresh the branches before choosing again.",
   ask_run_busy: "This conversation already has an active task. Wait for it or cancel it before sending another question.",
   ask_preview_changed: "The prepared input changed after review. Review the current question and sources again before sending.",
   ask_run_identity_conflict: "This task ID belongs to a different request. Check its original result before continuing.",
@@ -43,7 +44,7 @@ export interface AskRunRequest {
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }
 export class AskRequestError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  constructor(readonly status: number, message: string, readonly code = "") { super(message); }
 }
 export interface AskSyncChoice { choice_id: string; value: LLMConversation }
 export interface AskSyncConflict {
@@ -52,8 +53,10 @@ export interface AskSyncConflict {
   local_draft?: LLMConversation;
 }
 
-export async function recoveryConversationId(issue: AskSyncConflict, choice: AskSyncChoice) {
-  const input = new TextEncoder().encode(JSON.stringify([issue.id, issue.revision, choice.choice_id]));
+export async function recoveryConversationId(issue: AskSyncConflict, choice: AskSyncChoice, replaces?: string) {
+  const identity = [issue.id, issue.revision, choice.choice_id];
+  if (replaces) identity.push(replaces);
+  const input = new TextEncoder().encode(JSON.stringify(identity));
   const digest = await crypto.subtle.digest("SHA-256", input);
   return "restored_" + [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
@@ -68,15 +71,15 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   }
   if (!response.ok) {
     const value = await response.json().catch(() => ({})) as { detail?: string };
-    throw new AskRequestError(response.status, errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.");
+    throw new AskRequestError(response.status, errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.", value.detail ?? "");
   }
   return response.json() as Promise<T>;
 }
 
 export const askHistory = {
   syncConflicts: async () => (await request<{ conflicts: AskSyncConflict[] }>("/sync/conflicts")).conflicts,
-  restoreBranch: (conversation_id: string, choice_id: string, new_id: string, expected_revision: string) =>
-    request<LLMConversation>("/sync/restore", "POST", { conversation_id, choice_id, new_id, expected_revision }),
+  restoreBranch: (conversation_id: string, choice_id: string, new_id: string, expected_revision: string, replaces?: string) =>
+    request<LLMConversation>("/sync/restore", "POST", { conversation_id, choice_id, new_id, expected_revision, ...(replaces ? { replaces } : {}) }),
   beginRun: (body: AskRunRequest) => request<AskRun>("/runs", "POST", body),
   run: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}`),
   cancelRun: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}/cancel`, "POST"),

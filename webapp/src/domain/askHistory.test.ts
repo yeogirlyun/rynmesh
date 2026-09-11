@@ -36,3 +36,11 @@ it("clears only the selected provider service and network", async () => {
   await conversationRepository("live").clear(own.serviceKey, own.networkId);
   expect(remove).toHaveBeenCalledExactlyOnceWith(own);
 });
+
+it("preserves the confirmed deletion code and sends explicit replacement intent", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "ask_conversation_deleted" }), { status: 409 }));
+  vi.stubGlobal("fetch", fetch);
+  await expect(askHistory.restoreBranch("source", "choice", "next", "revision", "deleted"))
+    .rejects.toMatchObject({ status: 409, code: "ask_conversation_deleted" });
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ conversation_id: "source", choice_id: "choice", new_id: "next", expected_revision: "revision", replaces: "deleted" });
+});

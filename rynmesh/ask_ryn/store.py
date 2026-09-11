@@ -373,7 +373,7 @@ class ConversationStore:
             self._write(envelope, data, capture_sync=False)
             return state.summary(identifier)
 
-    def sync_restore(self, identifier, *, choice_id, new_id, expected_revision):
+    def sync_restore(self, identifier, *, choice_id, new_id, expected_revision, replaces=None):
         from copy import deepcopy
 
         from ..device_sync import records
@@ -383,15 +383,29 @@ class ConversationStore:
         _identity(new_id)
         if identifier == new_id:
             raise SyncError('sync_restore_new_identity_required')
+        if replaces is not None:
+            _identity(replaces)
+            if replaces in {identifier, new_id}:
+                raise SyncError('sync_restore_new_identity_required')
         with file_transaction(self.lock):
             envelope, data = self._read()
             state = self._sync_state(data)
             identity = {'source': identifier, 'choice_id': choice_id, 'revision': expected_revision}
+            if replaces is not None:
+                identity['replaces'] = replaces
             previous = state.value['restores'].get(new_id)
             if previous:
                 if previous != identity:
                     raise SyncError('sync_restore_identity_conflict')
+                if new_id in data['tombstones']:
+                    raise ConversationError('ask_conversation_deleted')
                 return self.get(new_id)
+            if replaces is not None:
+                prior = state.value['restores'].get(replaces, {})
+                if any(prior.get(key) != identity[key] for key in ('source', 'choice_id', 'revision')):
+                    raise SyncError('sync_restore_identity_conflict')
+                if replaces not in data['tombstones'] or replaces in data['conversations']:
+                    raise SyncError('sync_restore_copy_not_deleted')
             entity = state.value['entities'].get(identifier)
             if entity is None or records.fingerprint(entity['record']) != expected_revision:
                 raise SyncError('sync_revision_conflict')

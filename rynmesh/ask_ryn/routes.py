@@ -48,7 +48,7 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
             raise HTTPException(status, detail=code) from None
         except SyncError as exc:
             code = str(exc)
-            if code in {'sync_revision_conflict', 'sync_choice_unavailable', 'sync_restore_identity_conflict', 'sync_restore_new_identity_required'}:
+            if code in {'sync_revision_conflict', 'sync_choice_unavailable', 'sync_restore_identity_conflict', 'sync_restore_new_identity_required', 'sync_restore_copy_not_deleted'}:
                 raise HTTPException(409, detail=code) from None
             raise HTTPException(503, detail='ask_history_unavailable') from None
         except (OSError, ValueError, TypeError, KeyError):
@@ -113,7 +113,7 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def sync_restore(request: Request):
         value = await body(request)
         return await call('sync_restore', value.get('conversation_id'), choice_id=value.get('choice_id'),
-                          new_id=value.get('new_id'), expected_revision=value.get('expected_revision'))
+                          new_id=value.get('new_id'), expected_revision=value.get('expected_revision'), replaces=value.get('replaces'))
 
     @app.get("/api/local/ask/draft")
     async def draft(request: Request):
