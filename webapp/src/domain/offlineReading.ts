@@ -4,6 +4,7 @@ export type OfflineRecord = { key: string; item_id: string; reference: { item_id
   state: string; error_code: string; verified_bytes: number;
   current: { job_id: string; downloaded_at: number; partial: boolean; size_bytes: number } | null };
 export type OfflineStatus = { records: OfflineRecord[]; used_bytes: number; download_bytes: number;
+  cleanup?: { review_token: string; item_id: string | null; sequence: number; done: boolean; copies: number; bytes: number } | null;
   limits: { item_bytes: number; total_bytes: number; image_bytes: number; image_count: number } };
 export type OfflineBody = { item_id: string; title: string; source: string; url: string; text: string; truncated: boolean;
   images_omitted: boolean; source_mode: string; job_id: string; downloaded_at: number; partial: boolean;
@@ -30,6 +31,11 @@ const errors: Record<string, string> = {
   offline_no_readable_body: "No readable body was found. An empty page was not saved.",
   offline_item_unavailable: "Open or save this item first, then retry the download.",
   offline_clear_review_changed: "Downloads changed after your review. Review the current count and space before clearing.",
+  offline_cleanup_pending: "An earlier file cleanup is unfinished. Continue it before clearing other downloads.",
+  offline_cleanup_copy_changed: "A remaining file changed after review. Review its current version before clearing it.",
+  offline_cleanup_version_unsupported: "Cleanup records need a newer app version. Existing files and progress have been kept.",
+  offline_cleanup_unreadable: "Cleanup progress could not be read. Existing files have been kept; check your local node and retry.",
+  offline_cleanup_copy_too_large: "A managed copy exceeds the supported cleanup size. No new cleanup has started.",
   offline_version_unsupported: "This download needs a newer app version. Existing files have been kept.",
   offline_copy_changed: "This copy was updated or cleared. Close and reopen it to read the current version.",
   offline_verification_failed: "The saved copy failed verification. Reconnect and download a new version.",
@@ -37,13 +43,16 @@ const errors: Record<string, string> = {
   offline_resuming_verified_checkpoints: "Resuming from verified saved resources; unfinished resources download again.",
 };
 export const offlineError = (code: string) => errors[code] ?? "This operation could not be confirmed. Refresh the downloads and retry.";
+export class OfflineOperationError extends Error {
+  constructor(readonly code: string) { super(offlineError(code)); }
+}
 async function request<T>(action = "", body?: unknown): Promise<T> {
   const response = await fetch(nodeControlUrl(`/offline-reading${action ? `/${action}` : ""}`), {
     method: body === undefined ? "GET" : "POST", credentials: "include",
     headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) {
     const value = await response.json().catch(() => ({}));
-    throw new Error(offlineError(value.detail));
+    throw new OfflineOperationError(value.detail);
   }
   return response.json();
 }
@@ -56,6 +65,8 @@ export const offlineApi = {
   body: (item_id: string) => request<OfflineBody>("body", { item_id }),
   review: (item_id?: string) => request<ClearReview>("clear-preview", { item_id }),
   clear: (review_token: string, item_id?: string) => request<ClearReview & { freed_bytes: number }>("clear", { review_token, item_id }),
+  reviewRemaining: () => request<{ review_token: string; files: number; bytes: number }>("clear-remaining-preview", {}),
+  clearRemaining: (review_token: string) => request<ClearReview & { freed_bytes: number }>("clear-remaining", { review_token }),
   image: async (key: string, job: string, index: number, signal: AbortSignal) => {
     const response = await fetch(nodeControlUrl(`/offline-reading/copies/${encodeURIComponent(key)}/${encodeURIComponent(job)}/images/${index}`),
       { credentials: "include", signal });

@@ -8,11 +8,11 @@ import time
 import uuid
 from copy import deepcopy
 
-from ..crypto import canonical_json
 from ..file_transactions import file_transaction
 from ..services.document_extract import extract_document
 from ..services.library_imports import LibraryImportError
 from ..services.reader import extract_readable, link_post_target, readable_url
+from .cleanup import OfflineCleanup, public, receipt
 from .fetch import OfflineError, fetch_resource, image_mime
 from .store import MAX_ITEM, MAX_META, MAX_RECORDS, MAX_TOTAL, key_for
 
@@ -91,6 +91,7 @@ class OfflineReading:
     def __init__(self, *, store, sources, clock=time.time):
         self.store, self.sources, self.clock = store, sources, clock
         self.running = threading.Lock()
+        self.cleanup = OfflineCleanup(store)
 
     def recover(self):
         def change(data):
@@ -167,6 +168,7 @@ class OfflineReading:
         data = self.store.read()
         meta_bytes = self.store.path.stat().st_size if self.store.path.exists() else 0
         return {'records': [self.public(row) for row in data['records'].values()],
+                'cleanup': public(receipt(data)),
                 'used_bytes': self.store.used() + meta_bytes, 'download_bytes': self.store.used(),
                 'limits': {'item_bytes': MAX_ITEM, 'total_bytes': MAX_TOTAL, 'metadata_reserved_bytes': MAX_META,
                            'image_bytes': MAX_IMAGE, 'image_count': MAX_IMAGES},
@@ -320,14 +322,7 @@ class OfflineReading:
             self.running.release()
 
     def _clear_preview(self, item_id):
-        data = self.store.read()
-        rows = [row for row in data['records'].values() if item_id is None or row['item_id'] == item_id]
-        jobs = {(row.get('current') or {}).get('job_id') for row in rows}
-        jobs.update((row.get('job') or {}).get('id') for row in rows)
-        files = [(job, self.store._path(job).stat().st_size) for job in sorted(jobs - {None}) if self.store._path(job).exists()]
-        return {'review_token': hashlib.sha256(canonical_json([rows, files])).hexdigest(),
-                'copies': sum(bool(row.get('current')) for row in rows), 'bytes': sum(size for _, size in files),
-                'pending': sum(row['state'] in ACTIVE for row in rows)}
+        return self.cleanup.preview(item_id)
 
     def clear_preview(self, item_id=None):
         if item_id is not None:
@@ -335,20 +330,12 @@ class OfflineReading:
         return self._clear_preview(item_id)
 
     def clear(self, *, review_token, item_id=None):
-        if not isinstance(review_token, str) or len(review_token) != 64:
-            raise OfflineError('offline_clear_review_required')
-        def change(data):
-            preview = self._clear_preview(item_id)
-            if preview['review_token'] != review_token:
-                raise OfflineError('offline_clear_review_changed')
-            affected = [row for row in data['records'].values() if item_id is None or row['item_id'] == item_id]
-            self.store.ensure_supported([(row.get('current') or {}).get('job_id') for row in affected] +
-                                        [(row.get('job') or {}).get('id') for row in affected])
-            for row in data['records'].values():
-                if item_id is None or row['item_id'] == item_id:
-                    row.update(current=None, job=None, state='cleared', error_code='', verified_bytes=0)
-            return preview
-        preview = self.store.mutate(change)
-        before = self.store.used()
-        self.store.gc()
-        return {**preview, 'freed_bytes': before - self.store.used()}
+        if item_id is not None:
+            key_for(item_id)
+        return self.cleanup.clear(review_token=review_token, item_id=item_id)
+
+    def clear_remaining_preview(self):
+        return self.cleanup.review_remaining()
+
+    def clear_remaining(self, *, review_token):
+        return self.cleanup.approve_remaining(review_token=review_token)

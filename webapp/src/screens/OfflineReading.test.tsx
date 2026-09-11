@@ -112,3 +112,53 @@ it("never silently fetches the web after an offline read fails, and retries loca
   expect(offlineApi.body).toHaveBeenCalledTimes(2);
   expect(digestApi.readArticle).not.toHaveBeenCalled();
 });
+
+it("restores unfinished file cleanup after remount and retries its original identity", async () => {
+  snapshot.records = [{ ...record, state: 'cleared', current: null, verified_bytes: 0 }];
+  snapshot.cleanup = { review_token: 'c'.repeat(64), item_id: 'article', sequence: 7, done: false, copies: 1, bytes: 200 };
+  vi.mocked(offlineApi.clear).mockImplementation(async () => {
+    snapshot = { ...snapshot, cleanup: { ...snapshot.cleanup!, done: true } };
+    return { review_token: 'c'.repeat(64), copies: 1, bytes: 200, pending: 0, freed_bytes: 200 };
+  });
+  const initial = mount();
+  await screen.findByRole('heading', { name: 'File cleanup unfinished' });
+  initial.unmount();
+  const { user } = mount();
+  expect(await screen.findByText(/Removed from reader; file cleanup unfinished/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Clear all downloads' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Continue file cleanup' }));
+  expect(offlineApi.clear).toHaveBeenCalledExactlyOnceWith('c'.repeat(64), 'article');
+  expect(screen.queryByRole('heading', { name: 'File cleanup unfinished' })).not.toBeInTheDocument();
+  expect(screen.getByText(/freed across this cleanup/)).toHaveFocus();
+});
+
+it("requires a fresh confirmation to clear changed remaining files", async () => {
+  snapshot.cleanup = { review_token: 'c'.repeat(64), item_id: null, sequence: 7, done: false, copies: 1, bytes: 200 };
+  vi.spyOn(offlineApi, 'reviewRemaining').mockResolvedValue({ review_token: 'new-review', files: 1, bytes: 350 });
+  const approve = vi.spyOn(offlineApi, 'clearRemaining').mockImplementation(async () => {
+    snapshot = { ...snapshot, cleanup: { ...snapshot.cleanup!, done: true } };
+    return { review_token: 'c'.repeat(64), copies: 1, bytes: 350, pending: 0, freed_bytes: 350 };
+  });
+  const { user } = mount();
+  await user.click(await screen.findByRole('button', { name: 'Review remaining file versions' }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  expect(confirm.mock.calls[0][0].body).toContain('1 remaining files, 350 B');
+  expect(approve).not.toHaveBeenCalled();
+  await act(async () => { await confirm.mock.calls[0][0].onConfirm(); });
+  expect(approve).toHaveBeenCalledExactlyOnceWith('new-review');
+  expect(screen.getByText(/350 B freed across this cleanup/)).toBeInTheDocument();
+});
+
+it("retains the request identity if its response is lost before progress can be read", async () => {
+  snapshot.records = [record];
+  vi.mocked(offlineApi.clear).mockRejectedValueOnce(new Error('Response lost'));
+  const { user } = mount();
+  await user.click(await screen.findByRole('button', { name: 'Clear this download' }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  await act(async () => { await confirm.mock.calls[0][0].onConfirm(); });
+  expect(screen.getByRole('alert')).toHaveTextContent('Response lost');
+  expect(screen.getByRole('button', { name: 'Clear all downloads' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Retry same cleanup request' }));
+  expect(vi.mocked(offlineApi.clear).mock.calls).toEqual([['r'.repeat(64), 'article'], ['r'.repeat(64), 'article']]);
+  expect(screen.getByText(/200 B freed across this cleanup/)).toBeInTheDocument();
+});

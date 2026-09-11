@@ -71,6 +71,8 @@ class OfflineStore:
         envelope, value = self._read(self.path, MAX_META)
         if not isinstance(value.get('records'), dict) or len(value['records']) > MAX_RECORDS:
             raise OfflineError('offline_store_invalid')
+        from .cleanup import receipt
+        receipt(value)
         return envelope, value
 
     def read(self):
@@ -146,6 +148,10 @@ class OfflineStore:
             data = self._state()[1]
             retained = {(row.get('current') or {}).get('job_id') for row in data['records'].values()}
             retained.update((row.get('job') or {}).get('id') for row in data['records'].values())
+            from .cleanup import receipt
+            cleanup = receipt(data)
+            if cleanup and not cleanup['done']:
+                retained.update(row['job_id'] for row in cleanup['files'])
             for candidate in self.downloads.glob('*.json'):
                 if not re.fullmatch('[a-f0-9]{32}', candidate.stem) or candidate.stem in retained:
                     continue
