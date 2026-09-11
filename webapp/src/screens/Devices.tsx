@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
+import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
 import { deviceSyncApi, pairLabels, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
@@ -43,7 +44,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
           conflict: "Changes from different devices need review. Both versions have been kept." } as Record<string, string>)[pair.sync.state] ?? "Checking sync status."}</p>
         {pair.sync.pending !== null ? <p>{pair.sync.pending} local changes waiting for confirmation.</p> : null}
         {pair.sync.last_success_at !== null ? <p>Last confirmation across selected categories: {new Date(pair.sync.last_success_at * 1000).toLocaleString()}.</p> : null}
-        {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. Conversation branches can be reviewed in <Link to="/ask">Ask Ryn</Link>.</p> : null}
+        {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. <a href="#reading-sync-conflicts">Review reading choices below</a>; review conversation branches in <Link to="/ask">Ask Ryn</Link>.</p> : null}
       </div> : null}
       <p>Mutually allowed: {pair.effective_scopes.map((scope) => scopeNames[scope]).join(", ") || "None"}.</p>
       <ScopeChoice label="Your allowed scope" value={scopes} onChange={setScopes} disabled={busy} />
@@ -151,5 +152,6 @@ export default function Devices() {
         <Button disabled={busy} onClick={() => void act(() => deviceSyncApi.cancel(row.id))}>Cancel unused invitation</Button>
       </div>)}
     </Panel>
+    {status?.data_transfer_available ? <ReadingSyncConflicts devices={status.devices} onResolved={load} /> : null}
   </div>;
 }

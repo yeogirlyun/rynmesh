@@ -46,6 +46,10 @@ convention here. Read this document before hand-editing what it produces.
 `device_sync/routes.py` owns `app.state.device_sync` and the encrypted private
 `home / "device-sync" / "pairings.json"` container. Owner endpoints review
 invitations, approve identities, configure bilateral scope and remove devices.
+Owner-only `/api/local/device-sync/reading/conflicts` and `/reading/resolve`
+(under the same device-sync prefix) expose stored reading/bookmark candidates
+and commit an explicit choice against its reviewed revision. Duplicate successful
+choices are idempotent only while the resolved revision remains current.
 Peer pairing/control endpoints accept at most 64 KiB, verify signed encrypted
 messages with separate channels, and limit request frequency. The encrypted
 `/api/peer/device-sync/batch` endpoint additionally requires an active pairing,

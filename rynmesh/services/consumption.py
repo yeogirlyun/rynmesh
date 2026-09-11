@@ -252,6 +252,21 @@ class ConsumptionStore:
             self._save_document(document, local, sync)
             return receipts
 
+    def sync_issues(self):
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            return sync.issues() if sync else []
+
+    def sync_resolve(self, scope, identifier, *, choice_id, expected_revision):
+        with file_transaction(self.lock_path):
+            document, local, sync = self._document()
+            if sync is None:
+                raise SyncError('sync_not_enabled')
+            result = sync.resolve(scope, identifier, choice_id=choice_id, expected_revision=expected_revision)
+            sync.project(local)
+            self._save_document(document, local, sync)
+            return result
+
     def _write(self, payload: Mapping[str, Any]) -> None:
         atomic_write_json(
             self.path, dict(payload), indent=2, sort_keys=True, ensure_ascii=False,

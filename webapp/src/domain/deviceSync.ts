@@ -4,6 +4,9 @@ export type SyncScope = "bookmarks" | "reading" | "conversations";
 export const syncScopes: SyncScope[] = ["bookmarks", "reading", "conversations"];
 export const scopeNames: Record<SyncScope, string> = { bookmarks: "Saved content", reading: "Reading progress", conversations: "Ask Ryn history" };
 export type DeviceIdentity = { name: string; peer_id: string; actor: string; endpoint: string };
+export type ReadingConflict = { id: string; scope: "reading" | "bookmarks"; revision: string;
+  item: { title?: string; source_title?: string } | null;
+  candidates: { choice_id: string; value: { progress?: number; completed?: boolean; content_version?: string; bookmarked?: boolean } | null }[] };
 export type DeviceInvite = { id: string; device: DeviceIdentity; scopes: SyncScope[]; created: number; expires: number };
 export type DevicePair = { id: string; role: "inviter" | "joiner"; status: string; device: DeviceIdentity;
   review_token: string; verification_code: string; expires: number; scopes: SyncScope[]; remote_scopes: SyncScope[];
@@ -27,6 +30,8 @@ const errors: Record<string, string> = {
   sync_scope_denied: "The selected scope is not allowed by both devices. Review their choices.",
   sync_version_unsupported: "This device data needs a newer app version. Existing records have been kept.",
   sync_pairing_capacity_exhausted: "The device invitation storage limit was reached. Existing records have been kept.",
+  sync_reading_not_conflicted: "This reading change has already been resolved. Refresh to review the current position.",
+  sync_reading_choice_invalid: "This choice is no longer available. Refresh and review the current candidates.",
 };
 async function request<T>(path = "", method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(nodeControlUrl(`/device-sync${path}`), { method, credentials: "include",
@@ -39,6 +44,9 @@ async function request<T>(path = "", method = "GET", body?: unknown): Promise<T>
 }
 const devicePath = (id: string, action: string) => `/devices/${encodeURIComponent(id)}/${action}`;
 export const deviceSyncApi = {
+  readingConflicts: () => request<{ conflicts: ReadingConflict[]; local_actor: string }>("/reading/conflicts"),
+  resolveReading: (issue: ReadingConflict, choice_id: string) => request("/reading/resolve", "POST",
+    { id: issue.id, scope: issue.scope, expected_revision: issue.revision, choice_id }),
   status: () => request<DeviceStatus>(),
   invite: (scopes: SyncScope[]) => request<{ uri: string; invite: DeviceInvite }>("/invites", "POST", { scopes }),
   inspect: (uri: string) => request<DeviceInvite>("/invites/inspect", "POST", { uri }),
