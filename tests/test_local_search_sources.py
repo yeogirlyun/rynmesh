@@ -5,6 +5,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from test_ask_history import sample
 from test_friends import _pair
+from test_offline_reading import BODY as OFFLINE_TEXT
+from test_offline_reading import download as download_offline
+from test_offline_reading import fixture as offline_fixture
 
 from rynmesh.ask_ryn.store import ConversationStore
 from rynmesh.atomic_io import atomic_write_json, read_json
@@ -27,6 +30,67 @@ def sources(tmp_path):
     adapter = LocalSearchSources(consumption=lambda: history, imports=lambda: imports,
         reader=lambda: reader, friends=lambda: alice, conversations=lambda: conversations)
     return adapter, history, imports, reader, conversations, alice, bob, mesh
+
+
+def test_offline_body_search_clear_revalidation_and_independent_copy(tmp_path):
+    adapter, history, imports, reader, _, alice, _, _ = sources(tmp_path)
+    offline = offline_fixture(alice.home, images=False)
+    adapter.offline = lambda: offline.service
+    engine = LocalSearchIndex(alice.home / 'local-search', messaging_key=alice.messaging_private, source=adapter.snapshot)
+    engine.rebuild()
+    assert engine.query('Offline-only')['total'] == 0
+    download_offline(offline)
+    engine.rebuild()
+    result = engine.query('Offline-only')
+    assert result['total'] == 1
+    document = engine.resolve(result['results'][0]['id'])
+    assert document['text'] == OFFLINE_TEXT and document['offline_key']
+    assert not (alice.home / 'reader-cache').exists()  # Download does not create another cache copy.
+    before = history.path.read_bytes()
+    offline.service.clear(review_token=offline.service.clear_preview()['review_token'])
+    assert engine.query('Offline-only')['total'] == 0  # Immediately gated, before rebuild.
+    assert not engine.resolve(document['id']).get('offline_key')
+    assert history.path.read_bytes() == before
+    engine.rebuild()
+    assert engine.query('Saved article')['total'] == 1  # Bookmark metadata remains searchable.
+    download_offline(offline)
+    independent = imports.save(OFFLINE_TEXT.encode(), filename='independent.txt', mime='text/plain')
+    engine.rebuild()
+    assert engine.query('Offline-only')['total'] == 2
+    offline.service.clear(review_token=offline.service.clear_preview()['review_token'])
+    assert engine.query('Offline-only')['total'] == 1
+    assert imports.body(independent['import_id'])['text'] == OFFLINE_TEXT
+
+
+def test_offline_search_retains_download_without_history_and_refuses_corrupt_body(tmp_path):
+    adapter, history, _, _, _, alice, _, _ = sources(tmp_path)
+    offline = offline_fixture(alice.home, images=False)
+    adapter.offline = lambda: offline.service
+    body = download_offline(offline)
+    history.clear()
+    engine = LocalSearchIndex(alice.home / 'local-search', messaging_key=alice.messaging_private, source=adapter.snapshot)
+    engine.rebuild()
+    result = engine.query('Offline-only')
+    assert result['total'] == 1
+    document = engine.resolve(result['results'][0]['id'])
+    assert document['reading_record']['item']['item_id'] == offline.item['item_id']
+    atomic_write_json(offline.service.store._path(body['job_id']), {'version': 'ryn.offline-reading.v1', 'ciphertext': 'broken'})
+    assert engine.query('Offline-only')['total'] == 0
+    with pytest.raises(SearchError, match='search_result_unavailable'):
+        engine.resolve(document['id'])
+
+
+def test_corrupt_offline_metadata_does_not_hide_independent_search_sources(tmp_path):
+    adapter, _, imports, _, _, alice, _, _ = sources(tmp_path)
+    offline = offline_fixture(alice.home, images=False)
+    adapter.offline = lambda: offline.service
+    download_offline(offline)
+    imports.save(b'Independent healthy document', filename='healthy.txt', mime='text/plain')
+    engine = LocalSearchIndex(alice.home / 'local-search', messaging_key=alice.messaging_private, source=adapter.snapshot)
+    engine.rebuild()
+    atomic_write_json(offline.service.store.path, {'version': 'ryn.offline-reading.v999'})
+    assert engine.query('Offline-only')['total'] == 0
+    assert engine.query('Independent healthy')['total'] == 1
 
 
 def test_real_local_stores_search_all_types_without_fetching_and_revalidate_open(tmp_path):

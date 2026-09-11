@@ -784,9 +784,10 @@
       "scenario": "对支持的文章下载，随后断网并重启",
       "expected": "本地正文可打开，来源/下载时间可见，无需发外网请求加载正文",
       "status": "in_progress",
-      "actual": "Backend copies survive service restart and a terminated download process; local read does not fetch the source. Packaged offline reading UI is pending.",
+      "actual": "Browser explicitly downloaded a synthetic article, restarted the node with the source stopped, and reopened unchanged local text and PNG. Packaged desktop and device-wide offline acceptance remain pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -796,9 +797,10 @@
       "scenario": "普通收藏但未下载，在断网时打开",
       "expected": "清楚显示正文未下载，不错误显示可离线",
       "status": "in_progress",
-      "actual": "Backend returns offline_not_downloaded for a bookmark without an explicit download. User-facing offline state is pending.",
+      "actual": "Bookmarks start with zero downloads; page separates queued tasks from readable copies. Automatic offline selection in ordinary reading and packaged offline failure messaging remain pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -808,9 +810,10 @@
       "scenario": "正文成功、部分图片失败",
       "expected": "正文可读，图片缺失有标记，不显示完整资源已下载",
       "status": "in_progress",
-      "actual": "Body remains readable with missing images and a partial state. Image rendering and complete codec validation are pending.",
+      "actual": "Browser and component tests show local body, verified PNG and explicit missing-image marker. Decoder failure is reported in UI; full image-format acceptance remains pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -820,9 +823,10 @@
       "scenario": "中途断网、取消、重启、连续点击下载",
       "expected": "状态恢复正确，仅一份结果；未校验片段不标可读",
       "status": "in_progress",
-      "actual": "Real encrypted checkpoint, cancellation, superseded worker, duplicate request and terminated-process recovery tests pass. Packaged interrupted-download flow is pending.",
+      "actual": "Checkpoint/cancel/restart backend tests plus UI requested-cancellation and duplicate-request states pass. Full packaged interrupted-download flow remains pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -832,9 +836,10 @@
       "scenario": "已有旧版，更新时断网或校验失败",
       "expected": "旧版仍能读；新版本验证后才替换，并更新下载时间",
       "status": "in_progress",
-      "actual": "Failed updates preserve the old committed body and time; verified updates replace it and version-bind images. UI validation is pending.",
+      "actual": "Actual browser update with the source stopped fails while old body hash, job identity and time remain. Packaged and complete version-switch acceptance remain pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -844,9 +849,10 @@
       "scenario": "空间不足或超过单项/总预算",
       "expected": "提示清理/超限，其他下载不静默丢失，应用仍可阅读",
       "status": "in_progress",
-      "actual": "Backend tests cover item, total and disk limits without eviction. User-facing limits and recovery actions are pending.",
+      "actual": "Backend item/total/disk limits and UI storage limits are covered; real device space-exhaustion UI acceptance remains pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -856,9 +862,10 @@
       "scenario": "单条/全部清理下载",
       "expected": "对应磁盘空间释放，列表更新；收藏、进度、会话保留，正文索引及时移除",
       "status": "in_progress",
-      "actual": "Reviewed cleanup frees download bundles and preserves bookmark/progress and independent imports. Search integration and UI are pending.",
+      "actual": "Browser-reviewed cleanup frees all download bundles; consumption hash is unchanged, body search disappears and bookmark title remains. Independent-copy and corrupted-source isolation tests pass; broader maintenance acceptance remains pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -889,9 +896,12 @@
       "document": "07-offline-reading.md",
       "scenario": "离线阅读后退出重开，再联网",
       "expected": "阅读进度保持，外链仅主动打开时访问；无追踪脚本自动执行",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Offline viewer component restores and saves progress, avoids external fallback, visits original only on click and releases image blobs. Browser restart preserves content; packaged scrolling and image-layout restoration remain pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/windows-browser.json"
+      ],
       "implementation_commit": ""
     },
     {

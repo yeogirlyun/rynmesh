@@ -716,6 +716,29 @@ export function ConfirmDialog({
   const active = useRef(request);
   active.current = request;
   const running = useRef(false);
+  const dialog = useRef<HTMLDivElement>(null);
+  const cancel = useRef(onCancel);
+  cancel.current = onCancel;
+  useEffect(() => {
+    if (!request) return;
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (!dialog.current || Array.from(document.querySelectorAll('[role="dialog"]')).at(-1) !== dialog.current) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!running.current) cancel.current(); }
+      if (event.key !== "Tab") return;
+      const buttons = Array.from(dialog.current.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+      if (!buttons.length) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === buttons[0] || !dialog.current.contains(document.activeElement))) { event.preventDefault(); buttons.at(-1)?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === buttons.at(-1) || !dialog.current.contains(document.activeElement))) { event.preventDefault(); buttons[0]?.focus(); }
+    };
+    document.addEventListener("keydown", keyboard);
+    return () => {
+      document.removeEventListener("keydown", keyboard);
+      if (previous?.isConnected && !previous.matches(":disabled")) previous.focus();
+      else document.querySelector<HTMLElement>(".app-main button:not(:disabled), .app-main select")?.focus();
+    };
+  }, [request]);
   useEffect(() => { running.current = false; setBusy(false); setError(""); }, [request]);
   if (!request) return null;
   const run = async () => {
@@ -733,7 +756,7 @@ export function ConfirmDialog({
   };
   return (
     <div className="modal-backdrop" role="presentation">
-      <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div ref={dialog} className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div className="dialog-risk">
           <Chip tone={request.risk === "high" ? "danger" : request.risk === "medium" ? "warn" : "info"}>
             {request.risk} risk

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Callable
 from urllib.parse import quote, urlencode
 
+from ..offline_reading.fetch import OfflineError
 from ..services.library_imports import LibraryImportError
 from ..store import StoreError
 
@@ -26,10 +27,11 @@ def _clip(value, size=2048) -> str:
 
 class LocalSearchSources:
     def __init__(self, *, consumption: Callable, imports: Callable, reader: Callable,
-                 friends: Callable, conversations: Callable, store: Callable | None = None):
+                 friends: Callable, conversations: Callable, store: Callable | None = None, offline: Callable | None = None):
         self.consumption, self.imports, self.reader = consumption, imports, reader
         self.friends, self.conversations = friends, conversations
         self.store = store
+        self.offline = offline
 
     def snapshot(self) -> list[dict]:
         imports = self.imports()
@@ -104,6 +106,34 @@ class LocalSearchSources:
             rows[identifier]["text_truncated"] = truncated or rows[identifier].get("text_truncated", False)
             if text:
                 verified[identity] = identifier
+
+        if self.offline:
+            offline = self.offline()
+            try:
+                downloads = offline.status()['records']
+            except (OfflineError, OSError):
+                downloads = []  # Fail closed for this source while other local sources remain usable.
+            for saved in downloads:
+                if not saved.get('current'):
+                    continue
+                try:
+                    body = offline.read(saved['item_id'])
+                except (OfflineError, OSError):
+                    continue  # Corrupt/cleared bodies cannot survive via an old index.
+                item_id, text = saved['item_id'], body['text']
+                prior_id = aliases.get(item_id, 'content:' + item_id)
+                prior = rows.get(prior_id)
+                identifier = prior_id if prior is not None and (not prior['text'] or prior['text'] == text) else 'offline:' + saved['key']
+                record = history.get(item_id) or {'item_id': item_id, 'bookmarked': False, 'progress': 0, 'open_count': 0,
+                    'item': {'item_id': item_id, 'title': body['title'], 'link': body['url'],
+                             'source_title': body['source'], 'content_kind': 'document'}}
+                if identifier not in rows or not rows[identifier]['text']:
+                    rows[identifier] = content(identifier, body['title'], text, body['source'],
+                        _stamp(body['downloaded_at']), sorted(set(['saved'] + (prior or {}).get('kinds', []))), record)
+                rows[identifier]['offline_key'] = saved['key']
+                rows[identifier]['text_truncated'] = bool(body['truncated'])
+                if body.get('url'):
+                    verified[(body['url'], hashlib.sha256(text.encode()).hexdigest())] = identifier
 
         relations = {row["relationship_id"]: row for row in friends.store.list_relationships() if row["status"] == "active"}
         for card in friends.store.list_cards():

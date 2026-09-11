@@ -126,7 +126,7 @@ export default function Search() {
     {error ? <p role="alert">{error}</p> : !document ? <p>Checking this local result…</p> : <Panel>
       <h1>{document.title}</h1><p>{document.source}</p>
       {document.reading_record && (document.body_state === "available" || onlineReading) ? <ContentViewer
-        item={contentFromHistory(document.reading_record)} client={client} loadBody={onlineReading ? undefined : loadLocal}
+        item={contentFromHistory(document.reading_record)} client={client} loadBody={onlineReading ? undefined : loadLocal} offlineKey={document.offline_key}
         onClose={() => navigate(-1)} onRead={() => client.recordContentConsumption(contentFromHistory(document.reading_record!), "opened")} />
         : <><p>The local body is unavailable or has not been downloaded. It was not included in full-text search.</p>
           {document.reading_record ? <Button onClick={() => setOnlineReading(true)}>Open reading view and try fetching the source</Button> : null}
