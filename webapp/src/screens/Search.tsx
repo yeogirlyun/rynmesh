@@ -154,7 +154,7 @@ export default function Search() {
         {page.partial ? <p>Showing partial results while the index catches up. Some local records are not indexed yet.</p> : null}
         {!page.results.length && !page.partial ? <p>No matches. Try another keyword or clear the filters.</p> : <p>{page.total} matches</p>}
         <ol>{page.results.map((result) => <li key={result.id} style={{ marginBlock: "1.5rem" }}>
-          <h2><Highlight value={result.title_match} /></h2><p>{result.kinds.map((kind) => labels[kind]).join(" · ")} · {result.source} · {new Date(result.timestamp * 1000).toLocaleString()}</p>
+          <h2><Highlight value={result.title_match} /></h2><p>{result.kinds.map((kind) => labels[kind]).join(" · ")} · {result.source} · {result.timestamp > 0 ? new Date(result.timestamp * 1000).toLocaleString() : "Date unavailable"}</p>
           <p><Highlight value={result.snippet} /></p>{result.body_state !== "available" ? <p>Full text unavailable locally; metadata only.</p> : null}
           {result.text_truncated ? <p>The saved extraction is truncated. Only the extracted text was searched.</p> : null}
           {result.targets.map((target) => <Link key={target.href} to={target.href} onClick={remember} style={{ marginRight: "1rem" }}>{target.label}</Link>)}

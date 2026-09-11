@@ -49,7 +49,7 @@ class LocalSearchSources:
 
         history = {record["item_id"]: record for record in self.consumption().list()}
         for record in history.values():
-            kinds = (["saved"] if record.get("bookmarked") else []) + (["history"] if record.get("open_count") else [])
+            kinds = (["saved"] if record.get("bookmarked") else []) + (["history"] if record.get("open_count") or record.get('sync_reading_available') else [])
             if not kinds:
                 continue
             item = record["item"]
@@ -88,7 +88,7 @@ class LocalSearchSources:
                 text, body_state = "", "unavailable"
                 truncated = False
             record = history.get(item_id)
-            kinds = ["saved"] + (["history"] if record and record.get("open_count") else [])
+            kinds = ["saved"] + (["history"] if record and (record.get("open_count") or record.get('sync_reading_available')) else [])
             identity = (origin.get("source_url", ""), imported["sha256"])
             identifier = verified.get(identity, "content:" + item_id) if text else "content:" + item_id
             aliases[item_id] = identifier

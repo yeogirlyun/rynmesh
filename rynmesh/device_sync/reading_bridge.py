@@ -1,6 +1,6 @@
 """Reading-source durability before replica receipts; no network authorization.
 
-The future authenticated pairing worker calls this adapter only for its approved
+The authenticated device transfer worker calls this adapter only for its approved
 scopes. Constructing it does not opt in, discover devices or send any data.
 Local reading writes depend only on ConsumptionStore, never on replica health.
 """

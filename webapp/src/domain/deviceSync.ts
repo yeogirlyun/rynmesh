@@ -7,7 +7,8 @@ export type DeviceIdentity = { name: string; peer_id: string; actor: string; end
 export type DeviceInvite = { id: string; device: DeviceIdentity; scopes: SyncScope[]; created: number; expires: number };
 export type DevicePair = { id: string; role: "inviter" | "joiner"; status: string; device: DeviceIdentity;
   review_token: string; verification_code: string; expires: number; scopes: SyncScope[]; remote_scopes: SyncScope[];
-  paused: boolean; remote_paused: boolean; revision: number; effective_scopes: SyncScope[]; removal_pending: boolean };
+  paused: boolean; remote_paused: boolean; revision: number; effective_scopes: SyncScope[]; removal_pending: boolean;
+  sync?: { state: string; pending: number | null; last_success_at: number | null; error_code: string; conflicts: number } };
 export type DeviceStatus = { pairing_available: boolean; reason: string | null; data_transfer_available: boolean;
   devices: DevicePair[]; invites: (Omit<DeviceInvite, "device"> & { status: string; pair_id: string | null })[] };
 export const pairLabels: Record<string, string> = { awaiting_owner: "Review on this device", awaiting_inviter: "Waiting for the other device to approve",

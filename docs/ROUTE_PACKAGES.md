@@ -47,9 +47,13 @@ convention here. Read this document before hand-editing what it produces.
 `home / "device-sync" / "pairings.json"` container. Owner endpoints review
 invitations, approve identities, configure bilateral scope and remove devices.
 Peer pairing/control endpoints accept at most 64 KiB, verify signed encrypted
-messages with separate channels, and limit request frequency. No personal
-source transfer endpoint is installed yet. The `device-sync.pairing` worker
-rotates join confirmations, policy updates and durable removal notices; it
+messages with separate channels, and limit request frequency. The encrypted
+`/api/peer/device-sync/batch` endpoint additionally requires an active pairing,
+the capability for that pairing and matching bilateral policy revisions. Its
+18 MiB wire limit accommodates one scoped batch of at most 100 records / 12 MiB
+plaintext. It commits the actual source and replica before returning receipts.
+The `device-sync.pairing` worker
+rotates join confirmations, policy updates, scoped data batches and durable removal notices; it
 starts after three seconds and backs off to thirty seconds on failure.
 Reinstallation replaces state, guard and worker without duplicating handlers.
 All network and storage work runs off the HTTP event loop. Missing endpoint

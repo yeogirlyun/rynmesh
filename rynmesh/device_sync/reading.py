@@ -167,4 +167,8 @@ class ReadingState:
                 row.update(progress=0.0, completed=False)
             row.setdefault('sync_revisions', {})[scope] = current['revision']
             row.setdefault('sync_conflicts', {})[scope] = current['conflict']
+            if scope == 'reading':
+                # A remote position is readable history without inventing a
+                # local open event or a wall-clock timestamp for that event.
+                row['sync_reading_available'] = bool(active or current['conflict'] and description)
         return result

@@ -32,6 +32,24 @@ def sources(tmp_path):
     return adapter, history, imports, reader, conversations, alice, bob, mesh
 
 
+def test_synced_position_is_searchable_history_without_fabricated_local_open(tmp_path):
+    from rynmesh.device_sync import records
+    adapter, history, _, _, _, _, _, _ = sources(tmp_path)
+    history.enable_sync('a' * 64, ['reading'])
+    item = {'item_id': 'remote-position', 'title': 'Remote reading position', 'source_title': 'Journal',
+            'link': 'https://example.test/read', 'content_kind': 'article'}
+    value = {'item': item, 'progress': .65, 'completed': False, 'content_version': ''}
+    state = records.write('reading', item['item_id'], records.empty(), 'b' * 64, value)
+    history.sync_receive([{'scope': 'reading', 'id': item['item_id'], 'record': state}], scopes=['reading'])
+    result = adapter.snapshot()[0]
+    assert result['kinds'] == ['history']
+    assert result['reading_record']['progress'] == .65
+    assert result['reading_record']['open_count'] == result['timestamp'] == 0
+    state = records.write('reading', item['item_id'], state, 'b' * 64, None)
+    history.sync_receive([{'scope': 'reading', 'id': item['item_id'], 'record': state}], scopes=['reading'])
+    assert adapter.snapshot() == []
+
+
 def test_offline_body_search_clear_revalidation_and_independent_copy(tmp_path):
     adapter, history, imports, reader, _, alice, _, _ = sources(tmp_path)
     offline = offline_fixture(alice.home, images=False)

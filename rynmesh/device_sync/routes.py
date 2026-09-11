@@ -14,12 +14,16 @@ from ..friends.crypto import validate_endpoint
 from .pair_crypto import MAX_WIRE_BYTES
 from .pairing import PairingService
 from .records import SyncError
+from .store import ReplicaStore
+from .transfer import MAX_WIRE_BYTES as MAX_DATA_WIRE_BYTES
+from .transfer import DeviceTransfer
 
 
 @dataclass
 class DeviceSyncState:
     service: PairingService
     local_control: object
+    transfer: DeviceTransfer | None = None
     attempts: dict = field(default_factory=dict)
     poll_index: int = 0
 
@@ -35,11 +39,11 @@ SAFE_ERRORS = frozenset({
 })
 
 
-async def body(request):
+async def body(request, limit=MAX_WIRE_BYTES):
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
-        if len(raw) > MAX_WIRE_BYTES:
+        if len(raw) > limit:
             raise HTTPException(413, detail='sync_request_too_large')
     try:
         value = json.loads(raw)
@@ -51,7 +55,7 @@ async def body(request):
 
 
 def install_device_sync(app, *, store, home, workers, local_control, messaging_key,
-                        post_json=None, endpoint=None, allow_loopback=None):
+                        post_json=None, endpoint=None, allow_loopback=None, reading=None, conversations=None):
     from ..peer_http import HttpPeerClient, PeerTransportError
 
     def current():
@@ -59,7 +63,8 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
 
     def post(endpoint, path, wire):
         validate_endpoint(endpoint, allow_loopback=current().allow_loopback)
-        return HttpPeerClient(endpoint, timeout_s=5).post_json(path, wire, max_bytes=MAX_WIRE_BYTES)
+        return HttpPeerClient(endpoint, timeout_s=5).post_json(path, wire,
+            max_bytes=MAX_DATA_WIRE_BYTES if path.endswith('/batch') else MAX_WIRE_BYTES)
 
     if endpoint is None:
         endpoint = os.environ.get('RYNMESH_DEVICE_ENDPOINT', '') or str(store.node_info().get('peer_endpoint', ''))
@@ -69,6 +74,10 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
                             messaging_key=messaging_key, name=store.node_name, endpoint=endpoint,
                             post_json=post_json or post, allow_loopback=allow_loopback)
     app.state.device_sync = DeviceSyncState(service, local_control)
+    if reading is not None and conversations is not None:
+        app.state.device_sync.transfer = DeviceTransfer(pairing=current,
+            replica=ReplicaStore(getattr(store, 'home', None) or home, messaging_key=messaging_key),
+            reading=reading, conversations=conversations, post_json=post_json or post)
 
     def control(request):
         app.state.device_sync.local_control(request)
@@ -98,6 +107,9 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
                 result = node.retry_removal(row['id'])
             elif row['status'] == 'active':
                 result = node.exchange_policy(row['id'])
+                transfer = app.state.device_sync.transfer
+                if transfer is not None:
+                    return WorkerRunResult(activity=transfer.run_once(row['id']))
             else:
                 result = node.retry(row['id'])
         except Exception:
@@ -114,8 +126,13 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
     @app.get('/api/local/device-sync', name='device_sync_list')
     async def status(request: Request):
         control(request)
-        return {**current().readiness(), 'devices': await call('list'), 'invites': await call('list_invites'),
-                'data_transfer_available': False}
+        devices = await call('list')
+        transfer = app.state.device_sync.transfer
+        if transfer is not None:
+            for device in devices:
+                device['sync'] = await asyncio.to_thread(transfer.status, device['id'])
+        return {**current().readiness(), 'devices': devices, 'invites': await call('list_invites'),
+                'data_transfer_available': transfer is not None}
 
     @app.post('/api/local/device-sync/invites')
     async def invite(request: Request):
@@ -165,11 +182,19 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
         control(request)
         pair = await call('get', pair_id)
         method = 'retry_removal' if pair['status'] == 'revoked' else 'exchange_policy' if pair['status'] == 'active' else 'retry'
-        return await call(method, pair_id)
+        result = await call(method, pair_id)
+        if pair['status'] == 'active' and app.state.device_sync.transfer is not None:
+            try:
+                await asyncio.to_thread(app.state.device_sync.transfer.run_once, pair_id)
+            except Exception:
+                raise HTTPException(503, detail='sync_transfer_unconfirmed') from None
+        return result
 
     @app.post('/api/peer/device-sync/{action}')
     async def peer(action: str, request: Request):
-        if action not in {'join', 'confirm', 'policy', 'revoke'}:
+        if action not in {'join', 'confirm', 'policy', 'revoke', 'batch'}:
+            raise HTTPException(404, detail='sync_action_unavailable')
+        if action == 'batch' and app.state.device_sync.transfer is None:
             raise HTTPException(404, detail='sync_action_unavailable')
         attempts, now = app.state.device_sync.attempts, time.monotonic()
         for host in list(attempts):
@@ -181,8 +206,10 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
         if len(recent) >= 60 or host not in attempts and len(attempts) >= 256:
             raise HTTPException(429, detail='sync_rate_limited', headers={'Retry-After': '60'})
         attempts.setdefault(host, []).append(now)
-        wire = await body(request)
+        wire = await body(request, MAX_DATA_WIRE_BYTES if action == 'batch' else MAX_WIRE_BYTES)
         try:
+            if action == 'batch':
+                return await asyncio.to_thread(app.state.device_sync.transfer.receive, wire)
             return await asyncio.to_thread(getattr(current(), 'receive_' + action), wire)
         except OSError:
             raise HTTPException(503, detail='sync_operation_unavailable') from None
