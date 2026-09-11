@@ -1,5 +1,14 @@
 # Route packages
 
+`services/reading_cleanup_routes.py` owns `app.state.reading_cleanup` and the
+Owner-only `/api/local/privacy/reading` routes. Current source/replica/index and
+Owner guard are resolved per request; reinstallation adds no duplicate routes.
+Review-token bodies are capped at 8192 bytes. Cleanup runs off the event loop,
+stores encrypted progress under `privacy/reading-cleanup.json`, and resumes the
+same reviewed source/replica/backups/search steps after failure. It owns no timer.
+Completion is limited to reviewed local reading copies, with no remote or browser
+erasure claim. See the reading-cleanup acceptance record for the v4 source format.
+
 `privacy_export/routes.py` owns `app.state.privacy_export`. Its current Owner
 guard protects scope discovery and bounded POST archive generation. Exports run
 off the event loop, make no network calls and create no permanent archive job.

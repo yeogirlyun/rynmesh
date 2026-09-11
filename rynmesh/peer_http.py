@@ -2457,6 +2457,11 @@ def create_app(store: RynmeshStore | None = None):
     install_conversation_cleanup(app, store=active_store, home=_home,
         workers=app.state.background_workers, local_control=local_control)
 
+    from .services.reading_cleanup_routes import install_reading_cleanup
+
+    install_reading_cleanup(app, store=active_store, home=_home,
+        workers=app.state.background_workers, local_control=local_control)
+
     from .privacy_export.routes import install_privacy_export
 
     install_privacy_export(app, local_control=local_control)

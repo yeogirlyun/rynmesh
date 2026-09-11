@@ -1,6 +1,6 @@
 import { Activity, BellRing, Cloud, Download, DownloadCloud, HardDrive, History, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
@@ -12,6 +12,7 @@ import PrivateCopiesPanel from "./components/PrivateCopiesPanel";
 import ConversationCleanupPanel from "./components/ConversationCleanupPanel";
 import BrowserConversationCleanup from "./components/BrowserConversationCleanup";
 import ProductExportPanel from "./components/ProductExportPanel";
+import ReadingCleanupPanel from "./components/ReadingCleanupPanel";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
@@ -30,6 +31,8 @@ export default function Settings() {
   const { client, confirm, notify, refreshShell } = useAppContext();
   const [active, setActive] = useState<(typeof sections)[number]>("Identity & storage");
   const [settings, setSettings] = useState<NodeSettings | null>(null);
+  const [privacyRevision, setPrivacyRevision] = useState(0);
+  const readingChanged = useCallback(() => setPrivacyRevision((value) => value + 1), []);
 
   useEffect(() => {
     void client.getSettings().then(setSettings);
@@ -82,7 +85,7 @@ export default function Settings() {
           <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
         ) : null}
         {active === "Privacy & data" ? (
-          <><PrivacySection client={client} confirm={confirm} notify={notify} />{client.mode === "live" ? <ProductExportPanel /> : null}<ConversationCleanupPanel /><BrowserConversationCleanup /></>
+          <><PrivacySection client={client} confirm={confirm} notify={notify} revision={privacyRevision} />{client.mode === "live" ? <><ProductExportPanel /><ReadingCleanupPanel onChange={readingChanged} /></> : null}<ConversationCleanupPanel /><BrowserConversationCleanup /></>
         ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
@@ -96,10 +99,12 @@ function PrivacySection({
   client,
   confirm,
   notify,
+  revision,
 }: {
   client: NodeClient;
   confirm: ReturnType<typeof useAppContext>["confirm"];
   notify: (tone: "ok" | "warn" | "danger", text: string) => void;
+  revision: number;
 }) {
   const [status, setStatus] = useState<PrivacyStatus | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
@@ -115,7 +120,7 @@ function PrivacySection({
 
   useEffect(() => {
     void reload();
-  }, [client]);
+  }, [client, revision]);
 
   const download = async () => {
     const payload = await client.exportPersonalData();
@@ -166,9 +171,9 @@ function PrivacySection({
         <Button icon={Download} variant="primary" onClick={() => void download()}>
           Export reading & preferences (JSON)
         </Button>
-        <Button icon={History} onClick={() => erase(["history"], "Clear reading history?", "This erases opened items, bookmarks, playback position, and reading progress from this node.")}>
+        {client.mode !== "live" ? <Button icon={History} onClick={() => erase(["history"], "Clear reading history?", "This erases opened items, bookmarks, playback position, and reading progress from this node.")}>
           Clear history
-        </Button>
+        </Button> : null}
         <Button icon={Trash2} onClick={() => erase(["profile"], "Reset recommendation learning?", "This erases your direction, topic and platform choices, and all more/less/hide feedback.")}>
           Reset learning
         </Button>
