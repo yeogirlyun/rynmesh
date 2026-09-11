@@ -888,7 +888,9 @@
       "expected": "本地副本仍按保存规则可读，界面不承诺远程回收；新版本获取被拒绝",
       "status": "in_progress",
       "actual": "Encrypted friend-publication integration verifies authorized version retrieval, explicit offline save, revocation refusal for both cached and newly published versions, and restart reading of the independent copy. Full two-device desktop UI acceptance remains pending.",
-      "evidence": ["docs/acceptance/offline-reading-development/README.md"],
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -919,9 +921,11 @@
       "document": "08-device-sync.md",
       "scenario": "只选收藏，再分别开启进度与会话",
       "expected": "仅所选范围同步，未选数据、模型、正文、密钥和好友权限不传",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -929,9 +933,11 @@
       "document": "08-device-sync.md",
       "scenario": "两端原有不同数据，首次同步",
       "expected": "合并不覆盖，重复收藏/消息仅一份，原服务键保留",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -939,9 +945,11 @@
       "document": "08-device-sync.md",
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -949,9 +957,11 @@
       "document": "08-device-sync.md",
       "scenario": "离线修改→中途断开→重启→重连，重复/乱序投递",
       "expected": "变化补齐，原数据无损，不重复；接收成功前不显示已同步",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -959,9 +969,11 @@
       "document": "08-device-sync.md",
       "scenario": "收藏新增/取消并发，随后明确重新收藏",
       "expected": "按表中规则合并，旧记录不复活，新明确操作可恢复",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -969,9 +981,11 @@
       "document": "08-device-sync.md",
       "scenario": "先后及并发修改阅读位置，并让 B 时钟偏差一天",
       "expected": "先后操作按因果顺序；并发保留选择，时钟差不造成静默覆盖",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -979,9 +993,11 @@
       "document": "08-device-sync.md",
       "scenario": "同一会话两端离线继续，另测删除与新增并发",
       "expected": "分支完整可见；删除冲突进入待处理项，不混入主历史或静默丢弃",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -989,9 +1005,11 @@
       "document": "08-device-sync.md",
       "scenario": "目标空间不足、写入失败后恢复",
       "expected": "不错误确认，源记录保留，重试可完成",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -1029,9 +1047,11 @@
       "document": "08-device-sync.md",
       "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
       "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Causal record and encrypted replica primitives have automated coverage. Application-source integration, device authentication, transport, UI and full product acceptance are not implemented yet; storage-only receipts are not product delivery confirmation.",
+      "evidence": [
+        "docs/acceptance/device-sync-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
