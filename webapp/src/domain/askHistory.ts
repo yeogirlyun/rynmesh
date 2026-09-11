@@ -3,6 +3,8 @@ import type { LLMConversation } from "./llmConversationStore";
 import { nodeControlUrl } from "./nodeUrl";
 
 const errors: Record<string, string> = {
+  sync_recovery_not_deleted: "This conversation is still in history. Delete it there before discarding its recovery.",
+  sync_recovery_busy: "The original task is still being checked. Wait for its outcome, then refresh recovery.",
   sync_revision_conflict: "These branches changed on another device. Refresh and review the current branches before choosing again.",
   sync_choice_unavailable: "This branch is no longer available. Refresh the recovery list.",
   sync_restore_identity_conflict: "This recovery identity already belongs to another copy. Refresh history before continuing.",
@@ -51,6 +53,7 @@ export interface AskSyncConflict {
   id: string; revision: string; conflict: boolean; deleted: boolean; erased: boolean; deferred: boolean;
   common_messages: LLMConversation["messages"]; branches: AskSyncChoice[]; recovery: AskSyncChoice[];
   local_draft?: LLMConversation;
+  discard_token?: string;
 }
 
 export async function recoveryConversationId(issue: AskSyncConflict, choice: AskSyncChoice, replaces?: string) {
@@ -80,6 +83,8 @@ export const askHistory = {
   syncConflicts: async () => (await request<{ conflicts: AskSyncConflict[] }>("/sync/conflicts")).conflicts,
   restoreBranch: (conversation_id: string, choice_id: string, new_id: string, expected_revision: string, replaces?: string) =>
     request<LLMConversation>("/sync/restore", "POST", { conversation_id, choice_id, new_id, expected_revision, ...(replaces ? { replaces } : {}) }),
+  discardRecovery: (conversation_id: string, review_token: string) =>
+    request<{ erased: boolean; deleted: boolean }>("/sync/discard", "POST", { conversation_id, review_token }),
   beginRun: (body: AskRunRequest) => request<AskRun>("/runs", "POST", body),
   run: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}`),
   cancelRun: (taskId: string) => request<AskRun>(`/runs/${encodeURIComponent(taskId)}/cancel`, "POST"),

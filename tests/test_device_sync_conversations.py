@@ -155,6 +155,63 @@ def deleted_branch(tmp_path):
     return a, b, issue['id'], request
 
 
+def test_discard_recovery_preserves_independent_copies_and_survives_restart_replay(tmp_path):
+    a, b, identifier, request = deleted_branch(tmp_path)
+    stale = b.source.sync_export()
+    copy = a.source.sync_restore(identifier, new_id='independent', **request)
+    issue = a.source.sync_conflicts()[0]
+    result = a.source.sync_discard_recovery(identifier, review_token=issue['discard_token'])
+    assert result['erased'] and result['deleted']
+    assert a.source.sync_conflicts() == []
+    assert a.source.get(copy['id']) == copy
+    restarted = ConversationStore(a.source.root, a.source.key)
+    assert restarted.sync_discard_recovery(identifier, review_token=issue['discard_token']) == result
+    restarted.sync_receive(stale)
+    assert restarted.sync_conflicts() == []
+    assert [row['id'] for row in restarted.list()] == [copy['id']]
+    deliver(a, b)
+    b.source.sync_receive(stale)
+    assert b.source.sync_conflicts() == []
+    assert [row['id'] for row in b.source.list()] == [copy['id']]
+    exported = next(row for row in restarted.sync_export() if row['id'] == identifier)
+    assert exported['record']['erased'] and all(head['value'] is None for head in exported['record']['heads'])
+    assert 'discarded_review' not in str(exported)
+
+
+def test_discard_review_covers_local_draft_and_rejects_live_conversation(tmp_path):
+    a, _, identifier, _ = deleted_branch(tmp_path)
+    issue = a.source.sync_conflicts()[0]
+    envelope, data = a.source._read()
+    data['device_sync']['entities'][identifier]['local_draft'] = {**sample(), 'draft': 'Unsent local revision'}
+    a.source._write(envelope, data, capture_sync=False)
+    before = a.source.path.read_bytes()
+    with pytest.raises(SyncError, match='revision_conflict'):
+        a.source.sync_discard_recovery(identifier, review_token=issue['discard_token'])
+    assert a.source.path.read_bytes() == before
+    current = a.source.sync_conflicts()[0]
+    assert current['discard_token'] != issue['discard_token']
+    a.source.sync_discard_recovery(identifier, review_token=current['discard_token'])
+    assert 'Unsent local revision' not in str(a.source._read()[1])
+    a.source.save({**sample(), 'id': 'alive'}, expected_revision=0)
+    state = a.source._sync_state(a.source._read()[1])
+    before = a.source.path.read_bytes()
+    with pytest.raises(SyncError, match='sync_recovery_not_deleted'):
+        a.source.sync_discard_recovery('alive', review_token=state.recovery_review('alive'))
+    assert a.source.path.read_bytes() == before
+
+
+def test_discard_failure_keeps_recovery_for_retry(tmp_path, monkeypatch):
+    a, _, identifier, _ = deleted_branch(tmp_path)
+    issue = a.source.sync_conflicts()[0]
+    before = a.source.path.read_bytes()
+    with monkeypatch.context() as patch:
+        patch.setattr(history_storage, 'atomic_write_json', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('full')))
+        with pytest.raises(OSError):
+            a.source.sync_discard_recovery(identifier, review_token=issue['discard_token'])
+    assert a.source.path.read_bytes() == before
+    assert a.source.sync_discard_recovery(identifier, review_token=issue['discard_token'])['erased']
+
+
 def test_deleted_recovery_copy_requires_explicit_replacement_and_restart_retry(tmp_path):
     a, b, identifier, request = deleted_branch(tmp_path)
     first = a.source.sync_restore(identifier, new_id='first-copy', **request)
@@ -293,6 +350,11 @@ def test_remote_delete_during_run_hides_original_and_preserves_only_allowed_reco
         runs.begin({**request, 'task_id': 'task_' + 'b' * 32})
     assert runs.get(request['task_id'])['cancel_requested']
     assert 'body' not in history._read()[1]['runs']['records'][request['task_id']]
+    if not erase:
+        pending = history.sync_conflicts()[0]
+        assert pending['deferred']
+        with pytest.raises(SyncError, match='sync_recovery_busy'):
+            history.sync_discard_recovery(pending['id'], review_token=pending['discard_token'])
     orders.results[request['task_id']] = {'state': 'succeeded', 'output': 'Concurrent result after delete'}
     runs.run_once()
     assert history.list() == []
@@ -443,6 +505,19 @@ def test_owner_conflict_api_export_restore_and_auth(tmp_path):
     assert second.status_code == 200 and second.json()['id'] == 'second-copy'
     assert second.json()['serviceKey'] == sample()['serviceKey']
     assert client.post('/api/local/ask/sync/restore', headers=headers, json=replacement).json() == second.json()
+    discard = {'conversation_id': issue['id'], 'review_token': issue['discard_token']}
+    assert client.post('/api/local/ask/sync/discard', json=discard).status_code == 403
+    live = client.post('/api/local/ask/sync/discard', headers=headers, json=discard)
+    assert live.status_code == 409 and live.json()['detail'] == 'sync_recovery_not_deleted'
+    original = a.source.get(issue['id'])
+    a.source.remove(issue['id'], expected_revision=original['revision'])
+    assert client.post('/api/local/ask/sync/discard', headers=headers, json=discard).status_code == 409
+    current = client.get('/api/local/ask/sync/conflicts', headers=headers).json()['conflicts'][0]
+    discard['review_token'] = current['discard_token']
+    discarded = client.post('/api/local/ask/sync/discard', headers=headers, json=discard)
+    assert discarded.status_code == 200 and discarded.json()['erased']
+    assert client.post('/api/local/ask/sync/discard', headers=headers, json=discard).json() == discarded.json()
+    assert a.source.get('second-copy')['id'] == 'second-copy'
 
 
 def test_remote_delete_keeps_unsent_draft_local_and_explicit_restore_keeps_binding(tmp_path):

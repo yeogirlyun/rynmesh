@@ -11,7 +11,7 @@ const row = {
   messages: [{ id: "answer", role: "assistant" as const, content: "An answer retained on device B", status: "complete" as const, createdAt: "2026-09-11T00:00:00Z" }],
 };
 const issue: AskSyncConflict = { id: row.id, revision: "a".repeat(64), conflict: true, deleted: true, erased: false, deferred: false,
-  common_messages: [], branches: [], recovery: [{ choice_id: "b".repeat(64) + ":2", value: row }] };
+  common_messages: [], branches: [], recovery: [{ choice_id: "b".repeat(64) + ":2", value: row }], discard_token: "d".repeat(64) };
 
 beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
@@ -158,4 +158,62 @@ it("does not offer another identity when the node has not confirmed deletion", a
   await userEvent.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
   expect(screen.queryByRole("button", { name: "Keep another copy" })).not.toBeInTheDocument();
+});
+
+it("reviews all recovery before discarding, allows cancel, and does not claim remote removal", async () => {
+  const discard = vi.spyOn(askHistory, "discardRecovery").mockResolvedValue({ erased: true, deleted: true });
+  render(<AskSyncConflicts onRestored={vi.fn()} />);
+  const user = userEvent.setup();
+  const open = await screen.findByRole("button", { name: "Discard this conversation's recovery" });
+  await user.click(open);
+  const review = screen.getByRole("region", { name: "Discard pending recovery" });
+  expect(review).toHaveFocus();
+  expect(review).toHaveTextContent("Copies already kept as separate conversations remain");
+  expect(review).toHaveTextContent("does not confirm removal on offline or removed devices");
+  expect(discard).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Keep recovery for now" }));
+  expect(open).toHaveFocus();
+  expect(discard).not.toHaveBeenCalled();
+  await user.click(open);
+  vi.mocked(askHistory.syncConflicts).mockResolvedValue([]);
+  await user.click(screen.getByRole("button", { name: "Confirm discard recovery" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("discarded on this node");
+  expect(screen.getByRole("status")).toHaveFocus();
+  expect(discard).toHaveBeenCalledExactlyOnceWith(issue.id, issue.discard_token);
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Discard pending recovery" })).not.toBeInTheDocument());
+});
+
+it("keeps the reviewed discard token after an unconfirmed response and invalidates stale review on refresh", async () => {
+  const discard = vi.spyOn(askHistory, "discardRecovery").mockRejectedValue(new Error("No confirmed result"));
+  render(<AskSyncConflicts onRestored={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Discard this conversation's recovery" }));
+  await user.click(screen.getByRole("button", { name: "Confirm discard recovery" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No confirmed result");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm discard recovery" }));
+  await waitFor(() => expect(discard).toHaveBeenCalledTimes(2));
+  expect(discard.mock.calls[1]).toEqual(discard.mock.calls[0]);
+  vi.mocked(askHistory.syncConflicts).mockResolvedValue([{ ...issue, discard_token: "e".repeat(64), local_draft: { ...row, draft: "New unsent draft" } }]);
+  await user.click(screen.getByRole("button", { name: "Refresh branches" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Discard pending recovery" })).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Discard this conversation's recovery" }));
+  expect(screen.getByRole("region", { name: "Discard pending recovery" })).toHaveTextContent("and the unsent draft on this device");
+});
+
+it("does not discard live history or recovery with an outstanding task", async () => {
+  vi.mocked(askHistory.syncConflicts).mockResolvedValue([{ ...issue, deleted: false }, { ...issue, id: "pending", deferred: true }]);
+  render(<AskSyncConflicts onRestored={vi.fn()} />);
+  expect(await screen.findByRole("button", { name: "Discard this conversation's recovery" })).toBeDisabled();
+});
+
+it("requires the node to confirm deletion before showing discard success", async () => {
+  vi.spyOn(askHistory, "discardRecovery").mockResolvedValue({ erased: false, deleted: true });
+  render(<AskSyncConflicts onRestored={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Discard this conversation's recovery" }));
+  await user.click(screen.getByRole("button", { name: "Confirm discard recovery" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("did not confirm discarding recovery");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Confirm discard recovery" })).toBeEnabled();
 });

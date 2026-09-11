@@ -114,9 +114,14 @@ class ConversationState:
         for identifier, entity in self.value['entities'].items():
             current = records.view(SCOPE, identifier, entity['record'])
             if current['conflict'] or current['recovery'] or entity.get('deferred') or entity.get('local_draft'):
-                result.append({**current, 'deferred': bool(entity.get('deferred')),
+                result.append({**current, 'deferred': bool(entity.get('deferred')), 'discard_token': self.recovery_review(identifier),
                                **({'local_draft': clean_conversation(entity['local_draft'])} if entity.get('local_draft') else {})})
         return result
+
+    def recovery_review(self, identifier):
+        entity = self.value['entities'][identifier]
+        return records.fingerprint({'id': identifier, 'revision': records.fingerprint(entity['record']),
+                                    'local_draft': entity.get('local_draft')})
 
     def export(self):
         return [{'scope': SCOPE, 'id': identifier, 'record': deepcopy(entity['record'])}
