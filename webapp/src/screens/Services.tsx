@@ -404,7 +404,7 @@ export default function Services() {
     if (!llmSetupJob?.job_id) return;
     try {
       setLlmSetupJob(await client.cancelLLMSetup(llmSetupJob.job_id));
-      notify("ok", "Setup cancellation requested; existing configuration will be preserved");
+      notify("warn", "Setup cancellation requested. Wait for the final recovery status.");
     } catch (error) {
       notify("danger", friendlyError(error, "Unable to cancel local model setup"));
     }

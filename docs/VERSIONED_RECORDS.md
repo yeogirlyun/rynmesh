@@ -1,5 +1,13 @@
 # Versioned records
 
+Local AI setup uses a private integer-v1 `llm/setup-recovery.json` journal.
+It snapshots exact manifest/settings bytes and SHA-256 digests before async
+configuration, bounds each source to 2 MiB and the journal to 6 MiB, and refuses
+unknown versions, fields or corrupt snapshots before restoring files. A durable
+`committed` receipt discards private snapshots before best-effort unlink, so a
+leftover receipt cannot roll back later configuration. See
+[setup rollback acceptance](acceptance/local-ai-development/setup-rollback.md).
+
 Managed-document `library-imports/control.json` supports integer version 2 with
 a validated `ryn.library-cleanup.v1` receipt. Explicit cleanup backs up original
 v1 bytes before upgrade and preserves unknown control extensions. The receipt

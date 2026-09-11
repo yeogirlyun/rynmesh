@@ -29,6 +29,8 @@
 
 ## 本轮记录
 
+- 2026-09-12：修复安装取消后误报旧配置恢复、迟到进度改回运行中，以及恢复失败时丢失内存副本的问题。新增有完整性校验的私密恢复记录，失败可原任务重试或重启恢复；健康失败单独说明，未完成恢复不作为可用服务。全后端 1419 passed / 29 skipped，最终隔离改动相关回归 82 passed / 4 skipped，前端 219 passed。见[配置恢复记录](../acceptance/local-ai-development/setup-rollback.md)，完整原生模型与打包应用验收仍待执行。
+
 - 2026-09-12：修复模型下载截断被错误隔离、异常续传响应改写进度的问题；增加校验前后取消检查及真实下载状态提示。真实 HTTP 与独立进程验证中断后续传、无效响应保留前缀、校验阶段取消后恢复；全后端 1410 passed / 29 skipped，前端 218 passed，见[下载恢复记录](../acceptance/local-ai-development/model-download-recovery.md)。安装任务取消后的旧配置恢复状态仍需修复，完整打包应用恢复验收仍待执行。
 
 - 2026-09-12：修复运行时解压失败、完成记录写入失败及解压后取消时误判已安装的问题。托管运行时须有当前版本完成记录；失败残留经新进程检查不可用，重试可完整安装。全量后端 1399 passed / 1 failed / 29 skipped，唯一旧硬件夹具修正后失败项复测 1 passed，见[运行时安装恢复记录](../acceptance/local-ai-development/runtime-install-recovery.md)。AI03 更新为开发验收中；macOS 打包安装、中断续传与桌面重启恢复仍待实机验证。

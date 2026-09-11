@@ -70,10 +70,36 @@ function renderServices(options: {
       </Routes>
     </MemoryRouter>,
   );
-  return { ...result, client, discover, submit, user: userEvent.setup() };
+  return { ...result, client, discover, submit, notify: context.notify, user: userEvent.setup() };
 }
 
 describe("Services local LLM flow", () => {
+  it("waits for recovery after cancellation and offers retry when restoration fails", async () => {
+    const { client, user, notify } = renderServices({ setupStatuses: [
+      { job_id: "setup_restore", state: "running", stage: "download_model", progress: 40 },
+    ] });
+    let failed = false;
+    let cancelled = false;
+    client.getLLMSetupStatus = vi.fn(async (): Promise<LLMSetupJob> => failed ? {
+      job_id: "setup_restore", state: "failed", stage: "recovery", progress: 0, retryable: true,
+      message: "Previous configuration could not be restored. Check local storage and retry configuration.",
+    } : { job_id: "setup_restore", state: cancelled ? "cancelling" : "running", stage: "download_model", progress: 40 });
+    client.cancelLLMSetup = vi.fn(async (): Promise<LLMSetupJob> => {
+      cancelled = true;
+      return { job_id: "setup_restore", state: "cancelling", stage: "cancelling", progress: 40 };
+    });
+    await user.click(await screen.findByRole("button", { name: "Cancel setup" }));
+    expect(client.cancelLLMSetup).toHaveBeenCalledWith("setup_restore");
+    expect(notify).toHaveBeenCalledWith("warn", "Setup cancellation requested. Wait for the final recovery status.");
+    expect(await screen.findByRole("button", { name: "Cancelling…" })).toBeDisabled();
+    failed = true;
+    expect(await screen.findByText(/Previous configuration could not be restored/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeEnabled();
+    const retry = vi.spyOn(client, "startLLMSetup");
+    await user.click(screen.getByRole("button", { name: "Retry configuration" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
   it("offers a ready unpublished model directly in Ask Ryn", async () => {
     const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
     renderServices({ providerStatus: { configured: true, ready: true, online: false, publication_enabled: false, service, capacity: { available: 1, max_concurrent: 1 } } });
