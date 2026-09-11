@@ -216,12 +216,13 @@ class LocalSearchIndex:
             raise SearchError("search_result_unavailable")
         return current[identifier]
 
-    def rebuild(self) -> bool:
+    def rebuild(self, *, force: bool = False) -> bool:
         if not self.writer.acquire(blocking=False):
             raise SearchError("search_index_busy")
         try:
             with self.lock:
-                self.state = "building"
+                if force or not self.generation:
+                    self.state = "building"
             with file_transaction(self.root / ".index.lock"):
                 try:
                     envelope, data = self._read()
@@ -233,10 +234,12 @@ class LocalSearchIndex:
                 fingerprints = {key: _hash(row) for key, row in rows.items()}
                 with self.lock:
                     unchanged = fingerprints == self.fingerprints and bool(self.generation)
-                if unchanged and data and data["generation"] == self.generation:
+                if not force and unchanged and data and data["generation"] == self.generation:
                     with self.lock:
                         self.state, self.error = "ready", ""
                     return False
+                with self.lock:
+                    self.state = "building"
                 generation, stamp = uuid.uuid4().hex, time.time()
                 data = {**data, "version": VERSION, "generation": generation, "updated_at": stamp, "documents": list(rows.values())}
                 plaintext = _json(data)

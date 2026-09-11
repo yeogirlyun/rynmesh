@@ -24,7 +24,7 @@ def install_local_search(app, *, store, home, workers, messaging_key, local_cont
     root = Path(getattr(store, "home", None) or home) / "local-search"
     app.state.local_search = SearchState(LocalSearchIndex(root, messaging_key=messaging_key, source=source), local_control, workers)
     workers.register(BackgroundWorkerSpec(name="local-search.index", initial_delay_s=1,
-        run_once=lambda: app.state.local_search.index.rebuild(), policy=BackoffPolicy.fixed(3)), replace=True)
+        run_once=lambda: app.state.local_search.index.rebuild(), policy=BackoffPolicy.fixed(1)), replace=True)
     if any(getattr(route, "name", "") == "local_search_status" for route in app.routes):
         return app.state.local_search.index
 
@@ -60,7 +60,7 @@ def install_local_search(app, *, store, home, workers, messaging_key, local_cont
     @app.post("/api/local/search/rebuild")
     async def rebuild(request: Request):
         app.state.local_search.local_control(request)
-        await call("rebuild")
+        await call("rebuild", force=True)
         return app.state.local_search.index.status()
 
     @app.get("/api/local/search/open")

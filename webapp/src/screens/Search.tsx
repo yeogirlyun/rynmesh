@@ -41,6 +41,7 @@ export default function Search() {
   const [document, setDocument] = useState<SearchDocument | null>(null);
   const [onlineReading, setOnlineReading] = useState(false);
   const sequence = useRef(0);
+  const screenRoot = useRef<HTMLDivElement>(null);
   const indexStamp = useRef<number | null>(null);
   const restoreScroll = useRef<number | null>(location.state?.searchScroll ?? null);
   const request = useCallback((cursor = "") => ({ query: form.query, kind: form.kind, source: form.source, friend_id: form.friend,
@@ -75,7 +76,11 @@ export default function Search() {
         if (location.state?.searchScroll) restoreScroll.current = location.state.searchScroll;
         if (restoreScroll.current !== null) {
           const top = restoreScroll.current; restoreScroll.current = null;
-          window.requestAnimationFrame(() => window.scrollTo(0, top));
+          window.requestAnimationFrame(() => {
+            const scroller = screenRoot.current?.closest<HTMLElement>(".app-main");
+            if (scroller) scroller.scrollTop = top;
+            else window.scrollTo(0, top);
+          });
         }
       }).catch((cause) => { if (generation === sequence.current && !abort.signal.aborted) setError(cause.message); })
         .finally(() => { if (generation === sequence.current) setBusy(false); });
@@ -95,7 +100,9 @@ export default function Search() {
     return () => { active = false; };
   }, [identifier]);
   const remember = () => navigate(location.pathname + location.search, { replace: true,
-    state: { ...location.state, searchForm: form, searchScroll: window.scrollY, searchCount: page?.results.length ?? 0 } });
+    state: { ...location.state, searchForm: form,
+      searchScroll: screenRoot.current?.closest<HTMLElement>(".app-main")?.scrollTop ?? window.scrollY,
+      searchCount: page?.results.length ?? 0 } });
   const change = (key: keyof Form, value: string) => {
     sequence.current += 1; restoreScroll.current = null;
     const next = { ...form, [key]: value }; setForm(next);
@@ -107,7 +114,7 @@ export default function Search() {
     try {
       const next = await localSearch.query(request(page.next_cursor));
       if (generation === sequence.current) setPage({ ...next, results: [...page.results, ...next.results] });
-    } catch (cause) { if (generation === sequence.current) setError((cause as Error).message); }
+    } catch (cause) { if (generation === sequence.current) { setPage(null); setError((cause as Error).message); } }
     finally { if (generation === sequence.current) setBusy(false); }
   };
   const loadLocal = useCallback(async () => {
@@ -126,7 +133,7 @@ export default function Search() {
           {document.targets.filter((target) => !target.href.startsWith("/search?")).map((target) => <Link key={target.href} to={target.href}>{target.label}</Link>)}
         </>}
     </Panel>}</div>;
-  return <div className="screen-stack"><PageHeader eyebrow="Your local content" title="Search" context="Find saved articles, reading history, friend shares and conversations. Searches stay on your node." />
+  return <div ref={screenRoot} className="screen-stack"><PageHeader eyebrow="Your local content" title="Search" context="Find saved articles, reading history, friend shares and conversations. Searches stay on your node." />
     <Panel><label>Keywords<input aria-label="Search keywords" value={form.query} maxLength={160} onChange={(e) => change("query", e.target.value)} placeholder="Chinese phrases or English keywords" /></label>
       <label>Type<select aria-label="Search type" value={form.kind} onChange={(e) => change("kind", e.target.value)}><option value="">All types</option>{Object.entries(labels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <label>Source<input aria-label="Search source" value={form.source} onChange={(e) => change("source", e.target.value)} placeholder="Exact source name" /></label>

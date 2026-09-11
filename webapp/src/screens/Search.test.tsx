@@ -29,7 +29,7 @@ function Target() {
 }
 function mount(initial = "/search") {
   const context = { client: makeFixtureNodeClient(), confirm: vi.fn(), notify: vi.fn() } as unknown as AppOutletContext;
-  render(<MemoryRouter initialEntries={[initial]}><Routes><Route element={<Outlet context={context} />}>
+  render(<MemoryRouter initialEntries={[initial]}><Routes><Route element={<main className="app-main"><Outlet context={context} /></main>}>
     <Route path="/search" element={<Search />} /><Route path="/target" element={<Target />} />
   </Route></Routes></MemoryRouter>);
   return userEvent.setup();
@@ -64,6 +64,39 @@ it("restores keywords and filters after opening a result", async () => {
   expect(screen.getByLabelText("Search keywords")).toHaveValue("春天 Python");
   expect(screen.getByLabelText("Search type")).toHaveValue("saved");
   expect(await screen.findByRole("heading", { name: "Current result" })).toBeInTheDocument();
+});
+
+it("reloads every previously loaded page before restoring the app content scroller", async () => {
+  const first = { ...page(...Array.from({ length: 20 }, (_, i) => `Row ${i}`)), total: 40, next_cursor: "second" };
+  const second = { ...page(...Array.from({ length: 20 }, (_, i) => `Row ${i + 20}`)), total: 40 };
+  vi.mocked(localSearch.query).mockImplementation(async (request) => request.cursor === "second" ? second : first);
+  const user = mount();
+  fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "rows" } });
+  await user.click(await screen.findByRole("button", { name: "Load more results" }));
+  expect(await screen.findByRole("heading", { name: "Row 39" })).toBeInTheDocument();
+  const scroller = screen.getByRole("main");
+  scroller.scrollTop = 1600;
+  await user.click(screen.getAllByRole("link", { name: "Read local content" })[39]);
+  expect(await screen.findByText("Opened result")).toBeInTheDocument();
+  scroller.scrollTop = 0;
+  await user.click(screen.getByRole("button", { name: "Return to search" }));
+  expect(await screen.findByRole("heading", { name: "Row 39" })).toBeInTheDocument();
+  await waitFor(() => expect(scroller.scrollTop).toBe(1600));
+  expect(screen.getAllByRole("link", { name: "Read local content" })).toHaveLength(40);
+  expect(window.scrollTo).not.toHaveBeenCalled();
+});
+
+it("discards old snippets when pagination reports a changed result set", async () => {
+  vi.mocked(localSearch.query).mockResolvedValueOnce({ ...page("Old result"), next_cursor: "next" })
+    .mockRejectedValueOnce(new Error("Results changed. Refresh to start from the first page."))
+    .mockResolvedValue(page("Updated result"));
+  const user = mount();
+  fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "record" } });
+  await user.click(await screen.findByRole("button", { name: "Load more results" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Results changed");
+  expect(screen.queryByRole("heading", { name: "Old result" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Refresh results" }));
+  expect(await screen.findByRole("heading", { name: "Updated result" })).toBeInTheDocument();
 });
 
 it("distinguishes partial indexing from no matches and recovers from a failed rebuild", async () => {
