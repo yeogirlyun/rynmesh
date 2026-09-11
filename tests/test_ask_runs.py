@@ -60,6 +60,7 @@ def test_node_dispatch_and_archive_survive_no_browser_and_restart(tmp_path):
     assert len(orders.sent) == 1
     assert orders.sent[0]["task_id"] == orders.sent[0]["idempotency_key"] == request["task_id"]
     assert "中文秘密问题" in orders.sent[0]["prompt"]
+
     orders.results[request["task_id"]] = {"state": "succeeded", "output": "实际归档回答", "input_tokens": 20, "output_tokens": 8, "amount": 0.01}
     restarted = AskRunService(ConversationStore(history.root, history.key), runs.context, lambda: orders)
     restarted.run_once()
@@ -73,6 +74,28 @@ def test_node_dispatch_and_archive_survive_no_browser_and_restart(tmp_path):
     with file_transaction(history.lock):
         _, data = history._read()
         assert "body" not in data["runs"]["records"][request["task_id"]]
+
+
+def test_reviewed_friend_permission_is_frozen_and_changes_require_new_review(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    context = runs.context()
+    original_catalog = context.catalog
+    version = [1]
+    def catalog(network):
+        rows = original_catalog(network)
+        rows[0]["ai_permission"] = {"relationship_id": "b" * 32, "revision": version[0]}
+        return rows
+    context.catalog = catalog
+    request["ai_permission"] = {"relationship_id": "b" * 32, "revision": 1}
+    version[0] = 2
+    with pytest.raises(ConversationError, match="ask_preview_changed"):
+        runs.begin(request)
+    assert history.get("conversation")["messages"] == []
+    request["ai_permission"]["revision"] = 2
+    runs.begin(request)
+    version[0] = 3
+    runs.run_once()
+    assert orders.sent[0]["ai_permission"]["revision"] == 2
 
 
 def test_crash_at_dispatch_boundary_never_resubmits(tmp_path, monkeypatch):

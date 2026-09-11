@@ -44,6 +44,8 @@ class AskRunService:
         if not isinstance(task_id, str) or not re.fullmatch(r"task_[a-f0-9]{32}", task_id):
             raise ConversationError("ask_invalid_request")
         intent = {key: value.get(key) for key in ("conversation_id", "expected_revision", "question", "prompt_sha256")}
+        if value.get("ai_permission") is not None:
+            intent["ai_permission"] = value["ai_permission"]
         fingerprint = hashlib.sha256(_json(intent)).hexdigest()
         with file_transaction(self.history.lock):
             envelope, data = self.history._read()
@@ -67,6 +69,8 @@ class AskRunService:
             preview = self.context().preview(row, intent["question"])
             if preview["prompt_sha256"] != intent["prompt_sha256"]:
                 raise ConversationError("ask_preview_changed")
+            if preview.get("ai_permission") != intent.get("ai_permission"):
+                raise ConversationError("ask_preview_changed")
             now = datetime.now(timezone.utc).isoformat()
             sources = {"contextIds": [source["library_id"] for source in preview["sources"]],
                        "contextBytes": [source["included_bytes"] for source in preview["sources"]],
@@ -84,6 +88,7 @@ class AskRunService:
                    "body": {"task_id": task_id, "idempotency_key": task_id, "provider_peer_id": preview["provider_peer_id"],
                             "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto",
                             "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
+                            **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
                             "max_tokens": preview["max_output_tokens"]}}
             runs[task_id] = run
             self.history._write(envelope, data)

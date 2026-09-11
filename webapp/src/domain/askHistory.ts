@@ -25,6 +25,7 @@ export interface AskSource {
   source_number?: number; included_bytes?: number; budget_truncated?: boolean; text?: string;
 }
 export interface AskPreview {
+  ai_permission?: { relationship_id: string; revision: number };
   conversation_id: string; revision: number; provider_peer_id: string; service_id: string;
   prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
   framing_reserve: number; max_output_tokens: number; history_messages_omitted: number; sources: AskSource[];
@@ -33,6 +34,7 @@ export interface AskRun {
   task_id: string; conversation_id: string; state: string; cancel_requested: boolean; error_code?: string;
 }
 export interface AskRunRequest {
+  ai_permission?: { relationship_id: string; revision: number };
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }
 export class AskRequestError extends Error {

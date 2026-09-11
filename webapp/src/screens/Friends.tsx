@@ -6,6 +6,7 @@ import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../d
 import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
 import FriendCards from "./components/FriendCards";
+import FriendAI from "./components/FriendAI";
 import styles from "./Friends.module.css";
 
 export default function Friends() {
@@ -107,5 +108,6 @@ export default function Friends() {
     </Panel>
     {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} /> : null}
     <FriendCards friends={friends} />
+    <FriendAI friends={friends} />
   </div>;
 }

@@ -122,6 +122,7 @@ class AskContextService:
                 "provider_peer_id": conversation["providerPeerId"], "service_id": service_id,
                 "prompt": prepared_prompt, "prompt_sha256": hashlib.sha256(prepared_prompt.encode()).hexdigest(),
                 "prompt_format": CHAT_FORMAT if structured else "text",
+                **({"ai_permission": selected["ai_permission"]} if selected.get("ai_permission") else {}),
                 "context_window": context_window, "input_token_upper_estimate": len(prepared_prompt.encode()),
                 "framing_reserve": SYSTEM_RESERVE, "max_output_tokens": output_tokens,
                 "history_messages_omitted": omitted, "sources": sources}

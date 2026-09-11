@@ -923,6 +923,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "status": current.public_status() if current else {},
         }
 
+    def resolve_provider_endpoint(peer_id: str, *, cancellation: bool = False) -> str:
+        friends_state = getattr(app.state, "friends", None)
+        if friends_state:
+            friends = friends_state.service
+            relation = friends.store.relationship_for_peer(peer_id)
+            if relation is None and cancellation:
+                # A removed friendship may still have an already-issued task.
+                # Its signed cancellation contains no new prompt or credentials.
+                relation = next((row for row in friends.store.list_relationships() if row.get("peer_id") == peer_id), None)
+            if relation:
+                from rynmesh.friends.crypto import validate_endpoint
+
+                return validate_endpoint(relation["endpoint"], allow_loopback=friends.allow_loopback)
+        return resolve_endpoint(peer_id)
+
     def discover(network_id: str) -> list[dict[str, Any]]:
         services = []
         current = active_manager()
@@ -931,6 +946,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             local["service"] = {**local["service"], "pricing": {**local["service"]["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}}
             services.append({**local, "online": local["ready"], "peer_id": store.peer_id,
                              "node_name": "This device", "access": "self", "updated_at": datetime.now(timezone.utc).isoformat()})
+        access_state = getattr(app.state, "ai_access", None)
+        if access_state and access_state.catalog:
+            services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         try:
             values = store.list_job_capacities(
                 network_id=network_id, capability=CAPABILITY, max_age_hours=1,
@@ -944,6 +962,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 continue  # A stale published self-record cannot replace local health.
             public = dict(value.get("metadata") or {}).get("llm_service")
             if isinstance(public, dict):
+                if public.get("access_policy") == "explicit_friends" or any(row["peer_id"] == value.get("peer_id") for row in services):
+                    continue  # An invitation to discover metadata is not a grant.
                 services.append({**public, "peer_id": value.get("peer_id"), "node_name": value.get("node_name"),
                                  "updated_at": value.get("updated_at")})
         return services
@@ -1153,6 +1173,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     if getattr(app.state, "ai_access", None):
         app.state.ai_access.recheck = recheck_permissions_once
+        def own_service_status():
+            current = active_manager()
+            return {**current.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main")} if current else None
+        app.state.ai_access.provider = own_service_status
     registry.register(BackgroundWorkerSpec(
         name="llm.friend-permissions", run_once=recheck_permissions_once,
         initial_delay_s=1.0,
@@ -1670,7 +1694,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 expires_at=_expires(max(60, manifest.timeout_seconds + 30)),
             )
             own_request = provider_peer_id == store.peer_id
-            endpoint = "" if own_request else resolve_endpoint(provider_peer_id)
+            endpoint = "" if own_request else resolve_provider_endpoint(provider_peer_id)
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -2055,7 +2079,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if current is not None and current.manifest.package_id == service_id:
                     current.cancel_signed(signed_cancel.to_dict())
                 return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
-            endpoint = resolve_endpoint(provider_peer_id)
+            endpoint = resolve_provider_endpoint(provider_peer_id, cancellation=True)
             if endpoint:
                 try:
                     _peer_post_json(
