@@ -23,7 +23,8 @@ class LLMAdapter(Protocol):
     def health(self) -> dict[str, Any]: ...
     def models(self) -> list[dict[str, Any]]: ...
     def capabilities(self) -> dict[str, Any]: ...
-    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float) -> dict[str, Any]: ...
+    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+              messages: list[dict[str, str]] | None = None) -> dict[str, Any]: ...
     def cancel(self, task_id: str) -> bool: ...
     def metrics(self) -> dict[str, Any]: ...
     def shutdown(self) -> None: ...
@@ -60,6 +61,8 @@ class AdapterMetrics:
 
 
 class OpenAICompatibleAdapter:
+    supports_chat_messages = True
+
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
                  api_key: str = "", allow_non_loopback: bool = False,
                  timeout_s: float = 120.0) -> None:
@@ -155,7 +158,8 @@ class OpenAICompatibleAdapter:
             streaming = False
         return {"chat_completions": True, "streaming": streaming, "cancel": "best_effort"}
 
-    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float) -> dict[str, Any]:
+    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+              messages: list[dict[str, str]] | None = None) -> dict[str, Any]:
         if not prompt:
             raise AdapterError("prompt is required")
         if task_id in self._cancelled:
@@ -165,7 +169,7 @@ class OpenAICompatibleAdapter:
         started = time.monotonic()
         try:
             result = self._json("/v1/chat/completions", {
-                "model": self.model, "messages": [{"role": "user", "content": prompt}],
+                "model": self.model, "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
                 "max_tokens": int(max_tokens), "stream": False,
             }, min(float(timeout_s), self.timeout_s), task_id=task_id)
             if task_id in self._cancelled:

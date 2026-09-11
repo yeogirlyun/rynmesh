@@ -31,6 +31,7 @@ from rynmesh.store import RynmeshStore
 
 from . import runtime_native
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
+from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_commands import ConsumerCommands
 from .lifecycle import (
     LifecycleError,
@@ -276,6 +277,8 @@ class ProviderService:
         }
         from rynmesh.services import peer_box
 
+        if getattr(self.adapter, "supports_chat_messages", False):
+            result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CHAT_FORMAT]))
         result["node_messaging_pub"] = peer_box.public_key_b64(self.messaging_key)
         if benchmark and health.get("ok"):
             measured = self.adapter.infer(
@@ -313,6 +316,12 @@ class ProviderService:
         prompt = str(body.get("prompt") or "")
         if not prompt:
             raise TaskProtocolError("prompt is required")
+        try:
+            messages = decode_chat_prompt(prompt, body.get("prompt_format", "text"))
+        except ValueError as exc:
+            raise TaskProtocolError(str(exc)) from None
+        if messages is not None and not getattr(self.adapter, "supports_chat_messages", False):
+            raise TaskProtocolError("requested prompt format is not supported by this adapter")
         max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
@@ -395,6 +404,7 @@ class ProviderService:
             result = self.adapter.infer(
                 prompt=prompt, max_tokens=max_tokens, task_id=task_id,
                 timeout_s=self.manifest.timeout_seconds,
+                **({"messages": messages} if messages is not None else {}),
             )
             if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 return self._failure(
@@ -1140,7 +1150,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
         from .hardware import detect_hardware, recommend
-        report = detect_hardware(home)
+        report = detect_hardware(home, runtime_root=home / "llm")
         return {"hardware": report.to_dict(), "recommendations": recommend(report)}
 
     @app.get("/api/local/llm/services")
@@ -1401,7 +1411,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         consumer_orders.purge_expired_responses()
         summaries = []
         for record in consumer_orders.list():
-            final = dict((record.get("history") or [{}])[-1])
+            final = order_state_metadata(record)
             summaries.append({
                 "task_id": record.get("task_id"), "state": record.get("state"),
                 "created_at": record.get("created_at"), "updated_at": record.get("updated_at"),
@@ -1452,6 +1462,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         provider_peer_id = str(body.get("provider_peer_id") or "")
         service_id = str(body.get("service_id") or "")
         prompt = str(body.get("prompt") or "")
+        prompt_format = body.get("prompt_format", "text")
+        try:
+            decode_chat_prompt(prompt, prompt_format)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         try:
             max_tokens = int(body.get("max_tokens") or 64)
         except (TypeError, ValueError) as exc:
@@ -1475,6 +1490,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
+        if prompt_format == CHAT_FORMAT and CHAT_FORMAT not in public_manifest.get("capabilities", []):
+            raise HTTPException(status_code=409, detail="provider no longer supports the reviewed prompt format")
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are
@@ -1530,6 +1547,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "provider_peer_id": provider_peer_id,
             "service_id": service_id,
             "prompt": prompt,
+            **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
@@ -1547,7 +1565,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not claimed:
             encrypted = existing.get("encrypted_response")
             if isinstance(encrypted, dict):
-                final = dict((existing.get("history") or [{}])[-1])
+                final = order_state_metadata(existing)
                 try:
                     _, prior_result = _open_provider_response(
                         encrypted, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
@@ -1594,6 +1612,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             signed = seal_task(
                 body={"task_id": task_id, "idempotency_key": idempotency_key,
                       "service_id": service_id, "prompt": prompt, "max_tokens": max_tokens,
+                      **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
                       "max_amount": maximum, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,
@@ -1899,6 +1918,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     def local_llm_order_status(task_id: str) -> dict[str, Any]:
         return order_status(task_id, consume_ephemeral=True)
 
+    def order_state_metadata(record: dict[str, Any]) -> dict[str, Any]:
+        # Later settlement checkpoints supplement the current state's usage
+        # and transport; metadata from earlier states must not leak through.
+        return {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
+                for key, value in event.items() if key not in {"at", "checkpoint"}}
+
     def order_status(task_id: str, *, consume_ephemeral: bool = False) -> dict[str, Any]:
         try:
             record = consumer_orders.get(task_id)
@@ -1912,8 +1937,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return _public_background(pending)
         # A settlement acknowledgement is a later checkpoint, not a replacement
         # for the terminal usage/transport metadata needed after restarting UI.
-        final = {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
-                 for key, value in event.items() if key not in {"at", "checkpoint"}}
+        final = order_state_metadata(record)
         result: dict[str, Any] = {
             "task_id": task_id,
             "state": str(record.get("state") or "unknown"),

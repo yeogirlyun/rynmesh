@@ -83,7 +83,8 @@ class AskRunService:
                    "state": "queued", "cancel_requested": False, "last_checked": 0,
                    "body": {"task_id": task_id, "idempotency_key": task_id, "provider_peer_id": preview["provider_peer_id"],
                             "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto",
-                            "prompt": preview["prompt"], "max_tokens": preview["max_output_tokens"]}}
+                            "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
+                            "max_tokens": preview["max_output_tokens"]}}
             runs[task_id] = run
             self.history._write(envelope, data)
             return public_run(run)
