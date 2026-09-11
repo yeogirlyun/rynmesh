@@ -1606,7 +1606,7 @@ def test_local_model_works_unpublished_without_registry_or_peer_transport(tmp_pa
     foreign = seal_task(body={"task_id": "foreign", "service_id": "own-model", "prompt": "Foreign question", "max_amount": 1, "reply_messaging_pub": peer_box.public_key_b64(key)}, task_id="foreign", kind="llm_request", sender_peer_id=other.peer_id, recipient_peer_id=store.peer_id, sender_signing_key=other.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires()).to_dict()
     denied = client.post("/api/peer/llm/tasks", json=foreign).json()
     _, rejection = open_task(denied, recipient_peer_id=other.peer_id, recipient_messaging_key=key, expected_kind="llm_response")
-    assert rejection["error_code"] == "service_paused"
+    assert rejection["error_code"] == "ai_permission_denied"
     assert _OpenAIHandler.calls == calls_before + 1
     monkeypatch.setattr(OpenAICompatibleAdapter, "health", lambda _: {"ok": False, "error": "model missing"})
     assert client.get("/api/local/llm/services?network_id=network").json()["services"][0]["online"] is False
@@ -1660,7 +1660,7 @@ def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     orders = TaskOrderStore(tmp_path / "orders")
     balance = TaskBalanceLedger(tmp_path / "provider-balance.json")
     service = ProviderService(manifest=manifest, adapter=adapter, store=provider,
-                              task_store=orders, balance=balance, messaging_key=provider_msg)
+                              task_store=orders, balance=balance, messaging_key=provider_msg, access_check=lambda *_: {})
     request = seal_task(
         body={"task_id": "task_same", "service_id": "svc", "prompt": "TOP SECRET PROMPT",
               "max_tokens": 8, "max_amount": 1, "reply_messaging_pub": peer_box.public_key_b64(consumer_msg)},
@@ -1722,7 +1722,7 @@ def test_provider_bounds_retained_records_and_skips_paused_requests(monkeypatch,
             base_url="http://127.0.0.1:1",
         ),
         adapter=_FakeAdapter(), store=provider, task_store=orders,
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
 
     def request(task_id: str, prompt: str, reply_key: str | None = None) -> dict:
@@ -1852,7 +1852,7 @@ def test_provider_concurrent_duplicate_executes_once(tmp_path):
             base_url="http://127.0.0.1:1", timeout_seconds=2,
         ),
         adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "task_concurrent", "idempotency_key": "same-request",
@@ -1890,7 +1890,7 @@ def test_signed_cancel_reaches_running_provider_and_rejects_other_identity(tmp_p
             base_url="http://127.0.0.1:1", timeout_seconds=2,
         ),
         adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "task_cancel_running", "idempotency_key": "cancel-running",
@@ -1968,7 +1968,7 @@ def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):
     orders = TaskOrderStore(tmp_path / "orders")
     service = ProviderService(
         manifest=manifest, adapter=adapter, store=provider, task_store=orders,
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "busy_task", "service_id": "svc", "prompt": "body",
