@@ -37,6 +37,7 @@ export interface LLMConversation {
   revision?: number;
   draft?: string;
   contextIds?: string[];
+  sync?: { revision: string; conflict: boolean; deleted: boolean; erased: boolean; branch_count: number; recovery_count: number; deferred: boolean };
 }
 
 interface EncryptedConversationRecord {

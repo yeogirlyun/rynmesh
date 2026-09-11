@@ -58,7 +58,7 @@ class AskRunService:
             if not isinstance(conversation_id, str):
                 raise ConversationError("ask_invalid_request")
             row = data["conversations"].get(conversation_id)
-            if row is None:
+            if row is None or conversation_id in data['tombstones']:
                 raise ConversationError("ask_conversation_not_found")
             if type(intent["expected_revision"]) is not int or row["revision"] != intent["expected_revision"]:
                 raise ConversationError("ask_revision_conflict")

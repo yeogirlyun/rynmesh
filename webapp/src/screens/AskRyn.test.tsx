@@ -11,6 +11,7 @@ import type { LLMServiceRecord } from "../domain/nodeClient";
 import AskRyn, { AskRynQuickPanel, conversationUrl } from "./AskRyn";
 
 beforeEach(() => {
+  vi.spyOn(askHistory, "syncConflicts").mockResolvedValue([]);
   vi.spyOn(askHistory, "draft").mockResolvedValue({ text: "", revision: 0 });
   vi.spyOn(askHistory, "saveDraft").mockImplementation(async (text, revision) => ({ text, revision: revision + 1 }));
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
@@ -81,5 +82,20 @@ it("does not replace an explicitly requested missing provider with a working one
   const { submit } = mount("/ask?peer=missing&service=missing-model", [base]);
   expect(await screen.findByRole("heading", { name: "The selected provider is unavailable" })).toBeInTheDocument();
   expect(screen.queryByLabelText("Message Private AI")).not.toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("opens a recovered branch as readable history without a model and focuses it", async () => {
+  const value = { ...createConversation({ serviceKey: "old::model", serviceName: "Old model", providerPeerId: "old", networkId: "rynmesh-main" }),
+    title: "Recovered garden answer", messages: [{ id: "m", role: "assistant" as const, content: "The retained answer from the other computer.", createdAt: new Date().toISOString(), status: "complete" as const }] };
+  vi.mocked(askHistory.syncConflicts).mockResolvedValue([{ id: value.id, revision: "a".repeat(64), conflict: true, deleted: true, erased: false, deferred: false,
+    common_messages: [], branches: [], recovery: [{ choice_id: "b".repeat(64) + ":2", value }] }]);
+  const { user, save, submit } = mount();
+  vi.spyOn(askHistory, "restoreBranch").mockImplementation(async (_id, _choice, newId) => save({ ...value, id: newId }));
+  await user.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
+  expect(await screen.findByText(value.messages[0].content)).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Selected conversation" })).toHaveFocus();
+  expect(screen.getByText(/original service is unavailable/)).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Continue with original provider" })).not.toBeInTheDocument();
   expect(submit).not.toHaveBeenCalled();
 });
