@@ -30,6 +30,14 @@ MAX_FILE = 90 * 1024 * 1024
 MAX_DOCUMENTS = 100_000
 MAX_POSTINGS = 1_000_000
 KINDS = frozenset({"saved", "history", "share", "chat"})
+SOURCE_SCOPES = frozenset({'saved_documents', 'offline_downloads'})
+
+
+class SearchSnapshot(list):
+    """Local rows plus bounded scope codes, never exceptions or private paths."""
+    def __init__(self, rows=(), *, unavailable_sources=()):
+        super().__init__(rows)
+        self.unavailable_sources = sorted(set(unavailable_sources))
 
 
 class SearchError(ValueError):
@@ -141,6 +149,7 @@ class LocalSearchIndex:
         self.state = "needs_rebuild"
         self.error = ""
         self.updated_at = None
+        self.unavailable_sources = []
         try:
             _, data = self._read()
             if data:
@@ -205,11 +214,19 @@ class LocalSearchIndex:
     def status(self) -> dict:
         with self.lock:
             return {"version": VERSION, "state": self.state, "error_code": self.error,
-                    "indexed_count": len(self.rows), "updated_at": self.updated_at}
+                    "indexed_count": len(self.rows), "updated_at": self.updated_at,
+                    "unavailable_sources": list(self.unavailable_sources)}
+
+    def _source(self):
+        values = self.source()
+        issues = getattr(values, 'unavailable_sources', [])
+        if not isinstance(issues, list) or any(not isinstance(value, str) or value not in SOURCE_SCOPES for value in issues):
+            raise SearchError('search_source_invalid')
+        return _documents(values), sorted(set(issues))
 
     def resolve(self, identifier: str) -> dict:
         try:
-            current = _documents(self.source())
+            current, _ = self._source()
         except Exception:
             raise SearchError("search_source_unavailable") from None
         if identifier not in current:
@@ -230,10 +247,11 @@ class LocalSearchIndex:
                     if str(exc) == "search_index_version_unsupported":
                         raise
                     envelope, data = {}, {}  # Cache only; source files are untouched.
-                rows = _documents(self.source())
+                rows, issues = self._source()
                 fingerprints = {key: _hash(row) for key, row in rows.items()}
                 with self.lock:
                     unchanged = fingerprints == self.fingerprints and bool(self.generation)
+                    self.unavailable_sources = issues
                 if not force and unchanged and data and data["generation"] == self.generation:
                     with self.lock:
                         self.state, self.error = "ready", ""
@@ -274,16 +292,18 @@ class LocalSearchIndex:
         if any(not isinstance(value, str) or len(value) > 2048 for value in (source, friend_id, cursor)):
             raise SearchError("search_filter_invalid")
         if not terms:
-            return {"results": [], "total": 0, "next_cursor": "", "partial": False, "index": self.status()}
+            return {"results": [], "total": 0, "next_cursor": "", "partial": False, "indexing_pending": False,
+                    "unavailable_sources": [], "index": self.status()}
         # Fail closed even when rebuilding has failed. Never fall back to old
         # snippets if the authoritative source cannot be read now.
         try:
-            current = _documents(self.source())
+            current, issues = self._source()
         except Exception:
             raise SearchError("search_source_unavailable") from None
         current_hashes = {key: _hash(row) for key, row in current.items()}
         with self.lock:
-            partial = current_hashes != self.fingerprints or self.state != "ready"
+            indexing_pending = current_hashes != self.fingerprints or self.state != "ready"
+            partial = indexing_pending or bool(issues)
             candidates = None
             for term in terms if self.postings is not None else []:
                 grams = _grams(term, min(3, len(term))) if len(term) > 1 else set()
@@ -331,4 +351,5 @@ class LocalSearchIndex:
             results.append(result)
         next_offset = offset + limit
         next_cursor = base64.urlsafe_b64encode(_json({"signature": signature, "offset": next_offset})).decode() if next_offset < len(matches) else ""
-        return {"results": results, "total": len(matches), "next_cursor": next_cursor, "partial": partial, "index": self.status()}
+        return {"results": results, "total": len(matches), "next_cursor": next_cursor, "partial": partial,
+                "indexing_pending": indexing_pending, "unavailable_sources": issues, "index": self.status()}

@@ -122,6 +122,31 @@ it("distinguishes partial indexing from no matches and recovers from a failed re
   expect(await screen.findByText(/No matches/)).toBeInTheDocument();
 });
 
+it("keeps healthy results visible with a document recovery link and no false indexing message", async () => {
+  vi.mocked(localSearch.query).mockResolvedValue({ ...page('Healthy result'), partial: true,
+    indexing_pending: false, unavailable_sources: ['saved_documents'] });
+  const user = mount();
+  fireEvent.change(screen.getByLabelText('Search keywords'), { target: { value: 'healthy' } });
+  expect(await screen.findByRole('heading', { name: 'Healthy result' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Review document copies in Settings' })).toHaveAttribute('href', '/settings');
+  expect(screen.queryByText(/while the index catches up/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/No matches/)).not.toBeInTheDocument();
+  vi.mocked(localSearch.query).mockResolvedValue(page('Healthy result', 'Repaired document'));
+  await user.click(screen.getByRole('button', { name: 'Refresh results' }));
+  expect(await screen.findByRole('heading', { name: 'Repaired document' })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Review document copies in Settings' })).not.toBeInTheDocument();
+});
+
+it("explains unavailable downloaded content without claiming a complete empty search", async () => {
+  vi.mocked(localSearch.query).mockResolvedValue({ ...page(), partial: true,
+    indexing_pending: false, unavailable_sources: ['offline_downloads'] });
+  mount();
+  fireEvent.change(screen.getByLabelText('Search keywords'), { target: { value: 'download' } });
+  expect(await screen.findByRole('link', { name: 'Check offline reading' })).toHaveAttribute('href', '/offline');
+  expect(screen.queryByText(/No matches/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/while the index catches up/)).not.toBeInTheDocument();
+});
+
 it("rechecks an opened result and shows revoked or deleted content as unavailable", async () => {
   vi.spyOn(localSearch, "open").mockRejectedValue(new Error("This result was removed or access changed."));
   mount("/search?open=card%3Aone");

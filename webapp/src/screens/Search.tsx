@@ -88,7 +88,7 @@ export default function Search() {
     return () => { abort.abort(); window.clearTimeout(timer); };
   }, [form.query, request, identifier, revision]);
   useEffect(() => {
-    if (!page?.partial || busy || identifier) return;
+    if (!(page?.indexing_pending ?? page?.partial) || busy || identifier) return;
     const timer = window.setTimeout(() => setRevision((value) => value + 1), 3000);
     return () => window.clearTimeout(timer);
   }, [page, busy, identifier]);
@@ -151,7 +151,9 @@ export default function Search() {
       <p role="status">{status ? `Index: ${status.state} · ${status.indexed_count} records` : "Index status unavailable"}{busy ? " · Searching…" : ""}</p>
       {error ? <p role="alert">{error}</p> : null}
       {!form.query.trim() ? <p>Enter keywords to search local data. Undownloaded bodies and remote devices are not searched.</p> : page ? <>
-        {page.partial ? <p>Showing partial results while the index catches up. Some local records are not indexed yet.</p> : null}
+        {page.indexing_pending ?? page.partial ? <p>Showing partial results while the index catches up. Some local records are not indexed yet.</p> : null}
+        {page.unavailable_sources?.includes('saved_documents') ? <p role="status">Some saved document data is unavailable. Results may be incomplete. <Link to="/settings" onClick={remember}>Review document copies in Settings</Link>, then refresh results. Other local content remains searchable.</p> : null}
+        {page.unavailable_sources?.includes('offline_downloads') ? <p role="status">Some downloaded content is unavailable. <Link to="/offline" onClick={remember}>Check offline reading</Link>, then refresh results. Other local content remains searchable.</p> : null}
         {!page.results.length && !page.partial ? <p>No matches. Try another keyword or clear the filters.</p> : <p>{page.total} matches</p>}
         <ol>{page.results.map((result) => <li key={result.id} style={{ marginBlock: "1.5rem" }}>
           <h2><Highlight value={result.title_match} /></h2><p>{result.kinds.map((kind) => labels[kind]).join(" · ")} · {result.source} · {result.timestamp > 0 ? new Date(result.timestamp * 1000).toLocaleString() : "Date unavailable"}</p>

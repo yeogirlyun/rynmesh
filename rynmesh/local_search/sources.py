@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from datetime import datetime
 from typing import Callable
 from urllib.parse import quote, urlencode
 
 from ..offline_reading.fetch import OfflineError
-from ..services.library_imports import LibraryImportError
 from ..store import StoreError
+from .index import SearchSnapshot
 
 
 def _stamp(value) -> float:
@@ -25,6 +26,31 @@ def _clip(value, size=2048) -> str:
     return str(value or "").encode()[:size].decode(errors="ignore")
 
 
+def _saved_documents(imports, unavailable):
+    try:
+        documents = imports.list()
+    except (OSError, ValueError, TypeError, KeyError):
+        unavailable.add('saved_documents')
+        return
+    for row in documents:
+        try:
+            if (not isinstance(row, dict) or row.get('state') != 'ready'
+                    or any(not isinstance(row.get(key), str) for key in ('import_id', 'sha256', 'filename', 'mime'))
+                    or 'created_at_unix' not in row or not math.isfinite(_stamp(row['created_at_unix']))
+                    or not isinstance(row.get('source', {}), dict)
+                    or not isinstance(row.get('source', {}).get('source_url', ''), str)):
+                raise ValueError
+            try:
+                body = imports.body(row['import_id'])
+            except (OSError, ValueError, TypeError, KeyError):
+                # Valid metadata can still be found, but never the stale body.
+                unavailable.add('saved_documents')
+                body = None
+            yield row, body
+        except (OSError, ValueError, TypeError, KeyError):
+            unavailable.add('saved_documents')
+
+
 class LocalSearchSources:
     def __init__(self, *, consumption: Callable, imports: Callable, reader: Callable,
                  friends: Callable, conversations: Callable, store: Callable | None = None, offline: Callable | None = None):
@@ -37,6 +63,7 @@ class LocalSearchSources:
         imports = self.imports()
         friends = self.friends()
         rows = {}
+        unavailable = set()
         # A matching URL alone is insufficient to merge different revisions.
         verified = {}
         aliases = {}
@@ -77,14 +104,13 @@ class LocalSearchSources:
             if text:
                 verified[(item.get("link", ""), hashlib.sha256(text.encode()).hexdigest())] = identifier
 
-        for imported in imports.list():
+        for imported, body in _saved_documents(imports, unavailable):
             item_id = "import:" + imported["import_id"]
             origin = imported.get("source") or {}
-            try:
-                body = imports.body(imported["import_id"])
+            if body is not None:
                 text, body_state = body["text"], "available"
                 truncated = bool(body.get("truncated"))
-            except LibraryImportError:
+            else:
                 text, body_state = "", "unavailable"
                 truncated = False
             record = history.get(item_id)
@@ -112,6 +138,7 @@ class LocalSearchSources:
             try:
                 downloads = offline.status()['records']
             except (OfflineError, OSError):
+                unavailable.add('offline_downloads')
                 downloads = []  # Fail closed for this source while other local sources remain usable.
             for saved in downloads:
                 if not saved.get('current'):
@@ -119,6 +146,7 @@ class LocalSearchSources:
                 try:
                     body = offline.read(saved['item_id'])
                 except (OfflineError, OSError):
+                    unavailable.add('offline_downloads')
                     continue  # Corrupt/cleared bodies cannot survive via an old index.
                 item_id, text = saved['item_id'], body['text']
                 prior_id = aliases.get(item_id, 'content:' + item_id)
@@ -174,4 +202,4 @@ class LocalSearchSources:
                     "kinds": ["chat"], "friend_ids": [conversation["providerPeerId"]],
                     "targets": [{"label": "Open Ask Ryn message", "href": "/ask?" + urlencode({"conversation": conversation["id"],
                         "network": conversation["networkId"], "message": message["id"]})}]}
-        return list(rows.values())
+        return SearchSnapshot(rows.values(), unavailable_sources=unavailable)

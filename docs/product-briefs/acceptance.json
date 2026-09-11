@@ -556,13 +556,16 @@
       "scenario": "修改、增加和删除记录",
       "expected": "索引正常时建议 5 秒内更新；删除后旧索引也不能继续返回正文片段",
       "status": "in_progress",
-      "actual": "Original TCP rename took 6.930s. After reducing worker completion delay to 1s, two TCP samples created in 4.095/2.326s and renamed in 4.108/4.827s. Old title/deleted snippets hidden on first query; deleted direct-open denied with 409. Broader mutation paths and general gates remain pending.",
+      "actual": "Original TCP rename took 6.930s. After reducing worker completion delay to 1s, two TCP samples created in 4.095/2.326s and renamed in 4.108/4.827s. Old title/deleted snippets hidden on first query; deleted direct-open denied with 409. Broader mutation paths and general gates remain pending. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
         "docs/acceptance/search-development/tcp-change-before-scheduling.json",
         "docs/acceptance/search-development/tcp-change-recovery.json",
-        "docs/acceptance/search-development/tcp-current.json"
+        "docs/acceptance/search-development/tcp-current.json",
+        "docs/acceptance/search-development/source-isolation.md",
+        "docs/acceptance/search-development/source-isolation-http.json",
+        "docs/acceptance/search-development/source-isolation-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -585,10 +588,13 @@
       "scenario": "未获取正文、断网、来源删除分别测试",
       "expected": "不假装搜过未取得正文；本地数据可搜；不能打开时有真实原因",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/windows-browser-node.json"
+        "docs/acceptance/search-development/windows-browser-node.json",
+        "docs/acceptance/search-development/source-isolation.md",
+        "docs/acceptance/search-development/source-isolation-http.json",
+        "docs/acceptance/search-development/source-isolation-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -1188,8 +1194,12 @@
       "scenario": "故障隔离",
       "expected": "搜索、AI、好友或同步失败不使整个应用和已可用阅读一起失效",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": " Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete.",
+      "evidence": [
+        "docs/acceptance/search-development/source-isolation.md",
+        "docs/acceptance/search-development/source-isolation-http.json",
+        "docs/acceptance/search-development/source-isolation-browser.json"
+      ],
       "implementation_commit": ""
     },
     {
