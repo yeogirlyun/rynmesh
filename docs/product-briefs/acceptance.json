@@ -733,10 +733,13 @@
       "scenario": "取消关注后继续发布",
       "expected": "不自动收取新内容；已有私聊、独立收藏和下载副本不误删",
       "status": "in_progress",
-      "actual": "Actual Bob unsubscribe removed timeline and retained saved-copy hash. Unit test rejects delayed refresh after unsubscribe/re-follow. Continued publication after unsubscribe and full user paths pending.",
+      "actual": "Actual unsubscribe and reviewed feed cleanup removed received entries while preserving saved-copy hashes and friendships. Delayed refresh and old subscribe requests are rejected in real-store tests. Actual explicit refollow received a new publication; replaying completed cleanup retained it. Full independent-network user paths remain pending.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
-        "docs/acceptance/friend-feed-development/windows-three-node.json"
+        "docs/acceptance/friend-feed-development/windows-three-node.json",
+        "docs/acceptance/friend-feed-development/cleanup.md",
+        "docs/acceptance/friend-feed-development/cleanup-http.json",
+        "docs/acceptance/friend-feed-development/cleanup-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -746,10 +749,13 @@
       "scenario": "收窄受众、删除好友、停止分享",
       "expected": "Provider 立即拒绝新获取；接收端联网刷新后更新可见列表",
       "status": "in_progress",
-      "actual": "Actual audience change removed Bob and added Carol; old Bob fetch denied. Stop-sharing removed Carol and denied further fetch. Real-store test rechecks stop/relationship revoke after body resolution. Broader network cases pending.",
+      "actual": "Actual audience change removed Bob and added Carol; stop-sharing denied old fetches. Reviewed publisher cleanup also denied old fetch while a backup remained pending, survived restart and permitted a new publication afterward. Tests recheck authorization after body resolution and reject recreation by old draft requests. Broader network and packaged paths remain pending.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
-        "docs/acceptance/friend-feed-development/windows-three-node.json"
+        "docs/acceptance/friend-feed-development/windows-three-node.json",
+        "docs/acceptance/friend-feed-development/cleanup.md",
+        "docs/acceptance/friend-feed-development/cleanup-http.json",
+        "docs/acceptance/friend-feed-development/cleanup-browser.json"
       ],
       "implementation_commit": ""
     },
@@ -1156,7 +1162,7 @@
       "scenario": "数据维护",
       "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
       "status": "pending",
-      "actual": "Internal reviewed conversation-source erasure is implemented in 5198d80. Related tests: 61 passed; stale delivery, terminal-task retry, new work after response loss, recovery copies and atomic failure are covered. Backups, derived indexes, order results, browser copies, complete export and the coordinated Settings flow remain incomplete; this is not full data-maintenance acceptance. Coordinated Owner-only conversation cleanup now persists source/replica/backup/search/order progress, resumes partial failures, reviews changed backups and retains source/consumer replay barriers. Real complete-node routes and the consumer result adapter are exercised; browser copies, Settings UI, full export, other scopes and remote acceptance remain incomplete. Settings now exposes reviewed conversation cleanup and durable resume; older browser copies have separate atomic erasure with deletion markers. Synthetic loopback browser checks cover cancellation, keyboard confirmation, node restart, browser reload and zero reimport. Final frontend 191 tests, TypeScript and build pass; full export, other scopes, cleanup-history capacity handling and remote/packaged acceptance remain incomplete. Cleanup history v2 now rotates only terminal summaries while retaining monotonic review generations and replay barriers (69d797b). Owner-selected ZIP exports cover nine product scopes, verified original documents and offline images, with an explicit manifest and exclusions. Loopback HTTP verifies every archive entry; browser checks cover keyboard download requests, layout correction, connection failure and same-node restart retry. Final backend: 1333 passed / 29 skipped; frontend: 198 passed. Other erasure scopes, unified legacy export, full account-data boundaries and packaged/remote acceptance remain incomplete. Offline copy cleanup now commits a durable receipt with the worker write fence, retries the original reviewed files after restart, protects unfinished files from generic GC and requires new approval for changed versions. Actual Windows delete-sharing denial plus browser confirmation, node restart, a new download of the same article and original-operation retry preserved the new ciphertext and readable body/image. Completed HTTP replay returned the original result. Final backend: 1341 passed / 29 skipped; frontend: 201 passed. This is offline-copy cleanup recovery only; reading-source/replica/backup coordination and complete packaged data-maintenance acceptance remain incomplete. Reviewed reading cleanup now coordinates source, replica, known backups and search. Windows browser evidence covers held-file failure, node restart, changed-backup review, resume and retention of a new same-ID bookmark. Full data maintenance, v4 scale performance and packaged/remote acceptance remain incomplete.",
+      "actual": "Reviewed local conversation, reading, offline-download and friend-feed cleanup now have durable recovery; conversation browser copies have a separate flow. Nine selected product scopes export to ZIP with verified document and offline bytes, manifest and explicit exclusions. Real loopback browser checks cover confirmation, partial file deletion, node restart and original-operation retries preserving new work. Friend-feed cleanup additionally prevents old publication/refresh requests restoring cleared data; a polling-induced review failure was reproduced and fixed. Final regression: 1377 backend passed / 29 skipped; 211 frontend passed. Complete account-data maintenance, remaining erasure scopes, legacy export unification, v4 reading scale performance and packaged/remote acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
         "docs/acceptance/device-sync-development/cleanup-settings-browser.json",
@@ -1166,7 +1172,10 @@
         "docs/acceptance/offline-reading-development/cleanup-retry-http.json",
         "docs/acceptance/device-sync-development/reading-cleanup.md",
         "docs/acceptance/device-sync-development/reading-cleanup-browser.json",
-        "docs/acceptance/device-sync-development/reading-cleanup-http.json"
+        "docs/acceptance/device-sync-development/reading-cleanup-http.json",
+        "docs/acceptance/friend-feed-development/cleanup.md",
+        "docs/acceptance/friend-feed-development/cleanup-http.json",
+        "docs/acceptance/friend-feed-development/cleanup-browser.json"
       ],
       "implementation_commit": ""
     },

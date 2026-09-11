@@ -1,5 +1,14 @@
 # Route packages
 
+`friend_feed/routes.py` also owns the Owner-only
+`/api/local/privacy/friend-feed` preview, job/resume and backup review/approval
+routes. Requests resolve the current feed store and Owner guard, cap bodies at
+8192 bytes and run storage work off the event loop. Reinstallation adds no
+duplicate routes. Cleanup owns no timer: the existing `friend-feed.refresh`
+worker uses the same subscription revision barriers. Source cleanup and its
+encrypted receipt commit together; local completion does not confirm remote
+or browser erasure.
+
 `services/reading_cleanup_routes.py` owns `app.state.reading_cleanup` and the
 Owner-only `/api/local/privacy/reading` routes. Current source/replica/index and
 Owner guard are resolved per request; reinstallation adds no duplicate routes.

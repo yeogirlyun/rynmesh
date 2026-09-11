@@ -18,12 +18,15 @@ def main():
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument('--job-id')
     target.add_argument('--reading-orphan', help='32-hex ID of an existing consumption.json atomic orphan')
+    target.add_argument('--feed-orphan', help='32-hex ID of an existing friend-feed state.json atomic orphan')
     args = parser.parse_args()
     home = args.home.resolve()
-    identifier = args.job_id or args.reading_orphan
+    identifier = args.job_id or args.reading_orphan or args.feed_orphan
     path = (home / 'offline-reading' / 'downloads' / (identifier + '.json') if args.job_id
+            else home / 'friend-feed' / ('.state.json.' + identifier + '.tmp') if args.feed_orphan
             else home / ('.consumption.json.' + identifier + '.tmp'))
-    if (os.name != 'nt' or not home.name.startswith('rynmesh-offline-acceptance-')
+    prefix = 'rynmesh-feed-acceptance-' if args.feed_orphan else 'rynmesh-offline-acceptance-'
+    if (os.name != 'nt' or not home.name.startswith(prefix)
             or not re.fullmatch('[a-f0-9]{32}', identifier)
             or path.resolve() != path or not path.is_file()):
         raise SystemExit('Use one existing synthetic acceptance download or reading orphan on Windows.')

@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy
 from ..crypto import canonical_json
+from .cleanup import FeedCleanup
 from .service import PATH, FriendFeed
 from .store import FeedError, FeedStore
 
@@ -52,10 +53,11 @@ def install_friend_feed(app, *, home, messaging_key, friends, content, local_con
     if any(getattr(route, 'name', '') == 'friend_feed_publications' for route in app.routes):
         return current()
 
-    async def call(request, method, *args, **kwargs):
+    async def call(request, method, *args, _cleanup=False, **kwargs):
         app.state.friend_feed.local_control(request)
         try:
-            return await asyncio.to_thread(getattr(current(), method), *args, **kwargs)
+            target = FeedCleanup(current().store) if _cleanup else current()
+            return await asyncio.to_thread(getattr(target, method), *args, **kwargs)
         except FeedError as exc:
             raise HTTPException(409, detail=str(exc)) from None
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
@@ -64,6 +66,37 @@ def install_friend_feed(app, *, home, messaging_key, friends, content, local_con
     @app.get('/api/local/friend-feed/publications', name='friend_feed_publications')
     async def publications(request: Request):
         return {'publications': await call(request, 'publications')}
+
+    async def cleanup_body(request):
+        app.state.friend_feed.local_control(request)
+        value = await body(request)
+        if set(value) != {'review_token'}:
+            raise HTTPException(400, detail='feed_request_invalid')
+        return value['review_token']
+
+    @app.get('/api/local/privacy/friend-feed/preview')
+    async def cleanup_preview(request: Request):
+        return await call(request, 'preview', _cleanup=True)
+
+    @app.get('/api/local/privacy/friend-feed/job')
+    async def cleanup_status(request: Request):
+        return {'job': await call(request, 'status', _cleanup=True)}
+
+    @app.post('/api/local/privacy/friend-feed/job')
+    async def cleanup_begin(request: Request):
+        return await call(request, 'begin', review_token=await cleanup_body(request), _cleanup=True)
+
+    @app.post('/api/local/privacy/friend-feed/job/{identifier}/resume')
+    async def cleanup_resume(identifier: str, request: Request):
+        return await call(request, 'resume', identifier, _cleanup=True)
+
+    @app.get('/api/local/privacy/friend-feed/job/{identifier}/backups')
+    async def cleanup_backups(identifier: str, request: Request):
+        return await call(request, 'review_backups', identifier, _cleanup=True)
+
+    @app.post('/api/local/privacy/friend-feed/job/{identifier}/backups')
+    async def cleanup_approve(identifier: str, request: Request):
+        return await call(request, 'approve_backups', identifier, review_token=await cleanup_body(request), _cleanup=True)
 
     @app.post('/api/local/friend-feed/publications/{identifier}/{action}')
     async def publication_change(identifier: str, action: str, request: Request):

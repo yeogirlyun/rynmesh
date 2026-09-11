@@ -59,6 +59,8 @@ class FriendFeed:
         fingerprint = digest(request)
 
         def change(data):
+            if identifier in data.get('erased_publications', {}):
+                raise FeedError('feed_publication_erased')
             previous = data['publications'].get(identifier)
             if previous and previous.get('operation_id') == operation_id:
                 if previous.get('operation_digest') != fingerprint:

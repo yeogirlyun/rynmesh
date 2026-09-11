@@ -16,6 +16,7 @@ const errors: Record<string, string> = {
   feed_operation_conflict: "This attempt contains different changes. Refresh and review before retrying.",
   feed_friend_inactive: "This friendship is no longer active. Refresh your friends list.",
   feed_publication_unavailable: "This publication is no longer available to you. Refresh the updates.",
+  feed_publication_erased: "This publication was cleared. Choose Start another draft to publish a new item.",
   feed_publication_changed: "This publication changed. Refresh and review the current version.",
   feed_results_changed: "Updates changed during pagination. Refresh this friend to continue.",
   feed_friend_unreachable: "Your friend could not be reached. Previously checked entries remain available; retry later.",
