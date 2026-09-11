@@ -11,6 +11,7 @@ import LocalModelPicker from "./components/LocalModelPicker";
 import PrivateCopiesPanel from "./components/PrivateCopiesPanel";
 import ConversationCleanupPanel from "./components/ConversationCleanupPanel";
 import BrowserConversationCleanup from "./components/BrowserConversationCleanup";
+import ProductExportPanel from "./components/ProductExportPanel";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
@@ -81,7 +82,7 @@ export default function Settings() {
           <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
         ) : null}
         {active === "Privacy & data" ? (
-          <><PrivacySection client={client} confirm={confirm} notify={notify} /><ConversationCleanupPanel /><BrowserConversationCleanup /></>
+          <><PrivacySection client={client} confirm={confirm} notify={notify} />{client.mode === "live" ? <ProductExportPanel /> : null}<ConversationCleanupPanel /><BrowserConversationCleanup /></>
         ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
@@ -163,7 +164,7 @@ function PrivacySection({
       ) : <p className="muted">Inspecting local data…</p>}
       <div className="button-row">
         <Button icon={Download} variant="primary" onClick={() => void download()}>
-          Export my data
+          Export reading & preferences (JSON)
         </Button>
         <Button icon={History} onClick={() => erase(["history"], "Clear reading history?", "This erases opened items, bookmarks, playback position, and reading progress from this node.")}>
           Clear history
