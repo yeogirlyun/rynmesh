@@ -511,9 +511,11 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "中文词组、英文及中英混合查询",
       "expected": "按约定匹配，不因中文无空格而完全失效，匹配片段正确",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -541,9 +543,11 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "修改、增加和删除记录",
       "expected": "索引正常时建议 5 秒内更新；删除后旧索引也不能继续返回正文片段",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -551,9 +555,11 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "失去好友访问授权，保留旧索引",
       "expected": "受保护结果与片段立即被权限检查过滤，直接打开也拒绝",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -581,9 +587,11 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "索引损坏后重建，期间重启",
       "expected": "原数据无损，状态可见，重建完成后查询恢复",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -591,9 +599,12 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "参考桌面、1 万条已索引合成记录，20 次查询",
       "expected": "记录 p95，建议首屏不超过 2 秒；分页无重复遗漏",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md",
+        "docs/acceptance/search-development/core-performance.json"
+      ],
       "implementation_commit": ""
     },
     {
@@ -601,9 +612,11 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "查询含私有关键词，检查网络和日志",
       "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Core encrypted index and synthetic-source tests cover multilingual matching, filtering stale records, rebuild/restart and bounded local performance. Four production data adapters, HTTP/UI and full product acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/search-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
