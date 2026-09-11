@@ -2142,4 +2142,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if prior and prior.get("ephemeral"):
                 background_orders.pop(task_id, None)
 
-    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result, discover)
+    def erase_results(task_ids):
+        from .privacy import erase_consumer_results
+
+        return erase_consumer_results(consumer_orders, background_orders, background_orders_lock, task_ids)
+
+    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result, discover, erase_results)

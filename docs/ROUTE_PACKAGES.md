@@ -63,6 +63,19 @@ Reinstallation replaces state, guard and worker without duplicating handlers.
 All network and storage work runs off the HTTP event loop. Missing endpoint
 configuration prevents new invitations but leaves local device removal usable.
 
+`ask_ryn/cleanup_routes.py` installs `app.state.conversation_cleanup` and the
+Owner-only `/api/local/privacy/conversations` endpoints. Dependencies are resolved
+from current app state per call. Reinstallation replaces the guard/factory without
+duplicating routes. Cleanup runs off the HTTP event loop and stores encrypted,
+body-free progress in `home / "privacy" / "conversation-cleanup.json"`; it owns no
+private timer or thread. A client resumes an existing job after interruption.
+The review covers the source, replica, their known atomic orphan files, the source
+migration backup, and search-index atomic orphan files. Lock order is index writer
+and index file, then pairing, source, replica, matching an index rebuild's source
+reads. Rebuilding the index happens after these locks are released. Active orders
+block result cleanup; completed order identity and settlement metadata survive.
+Node-copy completion never implies browser-copy or remote-device completion.
+
 ## Why not add it to `peer_http.py`
 
 `rynmesh/peer_http.py` is already well past 2000 lines against this repo's

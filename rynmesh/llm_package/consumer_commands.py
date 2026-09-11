@@ -10,3 +10,4 @@ class ConsumerCommands:
     cancel: Callable[[str], dict]
     acknowledge: Callable[[str], None]
     discover: Callable[[str], list[dict]]
+    erase_results: Callable[[list[str]], dict] | None = None

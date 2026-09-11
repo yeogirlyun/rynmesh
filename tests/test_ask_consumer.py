@@ -61,3 +61,9 @@ def test_existing_consumer_result_is_archived_before_transient_ack(tmp_path, mon
     assert balance["held"] == 0 and balance["available"] == pytest.approx(99.999)
     if retention == 0:
         assert "output" not in commands.status(request["task_id"])
+    commands.erase_results([request['task_id']])
+    assert 'output' not in commands.status(request['task_id'])
+    assert commands.status(request['task_id'])['state'] == 'succeeded'
+    assert runs.begin(request)['state'] == 'succeeded'
+    assert len(requests) == 1
+    assert client.get('/api/local/task-balance').json() == balance
