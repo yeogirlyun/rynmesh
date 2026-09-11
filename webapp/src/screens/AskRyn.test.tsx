@@ -1,0 +1,85 @@
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { AppOutletContext } from "../appContext";
+import { askHistory } from "../domain/askHistory";
+import { friendsApi } from "../domain/friendsClient";
+import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
+import { createConversation, type LLMConversation } from "../domain/llmConversationStore";
+import type { LLMServiceRecord } from "../domain/nodeClient";
+import AskRyn, { AskRynQuickPanel, conversationUrl } from "./AskRyn";
+
+beforeEach(() => {
+  vi.spyOn(askHistory, "draft").mockResolvedValue({ text: "", revision: 0 });
+  vi.spyOn(askHistory, "saveDraft").mockImplementation(async (text, revision) => ({ text, revision: revision + 1 }));
+  vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
+});
+afterEach(() => vi.restoreAllMocks());
+
+function mount(initial = "/ask", services: LLMServiceRecord[] = [], rows: LLMConversation[] = []) {
+  const client = makeFixtureNodeClient(); client.mode = "live";
+  vi.spyOn(client, "listLLMServices").mockResolvedValue(services);
+  const submit = vi.spyOn(client, "submitLLMOrder");
+  const saved = new Map(rows.map((row) => [row.id, row]));
+  vi.spyOn(askHistory, "list").mockImplementation(async (key) => [...saved.values()].filter((row) => !key || row.serviceKey === key));
+  const save = vi.spyOn(askHistory, "save").mockImplementation(async (row) => { const result = { ...row, revision: (row.revision ?? 0) + 1 }; saved.set(row.id, result); return result; });
+  const confirm = vi.fn();
+  const context = { client, confirm, node: { peer_id: "owner" }, notify: vi.fn() } as unknown as AppOutletContext;
+  const rendered = render(<MemoryRouter initialEntries={[initial]}><Routes><Route element={<Outlet context={context} />}>
+    <Route path="/ask" element={<AskRyn />} /><Route path="/services/manage" element={<h1>Local model setup</h1>} />
+  </Route></Routes></MemoryRouter>);
+  return { ...rendered, submit, save, confirm, context, user: userEvent.setup() };
+}
+
+it("shows no invented history and keeps an unsent draft without a model", async () => {
+  const { user, submit } = mount();
+  expect(await screen.findByText("No conversations yet.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("Your draft")).toBeEnabled());
+  await user.type(screen.getByLabelText("Your draft"), "还没有模型，也要保留的问题");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  expect(await screen.findByText(/Draft saved on your node/)).toBeInTheDocument();
+  expect(askHistory.saveDraft).toHaveBeenCalledWith("还没有模型，也要保留的问题", 0);
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.queryByText(/urban gardens/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("link", { name: "Set up a local model" }));
+  expect(screen.getByRole("heading", { name: "Local model setup" })).toBeInTheDocument();
+});
+
+it("opens saved history and the same sidebar link when its model is unavailable", async () => {
+  const row = { ...createConversation({ serviceKey: "old::model", serviceName: "Old model", providerPeerId: "old", networkId: "rynmesh-main" }), title: "My saved question",
+    messages: [{ id: "m", role: "assistant" as const, content: "An actual saved response", createdAt: new Date().toISOString(), status: "complete" as const }], revision: 1 };
+  const { context, submit } = mount(conversationUrl(row), [], [row]);
+  expect(await screen.findByText("An actual saved response")).toBeInTheDocument();
+  expect(screen.getByText(/original service is unavailable/)).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Continue with original provider" })).not.toBeInTheDocument();
+  const quick = render(<MemoryRouter><AskRynQuickPanel context={context} /></MemoryRouter>);
+  expect(await within(quick.container).findByRole("link", { name: row.title })).toHaveAttribute("href", conversationUrl(row));
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("reviews the recipient and opens a separate provider conversation without forwarding history", async () => {
+  const base = (await makeFixtureNodeClient().listLLMServices())[0];
+  const other = { ...base, peer_id: "provider-b", node_name: "Provider B", service: { ...base.service, model_alias: "Model B" } };
+  const old = { ...createConversation({ serviceKey: "provider-a::model-a", serviceName: "Model A", providerPeerId: "provider-a", networkId: "rynmesh-main" }), title: "Private history with A", revision: 1 };
+  const { user, confirm, save, submit } = mount(conversationUrl(old), [other], [old]);
+  await user.click(await screen.findByRole("button", { name: "Choose Model B" }));
+  expect(save).not.toHaveBeenCalled();
+  const request = confirm.mock.calls[0][0];
+  expect(request.body).toContain("provider-b");
+  await act(() => request.onConfirm());
+  await screen.findByLabelText("Message Private AI");
+  const opened = save.mock.calls[0][0];
+  expect(opened.providerPeerId).toBe("provider-b");
+  expect(opened.messages).toEqual([]);
+  expect(opened.id).not.toBe(old.id);
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("does not replace an explicitly requested missing provider with a working one", async () => {
+  const base = (await makeFixtureNodeClient().listLLMServices())[0];
+  const { submit } = mount("/ask?peer=missing&service=missing-model", [base]);
+  expect(await screen.findByRole("heading", { name: "The selected provider is unavailable" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Message Private AI")).not.toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+});

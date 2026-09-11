@@ -28,6 +28,8 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const askHistory = {
+  draft: () => request<{ text: string; revision: number }>("/draft"),
+  saveDraft: (text: string, revision: number) => request<{ text: string; revision: number }>("/draft", "PUT", { text, expected_revision: revision }),
   list: async (serviceKey?: string) => (await request<{ conversations: LLMConversation[] }>(`/conversations${serviceKey ? `?service_key=${encodeURIComponent(serviceKey)}` : ""}`)).conversations,
   get: (id: string) => request<LLMConversation>(`/conversations/${encodeURIComponent(id)}`),
   save: (conversation: LLMConversation) => request<LLMConversation>(`/conversations/${encodeURIComponent(conversation.id)}`, "PUT", { conversation, expected_revision: conversation.revision ?? 0 }),

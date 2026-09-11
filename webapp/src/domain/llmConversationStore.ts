@@ -32,6 +32,7 @@ export interface LLMConversation {
   updatedAt: string;
   messages: LLMChatMessage[];
   revision?: number;
+  draft?: string;
 }
 
 interface EncryptedConversationRecord {

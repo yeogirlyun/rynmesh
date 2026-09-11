@@ -27,13 +27,12 @@ import Home from "./screens/Home";
 import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
-import SearchAsk from "./screens/SearchAsk";
+import AskRyn, { AskRynQuickPanel } from "./screens/AskRyn";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
-import PrivateAIChat from "./screens/PrivateAIChat";
 import VideoRendering from "./screens/VideoRendering";
 import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
@@ -44,7 +43,7 @@ const navItems = [
   { path: "/", label: "Home", icon: NavIcons.home },
   { path: "/digest", label: "For You", icon: NavIcons.digest },
   { path: "/explore", label: "Explore", icon: NavIcons.explore },
-  { path: "/search-ask", label: "Search & Ask", icon: NavIcons.searchAsk },
+  { path: "/ask", label: "Ask Ryn", icon: NavIcons.searchAsk },
   { path: "/publish", label: "Publish", icon: NavIcons.publish },
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
   { path: "/friends", label: "Friends", icon: Users },
@@ -226,7 +225,7 @@ export default function App() {
           <Outlet context={context} />
         </main>
         <aside className="ai-panel" aria-hidden={!aiOpen}>
-          {aiOpen ? <AISidePanel /> : null}
+          {aiOpen ? <AskRynQuickPanel context={context} /> : null}
         </aside>
       </div>
       <ConfirmDialog request={confirmRequest} onCancel={() => setConfirmRequest(null)} />
@@ -314,7 +313,7 @@ function TopBar({
           </span>
         ) : null}
         <IconButton icon={CircleHelp} label="Open getting started guide" onClick={onOpenTour} />
-        <IconButton icon={aiOpen ? PanelRightClose : Sparkles} label="Toggle AI curator panel" active={aiOpen} onClick={onToggleAi} />
+        <IconButton icon={aiOpen ? PanelRightClose : Sparkles} label="Toggle Ask Ryn panel" active={aiOpen} onClick={onToggleAi} />
       </div>
     </header>
   );
@@ -362,31 +361,6 @@ function Sidebar({ node, peers, unreadRecommendations }: { node: NodeStatus; pee
   );
 }
 
-function AISidePanel() {
-  return (
-    <div className="ai-side-inner">
-      <div>
-        <span className="eyebrow">AI curator</span>
-        <h2>Node-mediated review</h2>
-        <p>
-          The curator only receives evidence that the local Ryn node provides. It can recommend,
-          compare, and suggest searches, but cannot publish or trust roots.
-        </p>
-      </div>
-      <div className="ai-policy-list">
-        <span>Network access</span>
-        <Chip tone="ok">via node</Chip>
-        <span>Cloud model</span>
-        <Chip tone="muted">disabled</Chip>
-        <span>Fetch on suggest</span>
-        <Chip tone="warn">confirm full</Chip>
-        <span>Safety policy</span>
-        <Chip tone="info">standard</Chip>
-      </div>
-    </div>
-  );
-}
-
 function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
   return (
     <div className="offline-banner">
@@ -426,13 +400,14 @@ export function AppRoutes() {
           <Route path="explore" element={<Explore />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route path="recommendations" element={<Navigate replace to="/digest" />} />
-          <Route path="search-ask" element={<SearchAsk />} />
+          <Route path="ask" element={<AskRyn />} />
+          <Route path="search-ask" element={<LegacyAskRedirect />} />
           <Route path="publish" element={<Publish />} />
           <Route path="peers" element={<Peers />} />
           <Route path="friends" element={<Friends />} />
           <Route path="services" element={<ServicesCatalog />} />
           <Route path="services/manage" element={<Services />} />
-          <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="services/private-ai/chat" element={<LegacyAskRedirect />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route path="services/secure-web-access" element={<SecureWebAccess />} />
           <Route path="chat" element={<Chat />} />
@@ -441,4 +416,9 @@ export function AppRoutes() {
       </Routes>
     </UnlockGate>
   );
+}
+
+function LegacyAskRedirect() {
+  const location = useLocation();
+  return <Navigate replace to={`/ask${location.search}`} />;
 }
