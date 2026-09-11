@@ -145,6 +145,7 @@ class AskRunService:
                 }.get(state, "The original request failed. No new request was submitted.")
                 content = {
                     "runtime_busy": "The provider is busy. Wait or choose another service.",
+                    "ai_permission_denied": "This friend has not granted access to this AI service, or has revoked it. Ask them to review your permission; no other provider was used.",
                     "capacity_exhausted": "The provider is busy. Wait or choose another service.",
                     "p2p_capacity_exhausted": "No connection session is available. Wait for the active session to close.",
                     "insufficient_balance": "There are not enough credits for this request.",

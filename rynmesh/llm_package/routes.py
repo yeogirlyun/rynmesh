@@ -20,6 +20,7 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
+from rynmesh.ai_access.store import AIAccessError, AIAccessStore
 from rynmesh.atomic_io import atomic_write_json
 from rynmesh.background_workers import (
     BackgroundWorkerRegistry,
@@ -177,16 +178,23 @@ def _open_provider_response(
 class ProviderService:
     def __init__(self, *, manifest: LLMPackageManifest, adapter: LLMAdapter,
                  store: RynmeshStore, task_store: TaskOrderStore,
-                 balance: TaskBalanceLedger, messaging_key: Any) -> None:
+                 balance: TaskBalanceLedger, messaging_key: Any,
+                 access_check: Callable | None = None) -> None:
         self.manifest = manifest
         self.adapter = adapter
         self.store = store
         self.task_store = task_store
         self.balance = balance
         self.messaging_key = messaging_key
+        from rynmesh.friends.store import FriendStore
+
+        relationships = FriendStore(store.home)
+        permissions = AIAccessStore(store.home, relationship=relationships.relationship)
+        self.access_check = access_check or permissions.authorize
         self._slots = threading.BoundedSemaphore(manifest.max_concurrent)
         self._lock = threading.Lock()
         self._running = 0
+        self._active_permissions: dict[str, tuple[str, dict | None]] = {}
         self._pending_cancellations: dict[str, tuple[str, str]] = {}
         self._admission_lock = threading.Lock()
         self._request_times: dict[str, deque[float]] = {}
@@ -270,6 +278,7 @@ class ProviderService:
             "service": self.manifest.public_dict(),
             "online": bool(health.get("ok")) and self.accepting_orders,
             "accepting_orders": self.accepting_orders,
+            "access_policy": "explicit_friends",
             "health": {k: v for k, v in health.items() if k not in {"base_url", "path"}},
             "capacity": {"max_concurrent": self.manifest.max_concurrent,
                          "running": self._running, "available": max(0, self.manifest.max_concurrent - self._running),
@@ -329,6 +338,13 @@ class ProviderService:
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
         own_request = outer["from_peer_id"] == self.store.peer_id
+        if not own_request:
+            try:
+                self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
+            except (AIAccessError, OSError, ValueError):
+                return self._sealed_failure(
+                    task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
+                )
         if max_amount < 0 or (max_amount == 0 and not own_request):
             # Reject before inference: without a positive hold every completed
             # generation would fail the price check after burning compute.
@@ -397,9 +413,14 @@ class ProviderService:
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "capacity_exhausted")
         with self._lock:
             self._running += 1
+            if not own_request:
+                self._active_permissions[task_id] = (outer["from_peer_id"], body.get("ai_permission"))
         try:
             self.task_store.transition(task_id=task_id, state="accepted", metadata=metadata)
             self.task_store.transition(task_id=task_id, state="running", metadata=metadata)
+            self.recheck_permissions()
+            if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
+                return self._failure(task_id, reply_pub, outer["from_peer_id"], "cancelled", "ai_permission_revoked")
             started = time.monotonic()
             result = self.adapter.infer(
                 prompt=prompt, max_tokens=max_tokens, task_id=task_id,
@@ -453,7 +474,20 @@ class ProviderService:
             prompt = ""  # best-effort reference cleanup; see privacy documentation
             with self._lock:
                 self._running -= 1
+                self._active_permissions.pop(task_id, None)
             self._slots.release()
+
+    def recheck_permissions(self) -> bool:
+        with self._lock:
+            active = list(self._active_permissions.items())
+        cancelled = False
+        for task_id, (peer_id, permission) in active:
+            try:
+                self.access_check(peer_id, self.manifest.package_id, permission)
+            except (AIAccessError, OSError, ValueError):
+                self.cancel(task_id)
+                cancelled = True
+        return cancelled
 
     def _failure(self, task_id: str, reply_pub: str, consumer_peer_id: str,
                  state: str, code: str) -> dict[str, Any]:
@@ -826,6 +860,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 manager = ProviderService(
                     manifest=manifest, adapter=adapter_from_manifest(manifest), store=store,
                     task_store=provider_orders, balance=balance, messaging_key=messaging_key,
+                    access_check=(lambda peer, service_id, permission: app.state.ai_access.store.authorize(peer, service_id, permission))
+                    if getattr(app.state, "ai_access", None) else None,
                 )
                 manager.accepting_orders = bool(settings.get("publication_enabled"))
                 manager_path = configured
@@ -1110,6 +1146,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             error_max_s=30.0,
         ),
         error_sink=lambda value: setattr(app.state, "llm_relay_error", value),
+    ))
+    def recheck_permissions_once():
+        current = active_manager()
+        return bool(current and current.recheck_permissions())
+
+    if getattr(app.state, "ai_access", None):
+        app.state.ai_access.recheck = recheck_permissions_once
+    registry.register(BackgroundWorkerSpec(
+        name="llm.friend-permissions", run_once=recheck_permissions_once,
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(busy_delay_s=1, idle_initial_s=1, idle_multiplier=1, idle_max_s=1,
+                             error_multiplier=2, error_max_s=10),
     ))
     registry.register(BackgroundWorkerSpec(
         name="llm.publish-refresh",
@@ -1548,6 +1596,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "service_id": service_id,
             "prompt": prompt,
             **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
+            **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
@@ -1613,6 +1662,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 body={"task_id": task_id, "idempotency_key": idempotency_key,
                       "service_id": service_id, "prompt": prompt, "max_tokens": max_tokens,
                       **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
+                      **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
                       "max_amount": maximum, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,

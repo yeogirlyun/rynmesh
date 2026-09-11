@@ -437,9 +437,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "未授权好友直接请求",
       "expected": "Provider 拒绝，好友关系本身不开放 AI",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/ai-permissions-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -447,9 +449,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "仅允许 B 用模型 X，C 未授权",
       "expected": "B 可发现使用 X；C 及 B 对其他未授权模型的请求被拒绝",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/ai-permissions-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -457,9 +461,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "B 执行中被撤销，再发新任务",
       "expected": "新请求立即拒绝，旧任务状态真实且只结算一次",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/ai-permissions-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -467,9 +473,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "重放旧凭证、重启、重新发现好友",
       "expected": "旧权限不复活，需新的明确授权",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "evidence": [
+        "docs/acceptance/ai-permissions-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {

@@ -1,9 +1,8 @@
 # Route packages
 
 A route package is a self-contained module that wires one feature's state,
-background work, and HTTP surface into the node app, without adding to
-`rynmesh/peer_http.py`. Two exist today and this document describes what
-they actually do — it must never say something either one doesn't:
+background work, and HTTP surface into the node app, without adding handlers to
+`rynmesh/peer_http.py`. The original packages that established these conventions are:
 
 - `rynmesh/mailbox_routes.py::install_mailbox` — the newer package. Its own
   docstrings already explain several of the conventions below; where this
@@ -12,6 +11,16 @@ they actually do — it must never say something either one doesn't:
 - `rynmesh/llm_package/routes.py::install_llm_routes` — the older, larger
   package. It predates a couple of conventions below (see the callouts) and
   is described as it is, not as it "should" be.
+
+Product packages on the development branch also include `friends/routes.py`,
+`ask_ryn/routes.py`, and `ai_access/routes.py`. AI access owns one
+`app.state.ai_access` object and `home / "ai-access" / "permissions.json"`.
+Its list/update routes call the current Owner guard, and route reinstallation
+replaces state without duplicating handlers. Running inference access checks
+belong to the existing LLM package: `llm.friend-permissions` runs every second
+with error backoff capped at ten seconds. Permission revocation is durable
+before a cancellation attempt; the update response distinguishes `requested`
+from `pending` and never confirms that computation stopped.
 
 `scripts/new_route_package.py` generates a new package that follows every
 convention here. Read this document before hand-editing what it produces.
