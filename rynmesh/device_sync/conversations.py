@@ -97,6 +97,10 @@ class ConversationState:
             if identifier in data['conversations']:
                 continue  # Hidden while an original run is reconciling.
             entity = self.value['entities'].get(identifier)
+            if data['tombstones'][identifier].get('privacy_erased'):
+                if entity is None or not entity['record']['erased']:
+                    self._write(identifier, None, erase=True)
+                continue
             if entity is None or entity['visible'] is not None:
                 self._write(identifier, None)
 

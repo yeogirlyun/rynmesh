@@ -2452,6 +2452,11 @@ def create_app(store: RynmeshStore | None = None):
             friends=lambda: app.state.friends.service, conversations=lambda: app.state.ask_ryn.conversations,
             store=lambda: active_store, offline=lambda: app.state.offline_reading.service).snapshot())
 
+    from .ask_ryn.cleanup_routes import install_conversation_cleanup
+
+    install_conversation_cleanup(app, store=active_store, home=_home,
+        workers=app.state.background_workers, local_control=local_control)
+
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}

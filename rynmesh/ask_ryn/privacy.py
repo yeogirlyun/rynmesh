@@ -30,30 +30,39 @@ class ConversationPrivacy:
             raise ConversationError('ask_history_version_unsupported')
         return receipt
 
-    def _review(self, data):
+    @staticmethod
+    def _additional(value):
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > MAX_IDENTITIES:
+            raise ConversationError('ask_history_limit')
+        return sorted({_identity(identifier) for identifier in value})
+
+    def _review(self, data, additional):
         self._receipt(data)
         # Bind unsent drafts, local recovery and terminal run data too. A source
         # change after review must not silently expand the erasure operation.
-        return records.fingerprint({'actor': self.source.actor,
+        return records.fingerprint({'actor': self.source.actor, 'additional_identities': additional,
             'data': {key: value for key, value in data.items() if key != 'privacy_erasure'}})
 
     @staticmethod
     def _runs(data):
         return data.get('runs', {}).get('records', {})
 
-    def preview(self):
+    def preview(self, *, additional_identifiers=None):
+        additional = self._additional(additional_identifiers)
         with file_transaction(self.source.lock):
             _, data = self.source._read()
             state = self.source._sync_state(data) if data['version'] == SYNC_VERSION else None
             issues = state.issues() if state else []
-            return {'review_token': self._review(data),
+            return {'review_token': self._review(data, additional),
                 'conversations': len(data['conversations']),
                 'recovery_items': sum(len(row['branches']) + len(row['recovery']) for row in issues),
                 'has_unassigned_draft': bool(data.get('draft', {}).get('text')),
                 'active_tasks': sum(run['state'] not in TERMINAL for run in self._runs(data).values()),
                 'scope': 'conversation_source'}
 
-    def erase_source(self, *, review_token):
+    def erase_source(self, *, review_token, additional_identifiers=None):
         """Atomically erase reviewed bodies while retaining replay barriers.
 
         A repeated, committed review returns its original receipt even if the
@@ -62,12 +71,13 @@ class ConversationPrivacy:
         """
         if not isinstance(review_token, str) or not _TOKEN.fullmatch(review_token):
             raise ConversationError('ask_privacy_review_changed')
+        additional = self._additional(additional_identifiers)
         with file_transaction(self.source.lock):
             envelope, data = self.source._read()
             previous = self._receipt(data)
             if previous and previous.get('review_token') == review_token:
                 return deepcopy(previous['result'])
-            if self._review(data) != review_token:
+            if self._review(data, additional) != review_token:
                 raise ConversationError('ask_privacy_review_changed')
             runs = self._runs(data)
             if any(run['state'] not in TERMINAL for run in runs.values()):
@@ -75,6 +85,7 @@ class ConversationPrivacy:
 
             state = self.source._sync_state(data) if data['version'] == SYNC_VERSION else None
             identifiers = set(data['conversations']) | set(data['tombstones']) | set(data['migrations'])
+            identifiers.update(additional)
             identifiers.update(run['conversation_id'] for run in runs.values())
             if state:
                 identifiers.update(state.value['entities'])
