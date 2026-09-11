@@ -14,6 +14,7 @@ import { digestApi, type DigestItem, type ReaderArticle } from "../domain/digest
 import { Button, Chip, EvidenceDetails } from "./ui";
 import ShareContentButton from "./ShareContentButton";
 import AskAboutButton from "./AskAboutButton";
+import OfflineDownloadButton from "./OfflineDownloadButton";
 
 export type ViewerAction = "up" | "down" | "hide" | "opened" | "more_like_this";
 
@@ -359,6 +360,7 @@ export default function DigestViewer({
           {article?.blocks?.length ? <AskAboutButton key={`ask-${item.item_id}`} itemId={item.item_id} /> : null}
           {actionError ? <p role="alert">{actionError} <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button></p> : null}
           <div className="viewer-rate">
+            {isArticle ? <OfflineDownloadButton key={item.item_id} itemId={item.item_id} /> : null}
             <Button
               icon={ThumbsUp}
               variant={rated === "up" ? "primary" : "standard"}

@@ -7,6 +7,9 @@ import { Button, Chip } from "./ui";
 import ShareContentButton from "./ShareContentButton";
 import AskAboutButton from "./AskAboutButton";
 import { friendsApi } from "../domain/friendsClient";
+import { offlineApi, type OfflineBody } from "../domain/offlineReading";
+import OfflineDownloadButton from "./OfflineDownloadButton";
+import OfflineImages from "./OfflineImages";
 
 function youtubeEmbed(url: string | undefined): string {
   if (!url) return "";
@@ -28,19 +31,41 @@ function actionLabel(item: ContentItem) {
   return "Read original";
 }
 
-export default function ContentViewer({ item, onClose, client, onRead, loadBody }: {
+export default function ContentViewer({ item, onClose, client, onRead, loadBody, offlineKey }: {
   item: ContentItem;
   onClose: () => void;
   client?: NodeClient;
   onRead?: () => Promise<void>;
   loadBody?: () => Promise<{ text: string; truncated: boolean }>;
+  offlineKey?: string;
 }) {
   const [body, setBody] = useState<string[]>([]);
   const [bodyState, setBodyState] = useState<"loading" | "ready" | "failed">("loading");
   const [retry, setRetry] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [progressError, setProgressError] = useState("");
+  const [offlineBody, setOfflineBody] = useState<OfflineBody | null>(null);
+  const [bodyError, setBodyError] = useState("");
   const stageRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const closeButton = dialog?.querySelector<HTMLButtonElement>(".content-viewer-close");
+    closeButton?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (!dialog || Array.from(document.querySelectorAll('[role="dialog"]')).at(-1) !== dialog) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeButton?.click(); }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]'))
+        .filter((element) => !element.closest('[hidden], [aria-hidden="true"]'));
+      const first = focusable[0], last = focusable.at(-1);
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", keyboard);
+    return () => { document.removeEventListener("keydown", keyboard); if (previous?.isConnected) previous.focus(); };
+  }, []);
   const savedProgress = useRef(0);
   const progressWrites = useRef<Promise<void>>(Promise.resolve());
   const restore = useRef(0);
@@ -55,13 +80,18 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody 
     setBodyState("loading");
     setBody([]);
     setTruncated(false);
+    setOfflineBody(null); setBodyError("");
     setProgressError("");
     savedProgress.current = 0;
     positionReady.current = false;
     positionLoaded.current = client.mode !== "live";
     const read = async () => {
       let blocks: string[];
-      if (loadBody) {
+      if (offlineKey) {
+        const result = await offlineApi.body(item.digest_item_id ?? item.content_id);
+        blocks = result.text.split(/\n\n+/);
+        if (active) { setOfflineBody(result); setTruncated(result.truncated); }
+      } else if (loadBody) {
         const result = await loadBody();
         blocks = [result.text];
         if (active) setTruncated(result.truncated);
@@ -90,11 +120,12 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody 
       if (!active) return;
       setBody(blocks);
       setBodyState("ready");
-      await readCallback.current?.();
+      try { await readCallback.current?.(); }
+      catch { if (active) setProgressError("The article is open, but its reading record could not be saved. Retry reading to save it."); }
     };
-    void read().catch(() => { if (active) setBodyState("failed"); });
+    void read().catch((cause) => { if (active) { setBodyState("failed"); if (offlineKey) setBodyError(cause instanceof Error ? cause.message : "The offline copy could not be opened."); } });
     return () => { active = false; };
-  }, [client, item.content_id, item.external_url, textContent, retry, loadBody]);
+  }, [client, item.content_id, item.external_url, textContent, retry, loadBody, offlineKey]);
   useEffect(() => {
     if (bodyState !== "ready") return;
     const frame = window.requestAnimationFrame(() => {
@@ -132,7 +163,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody 
     <div className="content-viewer-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) void close();
     }}>
-      <section className="content-viewer" role="dialog" aria-modal="true" aria-label={item.title}>
+      <section ref={dialogRef} className="content-viewer" role="dialog" aria-modal="true" aria-label={item.title}>
         <header className="content-viewer-header">
           <div>
             <div className="content-viewer-kicker">
@@ -150,10 +181,12 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody 
         <div className="content-viewer-stage" ref={stageRef} onScroll={() => void saveProgress().catch(() => undefined)}>
           {client && textContent ? (
             <article className="content-document-stage" aria-live="polite">
-              {bodyState === "loading" ? <p role="status">Loading the article through your Ryn…</p> : null}
+              {bodyState === "loading" ? <p role="status">{offlineKey ? "Opening the saved offline copy…" : "Loading the article through your Ryn…"}</p> : null}
+              {offlineBody ? <p>Offline copy · {offlineBody.source} · Saved {new Date(offlineBody.downloaded_at * 1000).toLocaleString()}{offlineBody.partial ? " · Some resources are missing or shortened" : ""}</p> : null}
               {body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
               {truncated ? <p>This is a shortened preview. The full content has not been loaded.</p> : null}
-              {bodyState === "failed" ? <div role="alert"><p>The article or its reading record could not be loaded. Try again, or open the original.</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
+              {offlineBody && offlineKey ? <OfflineImages body={offlineBody} itemKey={offlineKey} /> : null}
+              {bodyState === "failed" ? <div role="alert"><p>{bodyError || "The article could not be loaded. Try again, or open the original."}</p><Button onClick={() => setRetry((value) => value + 1)}>Retry reading</Button></div> : null}
             </article>
           ) : embed ? (
             <iframe
@@ -183,6 +216,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody 
         <footer className="content-viewer-footer">
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
           <p>{item.description}</p>
+          {client?.mode === "live" && textContent && !offlineKey ? <OfflineDownloadButton key={item.digest_item_id ?? item.content_id} itemId={item.digest_item_id ?? item.content_id} /> : null}
+          {offlineKey ? <p>Opening the original requires a connection. This view does not fetch external media automatically.</p> : null}
           {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton itemId={item.digest_item_id ?? item.content_id} title={item.title} /> : null}
           {client?.mode === "live" && textContent && bodyState === "ready" ? <AskAboutButton itemId={item.digest_item_id ?? item.content_id} /> : null}
           {item.external_url ? (

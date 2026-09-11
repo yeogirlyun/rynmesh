@@ -26,3 +26,21 @@ it("keeps failed operations reviewable and prevents duplicate submissions", asyn
   await act(async () => finish());
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+it("moves focus into the review, contains tab navigation, and restores the trigger on Escape", async () => {
+  const operation = vi.fn();
+  function Harness() {
+    const [request, setRequest] = useState<ConfirmRequest | null>(null);
+    return <><button onClick={() => setRequest({ title: "Clear download?", body: "One local copy.", risk: "medium", onConfirm: operation })}>Review cleanup</button>
+      <ConfirmDialog request={request} onCancel={() => setRequest(null)} /></>;
+  }
+  const user = userEvent.setup(); render(<Harness />);
+  const trigger = screen.getByRole("button", { name: "Review cleanup" });
+  await user.click(trigger);
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await user.tab({ shift: true }); expect(screen.getByRole("button", { name: "Confirm" })).toHaveFocus();
+  await user.tab(); expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(trigger).toHaveFocus();
+  expect(operation).not.toHaveBeenCalled();
+});

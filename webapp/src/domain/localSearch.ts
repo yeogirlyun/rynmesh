@@ -6,7 +6,7 @@ export type SearchResult = { id: string; title: string; source: string; timestam
   targets: { label: string; href: string }[]; snippet: SearchSnippet; title_match: SearchSnippet };
 export type SearchStatus = { state: string; error_code: string; indexed_count: number; updated_at: number | null };
 export type SearchPage = { results: SearchResult[]; total: number; next_cursor: string; partial: boolean; index: SearchStatus };
-export type SearchDocument = Omit<SearchResult, "snippet" | "title_match"> & { text: string; reading_record?: ConsumptionRecord };
+export type SearchDocument = Omit<SearchResult, "snippet" | "title_match"> & { text: string; reading_record?: ConsumptionRecord; offline_key?: string };
 export type SearchRequest = { query: string; kind?: string; source?: string; friend_id?: string; after?: number; before?: number; sort?: string; cursor?: string };
 async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(nodeControlUrl(`/search${path}`), { credentials: "include", signal,

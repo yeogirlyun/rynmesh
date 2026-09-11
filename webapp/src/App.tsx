@@ -33,6 +33,7 @@ import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
+import OfflineReading from "./screens/OfflineReading";
 import Services from "./screens/Services";
 import ServicesCatalog from "./screens/ServicesCatalog";
 import VideoRendering from "./screens/VideoRendering";
@@ -51,6 +52,7 @@ const navItems = [
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
   { path: "/friends", label: "Friends", icon: Users },
   { path: "/friend-updates", label: "Friend updates", icon: Users },
+  { path: "/offline", label: "Offline reading", icon: NavIcons.publish },
   { path: "/services", label: "Services", icon: NavIcons.services },
   { path: "/chat", label: "Chat", icon: NavIcons.chat },
   { path: "/settings", label: "Settings", icon: NavIcons.settings },
@@ -404,6 +406,7 @@ export function AppRoutes() {
           <Route path="explore" element={<Explore />} />
           <Route path="search" element={<Search />} />
           <Route path="friend-updates" element={<FriendFeed />} />
+          <Route path="offline" element={<OfflineReading />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route path="recommendations" element={<Navigate replace to="/digest" />} />
           <Route path="ask" element={<AskRyn />} />

@@ -2433,7 +2433,7 @@ def create_app(store: RynmeshStore | None = None):
         source=lambda: LocalSearchSources(consumption=lambda: app.state.consumption_store,
             imports=lambda: app.state.friends.content.imports, reader=lambda: app.state.reader_cache,
             friends=lambda: app.state.friends.service, conversations=lambda: app.state.ask_ryn.conversations,
-            store=lambda: active_store).snapshot())
+            store=lambda: active_store, offline=lambda: app.state.offline_reading.service).snapshot())
 
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
