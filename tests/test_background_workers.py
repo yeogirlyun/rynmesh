@@ -342,6 +342,7 @@ def test_register_replaces_a_worker_only_when_asked() -> None:
 _KNOWN_WORKER_NAMES = {
     "llm.publish-refresh",
     "llm.friend-permissions",
+    "ai-access.discovery",
     "llm.relay-poll",
     "updates.poll",
     "recap.daily",

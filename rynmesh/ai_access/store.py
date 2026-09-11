@@ -58,6 +58,12 @@ class AIAccessStore:
             data = self._read()
             return [self._public(row) for row in data["grants"].values()]
 
+    def grant(self, service_id: str, relationship_id: str) -> dict | None:
+        key = rule_key(service_id, relationship_id)
+        with file_transaction(self.lock):
+            row = self._read()["grants"].get(key)
+            return self._public(row) if row else None
+
     def set(self, service_id: str, relationship_id: str, *, allowed: bool, expected_revision: int) -> dict:
         key = rule_key(service_id, relationship_id)
         if type(allowed) is not bool or type(expected_revision) is not int or expected_revision < 0:

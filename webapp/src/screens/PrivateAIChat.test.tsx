@@ -87,6 +87,7 @@ describe("Private AI chat", () => {
     vi.mocked(askHistory.preview).mockImplementation(async (row) => ({ conversation_id: row.id, revision: row.revision!, provider_peer_id: row.providerPeerId,
       service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: "A verified prompt with bounded untrusted article material", prompt_sha256: "a".repeat(64),
       context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
+      ai_permission: { relationship_id: "d".repeat(32), revision: 7 },
       sources: [{ library_id: "import:imp_" + "b".repeat(64), title: "Article", source_url: "https://example.test/article", sha256: "c".repeat(64), extraction_truncated: false,
         text_bytes: 10000, source_number: 1, included_bytes: 1000, budget_truncated: true }] }));
     await user.type(screen.getByLabelText("Message Private AI"), "Summarize this article");
@@ -98,7 +99,7 @@ describe("Private AI chat", () => {
     expect(review.body).toContain("3 older history messages omitted");
     expect(submit).not.toHaveBeenCalled();
     await act(() => review.onConfirm());
-    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ prompt_sha256: "a".repeat(64), question: "Summarize this article" }));
+    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ prompt_sha256: "a".repeat(64), question: "Summarize this article", ai_permission: { relationship_id: "d".repeat(32), revision: 7 } }));
     expect(submit).not.toHaveBeenCalled();
     expect(await screen.findByText("An answer with [1].")).toBeInTheDocument();
     expect(screen.getByText("Sources supplied for this answer")).toBeInTheDocument();

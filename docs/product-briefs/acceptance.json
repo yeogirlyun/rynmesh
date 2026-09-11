@@ -438,9 +438,10 @@
       "scenario": "未授权好友直接请求",
       "expected": "Provider 拒绝，好友关系本身不开放 AI",
       "status": "in_progress",
-      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "actual": "Owner UI, encrypted friend discovery and frozen Ask permission versions are implemented. Two independent loopback nodes using a real native model verified granted inference, in-flight revocation, old-version rejection, exactly-once development settlement and revocation/history persistence after restart. Packaged desktop, cross-NAT and remaining full-flow acceptance are not complete.",
       "evidence": [
-        "docs/acceptance/ai-permissions-development/README.md"
+        "docs/acceptance/ai-permissions-development/README.md",
+        "docs/acceptance/ai-permissions-development/windows-two-node-native.json"
       ],
       "implementation_commit": ""
     },
@@ -450,9 +451,10 @@
       "scenario": "仅允许 B 用模型 X，C 未授权",
       "expected": "B 可发现使用 X；C 及 B 对其他未授权模型的请求被拒绝",
       "status": "in_progress",
-      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "actual": "Owner UI, encrypted friend discovery and frozen Ask permission versions are implemented. Two independent loopback nodes using a real native model verified granted inference, in-flight revocation, old-version rejection, exactly-once development settlement and revocation/history persistence after restart. Packaged desktop, cross-NAT and remaining full-flow acceptance are not complete.",
       "evidence": [
-        "docs/acceptance/ai-permissions-development/README.md"
+        "docs/acceptance/ai-permissions-development/README.md",
+        "docs/acceptance/ai-permissions-development/windows-two-node-native.json"
       ],
       "implementation_commit": ""
     },
@@ -462,9 +464,10 @@
       "scenario": "B 执行中被撤销，再发新任务",
       "expected": "新请求立即拒绝，旧任务状态真实且只结算一次",
       "status": "in_progress",
-      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "actual": "Owner UI, encrypted friend discovery and frozen Ask permission versions are implemented. Two independent loopback nodes using a real native model verified granted inference, in-flight revocation, old-version rejection, exactly-once development settlement and revocation/history persistence after restart. Packaged desktop, cross-NAT and remaining full-flow acceptance are not complete.",
       "evidence": [
-        "docs/acceptance/ai-permissions-development/README.md"
+        "docs/acceptance/ai-permissions-development/README.md",
+        "docs/acceptance/ai-permissions-development/windows-two-node-native.json"
       ],
       "implementation_commit": ""
     },
@@ -474,9 +477,10 @@
       "scenario": "重放旧凭证、重启、重新发现好友",
       "expected": "旧权限不复活，需新的明确授权",
       "status": "in_progress",
-      "actual": "Default-deny Provider checks, versioned grants, Owner HTTP controls and best-effort running-task revocation are implemented and tested with signed encrypted requests. Friend discovery/UI and complete two-node acceptance remain pending.",
+      "actual": "Owner UI, encrypted friend discovery and frozen Ask permission versions are implemented. Two independent loopback nodes using a real native model verified granted inference, in-flight revocation, old-version rejection, exactly-once development settlement and revocation/history persistence after restart. Packaged desktop, cross-NAT and remaining full-flow acceptance are not complete.",
       "evidence": [
-        "docs/acceptance/ai-permissions-development/README.md"
+        "docs/acceptance/ai-permissions-development/README.md",
+        "docs/acceptance/ai-permissions-development/windows-two-node-native.json"
       ],
       "implementation_commit": ""
     },

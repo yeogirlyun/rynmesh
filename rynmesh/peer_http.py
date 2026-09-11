@@ -2405,6 +2405,7 @@ def create_app(store: RynmeshStore | None = None):
     install_ai_access(
         app, home=active_store.home, local_control=local_control,
         relationship=lambda rid: app.state.friends.service.store.relationship(rid),
+        friends=lambda: app.state.friends.service, workers=app.state.background_workers,
     )
 
     install_ask_ryn(

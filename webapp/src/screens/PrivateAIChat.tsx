@@ -312,7 +312,8 @@ export default function PrivateAIChat() {
     if (client.mode === "live" && preview) {
       cancelRequestedRef.current = false;
       return submitReviewed({ task_id: "task_" + crypto.randomUUID().replaceAll("-", ""), conversation_id: preview.conversation_id,
-        expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256 });
+        expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256,
+        ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}) });
     }
     if (!conversation) {
       conversation = createConversation({

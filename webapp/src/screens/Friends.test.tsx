@@ -8,6 +8,7 @@ import FriendConversation from "./components/FriendConversation";
 
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm: vi.fn() }) }));
 vi.mock("qrcode", () => ({ default: { toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,AA==") } }));
+vi.mock("./components/FriendAI", () => ({ default: () => null }));
 const friend: FriendRecord = { peer_id: "alice", relationship_id: "r1", node_name: "Alice", endpoint: "http://192.168.1.2:8791", permissions: ["friend.message"], status: "active", created_at: "2026-09-10T00:00:00Z" };
 const preview: FriendInvitePreview = { ...friend, invite_id: "i1", expires_at: "2026-09-10T00:15:00Z" };
 

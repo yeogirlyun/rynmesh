@@ -27,6 +27,7 @@ import type {
 } from "./types";
 
 export interface LLMServiceRecord {
+  network_id?: string;
   peer_id: string;
   node_name?: string;
   online: boolean;
