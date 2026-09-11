@@ -783,9 +783,11 @@
       "document": "07-offline-reading.md",
       "scenario": "对支持的文章下载，随后断网并重启",
       "expected": "本地正文可打开，来源/下载时间可见，无需发外网请求加载正文",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Backend copies survive service restart and a terminated download process; local read does not fetch the source. Packaged offline reading UI is pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -793,9 +795,11 @@
       "document": "07-offline-reading.md",
       "scenario": "普通收藏但未下载，在断网时打开",
       "expected": "清楚显示正文未下载，不错误显示可离线",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Backend returns offline_not_downloaded for a bookmark without an explicit download. User-facing offline state is pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -803,9 +807,11 @@
       "document": "07-offline-reading.md",
       "scenario": "正文成功、部分图片失败",
       "expected": "正文可读，图片缺失有标记，不显示完整资源已下载",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Body remains readable with missing images and a partial state. Image rendering and complete codec validation are pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -813,9 +819,11 @@
       "document": "07-offline-reading.md",
       "scenario": "中途断网、取消、重启、连续点击下载",
       "expected": "状态恢复正确，仅一份结果；未校验片段不标可读",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Real encrypted checkpoint, cancellation, superseded worker, duplicate request and terminated-process recovery tests pass. Packaged interrupted-download flow is pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -823,9 +831,11 @@
       "document": "07-offline-reading.md",
       "scenario": "已有旧版，更新时断网或校验失败",
       "expected": "旧版仍能读；新版本验证后才替换，并更新下载时间",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Failed updates preserve the old committed body and time; verified updates replace it and version-bind images. UI validation is pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -833,9 +843,11 @@
       "document": "07-offline-reading.md",
       "scenario": "空间不足或超过单项/总预算",
       "expected": "提示清理/超限，其他下载不静默丢失，应用仍可阅读",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Backend tests cover item, total and disk limits without eviction. User-facing limits and recovery actions are pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -843,9 +855,11 @@
       "document": "07-offline-reading.md",
       "scenario": "单条/全部清理下载",
       "expected": "对应磁盘空间释放，列表更新；收藏、进度、会话保留，正文索引及时移除",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Reviewed cleanup frees download bundles and preserves bookmark/progress and independent imports. Search integration and UI are pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -853,9 +867,11 @@
       "document": "07-offline-reading.md",
       "scenario": "无正文、需登录、已失权内容尝试下载",
       "expected": "返回实际失败原因，不产生空的成功记录，不绕过授权",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Backend rejects empty or unsupported pages, HTTP 403 and invalid local copies. Complete login-page and friend authorization UI flows are pending.",
+      "evidence": [
+        "docs/acceptance/offline-reading-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
