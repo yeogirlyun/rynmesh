@@ -18,9 +18,8 @@ class ReadingBridge:
 
     def _reconcile(self, scopes):
         selected = reading_scopes(scopes)
-        if self.source.sync_identity() != self.replica.actor:
-            raise SyncError('sync_device_identity_changed')
-        self.replica.reconcile_source(self.source.sync_export(selected), scopes=selected)
+        rows = self.source.sync_snapshot(selected, expected_actor=self.replica.actor)
+        self.replica.reconcile_source(rows, scopes=selected)
         return selected
 
     def pending(self, device, scopes):

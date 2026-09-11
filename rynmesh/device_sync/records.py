@@ -21,6 +21,7 @@ MAX_ACTORS = 64
 MAX_COUNTER = 2**53 - 1
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 _ACTOR = re.compile(r'^[a-f0-9]{64}$')
+_CONTROL = re.compile(r'[\x00-\x1f]')
 _FINAL = frozenset({'complete', 'failed', 'cancelled', 'interrupted'})
 
 
@@ -35,7 +36,7 @@ def actor_id(value):
 
 
 def entity_id(value):
-    if not isinstance(value, str) or not 0 < len(value) <= 256 or any(ord(c) < 32 for c in value):
+    if not isinstance(value, str) or not 0 < len(value) <= 256 or _CONTROL.search(value):
         raise SyncError('sync_entity_invalid')
     return value
 
@@ -85,7 +86,7 @@ def clean_value(scope, identifier, value):
     # Body, snippets, thumbnails, private chat and model inputs aren't metadata.
     for key, limit in (('title', 4000), ('source_title', 4000), ('source_id', 4000), ('content_kind', 32), ('link', 4096)):
         text = item.get(key, '')
-        if not isinstance(text, str) or len(text) > limit or any(ord(c) < 32 for c in text):
+        if not isinstance(text, str) or len(text) > limit or _CONTROL.search(text):
             raise SyncError('sync_item_invalid')
         metadata[key] = text
     try:
@@ -106,7 +107,7 @@ def clean_value(scope, identifier, value):
         if type(progress) not in {float, int} or not math.isfinite(progress) or not 0 <= progress <= 1 or type(value.get('completed')) is not bool:
             raise SyncError('sync_value_invalid')
         version = value.get('content_version', '')
-        if not isinstance(version, str) or len(version) > 256 or any(ord(c) < 32 for c in version):
+        if not isinstance(version, str) or len(version) > 256 or _CONTROL.search(version):
             raise SyncError('sync_value_invalid')
         result.update(progress=round(progress, 4), completed=value['completed'], content_version=version)
     return result
@@ -144,6 +145,23 @@ def validate(scope, identifier, record):
         raise SyncError('sync_record_limit')
     _binding(scope, heads)
     return record
+
+
+def validate_cached(scope, identifier, record, cache, *, max_entries):
+    """Reuse validation only for the same scope, ID and canonical record bytes.
+
+    Local store instances retain bounded fingerprints, never record values.
+    This does not cache file reads/decryption, use file timestamps, or bypass
+    envelope/identity checks. Wire input continues to use validate directly.
+    """
+    digest = fingerprint(record)
+    key = (scope, identifier, digest)
+    if key not in cache:
+        validate(scope, identifier, record)
+        if len(cache) >= max_entries:
+            cache.clear()
+        cache.add(key)
+    return digest
 
 
 def _binding(scope, heads):

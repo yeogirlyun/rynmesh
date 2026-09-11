@@ -243,6 +243,37 @@ def test_reader_snapshot_cannot_overwrite_new_remote_position(tmp_path):
     assert right.list()[0]['progress'] == .2
 
 
+def test_edit_projects_only_target_without_losing_unrelated_remote_state(tmp_path):
+    left, right = store(tmp_path, max_items=1), store(tmp_path, B)
+    remote = {**ITEM, 'item_id': 'remote'}
+    right.record(remote, 'bookmark')
+    right.record(remote, 'progress', progress=.7, content_version='original')
+    deliver(right, left)
+    before = left.sync_export(SCOPES)
+    left.record(ITEM, 'opened')
+    left.record(ITEM, 'progress', progress=.2)
+    left.record(ITEM, 'bookmark')
+    restarted = ConsumptionStore(left.path, max_items=1)
+    assert [row for row in restarted.sync_export(SCOPES) if row['id'] == 'remote'] == before
+    remote_row = next(row for row in restarted.list() if row['item_id'] == 'remote')
+    assert remote_row['bookmarked'] and remote_row['progress'] == .7
+    assert remote_row['content_version'] == 'original' and remote_row['open_count'] == 0
+
+
+def test_equal_python_values_do_not_skip_projected_record_validation(tmp_path):
+    source = store(tmp_path)
+    source.record(ITEM, 'progress', progress=0)
+    source.list()  # Prime the persisted-record validation fingerprints.
+    data = read_json(source.path)
+    entity = next(iter(data['sync']['entities'].values()))
+    entity['projected']['heads'][0]['value']['progress'] = False
+    atomic_write_json(source.path, data)
+    before = source.path.read_bytes()
+    with pytest.raises(SyncError, match='sync_value_invalid'):
+        source.record(ITEM, 'opened')
+    assert source.path.read_bytes() == before
+
+
 def test_observed_rereading_may_move_backwards_and_older_snapshot_does_not_restore_it(tmp_path):
     source, target = store(tmp_path), store(tmp_path, B)
     source.record(ITEM, 'progress', progress=.8)

@@ -35,6 +35,7 @@ class ReplicaStore:
         self.key = messaging_key
         self.pub = peer_box.public_key_b64(messaging_key)
         self.actor = records.fingerprint(self.pub)
+        self._validation_cache = set()
 
     def _read(self):
         if not self.path.exists():
@@ -67,7 +68,7 @@ class ReplicaStore:
             for key, row in data['records'].items():
                 if key != self._key(row['scope'], row['id']):
                     raise ValueError
-                records.validate(row['scope'], row['id'], row['record'])
+                records.validate_cached(row['scope'], row['id'], row['record'], self._validation_cache, max_entries=MAX_ENTITIES)
             return envelope, data
         except SyncError:
             raise
@@ -181,7 +182,10 @@ class ReplicaStore:
                     raise SyncError('sync_batch_invalid')
                 seen.add(key)
                 previous = data['records'].get(key, {}).get('record', records.empty())
-                merged = records.merge(row['scope'], row['id'], previous, row['record'])
+                # _read validated the previous record. Identical canonical
+                # bytes need no causal merge; changed input still takes the
+                # complete validation/merge path, including operation clashes.
+                merged = previous if canonical_json(previous) == canonical_json(row['record']) else records.merge(row['scope'], row['id'], previous, row['record'])
                 data['records'][key] = {**data['records'].get(key, {}), **row, 'record': merged}
                 receipts.append({'scope': row['scope'], 'id': row['id'], 'revision': records.fingerprint(row['record'])})
             return receipts

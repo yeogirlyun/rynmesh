@@ -949,9 +949,11 @@
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
       "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "A new TCP source-to-source benchmark uses disjoint synthetic legacy baselines, real source migration, active paired capabilities, encrypted batches and actual source receipts; it seeds no receipts. A 200-record / 10-change smoke run finished in 3.452 seconds including source writes. The initial 10000-record run failed during initial merge with a transport error. Targeted projection, compact source serialization, identical-record merge reuse and bounded validation fingerprints have been implemented and passed 77 related tests. The latest 10000-record run and subsequent full backend regression are still running; the 60-second target is not yet established. No scheduler, UI, full-node workload, physical-device or cross-NAT claim is made.",
       "evidence": [
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/device-sync-development/scale-smoke-200.json",
+        "docs/acceptance/device-sync-development/scale-initial-before.json"
       ],
       "implementation_commit": ""
     },

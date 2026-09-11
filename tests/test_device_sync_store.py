@@ -161,6 +161,21 @@ def test_response_loss_after_durable_commit_is_safe_to_retry(tmp_path, monkeypat
     assert a.pending(b.actor, ['bookmarks'])['pending'] == 0
 
 
+def test_reconcile_does_not_treat_python_numeric_equality_as_identical_operation(tmp_path):
+    a, b = replica(tmp_path / 'a'), replica(tmp_path / 'b')
+    put(a, 'reading', reading(0))
+    batch = a.pending(b.actor, ['reading'])['records']
+    b.reconcile_source(batch, scopes=['reading'])
+    before = b.path.read_bytes()
+    # The same operation dot cannot acquire a differently encoded value.
+    changed = deepcopy(batch)
+    old = changed[0]['record']['heads'][0]['value']['progress']
+    changed[0]['record']['heads'][0]['value']['progress'] = float(old) if type(old) is int else int(old)
+    with pytest.raises(SyncError, match='sync_dot_conflict'):
+        b.reconcile_source(changed, scopes=['reading'])
+    assert b.path.read_bytes() == before
+
+
 def test_parallel_instances_cannot_both_write_the_same_revision(tmp_path):
     replicas = [replica(tmp_path / 'a') for _ in range(8)]
     revision = records.fingerprint(records.empty())
