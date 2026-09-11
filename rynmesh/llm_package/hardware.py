@@ -232,6 +232,11 @@ def recommend(report: HardwareReport) -> list[dict[str, Any]]:
                 "quantization": profile.quantization,
                 "estimated_memory_mb": profile.estimated_memory_mb,
                 "estimated_disk_mb": disk_need,
+                "download_bytes": profile.size_bytes,
+                "source_url": profile.url,
+                "license_id": profile.license_id,
+                "license_notice": profile.license_notice,
+                "license_url": "https://www.apache.org/licenses/LICENSE-2.0" if profile.license_id == "Apache-2.0" else "",
                 "context_window": profile.context_window,
                 "max_concurrent": profile.max_concurrent,
                 # The managed llama.cpp image is the portable CPU build. GPU

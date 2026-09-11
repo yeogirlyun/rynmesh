@@ -379,9 +379,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "支持平台的干净桌面，无 Docker",
       "expected": "不用终端完成模型安装和真实问答",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -389,9 +391,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "查看推荐并安装",
       "expected": "来源、许可、大小和空间需求可见，确认后下载",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -409,9 +413,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -419,9 +425,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "就绪后重启问答",
       "expected": "配置保留，重新核对健康，可获得真实回答",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -469,9 +477,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "停止/移除模型后查看历史",
       "expected": "运行状态和空间更新，会话保留，对应模型入口显示不可用",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/README.md"
+      ],
       "implementation_commit": ""
     },
     {

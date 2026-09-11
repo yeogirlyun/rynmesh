@@ -1,5 +1,6 @@
 import { CloudCog, RefreshCw, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, Chip, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
 import type {
@@ -63,7 +64,7 @@ function friendlyError(error: unknown, fallback: string): string {
 }
 
 export default function Services() {
-  const { client, peers, notify, confirm } = useAppContext();
+  const { client, node, peers, notify, confirm } = useAppContext();
   const [capacities, setCapacities] = useState<JobCapacity[]>([]);
   const [selectedPeerId, setSelectedPeerId] = useState("");
   const [videoId, setVideoId] = useState("");
@@ -91,6 +92,7 @@ export default function Services() {
   const [llmSetupMode, setLlmSetupMode] = useState<LLMSetupRequest["mode"]>("openai-compatible");
   const [llmProfile, setLlmProfile] = useState<NonNullable<LLMSetupRequest["profile"]>>("auto");
   const [llmHardware, setLlmHardware] = useState<LLMHardwareReport | null>(null);
+  const reviewedProfile = llmHardware?.recommendations.find((row) => row.can_run && (llmProfile === "auto" ? row.recommended : row.profile === llmProfile));
   const [llmPackageId, setLlmPackageId] = useState("local-small");
   const [llmAlias, setLlmAlias] = useState("rynmesh-local");
   const [llmBaseUrl, setLlmBaseUrl] = useState("http://127.0.0.1:8080");
@@ -100,6 +102,7 @@ export default function Services() {
   const [llmApiKeyEnv, setLlmApiKeyEnv] = useState("");
   const [llmAllowNonLoopback, setLlmAllowNonLoopback] = useState(false);
   const [llmSetupConfirmed, setLlmSetupConfirmed] = useState(false);
+  useEffect(() => { setLlmSetupConfirmed(false); }, [llmSetupMode, llmProfile, reviewedProfile?.profile]);
   const [llmSetupJob, setLlmSetupJob] = useState<LLMSetupJob | null>(null);
   const [llmLifecycleAction, setLlmLifecycleAction] = useState("");
   const [llmHistoryQuery, setLlmHistoryQuery] = useState("");
@@ -370,6 +373,7 @@ export default function Services() {
   };
 
   const setupLlm = async () => {
+    if (llmSetupMode === "managed" && !reviewedProfile) return;
     setLlmConfiguring(true);
     try {
       const job = await client.startLLMSetup({
@@ -383,7 +387,7 @@ export default function Services() {
         api_key_env: llmApiKeyEnv.trim(),
         allow_non_loopback: llmAllowNonLoopback,
         accept_risk: llmSetupConfirmed,
-        profile: llmProfile,
+        profile: llmSetupMode === "managed" ? reviewedProfile!.profile : llmProfile,
       });
       setLlmSetupJob(job);
       await trackSetupJob(job.job_id || "");
@@ -542,8 +546,8 @@ export default function Services() {
             <span className="eyebrow">Provider control</span>
             <h2>Local LLM service</h2>
           </div>
-          <Chip tone={llmProvider?.online ? "ok" : llmProvider?.configured === false ? "info" : "danger"}>
-            {llmProvider?.online ? "online" : llmProvider?.configured === false ? "not configured" : "offline"}
+          <Chip tone={llmProvider?.ready || llmProvider?.online ? "ok" : llmProvider?.configured === false ? "info" : "danger"}>
+            {llmProvider?.ready ? (llmProvider.capacity?.available === 0 ? "busy" : "ready on this device") : llmProvider?.online ? "online" : llmProvider?.configured === false ? "not configured" : "not ready"}
           </Chip>
         </div>
         {llmProvider?.service ? (
@@ -556,6 +560,8 @@ export default function Services() {
               </small>
             </div>
             <div className="button-row">
+              {llmProvider.ready ? <Link to={`/ask?peer=${encodeURIComponent(node.peer_id)}&service=${encodeURIComponent(llmProvider.service.package_id)}&network=${encodeURIComponent(llmNetwork)}`}>Ask using this device</Link> : null}
+              {!llmProvider.publication_enabled ? <Chip tone="info">Remote sharing is off. Local Ask Ryn remains available when ready.</Chip> : null}
               <Button
                 variant="primary"
                 icon={CloudCog}
@@ -586,7 +592,7 @@ export default function Services() {
                     disabled={Boolean(llmLifecycleAction)}
                     onClick={() => confirm({
                       title: "Uninstall managed runtime?",
-                      body: "This removes the managed container only. Model data and private configuration are preserved.",
+                      body: "This stops and removes the managed runtime. Model data, private configuration and conversations are preserved.",
                       risk: "high",
                       confirmLabel: "Uninstall runtime",
                       onConfirm: () => runLlmLifecycle("uninstall"),
@@ -733,6 +739,14 @@ export default function Services() {
                   </select>
                 </label>
               ) : null}
+              {llmSetupMode === "managed" && reviewedProfile ? <div className="service-result">
+                <span>{reviewedProfile.display_name || reviewedProfile.model_alias || reviewedProfile.profile}</span>
+                <small>Model download: {reviewedProfile.download_bytes ? `${(reviewedProfile.download_bytes / 1024 / 1024).toFixed(0)} MiB` : "size unavailable"}; required disk: {reviewedProfile.estimated_disk_mb ?? "unknown"} MiB; memory: {reviewedProfile.estimated_memory_mb ?? "unknown"} MiB. The runtime may require an additional download.</small>
+                {reviewedProfile.source_url?.startsWith("https://") ? <a href={reviewedProfile.source_url} target="_blank" rel="noreferrer">Pinned model source</a> : null}
+                {reviewedProfile.license_url?.startsWith("https://") ? <a href={reviewedProfile.license_url} target="_blank" rel="noreferrer">License: {reviewedProfile.license_id}</a> : null}
+                <small>{reviewedProfile.license_notice || "Review the model source and license before installation."}</small>
+              </div> : null}
+              {llmSetupMode === "managed" && !reviewedProfile ? <p role="status">No verified profile is currently recommended. Refresh device information or free memory and disk space.</p> : null}
               <label className="field">
                 <span>Local runtime port</span>
                 <input value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
@@ -758,6 +772,7 @@ export default function Services() {
             <Button
               variant="primary"
               disabled={llmConfiguring || !packageIdValid || !llmAlias.trim()
+                || (llmSetupMode === "managed" && !reviewedProfile)
                 || (llmSetupMode === "import-gguf" && !llmModelPath.trim())
                 || ((llmSetupMode === "managed" || llmSetupMode === "import-gguf")
                   && (!llmSetupConfirmed || !Number.isInteger(Number(llmPort)) || Number(llmPort) < 1 || Number(llmPort) > 65535))}
@@ -952,7 +967,7 @@ export default function Services() {
           <div className="service-result">
             <small>
               Stored result bodies remain end-to-end encrypted. The selected Provider necessarily sees plaintext while computing;
-              this node never persists prompt text.
+              task records exclude prompt text. Ask Ryn conversations are saved separately in encrypted node history.
             </small>
           </div>
           {visibleLlmOrders.length ? visibleLlmOrders.map((order) => (

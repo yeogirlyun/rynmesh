@@ -9,3 +9,4 @@ class ConsumerCommands:
     status: Callable[[str], dict]
     cancel: Callable[[str], dict]
     acknowledge: Callable[[str], None]
+    discover: Callable[[str], list[dict]]

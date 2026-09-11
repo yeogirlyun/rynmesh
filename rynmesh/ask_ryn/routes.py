@@ -28,6 +28,9 @@ class AskRynState:
 def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
                     local_control: Callable, messaging_key: Any) -> AskRynState:
     def catalog(network: str):
+        commands = app.state.ask_ryn.orders
+        if commands is not None and hasattr(commands, "discover"):
+            return commands.discover(network)
         records = store.list_job_capacities(network_id=network, capability="rynmesh.llm.private.v1", max_age_hours=1).get("capacities", [])
         return [{**row["metadata"]["llm_service"], "peer_id": row.get("peer_id")} for row in records if isinstance((row.get("metadata") or {}).get("llm_service"), dict)]
     app.state.ask_ryn = AskRynState(ConversationStore(Path(getattr(store, "home", None) or home) / "ask-ryn", messaging_key), local_control,
