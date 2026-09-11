@@ -262,6 +262,12 @@ def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> P
            progress=progress, cancel_check=cancel_check)
     target = managed_root(base)
     try:
+        # A repair must not leave an older completion marker authorizing a
+        # partly overwritten extraction if the process exits or I/O fails.
+        try:
+            (target / MARKER_NAME).unlink(missing_ok=True)
+        except OSError as exc:
+            raise LifecycleError(UNWRITABLE_STATE) from exc
         _extract(archive, target)
     finally:
         _discard(archive)
@@ -273,6 +279,7 @@ def download(base: Path, *, progress: Any = None, cancel_check: Any = None) -> P
             server.chmod(0o755)
     except OSError as exc:
         raise LifecycleError(UNWRITABLE_STATE) from exc
+    report(progress, cancel_check, 79, "Finishing local inference runtime installation")
     _write_marker(target, server, expected_sha256)
-    report(progress, cancel_check, 80, "Local inference runtime installed")
+    report(progress, None, 80, "Local inference runtime installed")
     return server

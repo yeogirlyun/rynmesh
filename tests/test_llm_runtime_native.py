@@ -198,6 +198,7 @@ def test_resolve_server_walks_env_file_then_dir_then_managed_then_path(tmp_path,
     on_path = tmp_path / "path"
     for target in (bundled / name, managed / name, on_path / name):
         _stub_server(target)
+    llm_runtime_install._write_marker(managed, managed / name, "0" * 64)
     monkeypatch.setattr(llm_runtime_native.shutil, "which", lambda _name: str(on_path / name))
     monkeypatch.setenv("RYNMESH_LLAMA_SERVER", str(explicit))
     monkeypatch.setenv("RYNMESH_LLAMA_DIR", str(bundled))
@@ -261,6 +262,16 @@ def test_resolve_server_ignores_a_marker_that_escapes_the_runtime_directory(tmp_
     assert llm_runtime_native.resolve_server(root) is None
 
 
+@pytest.mark.parametrize("marker", [None, [], {"release": "old", "server": "llama-server"}])
+def test_managed_executable_without_a_current_completion_record_is_not_available(tmp_path, marker):
+    root = tmp_path / "llm"
+    managed = llm_runtime_install.managed_root(root)
+    _stub_server(managed / llm_runtime_install.server_filename())
+    if marker is not None:
+        (managed / llm_runtime_install.MARKER_NAME).write_text(json.dumps(marker), encoding="utf-8")
+    assert llm_runtime_native.resolve_server(root) is None
+
+
 def test_available_reason_never_names_a_filesystem_path(monkeypatch):
     monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: None)
     monkeypatch.setattr(llm_runtime_native, "asset", lambda: None)
@@ -274,7 +285,9 @@ def test_available_reason_never_names_a_filesystem_path(monkeypatch):
 
 def test_available_honours_a_custom_install_root(tmp_path, monkeypatch):
     root = tmp_path / "llm"
-    _stub_server(llm_runtime_install.managed_root(root) / llm_runtime_install.server_filename())
+    managed = llm_runtime_install.managed_root(root)
+    server = _stub_server(managed / llm_runtime_install.server_filename())
+    llm_runtime_install._write_marker(managed, server, "0" * 64)
     monkeypatch.setattr(llm_runtime_native, "asset", lambda: None)
     assert llm_runtime_native.available(root) == (True, "")
     assert llm_runtime_native.available(tmp_path / "elsewhere")[0] is False
@@ -544,6 +557,85 @@ def test_prepare_extracts_marks_the_server_executable_and_writes_the_marker(tmp_
     assert list((root / "runtime").glob("llama-test-bin*")) == []
     assert {stage for stage, _percent, _message in stages} == {"pull_runtime"}
     assert all(65 <= percent <= 80 for _stage, percent, _message in stages)
+
+
+@pytest.mark.parametrize("failure_stage", ["extract", "marker", "cancel"])
+def test_interrupted_runtime_install_is_not_reused_on_retry(tmp_path, monkeypatch, failure_stage):
+    root = tmp_path / "llm"
+    payload = _zip_archive(ZIP_ENTRIES) if os.name == "nt" else _tar_archive(TAR_ENTRIES)
+    name = "llama-test-bin.zip" if os.name == "nt" else "llama-test-bin.tar.gz"
+    _pin(monkeypatch, payload, name=name)
+    _serve(monkeypatch, payload)
+    original_extract = llm_runtime_install._extract
+    original_marker = llm_runtime_install._write_marker
+    extracted = False
+
+    def interrupt_extract(archive, target):
+        nonlocal extracted
+        original_extract(archive, target)
+        # An interrupted archive can leave an executable before its libraries
+        # and completion record exist, on POSIX as well as Windows.
+        server = llm_runtime_install._extracted_server(target)
+        server.chmod(0o755)
+        extracted = True
+        if failure_stage == "extract":
+            raise LifecycleError("runtime archive is unreadable or corrupt")
+
+    def interrupt_marker(*args):
+        if failure_stage == "marker":
+            raise LifecycleError("unable to write runtime state")
+        return original_marker(*args)
+
+    monkeypatch.setattr(llm_runtime_install, "_extract", interrupt_extract)
+    monkeypatch.setattr(llm_runtime_install, "_write_marker", interrupt_marker)
+    with pytest.raises(LifecycleError):
+        llm_runtime_native.prepare(
+            root=root, cancel_check=lambda: failure_stage == "cancel" and extracted,
+        )
+    assert extracted
+    assert llm_runtime_native.resolve_server(root) is None
+    assert not (llm_runtime_install.managed_root(root) / llm_runtime_install.MARKER_NAME).exists()
+    # Resolve the persisted directory in a new interpreter too; the current
+    # process's monkeypatches and setup state cannot hide a stale installation.
+    probe = subprocess.run(
+        [sys.executable, "-c", (
+            "import os, sys; from rynmesh.llm_package import runtime_native as runtime; "
+            "os.environ.pop('RYNMESH_LLAMA_SERVER', None); "
+            "os.environ.pop('RYNMESH_LLAMA_DIR', None); "
+            "runtime.shutil.which = lambda name: None; "
+            "sys.exit(0 if runtime.resolve_server(sys.argv[1]) is None else 1)"
+        ), str(root)], capture_output=True, timeout=30,
+    )
+    assert probe.returncode == 0
+
+    # A fresh setup call, with no in-memory installation state, must repair the
+    # interrupted install instead of announcing that the runtime is present.
+    monkeypatch.setattr(llm_runtime_install, "_extract", original_extract)
+    monkeypatch.setattr(llm_runtime_install, "_write_marker", original_marker)
+    stages = []
+    llm_runtime_native.prepare(root=root, progress=lambda *event: stages.append(event))
+    assert llm_runtime_native.resolve_server(root) is not None
+    assert any(message == "Local inference runtime installed" for _, _, message in stages)
+    assert not any(message == "Local inference runtime already present" for _, _, message in stages)
+
+
+def test_failed_runtime_repair_invalidates_the_previous_completion_record(tmp_path, monkeypatch):
+    root = tmp_path / "llm"
+    payload = _zip_archive(ZIP_ENTRIES) if os.name == "nt" else _tar_archive(TAR_ENTRIES)
+    name = "llama-test-bin.zip" if os.name == "nt" else "llama-test-bin.tar.gz"
+    _pin(monkeypatch, payload, name=name)
+    _serve(monkeypatch, payload)
+    llm_runtime_native.prepare(root=root)
+    assert llm_runtime_native.resolve_server(root) is not None
+
+    def fail_extract(archive, target):
+        raise LifecycleError("runtime archive is unreadable or corrupt")
+
+    monkeypatch.setattr(llm_runtime_install, "_extract", fail_extract)
+    with pytest.raises(LifecycleError, match="unreadable or corrupt"):
+        llm_runtime_install.download(root)
+    assert llm_runtime_native.resolve_server(root) is None
+    assert not (llm_runtime_install.managed_root(root) / llm_runtime_install.MARKER_NAME).exists()
 
 
 def test_prepare_skips_the_download_when_a_server_is_already_present(tmp_path, monkeypatch):

@@ -88,8 +88,10 @@ def _marker_server(base: Path) -> Path | None:
         marker = json.loads((base / MARKER_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    relative = str(marker.get("server") or "") if isinstance(marker, dict) else ""
-    if not relative:
+    if not isinstance(marker, dict) or marker.get("release") != RUNTIME_RELEASE:
+        return None
+    relative = marker.get("server")
+    if not isinstance(relative, str) or not relative or "\\" in relative or ":" in relative:
         return None
     parts = PurePosixPath(relative)
     if parts.is_absolute() or ".." in parts.parts:
@@ -114,7 +116,9 @@ def resolve_server(root: Path | str | None = None) -> Path | None:
         if found is not None:
             return found
     base = managed_root(root if root is not None else _default_root())
-    found = _marker_server(base) or find_server(base)
+    # Managed extraction may leave an executable before its libraries finish.
+    # Only the completion record makes that directory eligible for reuse.
+    found = _marker_server(base)
     if found is not None:
         return found
     on_path = shutil.which(server_filename())
