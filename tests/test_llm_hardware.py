@@ -147,6 +147,8 @@ def test_runtime_presence_uses_explicit_node_root_not_disk_probe(monkeypatch, tm
     server.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     server.chmod(0o755)
     assert not llm_hardware.detect_hardware(tmp_path).native_runtime_present
+    assert not llm_hardware.detect_hardware(tmp_path, runtime_root=node_root).native_runtime_present
+    llm_runtime_install._write_marker(managed, server, "0" * 64)
     assert llm_hardware.detect_hardware(tmp_path, runtime_root=node_root).native_runtime_present
     assert not llm_hardware.detect_hardware(node_root).native_runtime_present
 

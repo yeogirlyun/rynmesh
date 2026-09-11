@@ -404,9 +404,11 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "下载中断、取消、重启后继续",
       "expected": "依据验证进度恢复，无重复安装，未完成不标就绪",
-      "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "status": "in_progress",
+      "actual": "Backend regression verifies that extraction failure, completion-record failure and cancellation cannot reuse an incomplete managed runtime; an independent process rejects the residue and retry completes installation. Full packaged desktop download interruption, cancellation and restart acceptance remains pending.",
+      "evidence": [
+        "docs/acceptance/local-ai-development/runtime-install-recovery.md"
+      ],
       "implementation_commit": ""
     },
     {
@@ -415,9 +417,10 @@
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
       "status": "in_progress",
-      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "actual": "Local-only inference and installation review are implemented. Incomplete managed runtime extraction and failed repair now invalidate reuse until installation completes. Full desktop and model recovery acceptance is incomplete.",
       "evidence": [
-        "docs/acceptance/local-ai-development/README.md"
+        "docs/acceptance/local-ai-development/README.md",
+        "docs/acceptance/local-ai-development/runtime-install-recovery.md"
       ],
       "implementation_commit": ""
     },
