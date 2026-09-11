@@ -69,6 +69,7 @@ def _expires() -> str:
 
 class _OpenAIHandler(BaseHTTPRequestHandler):
     calls = 0
+    last_messages = []
 
     def do_GET(self):
         if self.path == "/v1/models":
@@ -83,6 +84,7 @@ class _OpenAIHandler(BaseHTTPRequestHandler):
         size = int(self.headers.get("content-length", "0"))
         body = json.loads(self.rfile.read(size))
         type(self).calls += 1
+        type(self).last_messages = body.get("messages", [])
         if body["stream"] is True:
             self._send({"choices": [{"delta": {"content": "stream supported"}}]})
             return
@@ -1582,6 +1584,18 @@ def test_local_model_works_unpublished_without_registry_or_peer_transport(tmp_pa
     assert history.get(row["id"])["messages"][-1]["content"] == "test adapter completion"
     assert history.get(row["id"])["messages"][-1]["cost"] == 0
     assert commands.status(task_id)["transport"] == "local_runtime"
+    assert preview["prompt_format"] == "chat_messages_v1"
+    assert _OpenAIHandler.last_messages == json.loads(preview["prompt"])
+    assert _OpenAIHandler.last_messages[-1] == {"role": "user", "content": "A local question"}
+    changed_format = client.post("/api/local/llm/orders", json={
+        "task_id": task_id, "idempotency_key": task_id, "provider_peer_id": store.peer_id,
+        "service_id": "own-model", "network_id": "network", "prompt": preview["prompt"],
+        "max_tokens": preview["max_output_tokens"], "transport": "auto", "prompt_format": "text",
+    })
+    assert changed_format.status_code == 409
+    listed = next(order for order in client.get("/api/local/llm/orders").json()["orders"] if order["task_id"] == task_id)
+    assert listed["transport"] == "local_runtime"
+    assert listed["state"] == "succeeded"
     assert _OpenAIHandler.calls == calls_before + 1
     assert client.get("/api/local/task-balance").json()["available"] == 100
     assert not client.get("/api/local/llm/service/status").json()["publication_enabled"]
