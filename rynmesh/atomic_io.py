@@ -116,6 +116,7 @@ def atomic_write_json(
     indent: int | None = None,
     sort_keys: bool = True,
     ensure_ascii: bool = True,
+    separators: tuple[str, str] | None = None,
     trailing_newline: bool = False,
     mode: int = FILE_MODE,
     dir_mode: int = DIR_MODE,
@@ -125,7 +126,7 @@ def atomic_write_json(
     """Serialize ``value`` as JSON and write it durably via `atomic_write_bytes`."""
 
     try:
-        text = json.dumps(value, indent=indent, sort_keys=sort_keys, ensure_ascii=ensure_ascii)
+        text = json.dumps(value, indent=indent, sort_keys=sort_keys, ensure_ascii=ensure_ascii, separators=separators)
     except (TypeError, ValueError) as exc:
         raise AtomicIOError("record is not JSON-serializable") from exc
     if trailing_newline:

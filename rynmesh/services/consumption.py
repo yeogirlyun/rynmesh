@@ -40,7 +40,8 @@ _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
 # pair, and the test's own field-maxing must be kept in sync with whatever
 # `_clean_item` actually truncates.
 MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured true worst case at 1000 items is ~68.2 MiB
-SYNC_VERSION = "ryn.consumption.v2"
+PREVIOUS_SYNC_VERSION = "ryn.consumption.v2"
+SYNC_VERSION = "ryn.consumption.v3"
 MAX_SYNC_HISTORY_BYTES = 256 * 1024 * 1024
 _ITEM_FIELDS = {
     "item_id",
@@ -193,11 +194,12 @@ class ConsumptionStore:
         if not isinstance(payload, dict):
             raise ConsumptionError("consumption_history_invalid")
         if isinstance(payload.get("version"), str):
-            if payload["version"] != SYNC_VERSION:
+            if payload["version"] not in {PREVIOUS_SYNC_VERSION, SYNC_VERSION}:
                 raise SyncError("sync_version_unsupported")
             if not isinstance(payload.get("records"), dict) or "sync" not in payload:
                 raise ConsumptionError("consumption_history_invalid")
-            return payload, payload["records"], ReadingState(payload["sync"], validation_cache=self._sync_validation)
+            value = ReadingState.decode_compact(payload["sync"]) if payload["version"] == SYNC_VERSION else payload["sync"]
+            return payload, payload["records"], ReadingState(value, validation_cache=self._sync_validation)
         return payload, {
             str(key): dict(value)
             for key, value in payload.items()
@@ -206,8 +208,12 @@ class ConsumptionStore:
 
     def _save_document(self, document, local, sync):
         if sync:
-            atomic_write_json(self.path, {**document, "version": SYNC_VERSION, "records": local, "sync": sync.value},
-                              sort_keys=True, ensure_ascii=False, max_bytes=MAX_SYNC_HISTORY_BYTES)
+            if document.get('version') == PREVIOUS_SYNC_VERSION:
+                if migration_backup(self.path, suffix='.v2.migrated', max_bytes=MAX_SYNC_HISTORY_BYTES) is None:
+                    raise ConsumptionError('consumption_backup_failed')
+            atomic_write_json(self.path, {**document, "version": SYNC_VERSION, "records": local, "sync": sync.encode_compact()},
+                              sort_keys=False, ensure_ascii=False, separators=(',', ':'), max_bytes=MAX_SYNC_HISTORY_BYTES)
+            document['version'] = SYNC_VERSION
         else:
             self._write(local)
 
@@ -215,17 +221,21 @@ class ConsumptionStore:
         """Opt in after device consent; capture persists even while transfer pauses."""
         with file_transaction(self.lock_path):
             document, local, sync = self._document()
-            if sync is not None and sync.value['actor'] == actor and reading_scopes(scopes) <= set(sync.value['scopes']):
-                return
-            if sync is None:
-                sync = ReadingState.create(actor)
-                sync.enable(actor, scopes, local)
-                if self.path.exists() and migration_backup(self.path, max_bytes=MAX_HISTORY_BYTES) is None:
-                    raise ConsumptionError("consumption_backup_failed")
-                document = {"legacy_metadata": {key: value for key, value in document.items() if not isinstance(value, dict)}}
-            else:
-                sync.enable(actor, scopes, local)
-            self._save_document(document, local, sync)
+            self._enable_sync(document, local, sync, actor, scopes)
+
+    def _enable_sync(self, document, local, sync, actor, scopes):
+        if sync is not None and sync.value['actor'] == actor and reading_scopes(scopes) <= set(sync.value['scopes']):
+            return document, local, sync
+        if sync is None:
+            sync = ReadingState.create(actor)
+            sync.enable(actor, scopes, local)
+            if self.path.exists() and migration_backup(self.path, max_bytes=MAX_HISTORY_BYTES) is None:
+                raise ConsumptionError("consumption_backup_failed")
+            document = {"legacy_metadata": {key: value for key, value in document.items() if not isinstance(value, dict)}}
+        else:
+            sync.enable(actor, scopes, local)
+        self._save_document(document, local, sync)
+        return document, local, sync
 
     def sync_export(self, scopes):
         with file_transaction(self.lock_path):
@@ -234,10 +244,12 @@ class ConsumptionStore:
                 raise SyncError("sync_not_enabled")
             return sync.export(scopes)
 
-    def sync_snapshot(self, scopes, *, expected_actor):
+    def sync_snapshot(self, scopes, *, expected_actor, enable=False):
         """Validate the source once for an identity-bound bridge snapshot."""
         with file_transaction(self.lock_path):
-            _, _, sync = self._document()
+            document, local, sync = self._document()
+            if enable:
+                _, _, sync = self._enable_sync(document, local, sync, expected_actor, scopes)
             if sync is None:
                 raise SyncError("sync_not_enabled")
             if sync.value['actor'] != expected_actor:
@@ -259,7 +271,7 @@ class ConsumptionStore:
             entity = sync.value['entities'].get(sync.key(scope, identifier))
             return view(scope, identifier, entity['record']) if entity else None
 
-    def sync_receive(self, rows, *, scopes):
+    def sync_receive(self, rows, *, scopes, expected_actor=None, enable=False):
         """Confirm only after source fields and their causal state commit together."""
         from ..device_sync.store import MAX_BATCH, MAX_BATCH_BYTES
 
@@ -267,8 +279,12 @@ class ConsumptionStore:
             raise SyncError("sync_batch_limit")
         with file_transaction(self.lock_path):
             document, local, sync = self._document()
+            if enable:
+                document, local, sync = self._enable_sync(document, local, sync, expected_actor, scopes)
             if sync is None:
                 raise SyncError("sync_not_enabled")
+            if expected_actor is not None and sync.value['actor'] != expected_actor:
+                raise SyncError("sync_device_identity_changed")
             receipts = sync.merge(rows, scopes)
             # Validate the actual projected source before acknowledging a batch.
             # Unchanged entities were validated by _document and are not part

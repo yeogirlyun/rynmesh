@@ -61,6 +61,22 @@ def test_late_receipt_does_not_confirm_newer_local_value(tmp_path):
     assert not b.read('bookmarks', 'article')['bookmarked']
 
 
+def test_combined_source_import_rejects_invalid_ack_and_scope_before_any_commit(tmp_path):
+    a, b = replica(tmp_path / 'a'), replica(tmp_path / 'b')
+    put(a, 'bookmarks', bookmark())
+    put(a, 'reading', reading(.5))
+    rows = a.pending(b.actor, ['bookmarks', 'reading'])['records']
+    for operation in (
+        lambda: b.source_pending(a.actor, rows, scopes=['bookmarks']),
+        lambda: b.source_acknowledge(a.actor, rows, [{'scope': 'bookmarks', 'id': 'missing', 'revision': 'a' * 64}], scopes=['bookmarks', 'reading']),
+        lambda: b.source_acknowledge(a.actor, rows, [{}] * 101, scopes=['bookmarks', 'reading']),
+    ):
+        with pytest.raises(SyncError):
+            operation()
+        assert not b.path.exists()
+    assert b.source_pending(a.actor, rows, scopes=['bookmarks', 'reading'])['pending'] == 2
+
+
 def test_unselected_batch_is_rejected_atomically_and_disk_failure_has_no_receipt(tmp_path, monkeypatch):
     a, b = replica(tmp_path / 'a'), replica(tmp_path / 'b')
     put(a, 'bookmarks', bookmark())

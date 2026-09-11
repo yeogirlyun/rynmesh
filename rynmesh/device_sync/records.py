@@ -11,6 +11,7 @@ import hashlib
 import math
 import re
 from copy import deepcopy
+from functools import lru_cache
 from urllib.parse import quote, urlsplit
 
 from ..ask_ryn.store import clean_conversation
@@ -49,6 +50,26 @@ def scope_id(value):
 
 def fingerprint(value):
     return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+@lru_cache(maxsize=30000)
+def _entity_key(scope, identifier):
+    return fingerprint([scope, identifier])
+
+
+def entity_key(scope, identifier):
+    """Bounded memo of immutable identifiers, not record content or validity.
+
+    Validate before the memo lookup, including malformed unhashable inputs.
+    Every content value continues through its own canonical-byte validation.
+    """
+    return _entity_key(scope_id(scope), entity_id(identifier))
+
+
+def conflict_count(rows):
+    """Count distinct concurrent values in already validated source records."""
+    return sum(len(heads := row['record']['heads']) > 1 and
+               len({fingerprint(head['value']) for head in heads}) > 1 for row in rows)
 
 
 def clean_value(scope, identifier, value):

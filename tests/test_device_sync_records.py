@@ -165,3 +165,24 @@ def test_same_operation_cannot_change_its_numeric_encoding_and_hash_on_merge():
     for left, right in [(first, changed), (changed, first)]:
         with pytest.raises(r.SyncError, match='sync_dot_conflict'):
             r.merge('reading', 'article', left, right)
+
+
+def test_entity_key_memo_preserves_canonical_scope_binding_and_rejects_invalid_inputs():
+    for scope in ('bookmarks', 'reading', 'conversations'):
+        for identifier in ('article', '中文内容', 'a' * 256):
+            assert r.entity_key(scope, identifier) == r.fingerprint([scope, identifier])
+    for scope, identifier, error in (([], 'article', 'scope'), ('bookmarks', [], 'entity'),
+                                     ('bookmarks', True, 'entity'), ('bookmarks', 'bad\nname', 'entity')):
+        with pytest.raises(r.SyncError, match=error):
+            r.entity_key(scope, identifier)
+    # A long-lived node never retains unlimited identifiers in the memo.
+    for index in range(30001):
+        r.entity_key('bookmarks', f'memo-{index}')
+    assert r._entity_key.cache_info().currsize == 30000
+
+
+def test_conflict_count_keeps_identical_concurrent_values_together():
+    first = r.write('bookmarks', 'article', r.empty(), A, bookmark())
+    identical = r.merge('bookmarks', 'article', first, r.write('bookmarks', 'article', r.empty(), B, bookmark()))
+    different = r.merge('bookmarks', 'article', first, r.write('bookmarks', 'article', r.empty(), B, bookmark(False)))
+    assert r.conflict_count([{'record': row} for row in (r.empty(), first, identical, different)]) == 1

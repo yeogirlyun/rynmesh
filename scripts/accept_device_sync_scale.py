@@ -11,14 +11,16 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import shutil
 import socket
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 class Node:
-    def __init__(self, home):
+    def __init__(self, home, *, port=0):
         import uvicorn
         from fastapi import FastAPI, HTTPException
 
@@ -32,7 +34,7 @@ class Node:
 
         self.home, self.bytes_sent, self.bytes_received = home, 0, 0
         self.socket = socket.socket()
-        self.socket.bind(('127.0.0.1', 0))
+        self.socket.bind(('127.0.0.1', port))
         self.endpoint = f'http://127.0.0.1:{self.socket.getsockname()[1]}'
         self.store = RynmeshStore(home=home, network_dir=home / 'network', node_name=home.name)
         self.key = peer_box.load_or_create_messaging_key(home / 'messaging.x25519')
@@ -120,25 +122,72 @@ def converge(left, right, pair_id, *, expected_changes=None):
     return {'seconds': time.perf_counter() - start, 'batches': rounds, 'acknowledged': confirmed}
 
 
-def measure(home, count, changes, result):
-    left, right = Node(home / 'A'), None
+def measure(home, count, changes, result, *, baseline=None):
+    from rynmesh.crypto import canonical_json
+
+    ports, pair_id = {}, None
+    if baseline:
+        from rynmesh.device_sync.pair_store import PairingStore
+        from rynmesh.services.peer_box import load_or_create_messaging_key
+
+        if not baseline.is_dir() or not baseline.name.startswith('rynmesh-device-sync-scale-'):
+            raise ValueError('benchmark_baseline_not_synthetic')
+        shutil.copytree(baseline, home)
+        endpoints = {}
+        for name in ('A', 'B'):
+            key_path = home / name / 'messaging.x25519'
+            if not key_path.is_file():
+                raise ValueError('benchmark_baseline_identity_missing')
+            pairs = PairingStore(home / name, load_or_create_messaging_key(key_path)).snapshot()['pairs']
+            active = [row for row in pairs.values() if row['status'] == 'active']
+            if len(active) != 1 or (pair_id and active[0]['id'] != pair_id):
+                raise ValueError('benchmark_baseline_pair_mismatch')
+            pair_id = active[0]['id']
+            row = active[0]
+            parsed = urlsplit(row['local']['endpoint'])
+            if parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port:
+                raise ValueError('benchmark_baseline_endpoint_invalid')
+            ports[name] = parsed.port
+            endpoints[name] = (row['local']['endpoint'], row['remote']['endpoint'])
+        if endpoints['A'] != tuple(reversed(endpoints['B'])) or ports['A'] == ports['B']:
+            raise ValueError('benchmark_baseline_endpoint_mismatch')
+
+    left, right = Node(home / 'A', port=ports.get('A', 0)), None
     try:
-        right = Node(home / 'B')
-        invite = left.pairing.create_invite(['bookmarks'])
-        pair = right.pairing.join(invite['uri'], ['bookmarks'])
-        left.pairing.approve(pair['id'], review_token=pair['review_token'], scopes=['bookmarks'])
-        right.pairing.retry(pair['id'])
-        result['phase'] = 'baseline_migration'
-        started = time.perf_counter()
-        seed(left, 0, count // 2)
-        seed(right, count // 2, count)
-        result['baseline_migration_seconds'] = time.perf_counter() - started
-        print(json.dumps({'stage': result['phase'], 'seconds': result['baseline_migration_seconds']}), flush=True)
-        result['phase'] = 'initial_merge'
-        result['initial_merge'] = converge(left, right, pair['id'])
+        right = Node(home / 'B', port=ports.get('B', 0))
+        if baseline is None:
+            invite = left.pairing.create_invite(['bookmarks'])
+            pair = right.pairing.join(invite['uri'], ['bookmarks'])
+            pair_id = pair['id']
+            left.pairing.approve(pair_id, review_token=pair['review_token'], scopes=['bookmarks'])
+            right.pairing.retry(pair_id)
+            result['phase'] = 'baseline_migration'
+            started = time.perf_counter()
+            seed(left, 0, count // 2)
+            seed(right, count // 2, count)
+            result['baseline_migration_seconds'] = time.perf_counter() - started
+            print(json.dumps({'stage': result['phase'], 'seconds': result['baseline_migration_seconds']}), flush=True)
+            result['phase'] = 'initial_merge'
+            result['initial_merge'] = converge(left, right, pair_id)
+        else:
+            result['phase'] = 'verify_persisted_baseline'
+            assert all(node.transfer.status(pair_id)['state'] == 'confirmed' for node in (left, right))
         for node in (left, right):
-            assert len(node.reader.sync_export(['bookmarks'])) == count
-            assert len(node.reader.list()) == count
+            rows = node.reader.sync_export(['bookmarks'])
+            assert len(rows) == count
+            assert all(len(row['record']['heads']) == 1 for row in rows)
+            saved_ids = {row['id'] for row in rows if row['record']['heads'][0]['value']['bookmarked']}
+            # A previously cancelled bookmark need not remain in recent history;
+            # its causal metadata must still be present in the source above.
+            assert {row['item_id'] for row in node.reader.list() if row['bookmarked']} == saved_ids
+        initial = left.reader.sync_export(['bookmarks'])
+        assert canonical_json(initial) == canonical_json(right.reader.sync_export(['bookmarks']))
+        selected = [row for row in initial if int(row['id'].rsplit('-', 1)[1]) < changes]
+        assert len(selected) == changes
+        before_values = {row['record']['heads'][0]['value']['bookmarked'] for row in selected}
+        assert len(before_values) == 1
+        bookmarked = not before_values.pop()
+        result['change_action'] = 'bookmark' if bookmarked else 'unbookmark'
         result['phase'] = 'incremental_source_writes'
         before_bytes = sum(node.bytes_sent + node.bytes_received for node in (left, right))
         started = time.perf_counter()
@@ -146,20 +195,20 @@ def measure(home, count, changes, result):
             identifier = f'sync-scale-{index:05d}'
             left.reader.record({'item_id': identifier, 'title': f'Synthetic reading record {index}',
                 'source_title': 'Scale acceptance', 'link': f'https://example.test/sync-scale/{index}',
-                'content_kind': 'article'}, 'unbookmark')
+                'content_kind': 'article'}, result['change_action'])
             if (index + 1) % 10 == 0:
                 print(json.dumps({'stage': result['phase'], 'written': index + 1,
                     'elapsed_seconds': round(time.perf_counter() - started, 3)}), flush=True)
         result['source_write_seconds'] = time.perf_counter() - started
         result['phase'] = 'incremental_transfer'
-        result['incremental_transfer'] = converge(left, right, pair['id'], expected_changes=changes)
+        result['incremental_transfer'] = converge(left, right, pair_id, expected_changes=changes)
         result['incremental_total_seconds'] = time.perf_counter() - started
         result['incremental_json_bytes'] = sum(node.bytes_sent + node.bytes_received for node in (left, right)) - before_bytes
         for node in (left, right):
             rows = node.reader.sync_export(['bookmarks'])
             assert len(rows) == count
             changed = [row for row in rows if int(row['id'].rsplit('-', 1)[1]) < changes]
-            assert len(changed) == changes and all(not row['record']['heads'][0]['value']['bookmarked'] for row in changed)
+            assert len(changed) == changes and all(row['record']['heads'][0]['value']['bookmarked'] is bookmarked for row in changed)
         result.update(phase='finished', status='measured', target_met=result['incremental_total_seconds'] <= 60)
     finally:
         if right:
@@ -175,6 +224,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--records', type=int, default=10000)
     parser.add_argument('--changes', type=int, default=100)
+    parser.add_argument('--baseline-home', type=Path, help='Copy a stopped, genuinely confirmed synthetic baseline; do not remeasure initial merge or seed receipts')
     args = parser.parse_args()
     home = args.home.resolve()
     if home.exists() or not home.name.startswith('rynmesh-device-sync-scale-'):
@@ -186,8 +236,11 @@ def main():
         'scope': 'Bookmarks; two loopback route packages; no scheduler wait/UI/other workers/cross-NAT',
         'baseline': 'Disjoint synthetic legacy files migrated through source API; no seeded receipts',
         'target_seconds': 60, 'status': 'running', 'phase': 'pairing'}
+    if args.baseline_home:
+        result['baseline'] = 'Copy of persisted synthetic paired source/replica state from an earlier real TCP run; confirmed state verified, no receipts created by the harness'
+        result['initial_merge_remeasured'] = False
     try:
-        measure(home, args.records, args.changes, result)
+        measure(home, args.records, args.changes, result, baseline=args.baseline_home.resolve() if args.baseline_home else None)
     except Exception as exc:
         result.update(status='failed', error_type=type(exc).__name__, target_met=False)
         print(json.dumps({'stage': result['phase'], 'error_type': result['error_type']}), flush=True)

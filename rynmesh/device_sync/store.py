@@ -77,7 +77,7 @@ class ReplicaStore:
 
     @staticmethod
     def _key(scope, identifier):
-        return records.fingerprint([records.scope_id(scope), records.entity_id(identifier)])
+        return records.entity_key(scope, identifier)
 
     def _mutate(self, operation):
         with file_transaction(self.lock):
@@ -140,18 +140,21 @@ class ReplicaStore:
         selected = self.scopes(scopes)
         with file_transaction(self.lock):
             _, data = self._read()
-            receipts = data['receipts'].get(device, {})
-            rows = [row for key, row in sorted(data['records'].items())
-                    if row['scope'] in selected and receipts.get(key) != records.fingerprint(row['record'])]
-            batch, size = [], 2
-            for row in rows[:MAX_BATCH]:
-                wire = {key: row[key] for key in ('scope', 'id', 'record')}
-                row_size = len(canonical_json(wire)) + bool(batch)
-                if size + row_size > MAX_BATCH_BYTES:
-                    break
-                batch.append(deepcopy(wire))
-                size += row_size
-            return {'records': batch, 'pending': len(rows)}
+            return self._pending(data, device, selected)
+
+    def _pending(self, data, device, selected):
+        receipts = data['receipts'].get(device, {})
+        rows = [row for key, row in sorted(data['records'].items())
+                if row['scope'] in selected and receipts.get(key) != records.fingerprint(row['record'])]
+        batch, size = [], 2
+        for row in rows[:MAX_BATCH]:
+            wire = {key: row[key] for key in ('scope', 'id', 'record')}
+            row_size = len(canonical_json(wire)) + bool(batch)
+            if size + row_size > MAX_BATCH_BYTES:
+                break
+            batch.append(deepcopy(wire))
+            size += row_size
+        return {'records': batch, 'pending': len(rows)}
 
     def receive(self, rows, *, scopes):
         selected = self.scopes(scopes)
@@ -166,30 +169,57 @@ class ReplicaStore:
         restart recovery does not repeatedly rewrite the whole replica per row.
         Only the source adapters may call this; network input uses receive().
         """
+        selected = self._source_scope(rows, scopes)
+        return self._receive(rows, selected)
+
+    def _source_scope(self, rows, scopes):
         selected = self.scopes(scopes)
         if not isinstance(rows, list) or len(rows) > MAX_ENTITIES or len(canonical_json(rows)) > MAX_PLAINTEXT:
             raise SyncError('sync_capacity_exhausted')
-        return self._receive(rows, selected)
+        return selected
+
+    def source_pending(self, device, rows, *, scopes):
+        """Import a durable source and derive its pending batch in one transaction."""
+        records.actor_id(device)
+        selected = self._source_scope(rows, scopes)
+
+        def change(data):
+            self._merge_rows(data, rows, selected, collect_receipts=False)
+            return self._pending(data, device, selected)
+        return self._mutate(change)
+
+    def source_acknowledge(self, device, rows, receipts, *, scopes):
+        """Check receipts against current source values in the same replica commit."""
+        records.actor_id(device)
+        selected = self._source_scope(rows, scopes)
+        if not isinstance(receipts, list) or len(receipts) > MAX_BATCH:
+            raise SyncError('sync_batch_limit')
+
+        def change(data):
+            self._merge_rows(data, rows, selected, collect_receipts=False)
+            return self._acknowledge(data, device, receipts, selected)
+        return self._mutate(change)
 
     def _receive(self, rows, selected):
-        def change(data):
-            receipts, seen = [], set()
-            for row in rows:
-                if not isinstance(row, dict) or set(row) != {'scope', 'id', 'record'} or records.scope_id(row['scope']) not in selected:
-                    raise SyncError('sync_scope_denied')
-                key = self._key(row['scope'], row['id'])
-                if key in seen:
-                    raise SyncError('sync_batch_invalid')
-                seen.add(key)
-                previous = data['records'].get(key, {}).get('record', records.empty())
-                # _read validated the previous record. Identical canonical
-                # bytes need no causal merge; changed input still takes the
-                # complete validation/merge path, including operation clashes.
-                merged = previous if canonical_json(previous) == canonical_json(row['record']) else records.merge(row['scope'], row['id'], previous, row['record'])
-                data['records'][key] = {**data['records'].get(key, {}), **row, 'record': merged}
+        return self._mutate(lambda data: self._merge_rows(data, rows, selected))
+
+    def _merge_rows(self, data, rows, selected, *, collect_receipts=True):
+        receipts, seen = [], set()
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {'scope', 'id', 'record'} or records.scope_id(row['scope']) not in selected:
+                raise SyncError('sync_scope_denied')
+            key = self._key(row['scope'], row['id'])
+            if key in seen:
+                raise SyncError('sync_batch_invalid')
+            seen.add(key)
+            previous = data['records'].get(key, {}).get('record', records.empty())
+            # _read validated the previous record. Identical canonical bytes
+            # need no merge; changed input retains full validation.
+            merged = previous if canonical_json(previous) == canonical_json(row['record']) else records.merge(row['scope'], row['id'], previous, row['record'])
+            data['records'][key] = {**data['records'].get(key, {}), **row, 'record': merged}
+            if collect_receipts:
                 receipts.append({'scope': row['scope'], 'id': row['id'], 'revision': records.fingerprint(row['record'])})
-            return receipts
-        return self._mutate(change)
+        return receipts
 
     def acknowledge(self, device, receipts, *, scopes):
         records.actor_id(device)
@@ -197,28 +227,29 @@ class ReplicaStore:
         if not isinstance(receipts, list) or len(receipts) > MAX_BATCH:
             raise SyncError('sync_batch_limit')
 
-        def change(data):
-            if device not in data['receipts'] and len(data['receipts']) >= records.MAX_ACTORS:
-                raise SyncError('sync_device_limit')
-            saved = data['receipts'].setdefault(device, {})
-            confirmed, seen = 0, set()
-            for receipt in receipts:
-                if not isinstance(receipt, dict) or set(receipt) != {'scope', 'id', 'revision'} or records.scope_id(receipt['scope']) not in selected:
-                    raise SyncError('sync_scope_denied')
-                key = self._key(receipt['scope'], receipt['id'])
-                if key in seen:
-                    raise SyncError('sync_batch_invalid')
-                seen.add(key)
-                records.actor_id(receipt['revision'])  # SHA256, the same bounded hexadecimal shape.
-                row = data['records'].get(key)
-                if not row:
-                    raise SyncError('sync_receipt_invalid')
-                # A late acknowledgement cannot mark a newer local value synced.
-                if records.fingerprint(row['record']) == receipt['revision']:
-                    saved[key] = receipt['revision']
-                    confirmed += 1
-            return {'acknowledged': confirmed, 'outdated': len(receipts) - confirmed}
-        return self._mutate(change)
+        return self._mutate(lambda data: self._acknowledge(data, device, receipts, selected))
+
+    def _acknowledge(self, data, device, receipts, selected):
+        if device not in data['receipts'] and len(data['receipts']) >= records.MAX_ACTORS:
+            raise SyncError('sync_device_limit')
+        saved = data['receipts'].setdefault(device, {})
+        confirmed, seen = 0, set()
+        for receipt in receipts:
+            if not isinstance(receipt, dict) or set(receipt) != {'scope', 'id', 'revision'} or records.scope_id(receipt['scope']) not in selected:
+                raise SyncError('sync_scope_denied')
+            key = self._key(receipt['scope'], receipt['id'])
+            if key in seen:
+                raise SyncError('sync_batch_invalid')
+            seen.add(key)
+            records.actor_id(receipt['revision'])
+            row = data['records'].get(key)
+            if not row:
+                raise SyncError('sync_receipt_invalid')
+            # A late acknowledgement cannot mark a newer local value synced.
+            if records.fingerprint(row['record']) == receipt['revision']:
+                saved[key] = receipt['revision']
+                confirmed += 1
+        return {'acknowledged': confirmed, 'outdated': len(receipts) - confirmed}
 
     def forget_device(self, device):
         """Pairing removal/reset must discard old acknowledgements before reuse."""

@@ -113,3 +113,40 @@ def test_concurrent_flush_and_source_actions_have_consistent_lock_order(tmp_path
     assert batch['records'][0]['record']['clock'] == {a.replica.actor: 1}
     receipt = b.receive(batch['records'], scopes=SCOPES)
     assert a.acknowledge(b.replica.actor, receipt, scopes=SCOPES)['acknowledged'] == 1
+
+
+def test_combined_receipt_failure_preserves_source_outbox_and_rejects_old_ack(tmp_path, monkeypatch):
+    a, b = device(tmp_path / 'a'), device(tmp_path / 'b')
+    a.source.record(ITEM, 'bookmark')
+    first = a.pending(b.replica.actor, ['bookmarks'])
+    receipt = b.receive(first['records'], scopes=['bookmarks'])
+    a.source.record(ITEM, 'unbookmark')
+    source_before, replica_before = a.source.path.read_bytes(), a.replica.path.read_bytes()
+    with monkeypatch.context() as patch:
+        patch.setattr(replica_storage, 'atomic_write_json', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('full')))
+        with pytest.raises(OSError):
+            a.acknowledge(b.replica.actor, receipt, scopes=['bookmarks'])
+    assert a.source.path.read_bytes() == source_before
+    assert a.replica.path.read_bytes() == replica_before
+    a = device(tmp_path / 'a', enable=False)
+    assert a.acknowledge(b.replica.actor, receipt, scopes=['bookmarks']) == {'acknowledged': 0, 'outdated': 1}
+    second = a.pending(b.replica.actor, ['bookmarks'])
+    assert second['pending'] == 1 and not second['records'][0]['record']['heads'][0]['value']['bookmarked']
+    receipt = b.receive(second['records'], scopes=['bookmarks'])
+    assert a.acknowledge(b.replica.actor, receipt, scopes=['bookmarks'])['acknowledged'] == 1
+
+
+def test_pending_snapshot_failure_returns_no_batch_and_status_retains_scope_conflicts(tmp_path, monkeypatch):
+    a, b = device(tmp_path / 'a'), device(tmp_path / 'b')
+    a.source.record(ITEM, 'bookmark')
+    with monkeypatch.context() as patch:
+        patch.setattr(replica_storage, 'atomic_write_json', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('full')))
+        with pytest.raises(OSError):
+            a.pending(b.replica.actor, SCOPES)
+    assert not a.replica.path.exists() and a.source.list()[0]['bookmarked']
+    assert a.status(b.replica.actor, ['bookmarks']) == {'pending': 1, 'conflicts': 0}
+    a.source.record(ITEM, 'progress', progress=.2)
+    b.source.record(ITEM, 'progress', progress=.8)
+    a.receive(b.pending(a.replica.actor, ['reading'])['records'], scopes=['reading'])
+    assert a.status(b.replica.actor, ['reading']) == {'pending': 1, 'conflicts': 1}
+    assert a.status(b.replica.actor, ['bookmarks']) == {'pending': 1, 'conflicts': 0}

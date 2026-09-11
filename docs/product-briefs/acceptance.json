@@ -949,12 +949,14 @@
       "scenario": "参考双设备、稳定连接、两端各不超过 1 万条元数据记录",
       "expected": "新增 100 条合成变更，建议 60 秒内完成确认；记录环境与字节数，大规模首次同步单独计时",
       "status": "in_progress",
-      "actual": "The 10000-record-per-source TCP measurement completed with source integrity and 200 change receipts verified. The 100 normal sequential source changes took 99.682 seconds through final bilateral confirmation: 63.864 seconds writing sources and 35.819 seconds transferring/confirming, with 164740 encrypted JSON bytes excluding HTTP headers. This exceeds the 60-second target. Initial disjoint merge took 1866.666 seconds across 200 batches; tests and browser work overlapped initial merge only, so it is not an exclusive-machine comparison. Incremental timing excludes scheduler wait, UI/full-node workload, physical devices and cross-NAT. Performance work remains required; the earlier failed run and smoke results are retained.",
+      "actual": "The original fresh 10000-record-per-source TCP run confirmed source integrity but took 99.682 seconds for 100 changes. After combined transactions, v3 projection storage and compatible encoder reuse, an incremental rerun on copies of the genuinely confirmed baseline took 59.137 seconds: 41.996 seconds of 100 normal source writes, 17.140 seconds of transfer/final confirmation, 200 receipts and 164476 encrypted JSON bytes excluding headers. V2 migration backups match the original files; both sources retain 10000 causal records and the selected changes. This rerun reaches the 60-second reference with little margin, but does not remeasure initial merge. A fresh-baseline run of the latest code and full-node/packaged/cross-network evidence remain required; all intermediate misses and the pre-timing baseline-check failure are retained.",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/device-sync-development/scale-smoke-200.json",
         "docs/acceptance/device-sync-development/scale-initial-before.json",
-        "docs/acceptance/device-sync-development/scale-10000-result.json"
+        "docs/acceptance/device-sync-development/scale-10000-result.json",
+        "docs/acceptance/device-sync-development/scale-compact-59s.json",
+        "docs/acceptance/device-sync-development/source-v3-storage.md"
       ],
       "implementation_commit": ""
     },
