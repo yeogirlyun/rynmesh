@@ -6,7 +6,7 @@ export interface CleanupReview {
   has_unassigned_draft: boolean; active_tasks: number; backup_files: number; backup_bytes: number; order_results: number;
 }
 export interface CleanupJob {
-  id: string; done: CleanupStep[]; pending: CleanupStep[]; cancelled: boolean;
+  id: string; sequence?: number; done: CleanupStep[]; pending: CleanupStep[]; cancelled: boolean;
   local_copies_complete: boolean; browser_cleanup_required: boolean; remote_confirmed: boolean; identities: number;
 }
 export interface BackupReview { review_token: string; files: number; bytes: number }
@@ -21,7 +21,8 @@ const messages: Record<string, string> = {
   ask_cleanup_already_started: "Conversation erasure already started and cannot be undone. Continue the remaining cleanup steps.",
   ask_cleanup_backup_changed: "A remaining backup changed. Review that backup again before clearing it.",
   ask_cleanup_not_found: "The node has no record of this cleanup. Refresh the list and review your current data.",
-  ask_cleanup_limit: "The node's cleanup history is full. Existing cleanup records have been preserved.",
+  ask_cleanup_limit: "This node has reached its cleanup sequence limit. Existing records are preserved; update Ryn before starting another cleanup.",
+  ask_cleanup_backup_failed: "The node could not preserve its previous cleanup records for migration. Check available storage and retry the same request.",
   ask_cleanup_backup_limit: "There are too many backup files to review in one operation. No new cleanup was started.",
   ask_cleanup_version_unsupported: "Cleanup records need a newer version of Ryn. They have been kept unchanged.",
   ask_history_version_unsupported: "Saved conversations need a newer version of Ryn. They have been kept unchanged.",

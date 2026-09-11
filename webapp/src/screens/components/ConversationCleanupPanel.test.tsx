@@ -97,3 +97,19 @@ it("requires waiting for active AI tasks and discards a stale review", async () 
   expect(screen.queryByRole("button", { name: "Clear reviewed node copies" })).not.toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("changed after review");
 });
+
+it("keeps the operation number after older history leaves the list", async () => {
+  const partial: CleanupJob = { ...finished, sequence: 35, done: ["source", "replica"],
+    pending: ["backups", "search", "orders"], local_copies_complete: false };
+  vi.spyOn(conversationCleanup, "jobs").mockResolvedValue([partial, { ...finished, id: "older", sequence: 34 }]);
+  const resume = vi.spyOn(conversationCleanup, "resume").mockResolvedValue({ ...finished, sequence: 35 });
+  const user = userEvent.setup();
+  render(<ConversationCleanupPanel />);
+  await screen.findByRole("heading", { name: "Cleanup 35" });
+  expect(screen.getByText(/most recent 32 cleanup records/)).toHaveTextContent("deletion markers remain");
+  await user.click(screen.getByRole("button", { name: "Continue cleanup 35" }));
+  expect(resume).toHaveBeenCalledExactlyOnceWith(partial.id);
+  expect(screen.getByRole("heading", { name: "Cleanup 35" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Cleanup 34" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Cleanup 2" })).not.toBeInTheDocument();
+});

@@ -18,6 +18,7 @@ SAFE_ERRORS = frozenset({
     'ask_cleanup_not_found', 'ask_cleanup_backup_changed', 'ask_cleanup_backup_limit',
     'ask_cleanup_already_started', 'ask_cleanup_backup_review_unavailable', 'ask_cleanup_orders_active',
     'ask_cleanup_orders_unavailable', 'ask_cleanup_version_unsupported', 'ask_cleanup_unreadable',
+    'ask_cleanup_backup_failed',
     'ask_history_limit', 'ask_history_version_unsupported', 'search_index_busy',
     'search_index_version_unsupported', 'search_source_unavailable',
 })
