@@ -76,7 +76,7 @@ def clean_value(scope, identifier, value):
         raise SyncError('sync_item_invalid')
     metadata = {'item_id': identifier}
     # Body, snippets, thumbnails, private chat and model inputs aren't metadata.
-    for key, limit in (('title', 512), ('source_title', 512), ('source_id', 256), ('content_kind', 32), ('link', 4096)):
+    for key, limit in (('title', 4000), ('source_title', 4000), ('source_id', 4000), ('content_kind', 32), ('link', 4096)):
         text = item.get(key, '')
         if not isinstance(text, str) or len(text) > limit or any(ord(c) < 32 for c in text):
             raise SyncError('sync_item_invalid')

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import math
-import threading
 import time
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import quote
 
-from ..atomic_io import atomic_write_json, read_json
+from ..atomic_io import atomic_write_json, migration_backup, read_json
+from ..crypto import canonical_json
+from ..device_sync.reading import ReadingState
+from ..device_sync.records import SyncError, view
+from ..file_transactions import file_transaction
 
 __all__ = ["MAX_HISTORY_BYTES", "ConsumptionError", "ConsumptionStore"]
 
@@ -36,6 +39,8 @@ _ACTIONS = {"opened", "bookmark", "unbookmark", "progress", "completed"}
 # pair, and the test's own field-maxing must be kept in sync with whatever
 # `_clean_item` actually truncates.
 MAX_HISTORY_BYTES = 96 * 1024 * 1024  # 96 MiB; measured true worst case at 1000 items is ~68.2 MiB
+SYNC_VERSION = "ryn.consumption.v2"
+MAX_SYNC_HISTORY_BYTES = 256 * 1024 * 1024
 _ITEM_FIELDS = {
     "item_id",
     "source_id",
@@ -67,7 +72,7 @@ class ConsumptionStore:
     def __init__(self, path: str | Path, *, max_items: int = 1000) -> None:
         self.path = Path(path)
         self.max_items = max(1, int(max_items))
-        self._lock = threading.RLock()
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
 
     def list(self) -> list[dict[str, Any]]:
         records = list(self._load().values())
@@ -84,12 +89,16 @@ class ConsumptionStore:
         *,
         progress: float | None = None,
         now_unix: float | None = None,
+        content_version: str | None = None,
+        expected_sync_revision: str | None = None,
     ) -> dict[str, Any]:
-        with self._lock:
-            return self._record(item, action, progress=progress, now_unix=now_unix)
+        with file_transaction(self.lock_path):
+            return self._record(item, action, progress=progress, now_unix=now_unix,
+                                content_version=content_version, expected_sync_revision=expected_sync_revision)
 
     def _record(self, item: Mapping[str, Any], action: str, *, progress: float | None,
-                now_unix: float | None) -> dict[str, Any]:
+                now_unix: float | None, content_version: str | None,
+                expected_sync_revision: str | None) -> dict[str, Any]:
         action = str(action or "").strip().lower()
         if action not in _ACTIONS:
             raise ConsumptionError("consumption_action_invalid")
@@ -98,7 +107,8 @@ class ConsumptionStore:
         stamp = time.time() if now_unix is None else float(now_unix)
         if not math.isfinite(stamp) or stamp < 0:
             raise ConsumptionError("consumption_timestamp_invalid")
-        records = self._load()
+        document, local, sync = self._document()
+        records = sync.project(local) if sync else local
         record = dict(
             records.get(
                 item_id,
@@ -114,6 +124,10 @@ class ConsumptionStore:
             )
         )
         record["item"] = clean_item
+        if content_version is not None:
+            if not isinstance(content_version, str) or len(content_version) > 256 or any(ord(c) < 32 for c in content_version):
+                raise ConsumptionError("consumption_content_version_invalid")
+            record["content_version"] = content_version
         record["last_activity_unix"] = stamp
         if action == "opened":
             if not record.get("first_opened_unix"):
@@ -131,28 +145,109 @@ class ConsumptionStore:
         elif action == "completed":
             record["progress"] = 1.0
             record["completed"] = True
+        scope = "bookmarks" if action in {"bookmark", "unbookmark"} else "reading"
+        if sync:
+            sync.capture(record, scope, expected_revision=expected_sync_revision)
+        elif expected_sync_revision is not None:
+            raise SyncError("sync_not_enabled")
         records[item_id] = record
         ordered = sorted(
             records.values(),
             key=lambda value: float(value.get("last_activity_unix", 0.0) or 0.0),
             reverse=True,
         )[: self.max_items]
-        self._write({str(value["item_id"]): value for value in ordered})
-        return record
+        # Derived conflict/revision fields never become an independent source.
+        saved = {str(value["item_id"]): {key: item for key, item in value.items()
+                 if key not in {"sync_revisions", "sync_conflicts"}} for value in ordered}
+        self._save_document(document, saved, sync)
+        return sync.project({item_id: record})[item_id] if sync else record
 
     def clear(self) -> None:
-        with self._lock:
-            self._write({})
+        with file_transaction(self.lock_path):
+            document, _, sync = self._document()
+            if sync:
+                sync.clear()
+            self._save_document(document, {}, sync)
 
     def _load(self) -> dict[str, dict[str, Any]]:
-        payload = read_json(self.path, max_bytes=MAX_HISTORY_BYTES) if self.path.exists() else {}
+        with file_transaction(self.lock_path):
+            _, local, sync = self._document()
+            return sync.project(local) if sync else local
+
+    def _document(self):
+        payload = read_json(self.path, max_bytes=MAX_SYNC_HISTORY_BYTES) if self.path.exists() else {}
         if not isinstance(payload, dict):
             raise ConsumptionError("consumption_history_invalid")
-        return {
+        if isinstance(payload.get("version"), str):
+            if payload["version"] != SYNC_VERSION:
+                raise SyncError("sync_version_unsupported")
+            if not isinstance(payload.get("records"), dict) or "sync" not in payload:
+                raise ConsumptionError("consumption_history_invalid")
+            return payload, payload["records"], ReadingState(payload["sync"])
+        return payload, {
             str(key): dict(value)
             for key, value in payload.items()
             if isinstance(value, dict)
-        }
+        }, None
+
+    def _save_document(self, document, local, sync):
+        if sync:
+            atomic_write_json(self.path, {**document, "version": SYNC_VERSION, "records": local, "sync": sync.value},
+                              indent=2, sort_keys=True, ensure_ascii=False, max_bytes=MAX_SYNC_HISTORY_BYTES)
+        else:
+            self._write(local)
+
+    def enable_sync(self, actor, scopes):
+        """Opt in after device consent; capture persists even while transfer pauses."""
+        with file_transaction(self.lock_path):
+            document, local, sync = self._document()
+            if sync is None:
+                sync = ReadingState.create(actor)
+                sync.enable(actor, scopes, local)
+                if self.path.exists() and migration_backup(self.path, max_bytes=MAX_HISTORY_BYTES) is None:
+                    raise ConsumptionError("consumption_backup_failed")
+                document = {"legacy_metadata": {key: value for key, value in document.items() if not isinstance(value, dict)}}
+            else:
+                sync.enable(actor, scopes, local)
+            self._save_document(document, local, sync)
+
+    def sync_export(self, scopes):
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            if sync is None:
+                raise SyncError("sync_not_enabled")
+            return sync.export(scopes)
+
+    def sync_identity(self):
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            if sync is None:
+                raise SyncError("sync_not_enabled")
+            return sync.value['actor']
+
+    def sync_read(self, scope, identifier):
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            if sync is None or scope not in sync.value['scopes']:
+                raise SyncError("sync_scope_denied")
+            entity = sync.value['entities'].get(sync.key(scope, identifier))
+            return view(scope, identifier, entity['record']) if entity else None
+
+    def sync_receive(self, rows, *, scopes):
+        """Confirm only after source fields and their causal state commit together."""
+        from ..device_sync.store import MAX_BATCH, MAX_BATCH_BYTES
+
+        if not isinstance(rows, list) or len(rows) > MAX_BATCH or len(canonical_json(rows)) > MAX_BATCH_BYTES:
+            raise SyncError("sync_batch_limit")
+        with file_transaction(self.lock_path):
+            document, local, sync = self._document()
+            if sync is None:
+                raise SyncError("sync_not_enabled")
+            receipts = sync.merge(rows, scopes)
+            # Validate the actual projected source before acknowledging a batch.
+            sync.project(local)
+            self._save_document(document, local, sync)
+            return receipts
 
     def _write(self, payload: Mapping[str, Any]) -> None:
         atomic_write_json(

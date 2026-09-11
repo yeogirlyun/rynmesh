@@ -156,7 +156,21 @@ class ReplicaStore:
         selected = self.scopes(scopes)
         if not isinstance(rows, list) or len(rows) > MAX_BATCH or len(canonical_json(rows)) > MAX_BATCH_BYTES:
             raise SyncError('sync_batch_limit')
+        return self._receive(rows, selected)
 
+    def reconcile_source(self, rows, *, scopes):
+        """Internal source snapshot import, not an unbounded network endpoint.
+
+        The source outbox is already durable. Reconcile it in one transaction so
+        restart recovery does not repeatedly rewrite the whole replica per row.
+        Only the source adapters may call this; network input uses receive().
+        """
+        selected = self.scopes(scopes)
+        if not isinstance(rows, list) or len(rows) > MAX_ENTITIES or len(canonical_json(rows)) > MAX_PLAINTEXT:
+            raise SyncError('sync_capacity_exhausted')
+        return self._receive(rows, selected)
+
+    def _receive(self, rows, selected):
         def change(data):
             receipts, seen = [], set()
             for row in rows:

@@ -174,12 +174,13 @@ def read_json(path: str | Path, *, default: Any = _REQUIRED, max_bytes: int = MA
         raise AtomicIOError("record is not valid JSON") from exc
 
 
-def migration_backup(path: str | Path, *, suffix: str = ".migrated") -> Path | None:
+def migration_backup(path: str | Path, *, suffix: str = ".migrated", max_bytes: int = MAX_RECORD_BYTES) -> Path | None:
     """Durably copy ``path`` aside to ``path`` + ``suffix``; return the backup path.
 
     Returns ``None`` when ``path`` does not exist (or is unreadable). An
     existing backup is only overwritten after the source has been read
-    successfully.
+    successfully. Stores with a larger explicit record budget must pass that
+    budget here too; the generic default is otherwise retained.
     """
 
     path = Path(path)
@@ -188,7 +189,7 @@ def migration_backup(path: str | Path, *, suffix: str = ".migrated") -> Path | N
     except OSError:
         return None
     backup = path.with_name(path.name + suffix)
-    atomic_write_bytes(backup, data)
+    atomic_write_bytes(backup, data, max_bytes=max_bytes)
     return backup
 
 
