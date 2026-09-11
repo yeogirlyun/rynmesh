@@ -1,0 +1,345 @@
+{
+  "environment": "Windows AMD64; production browser UI; real HTTPS model download; no response or progress stubs",
+  "packaged_desktop": false,
+  "observations": [
+    {
+      "label": "cancel_requested",
+      "at": "2026-09-11T17:00:01.525596+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.002681999991182238
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_5a7eebe6bb5745a7b09b1e8fe199bde0",
+        "state": "cancelled",
+        "stage": "cancelled",
+        "progress": 0,
+        "error_code": "setup_cancelled",
+        "recovery_state": "not_needed",
+        "message": "Setup cancelled. No previous model configuration required restoration."
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 5242880,
+          "sha256": "f1233bec21f8468dcabadab7518a8c224eb1134ae0d4aa4cdfac49b4d1edd022"
+        }
+      ],
+      "recovery_record_present": false
+    },
+    {
+      "label": "cancelled_after_restart",
+      "at": "2026-09-11T17:01:21.130685+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.0020087999873794615
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_5a7eebe6bb5745a7b09b1e8fe199bde0",
+        "state": "cancelled",
+        "stage": "cancelled",
+        "progress": 0,
+        "error_code": "setup_cancelled",
+        "recovery_state": "not_needed",
+        "message": "Setup cancelled. No previous model configuration required restoration."
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 5242880,
+          "sha256": "f1233bec21f8468dcabadab7518a8c224eb1134ae0d4aa4cdfac49b4d1edd022"
+        }
+      ],
+      "recovery_record_present": false
+    },
+    {
+      "label": "resumed_running",
+      "at": "2026-09-11T17:10:11.914628+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.002028800023254007
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_b33afee7a8ea40899b23dc09ae91fb9d",
+        "state": "running",
+        "stage": "download_model",
+        "progress": 15,
+        "error_code": null,
+        "recovery_state": null,
+        "message": "Downloading model data; verification pending"
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 7340032
+        }
+      ],
+      "recovery_record_present": true,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        }
+      ]
+    },
+    {
+      "label": "interrupted_on_disk",
+      "at": "2026-09-11T17:11:19.313790+00:00",
+      "job": {
+        "job_id": "setup_b33afee7a8ea40899b23dc09ae91fb9d",
+        "state": "running",
+        "stage": "download_model",
+        "progress": 16,
+        "error_code": null,
+        "recovery_state": null,
+        "message": "Downloading model data; verification pending",
+        "resume_configuration": {
+          "mode": "managed",
+          "package_id": "local-small",
+          "port": 18925,
+          "profile": "light"
+        }
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 16777216,
+          "sha256": "28b2136968798fdd915c64a63f7f1e0a418393447359fcd73a78aa5d67dddd47"
+        }
+      ],
+      "recovery_record_present": true,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        }
+      ]
+    },
+    {
+      "label": "interrupted_after_restart",
+      "at": "2026-09-11T17:12:18.683883+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.0019611000025179237
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_b33afee7a8ea40899b23dc09ae91fb9d",
+        "state": "failed",
+        "stage": "recovery",
+        "progress": 16,
+        "error_code": "setup_interrupted",
+        "recovery_state": "not_needed",
+        "message": "Setup was interrupted when the node stopped. Review the model service and retry.",
+        "resume_configuration": {
+          "mode": "managed",
+          "package_id": "local-small",
+          "port": 18925,
+          "profile": "light"
+        }
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 16777216,
+          "sha256": "28b2136968798fdd915c64a63f7f1e0a418393447359fcd73a78aa5d67dddd47"
+        }
+      ],
+      "recovery_record_present": false,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        }
+      ]
+    },
+    {
+      "label": "resumed_after_interruption",
+      "at": "2026-09-11T17:14:21.913799+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.001388799981214106
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_16a637f543f14b28b82c6fed4ee052c9",
+        "state": "running",
+        "stage": "download_model",
+        "progress": 17,
+        "error_code": null,
+        "recovery_state": null,
+        "message": "Downloading model data; verification pending",
+        "resume_configuration": {
+          "mode": "managed",
+          "package_id": "local-small",
+          "port": 18925,
+          "profile": "light"
+        }
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 22020096
+        }
+      ],
+      "recovery_record_present": true,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        },
+        {
+          "at": "2026-09-11T17:13:06.216528+00:00",
+          "content_length": 474622816,
+          "content_range": "bytes 16777216-491400031/491400032",
+          "requested_range": "bytes=16777216-",
+          "status": 206
+        }
+      ]
+    },
+    {
+      "label": "continuing_real_download",
+      "at": "2026-09-11T17:15:47.453278+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.0015263999812304974
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_16a637f543f14b28b82c6fed4ee052c9",
+        "state": "running",
+        "stage": "download_model",
+        "progress": 17,
+        "error_code": null,
+        "recovery_state": null,
+        "message": "Downloading model data; verification pending",
+        "resume_configuration": {
+          "mode": "managed",
+          "package_id": "local-small",
+          "port": 18925,
+          "profile": "light"
+        }
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 32505856
+        }
+      ],
+      "recovery_record_present": true,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        },
+        {
+          "at": "2026-09-11T17:13:06.216528+00:00",
+          "content_length": 474622816,
+          "content_range": "bytes 16777216-491400031/491400032",
+          "requested_range": "bytes=16777216-",
+          "status": 206
+        }
+      ]
+    },
+    {
+      "label": "continuing_after_regression",
+      "at": "2026-09-11T17:21:51.664455+00:00",
+      "health": {
+        "status": 200,
+        "seconds": 0.003236699994886294
+      },
+      "service": {
+        "configured": false,
+        "ready": null,
+        "online": false,
+        "publication_enabled": false
+      },
+      "job": {
+        "job_id": "setup_16a637f543f14b28b82c6fed4ee052c9",
+        "state": "running",
+        "stage": "download_model",
+        "progress": 22,
+        "error_code": null,
+        "recovery_state": null,
+        "message": "Downloading model data; verification pending",
+        "resume_configuration": {
+          "mode": "managed",
+          "package_id": "local-small",
+          "port": 18925,
+          "profile": "light"
+        }
+      },
+      "model_files": [
+        {
+          "name": "llm/models/local-small/light.gguf.part",
+          "bytes": 78643200
+        }
+      ],
+      "recovery_record_present": true,
+      "download_responses": [
+        {
+          "at": "2026-09-11T17:09:41.620807+00:00",
+          "content_length": 486157152,
+          "content_range": "bytes 5242880-491400031/491400032",
+          "requested_range": "bytes=5242880-",
+          "status": 206
+        },
+        {
+          "at": "2026-09-11T17:13:06.216528+00:00",
+          "content_length": 474622816,
+          "content_range": "bytes 16777216-491400031/491400032",
+          "requested_range": "bytes=16777216-",
+          "status": 206
+        }
+      ]
+    }
+  ]
+}

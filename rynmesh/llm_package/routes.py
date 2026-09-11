@@ -63,7 +63,12 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PCapacityError, P2PError, consumer_exchange, provider_exchange
-from .setup_recovery import RECOVERY_FAILED, SetupRecovery, SetupRecoveryError
+from .setup_recovery import (
+    RECOVERY_FAILED,
+    SetupRecovery,
+    SetupRecoveryError,
+    managed_resume_configuration,
+)
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
@@ -1310,6 +1315,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.post("/api/local/llm/setup/async")
     async def local_llm_setup_async(request: Request) -> dict[str, Any]:
         body = dict(await request.json())
+        resume_configuration = managed_resume_configuration(body)
         with setup_job_lock:
             current_job = read_setup_job()
             if current_job.get("state") in {"queued", "running", "cancelling"}:
@@ -1327,6 +1333,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "progress": 0,
                 "message": "Local model setup is queued",
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "resume_configuration": resume_configuration,
             }
             try:
                 write_setup_job(job)
@@ -1371,6 +1378,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         "stage": "completed",
                         "progress": 100,
                         "message": "Local model configured and self-tested; publishing remains off",
+                        "resume_configuration": resume_configuration,
                         "configured": activation["configured"],
                         "publication_enabled": False,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1411,6 +1419,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else "setup_failed",
                         "message": message,
                         "recovery_state": recovery_state,
+                        "resume_configuration": resume_configuration,
                         "retryable": True,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })

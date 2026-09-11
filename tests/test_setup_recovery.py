@@ -231,3 +231,35 @@ def test_recovery_capacity_and_failed_cleanup_keep_safe_receipt(tmp_path, monkey
     manifest.write_bytes(b"new configuration")
     assert setup_recovery.SetupRecovery(tmp_path).restore() == "absent"
     assert manifest.read_bytes() == b"new configuration"
+
+
+def test_managed_retry_choices_survive_failure_and_restart_without_private_inputs(tmp_path, monkeypatch):
+    home = tmp_path / "node"
+
+    def interrupted_install(**kwargs):
+        kwargs["progress"]("download_model", 20, "Downloading model data; verification pending")
+        raise LifecycleError("download incomplete; retry to resume")
+
+    monkeypatch.setattr(routes, "install_managed", interrupted_install)
+    choices = {"mode": "managed", "profile": "light", "package_id": "resume-model", "port": 18925}
+    with TestClient(make_app(home, tmp_path / "network")) as client:
+        queued = client.post("/api/local/llm/setup/async", json={
+            **choices, "accept_risk": True, "base_url": "PRIVATE-URL-MARKER",
+            "model_path": "PRIVATE-PATH-MARKER", "api_key_env": "PRIVATE-KEY-MARKER",
+        }).json()
+        assert queued["resume_configuration"] == choices
+        completed = terminal(client)
+        assert completed["resume_configuration"] == choices
+    with TestClient(make_app(home, tmp_path / "network")) as restarted:
+        assert restarted.get("/api/local/llm/setup/status").json()["resume_configuration"] == choices
+    raw = (home / "llm/setup-job.json").read_text(encoding="utf-8")
+    assert "PRIVATE-" not in raw and "accept_risk" not in raw
+
+
+@pytest.mark.parametrize("changes", [
+    {"profile": "auto"}, {"profile": {}}, {"port": True}, {"port": 70000},
+    {"mode": "openai-compatible"}, {"package_id": "../private"}, {"runtime": "docker"},
+])
+def test_unreviewable_or_non_ui_configuration_is_not_used_as_managed_retry(changes):
+    body = {"mode": "managed", "profile": "light", "package_id": "local-small", "port": 18080, **changes}
+    assert setup_recovery.managed_resume_configuration(body) is None

@@ -116,6 +116,12 @@ export interface LLMSetupJob {
   retryable?: boolean;
   configured?: boolean;
   publication_enabled?: boolean;
+  resume_configuration?: {
+    mode: "managed";
+    profile: "light" | "balanced" | "quality";
+    package_id: string;
+    port: number;
+  } | null;
 }
 
 export interface LLMSetupRequest {

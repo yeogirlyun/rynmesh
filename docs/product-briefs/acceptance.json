@@ -405,11 +405,13 @@
       "scenario": "下载中断、取消、重启后继续",
       "expected": "依据验证进度恢复，无重复安装，未完成不标就绪",
       "status": "in_progress",
-      "actual": "Backend regression verifies incomplete runtime extraction cannot be reused. Real loopback HTTP tests verify resumable model bytes and cancellation before publishing. Async setup now persists exact prior configuration, distinguishes recovery failure from model unavailability, resumes failed restoration on retry/restart and hides services until recovery completes. Full packaged desktop installation and recovery acceptance remains pending.",
+      "actual": "Backend recovery and rollback regressions pass. Windows production-browser acceptance retained 5 MiB after real download cancellation and 16 MiB after node termination, with equal hashes across restarts and real source 206 responses from both saved offsets. A discovered form-reset defect is fixed: managed profile, package and port return on reload, consent is renewed, and legacy jobs cannot silently retry a default API. The full real-model download is still running; final verification, inference and packaged desktop recovery remain pending.",
       "evidence": [
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
         "docs/acceptance/local-ai-development/model-download-recovery.md",
-        "docs/acceptance/local-ai-development/setup-rollback.md"
+        "docs/acceptance/local-ai-development/setup-rollback.md",
+        "docs/acceptance/local-ai-development/windows-managed-recovery.md",
+        "docs/acceptance/local-ai-development/windows-install-recovery.json"
       ],
       "implementation_commit": ""
     },
