@@ -44,6 +44,8 @@ SAFE_ERRORS = {
     "friend_card_read_first", "friend_card_content_too_large", "friend_card_id_conflict", "friend_card_capacity_exhausted",
     "friend_copy_unavailable", "library_import_cancelled_by_cleanup", "library_import_version_unsupported",
     "friend_card_content_changed",
+    "library_cleanup_pending", "library_cleanup_review_changed", "library_cleanup_files_changed",
+    "library_cleanup_not_found", "library_cleanup_limit", "library_cleanup_backup_failed",
 }
 
 
@@ -85,6 +87,8 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                             consumption=lambda: app.state.consumption_store,
                             offline=lambda: getattr(getattr(app.state, 'offline_reading', None), 'service', None))
     app.state.friends = FriendsState(service, local_control, content)
+    from ..services.library_cleanup_routes import install_library_cleanup_routes
+    install_library_cleanup_routes(app)
     service.resolve_content = lambda library_id: app.state.friends.content.resolve(library_id)
     service.import_content = lambda resource: app.state.friends.content.import_card(resource)
     service.import_generation = lambda: app.state.friends.content.imports.generation()
@@ -205,7 +209,19 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.get("/api/local/friends/cards")
     async def cards(request: Request):
         control(request)
-        return {"cards": await call(current().content_cards)}
+        return {"cards": await call(visible_cards)}
+
+    def visible_cards():
+        rows = current().content_cards()
+        imports = app.state.friends.content.imports
+        for row in rows:
+            identifier = row.get('fetched_library_id', '')
+            if row.get('fetch_state') == 'fetched' and identifier.startswith('import:'):
+                try:
+                    imports.get(identifier.removeprefix('import:'))
+                except (ValueError, OSError):
+                    row.update(fetch_state='unavailable', sha256_verified=False)
+        return rows
 
     @app.post("/api/local/friends/share")
     async def share(request: Request):
@@ -255,20 +271,22 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.delete("/api/local/friends/documents/{import_id}")
     async def remove_document(import_id: str, request: Request):
         control(request)
-        return await call(remove_copies, import_id)
+        body = await _body(request, 8192)
+        if set(body) != {'review_token'}:
+            raise HTTPException(409, detail='library_cleanup_review_required')
+        return await call(remove_copies, import_id, body['review_token'])
 
     @app.post("/api/local/friends/documents/clear")
     async def clear_documents(request: Request):
         control(request)
-        return await call(remove_copies)
+        body = await _body(request, 8192)
+        if set(body) != {'review_token'}:
+            raise HTTPException(409, detail='library_cleanup_review_required')
+        return await call(remove_copies, None, body['review_token'])
 
-    def remove_copies(import_id: str | None = None):
-        result = app.state.friends.content.imports.remove(import_id)
-        for card in current().store.list_cards():
-            library_id = card.get("fetched_library_id")
-            if library_id and (import_id is None or library_id == "import:" + import_id):
-                current().store.patch_card(card["card_id"], {"fetch_state": "unavailable", "sha256_verified": False})
-        return result
+    def remove_copies(import_id, token):
+        from ..services.library_cleanup import LibraryCleanup
+        return LibraryCleanup(app.state.friends.content.imports).begin(scope=import_id, review_token=token)
 
     @app.post("/api/peer/friends/content-card/fetch")
     async def peer_card_fetch(request: Request):

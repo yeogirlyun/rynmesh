@@ -1,5 +1,13 @@
 # Route packages
 
+`services/library_cleanup_routes.py` installs Owner-only
+`/api/local/privacy/documents` review/job/resume and remaining-file approval
+routes. It resolves the current `app.state.friends.content.imports` and guard
+on every request, bounds bodies at 8192 bytes and owns no worker. Source fencing
+and the file manifest commit together under the shared imports lock. Legacy
+friend-document DELETE/clear endpoints also require a reviewed token. Errors
+never include private paths. See the document-cleanup acceptance record.
+
 `friend_feed/routes.py` also owns the Owner-only
 `/api/local/privacy/friend-feed` preview, job/resume and backup review/approval
 routes. Requests resolve the current feed store and Owner guard, cap bodies at

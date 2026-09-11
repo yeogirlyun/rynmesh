@@ -1162,7 +1162,7 @@
       "scenario": "数据维护",
       "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
       "status": "pending",
-      "actual": "Reviewed local conversation, reading, offline-download and friend-feed cleanup now have durable recovery; conversation browser copies have a separate flow. Nine selected product scopes export to ZIP with verified document and offline bytes, manifest and explicit exclusions. Real loopback browser checks cover confirmation, partial file deletion, node restart and original-operation retries preserving new work. Friend-feed cleanup additionally prevents old publication/refresh requests restoring cleared data; a polling-induced review failure was reproduced and fixed. Final regression: 1377 backend passed / 29 skipped; 211 frontend passed. Complete account-data maintenance, remaining erasure scopes, legacy export unification, v4 reading scale performance and packaged/remote acceptance remain incomplete.",
+      "actual": "Reviewed local conversation, reading, offline-download and friend-feed cleanup now have durable recovery; conversation browser copies have a separate flow. Nine selected product scopes export to ZIP with verified document and offline bytes, manifest and explicit exclusions. Real loopback browser checks cover confirmation, partial file deletion, node restart and original-operation retries preserving new work. Friend-feed cleanup additionally prevents old publication/refresh requests restoring cleared data; a polling-induced review failure was reproduced and fixed. Final regression: 1377 backend passed / 29 skipped; 211 frontend passed. Complete account-data maintenance, remaining erasure scopes, legacy export unification, v4 reading scale performance and packaged/remote acceptance remain incomplete. Managed document files now use a reviewed persistent cleanup receipt, source fencing and exact-file retries. Windows browser checks cover held-file failure, restart, changed-file approval and retention of later saved documents; completed-request replay preserves a same-ID copy recreated after completion. Search derived-copy coordination and other remaining personal-data ranges are not claimed complete.",
       "evidence": [
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
         "docs/acceptance/device-sync-development/cleanup-settings-browser.json",
@@ -1175,7 +1175,10 @@
         "docs/acceptance/device-sync-development/reading-cleanup-http.json",
         "docs/acceptance/friend-feed-development/cleanup.md",
         "docs/acceptance/friend-feed-development/cleanup-http.json",
-        "docs/acceptance/friend-feed-development/cleanup-browser.json"
+        "docs/acceptance/friend-feed-development/cleanup-browser.json",
+        "docs/acceptance/friends-development/document-cleanup.md",
+        "docs/acceptance/friends-development/document-cleanup-http.json",
+        "docs/acceptance/friends-development/document-cleanup-browser.json"
       ],
       "implementation_commit": ""
     },
