@@ -5,6 +5,7 @@ import type { NodeClient } from "../domain/nodeClient";
 import type { ContentItem } from "../domain/types";
 import { Button, Chip } from "./ui";
 import ShareContentButton from "./ShareContentButton";
+import AskAboutButton from "./AskAboutButton";
 import { friendsApi } from "../domain/friendsClient";
 
 function youtubeEmbed(url: string | undefined): string {
@@ -178,6 +179,7 @@ export default function ContentViewer({ item, onClose, client, onRead }: {
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button></p> : null}
           <p>{item.description}</p>
           {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton itemId={item.digest_item_id ?? item.content_id} title={item.title} /> : null}
+          {client?.mode === "live" && textContent && bodyState === "ready" ? <AskAboutButton itemId={item.digest_item_id ?? item.content_id} /> : null}
           {item.external_url ? (
             <Button
               variant="primary"

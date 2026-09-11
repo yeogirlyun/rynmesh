@@ -3,6 +3,10 @@ import type { LLMConversation } from "./llmConversationStore";
 import { nodeControlUrl } from "./nodeUrl";
 
 const errors: Record<string, string> = {
+  ask_context_unavailable: "This source copy is missing, damaged or no longer readable. Reopen the article to prepare it again, or remove it from this conversation.",
+  ask_provider_unavailable: "The original provider is unavailable. Wait for it or start a separate conversation with another service.",
+  ask_context_budget_unavailable: "This service has no usable context budget. Choose a service with a larger context window.",
+  ask_question_too_large: "This question does not fit with the required prompt framing. Shorten it or choose a larger context window.",
   ask_revision_conflict: "This conversation changed in another view. Reload its history before continuing; your input has been kept.",
   ask_conversation_deleted: "This conversation was deleted. Start a new conversation; it will not be restored automatically.",
   ask_service_binding_mismatch: "This history belongs to its original provider and service. Start a separate conversation to switch.",
@@ -11,6 +15,16 @@ const errors: Record<string, string> = {
   ask_history_limit: "Conversation storage is full or this conversation is too large. Export and remove older history before retrying.",
   ask_migration_conflict: "This older conversation differs from the copy already on this node. Both copies have been kept for review.",
 };
+
+export interface AskSource {
+  library_id: string; title: string; source_url: string; sha256: string; extraction_truncated: boolean; text_bytes: number;
+  source_number?: number; included_bytes?: number; budget_truncated?: boolean; text?: string;
+}
+export interface AskPreview {
+  conversation_id: string; revision: number; provider_peer_id: string; service_id: string;
+  prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
+  framing_reserve: number; max_output_tokens: number; history_messages_omitted: number; sources: AskSource[];
+}
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   let response: Response;
@@ -28,6 +42,9 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const askHistory = {
+  prepareContext: (item_id: string) => request<AskSource>("/contexts", "POST", { item_id }),
+  context: (libraryId: string) => request<AskSource>(`/contexts/${encodeURIComponent(libraryId)}`),
+  preview: (conversation: LLMConversation, question: string) => request<AskPreview>("/preview", "POST", { conversation_id: conversation.id, expected_revision: conversation.revision, question }),
   draft: () => request<{ text: string; revision: number }>("/draft"),
   saveDraft: (text: string, revision: number) => request<{ text: string; revision: number }>("/draft", "PUT", { text, expected_revision: revision }),
   list: async (serviceKey?: string) => (await request<{ conversations: LLMConversation[] }>(`/conversations${serviceKey ? `?service_key=${encodeURIComponent(serviceKey)}` : ""}`)).conversations,

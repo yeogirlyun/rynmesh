@@ -19,6 +19,9 @@ export interface LLMChatMessage {
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
+  contextIds?: string[];
+  contextBytes?: number[];
+  promptSha256?: string;
 }
 
 export interface LLMConversation {
@@ -33,6 +36,7 @@ export interface LLMConversation {
   messages: LLMChatMessage[];
   revision?: number;
   draft?: string;
+  contextIds?: string[];
 }
 
 interface EncryptedConversationRecord {

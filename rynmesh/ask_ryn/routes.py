@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from fastapi import HTTPException, Request
 
+from .context import AskContextService
 from .store import ConversationError, ConversationStore
 
 
@@ -16,15 +17,20 @@ from .store import ConversationError, ConversationStore
 class AskRynState:
     conversations: ConversationStore
     local_control: Callable
+    context: AskContextService
 
 
 def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
                     local_control: Callable, messaging_key: Any) -> AskRynState:
-    app.state.ask_ryn = AskRynState(ConversationStore(Path(getattr(store, "home", None) or home) / "ask-ryn", messaging_key), local_control)
+    def catalog(network: str):
+        records = store.list_job_capacities(network_id=network, capability="rynmesh.llm.private.v1", max_age_hours=1).get("capacities", [])
+        return [{**row["metadata"]["llm_service"], "peer_id": row.get("peer_id")} for row in records if isinstance((row.get("metadata") or {}).get("llm_service"), dict)]
+    app.state.ask_ryn = AskRynState(ConversationStore(Path(getattr(store, "home", None) or home) / "ask-ryn", messaging_key), local_control,
+                                  AskContextService(lambda: app.state.friends.content, catalog))
 
-    async def call(method: str, *args, **kwargs):
+    async def call(method: str, *args, service: str = "conversations", **kwargs):
         try:
-            return await asyncio.to_thread(getattr(app.state.ask_ryn.conversations, method), *args, **kwargs)
+            return await asyncio.to_thread(getattr(getattr(app.state.ask_ryn, service), method), *args, **kwargs)
         except ConversationError as exc:
             code = str(exc)
             status = 404 if code == "ask_conversation_not_found" else 409
@@ -91,5 +97,23 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def save_draft(request: Request):
         value = await body(request)
         return await call("save_draft", value.get("text"), expected_revision=value.get("expected_revision"))
+
+    @app.post("/api/local/ask/contexts")
+    async def prepare_context(request: Request):
+        value = await body(request)
+        return await call("prepare", value.get("item_id"), service="context")
+
+    @app.get("/api/local/ask/contexts/{library_id}")
+    async def read_context(library_id: str, request: Request):
+        app.state.ask_ryn.local_control(request)
+        return await call("describe", library_id, include_text=True, service="context")
+
+    @app.post("/api/local/ask/preview")
+    async def preview(request: Request):
+        value = await body(request)
+        conversation = await call("get", value.get("conversation_id"))
+        if conversation["revision"] != value.get("expected_revision"):
+            raise HTTPException(409, detail="ask_revision_conflict")
+        return await call("preview", conversation, value.get("question"), service="context")
 
     return app.state.ask_ryn

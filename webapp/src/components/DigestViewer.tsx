@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { digestApi, type DigestItem, type ReaderArticle } from "../domain/digestClient";
 import { Button, Chip, EvidenceDetails } from "./ui";
 import ShareContentButton from "./ShareContentButton";
+import AskAboutButton from "./AskAboutButton";
 
 export type ViewerAction = "up" | "down" | "hide" | "opened" | "more_like_this";
 
@@ -355,6 +356,7 @@ export default function DigestViewer({
 
         <footer className="viewer-foot">
           {article?.blocks?.length ? <ShareContentButton key={item.item_id} itemId={item.item_id} title={item.title} /> : null}
+          {article?.blocks?.length ? <AskAboutButton key={`ask-${item.item_id}`} itemId={item.item_id} /> : null}
           {actionError ? <p role="alert">{actionError} <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button></p> : null}
           <div className="viewer-rate">
             <Button

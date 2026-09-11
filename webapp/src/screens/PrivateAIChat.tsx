@@ -25,7 +25,8 @@ import {
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
-import { askHistory, conversationRepository } from "../domain/askHistory";
+import { askHistory, conversationRepository, type AskPreview } from "../domain/askHistory";
+import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
 
@@ -89,6 +90,7 @@ export default function PrivateAIChat() {
   const [loading, setLoading] = useState(true);
   const [historyReady, setHistoryReady] = useState(false);
   const [sending, setSending] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [error, setError] = useState("");
   const [storageMode, setStorageMode] = useState<"node-encrypted" | "encrypted" | "session-only">("node-encrypted");
@@ -107,6 +109,8 @@ export default function PrivateAIChat() {
   }, []);
 
   const selectedConversation = conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0] ?? null;
+  const selectedConversationRef = useRef(selectedConversation?.id);
+  selectedConversationRef.current = selectedConversation?.id;
 
   useEffect(() => {
     let active = true;
@@ -238,10 +242,14 @@ export default function PrivateAIChat() {
     });
   };
 
-  const runPrompt = async (promptText: string) => {
+  const runPrompt = async (promptText: string, preview?: AskPreview) => {
     const text = promptText.trim();
     if (!text || !selectedService || sending || !historyReady) return;
     let conversation = selectedConversation;
+    if (client.mode === "live" && (!preview || preview.conversation_id !== selectedConversationRef.current || preview.provider_peer_id + "::" + preview.service_id !== selectedServiceKeyRef.current || preview.revision !== conversation?.revision)) {
+      setError("This send review is out of date. Review the current conversation before sending.");
+      return;
+    }
     if (conversation && (conversation.serviceKey !== serviceKey(selectedService) || conversation.networkId !== networkId)) {
       setError("This conversation belongs to another provider. Open a separate conversation for the selected service.");
       return;
@@ -276,8 +284,8 @@ export default function PrivateAIChat() {
         network_id: networkId,
         provider_peer_id: selectedService.peer_id,
         service_id: selectedService.service.package_id,
-        prompt: buildConversationPrompt(withUser.messages),
-        max_tokens: Math.min(selectedService.service.max_output_tokens || 256, 256),
+        prompt: preview?.prompt ?? buildConversationPrompt(withUser.messages),
+        max_tokens: preview?.max_output_tokens ?? Math.min(selectedService.service.max_output_tokens || 256, 256),
         transport: "auto",
       });
       setActiveTaskId(result.task_id);
@@ -305,6 +313,7 @@ export default function PrivateAIChat() {
         inputTokens: result.input_tokens,
         outputTokens: result.output_tokens,
         cost: result.amount,
+        ...(preview ? { contextIds: preview.sources.map((source) => source.library_id), contextBytes: preview.sources.map((source) => source.included_bytes ?? 0), promptSha256: preview.prompt_sha256 } : {}),
       };
       const completed = {
         ...withUser,
@@ -355,6 +364,22 @@ export default function PrivateAIChat() {
         setError(`Original task ${result.state}. ${resultMessage(result)} No new request was submitted.`);
       }).catch(() => setError("The original task could not be verified. No new request was submitted. Reconnect and check again."));
     } else if (lastUser) setInput(lastUser.content);
+  };
+
+  const reviewAndSend = async () => {
+    if (!selectedConversation || !selectedService || !input.trim() || sending || reviewing || !historyReady) return;
+    if (client.mode !== "live") return runPrompt(input);
+    const question = input.trim();
+    setReviewing(true); setError("");
+    try {
+      const preview = await askHistory.preview(selectedConversation, question);
+      confirm({ title: `Send to ${selectedService.service.model_alias}?`, risk: "medium", confirmLabel: "Send reviewed question",
+        body: `Recipient: ${preview.provider_peer_id}. Conservative input estimate ${preview.input_token_upper_estimate}, framing reserve ${preview.framing_reserve}, output reserve ${preview.max_output_tokens}, context window ${preview.context_window}. ${preview.history_messages_omitted} older history messages omitted.${preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."}`,
+        details: [{ label: "Question", value: question }, ...preview.sources.map((source) => ({ label: `Source ${source.source_number}: ${source.title}`, value: `${source.source_url || "Private local document"} · ${source.included_bytes}/${source.text_bytes} bytes${source.budget_truncated || source.extraction_truncated ? " · TRUNCATED" : ""}` }))],
+        onConfirm: () => runPrompt(question, preview),
+      });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not prepare the send review."); }
+    finally { setReviewing(false); }
   };
 
   if (loading) return <LoadingPanel label="Opening Private AI" />;
@@ -468,6 +493,7 @@ export default function PrivateAIChat() {
                     {message.status !== "complete" ? <button type="button" onClick={retryLast}><RotateCcw size={12} /> Check original task</button> : null}
                   </div>
                 ) : null}
+                {message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}
               </div>
             </div>
           ))}
@@ -480,6 +506,7 @@ export default function PrivateAIChat() {
         </div>
 
         <div className={styles.composerWrap}>
+          {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async (id) => { await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter((value) => value !== id) }, false); }} /> : null}
           {error ? <div className={styles.error} role="alert">{error}</div> : null}
           <div className={styles.composer}>
             <textarea
@@ -491,14 +518,14 @@ export default function PrivateAIChat() {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  void runPrompt(input);
+                  void reviewAndSend();
                 }
               }}
             />
             {sending ? (
               <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
             ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady} onClick={() => void runPrompt(input)}><SendHorizontal size={17} /></button>
+              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady || reviewing} onClick={() => void reviewAndSend()}><SendHorizontal size={17} /></button>
             )}
           </div>
           <div className={styles.composerMeta}>

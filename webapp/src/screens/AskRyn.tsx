@@ -10,6 +10,7 @@ import { llmServiceRecordKey } from "../domain/llmOrders";
 import type { LLMServiceRecord } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 import styles from "./AskRyn.module.css";
+import AskMaterials from "../components/AskMaterials";
 
 export function conversationUrl(row: LLMConversation, continueChat = false) {
   const query = new URLSearchParams({ conversation: row.id, network: row.networkId });
@@ -47,6 +48,7 @@ function AskRynHome() {
   const draftRecord = useRef({ text: "", revision: 0 });
   const drafts = useRef(Promise.resolve());
   const selection = rows.find((row) => row.id === params.get("conversation"));
+  const material = params.get("material");
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
@@ -87,10 +89,10 @@ function AskRynHome() {
   }, [draft, persistDraft]);
   const openService = (service: LLMServiceRecord) => confirm({
     title: `Start with ${service.service.model_alias}?`, risk: "medium", confirmLabel: "Open separate conversation",
-    body: `Messages you send will be received by ${service.node_name || service.peer_id} (${service.peer_id}). Previous conversations stay with their original service.${draft.trim() ? " Your draft will be copied into the new composer for review; it is not sent now." : ""}`,
+    body: `Messages you send will be received by ${service.node_name || service.peer_id} (${service.peer_id}). Previous conversations stay with their original service.${material ? " The selected article will be included for review before sending." : ""}${draft.trim() ? " Your draft will be copied into the new composer for review; it is not sent now." : ""}`,
     onConfirm: async () => {
       await persistDraft(draft);
-      const fresh = { ...createConversation({ serviceKey: llmServiceRecordKey(service), serviceName: service.service.model_alias, providerPeerId: service.peer_id, networkId: network }), draft };
+      const fresh = { ...createConversation({ serviceKey: llmServiceRecordKey(service), serviceName: service.service.model_alias, providerPeerId: service.peer_id, networkId: network }), draft, contextIds: material ? [material] : [] };
       if (client.mode === "live") await askHistory.save(fresh);
       else await saveConversation(fresh);
       navigate(conversationUrl(fresh, true));
@@ -132,6 +134,7 @@ function AskRynHome() {
           </> : null}
         </Panel> : params.get("conversation") && !loading ? <p role="alert">This conversation is unavailable or was deleted. It has not been replaced by another conversation.</p> : null}
         <Panel title="Start a conversation">
+          {material ? <AskMaterials ids={[material]} onRemove={() => { const next = new URLSearchParams(params); next.delete("material"); navigate(`/ask?${next}`); }} /> : null}
           <label>Your draft<textarea aria-label="Your draft" rows={4} disabled={!draftReady} value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => void persistDraft(draft).catch(() => undefined)} placeholder="Write a question even before a model is ready…" /></label>
           {draftStatus ? <p role="status">{draftStatus}</p> : null}
           <Button disabled={!draftReady} onClick={() => void persistDraft(draft).catch(() => undefined)}>Save draft</Button>
