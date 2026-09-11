@@ -14,6 +14,8 @@
 
 相关测试 **61 passed / 1 warning，11.01 秒**，包含新增 16 项来源擦除测试及现有会话存储、任务、同步测试。使用临时目录、真实加密和原子文件写入，验证并发版本变化、写入失败重试、重启、旧投递、独立恢复副本及原任务重试不再次派发。没有用此结果代替界面验收。
 
+随后后端全量 **1287 passed / 29 skipped / 5 warnings，225.52 秒**；产品代码为 `5198d80`，运行期间保持不变。
+
 测试也明确证明：此内部步骤之后 `history.json.migrated` 仍存在。因此必须完成下面的协调流程后才能提供“个人数据已清除”的结果。
 
 ## 需要纳入用户审核的范围
@@ -33,6 +35,11 @@
 | 离线阅读 | `offline-reading/state.json`、下载目录 | 复用已审核的清理接口，包含正文、图片及检查点；旧下载任务不能重新写回 |
 
 好友关系 `state.json` 是受私有文件权限保护的 JSON，不能将其描述为加密会话容器。其历史 `secrets.json` 及迁移备份也属于需要明确处理的凭证范围。
+
+复用接口时还有两个已经核对的差别：
+
+- 旧浏览器库实际为 IndexedDB `ryn-private-ai-chat`，包含 `keys` 和 `conversations`。当前 `deleteConversation`/`clearConversations` 捕获并忽略存储错误，不能直接作为已成功擦除的凭据；完整维护入口需要返回真实事务完成结果，并清除当前会话内存。节点导入后仍保留这些旧浏览器恢复副本。
+- `TaskOrderStore.purge_encrypted_response` 能保留订单身份并删除持久化加密结果；`ConsumerCommands.acknowledge` 当前只移除标记为 ephemeral 的内存结果。完整清理须协调这两个范围及正在执行的后台任务，不能把 acknowledge 当成完整订单结果清除。
 
 ## 下一步协调流程
 
