@@ -9,6 +9,8 @@ import { requestDesktopNotificationPermission, sendTestNotification } from "../d
 import AccessPanel from "./components/AccessPanel";
 import LocalModelPicker from "./components/LocalModelPicker";
 import PrivateCopiesPanel from "./components/PrivateCopiesPanel";
+import ConversationCleanupPanel from "./components/ConversationCleanupPanel";
+import BrowserConversationCleanup from "./components/BrowserConversationCleanup";
 import type { ActivityEvent, NodeSettings, PrivacyEraseScope, PrivacyStatus, UpdateStatus } from "../domain/types";
 
 const sections = [
@@ -79,7 +81,7 @@ export default function Settings() {
           <NotificationsSection settings={settings} onUpdate={update} notify={notify} />
         ) : null}
         {active === "Privacy & data" ? (
-          <PrivacySection client={client} confirm={confirm} notify={notify} />
+          <><PrivacySection client={client} confirm={confirm} notify={notify} /><ConversationCleanupPanel /><BrowserConversationCleanup /></>
         ) : null}
         {active === "Ranking & publish" ? <RankingSection settings={settings} onUpdate={update} /> : null}
         {active === "Fetch limits" ? <FetchSection settings={settings} onUpdate={update} /> : null}
@@ -145,8 +147,8 @@ function PrivacySection({
       <div className="privacy-local-callout">
         <HardDrive size={18} />
         <span>
-          <b>Your profile, history, cached reading, and audit trail stay on this node.</b>
-          <small>Public content discovery contacts the listed source sites. AI metadata leaves the device only when you explicitly enable cloud access.</small>
+          <b>Manage this node's profile, reading history, cached content and audit trail.</b>
+          <small>Discovery contacts your chosen source sites. Sharing, device sync and AI requests have their own permissions.</small>
         </span>
       </div>
       {status ? (

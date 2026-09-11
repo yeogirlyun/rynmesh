@@ -11,7 +11,7 @@ import {
 
 function readRawConversation(id: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("ryn-private-ai-chat", 1);
+    const request = indexedDB.open("ryn-private-ai-chat");
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const transaction = request.result.transaction("conversations", "readonly");
@@ -24,7 +24,7 @@ function readRawConversation(id: string): Promise<unknown> {
 
 function writeRawConversation(record: unknown): Promise<void> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open("ryn-private-ai-chat", 1);
+    const request = indexedDB.open("ryn-private-ai-chat");
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const transaction = request.result.transaction("conversations", "readwrite");
