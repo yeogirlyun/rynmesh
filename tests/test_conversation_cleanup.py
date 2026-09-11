@@ -6,12 +6,22 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from test_ask_history import sample
 from test_local_search import document
 
-from rynmesh.ask_ryn.cleanup import STEPS, ConversationCleanup
+from rynmesh.ask_ryn.cleanup import (
+    CHANNEL,
+    MAX_HISTORY,
+    PREVIOUS_VERSION,
+    STEPS,
+    VERSION,
+    ConversationCleanup,
+)
 from rynmesh.ask_ryn.privacy import ConversationPrivacy
 from rynmesh.ask_ryn.store import ConversationError, ConversationStore
+from rynmesh.atomic_io import atomic_write_json
+from rynmesh.crypto import canonical_json
 from rynmesh.device_sync import records
 from rynmesh.device_sync.store import ReplicaStore
 from rynmesh.local_search.index import LocalSearchIndex, SearchError
+from rynmesh.services import peer_box
 
 
 def fixture(tmp_path, *, enabled=True, source=None, replica=None, orders=None):
@@ -242,3 +252,172 @@ def test_reviewed_search_orphan_is_removed_but_canonical_index_is_rebuilt(tmp_pa
     assert not orphan.exists()
     assert job.search.path.exists() and job.search.path.read_bytes() != old
     assert job.search._read()[1]['documents'] == []
+
+
+def write_journal(job, data, **extensions):
+    nonce, ciphertext = peer_box.seal(job.source.key, job.source.pub, canonical_json(data), info=CHANNEL)
+    atomic_write_json(job.path, {**extensions, 'version': data['version'], 'nonce': nonce, 'ciphertext': ciphertext})
+
+
+def legacy_journal(job, *, done=None):
+    plan = {**job._plan(), 'review_generation': 0, 'future_plan_field': {'keep': True}}
+    token = records.fingerprint(plan)
+    entry = {'id': token, 'review_token': token, 'plan': plan, 'done': list(STEPS) if done is None else done,
+             'future_job_field': ['keep']}
+    data = {'version': PREVIOUS_VERSION, 'jobs': {token: entry}, 'future_data_field': 42}
+    write_journal(job, data, future_envelope_field='keep')
+    return token
+
+
+def test_more_than_32_cleanups_keep_monotonic_identity_and_replay_barriers(tmp_path, monkeypatch):
+    job, calls = fixture(tmp_path)
+    tokens = []
+    original = job._step_source
+    def fail(_):
+        raise OSError('source unavailable')
+    for number in range(MAX_HISTORY + 3):
+        token = job.preview()['review_token']
+        tokens.append(token)
+        if number == 0:
+            monkeypatch.setattr(job, '_step_source', fail)
+            with pytest.raises(OSError):
+                job.begin(review_token=token)
+            assert job.cancel_uncommitted(token)['cancelled']
+            monkeypatch.setattr(job, '_step_source', original)
+        else:
+            result = job.begin(review_token=token)
+            assert result['local_copies_complete'] and result['sequence'] == number + 1
+    assert len(set(tokens)) == MAX_HISTORY + 3
+    assert [row['sequence'] for row in job.list_status()] == list(range(MAX_HISTORY + 3, 3, -1))
+    _, journal = job._read()
+    assert journal['next_generation'] == MAX_HISTORY + 3
+    assert all(row['compacted'] and row['plan'] == {'review_generation': row['plan']['review_generation'],
+                                                  'identity_count': 1} for row in journal['jobs'].values())
+    job.source.save({**sample(), 'id': 'after-history-rollover'}, expected_revision=0)
+    restarted, _ = fixture(tmp_path, source=job.source, replica=job.replica, orders=calls)
+    before = restarted.source.path.read_bytes()
+    # Both an evicted cancellation and an evicted successful operation must fail
+    # closed, rather than becoming valid reviews of the new source.
+    for old in tokens[:3]:
+        with pytest.raises(ConversationError, match='ask_privacy_review_changed'):
+            restarted.begin(review_token=old)
+        with pytest.raises(ConversationError, match='ask_cleanup_not_found'):
+            restarted.resume(old)
+    assert restarted.source.path.read_bytes() == before
+    assert restarted.replica.read('conversations', sample()['id'])['erased']
+    assert restarted.begin(review_token=tokens[-1])['local_copies_complete']
+    assert restarted.source.get('after-history-rollover')
+
+
+def test_full_history_never_evicts_unfinished_operation(tmp_path, monkeypatch):
+    job, _ = fixture(tmp_path)
+    # Seed only completed summaries; the last operation below uses the real
+    # source/replica commit and deliberately fails before removing a backup.
+    entries = {}
+    for generation in range(MAX_HISTORY - 1):
+        token = f'{generation:064x}'
+        entries[token] = {'id': token, 'review_token': token, 'done': list(STEPS), 'compacted': True,
+                          'plan': {'review_generation': generation, 'identity_count': 0}}
+    write_journal(job, {'version': VERSION, 'jobs': entries, 'next_generation': MAX_HISTORY - 1})
+    token = job.preview()['review_token']
+    original = job._step_backups
+    def fail(_):
+        raise OSError('backup locked')
+    monkeypatch.setattr(job, '_step_backups', fail)
+    with pytest.raises(OSError):
+        job.begin(review_token=token)
+    before = job.path.read_bytes()
+    with pytest.raises(ConversationError, match='ask_cleanup_pending'):
+        job.begin(review_token=job.preview()['review_token'])
+    assert job.path.read_bytes() == before
+    assert job.status(token)['sequence'] == MAX_HISTORY
+    assert 'backups' in job._read()[1]['jobs'][token]['plan']
+    monkeypatch.setattr(job, '_step_backups', original)
+    assert job.resume(token)['local_copies_complete']
+    assert job.begin(review_token=job.preview()['review_token'])['sequence'] == MAX_HISTORY + 1
+    assert len(job.list_status()) == MAX_HISTORY
+
+
+def test_legacy_read_only_then_migration_preserves_original_and_unknown_fields(tmp_path):
+    job, _ = fixture(tmp_path)
+    old_token = legacy_journal(job)
+    before = job.path.read_bytes()
+    backup = job.path.with_name(job.path.name + '.v1.migrated')
+    assert job.list_status()[0]['sequence'] == 1
+    preview = job.preview()
+    assert job.path.read_bytes() == before and not backup.exists()
+    assert job.begin(review_token=preview['review_token'])['sequence'] == 2
+    assert backup.read_bytes() == before
+    envelope, data = job._read()
+    assert envelope['version'] == data['version'] == VERSION
+    assert envelope['future_envelope_field'] == 'keep' and data['future_data_field'] == 42
+    assert data['jobs'][old_token]['future_job_field'] == ['keep']
+    assert data['jobs'][old_token]['plan']['future_plan_field'] == {'keep': True}
+    assert data['jobs'][old_token]['compacted']
+    job.begin(review_token=job.preview()['review_token'])
+    assert backup.read_bytes() == before
+
+
+def test_unfinished_legacy_operation_resumes_and_compacts_only_after_completion(tmp_path, monkeypatch):
+    job, _ = fixture(tmp_path)
+    token = legacy_journal(job, done=[])
+    before = job.path.read_bytes()
+    original = job._step_backups
+    def fail(_):
+        raise OSError('backup locked')
+    monkeypatch.setattr(job, '_step_backups', fail)
+    with pytest.raises(OSError):
+        job.resume(token)
+    assert job.path.with_name(job.path.name + '.v1.migrated').read_bytes() == before
+    entry = job._read()[1]['jobs'][token]
+    assert entry['done'] == ['source', 'replica'] and not entry.get('compacted')
+    assert entry['plan']['identifiers'] == [sample()['id']]
+    monkeypatch.setattr(job, '_step_backups', original)
+    assert job.resume(token)['local_copies_complete']
+    assert job._read()[1]['jobs'][token]['compacted']
+
+
+@pytest.mark.parametrize('failure', ['backup', 'commit'])
+def test_legacy_migration_failure_keeps_source_and_journal_retryable(tmp_path, monkeypatch, failure):
+    import rynmesh.ask_ryn.cleanup as module
+    job, _ = fixture(tmp_path)
+    legacy_journal(job)
+    token = job.preview()['review_token']
+    before, source_before = job.path.read_bytes(), job.source.path.read_bytes()
+    with monkeypatch.context() as patch:
+        if failure == 'backup':
+            patch.setattr(module, 'migration_backup', lambda *args, **kwargs: None)
+            error, match = ConversationError, 'ask_cleanup_backup_failed'
+        else:
+            def fail(*args, **kwargs):
+                raise OSError('journal unavailable')
+            patch.setattr(module, 'atomic_write_json', fail)
+            error, match = OSError, 'journal unavailable'
+        with pytest.raises(error, match=match):
+            job.begin(review_token=token)
+    assert job.path.read_bytes() == before and job.source.path.read_bytes() == source_before
+    assert job.begin(review_token=token)['local_copies_complete']
+    assert job.path.with_name(job.path.name + '.v1.migrated').read_bytes() == before
+
+
+@pytest.mark.parametrize('counter', [None, True, -1, 0, records.MAX_COUNTER + 1])
+def test_invalid_generation_fails_closed(tmp_path, counter):
+    job, _ = fixture(tmp_path)
+    token = job.preview()['review_token']
+    job.begin(review_token=token)
+    _, data = job._read()
+    data['next_generation'] = counter
+    write_journal(job, data)
+    before = job.path.read_bytes()
+    with pytest.raises(ConversationError, match='ask_cleanup_unreadable'):
+        job.preview()
+    assert job.path.read_bytes() == before
+
+
+def test_future_journal_is_not_overwritten(tmp_path):
+    job, _ = fixture(tmp_path)
+    write_journal(job, {'version': 'ryn.conversation-cleanup.v99', 'jobs': {}})
+    before = job.path.read_bytes()
+    with pytest.raises(ConversationError, match='ask_cleanup_version_unsupported'):
+        job.preview()
+    assert job.path.read_bytes() == before

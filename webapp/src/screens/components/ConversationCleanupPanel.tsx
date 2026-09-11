@@ -45,7 +45,8 @@ export default function ConversationCleanupPanel() {
 
   const accept = async (job: CleanupJob) => {
     if (!mounted.current) return;
-    setJobs((rows) => [job, ...rows.filter((row) => row.id !== job.id)]);
+    setJobs((rows) => [job, ...rows.filter((row) => row.id !== job.id)]
+      .sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0)).slice(0, 32));
     setAttempt(null); setReview(null);
     setNotice(job.cancelled ? "Uncommitted cleanup cancelled. Your conversations were not cleared by this operation."
       : job.local_copies_complete ? "Reviewed node copies cleared. Browser cleanup is tracked separately below; remote devices remain unconfirmed."
@@ -86,15 +87,16 @@ export default function ConversationCleanupPanel() {
       <p>The last request has not been confirmed. Retry its original identity to check whether it started.</p>
       <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.begin(attempt)); })}>Retry same cleanup request</Button>
     </div> : null}
+    {jobs.length ? <p>The most recent 32 cleanup records are kept here. Older completed or cancelled entries leave this list; deletion markers remain.</p> : null}
     {jobs.length ? <ol className={styles.jobs}>{jobs.map((job, index) => <li key={job.id}>
-      <h4>Cleanup {jobs.length - index}</h4>
+      <h4>Cleanup {job.sequence ?? jobs.length - index}</h4>
       <p>{job.cancelled ? "Cancelled before erasure" : job.local_copies_complete ? "Reviewed node copies cleared" : "Unfinished"}</p>
       {job.done.length ? <p>Completed: {job.done.map((step) => labels[step]).join(", ")}</p> : null}
       {job.pending.length ? <p>Remaining: {job.pending.map((step) => labels[step]).join(", ")}</p> : null}
       {!job.cancelled ? <p>Browser cleanup is tracked separately below. Remote devices remain unconfirmed.</p> : null}
       {job.pending.length ? <div className="button-row">
-        <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.resume(job.id)); })}>Continue cleanup {jobs.length - index}</Button>
-        {!job.done.length ? <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.cancel(job.id)); })}>Cancel uncommitted cleanup {jobs.length - index}</Button> : null}
+        <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.resume(job.id)); })}>Continue cleanup {job.sequence ?? jobs.length - index}</Button>
+        {!job.done.length ? <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.cancel(job.id)); })}>Cancel uncommitted cleanup {job.sequence ?? jobs.length - index}</Button> : null}
         {job.pending[0] === "backups" ? <Button disabled={busy} onClick={() => reviewBackups(job)}>Review remaining backups</Button> : null}
       </div> : null}
     </li>)}</ol> : loaded ? <p>No previous conversation cleanup.</p> : null}

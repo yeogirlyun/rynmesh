@@ -12,7 +12,7 @@ from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path
 
-from ..atomic_io import _fsync_dir, atomic_write_json, read_json
+from ..atomic_io import _fsync_dir, atomic_write_json, migration_backup, read_json
 from ..crypto import canonical_json
 from ..device_sync import records
 from ..file_transactions import file_transaction
@@ -21,9 +21,11 @@ from ..services import peer_box
 from .privacy import ConversationPrivacy
 from .store import SYNC_VERSION, ConversationError
 
-VERSION = 'ryn.conversation-cleanup.v1'
+PREVIOUS_VERSION = 'ryn.conversation-cleanup.v1'
+VERSION = 'ryn.conversation-cleanup.v2'
 CHANNEL = b'rynmesh-conversation-cleanup-v1'
 MAX_FILE = 8 * 1024 * 1024
+MAX_HISTORY = 32
 STEPS = ('source', 'replica', 'backups', 'search', 'orders')
 
 
@@ -40,9 +42,9 @@ class ConversationCleanup:
 
     def _read(self):
         if not self.path.exists():
-            return {}, {'version': VERSION, 'jobs': {}}
+            return {}, {'version': VERSION, 'jobs': {}, 'next_generation': 0}
         envelope = read_json(self.path, max_bytes=MAX_FILE)
-        if not isinstance(envelope, dict) or envelope.get('version') != VERSION:
+        if not isinstance(envelope, dict) or envelope.get('version') not in {PREVIOUS_VERSION, VERSION}:
             raise ConversationError('ask_cleanup_version_unsupported')
         try:
             raw = peer_box.open_sealed(self.source.key, self.source.pub,
@@ -50,10 +52,11 @@ class ConversationCleanup:
             data = json.loads(raw)
         except Exception:
             raise ConversationError('ask_cleanup_unreadable') from None
-        if not isinstance(data, dict) or data.get('version') != VERSION:
+        if not isinstance(data, dict) or data.get('version') != envelope['version']:
             raise ConversationError('ask_cleanup_version_unsupported')
-        if not isinstance(data.get('jobs'), dict) or len(data['jobs']) > 32:
+        if not isinstance(data.get('jobs'), dict) or len(data['jobs']) > MAX_HISTORY:
             raise ConversationError('ask_cleanup_unreadable')
+        generations = set()
         for identifier, job in data['jobs'].items():
             if (not re.fullmatch('[a-f0-9]{64}', identifier) or not isinstance(job, dict)
                     or job.get('id') != identifier or job.get('review_token') != identifier
@@ -61,11 +64,52 @@ class ConversationCleanup:
                     or type(job.get('cancelled', False)) is not bool or job.get('cancelled') and job['done']
                     or not isinstance(job.get('plan'), dict)):
                 raise ConversationError('ask_cleanup_unreadable')
+            generation = job['plan'].get('review_generation')
+            if type(generation) is not int or not 0 <= generation < records.MAX_COUNTER or generation in generations:
+                raise ConversationError('ask_cleanup_unreadable')
+            generations.add(generation)
+            if type(job.get('compacted', False)) is not bool:
+                raise ConversationError('ask_cleanup_unreadable')
+            if job.get('compacted'):
+                if (data['version'] == PREVIOUS_VERSION or not self._terminal(job)
+                        or type(job['plan'].get('identity_count')) is not int
+                        or not 0 <= job['plan']['identity_count'] <= 10000):
+                    raise ConversationError('ask_cleanup_unreadable')
+            elif not isinstance(job['plan'].get('identifiers'), list):
+                raise ConversationError('ask_cleanup_unreadable')
+        if data['version'] == PREVIOUS_VERSION:
+            # Read-only inspection does not migrate the file or create backups.
+            if 'next_generation' in data:
+                raise ConversationError('ask_cleanup_version_unsupported')
+            data.update(version=VERSION, next_generation=max(generations, default=-1) + 1)
+        counter = data.get('next_generation')
+        if type(counter) is not int or not 0 <= counter <= records.MAX_COUNTER or any(value >= counter for value in generations):
+            raise ConversationError('ask_cleanup_unreadable')
         return envelope, data
 
+    @staticmethod
+    def _terminal(job):
+        return bool(job.get('cancelled')) or job['done'] == list(STEPS)
+
+    @staticmethod
+    def _compact(job):
+        if not ConversationCleanup._terminal(job) or job.get('compacted'):
+            return
+        plan = job['plan']
+        plan['identity_count'] = len(plan['identifiers'])
+        for key in ('source', 'additional_identifiers', 'identifiers', 'replica_revision', 'backups', 'task_ids'):
+            plan.pop(key, None)
+        job['compacted'] = True
+
     def _save(self, envelope, data):
+        for job in data['jobs'].values():
+            self._compact(job)
+        if envelope.get('version') == PREVIOUS_VERSION:
+            if migration_backup(self.path, suffix='.v1.migrated', max_bytes=MAX_FILE) is None:
+                raise ConversationError('ask_cleanup_backup_failed')
         nonce, ciphertext = peer_box.seal(self.source.key, self.source.pub, canonical_json(data), info=CHANNEL)
         atomic_write_json(self.path, {**envelope, 'version': VERSION, 'nonce': nonce, 'ciphertext': ciphertext}, max_bytes=MAX_FILE)
+        envelope['version'] = VERSION
 
     def _locks(self):
         stack = ExitStack()
@@ -133,7 +177,7 @@ class ConversationCleanup:
         with file_transaction(self.lock), self._locks():
             _, data = self._read()  # Future journals must not be silently replaced.
             plan = self._plan()
-            plan['review_generation'] = len(data['jobs'])
+            plan['review_generation'] = data['next_generation']
             return {'review_token': records.fingerprint(plan), **{k: v for k, v in plan['source'].items() if k != 'review_token'},
                 'scope': 'reviewed_conversation_copies', 'identities': len(plan['identifiers']),
                 'backup_files': len(plan['backups']), 'backup_bytes': sum(row['bytes'] for row in plan['backups']),
@@ -145,7 +189,8 @@ class ConversationCleanup:
         return {'id': job['id'], 'done': list(job['done']), 'pending': [] if job.get('cancelled') else list(STEPS[len(job['done']):]),
             'cancelled': bool(job.get('cancelled')),
             'local_copies_complete': job['done'] == list(STEPS), 'browser_cleanup_required': True,
-            'remote_confirmed': False, 'identities': len(job['plan']['identifiers'])}
+            'remote_confirmed': False, 'identities': job['plan']['identity_count'] if job.get('compacted') else len(job['plan']['identifiers']),
+            'sequence': job['plan']['review_generation'] + 1}
 
     def status(self, identifier):
         with file_transaction(self.lock):
@@ -168,16 +213,23 @@ class ConversationCleanup:
             if review_token not in data['jobs']:
                 if any(not job.get('cancelled') and job['done'] != list(STEPS) for job in data['jobs'].values()):
                     raise ConversationError('ask_cleanup_pending')
-                if len(data['jobs']) >= 32:
+                if data['next_generation'] >= records.MAX_COUNTER:
                     raise ConversationError('ask_cleanup_limit')
                 with self._locks():
                     plan = self._plan()
-                    plan['review_generation'] = len(data['jobs'])
+                    plan['review_generation'] = data['next_generation']
                     if records.fingerprint(plan) != review_token:
                         raise ConversationError('ask_privacy_review_changed')
                     if plan['source']['active_tasks']:
                         raise ConversationError('ask_privacy_tasks_active')
+                    # Only terminal summaries leave the bounded activity list.
+                    # The monotonic counter is retained even when an old job is
+                    # no longer listed, so its old review cannot be reused.
+                    if len(data['jobs']) >= MAX_HISTORY:
+                        oldest = min(data['jobs'], key=lambda key: data['jobs'][key]['plan']['review_generation'])
+                        del data['jobs'][oldest]
                     data['jobs'][review_token] = {'id': review_token, 'review_token': review_token, 'plan': plan, 'done': []}
+                    data['next_generation'] += 1
                     self._save(envelope, data)
                     # Hold review locks until the irreversible source decision
                     # commits; no edit can slip between review and this step.
