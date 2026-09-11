@@ -84,7 +84,10 @@ def test_owner_pairing_message_receipt_and_signed_refusal(tmp_path, monkeypatch)
     document_url = f"/api/local/friends/documents/{imported_id}/body"
     assert alice.get(document_url, headers=auth).json()["text"] == "Private article body, sent only on request."
     assert len(alice_app.state.consumption_store.list()) == 1
-    cleared = alice.delete(f"/api/local/friends/documents/{imported_id}", headers=auth)
+    assert alice.delete(f"/api/local/friends/documents/{imported_id}", headers=auth).status_code == 409
+    reviewed = alice.post('/api/local/privacy/documents/preview', json={'scope': imported_id}, headers=auth).json()
+    cleared = alice.request('DELETE', f"/api/local/friends/documents/{imported_id}",
+                            json={'review_token': reviewed['review_token']}, headers=auth)
     assert cleared.status_code == 200 and cleared.json()["removed"] == 1
     assert alice.get("/api/local/friends/cards", headers=auth).json()["cards"][0]["fetch_state"] == "unavailable"
     repaired = alice.post(f"/api/local/friends/cards/{'b' * 32}/fetch", json={"repair": True}, headers=auth)

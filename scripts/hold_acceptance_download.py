@@ -19,17 +19,19 @@ def main():
     target.add_argument('--job-id')
     target.add_argument('--reading-orphan', help='32-hex ID of an existing consumption.json atomic orphan')
     target.add_argument('--feed-orphan', help='32-hex ID of an existing friend-feed state.json atomic orphan')
+    target.add_argument('--document-id', help='Managed imp_ ID of an existing synthetic original.txt')
     args = parser.parse_args()
     home = args.home.resolve()
-    identifier = args.job_id or args.reading_orphan or args.feed_orphan
+    identifier = args.job_id or args.reading_orphan or args.feed_orphan or args.document_id
     path = (home / 'offline-reading' / 'downloads' / (identifier + '.json') if args.job_id
             else home / 'friend-feed' / ('.state.json.' + identifier + '.tmp') if args.feed_orphan
+            else home / 'library-imports' / identifier / 'original.txt' if args.document_id
             else home / ('.consumption.json.' + identifier + '.tmp'))
-    prefix = 'rynmesh-feed-acceptance-' if args.feed_orphan else 'rynmesh-offline-acceptance-'
+    prefix = 'rynmesh-feed-acceptance-' if args.feed_orphan or args.document_id else 'rynmesh-offline-acceptance-'
     if (os.name != 'nt' or not home.name.startswith(prefix)
-            or not re.fullmatch('[a-f0-9]{32}', identifier)
+            or not re.fullmatch(r'imp_[a-f0-9]{32}(?:[a-f0-9]{32})?' if args.document_id else '[a-f0-9]{32}', identifier)
             or path.resolve() != path or not path.is_file()):
-        raise SystemExit('Use one existing synthetic acceptance download or reading orphan on Windows.')
+        raise SystemExit('Use one existing synthetic acceptance copy on Windows.')
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                   wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]

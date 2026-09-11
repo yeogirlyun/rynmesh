@@ -3,6 +3,7 @@ import { useAppContext } from "../../appContext";
 import { Button, Panel } from "../../components/ui";
 import ContentViewer from "../../components/ContentViewer";
 import { friendsApi } from "../../domain/friendsClient";
+import { libraryCleanup, libraryCleanupScope, libraryReviewCounts } from "../../domain/libraryCleanup";
 import { contentFromHistory } from "../../domain/readingHistory";
 import { digestApi } from "../../domain/digestClient";
 import type { FriendContentCard, FriendRecord } from "../../domain/friendTypes";
@@ -64,9 +65,15 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
         : card.fetch_state === "unavailable" ? <><p>Saved copy unavailable.</p><Button disabled={busy} onClick={() => void act(() => open(card, true))}>Download again</Button></>
         : card.card.fetch_available ? <Button disabled={busy} onClick={() => void act(() => open(card))}>Download and read ({card.card.size_bytes} bytes)</Button>
         : <p>Metadata only. No private document is available.</p>}
-      {card.fetch_state === "fetched" && card.fetched_library_id?.startsWith("import:") ? <Button disabled={busy} onClick={() => confirm({
-        title: "Remove this local copy?", body: "This removes the downloaded document from this node. The card and bookmark remain. Downloading again requires access to your friend's copy.",
-        risk: "medium", confirmLabel: "Remove local copy", onConfirm: async () => { await friendsApi.removeDocument(card.fetched_library_id!.slice(7)); await refresh().catch(() => setError("The copy was removed. Refresh shared content to update this list.")); },
+      {card.fetch_state === "fetched" && card.fetched_library_id?.startsWith("import:") ? <Button disabled={busy} onClick={() => void act(async () => {
+        const reviewed = await libraryCleanup.preview(card.fetched_library_id!.slice(7));
+        confirm({ title: "Remove this local copy?", body: libraryReviewCounts(reviewed) + " " + libraryCleanupScope,
+          risk: "high", confirmLabel: "Remove local copy", onConfirm: () => act(async () => {
+            try { await libraryCleanup.begin(reviewed); }
+            catch (cause) { throw new Error((cause instanceof Error ? cause.message : "Removal was not confirmed.") + " Check document cleanup progress in Settings → Privacy & data."); }
+            await refresh();
+          }),
+        });
       })}>Remove local copy</Button> : null}
     </article>)}
     {reading ? <ContentViewer item={reading} client={client} onClose={() => setReading(null)} onRead={() => client.recordContentConsumption(reading, "opened")} /> : null}

@@ -10,8 +10,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
-import shutil
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -32,6 +32,14 @@ class LibraryImportError(ValueError):
         self.code = code
 
 
+def _locked(method):
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with file_transaction(self.root / ".imports.lock"):
+            return method(self, *args, **kwargs)
+    return read
+
+
 class LibraryImportStore:
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()
@@ -45,48 +53,24 @@ class LibraryImportStore:
         return directory
 
     def generation(self) -> int:
-        path = self.root / "control.json"
-        if not path.exists():
-            return 0
-        record = read_json(path, max_bytes=4096)
-        if not isinstance(record, dict) or record.get("version") != 1:
-            raise LibraryImportError("library_import_version_unsupported")
-        value = record.get("generation")
-        if type(value) is not int or value < 0:
-            raise LibraryImportError("library_import_corrupt")
-        return value
+        from .library_cleanup import control
+        with file_transaction(self.root / ".imports.lock"):
+            return control(self)["generation"]
 
     def remove(self, import_id: str | None = None) -> dict[str, int]:
-        """Erase selected managed copies and invalidate older in-flight downloads."""
+        """Internal explicit cleanup. HTTP clients must supply a reviewed token."""
+        from .library_cleanup import LibraryCleanup
+        cleanup = LibraryCleanup(self)
         with file_transaction(self.root / ".imports.lock"):
-            targets = [self._directory(import_id)] if import_id else [self._directory(path.name) for path in self.root.glob("imp_*") if _ID.fullmatch(path.name)]
-            # Resolve every target before deletion. Future metadata remains intact.
-            for directory in targets:
-                metadata = directory / "metadata.json"
-                if metadata.exists():
-                    # An explicit cleanup can erase a corrupt managed copy,
-                    # including an interrupted import. Recognizable future
-                    # versions still require an upgrade instead of destruction.
-                    try:
-                        raw = read_json(metadata, max_bytes=65536)
-                    except OSError:
-                        raw = None
-                    if isinstance(raw, dict) and raw.get("version") not in {VERSION, "ryn.library-import.v1"}:
-                        raise LibraryImportError("library_import_version_unsupported")
-            control = self.root / "control.json"
-            generation = self.generation() + 1
-            previous = read_json(control, max_bytes=4096) if control.exists() else {}
-            atomic_write_json(control, {**previous, "version": 1, "generation": generation}, max_bytes=4096)
-            removed = 0
-            for directory in targets:
-                if directory.exists():
-                    # _directory has checked the resolved absolute target is one
-                    # direct child with exactly the requested managed import id.
-                    shutil.rmtree(directory)
-                    removed += 1
-            return {"removed": removed, "generation": generation}
+            review = cleanup.preview(import_id)
+            result = cleanup.begin(review_token=review['review_token'], scope=import_id)
+            return {key: result[key] for key in ('removed', 'generation')}
 
+    @_locked
     def get(self, import_id: str) -> dict[str, Any]:
+        from .library_cleanup import pending_target
+        if pending_target(self, import_id):
+            raise LibraryImportError("library_cleanup_pending")
         directory = self._directory(import_id)
         if not (directory / "metadata.json").is_file():
             raise LibraryImportError("library_import_not_found")
@@ -97,9 +81,15 @@ class LibraryImportStore:
             raise LibraryImportError("library_import_corrupt")
         return record
 
+    @_locked
     def list(self) -> list[dict[str, Any]]:
+        from .library_cleanup import control
+        job = control(self).get('cleanup')
+        hidden = set(job['targets']) if job and job['done'] == ['source'] else set()
         records = []
         for path in self.root.glob("imp_*/metadata.json"):
+            if path.parent.name in hidden:
+                continue
             try:
                 records.append(self.get(path.parent.name))
             except (OSError, ValueError):
@@ -116,6 +106,7 @@ class LibraryImportStore:
             raise LibraryImportError("library_import_corrupt")
         return path
 
+    @_locked
     def read_bytes(self, import_id: str) -> bytes:
         record = self.get(import_id)
         with self._blob(record).open("rb") as handle:
@@ -124,6 +115,7 @@ class LibraryImportStore:
             raise LibraryImportError("library_import_hash_mismatch")
         return data
 
+    @_locked
     def body(self, import_id: str) -> dict[str, Any]:
         record = self.get(import_id)
         self.read_bytes(import_id)
@@ -178,6 +170,9 @@ class LibraryImportStore:
             generation = self.generation()
             if expected_generation is not None and expected_generation != generation:
                 raise LibraryImportError("library_import_cancelled_by_cleanup")
+            from .library_cleanup import pending_target
+            if pending_target(self, import_id):
+                raise LibraryImportError("library_cleanup_pending")
             prior: dict[str, Any] = {}
             prior_extracted: dict[str, Any] = {}
             if (directory / "metadata.json").exists():

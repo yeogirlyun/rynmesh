@@ -1,5 +1,13 @@
 # Versioned records
 
+Managed-document `library-imports/control.json` supports integer version 2 with
+a validated `ryn.library-cleanup.v1` receipt. Explicit cleanup backs up original
+v1 bytes before upgrade and preserves unknown control extensions. The receipt
+holds store-generated names, hashes and progress, never document bodies. Its
+source fence hides selected copies until file cleanup finishes; the completed
+receipt drops the manifest while retaining the result and monotonic generation.
+See [document cleanup](acceptance/friends-development/document-cleanup.md).
+
 Friend-feed state supports `ryn.friend-feed.v2`, with bounded erased publication
 IDs and a validated `ryn.friend-feed-cleanup.v1` receipt. Existing v1 ordinary
 reads/writes retain v1; explicit reviewed cleanup saves exact encrypted

@@ -21,6 +21,7 @@ const explanations: Record<string, string> = {
   friend_copy_unavailable: "This saved copy is missing or damaged. Choose Download again to restore it from your friend.",
   library_import_cancelled_by_cleanup: "Local copies were cleared while this download was running. Nothing was restored. Start a new download if you want this copy back.",
   library_import_version_unsupported: "This saved data needs a newer version of Ryn. It has been kept unchanged.",
+  library_cleanup_pending: "Document cleanup is unfinished. Continue it in Settings → Privacy & data before downloading this copy again.",
 };
 
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
@@ -54,8 +55,6 @@ export const friendsApi = {
   retryCard: (id: string) => request<FriendContentCard>(`/cards/${encodeURIComponent(id)}/retry`, "POST"),
   document: (id: string) => request<{ text: string; truncated: boolean; filename: string; mime: string }>(`/documents/${encodeURIComponent(id)}/body`),
   documents: () => request<{ documents: { import_id: string; filename: string; state: string; size_bytes?: number; created_at_unix: number }[] }>("/documents"),
-  removeDocument: (id: string) => request<{ removed: number }>(`/documents/${encodeURIComponent(id)}`, "DELETE"),
-  clearDocuments: () => request<{ removed: number }>("/documents/clear", "POST"),
   attachmentUrl: (peer: string, message: string) => nodeControlUrl(`/friends/${encodeURIComponent(peer)}/attachments/${encodeURIComponent(message)}`),
 };
 
