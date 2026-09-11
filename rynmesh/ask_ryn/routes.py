@@ -111,7 +111,8 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.post("/api/local/ask/contexts")
     async def prepare_context(request: Request):
         value = await body(request)
-        return await call("prepare", value.get("item_id"), service="context")
+        return await call("prepare", value.get("item_id"), offline_job_id=value.get('offline_job_id'),
+                          prefer_source=value.get('prefer_source', False), service="context")
 
     @app.get("/api/local/ask/contexts/{library_id}")
     async def read_context(library_id: str, request: Request):

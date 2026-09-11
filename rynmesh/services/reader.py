@@ -262,6 +262,7 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         "word_count": words,
         "images": list(image_urls.values()),
         "images_omitted": parser.images_omitted,
+        "truncated": len(parser._groups.get(parser.best_group, [])) > MAX_BLOCKS,
     }
 
 

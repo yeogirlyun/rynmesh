@@ -298,11 +298,15 @@ def test_owner_routes_limits_dynamic_reinstallation_and_version_bound_images(tmp
     client = TestClient(app)
     base, headers = '/api/local/offline-reading', {'X-Test-Owner': 'yes'}
     assert client.get(base).status_code == 403
+    assert client.post(base + '/resolve', json={'item_id': f.item['item_id']}).status_code == 403
+    assert client.post(base + '/resolve', json={'item_id': f.item['item_id']}, headers=headers).json() is None
     assert client.post(base + '/download', json={'item_id': f.item['item_id']}).status_code == 403
     assert client.post(base + '/download', content='x' * 8193, headers=headers).status_code == 413
     assert client.post(base + '/download', json={'item_id': f.item['item_id']}, headers=headers).status_code == 200
     assert f.service.run_once()
     record = row(f)
+    resolved = client.post(base + '/resolve', json={'item_id': f.item['item_id']}, headers=headers).json()
+    assert resolved['key'] == record['key'] and resolved['body']['text'] == BODY
     image_path = base + '/copies/' + record['key'] + '/' + record['current']['job_id'] + '/images/0'
     assert client.get(image_path).status_code == 403
     response = client.get(image_path, headers=headers)

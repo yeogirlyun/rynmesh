@@ -53,6 +53,7 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
     {!loaded ? <p>Loading shared content…</p> : !cards.length ? <p>No shared content yet. Open an article and choose Share with a friend.</p> : cards.map((card) => <article key={card.card_id} id={`friend-card-${card.card_id}`} tabIndex={-1}
       style={card.card_id === focusCard ? { outline: "2px solid currentColor" } : undefined}>
       <h3>{card.card.title}</h3><p>{card.card.summary}</p>
+      {card.card.content_truncated ? <p>This shared text is shortened; it does not include the full source.</p> : null}
       <p>{card.dir === "out" ? "Shared by you" : `Shared by ${friends.find((friend) => friend.peer_id === card.from)?.node_name ?? "a friend"}`} · {card.card.source || "Source not supplied"}</p>
       {card.dir !== "out" ? <details><summary>Sender identity</summary><span style={{ overflowWrap: "anywhere" }}>{card.from}</span></details> : null}
       {card.card.publisher_peer_id ? <p>Publisher: {card.card.publisher_peer_id}</p> : null}

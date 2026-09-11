@@ -43,6 +43,7 @@ SAFE_ERRORS = {
     "friend_card_fetch_failed", "friend_capacity_exhausted", "friend_store_version_unsupported",
     "friend_card_read_first", "friend_card_content_too_large", "friend_card_id_conflict", "friend_card_capacity_exhausted",
     "friend_copy_unavailable", "library_import_cancelled_by_cleanup", "library_import_version_unsupported",
+    "friend_card_content_changed",
 }
 
 
@@ -81,7 +82,8 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     )
     content = FriendContent(store=store, imports=LibraryImportStore(Path(getattr(store, "home", None) or home) / "library-imports"),
                             cache=lambda: app.state.reader_cache,
-                            consumption=lambda: app.state.consumption_store)
+                            consumption=lambda: app.state.consumption_store,
+                            offline=lambda: getattr(getattr(app.state, 'offline_reading', None), 'service', None))
     app.state.friends = FriendsState(service, local_control, content)
     service.resolve_content = lambda library_id: app.state.friends.content.resolve(library_id)
     service.import_content = lambda resource: app.state.friends.content.import_card(resource)
@@ -216,10 +218,13 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         await call(current()._relationship, peer_id)
         prior = await call(current().store.card, card_id)
         if prior:
-            if prior.get("to") != peer_id or prior.get("dir") != "out" or prior.get("source_item_id") != item_id:
+            if (prior.get("to") != peer_id or prior.get("dir") != "out" or prior.get("source_item_id") != item_id
+                    or body.get('offline_job_id') is not None and prior.get('source_offline_job_id') != body.get('offline_job_id')
+                    or body.get('prefer_source') is True and prior.get('source_offline_job_id')):
                 raise HTTPException(409, detail="friend_card_id_conflict")
             return await call(current().retry_card, card_id)
-        card = await call(app.state.friends.content.prepare, {"item_id": item_id})
+        card = await call(app.state.friends.content.prepare, {"item_id": item_id, 'offline_job_id': body.get('offline_job_id'),
+                                                            'prefer_source': body.get('prefer_source', False)})
         card["source_item_id"] = item_id
         return await call(current().send_content_card, peer_id, card, card_id=card_id)
 

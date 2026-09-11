@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from ..friends.service import FriendError
 from ..llm_package.chat_prompt import CHAT_FORMAT
 from .store import ConversationError
 
@@ -26,13 +27,15 @@ class AskContextService:
         self.content = content
         self.catalog = catalog
 
-    def prepare(self, item_id: str) -> dict:
+    def prepare(self, item_id: str, *, offline_job_id=None, prefer_source=False) -> dict:
         if not isinstance(item_id, str) or not item_id or len(item_id) > 512:
             raise ConversationError("ask_context_unavailable")
         try:
-            prepared = self.content().prepare({"item_id": item_id})
+            prepared = self.content().prepare({"item_id": item_id, 'offline_job_id': offline_job_id, 'prefer_source': prefer_source})
             return self.describe(prepared["library_id"])
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, FriendError) as exc:
+            if str(exc) == 'friend_card_content_changed':
+                raise ConversationError('ask_context_changed') from None
             raise ConversationError("ask_context_unavailable") from None
 
     def describe(self, library_id: str, *, include_text: bool = False) -> dict:
