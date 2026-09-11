@@ -117,11 +117,11 @@ def seal(payload, *, private_key, messaging_key, sender, receiver, channel=CHANN
     return {'kind': 'ryn.device-box.v1', 'sender': sender, 'nonce': nonce, 'ciphertext': ciphertext}
 
 
-def open_wire(wire, *, messaging_key, allow_loopback=False, channel=CHANNEL):
+def open_wire(wire, *, messaging_key, allow_loopback=False, channel=CHANNEL, max_bytes=MAX_WIRE_BYTES):
     try:
         if not isinstance(wire, dict) or set(wire) != {'kind', 'sender', 'nonce', 'ciphertext'} or wire['kind'] != 'ryn.device-box.v1':
             raise ValueError
-        if len(canonical_json(wire)) > MAX_WIRE_BYTES:
+        if len(canonical_json(wire)) > max_bytes:
             raise ValueError
         sender = identity(wire['sender'], allow_loopback=allow_loopback)
         plaintext = peer_box.open_sealed(messaging_key, sender['messaging_pub'], wire['nonce'], wire['ciphertext'], info=channel)

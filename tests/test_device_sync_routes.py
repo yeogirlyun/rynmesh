@@ -18,10 +18,16 @@ OWNER = {'x-test-owner': 'yes'}
 
 
 class Node:
-    def __init__(self, home, endpoint='', post=None):
+    def __init__(self, home, endpoint='', post=None, *, transfer=False):
         self.app, self.workers = FastAPI(), BackgroundWorkerRegistry()
         self.store = SimpleNamespace(home=home, private_key_bytes=Ed25519PrivateKey.generate().private_bytes_raw(), node_name=home.name)
         self.key, self.endpoint, self.post = X25519PrivateKey.generate(), endpoint, post
+        self.transfer_enabled = transfer
+        if transfer:
+            from rynmesh.ask_ryn.store import ConversationStore
+            from rynmesh.services.consumption import ConsumptionStore
+            self.reader = ConsumptionStore(home / 'consumption.json')
+            self.history = ConversationStore(home / 'ask', self.key)
         self.install()
         self.client = TestClient(self.app)
 
@@ -33,7 +39,9 @@ class Node:
     def install(self):
         return install_device_sync(self.app, store=self.store, home=self.store.home / 'wrong-home',
             workers=self.workers, messaging_key=self.key, endpoint=self.endpoint, allow_loopback=True,
-            local_control=self.owner, post_json=self.post)
+            local_control=self.owner, post_json=self.post,
+            reading=(lambda: self.reader) if self.transfer_enabled else None,
+            conversations=(lambda: self.history) if self.transfer_enabled else None)
 
     @property
     def service(self):
@@ -171,3 +179,42 @@ def test_worker_sanitizes_network_error(tmp_path):
     with pytest.raises(RuntimeError, match='^sync_pairing_retry_unavailable$'):
         b.tick()
     assert b.request('GET')['devices'][0]['status'] == 'awaiting_inviter'
+
+
+def test_installed_worker_moves_real_sources_through_encrypted_http_batches(tmp_path):
+    from test_ask_history import sample
+    from test_device_sync_reading import ITEM
+    nodes, paths = {}, []
+
+    def post(endpoint, path, wire):
+        paths.append(path)
+        result = nodes[endpoint].client.post(path, json=wire)
+        assert result.status_code == 200, result.text
+        return result.json()
+
+    a = Node(tmp_path / 'A', 'http://127.0.0.1:18901', post, transfer=True)
+    b = Node(tmp_path / 'B', 'http://127.0.0.1:18902', post, transfer=True)
+    nodes.update({a.endpoint: a, b.endpoint: b})
+    scopes = ['bookmarks', 'reading', 'conversations']
+    a.reader.record(ITEM, 'bookmark')
+    a.reader.record(ITEM, 'progress', progress=.7)
+    conversation = sample()
+    conversation['messages'][0]['content'] = 'Large history fragment. ' * 6000
+    a.history.save(conversation, expected_revision=0)
+    uri = a.request('POST', '/invites', json={'scopes': scopes})['uri']
+    pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': scopes})['id']
+    b.tick()
+    assert not b.reader.path.exists() and not b.history.path.exists()
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes})
+    b.tick()
+    for _ in range(3):
+        a.tick()
+    status = a.request('GET')
+    assert status['data_transfer_available']
+    assert status['devices'][0]['sync']['state'] == 'confirmed'
+    assert b.reader.sync_read('reading', ITEM['item_id'])['value']['progress'] == .7
+    assert b.history.get(conversation['id'])['messages'][0]['content'] == conversation['messages'][0]['content']
+    assert paths.count('/api/peer/device-sync/batch') == 3
+    a.reader.record(ITEM, 'unbookmark')
+    assert a.request('GET')['devices'][0]['sync']['pending'] == 1
+    assert b.client.post('/api/peer/device-sync/batch', json={}).status_code == 403

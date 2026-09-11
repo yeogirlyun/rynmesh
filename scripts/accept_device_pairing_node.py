@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--reuse', action='store_true')
+    parser.add_argument('--seed', action='store_true', help='Seed synthetic saved/progress/history sources on a new node.')
     args = parser.parse_args()
     home = args.home.resolve()
     if not home.name.startswith('rynmesh-device-pairing-acceptance-') or home.exists() != args.reuse:
@@ -31,6 +32,19 @@ def main():
     from rynmesh.store import RynmeshStore
 
     app = create_app(RynmeshStore(home=home, network_dir=home / 'network', node_name=args.name))
+    if args.seed:
+        if args.reuse:
+            raise SystemExit('--seed requires a new node home.')
+        item = {'item_id': 'device-transfer-article', 'title': 'Device transfer reading sample',
+                'source_title': 'Synthetic acceptance source', 'link': 'https://example.test/device-transfer', 'content_kind': 'article'}
+        app.state.consumption_store.record(item, 'bookmark')
+        app.state.consumption_store.record(item, 'progress', progress=.65)
+        stamp = '2026-09-11T00:00:00Z'
+        app.state.ask_ryn.conversations.save({'id': 'device-transfer-conversation', 'title': 'Conversation from the other computer',
+            'serviceKey': 'acceptance-provider::original-model', 'providerPeerId': 'acceptance-provider',
+            'serviceName': 'Original acceptance model', 'networkId': 'rynmesh-main', 'createdAt': stamp, 'updatedAt': stamp,
+            'messages': [{'id': 'original-answer', 'role': 'assistant', 'status': 'complete', 'createdAt': stamp,
+                          'content': 'This history arrived through encrypted device transfer. 原服务绑定保留，没有调用模型。'}]}, expected_revision=0)
     app.state.first_run.store.dismiss()
     uvicorn.run(app, host='127.0.0.1', port=args.port, access_log=False)
 

@@ -1,6 +1,6 @@
 """Conversation source durability before replication acknowledgement.
 
-An authenticated device worker must supply authorization before these internal
+The authenticated device transfer worker supplies authorization before these internal
 methods are called. They neither grant permission nor discover/send to devices.
 """
 from __future__ import annotations

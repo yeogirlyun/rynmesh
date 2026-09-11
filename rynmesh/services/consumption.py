@@ -11,6 +11,7 @@ from urllib.parse import quote
 from ..atomic_io import atomic_write_json, migration_backup, read_json
 from ..crypto import canonical_json
 from ..device_sync.reading import ReadingState
+from ..device_sync.reading import scopes as reading_scopes
 from ..device_sync.records import SyncError, view
 from ..file_transactions import file_transaction
 
@@ -158,7 +159,7 @@ class ConsumptionStore:
         )[: self.max_items]
         # Derived conflict/revision fields never become an independent source.
         saved = {str(value["item_id"]): {key: item for key, item in value.items()
-                 if key not in {"sync_revisions", "sync_conflicts"}} for value in ordered}
+                 if key not in {"sync_revisions", "sync_conflicts", "sync_reading_available"}} for value in ordered}
         self._save_document(document, saved, sync)
         return sync.project({item_id: record})[item_id] if sync else record
 
@@ -201,6 +202,8 @@ class ConsumptionStore:
         """Opt in after device consent; capture persists even while transfer pauses."""
         with file_transaction(self.lock_path):
             document, local, sync = self._document()
+            if sync is not None and sync.value['actor'] == actor and reading_scopes(scopes) <= set(sync.value['scopes']):
+                return
             if sync is None:
                 sync = ReadingState.create(actor)
                 sync.enable(actor, scopes, local)

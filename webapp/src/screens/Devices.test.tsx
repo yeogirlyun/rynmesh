@@ -127,3 +127,28 @@ it("uses the reviewed policy revision and preserves saved scope when pausing", a
   expect(await screen.findByRole("alert")).toHaveTextContent("settings changed");
   expect(screen.queryByText("Paused on this device.")).not.toBeInTheDocument();
 });
+
+it("shows pending source changes and a lost acknowledgement without claiming success", async () => {
+  state.data_transfer_available = true;
+  state.devices = [{ ...pair, status: "active", revision: 1,
+    sync: { state: "waiting", pending: 3, last_success_at: null, error_code: "sync_transfer_unconfirmed", conflicts: 0 } }];
+  show();
+  expect(await screen.findByText("3 local changes waiting for confirmation.")).toBeInTheDocument();
+  expect(screen.getByText("Last transfer was not confirmed. Reconnect and retry.")).toBeInTheDocument();
+  expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Personal data transfer is still/)).not.toBeInTheDocument();
+});
+
+it("shows source-confirmed status and preserves the distinction between conflicts and pending transfers", async () => {
+  state.data_transfer_available = true;
+  state.devices = [{ ...pair, status: "active", revision: 1,
+    sync: { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0 } }];
+  const user = userEvent.setup();
+  show();
+  expect(await screen.findByText("Selected local changes confirmed by the other device.")).toBeInTheDocument();
+  expect(screen.getByText(/Last confirmation across selected categories/)).toBeInTheDocument();
+  state.devices[0].sync = { state: "conflict", pending: 0, last_success_at: 1000, error_code: "", conflicts: 2 };
+  await user.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText(/2 unresolved conflicts/)).toBeInTheDocument();
+  expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
+});

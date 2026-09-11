@@ -2413,7 +2413,8 @@ def create_app(store: RynmeshStore | None = None):
     from .device_sync.routes import install_device_sync
 
     install_device_sync(app, store=active_store, home=_home, workers=app.state.background_workers,
-        local_control=local_control, messaging_key=_msg_priv)
+        local_control=local_control, messaging_key=_msg_priv,
+        reading=lambda: app.state.consumption_store, conversations=lambda: app.state.ask_ryn.conversations)
 
     from .friend_feed.routes import install_friend_feed
 

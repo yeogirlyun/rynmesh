@@ -41,6 +41,14 @@ it("starts empty and explains the local scope without querying all records", asy
   expect(localSearch.query).not.toHaveBeenCalled();
 });
 
+it("does not invent a 1970 date for synced metadata without a local timestamp", async () => {
+  vi.mocked(localSearch.query).mockResolvedValue({ ...page(), results: [{ ...result("Remote article"), timestamp: 0 }], total: 1 });
+  const user = mount();
+  await user.type(screen.getByLabelText("Search keywords"), "Remote");
+  expect(await screen.findByText(/Date unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText(/1970/)).not.toBeInTheDocument();
+});
+
 it("discards late replies from older keywords", async () => {
   let finish!: (value: SearchPage) => void;
   vi.mocked(localSearch.query).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; })).mockResolvedValue(page("New result"));
