@@ -148,7 +148,12 @@ class ConsumptionStore:
             record["completed"] = True
         scope = "bookmarks" if action in {"bookmark", "unbookmark"} else "reading"
         if sync:
-            sync.capture(record, scope, expected_revision=expected_sync_revision)
+            # Opening an existing position is a local history event, not a new
+            # position. In particular it must not create a third conflict head
+            # or supersede a position received while the reader was loading.
+            existing_position = sync.key("reading", item_id) in sync.value["entities"]
+            if action != "opened" or not existing_position:
+                sync.capture(record, scope, expected_revision=expected_sync_revision)
         elif expected_sync_revision is not None:
             raise SyncError("sync_not_enabled")
         records[item_id] = record

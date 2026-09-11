@@ -110,6 +110,6 @@ def test_concurrent_flush_and_source_actions_have_consistent_lock_order(tmp_path
         list(executor.map(operation, range(16)))
     assert a.source.list()[0]['open_count'] == 8
     batch = a.pending(b.replica.actor, SCOPES)
-    assert batch['records'][0]['record']['clock'] == {a.replica.actor: 8}
+    assert batch['records'][0]['record']['clock'] == {a.replica.actor: 1}
     receipt = b.receive(batch['records'], scopes=SCOPES)
     assert a.acknowledge(b.replica.actor, receipt, scopes=SCOPES)['acknowledged'] == 1

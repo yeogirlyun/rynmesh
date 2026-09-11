@@ -1,4 +1,5 @@
 import type { NodeClient } from "./nodeClient";
+import type { ConsumptionRecord } from "./digestClient";
 import { NodeClientError } from "./nodeClient";
 import type {
   ContentFilters,
@@ -123,12 +124,13 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
     getFirstSuccess: () => requestJson(`${baseUrl}/first-success`),
     dismissFirstSuccess: () => requestJson(`${baseUrl}/first-success/dismiss`, { method: "POST" }),
     resetFirstSuccess: () => requestJson(`${baseUrl}/first-success/reset`, { method: "POST" }),
-    recordContentConsumption: async (item, action, progress) => {
-      await requestJson(`${baseUrl}/consumption`, {
+    recordContentConsumption: async (item, action, progress, reading) => {
+      return requestJson<ConsumptionRecord>(`${baseUrl}/consumption`, {
         method: "POST",
         body: JSON.stringify({
           action,
           progress,
+          ...reading,
           item: {
             item_id: item.digest_item_id ?? item.content_id,
             source_id: item.publisher_peer_id,
