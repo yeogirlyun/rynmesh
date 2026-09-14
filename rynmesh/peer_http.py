@@ -1836,7 +1836,7 @@ def create_app(store: RynmeshStore | None = None):
         _audit().append(
             "rec",
             "Recommendation direction updated",
-            details={"interests": result["interests"], "avoids": result["avoids"]},
+            details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
         )
         return result
 
@@ -1901,8 +1901,8 @@ def create_app(store: RynmeshStore | None = None):
             "rec",
             "Recommendation profile updated",
             details={
-                "topics": profile["topics"],
-                "platforms": profile["platforms"],
+                "topic_count": len(profile["topics"]),
+                "platform_count": len(profile["platforms"]),
                 "has_direction": bool(profile["direction"]),
             },
         )

@@ -1,3 +1,4 @@
+import socket
 from types import SimpleNamespace
 
 import pytest
@@ -111,7 +112,7 @@ def test_corrupt_offline_metadata_does_not_hide_independent_search_sources(tmp_p
     assert engine.query('Independent healthy')['total'] == 1
 
 
-def test_real_local_stores_search_all_types_without_fetching_and_revalidate_open(tmp_path):
+def test_real_local_stores_search_all_types_without_fetching_and_revalidate_open(tmp_path, monkeypatch):
     adapter, history, imports, reader, conversations, alice, bob, mesh = sources(tmp_path)
     article = {"item_id": "article-one", "title": "Saved-title", "source_title": "Notebook", "link": "https://example.test/story"}
     history.record(article, "bookmark")
@@ -126,6 +127,9 @@ def test_real_local_stores_search_all_types_without_fetching_and_revalidate_open
     def forbidden(*args, **kwargs):
         raise AssertionError("Search attempted a remote request")
     alice.post_json = forbidden
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket.socket, "sendto", forbidden)
     engine = LocalSearchIndex(alice.home / "local-search", messaging_key=alice.messaging_private, source=adapter.snapshot)
     engine.rebuild()
     for query, kind in (("山谷 Python", "saved"), ("山谷", "history"), ("Friend-card", "share"),
