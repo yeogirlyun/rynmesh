@@ -135,9 +135,11 @@
       "scenario": "A 已安装，B 未安装",
       "expected": "B 凭邀请文本完成安装/打开、审核、接受和分享，无需手工改配置",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh-node HTTP pairing and first sharing passed without seeded relations or cards. Desktop installation/opening and invitation text/QR interaction remain unproven.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -147,9 +149,11 @@
       "scenario": "粘贴邀请但不确认",
       "expected": "身份、权限可检查，未向待审核端点请求",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Local invite inspection succeeded while the inviter process was stopped, exposed the signed identity and three sharing permissions, and created no relation. Existing route tests separately assert no outbound request during inspection; browser review remains untested in this run.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -159,9 +163,11 @@
       "scenario": "两个接收者并发接受",
       "expected": "仅建立一次关系，另一方得到已使用提示",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Two fresh receiver processes concurrently accepted one real invitation over TCP; exactly one succeeded and the other got invite_used. The winner retried to the same relation; both peers retained one relationship.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -171,9 +177,11 @@
       "scenario": "过期、取消、重复接受分别测试",
       "expected": "状态准确且可恢复；同一成功请求重试返回原关系",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Cancelled invitation and real one-minute expiry returned invite_cancelled and invite_expired respectively. Successful acceptance retry returned the original relation; no clock override was used.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -183,9 +191,11 @@
       "scenario": "双方互发文本、小附件、内容卡片",
       "expected": "内容完整；确认前不获取私有正文；超限附件发送前被阻止",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh peers exchanged exact text and small binary attachments through real HTTP, then shared a read/saved article, explicitly fetched its private body and shared the copy back. No document existed at the recipient before explicit fetch. Frontend oversized-file rejection remains component evidence, not a desktop file-picker check.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -195,9 +205,11 @@
       "scenario": "B 离线，A 发送可入邮箱消息，B 再上线",
       "expected": "先显示入队，接收确认后显示送达；重复投递仅一条",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: With the receiver stopped, the sender reported mailbox and delivered=false. The sender then stopped so the receiver could only consume the real HTTP Registry mailbox; after sender restart the signed receipt changed its status to delivered. Repeating the send retained one received message.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -207,9 +219,11 @@
       "scenario": "邮箱满、消息过期、断网、重启后重试",
       "expected": "无伪造送达，状态可恢复，不重复分享",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Sender and receiver process restarts preserved an unconfirmed mailbox message, followed by one confirmed delivery. This run does not prove mailbox quota exhaustion or message-expiry recovery.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -219,9 +233,11 @@
       "scenario": "B 在线/离线时 A 分别撤销",
       "expected": "A 立即拒绝下一次受保护请求，重启或重新发现不复活关系",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Direct old-credential probing found a real defect: rejected card-fetch authentication escaped as HTTP 500. Catching FriendError now returns 403; the final real-process run verified 200 before revocation, 403 immediately afterward with the other peer offline, and 403 after sender restart.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -231,9 +247,11 @@
       "scenario": "撤销后访问私有卡片",
       "expected": "新的正文获取被拒绝，界面说明已保存副本无法远程收回",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: The final real-process run denied new private-card fetching after revocation while the previously saved body remained readable. The copy warning is still backed by earlier browser/component evidence, not new desktop evidence.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -243,9 +261,11 @@
       "scenario": "检查权限、日志、诊断、导出",
       "expected": "不获得额外服务/根信任，邀请和关系秘密不泄露",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Real paired relationships exposed only friend.message, friend.attachment.small and friend.content-card. This is a limited permission check, not the outstanding full log/diagnostic/export privacy audit.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },
@@ -255,9 +275,11 @@
       "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
       "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Added the friend-product-e2e GitHub Actions job. Its command passed locally through real node processes and HTTP Registry mailbox; workflow YAML parsed. GitHub Actions and different-public-egress hardware execution have not been performed.",
       "evidence": [
-        "docs/acceptance/friends-development/README.md"
+        "docs/acceptance/friends-development/README.md",
+        "docs/acceptance/friends-development/product-http-20260914.md",
+        "docs/acceptance/friends-development/product-http-20260914-d.json"
       ],
       "implementation_commit": ""
     },

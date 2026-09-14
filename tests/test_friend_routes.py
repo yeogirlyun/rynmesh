@@ -117,6 +117,17 @@ def test_replay_capacity_never_evicts_still_valid_requests(tmp_path):
     assert store.remember_nonce("rel", "c", now=221, timestamp=221, limit=2)
 
 
+def test_private_card_fetch_returns_safe_denial_for_inactive_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_DISABLE_DISCOVERY", "1")
+    monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "none")
+    app = create_app(RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network"))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/api/peer/friends/content-card/fetch", json={"v": 1, "card_id": "a" * 32})
+    assert response.status_code == 403
+    assert response.json() == {"detail": "friend_request_rejected"}
+
+
 def test_imports_belong_to_the_injected_node_home(tmp_path, monkeypatch):
     monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "ambient-home"))
     monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
