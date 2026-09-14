@@ -1217,9 +1217,10 @@
       "scenario": "暂停/关闭会话同步，随后恢复",
       "expected": "暂停期间不继续传相应数据，旧副本保留；恢复后正确补齐",
       "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete. 2026-09-14: Installed-wheel/in-app-browser follow-up: pause stopped bookmark changes; resume applied them, disabling the bookmark scope stopped new changes, and re-enabling applied them with zero pending. Both independent bodies remained. This is a bookmark flow, not a new conversation-scope browser claim.",
       "evidence": [
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/candidate-delivery/sync-policy-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -1229,9 +1230,10 @@
       "scenario": "移除设备，重放旧凭证并重新发现",
       "expected": "后续同步拒绝，须重新审核配对；界面说明旧副本无法自动收回",
       "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete.",
+      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete. 2026-09-14: Installed-wheel/in-app-browser follow-up: both devices became revoked after owner confirmation; a subsequent bookmark change stayed local. Both node processes restarted with revoked pairing and independent copies intact. Existing full-suite tests reject old authenticated batches and confirm wires and require fresh pairing.",
       "evidence": [
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/candidate-delivery/sync-policy-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -1393,8 +1395,12 @@
       "scenario": "发布证据",
       "expected": "记录提交、平台、环境、步骤、预期/实际结果、耗时及限制；只声明实测范围",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": "Local candidate identity, installed-wheel startup, two-node browser results and the final full backend/frontend checks are recorded. macOS and public-network checks are explicitly waived by the user; their absence is not a local completion blocker. Remaining per-case evidence must still be audited.",
+      "evidence": [
+        "docs/acceptance/candidate-delivery/final-checks-20260914.md",
+        "docs/acceptance/candidate-delivery/two-node-20260914.md",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md"
+      ],
       "implementation_commit": ""
     }
   ]
