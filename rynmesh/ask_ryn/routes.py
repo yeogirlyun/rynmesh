@@ -28,6 +28,16 @@ class AskRynState:
 
 def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
                     local_control: Callable, messaging_key: Any) -> AskRynState:
+    if not getattr(app.state, "ask_ryn_cache_guard", False):
+        @app.middleware("http")
+        async def prevent_ask_caching(request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/api/local/ask/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
+
+        app.state.ask_ryn_cache_guard = True
+
     def catalog(network: str):
         commands = app.state.ask_ryn.orders
         if commands is not None and hasattr(commands, "discover"):

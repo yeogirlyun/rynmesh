@@ -165,11 +165,15 @@ def test_owner_routes_reinstall_uses_latest_store_and_auth(tmp_path):
     install_ask_ryn(app, store=SimpleNamespace(home=home), home=tmp_path / "ignored", workers=workers, local_control=auth, messaging_key=key)
     client = TestClient(app)
     headers = {"x-owner": "owner"}
-    assert client.get("/api/local/ask/conversations").status_code == 401
+    denied = client.get("/api/local/ask/conversations")
+    assert denied.status_code == 401
+    assert denied.headers.get("cache-control") == "no-store"
     row = {**sample(), "api_key": "must-not-import"}
     migrated = client.post("/api/local/ask/migrate", headers=headers, json={"source": "ryn-private-ai-chat-v1", "conversation": row})
     assert migrated.status_code == 200, migrated.text
-    exported = client.get("/api/local/ask/export", headers=headers).json()
+    response = client.get("/api/local/ask/export", headers=headers)
+    assert response.headers.get("cache-control") == "no-store"
+    exported = response.json()
     assert exported["conversations"][0]["messages"][0]["taskId"] == "task-original"
     assert "must-not-import" not in str(exported)
     assert not (old_home / "ask-ryn" / "history.json").exists()
