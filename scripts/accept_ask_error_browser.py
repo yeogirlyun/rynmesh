@@ -9,6 +9,8 @@ import argparse
 import hashlib
 import json
 import os
+import time
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from accept_local_search import configure
 HOME = Path('D:/code/rynmesh-ask-errors-acceptance-20260914')
 
 
-def observe(label):
+def observe(label, *, timeout_evidence=False):
     import httpx
     with httpx.Client(base_url='http://127.0.0.1:18950/api/local/', trust_env=False, timeout=15) as client:
         def get(path):
@@ -39,9 +41,19 @@ def observe(label):
             conversations.append({'id': row['id'], 'messages': messages})
         orders = [{k: row.get(k) for k in ('task_id', 'state', 'error_code', 'amount')}
                   for row in get('llm/orders')['orders']]
-    checkpoint = {'label': label, 'conversations': conversations, 'orders': orders,
+        extra = {}
+        if timeout_evidence:
+            balance = get('task-balance')
+            extra = {'at': datetime.now(UTC).isoformat(),
+                'balance': {k: v for k, v in balance.items() if isinstance(v, (int, float))},
+                'balance_events': [{k: event.get(k) for k in ('task_id', 'kind', 'amount')} for event in balance.get('events', [])],
+                'provider_orders': [{'task_id': row['task_id'], 'state': row['state'],
+                    'error_code': next((event['error_code'] for event in reversed(row.get('history') or []) if event.get('error_code')), None)}
+                    for row in get('llm/provider-orders')['orders']]}
+    checkpoint = {'label': label, **extra, 'conversations': conversations, 'orders': orders,
                   'runtime_calls': [json.loads(line) for line in (HOME / 'runtime-calls.jsonl').read_text().splitlines()]}
-    path = Path(__file__).resolve().parents[1] / 'docs/acceptance/ask-ryn-development/error-browser-checkpoints-20260914.json'
+    filename = 'timeout-browser-checkpoints-20260914.json' if timeout_evidence else 'error-browser-checkpoints-20260914.json'
+    path = Path(__file__).resolve().parents[1] / 'docs/acceptance/ask-ryn-development' / filename
     data = json.loads(path.read_text()) if path.exists() else {'scope': 'Synthetic HTTP faults; real browser, node stores and task protocol; loopback only', 'checkpoints': []}
     data['checkpoints'].append(checkpoint)
     path.write_text(json.dumps(data, indent=2) + '\n')
@@ -61,6 +73,18 @@ def runtime():
             mode = (HOME / 'mode.txt').read_text().strip()
             with (HOME / 'runtime-calls.jsonl').open('a', encoding='utf-8') as output:
                 output.write(json.dumps({'mode': mode}) + '\n')
+            if mode in {'timeout', 'cancel_delay'}:
+                from rynmesh.atomic_io import atomic_write_json
+                started = time.monotonic()
+                delay = 125 if mode == 'timeout' else 45
+                receipt = HOME / ('timeout-runtime.json' if mode == 'timeout' else 'cancel-runtime.json')
+                value = {'state': 'waiting', 'started_at': datetime.now(UTC).isoformat(), 'delay_seconds': delay}
+                atomic_write_json(receipt, value)
+                time.sleep(delay)
+                delivered = self.respond(200, {'choices': [{'message': {'content': 'Synthetic delayed response.'}}]})
+                atomic_write_json(receipt, {**value, 'state': 'response_attempted',
+                    'elapsed_seconds': round(time.monotonic() - started, 3), 'socket_write_succeeded': delivered})
+                return
             if mode in {'runtime_busy', 'runtime_unavailable', 'model_not_found'}:
                 return self.respond(404 if mode == 'model_not_found' else 503, {'detail': mode})
             self.respond(200, {'choices': [{'message': {'content': 'Synthetic recovery response.'}}],
@@ -72,7 +96,11 @@ def runtime():
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+                return True
+            except OSError:
+                return False
 
         def log_message(self, *_):
             pass
@@ -87,6 +115,7 @@ def main():
     parser.add_argument('surface', choices=['node', 'runtime', 'observe'])
     parser.add_argument('--label', default='checkpoint')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--timeout-evidence', action='store_true')
     args = parser.parse_args()
     marker = HOME / '.ask-errors-fixture.json'
     if args.surface in {'runtime', 'observe'} or args.resume:
@@ -98,7 +127,7 @@ def main():
     if args.surface == 'runtime':
         return runtime()
     if args.surface == 'observe':
-        return observe(args.label)
+        return observe(args.label, timeout_evidence=args.timeout_evidence)
     configure(HOME, 18950)
     os.environ['RYNMESH_LLM_HOME'] = str(HOME / 'llm')
     import uvicorn

@@ -3,6 +3,7 @@
 --hold-ice holds a real gathered ICE connection on the consumer's fixed port.
 Creating release-ice in the dedicated control directory closes it normally.
 No request, discovery response, task result, or model adapter is substituted.
+watch-provider-running only records a new running task; it does not stop it.
 """
 from __future__ import annotations
 
@@ -25,13 +26,13 @@ NODES = {
 }
 
 
-def stop_provider_on_running():
+def stop_provider_on_running(*, stop=True):
     import httpx
     marker = CONTROL / 'provider.json'
     original = marker.read_text()
     pid = json.loads(original)['pid']
-    receipt = CONTROL / 'provider-running-interruption.json'
-    assert not receipt.exists(), 'This one-shot interruption already has a receipt.'
+    receipt = CONTROL / ('provider-running-interruption.json' if stop else 'provider-browser-cancel-running.json')
+    assert not receipt.exists(), 'This one-shot running observation already has a receipt.'
     with httpx.Client(base_url='http://127.0.0.1:18846/api/local/', trust_env=False, timeout=5) as client:
         def get(path):
             response = client.get(path)
@@ -49,7 +50,8 @@ def stop_provider_on_running():
                 value = {'task_id': running['task_id'], 'observed_state': 'running',
                     'at': datetime.now(UTC).isoformat(), 'provider_pid': pid}
                 receipt.write_text(json.dumps(value) + '\n')
-                os.kill(pid, signal.SIGTERM)
+                if stop:
+                    os.kill(pid, signal.SIGTERM)
                 print(json.dumps(value), flush=True)
                 return
             time.sleep(0.05)
@@ -81,12 +83,14 @@ async def hold_connection():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('node', choices=[*NODES, 'stop-provider-on-running'])
+    parser.add_argument('node', choices=[*NODES, 'stop-provider-on-running', 'watch-provider-running'])
     parser.add_argument('--transport', choices=['auto', 'direct', 'p2p'], default='auto')
     parser.add_argument('--hold-ice', action='store_true')
     args = parser.parse_args()
     if args.node == 'stop-provider-on-running':
         return stop_provider_on_running()
+    if args.node == 'watch-provider-running':
+        return stop_provider_on_running(stop=False)
     port, home = NODES[args.node]
     assert (home / 'llm/provider-settings.json').is_file()
     CONTROL.mkdir(exist_ok=True)

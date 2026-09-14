@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--label', required=True)
     parser.add_argument('--peer-failures', action='store_true', help='Write a separate ICE and peer failure evidence file.')
+    parser.add_argument('--cancel-timeout', action='store_true', help='Write separate browser cancellation/timeout evidence.')
     parser.add_argument('--consumer-only', action='store_true', help='Observe the consumer while the provider is deliberately stopped.')
     args = parser.parse_args()
     observation = {'label': args.label, 'at': datetime.now(UTC).isoformat(), 'nodes': {}}
@@ -55,7 +56,7 @@ def main():
             service = read('llm/service/status')
             row['service'] = {k: service.get(k) for k in ('ready', 'publication_enabled')}
             observation['nodes'][name] = row
-    filename = 'peer-failure-checkpoints-20260914.json' if args.peer_failures else 'model-switch-checkpoints-20260914.json'
+    filename = 'cancel-timeout-checkpoints-20260914.json' if args.cancel_timeout else 'peer-failure-checkpoints-20260914.json' if args.peer_failures else 'model-switch-checkpoints-20260914.json'
     path = Path(__file__).resolve().parents[1] / 'docs/acceptance/ask-ryn-development' / filename
     data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {
         'scope': 'Actual browser operations on two existing isolated native-model nodes; loopback not public NAT', 'observations': []}
