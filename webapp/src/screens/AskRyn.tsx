@@ -39,11 +39,16 @@ function AskRynHome() {
   const [draft, setDraft] = useState("");
   const [draftReady, setDraftReady] = useState(false);
   const [draftStatus, setDraftStatus] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ failed: boolean; text: string } | null>(null);
+  const exportBusy = useRef(false);
+  const exportFeedback = useRef<HTMLParagraphElement>(null);
   const [loading, setLoading] = useState(true);
   const draftRecord = useRef({ text: "", revision: 0 });
   const drafts = useRef(Promise.resolve());
   const selection = rows.find((row) => row.id === params.get("conversation"));
   const material = params.get("material");
+  useEffect(() => { if (exportResult) exportFeedback.current?.focus(); }, [exportResult]);
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
@@ -104,9 +109,19 @@ function AskRynHome() {
     },
   });
   const exportHistory = async () => {
-    const value = await askHistory.export();
-    const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "ryn-conversations.json"; anchor.click(); URL.revokeObjectURL(url);
+    if (exportBusy.current || !draftReady) return;
+    exportBusy.current = true; setExporting(true); setExportResult(null);
+    try {
+      await persistDraft(draft);
+      const value = await askHistory.export();
+      const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
+      try {
+        const anchor = document.createElement("a"); anchor.href = url; anchor.download = "ryn-conversations.json"; anchor.click();
+      } finally { URL.revokeObjectURL(url); }
+      setExportResult({ failed: false, text: "Export prepared and download requested. Check your downloads to confirm the file was saved." });
+    } catch {
+      setExportResult({ failed: true, text: "Export was not completed. Your draft remains here. Check the node connection and draft save status, then retry export." });
+    } finally { exportBusy.current = false; setExporting(false); }
   };
   return <div className={styles.home}>
     <PageHeader eyebrow="Your assistant" title="Ask Ryn" context="Your conversations stay on your node. Choose who receives each new conversation." />
@@ -121,7 +136,8 @@ function AskRynHome() {
           </li>)}
         </ul>}
         {client.mode === "live" ? <>
-          <Button onClick={() => void exportHistory().catch((cause: Error) => setError(cause.message))}>Export conversations and draft</Button>
+          <Button disabled={exporting || !draftReady} onClick={() => void exportHistory()}>{exporting ? "Preparing export…" : "Export conversations and draft"}</Button>
+          {exportResult ? <p ref={exportFeedback} tabIndex={-1} role={exportResult.failed ? "alert" : "status"}>{exportResult.text}</p> : null}
           <Button onClick={() => confirm({ title: "Import older browser conversations?", risk: "medium", confirmLabel: "Import conversations", body: "Read this browser's encrypted history into the node, keeping original providers and service keys. Browser originals remain recovery copies.", onConfirm: async () => { const result = await askHistory.importLegacy(); setNotice(legacyMigrationNotice(result)); await load(); } })}>Import older browser conversations</Button>
         </> : null}
       </Panel>

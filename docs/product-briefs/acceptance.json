@@ -479,9 +479,11 @@
       "scenario": "删除/导出会话并检查日志",
       "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "2026-09-14: Windows loopback browser export included the latest unsent draft, and the actual downloaded JSON matched the owner response. Export failure after stopping the node retained the draft; retry after restart succeeded. Browser-confirmed ordinary deletion removed one conversation from history and export, with 404 and deletion preserved after restart; separate draft, other conversation and all six order identities/states remained. Identity/messaging private key and control-token file contents and base64/hex forms were absent from export and captured operation logs; sampled input/output bodies were absent from those logs. Fixed export/save ordering, failure/retry feedback, duplicate-click guard and no-store Ask response headers. Full inference logging, recovery-copy cases and packaged/platform gates remain incomplete.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/export-privacy-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/export-privacy-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },

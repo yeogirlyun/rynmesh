@@ -16,7 +16,67 @@ beforeEach(() => {
   vi.spyOn(askHistory, "saveDraft").mockImplementation(async (text, revision) => ({ text, revision: revision + 1 }));
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+function mockDownload() {
+  const create = vi.fn(() => "blob:ask-export");
+  vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: create, revokeObjectURL: vi.fn() }));
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  return { create, click };
+}
+
+it("exports the latest unsaved draft once and reports only a requested download", async () => {
+  const download = mockDownload();
+  let persisted = "", exported = "";
+  let finish!: () => void;
+  let finishSave!: () => void;
+  vi.mocked(askHistory.saveDraft).mockImplementation((text, revision) => new Promise((resolve) => {
+    finishSave = () => { persisted = text; resolve({ text, revision: revision + 1 }); };
+  }));
+  const exportRequest = vi.spyOn(askHistory, "export").mockImplementation(() => {
+    exported = persisted;
+    return new Promise((resolve) => { finish = () => resolve({ version: "ryn.ask-export.v1", conversations: [] }); });
+  });
+  const { user } = mount();
+  await waitFor(() => expect(screen.getByLabelText("Your draft")).toBeEnabled());
+  await user.click(screen.getByLabelText("Your draft"));
+  await user.paste("Latest unsaved export draft");
+  await user.click(screen.getByRole("button", { name: "Export conversations and draft" }));
+  await waitFor(() => expect(askHistory.saveDraft).toHaveBeenCalledTimes(1));
+  expect(exportRequest).not.toHaveBeenCalled();
+  await act(async () => finishSave());
+  await waitFor(() => expect(exportRequest).toHaveBeenCalledTimes(1));
+  expect(exported).toBe("Latest unsaved export draft");
+  const busy = screen.getByRole("button", { name: "Preparing export…" });
+  expect(busy).toBeDisabled();
+  await user.click(busy);
+  expect(exportRequest).toHaveBeenCalledTimes(1);
+  await act(async () => finish());
+  const result = await screen.findByText(/Export prepared and download requested/);
+  expect(result).toHaveFocus();
+  expect(download.click).toHaveBeenCalledTimes(1);
+});
+
+it.each(["save", "export"])("keeps the draft and supports retry when %s fails", async (failure) => {
+  const download = mockDownload();
+  const exportRequest = vi.spyOn(askHistory, "export").mockResolvedValue({ version: "ryn.ask-export.v1", conversations: [] });
+  if (failure === "save") vi.mocked(askHistory.saveDraft).mockRejectedValue(new Error("Synthetic write failure"));
+  else exportRequest.mockRejectedValueOnce(new Error("Synthetic connection failure"));
+  const { user } = mount();
+  await waitFor(() => expect(screen.getByLabelText("Your draft")).toBeEnabled());
+  await user.click(screen.getByLabelText("Your draft"));
+  await user.paste("Keep this draft through export failure");
+  await user.click(screen.getByRole("button", { name: "Export conversations and draft" }));
+  const error = await screen.findByText(/Export was not completed/);
+  expect(error).toHaveFocus();
+  expect(screen.getByLabelText("Your draft")).toHaveValue("Keep this draft through export failure");
+  expect(download.create).not.toHaveBeenCalled();
+  if (failure === "save") expect(exportRequest).not.toHaveBeenCalled();
+  vi.mocked(askHistory.saveDraft).mockImplementation(async (text, revision) => ({ text, revision: revision + 1 }));
+  await user.click(screen.getByRole("button", { name: "Export conversations and draft" }));
+  expect(await screen.findByText(/Export prepared and download requested/)).toHaveFocus();
+  expect(download.click).toHaveBeenCalledTimes(1);
+});
 
 function mount(initial = "/ask", services: LLMServiceRecord[] = [], rows: LLMConversation[] = []) {
   const client = makeFixtureNodeClient(); client.mode = "live";
