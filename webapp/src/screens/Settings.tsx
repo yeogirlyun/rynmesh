@@ -1,6 +1,6 @@
 import { Activity, BellRing, Cloud, Download, DownloadCloud, HardDrive, History, Network, Save, ShieldCheck, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, Chip, KV, LoadingPanel, PageHeader, Panel } from "../components/ui";
@@ -96,7 +96,7 @@ export default function Settings() {
   );
 }
 
-function PrivacySection({
+export function PrivacySection({
   client,
   confirm,
   notify,
@@ -109,30 +109,51 @@ function PrivacySection({
 }) {
   const [status, setStatus] = useState<PrivacyStatus | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const [exportNotice, setExportNotice] = useState("");
+  const exportPending = useRef(false);
+  const exportResult = useRef<HTMLParagraphElement>(null);
 
-  const reload = async () => {
-    const [nextStatus, nextEvents] = await Promise.all([
-      client.getPrivacyStatus(),
-      client.getActivity(),
-    ]);
-    setStatus(nextStatus);
-    setEvents(nextEvents);
-  };
+  const reload = useCallback(async () => {
+    setLoading(true); setLoadError("");
+    try {
+      const [nextStatus, nextEvents] = await Promise.all([
+        client.getPrivacyStatus(), client.getActivity(),
+      ]);
+      setStatus(nextStatus); setEvents(nextEvents);
+    } catch {
+      setLoadError("The local data summary could not be refreshed. Check the node connection and retry.");
+    } finally { setLoading(false); }
+  }, [client]);
 
   useEffect(() => {
     void reload();
-  }, [client, revision]);
+  }, [reload, revision]);
+
+  useEffect(() => { if (exportError || exportNotice) exportResult.current?.focus(); }, [exportError, exportNotice]);
 
   const download = async () => {
-    const payload = await client.exportPersonalData();
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `ryn-personal-data-${new Date().toISOString().slice(0, 10)}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    notify("ok", "Personal data export created locally");
+    if (exportPending.current) return;
+    exportPending.current = true;
+    setExporting(true); setExportError(""); setExportNotice("");
+    try {
+      const payload = await client.exportPersonalData();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const revoke = URL.revokeObjectURL.bind(URL);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `ryn-personal-data-${new Date().toISOString().slice(0, 10)}.json`;
+        anchor.click();
+      } finally { window.setTimeout(() => revoke(url), 1000); }
+      setExportNotice("Reading and preferences export prepared; download requested. Check your browser downloads.");
+    } catch {
+      setExportError("The node did not return a complete reading and preferences export. Check the connection and retry.");
+    } finally { exportPending.current = false; setExporting(false); }
   };
 
   const erase = (scopes: PrivacyEraseScope[], title: string, body: string) => {
@@ -142,7 +163,8 @@ function PrivacySection({
       risk: "high",
       confirmLabel: "Erase local data",
       onConfirm: async () => {
-        await client.erasePersonalData(scopes);
+        try { await client.erasePersonalData(scopes); }
+        catch { throw new Error("The selected data could not be fully erased. Check the node connection and storage access, then retry. Some steps may already have completed."); }
         await reload();
         notify("ok", "Selected personal data erased from this node");
       },
@@ -167,10 +189,12 @@ function PrivacySection({
           { label: "Assistant audit", value: `${status.audit_events} events` },
           { label: "Cloud AI", value: status.cloud_ai_enabled ? "enabled" : "disabled" },
         ]} />
-      ) : <p className="muted">Inspecting local data…</p>}
+      ) : loading ? <p className="muted">Inspecting local data…</p> : null}
+      {loadError ? <p role="alert">{loadError} <Button disabled={loading} onClick={() => void reload()}>Retry data summary</Button></p> : null}
+      <p ref={exportResult} tabIndex={-1} role={exportError ? "alert" : "status"}>{exportError || exportNotice}</p>
       <div className="button-row">
-        <Button icon={Download} variant="primary" onClick={() => void download()}>
-          Export reading & preferences (JSON)
+        <Button icon={Download} variant="primary" disabled={exporting} onClick={() => void download()}>
+          {exporting ? "Preparing reading export…" : "Export reading & preferences (JSON)"}
         </Button>
         {client.mode !== "live" ? <Button icon={History} onClick={() => erase(["history"], "Clear reading history?", "This erases opened items, bookmarks, playback position, and reading progress from this node.")}>
           Clear history

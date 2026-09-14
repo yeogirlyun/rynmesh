@@ -17,6 +17,7 @@ it("keeps failed operations reviewable and prevents duplicate submissions", asyn
   render(<Harness />);
   await user.click(screen.getByRole("button", { name: "Clear copies" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Storage unavailable");
+  expect(screen.getByRole("alert")).toHaveFocus();
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   const button = screen.getByRole("button", { name: "Clear copies" });
   fireEvent.click(button); fireEvent.click(button);
