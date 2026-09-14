@@ -1,4 +1,4 @@
-import { ExternalLink, FileText, Headphones, Image as ImageIcon, Play, X } from "lucide-react";
+import { Bookmark, ExternalLink, FileText, Headphones, Image as ImageIcon, Play, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { readingTextVersion } from "../domain/readingHistory";
@@ -46,6 +46,10 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   const [retry, setRetry] = useState(0);
   const [truncated, setTruncated] = useState(false);
   const [progressError, setProgressError] = useState("");
+  const [bookmarked, setBookmarked] = useState<boolean | null>(null);
+  const [bookmarkPending, setBookmarkPending] = useState(false);
+  const [bookmarkError, setBookmarkError] = useState("");
+  const bookmarkWriting = useRef(false);
   const [positionReview, setPositionReview] = useState<"conflict" | "version" | "unknown" | null>(null);
   const [positionChoice, setPositionChoice] = useState(0);
   const readingRevision = useRef("");
@@ -59,6 +63,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   const imagesReady = !offlineBody?.images.some((image) => image.state === "verified") || settledImageJob === offlineBody?.job_id;
   const [sourceItem, setSourceItem] = useState<string | null>(null);
   const readingId = item.digest_item_id ?? item.content_id;
+  const bookmarkTarget = useRef(readingId);
+  bookmarkTarget.current = readingId;
   const forceSource = sourceItem === readingId;
   const stageRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -98,6 +104,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
     setOfflineBody(null); setBodyError(""); setResolvedOfflineKey("");
     setSettledImageJob(""); readingStarted.current = false;
     setProgressError("");
+    setBookmarked(null); setBookmarkError("");
     setPositionReview(null);
     restore.current = 0;
     savedProgress.current = 0;
@@ -144,6 +151,7 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
           const history = await digestApi.listConsumption();
           if (!active) return;
           const record = history.find((row) => row.item_id === readingId);
+          setBookmarked(Boolean(record?.bookmarked));
           restore.current = record?.progress ?? 0;
           readingRevision.current = record?.sync_revisions?.reading ?? "";
           if (readingRevision.current) {
@@ -204,6 +212,20 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
   };
   const close = async () => {
     try { await saveProgress(true); onClose(); } catch { /* Keep the retry visible. */ }
+  };
+  const toggleBookmark = async () => {
+    if (!client || bookmarked === null || bookmarkWriting.current) return;
+    const next = !bookmarked;
+    const target = readingId;
+    bookmarkWriting.current = true;
+    setBookmarkPending(true); setBookmarkError("");
+    try {
+      const result = await client.recordContentConsumption(item, next ? "bookmark" : "unbookmark");
+      if (result?.bookmarked !== next) throw new Error("bookmark_receipt_missing");
+      if (bookmarkTarget.current === target) setBookmarked(next);
+    } catch {
+      if (bookmarkTarget.current === target) setBookmarkError("Your saved choice could not be confirmed. Retry to save the same choice.");
+    } finally { bookmarkWriting.current = false; setBookmarkPending(false); }
   };
   const choosePosition = (keep: boolean) => {
     if (!keep) restore.current = 0;
@@ -290,9 +312,16 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
         </div>
 
         <footer className="content-viewer-footer">
+          {bookmarkError ? <p role="alert">{bookmarkError}</p> : null}
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button>
             <Button onClick={() => setRetry((value) => value + 1)}>Reload saved position</Button></p> : null}
           <p>{item.description}</p>
+          {client?.mode === "live" && textContent && bodyState === "ready" ? (
+            <Button icon={Bookmark} variant={bookmarked ? "primary" : "standard"}
+              disabled={bookmarked === null || bookmarkPending} onClick={() => void toggleBookmark()}>
+              {bookmarkPending ? "Saving choice…" : bookmarked ? "Remove from saved" : "Save for later"}
+            </Button>
+          ) : null}
           {client?.mode === "live" && textContent && !offlineKey ? <OfflineDownloadButton key={item.digest_item_id ?? item.content_id} itemId={item.digest_item_id ?? item.content_id} /> : null}
           {offlineBody ? <p>Opening the original requires a connection. This view does not fetch external media automatically. Sharing or asking saves a separate text copy; clearing downloads keeps that copy.</p> : null}
           {client?.mode === "live" && textContent && bodyState === "ready" ? <ShareContentButton key={`${readingId}:${offlineBody?.job_id ?? "source"}`} itemId={readingId} title={item.title} offlineJobId={offlineBody?.job_id} /> : null}

@@ -10,6 +10,27 @@ import { friendsApi } from "../domain/friendsClient";
 
 afterEach(() => vi.restoreAllMocks());
 
+it("keeps bookmark state until a save succeeds and can remove it from an ordinary reading view", async () => {
+  vi.spyOn(offlineApi, "resolve").mockResolvedValue(null);
+  const client = { ...makeFixtureNodeClient(), mode: "live" as const };
+  const item = (await client.listContent()).find((row) => row.content_kind === "document")!;
+  vi.spyOn(client, "getContentBody").mockResolvedValue({ ok: true, content_id: item.content_id,
+    content_type: "text/plain", size: "20", truncated: false, text: "Saved-list article body." });
+  vi.spyOn(digestApi, "listConsumption").mockResolvedValue([]);
+  const write = vi.spyOn(client, "recordContentConsumption").mockRejectedValueOnce(new Error("disk full"))
+    .mockResolvedValueOnce({ bookmarked: true } as ConsumptionRecord)
+    .mockResolvedValueOnce({ bookmarked: false } as ConsumptionRecord);
+  render(<MemoryRouter><ContentViewer item={item} client={client} onClose={vi.fn()} /></MemoryRouter>);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Save for later" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("saved choice could not be confirmed");
+  expect(screen.queryByRole("button", { name: "Remove from saved" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save for later" }));
+  await user.click(await screen.findByRole("button", { name: "Remove from saved" }));
+  expect(await screen.findByRole("button", { name: "Save for later" })).toBeEnabled();
+  expect(write.mock.calls.map((call) => call[1])).toEqual(["bookmark", "bookmark", "unbookmark"]);
+});
+
 it("restores position, reports truncated content and retries a failed position save before closing", async () => {
   vi.spyOn(offlineApi, 'resolve').mockResolvedValue(null);
   const client = { ...makeFixtureNodeClient(), mode: "live" as const };

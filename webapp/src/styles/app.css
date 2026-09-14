@@ -2937,10 +2937,12 @@ button.digest-title:hover {
 
 .content-viewer-footer {
   align-items: center;
+  flex-wrap: wrap;
   border-top: 1px solid var(--border-color);
 }
 
 .content-viewer-footer p {
+  flex-basis: 100%;
   max-width: 70ch;
   color: var(--text-secondary);
 }

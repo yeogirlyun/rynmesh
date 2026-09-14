@@ -8,11 +8,13 @@
       "scenario": "干净安装、正常网络、无模型与好友",
       "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run. 2026-09-14 browser follow-up: Fresh unseeded Windows production-node browser run: real public content ready at 26.80 seconds; actual open and bookmark completed at 167.15 seconds from initial node startup, including an intentional unfinished-guide restart. No model or friends configured. This is not installation or packaged-desktop timing.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -22,9 +24,11 @@
       "scenario": "关闭未完成引导后重启",
       "expected": "应用可用，首页可继续，未错误标记完成",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser Continue later before opening preserved incomplete state; node restart offered Continue first reading. Resuming opened a real article without crediting an earlier failed/absent action. Packaged desktop remains untested.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -34,12 +38,14 @@
       "scenario": "收藏并阅读后重启",
       "expected": "收藏仅一条，阅读位置可恢复",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance. 2026-09-14: the real public-source HTTP run saved one BBC article twice without duplicates, stored progress 0.37, restarted the node to a different PID, and recovered the exact history record and matching cached body hash. This proves storage/API recovery, not desktop scroll restoration.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance. 2026-09-14: the real public-source HTTP run saved one BBC article twice without duplicates, stored progress 0.37, restarted the node to a different PID, and recovered the exact history record and matching cached body hash. This proves storage/API recovery, not desktop scroll restoration. 2026-09-14 browser follow-up: Actual browser My reading found one saved public article at 16%; process restart retained the exact history digest and reopening visibly restored the middle of the article. Final restart retained the same bookmarked record and approximately 16% position. Ordinary reading view now supports save/remove with confirmed receipts.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -49,11 +55,13 @@
       "scenario": "一个来源失败，单独重试",
       "expected": "显示对应错误与失败次数；正常来源内容保留且不强制重抓",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: retrying one genuinely failed YouTube source updated its check time and failure count from 2 to 3 while all 13 other source-health records remained unchanged and 30 items remained available. The source still failed; successful network recovery and UI interaction are not claimed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: retrying one genuinely failed YouTube source updated its check time and failure count from 2 to 3 while all 13 other source-health records remained unchanged and 30 items remained available. The source still failed; successful network recovery and UI interaction are not claimed. 2026-09-14 browser follow-up: Browser added an independent HTTP source, then retried real 503 and recovery to 200. Cached item, failure count and check/success times were visible; all 14 other source-health records stayed exactly unchanged on both targeted retries. Reading data survived. Packaged desktop remains untested.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -75,9 +83,11 @@
       "scenario": "查看内置和自定义来源",
       "expected": "所有健康字段真实，从未检查或从未成功有明确文字",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser default/custom source health matched API during 200/503/recovery: counts, times, failures and cached status. Never-checked and never-successful branches remain unverified in this browser run.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -87,9 +97,11 @@
       "scenario": "分别反馈 More/Less/Hide，再撤销一条",
       "expected": "操作、时间和信号可见；仅撤销指定操作，重新计算排名，重启保持",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser More/Less/Hide displayed time and signal explanations; undo changed only the selected event. A later successful Less replaced the earlier More for that item. Four resulting events including undone/replaced states survived node restart exactly.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -99,9 +111,11 @@
       "scenario": "收藏/反馈写入失败，恢复后重试",
       "expected": "不伪造成功；恢复后只有一条记录",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Real Windows file-share locks independently blocked consumption and profile atomic replacement. Browser reported unconfirmed saves and kept prior state. After release, retries produced one bookmarked record and one additional successful feedback event; unrelated events unchanged. Both datasets survived node restart exactly. This does not complete the packaged-platform/common gates.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -111,9 +125,11 @@
       "scenario": "完成后再次启动",
       "expected": "不强制重复引导，能继续阅读并找到连接朋友入口",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: After final process restart, browser Home showed real recommendations, Continue reading and Friends without forced onboarding. Completion screen had offered Connect a friend. Packaged desktop remains untested.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
