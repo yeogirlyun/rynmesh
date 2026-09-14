@@ -14,6 +14,7 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
   const [cards, setCards] = useState<FriendContentCard[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState<ContentItem | null>(null);
   useEffect(() => {
@@ -21,14 +22,14 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
     const element = document.getElementById(`friend-card-${focusCard}`);
     element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
   }, [loaded, focusCard]);
-  const refresh = async () => { setCards((await friendsApi.cards()).cards); setLoaded(true); };
+  const refresh = async () => { setCards((await friendsApi.cards()).cards); setLoaded(true); setLoadError(""); };
   useEffect(() => {
     let active = true, running = false;
     const poll = async () => {
       if (running) return;
       running = true;
-      try { const result = await friendsApi.cards(); if (active) { setCards(result.cards); setLoaded(true); } }
-      catch { if (active) setError("Could not refresh shared content. Retry when the node is available."); }
+      try { const result = await friendsApi.cards(); if (active) { setCards(result.cards); setLoaded(true); setLoadError(""); } }
+      catch { if (active) setLoadError("Could not refresh shared content. Retry when the node is available."); }
       finally { running = false; }
     };
     void poll(); const timer = window.setInterval(() => void poll(), 5000);
@@ -49,7 +50,7 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
   };
   return <Panel><h2>Shared content</h2>
     <p>Cards show metadata first. Choose Download and read to save a private copy. Removing a friend cannot recall copies already saved.</p>
-    {error ? <p role="alert">{error}</p> : null}
+    {error || loadError ? <p role="alert">{error || loadError}</p> : null}
     <Button disabled={busy} onClick={() => void act(refresh)}>Refresh shared content</Button>
     {!loaded ? <p>Loading shared content…</p> : !cards.length ? <p>No shared content yet. Open an article and choose Share with a friend.</p> : cards.map((card) => <article key={card.card_id} id={`friend-card-${card.card_id}`} tabIndex={-1}
       style={card.card_id === focusCard ? { outline: "2px solid currentColor" } : undefined}>
