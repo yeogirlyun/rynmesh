@@ -1,53 +1,41 @@
 # 当前候选怎么试用
 
-2026-09-14。当前安装代码：`f486fb76d417fab96d97fcdcbeb5c8762b931b38`，在首个候选 `04f6d28` 基础上修复登录页面误覆盖离线正文，以及设置页首次加载失败后一直转圈。本机已生成带前端的 Python wheel，并更新独立运行环境，继续使用原来的数据目录。当前为本机试用候选；macOS 与公网验收已由用户同意跳过，见[本轮范围确认](ACCEPTANCE_SCOPE.md)。
+2026-09-14。八项需求的原始 95 条用例在[本轮确认范围](ACCEPTANCE_SCOPE.md)内验收完成，远程 CI 9/9 成功。macOS 实机与公网跨 NAT 按用户要求跳过。[完整验收报告](../acceptance/candidate-delivery/requirement-review-20260914.md)。
 
-## 启动
+## 本机打开
 
-当前机器的候选目录：`dist/candidate-04f6d28/`。
+- 主节点：<http://127.0.0.1:18990/>。
+- 第二个独立节点：<http://127.0.0.1:18991/>。
+- 启动目录：`D:/code/rynmesh-product-development/dist/candidate-04f6d28/`。双击 `Start-Ryn.cmd` 或 `Start-Second-Ryn.cmd`；后台运行时使用对应的 `Stop-Ryn.cmd` / `Stop-Second-Ryn.cmd` 退出。先等待下载、同步和模型任务结束。
+- 数据分别在该目录的 `user-data/` 和 `second-user-data/`。两个节点独立身份、独立数据，均只监听本机；不会公开注册。已有真实文章、收藏及明确的验收记录保留。当前好友、设备配对及关注均已撤销，需要通过页面重新邀请才能继续传输；已保存的副本仍在。
 
-1. 双击目录中的 `Start-Ryn.cmd`，保留启动窗口。
-2. 打开 <http://127.0.0.1:18990/>。如果已经启动，直接打开这个地址。
-3. 退出时在启动窗口按 Ctrl+C；本轮后台启动的进程可以双击 `Stop-Ryn.cmd` 停止。下次启动继续使用同一份数据。停止前先等下载、同步或模型任务结束。
+## 安装包
 
-数据单独保存在候选目录的 `user-data/`，不会使用原节点的数据。首次打开不安装模型、不预置好友和聊天记录；默认公共内容来源仍需联网。这个启动配置只监听本机，不向公共注册中心发布节点，所以不能用它直接证明异地好友或多设备跨网流程。
+当前 wheel：`D:/code/rynmesh-product-development/dist/candidate-04d94f2/rynmesh-0.6.2-py3-none-any.whl`。
 
-第二个独立节点现已可用：双击 `Start-Second-Ryn.cmd`，打开 <http://127.0.0.1:18991/>；停止使用 `Stop-Second-Ryn.cmd`。其数据保存在 `second-user-data/`。两个节点已实际完成设备双端审核、收藏同步，以及好友邀请、消息、文章分享与撤销。同步暂停、恢复、范围关闭和设备移除也已完成页面验证；两端重启后设备关系仍已移除。现在好友与设备关系均需通过页面重新邀请才会继续传输，旧本地副本保留。此设置只供本机双节点验证。
+SHA-256：`9e746cfbacae0e7dc8f96355c9e0756a5b05f5ccb52eef9758a60e41bc077f6c`。
 
-当前安装包：`dist/candidate-858cda5/rynmesh-0.6.2-py3-none-any.whl`。SHA-256：`644e86a40ba96661a4eefe4f48c149aa83ea59fc2b824a91a958269a8af968eb`。启动入口仍在 `dist/candidate-04f6d28/`，其中 `installed-candidate.json` 记录当前安装版本；旧 wheel 与原 `candidate.json` 保留作为首版记录。
+已安装实现提交 `04d94f21fb702ffe0ac9ed596ccb56e681e578f4`，页面资源 `index-DaWWiomT.js`，包含 18 个前端资源文件。启动目录沿用第一版名称；其中 `installed-candidate.json` 才是当前安装记录。新包直接升级同一环境，18 个关键数据文件在升级前后摘要一致，依赖检查和两个健康/状态接口均通过。[安装证据](../acceptance/candidate-delivery/installed-04d94f2.json)。
 
-`candidate.json` 记录代码和包校验值，`installed-requirements.txt` 记录本次实际依赖。运行环境不可直接搬到另一台机器；迁移时使用 Python 3.10+ 创建新虚拟环境，再安装此 wheel 的 `documents` 可选依赖。wheel 已包含网页，不需要 Node.js 或源码开发服务器。
+运行环境不能直接搬到另一台机器。另机使用 Python 3.10+ 创建虚拟环境，安装此 wheel 的 `documents` 可选依赖；网页已经包含在 wheel 内，不需要 Node.js 或 Vite。这是 Windows Python 安装包与浏览器交付，不是 Windows 原生桌面安装器。
 
-## 八项功能入口与试用目标
+## 八项入口
 
-以下是完整需求的入口清单，不能把页面存在当作整项验收通过。已有功能证据见[剩余验收清单](REMAINING_ACCEPTANCE.md)。
+| 需求 | 入口与操作 |
+|---|---|
+| 首次阅读 | Home / For You → 打开正文 → 收藏 → My reading；不安装模型也可用 |
+| 两人分享 | Friends → 创建邀请 → 对方审核接受 → 消息/内容卡片 → 查看送达 → 移除好友 |
+| Ask Ryn | Ask Ryn；文章内 Ask about this content。历史可独立阅读，提问前说明接收 Provider 和引用内容 |
+| AI 设置与好友权限 | **Services → Manage** 安装、启动、自检或恢复模型；Friends → AI with friends 明确允许/撤销。Settings 的 AI curator 是既有推荐设置，不是原生模型安装入口 |
+| 搜索与找回 | Search → 关键词、来源和类型筛选 → 打开原内容；新节点需先产生内容 |
+| 好友内容更新 | Friend updates → 选择内容与受众 → 审核发布；对方主动 Follow；可停止分享或取消关注 |
+| 离线阅读 | 正文内 Download for offline → Offline reading；状态明确显示正文是否可离线读，提供已用空间和清理 |
+| 自己的多设备同步 | My reading / Settings → My devices → 双端审核自己的设备 → 选择范围 → 同步状态、冲突与移除 |
 
-| 需求 | 入口 | 试用时应看到的结果 | 当前限制 |
-|---|---|---|---|
-| 首次阅读 | Home / For You → Read → Save for later → My reading | 无模型也能看真实正文、收藏和找回；来源失败可恢复 | 本包已实际打开正文并收藏找回；macOS 安装路径跳过 |
-| 两人分享 | Friends | 创建邀请、接受、分享正文或附件、查看送达、撤销 | 已安装包的两节点页面邀请、消息、正文及撤销已验证；macOS 安装邀请和公网跳过 |
-| Ask Ryn | Ask Ryn；文章内 Ask about this content | 统一历史、内容问答、明确 Provider 后切换 | 新候选未安装模型；真实问答已有其他节点证据，不能当作本包已验证 |
-| AI 设置与好友权限 | Settings → AI curator；Friends | 安装/恢复本地模型；授权和撤销好友使用 | 实际安装与权限已有本机证据；macOS 原生运行时跳过，剩余本机证据按原用例核对 |
-| 搜索找回 | Search | 查收藏、历史、好友分享和会话；筛选后回到原内容 | 新节点先产生内容才有结果；已有搜索证据继续复用 |
-| 好友内容更新 | Friend updates | 发布内容时明确受众；关注后看到新版本；停止分享生效 | 需第二节点；已有三节点证据，剩余用例见原清单 |
-| 离线阅读 | 文章内 Download for offline → Offline reading | 下载完成后打开正文，查看空间并清理 | 需先完成下载；当前包的整机断网流程仍未验 |
-| 自己的多设备同步 | Settings → My devices | 配对自己的设备，选择同步范围，处理冲突并继续阅读 | 已安装包的双端审核、收藏同步、暂停/恢复/关闭范围及移除已验证；其他范围复用已有独立节点证据，macOS 和公网跳过 |
+两个试用节点未配置模型。真实本地模型安装、问答、恢复、授权和键盘操作在独立的已有 Qwen 验收环境完成；该临时节点与模型已停止，文件和历史保留，不冒充两个试用节点开箱即有模型。
 
-## 本轮完成的交付验证
+## 数据与验收边界
 
-- 从 Git 候选快照构建 wheel，包含 18 个前端资源文件。
-- 在全新虚拟环境安装 wheel 和依赖，`pip check` 通过。
-- 使用隔离导入模式从已安装包启动，确认服务代码与网页来自该环境的 `site-packages`，不依赖源码目录或 Vite。
-- 健康检查返回 200；Chrome 实际显示首次引导和 30 条真实公共推荐；打开一篇真实文章正文，收藏并进入 My reading 找回。
+Settings → Privacy & data 提供按范围导出及阅读/会话清理；Friends 的卡片历史、已保存文档、Friend updates 和 Offline reading 各有明确清理范围。撤销关系不等于收回别人已保存的副本，远端未确认不会显示全局擦除成功。[数据范围和失败恢复](../acceptance/candidate-delivery/data-scope-final-20260914.md)。
 
-这证明候选包能安装、启动并完成基础阅读闭环。其余功能复用原有开发证据，不在本轮重新宣称全部通过。原需求剩余本机路径继续核对；候选远端 CI 未运行，本地检查结果另行记录。macOS 与不同公网出口按用户要求跳过。
-
-后续修复：登录提示覆盖离线正文已复现并修复，相关 53 项回归通过。新版 wheel 已安装到同一环境并启动，健康检查 200，确认安装包中的提取器含修复。见[缺陷与验证记录](../acceptance/offline-reading-development/password-gate-fix-20260914.md)。
-
-双节点交付验证见[页面流程与限制](../acceptance/candidate-delivery/two-node-20260914.md)。
-
-最新验收复核：原始 95 条中，本轮范围内 92 条通过、3 条继续核对；不是全部产品完成声明。见[逐项结论](../acceptance/candidate-delivery/requirement-review-20260914.md)。设置加载错误修复已在安装包实际页面通过 503 → 错误聚焦 → Tab/Enter 重试恢复；18 个关键数据文件升级前后摘要保持。
-
-最新增量：运行时依赖缺失可通过 Update runtime 修复；审计、注册诊断与原生子进程日志不再复制原始私有输入。见[本轮边界记录](../acceptance/candidate-delivery/privacy-boundaries-20260914.md)。
-
-`f486fb7` wheel 已装入同一独立环境，两个试用节点已重启并加载新资源 `index-DhKuxa6a.js`；18 个关键数据文件的升级前后摘要一致，pip check、两个节点状态和健康接口通过。[本次安装记录](../acceptance/candidate-delivery/installed-f486fb7.json)包含包 SHA256。另建空目录已实际核对八个入口，临时节点随后停止，正式试用节点继续运行。
+[草稿 PR #1](https://github.com/yyeogirl/rynmesh/pull/1) 已在自己的 fork 创建；没有合并上游 main，也没有发布正式版本。[最终 CI](https://github.com/yyeogirl/rynmesh/actions/runs/34862743090) 对 `25aa0b8` 执行，产品目录与已安装 `04d94f2` 完全相同。后续验收文档提交跳过重复 CI，未声称新一轮运行。

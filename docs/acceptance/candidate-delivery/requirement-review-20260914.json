@@ -1,9 +1,8 @@
 {
   "scope": "Windows local scope; macOS and public-network checks waived by user",
-  "runtime_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38",
+  "runtime_commit": "04d94f21fb702ffe0ac9ed596ccb56e681e578f4",
   "counts": {
-    "passed": 92,
-    "in_progress": 3
+    "passed": 95
   },
   "cases": [
     {
@@ -317,15 +316,16 @@
       "id": "SHARE11",
       "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
       "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
-      "status": "in_progress",
-      "reason": "产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。",
+      "status": "passed",
+      "reason": "最终GitHub Actions 9项全部通过，含产品双节点分享与配额恢复；公网双出口实机按用户明确要求跳过，未声称完整跨公网实测。",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
         "docs/acceptance/friends-development/product-http-20260914-d.json",
         "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
         "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
-        "docs/acceptance/friends-development/product-http-20260914-e.json"
+        "docs/acceptance/friends-development/product-http-20260914-e.json",
+        "docs/acceptance/candidate-delivery/remote-ci-final-20260914.md"
       ]
     },
     {
@@ -1234,21 +1234,22 @@
       "id": "G07",
       "scenario": "可访问性",
       "expected": "主要流程可仅用键盘完成；弹窗焦点正确；状态不只靠颜色表达",
-      "status": "in_progress",
-      "reason": "阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。",
+      "status": "passed",
+      "reason": "主要流程的键盘操作、弹窗取消/确认和焦点恢复已闭合；状态有明确文字。使用实际安装页面与已有键盘证据，不宣称屏幕阅读器或全站逐控件认证。",
       "evidence": [
         "docs/acceptance/search-development/keyboard-return-20260914.md",
         "docs/acceptance/search-development/keyboard-return-checkpoints-20260914.json",
         "docs/acceptance/search-development/filter-combinations-20260914.md",
-        "docs/acceptance/search-development/filter-combinations-checkpoints-20260914.json"
+        "docs/acceptance/search-development/filter-combinations-checkpoints-20260914.json",
+        "docs/acceptance/candidate-delivery/keyboard-final-20260914.md"
       ]
     },
     {
       "id": "G08",
       "scenario": "数据维护",
       "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
-      "status": "in_progress",
-      "reason": "九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。",
+      "status": "passed",
+      "reason": "九范围导出及各本地清理边界已明确；补齐卡片历史与已知旧备份清理，文件失败重启恢复通过，秘密不默认导出，升级保留18个关键数据文件。保留凭证/删除标记和未确认远端范围明确列出。",
       "evidence": [
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
         "docs/acceptance/device-sync-development/cleanup-settings-browser.json",
@@ -1264,7 +1265,8 @@
         "docs/acceptance/friend-feed-development/cleanup-browser.json",
         "docs/acceptance/friends-development/document-cleanup.md",
         "docs/acceptance/friends-development/document-cleanup-http.json",
-        "docs/acceptance/friends-development/document-cleanup-browser.json"
+        "docs/acceptance/friends-development/document-cleanup-browser.json",
+        "docs/acceptance/candidate-delivery/data-scope-final-20260914.md"
       ]
     },
     {
@@ -1293,5 +1295,6 @@
         "docs/product-briefs/ACCEPTANCE_SCOPE.md"
       ]
     }
-  ]
+  ],
+  "ci_commit": "25aa0b8"
 }
