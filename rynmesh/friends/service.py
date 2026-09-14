@@ -337,6 +337,8 @@ class FriendService:
         stripe = hashlib.sha256(f"{peer_id}:{identifier}".encode()).hexdigest()[:2]
         with file_transaction(self.store.root / f".outgoing-{stripe}.lock"):
             if snapshot.get("card_id"):
+                if self.store.card_erased(identifier):
+                    raise FriendError('friend_card_erased')
                 local = self.store.card(identifier) or snapshot
             else:
                 rows = {str(row.get("msg_id")): row for row in self.messages.history(peer_id)}
@@ -635,11 +637,19 @@ class FriendService:
             "relationship_id": relationship["relationship_id"],
             "fetch_state": "available" if clean["fetch_available"] else "metadata_only",
         }
-        self.store.put_card(row)
+        try:
+            self.store.put_card(row)
+        except ValueError as exc:
+            if str(exc) != 'friend_card_erased':
+                raise
+            # Acknowledge previously received data without restoring its payload.
+            return {'card_id': inner['card_id'], 'erased': True}
         return self.store.card(inner["card_id"]) or row
 
     def content_cards(self) -> list[dict[str, Any]]:
         rows = self.store.list_cards()
+        from .card_cleanup import controls
+        deleted = set(controls(self.store.state())['deleted'])
         path = self.home / "friends" / "content-cards.jsonl"
         if path.exists():
             known = {str(row.get("card_id", "")) for row in rows}
@@ -648,7 +658,8 @@ class FriendService:
                     legacy = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(legacy, dict) and str(legacy.get("card_id", "")) not in known:
+                if (isinstance(legacy, dict) and str(legacy.get("card_id", "")) not in known
+                        and str(legacy.get('card_id', '')) not in deleted):
                     rows.append(legacy)
         return [self.public_card(row) for row in sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)[:500]]
 

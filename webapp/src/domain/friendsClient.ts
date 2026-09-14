@@ -2,6 +2,11 @@ import { nodeControlUrl } from "./nodeUrl";
 import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
+  friend_card_erased: "This card was cleared locally. It cannot be restored by retrying the old share.",
+  friend_card_cleanup_review_changed: "Card history or a remaining legacy file changed. Review again before clearing it.",
+  friend_card_cleanup_file_unavailable: "A legacy card file could not be safely read. Current data is kept; repair or restore that file before retrying.",
+  friend_card_cleanup_version_unsupported: "This card-cleanup format needs a newer Ryn version. Data has been kept.",
+  friend_card_cleanup_limit: "The node's 10,000 retained deletion identifiers are full. Existing deletion protection is kept; no additional cards were cleared.",
   invite_expired: "This invite expired. Ask your friend for a new invite.",
   invite_used: "Someone else already used this invite. Ask for a new one.",
   invite_cancelled: "Your friend cancelled this invite. Ask for a new one.",
@@ -50,6 +55,8 @@ export const friendsApi = {
     request<FriendMessage>(`/${encodeURIComponent(peer)}/messages`, "POST", body),
   retry: (peer: string) => request(`/${encodeURIComponent(peer)}/retry-messages`, "POST"),
   cards: () => request<{ cards: FriendContentCard[] }>("/cards"),
+  reviewCardCleanup: () => request<{ review_token: string; cards: number; legacy_files: number; resuming: boolean }>("/card-cleanup"),
+  clearCards: (review_token: string) => request<{ cards: number; complete: boolean; remote_confirmed: boolean }>("/card-cleanup", "POST", { review_token }),
   share: (body: { peer_id: string; item_id: string; card_id: string; offline_job_id?: string }) => request<FriendContentCard>("/share", "POST", { ...body, prefer_source: !body.offline_job_id }),
   fetchCard: (id: string, repair = false) => request<{ library_id: string; sha256_verified: boolean }>(`/cards/${encodeURIComponent(id)}/fetch`, "POST", { repair }),
   retryCard: (id: string) => request<FriendContentCard>(`/cards/${encodeURIComponent(id)}/retry`, "POST"),
