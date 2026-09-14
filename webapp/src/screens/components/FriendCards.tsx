@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAppContext } from "../../appContext";
 import { Button, Panel } from "../../components/ui";
 import ContentViewer from "../../components/ContentViewer";
-import { friendsApi } from "../../domain/friendsClient";
+import { friendDeliveryExplanation, friendsApi } from "../../domain/friendsClient";
 import { libraryCleanup, libraryCleanupScope, libraryReviewCounts } from "../../domain/libraryCleanup";
 import { contentFromHistory } from "../../domain/readingHistory";
 import { digestApi } from "../../domain/digestClient";
@@ -59,7 +59,8 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
       {card.dir !== "out" ? <details><summary>Sender identity</summary><span style={{ overflowWrap: "anywhere" }}>{card.from}</span></details> : null}
       {card.card.publisher_peer_id ? <p>Publisher: {card.card.publisher_peer_id}</p> : null}
       {card.card.source_url ? <p style={{ overflowWrap: "anywhere" }}>Source: {card.card.source_url}</p> : null}
-      {card.dir === "out" ? <><p>{card.delivery_state === "delivered" ? "Card received · confirmed" : card.delivery_state === "mailbox" ? "In encrypted mailbox · waiting for confirmation" : card.delivery_state === "expired" ? "Expired · not delivered" : card.delivery_state === "failed" ? "Could not deliver · retry available" : "Waiting for delivery"}</p>
+      {card.dir === "out" ? <><p>{card.delivery_state === "delivered" ? "Card received · confirmed" : card.delivery_state === "mailbox" ? "In encrypted mailbox · waiting for confirmation" : card.delivery_state === "expired" ? "Expired · delivery unconfirmed" : card.delivery_state === "failed" ? "Could not confirm delivery · retry available" : "Waiting for delivery"}</p>
+        {friendDeliveryExplanation(card) ? <p role="status">{friendDeliveryExplanation(card)}</p> : null}
         {["queued", "mailbox", "failed"].includes(card.delivery_state ?? "") ? <Button disabled={busy} onClick={() => void act(async () => { await friendsApi.retryCard(card.card_id); await refresh(); })}>Retry this card</Button> : null}</>
         : card.fetch_state === "fetched" ? <Button disabled={busy} onClick={() => void act(() => open(card))}>Read saved copy</Button>
         : card.fetch_state === "unavailable" ? <><p>Saved copy unavailable.</p><Button disabled={busy} onClick={() => void act(() => open(card, true))}>Download again</Button></>

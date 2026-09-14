@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
+
+from ..mailbox import MailboxError
 
 OPERATION_KIND = "friend.operation.v1"
 RECEIPT_KIND = "friend.receipt.v1"
@@ -12,10 +15,15 @@ MESSAGE_PATH = "/api/peer/friends/message"
 def wire_mailbox(*, mailbox: Any, service: Callable) -> None:
     """Late-bound service callbacks survive route-package reinstallation."""
 
-    def queue(record: dict, path: str, wire: dict) -> dict:
+    def queue(record: dict, path: str, wire: dict, *, expires_at: str | None = None) -> dict:
+        ttl = 3600
+        if expires_at:
+            ttl = min(ttl, int((datetime.fromisoformat(expires_at) - service().clock()).total_seconds()))
+            if ttl <= 0:
+                raise MailboxError("message_expired")
         return mailbox.deposit(
             record["peer_id"], OPERATION_KIND, {"path": path, "wire": wire},
-            ttl_s=3600, to_messaging_pub=record["messaging_pub"],
+            ttl_s=ttl, to_messaging_pub=record["messaging_pub"],
         )
 
     service().queue_mail = queue

@@ -38,6 +38,8 @@ export interface FriendMessage {
   ts?: string;
   kind?: string;
   delivered?: boolean;
+  error?: string;
+  expires_at?: string;
   delivery_state?: "queued" | "sending" | "mailbox" | "delivered" | "failed" | "expired";
   attachment?: { filename: string; mime: string; size?: number };
 }
@@ -52,6 +54,8 @@ export interface FriendContentCard {
   fetched_library_id?: string;
   sha256_verified?: boolean;
   delivered?: boolean;
+  error?: string;
+  expires_at?: string;
   delivery_state?: FriendMessage["delivery_state"];
   card: {
     version?: "ryn.shared-content-card.v1";

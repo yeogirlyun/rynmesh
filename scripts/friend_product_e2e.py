@@ -331,10 +331,55 @@ def run(work, report):
             node.stop()
 
 
+def run_quota(work, report):
+    registry = Node(work / "registry")
+    alice = Node(work / "alice", registry)
+    bob = Node(work / "bob", registry)
+    nodes = [registry, alice, bob]
+    try:
+        for node in nodes:
+            node.start()
+        invitation = alice.request("/api/local/friends/invites", {})
+        bob.request("/api/local/friends/join", {"invite_uri": invitation["invite_uri"]})
+        bob.stop()
+        path = f"/api/local/friends/{quote(bob.peer_id, safe='')}/messages"
+        messages = [{"message_id": uuid.uuid4().hex, "text": f"Quota acceptance {i}"} for i in range(17)]
+        for message in messages[:16]:
+            result = alice.request(path, message)
+            assert result["delivery_state"] == "mailbox" and not result["delivered"]
+        blocked = alice.request(path, messages[-1])
+        assert blocked["delivery_state"] == "failed" and not blocked["delivered"]
+        assert blocked["error"] == "sender_quota"
+        report["checks"].append({"name": "real_default_sender_quota", "result": "passed",
+            "pending_envelopes": 16, "refused_message": 17, "safe_error": blocked["error"]})
+        print("Default HTTP mailbox quota: 16 stored, 17th refused without claiming delivery", flush=True)
+        alice.stop()
+        alice.start()
+        retained = next(row for row in alice.history(bob) if row["msg_id"] == messages[-1]["message_id"])
+        assert retained["error"] == "sender_quota" and retained["delivery_state"] == "failed"
+        bob.start()
+        eventually(lambda: len(bob.history(alice)) == 16)
+        eventually(lambda: sum(row.get("delivery_state") == "delivered" for row in alice.history(bob)) == 16)
+        assert alice.request(f"/api/local/friends/{quote(bob.peer_id, safe='')}/retry-messages", {})["attempted"] == 1
+        assert len(bob.history(alice)) == 17
+        assert alice.request(path, messages[-1])["delivered"]
+        assert len(bob.history(alice)) == 17
+        bob.stop()
+        bob.start()
+        assert {row["msg_id"] for row in bob.history(alice)} == {row["message_id"] for row in messages}
+        report["checks"].append({"name": "quota_failure_restart_recovery_and_same_id_retry", "result": "passed",
+            "received_messages": 17, "duplicate_messages": 0})
+        print("Quota recovery and restart: 17 messages, no duplicates", flush=True)
+    finally:
+        for node in reversed(nodes):
+            node.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scenario", choices=["first-sharing", "mailbox-quota"], default="first-sharing")
     args = parser.parse_args()
     work = args.work_root.resolve()
     if work.exists():
@@ -346,8 +391,13 @@ def main():
         "scope": "isolated real TCP processes, HTTP registry mailbox, deterministic local article source",
         "not_proven": ["desktop installation/UI", "different public network exits", "mailbox quota/expiry failures", "full privacy export audit"],
         "checks": []}
+    report["scenario"] = args.scenario
+    if args.scenario == "mailbox-quota":
+        report["scope"] = "fresh real TCP nodes and default HTTP Registry sender quota; no artificial quota settings"
+        report["not_proven"] = ["desktop installation/UI", "different public network exits",
+            "recipient-wide capacity over TCP", "full-hour real-clock message expiry", "full privacy export audit"]
     try:
-        run(work, report)
+        (run_quota if args.scenario == "mailbox-quota" else run)(work, report)
         report["passed"] = True
     finally:
         report["finished_at"] = datetime.now(UTC).isoformat()

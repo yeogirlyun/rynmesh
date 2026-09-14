@@ -82,11 +82,19 @@ jobs:
           python scripts/friend_product_e2e.py \
             --work-root "$RUNNER_TEMP/friend-product" \
             --output "$RUNNER_TEMP/friend-product-result.json"
+      - name: Default mailbox quota and recovery without duplicate messages
+        run: |
+          python scripts/friend_product_e2e.py --scenario mailbox-quota \
+            --work-root "$RUNNER_TEMP/friend-quota" \
+            --output "$RUNNER_TEMP/friend-quota-result.json"
       - name: Show bounded acceptance evidence
         if: always()
         run: |
           if test -f "$RUNNER_TEMP/friend-product-result.json"; then
             cat "$RUNNER_TEMP/friend-product-result.json"
+          fi
+          if test -f "$RUNNER_TEMP/friend-quota-result.json"; then
+            cat "$RUNNER_TEMP/friend-quota-result.json"
           fi
 
   peer-transit-e2e:

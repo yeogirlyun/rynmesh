@@ -57,6 +57,35 @@ describe("Friend pairing recovery", () => {
 });
 
 describe("Friend delivery recovery", () => {
+  it("explains a full mailbox and clears the warning only after confirmed recovery", async () => {
+    const failed = { msg_id: "id", dir: "out" as const, from: "me", to: "alice", text: "hello",
+      delivery_state: "failed" as const, error: "recipient_full" };
+    vi.mocked(friendsApi.history).mockResolvedValue({ messages: [failed] });
+    const retry = vi.spyOn(friendsApi, "retry").mockImplementation(async () => {
+      vi.mocked(friendsApi.history).mockResolvedValue({ messages: [{ ...failed, delivery_state: "delivered", error: "" }] });
+      return {};
+    });
+    const user = userEvent.setup();
+    render(<FriendConversation friend={friend} />);
+    expect(await screen.findByText(/Your friend's mailbox is full/)).toBeInTheDocument();
+    expect(screen.queryByText("Delivered · confirmed by your friend")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry next pending message" }));
+    expect(retry).toHaveBeenCalledWith("alice");
+    expect(await screen.findByText("Delivered · confirmed by your friend")).toBeInTheDocument();
+    expect(screen.queryByText(/Your friend's mailbox is full/)).not.toBeInTheDocument();
+  });
+
+  it("does not claim non-delivery or resend automatically after unconfirmed expiry", async () => {
+    vi.mocked(friendsApi.history).mockResolvedValue({ messages: [{ msg_id: "id", dir: "out", from: "me", to: "alice",
+      text: "hello", delivery_state: "expired", error: "message_expired" }] });
+    const send = vi.spyOn(friendsApi, "send");
+    render(<FriendConversation friend={friend} />);
+    expect(await screen.findByText(/Your friend may already have received it/)).toBeInTheDocument();
+    expect(screen.queryByText("Expired · not delivered")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry next pending message" })).not.toBeInTheDocument();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("retries an unconfirmed send with the same identity and content", async () => {
     const send = vi.spyOn(friendsApi, "send").mockRejectedValueOnce(new Error("Response lost"))
       .mockResolvedValue({ msg_id: "id", dir: "out", from: "me", to: "alice", delivery_state: "mailbox" });
