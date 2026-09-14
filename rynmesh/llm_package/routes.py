@@ -1215,7 +1215,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         app.state.ai_access.recheck = recheck_permissions_once
         def own_service_status():
             current = active_manager()
-            return {**current.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main")} if current else None
+            settings = read_provider_settings()
+            return {**current.public_status(), "network_id": settings.get("network_id", "rynmesh-main"),
+                    "publication_enabled": bool(settings.get("publication_enabled"))} if current else None
         app.state.ai_access.provider = own_service_status
     registry.register(BackgroundWorkerSpec(
         name="llm.friend-permissions", run_once=recheck_permissions_once,

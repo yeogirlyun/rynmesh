@@ -5,6 +5,7 @@ import { Button, Panel } from "../../components/ui";
 import { aiAccess, type AIGrant, type FriendAISnapshot } from "../../domain/aiAccess";
 import type { FriendRecord } from "../../domain/friendTypes";
 import type { LLMProviderStatus } from "../../domain/nodeClient";
+import AIInvitations from "./AIInvitations";
 
 export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
   const [params] = useSearchParams();
@@ -70,6 +71,7 @@ export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
         <p>{provider.ready ? "Model ready" : "Model not ready"} · {provider.publication_enabled ? "Friend sharing enabled" : "Friend sharing paused"}</p>
         <p>{price}</p>
         <Link to="/services/manage">Manage local model</Link>
+        <AIInvitations serviceId={provider.service.package_id} disabled={serviceChanged || !pricing || !provider.ready || !provider.publication_enabled} />
         {provider.publication_enabled ? <Button disabled={busy} onClick={() => confirm({ title: "Pause sharing with all friends?", body: "New requests will be blocked. Existing permissions are kept so you can resume sharing later.", risk: "medium", confirmLabel: "Pause sharing", onConfirm: async () => {
           working.current = true; setBusy(true); try { await client.pauseLLMService(); await load(); } finally { working.current = false; setBusy(false); }
         } })}>Pause sharing with all friends</Button> : null}

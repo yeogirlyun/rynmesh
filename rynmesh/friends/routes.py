@@ -15,6 +15,8 @@ from fastapi import HTTPException, Request, Response
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
 from ..services.library_imports import LibraryImportStore
+from .ai_sharing import ERRORS as AI_ERRORS
+from .ai_sharing import FriendAISharing
 from .content import FriendContent
 from .crypto import FriendCryptoError, validate_endpoint
 from .mailbox import wire_mailbox
@@ -35,6 +37,7 @@ class FriendsState:
 
 
 SAFE_ERRORS = {
+    *AI_ERRORS,
     'friend_card_erased', 'friend_card_cleanup_review_changed', 'friend_card_cleanup_file_unavailable',
     'friend_card_cleanup_version_unsupported', 'friend_card_cleanup_limit',
     "invalid_invite", "invite_expired", "invite_used", "invite_cancelled", "invite_not_found",
@@ -89,6 +92,9 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                             consumption=lambda: app.state.consumption_store,
                             offline=lambda: getattr(getattr(app.state, 'offline_reading', None), 'service', None))
     app.state.friends = FriendsState(service, local_control, content)
+    service.ai_sharing = FriendAISharing(service,
+        provider=lambda: app.state.ai_access.provider() if app.state.ai_access.provider else None,
+        grants=lambda: app.state.ai_access.store, catalog=lambda: app.state.ai_access.catalog)
     from ..services.library_cleanup_routes import install_library_cleanup_routes
     install_library_cleanup_routes(app)
     service.resolve_content = lambda library_id: app.state.friends.content.resolve(library_id)
@@ -149,7 +155,38 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def invite(request: Request):
         control(request)
         body = await _body(request, 4096)
+        if body.get('purpose') == 'ai':
+            return await call(current().ai_sharing.create, str(body.get('service_id', '')))
+        if body.get('purpose') not in {None, 'friend'}:
+            raise HTTPException(400, detail='friend_request_invalid')
         return await call(current().create_invite, ttl_minutes=body.get("ttl_minutes", 15))
+
+    @app.get('/api/local/friends/ai-joins')
+    async def ai_joins(request: Request):
+        control(request)
+        return {'operations': await call(current().ai_sharing.operations)}
+
+    @app.post('/api/local/friends/ai-joins')
+    async def begin_ai_join(request: Request):
+        control(request)
+        body = await _body(request, 24576)
+        return await call(current().ai_sharing.begin, str(body.get('invite_uri', '')), str(body.get('review_token', '')))
+
+    @app.post('/api/local/friends/ai-joins/{operation_id}/review')
+    async def review_ai_join(operation_id: str, request: Request):
+        control(request)
+        return await call(current().ai_sharing.rereview, operation_id)
+
+    @app.post('/api/local/friends/ai-joins/{operation_id}')
+    async def resume_ai_join(operation_id: str, request: Request):
+        control(request)
+        body = await _body(request, 4096)
+        return await call(current().ai_sharing.resume, operation_id, str(body.get('review_token', '')))
+
+    @app.delete('/api/local/friends/ai-joins/{operation_id}')
+    async def abandon_ai_join(operation_id: str, request: Request):
+        control(request)
+        return await call(current().ai_sharing.abandon, operation_id)
 
     @app.get("/api/local/friends/invites")
     async def invites(request: Request):
@@ -329,6 +366,19 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
             "Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
             "Cache-Control": "no-store",
         })
+
+    @app.post('/api/peer/friends/ai-review')
+    async def peer_ai_review(request: Request):
+        import hashlib
+
+        from ..crypto import canonical_json, sign_payload
+        body = await _body(request, 24576)
+        try:
+            return await asyncio.to_thread(current().ai_sharing.peer_review, body)
+        except (FriendError, FriendCryptoError) as exc:
+            code = str(exc) if str(exc) in SAFE_ERRORS else 'invalid_invite'
+            return sign_payload({'request_digest': hashlib.sha256(canonical_json(body)).hexdigest(), 'error': code},
+                                private_key_bytes=current().identity_private).to_dict()
 
     @app.post("/api/peer/friends/accept")
     async def accept(request: Request):

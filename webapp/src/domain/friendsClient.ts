@@ -1,7 +1,18 @@
 import { nodeControlUrl } from "./nodeUrl";
-import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
+import type { AIJoinOperation, FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
+  ai_review_required: "Review this AI invitation before accepting it. Ordinary friendship does not grant AI access.",
+  ai_review_changed: "The model or price changed. Review the current AI details again before continuing this operation.",
+  ai_service_changed: "Your friend's selected AI service changed. Ask for a new invitation to that service.",
+  ai_not_ready: "Your friend's AI is not ready. Ask them to start or check their model, then continue this operation.",
+  ai_busy: "Your friend's AI is busy. Wait, then continue this operation.",
+  ai_sharing_paused: "Your friend paused AI sharing. Continue when they enable it again.",
+  ai_invite_revoked: "This AI authorization was revoked. Retrying this invitation cannot grant it again.",
+  ai_grant_pending: "Friendship was recorded on the provider, but AI authorization is unfinished. Continue the original operation.",
+  ai_discovery_pending: "The authorized service could not be confirmed. Continue the original operation when your friend is available.",
+  ai_operation_cancelled: "You stopped this operation. Ask for a new invitation to start again.",
+  ai_operation_not_found: "This saved operation could not be found. Paste the original invitation to review it again.",
   friend_card_erased: "This card was cleared locally. It cannot be restored by retrying the old share.",
   friend_card_cleanup_review_changed: "Card history or a remaining legacy file changed. Review again before clearing it.",
   friend_card_cleanup_file_unavailable: "A legacy card file could not be safely read. Current data is kept; repair or restore that file before retrying.",
@@ -29,6 +40,10 @@ const explanations: Record<string, string> = {
   library_cleanup_pending: "Document cleanup is unfinished. Continue it in Settings → Privacy & data before downloading this copy again.",
 };
 
+export function aiJoinExplanation(code: string): string {
+  return explanations[code] ?? "Your friend could not be reached. The original operation is saved; retry when connected.";
+}
+
 async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(nodeControlUrl(`/friends${path}`), {
     method, credentials: "include", headers: { "Content-Type": "application/json" },
@@ -45,6 +60,12 @@ export const friendsApi = {
   list: () => request<{ friends: FriendRecord[] }>(""),
   invites: () => request<{ invites: (FriendInvitePreview & { status: string })[] }>("/invites"),
   createInvite: () => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15 }),
+  createAIInvite: (service_id: string) => request<FriendInviteResult>("/invites", "POST", { purpose: "ai", service_id }),
+  aiJoins: () => request<{ operations: AIJoinOperation[] }>("/ai-joins"),
+  beginAIJoin: (invite_uri: string, review_token: string) => request<AIJoinOperation>("/ai-joins", "POST", { invite_uri, review_token }),
+  resumeAIJoin: (id: string, review_token = "") => request<AIJoinOperation>(`/ai-joins/${encodeURIComponent(id)}`, "POST", { review_token }),
+  reviewAIJoin: (id: string) => request<FriendInvitePreview>(`/ai-joins/${encodeURIComponent(id)}/review`, "POST"),
+  abandonAIJoin: (id: string) => request<AIJoinOperation>(`/ai-joins/${encodeURIComponent(id)}`, "DELETE"),
   inspect: (invite_uri: string) => request<FriendInvitePreview>("/invites/inspect", "POST", { invite_uri }),
   join: (invite_uri: string) => request<FriendRecord>("/join", "POST", { invite_uri }),
   cancel: (id: string) => request(`/invites/${encodeURIComponent(id)}`, "DELETE"),
@@ -66,6 +87,7 @@ export const friendsApi = {
 };
 
 export function invitationText(invite: FriendInviteResult): string {
+  if (invite.invite.purpose === "ai") return `${invite.invite.node_name} invites you to use ${invite.invite.ai?.service.model_alias} on their device. No model download or API key is needed on your device. Keep this invitation private: the first person who accepts gets this AI's permission.\nOpen Ryn → Friends, paste this invitation, review the provider and actual price, then choose Accept and start chatting.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only.\n\n${invite.invite_uri}`;
   return `Join me on Ryn.\nInstall or open Ryn: https://github.com/yeogirlyun/rynmesh/releases/latest\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;
 }
 

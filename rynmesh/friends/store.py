@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from rynmesh.atomic_io import atomic_write_json, migration_backup, read_json
+from rynmesh.file_transactions import file_transaction
 
 _LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[str, threading.RLock] = {}
@@ -111,16 +112,26 @@ class FriendStore:
         return [deepcopy(row) for row in self.state()["invites"].values() if isinstance(row, dict)]
 
     def cancel_invite(self, invite_id: str, cancelled_at: str) -> dict[str, Any] | None:
+        with file_transaction(self.root.parent / 'ai-access' / '.sharing.lock'):
+            return self._cancel_invite(invite_id, cancelled_at)
+
+    def _cancel_invite(self, invite_id: str, cancelled_at: str) -> dict[str, Any] | None:
         with self._guard():
             state = self._read(self.state_path, self._empty())
             invite = state["invites"].get(invite_id)
             if not isinstance(invite, dict):
                 return None
-            if invite.get("status") == "active":
+            if invite.get("status") == "active" or (invite.get('purpose') == 'ai' and invite.get('status') == 'used'):
                 invite["status"] = "cancelled"
                 invite["cancelled_at"] = cancelled_at
                 self._write(self.state_path, state)
             return deepcopy(invite)
+
+    def patch_invite(self, invite_id: str, updates: dict) -> None:
+        with self._guard():
+            state = self._read(self.state_path, self._empty())
+            state['invites'][invite_id].update(updates)
+            self._write(self.state_path, state)
 
     def consume_invite(self, invite_id: str, secret_hash: str, now_iso: str) -> bool:
         with self._guard():
@@ -176,6 +187,8 @@ class FriendStore:
             state["relationships"][rid] = record
             state["secrets"][rid] = base64.b64encode(secret).decode("ascii")
             invite.update(status="used", used_at=now_iso, relationship_id=rid)
+            if invite.get('purpose') == 'ai':
+                invite['ai_stage'] = 'grant_pending'
             self._write(self.state_path, state)
             return record, secret
 
@@ -208,6 +221,11 @@ class FriendStore:
         self, relationship_id: str, revoked_at: str, *, retain_secret: bool = False,
         notice: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        with file_transaction(self.root.parent / 'ai-access' / '.sharing.lock'):
+            return self._revoke(relationship_id, revoked_at, retain_secret=retain_secret, notice=notice)
+
+    def _revoke(self, relationship_id: str, revoked_at: str, *, retain_secret: bool = False,
+                notice: dict[str, Any] | None = None) -> dict[str, Any] | None:
         with self._guard():
             state = self._read(self.state_path, self._empty())
             record = state["relationships"].get(relationship_id)

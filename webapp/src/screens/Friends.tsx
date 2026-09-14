@@ -1,10 +1,10 @@
 import QRCode from "qrcode";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
-import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
-import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
+import type { AIJoinOperation, FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
+import { aiJoinExplanation, extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
 import FriendCards from "./components/FriendCards";
 import FriendAI from "./components/FriendAI";
@@ -12,13 +12,17 @@ import styles from "./Friends.module.css";
 
 export default function Friends() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [invite, setInvite] = useState<FriendInviteResult | null>(null);
   const [qr, setQr] = useState("");
   const [paste, setPaste] = useState("");
-  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview } | null>(null);
+  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview; operationId?: string } | null>(null);
+  const [operations, setOperations] = useState<AIJoinOperation[]>([]);
+  const errorFocus = useRef<HTMLDivElement>(null);
+  const reviewFocus = useRef<HTMLHeadingElement>(null);
   const revision = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -26,13 +30,24 @@ export default function Friends() {
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const load = useCallback(async () => {
-    const [result, invitations] = await Promise.all([friendsApi.list(), friendsApi.invites()]);
+    const [result, invitations, joins] = await Promise.all([friendsApi.list(), friendsApi.invites(), friendsApi.aiJoins()]);
+    setOperations(joins.operations);
     setFriends(result.friends); setLoaded(true); setLoadError("");
     setInvite((current) => {
       const stored = invitations.invites.find((row) => row.invite_id === current?.invite.invite_id);
       return stored && (stored.status !== "active" || Date.parse(stored.expires_at) <= Date.now()) ? null : current;
     });
   }, []);
+  useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
+  useEffect(() => { if (review) reviewFocus.current?.focus(); }, [review]);
+  const finishAI = async (operation: AIJoinOperation) => {
+    await load();
+    if (operation.stage !== "complete" || operation.error) {
+      throw new Error(`${aiJoinExplanation(operation.error ?? "ai_grant_pending")} Operation ${operation.operation_id} is saved.`);
+    }
+    setPaste(""); setReview(null);
+    navigate(`/ask?${new URLSearchParams({ peer: operation.peer_id, service: operation.service_id, network: operation.network_id })}`);
+  };
   const act = async (operation: () => Promise<void>) => {
     setBusy(true); setError(""); setNotice("");
     try { await operation(); }
@@ -67,7 +82,7 @@ export default function Friends() {
 
   return <div className="screen-stack">
     <PageHeader eyebrow="Private sharing" title="Friends" context="Invite someone you know, review their identity, then share your first message." />
-    {error || loadError ? <div role="alert">{error || loadError} <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button></div> : null}
+    {error || loadError ? <div role="alert" tabIndex={-1} ref={errorFocus}>{error || loadError} <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button></div> : null}
     {notice ? <p role="status">{notice}</p> : null}
     <div className={styles.heroGrid}>
       <Panel className={styles.actionCard}>
@@ -90,17 +105,40 @@ export default function Friends() {
           const preview = await friendsApi.inspect(uri);
           if (version === revision.current) setReview({ uri, preview });
         })}>Review invite</Button> : <div className={styles.review}>
-          <strong>Signature checked locally. Your friend has not been contacted.</strong>
-          <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards</dd><dt>Stays off</dt><dd>AI, VPN, access to your files and credits</dd></dl>
+          <h3 ref={reviewFocus} tabIndex={-1}>{review.preview.purpose === "ai" ? "Review this friend's AI" : "Review friend invitation"}</h3>
+          <strong>{review.preview.purpose === "ai" ? "Provider signature checked. Current AI details confirmed with their device." : "Signature checked locally. Your friend has not been contacted."}</strong>
+          <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards{review.preview.purpose === "ai" ? ", and this AI service only" : ""}</dd><dt>Stays off</dt><dd>{review.preview.purpose === "ai" ? "Other AI services, VPN, access to your files and credits" : "AI, VPN, access to your files and credits"}</dd></dl>
+          {review.preview.ai ? <div><p>Model: {review.preview.ai.service.model_alias} · {review.preview.ai.ready ? review.preview.ai.busy ? "Busy" : "Model ready" : "Model not ready"} · {review.preview.ai.sharing ? "Sharing enabled" : "Sharing paused"}</p>
+            <p>Your questions go to {review.preview.node_name}'s device. No model download or API key is needed here.</p>
+            <p>{review.preview.ai.service.pricing ? `Development Task Balance: input ${review.preview.ai.service.pricing.input_per_1k}/1k tokens, output ${review.preview.ai.service.pricing.output_per_1k}/1k, minimum ${review.preview.ai.service.pricing.minimum}, maximum per task ${review.preview.ai.service.pricing.maximum_per_task}. This is not RMB billing.` : "Price unknown. Do not send a question until the actual price is confirmed."}</p>
+            {review.preview.changed ? <p role="status">The model or price differs from the original invitation. Review these current details before accepting.</p> : null}</div> : null}
           <Button disabled={busy} onClick={() => void act(async () => {
+            if (review.preview.purpose === "ai") {
+              await finishAI(review.operationId ? await friendsApi.resumeAIJoin(review.operationId, review.preview.review_token)
+                : await friendsApi.beginAIJoin(review.uri, review.preview.review_token ?? ""));
+              return;
+            }
             const version = revision.current;
             const friend = await friendsApi.join(review.uri);
             if (version === revision.current) { setPaste(""); setReview(null); }
             setSelected(friend.peer_id); setNotice("Friend added. Send your first message below."); await load();
-          })}>Add this friend</Button>
+          })}>{review.preview.purpose === "ai" ? "Accept and start chatting" : "Add this friend"}</Button>
+          <Button disabled={busy} onClick={() => { setReview(null); setPaste(""); setNotice("Review cancelled. No acceptance was submitted."); }}>Cancel review</Button>
         </div>}
       </Panel>
     </div>
+    {operations.length ? <Panel><h2>AI invitation progress</h2><p>Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.</p>
+      {operations.map((operation) => <section key={operation.operation_id} aria-label={`AI invitation from ${operation.node_name}`}>
+        <h3>{operation.node_name} · {operation.service_id}</h3>
+        <p>Operation {operation.operation_id} · {operation.stage === "joining" ? "Friendship / authorization unfinished" : operation.stage === "discovering" ? "Service confirmation unfinished" : operation.stage === "complete" ? "Previously accepted; recheck to open" : "Stopped locally"}</p>
+        {operation.error ? <p>{aiJoinExplanation(operation.error)}</p> : null}
+        {operation.stage !== "cancelled" ? <>
+          <Button disabled={busy} onClick={() => void act(async () => finishAI(await friendsApi.resumeAIJoin(operation.operation_id)))}>{operation.stage === "complete" ? "Open this friend's AI" : "Continue original operation"}</Button>
+          {operation.stage === "joining" || operation.stage === "discovering" ? <Button disabled={busy} onClick={() => void act(async () => setReview({ uri: "", operationId: operation.operation_id, preview: await friendsApi.reviewAIJoin(operation.operation_id) }))}>Review current AI details</Button> : null}
+          <Button disabled={busy} onClick={() => confirm({ title: "Stop continuing this invitation?", body: "Clears its saved invitation on this device. Any friendship or AI permission already saved by the provider remains; ask them to revoke it if needed.", risk: "medium", confirmLabel: "Stop and clear invitation", onConfirm: () => act(async () => { await friendsApi.abandonAIJoin(operation.operation_id); await load(); }) })}>Stop continuing</Button>
+        </> : null}
+      </section>)}
+    </Panel> : null}
     <Panel><h2>Your friends</h2>
       <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button>
       {!loaded ? <p>Loading friends…</p> : activeFriends.length === 0 ? <p>No friends yet. Create or paste an invite above.</p> : activeFriends.map((friend) => <div className={styles.friendCard} key={friend.relationship_id}>

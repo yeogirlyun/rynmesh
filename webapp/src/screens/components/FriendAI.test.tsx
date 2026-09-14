@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { aiAccess, type FriendAISnapshot } from "../../domain/aiAccess";
 import type { FriendRecord } from "../../domain/friendTypes";
 import FriendAI from "./FriendAI";
+import { friendsApi } from "../../domain/friendsClient";
 
 const mocks = vi.hoisted(() => ({ confirm: vi.fn(), client: { getLLMServiceStatus: vi.fn(), publishLLMService: vi.fn() } }));
 vi.mock("../../appContext", () => ({ useAppContext: () => mocks }));
@@ -15,6 +16,7 @@ const service = { package_id: "model-x", model_alias: "Local model", capabilitie
 const snapshot = (): FriendAISnapshot => ({ peer_id: friend.peer_id, relationship_id: friend.relationship_id,
   checked_at: Date.now() / 1000, status: "authorized", services: [{ peer_id: friend.peer_id, online: true, service, capacity: { available: 1 } }] });
 beforeEach(() => {
+  vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
   mocks.confirm.mockReset();
   mocks.client.getLLMServiceStatus.mockResolvedValue({ online: true, ready: true, publication_enabled: true, service });
   vi.spyOn(aiAccess, "list").mockResolvedValue({ grants: [] });

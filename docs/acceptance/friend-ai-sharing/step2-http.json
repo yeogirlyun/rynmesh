@@ -1,0 +1,216 @@
+{
+  "scope": "actual production HTTP after browser AI invitation acceptance and real CPU inference",
+  "b_operations": {
+    "operations": [
+      {
+        "accepted_digest": "5f11a6ee93ee3442a2b7be150c8eb0984dbd45e68f47f97a45e86666f5597e21",
+        "error": "",
+        "network_id": "rynmesh-main",
+        "node_name": "FAI-A",
+        "operation_id": "5002302bb0274914af76b175c4613c10",
+        "peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+        "preview": {
+          "address_category": "loopback",
+          "ai": {
+            "busy": false,
+            "network_id": "rynmesh-main",
+            "ready": true,
+            "service": {
+              "adapter": "openai_compatible",
+              "capabilities": [
+                "text-generation",
+                "chat_messages_v1"
+              ],
+              "content_rules": "Provider-defined content policy applies.",
+              "context_window": 4096,
+              "hardware_requirements": {
+                "estimated_memory_mb": 900
+              },
+              "healthcheck": {
+                "enabled": true
+              },
+              "license_id": "Apache-2.0",
+              "license_notice": "Qwen2.5 and llama.cpp are Apache-2.0; review their notices before use.",
+              "max_concurrent": 2,
+              "max_output_tokens": 256,
+              "model_alias": "rynmesh-qwen2.5-0.5b-q4",
+              "model_fingerprint": "sha256:74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+              "package_id": "local-small",
+              "pricing": {
+                "currency": "DEV_TASK_BALANCE",
+                "input_per_1k": 0,
+                "maximum_per_task": 1.0,
+                "minimum": 0,
+                "output_per_1k": 0
+              },
+              "privacy": {
+                "compute_node_sees_plaintext": true,
+                "log_bodies": false,
+                "policy_text": "No prompt/response logging; plaintext exists at the compute node during inference.",
+                "retention_seconds": 0,
+                "temporary_storage": false
+              },
+              "protocol_version": "rynmesh.llm.task.v1",
+              "queue_limit": 0,
+              "risk_labels": [],
+              "runtime": "native_llama_cpp",
+              "timeout_seconds": 120.0,
+              "version": "0.1.0"
+            },
+            "sharing": true
+          },
+          "created_at": "2026-09-14T16:44:20.397092+00:00",
+          "endpoint": "http://127.0.0.1:19041",
+          "endpoints": [
+            "http://127.0.0.1:19041"
+          ],
+          "expires_at": "2026-09-14T16:59:20.397092+00:00",
+          "fingerprint": "udJlEtV1rjr7…qtkHFjw=",
+          "invite_id": "5002302bb0274914af76b175c4613c10",
+          "network_id": "rynmesh-main",
+          "node_name": "FAI-A",
+          "peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+          "permissions": [
+            "friend.message",
+            "friend.attachment.small",
+            "friend.content-card"
+          ],
+          "purpose": "ai"
+        },
+        "relationship_id": "29537cbabe654bca989c9107021f95f5",
+        "service_id": "local-small",
+        "stage": "complete",
+        "version": "ryn.ai-join.v1"
+      }
+    ]
+  },
+  "b_friends": {
+    "friends": [
+      {
+        "created_at": "2026-09-14T16:44:36.774579+00:00",
+        "endpoint": "http://127.0.0.1:19041",
+        "node_name": "FAI-A",
+        "peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+        "permissions": [
+          "friend.message",
+          "friend.attachment.small",
+          "friend.content-card"
+        ],
+        "relationship_id": "29537cbabe654bca989c9107021f95f5",
+        "status": "active"
+      }
+    ]
+  },
+  "b_orders": {
+    "orders": [
+      {
+        "task_id": "task_125fc1ff86fa4e22a8e1b314848ad60a",
+        "state": "succeeded",
+        "created_at": "2026-09-14T16:45:37.145713+00:00",
+        "updated_at": "2026-09-14T16:45:37.373358+00:00",
+        "history": [
+          {
+            "at": "2026-09-14T16:45:37.145713+00:00",
+            "state": "created"
+          },
+          {
+            "at": "2026-09-14T16:45:37.155224+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "accepted"
+          },
+          {
+            "at": "2026-09-14T16:45:37.160201+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "running",
+            "transport": "auto"
+          },
+          {
+            "amount": 0,
+            "at": "2026-09-14T16:45:37.347340+00:00",
+            "checkpoint": true,
+            "duration_ms": 108,
+            "input_tokens": 87,
+            "network_id": "rynmesh-main",
+            "output_tokens": 3,
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "relay_used": false,
+            "response_expires_at": "2026-09-14T17:45:37.347340+00:00",
+            "service_id": "local-small",
+            "settlement_pending": true,
+            "state": "running",
+            "transport": "peer_http_direct",
+            "transport_evidence": {
+              "relay_used": false,
+              "transport": "peer_http_direct"
+            }
+          },
+          {
+            "amount": 0,
+            "at": "2026-09-14T16:45:37.355851+00:00",
+            "duration_ms": 108,
+            "input_tokens": 87,
+            "network_id": "rynmesh-main",
+            "output_tokens": 3,
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "relay_used": false,
+            "response_expires_at": "2026-09-14T17:45:37.347340+00:00",
+            "service_id": "local-small",
+            "state": "succeeded",
+            "transport": "peer_http_direct",
+            "transport_evidence": {
+              "relay_used": false,
+              "transport": "peer_http_direct"
+            }
+          },
+          {
+            "at": "2026-09-14T16:45:37.373358+00:00",
+            "checkpoint": true,
+            "settlement_dispatched": true,
+            "state": "succeeded"
+          }
+        ],
+        "amount": 0,
+        "duration_ms": 108,
+        "input_tokens": 87,
+        "network_id": "rynmesh-main",
+        "output_tokens": 3,
+        "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+        "relay_used": false,
+        "response_expires_at": "2026-09-14T17:45:37.347340+00:00",
+        "service_id": "local-small",
+        "transport": "peer_http_direct",
+        "transport_evidence": {
+          "relay_used": false,
+          "transport": "peer_http_direct"
+        },
+        "settlement_dispatched": true
+      }
+    ]
+  },
+  "a_grants": {
+    "grants": [
+      {
+        "service_id": "local-small",
+        "relationship_id": "29537cbabe654bca989c9107021f95f5",
+        "peer_id": "Arw9014k3YgCVSlxkahuGPEMDS3tzE8DB5vrOSsM0BI=",
+        "allowed": true,
+        "revision": 1,
+        "effective": true
+      },
+      {
+        "service_id": "local-small",
+        "relationship_id": "b7c69bd1b9e24f2eb37c87a859efb962",
+        "peer_id": "5k4KeYrIv9szJ/rJuGZQk+XYzOa5ukj2f34gKFwNB9c=",
+        "allowed": true,
+        "revision": 1,
+        "effective": true
+      }
+    ]
+  },
+  "b_model_files": 0,
+  "b_saved_invite_capabilities": 0
+}
