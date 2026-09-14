@@ -880,10 +880,12 @@
       "scenario": "同一更新重复投递、修订、重启",
       "expected": "无重复条目，修订显示更新状态，关注与已读状态保持",
       "status": "in_progress",
-      "actual": "Real-store tests deduplicate updates and revisions; actual three-process restart preserved publication revision, subscription and Bob read state. Browser multipage revisions and general gates pending.",
+      "actual": "Real-store tests deduplicate updates and revisions; actual three-process restart preserved publication revision, subscription and Bob read state. Browser multipage revisions and general gates pending. 2026-09-14 actual Chrome/three existing loopback nodes: a real Windows file lock made publication fail without changing revision-6 saved draft or visibility; author restart retained it, then unlock/review/retry published the same ID as revision 7 to both recipients. With Bob stopped, page draft revision 8 narrowed only the draft; confirmation published revision 9 to Carol alone. Bob retained last-checked time and old version while offline, then reconnected to no visible updates; old/current-version fetches both returned 409 feed_publication_unavailable. Page Stop sharing produced revision 10; all three restarted with stopped state, subscriptions and independent Bob copy unchanged. Bob could reopen the copy in the browser. Observer verifier and Ruff passed; no product modification or repeated unit/scale tests. Process-offline loopback is not public-NAT, packaged desktop or complete common-gate evidence.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
-        "docs/acceptance/friend-feed-development/windows-three-node.json"
+        "docs/acceptance/friend-feed-development/windows-three-node.json",
+        "docs/acceptance/friend-feed-development/audience-recovery-browser-20260914.md",
+        "docs/acceptance/friend-feed-development/audience-recovery-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -909,13 +911,15 @@
       "scenario": "收窄受众、删除好友、停止分享",
       "expected": "Provider 立即拒绝新获取；接收端联网刷新后更新可见列表",
       "status": "in_progress",
-      "actual": "Actual audience change removed Bob and added Carol; stop-sharing denied old fetches. Reviewed publisher cleanup also denied old fetch while a backup remained pending, survived restart and permitted a new publication afterward. Tests recheck authorization after body resolution and reject recreation by old draft requests. Broader network and packaged paths remain pending.",
+      "actual": "Actual audience change removed Bob and added Carol; stop-sharing denied old fetches. Reviewed publisher cleanup also denied old fetch while a backup remained pending, survived restart and permitted a new publication afterward. Tests recheck authorization after body resolution and reject recreation by old draft requests. Broader network and packaged paths remain pending. 2026-09-14 actual Chrome/three existing loopback nodes: a real Windows file lock made publication fail without changing revision-6 saved draft or visibility; author restart retained it, then unlock/review/retry published the same ID as revision 7 to both recipients. With Bob stopped, page draft revision 8 narrowed only the draft; confirmation published revision 9 to Carol alone. Bob retained last-checked time and old version while offline, then reconnected to no visible updates; old/current-version fetches both returned 409 feed_publication_unavailable. Page Stop sharing produced revision 10; all three restarted with stopped state, subscriptions and independent Bob copy unchanged. Bob could reopen the copy in the browser. Observer verifier and Ruff passed; no product modification or repeated unit/scale tests. Process-offline loopback is not public-NAT, packaged desktop or complete common-gate evidence.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
         "docs/acceptance/friend-feed-development/windows-three-node.json",
         "docs/acceptance/friend-feed-development/cleanup.md",
         "docs/acceptance/friend-feed-development/cleanup-http.json",
-        "docs/acceptance/friend-feed-development/cleanup-browser.json"
+        "docs/acceptance/friend-feed-development/cleanup-browser.json",
+        "docs/acceptance/friend-feed-development/audience-recovery-browser-20260914.md",
+        "docs/acceptance/friend-feed-development/audience-recovery-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -925,10 +929,12 @@
       "scenario": "撤销时接收端离线",
       "expected": "有最后同步标记，不承诺远程抹除；重连后执行新权限",
       "status": "in_progress",
-      "actual": "Last-check/offline labels implemented; actual independent saved copy survived revocation. Full recipient-offline-across-remote-revocation/reconnect scenario remains pending.",
+      "actual": "Last-check/offline labels implemented; actual independent saved copy survived revocation. Full recipient-offline-across-remote-revocation/reconnect scenario remains pending. 2026-09-14 actual Chrome/three existing loopback nodes: a real Windows file lock made publication fail without changing revision-6 saved draft or visibility; author restart retained it, then unlock/review/retry published the same ID as revision 7 to both recipients. With Bob stopped, page draft revision 8 narrowed only the draft; confirmation published revision 9 to Carol alone. Bob retained last-checked time and old version while offline, then reconnected to no visible updates; old/current-version fetches both returned 409 feed_publication_unavailable. Page Stop sharing produced revision 10; all three restarted with stopped state, subscriptions and independent Bob copy unchanged. Bob could reopen the copy in the browser. Observer verifier and Ruff passed; no product modification or repeated unit/scale tests. Process-offline loopback is not public-NAT, packaged desktop or complete common-gate evidence.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
-        "docs/acceptance/friend-feed-development/windows-three-node.json"
+        "docs/acceptance/friend-feed-development/windows-three-node.json",
+        "docs/acceptance/friend-feed-development/audience-recovery-browser-20260914.md",
+        "docs/acceptance/friend-feed-development/audience-recovery-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -938,10 +944,12 @@
       "scenario": "发布失败、好友离线、无更新",
       "expected": "草稿可恢复，离线可重试，空状态明确，不显示假发布或假已读",
       "status": "in_progress",
-      "actual": "Atomic failed publication retains draft in storage test; component tests cover failed saves/retry identity and empty/offline states. Browser node disconnect and automatic error clearing on reconnect verified. Full desktop/general gates pending.",
+      "actual": "Atomic failed publication retains draft in storage test; component tests cover failed saves/retry identity and empty/offline states. Browser node disconnect and automatic error clearing on reconnect verified. Full desktop/general gates pending. 2026-09-14 actual Chrome/three existing loopback nodes: a real Windows file lock made publication fail without changing revision-6 saved draft or visibility; author restart retained it, then unlock/review/retry published the same ID as revision 7 to both recipients. With Bob stopped, page draft revision 8 narrowed only the draft; confirmation published revision 9 to Carol alone. Bob retained last-checked time and old version while offline, then reconnected to no visible updates; old/current-version fetches both returned 409 feed_publication_unavailable. Page Stop sharing produced revision 10; all three restarted with stopped state, subscriptions and independent Bob copy unchanged. Bob could reopen the copy in the browser. Observer verifier and Ruff passed; no product modification or repeated unit/scale tests. Process-offline loopback is not public-NAT, packaged desktop or complete common-gate evidence.",
       "evidence": [
         "docs/acceptance/friend-feed-development/README.md",
-        "docs/acceptance/friend-feed-development/windows-three-node.json"
+        "docs/acceptance/friend-feed-development/windows-three-node.json",
+        "docs/acceptance/friend-feed-development/audience-recovery-browser-20260914.md",
+        "docs/acceptance/friend-feed-development/audience-recovery-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -1286,8 +1294,11 @@
       "scenario": "重启恢复",
       "expected": "已保存数据仍在，中途操作可恢复或明确失败，不伪造完成",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": " 2026-09-14 actual Chrome/three existing loopback nodes: a real Windows file lock made publication fail without changing revision-6 saved draft or visibility; author restart retained it, then unlock/review/retry published the same ID as revision 7 to both recipients. With Bob stopped, page draft revision 8 narrowed only the draft; confirmation published revision 9 to Carol alone. Bob retained last-checked time and old version while offline, then reconnected to no visible updates; old/current-version fetches both returned 409 feed_publication_unavailable. Page Stop sharing produced revision 10; all three restarted with stopped state, subscriptions and independent Bob copy unchanged. Bob could reopen the copy in the browser. Observer verifier and Ruff passed; no product modification or repeated unit/scale tests. Process-offline loopback is not public-NAT, packaged desktop or complete common-gate evidence.",
+      "evidence": [
+        "docs/acceptance/friend-feed-development/audience-recovery-browser-20260914.md",
+        "docs/acceptance/friend-feed-development/audience-recovery-checkpoints-20260914.json"
+      ],
       "implementation_commit": ""
     },
     {

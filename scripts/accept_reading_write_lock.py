@@ -18,11 +18,14 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home', type=Path, required=True)
-    parser.add_argument('--target', choices=('consumption.json', 'recommendation-profile.json', 'ask-ryn/history.json', 'local-search/index.json'), required=True)
+    parser.add_argument('--target', choices=('consumption.json', 'recommendation-profile.json', 'ask-ryn/history.json', 'local-search/index.json', 'friend-feed/state.json'), required=True)
     args = parser.parse_args()
     home = args.home.resolve()
     assert os.name == 'nt'
-    if args.target == 'local-search/index.json':
+    if args.target == 'friend-feed/state.json':
+        assert home.name == 'rynmesh-feed-acceptance-author-20260911-v2'
+        assert json.loads((home / args.target).read_text())['version'] in {'ryn.friend-feed.v1', 'ryn.friend-feed.v2'}
+    elif args.target == 'local-search/index.json':
         assert home.name == 'rynmesh-first-sharing-acceptance-invites-20260914-C'
         marker = json.loads((home / '.first-sharing-fixture.json').read_text(encoding='utf-8'))
         assert marker['kind'] == 'ryn.first-sharing-acceptance.v1' and marker['port'] == 18972
