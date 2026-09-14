@@ -150,6 +150,15 @@ class AskRunService:
                 }.get(state, "The original request failed. No new request was submitted.")
                 content = {
                     "runtime_busy": "The provider is busy. Wait or choose another service.",
+                    "model_not_ready": "The model is not ready. Check the provider's model setup or choose another service.",
+                    "model_not_found": "The selected model is unavailable. Check the provider's model configuration or choose another service.",
+                    "runtime_unavailable": "The model runtime is unavailable. Check the provider's runtime or choose another service.",
+                    "runtime_connection_failed": "The provider could not reach its model runtime. Check its local AI settings or choose another service.",
+                    "service_unhealthy": "The AI service is not ready. Check the provider's model setup or choose another service.",
+                    "provider_unavailable": "The provider is unavailable. Check its connection or choose another service.",
+                    "direct_transport_failed": "The direct connection failed. Check the provider's connection, then check the original task before retrying.",
+                    "p2p_transport_failed": "The peer connection failed. Check the connection, then check the original task before retrying.",
+                    "encrypted_relay_failed": "The relay connection failed. Check the connection, then check the original task before retrying.",
                     "ai_permission_denied": "This friend has not granted access to this AI service, or has revoked it. Ask them to review your permission; no other provider was used.",
                     "capacity_exhausted": "The provider is busy. Wait or choose another service.",
                     "p2p_capacity_exhausted": "No connection session is available. Wait for the active session to close.",
@@ -159,7 +168,7 @@ class AskRunService:
             run["state"] = state
             # No untrusted provider error detail or frozen prompt in receipts.
             code = result.get("error_code")
-            if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,96}", code):
+            if isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,95}", code):
                 run["error_code"] = code
             run.pop("body", None)
             self._message(data, run, "complete" if state == "succeeded" else "cancelled" if state == "cancelled" else "interrupted" if state == "interrupted" else "failed", content, result)

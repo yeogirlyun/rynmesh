@@ -49,6 +49,39 @@ def setup(tmp_path):
     return history, runs, orders, request
 
 
+@pytest.mark.parametrize('code,reason,action', [
+    ('runtime_busy', 'busy', 'Wait'),
+    ('capacity_exhausted', 'busy', 'Wait'),
+    ('p2p_capacity_exhausted', 'No connection session', 'Wait'),
+    ('model_not_ready', 'not ready', 'model setup'),
+    ('model_not_found', 'selected model is unavailable', 'configuration'),
+    ('runtime_unavailable', 'runtime is unavailable', 'Check'),
+    ('runtime_connection_failed', 'could not reach', 'local AI settings'),
+    ('service_unhealthy', 'not ready', 'model setup'),
+    ('provider_unavailable', 'provider is unavailable', 'connection'),
+    ('direct_transport_failed', 'direct connection failed', 'original task'),
+    ('p2p_transport_failed', 'peer connection failed', 'original task'),
+    ('encrypted_relay_failed', 'relay connection failed', 'original task'),
+])
+def test_actionable_failures_survive_restart_without_resubmission(tmp_path, code, reason, action):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()
+    orders.results[request['task_id']] = {
+        'state': 'failed', 'error_code': code, 'error': 'PRIVATE_ERROR_CANARY',
+    }
+    runs.run_once()
+    content = history.get('conversation')['messages'][-1]['content']
+    assert reason in content and action in content
+    assert 'PRIVATE_ERROR_CANARY' not in content
+    restarted_history = ConversationStore(history.root, history.key)
+    restarted = AskRunService(restarted_history, runs.context, lambda: orders)
+    assert restarted.begin(request)['error_code'] == code
+    restarted.run_once()
+    assert restarted_history.get('conversation')['messages'][-1]['content'] == content
+    assert len(orders.sent) == 1
+
+
 def test_node_dispatch_and_archive_survive_no_browser_and_restart(tmp_path):
     history, runs, orders, request = setup(tmp_path)
     accepted = runs.begin(request)

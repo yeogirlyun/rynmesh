@@ -469,12 +469,13 @@ class ProviderService:
             return encrypted
         except Exception as exc:
             message = str(exc).lower()
+            code = exc.code if isinstance(exc, AdapterError) else "inference_failed"
             state = "cancelled" if "task_cancelled" in message else (
-                "timed_out" if "timed out" in message else "failed"
+                "timed_out" if code == "inference_timeout" or "timed out" in message else "failed"
             )
             return self._failure(task_id, reply_pub, outer["from_peer_id"], state,
                                  "consumer_cancelled" if state == "cancelled" else (
-                                     "inference_timeout" if state == "timed_out" else "inference_failed"
+                                     "inference_timeout" if state == "timed_out" else code
                                  ))
         finally:
             prompt = ""  # best-effort reference cleanup; see privacy documentation
