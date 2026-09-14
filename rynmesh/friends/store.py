@@ -285,6 +285,9 @@ class FriendStore:
             raise ValueError("friend_card_id_required")
         with self._guard():
             state = self._read(self.state_path, self._empty())
+            from .card_cleanup import erased
+            if erased(state, card_id):
+                raise ValueError('friend_card_erased')
             cards = state.setdefault("cards", {})
             prior = cards.get(card_id)
             if prior is not None:
@@ -295,6 +298,11 @@ class FriendStore:
                 raise ValueError("friend_card_capacity_exhausted")
             cards[card_id] = deepcopy(record)
             self._write(self.state_path, state)
+
+    def card_erased(self, card_id: str) -> bool:
+        from .card_cleanup import erased
+        with self._guard():
+            return erased(self._read(self.state_path, self._empty()), card_id)
 
     def card(self, card_id: str) -> dict[str, Any] | None:
         record = self.state().get("cards", {}).get(card_id)

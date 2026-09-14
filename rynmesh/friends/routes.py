@@ -35,6 +35,8 @@ class FriendsState:
 
 
 SAFE_ERRORS = {
+    'friend_card_erased', 'friend_card_cleanup_review_changed', 'friend_card_cleanup_file_unavailable',
+    'friend_card_cleanup_version_unsupported', 'friend_card_cleanup_limit',
     "invalid_invite", "invite_expired", "invite_used", "invite_cancelled", "invite_not_found",
     "invalid_join", "could_not_join_friend", "friend_acceptance_invalid", "unsafe_endpoint",
     "friend_revoked", "friend_not_found", "active_friend_required", "friend_queue_full",
@@ -243,6 +245,23 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
                                                             'prefer_source': body.get('prefer_source', False)})
         card["source_item_id"] = item_id
         return await call(current().send_content_card, peer_id, card, card_id=card_id)
+
+    @app.get('/api/local/friends/card-cleanup')
+    async def card_cleanup_review(request: Request, response: Response):
+        control(request)
+        response.headers['Cache-Control'] = 'no-store'
+        from .card_cleanup import CardCleanup
+        return await call(CardCleanup(current().store).preview)
+
+    @app.post('/api/local/friends/card-cleanup')
+    async def card_cleanup_begin(request: Request, response: Response):
+        control(request)
+        response.headers['Cache-Control'] = 'no-store'
+        body = await _body(request, 1024)
+        if set(body) != {'review_token'}:
+            raise HTTPException(400, detail='friend_request_invalid')
+        from .card_cleanup import CardCleanup
+        return await call(CardCleanup(current().store).begin, body['review_token'])
 
     @app.post("/api/local/friends/cards/{card_id}/fetch")
     async def fetch_card(card_id: str, request: Request):

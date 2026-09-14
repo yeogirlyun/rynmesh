@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppContext } from "../../appContext";
 import { Button, Panel } from "../../components/ui";
 import ContentViewer from "../../components/ContentViewer";
+import FriendCardCleanupPanel from "./FriendCardCleanupPanel";
 import { friendDeliveryExplanation, friendsApi } from "../../domain/friendsClient";
 import { libraryCleanup, libraryCleanupScope, libraryReviewCounts } from "../../domain/libraryCleanup";
 import { contentFromHistory } from "../../domain/readingHistory";
@@ -17,19 +18,26 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
   const [reading, setReading] = useState<ContentItem | null>(null);
+  const loadVersion = useRef(0);
   useEffect(() => {
     if (!loaded || !focusCard) return;
     const element = document.getElementById(`friend-card-${focusCard}`);
     element?.focus({ preventScroll: true }); element?.scrollIntoView?.({ block: "center" });
   }, [loaded, focusCard]);
-  const refresh = async () => { setCards((await friendsApi.cards()).cards); setLoaded(true); setLoadError(""); };
+  const refresh = async () => {
+    const version = ++loadVersion.current;
+    const result = await friendsApi.cards();
+    if (version !== loadVersion.current) return;
+    setCards(result.cards); setLoaded(true); setLoadError("");
+  };
   useEffect(() => {
     let active = true, running = false;
     const poll = async () => {
       if (running) return;
       running = true;
-      try { const result = await friendsApi.cards(); if (active) { setCards(result.cards); setLoaded(true); setLoadError(""); } }
-      catch { if (active) setLoadError("Could not refresh shared content. Retry when the node is available."); }
+      const version = ++loadVersion.current;
+      try { const result = await friendsApi.cards(); if (active && version === loadVersion.current) { setCards(result.cards); setLoaded(true); setLoadError(""); } }
+      catch { if (active && version === loadVersion.current) setLoadError("Could not refresh shared content. Retry when the node is available."); }
       finally { running = false; }
     };
     void poll(); const timer = window.setInterval(() => void poll(), 5000);
@@ -78,6 +86,7 @@ export default function FriendCards({ friends = [], focusCard }: { friends?: Fri
         });
       })}>Remove local copy</Button> : null}
     </article>)}
+    <FriendCardCleanupPanel onChanged={() => { void refresh().catch(() => setLoadError("Could not refresh shared content. Retry to see the current list.")); }} />
     {reading ? <ContentViewer item={reading} client={client} onClose={() => setReading(null)} onRead={() => client.recordContentConsumption(reading, "opened")} /> : null}
   </Panel>;
 }
