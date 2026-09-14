@@ -66,8 +66,8 @@ def fixture(tmp_path):
     app.state.ai_access.recheck = service.recheck_permissions
     client = TestClient(app)
 
-    def request(task_id, *, revision=None, sender=friend, service_id="model-x"):
-        body = {"task_id": task_id, "service_id": service_id, "prompt": "question", "max_tokens": 8, "max_amount": 1,
+    def request(task_id, *, revision=None, sender=friend, service_id="model-x", max_amount=1):
+        body = {"task_id": task_id, "service_id": service_id, "prompt": "question", "max_tokens": 8, "max_amount": max_amount,
                 "reply_messaging_pub": peer_box.public_key_b64(fkey)}
         if revision is not None:
             body["ai_permission"] = {"relationship_id": RID, "revision": revision}
@@ -81,6 +81,26 @@ def fixture(tmp_path):
                          recipient_messaging_key=fkey, expected_kind="llm_response")[1]
 
     return service, manager, model, client, grants, relationships, friend, stranger, request, result
+
+
+def test_authorized_zero_price_friend_needs_no_hold_but_paid_work_does(tmp_path):
+    from dataclasses import replace
+
+    import pytest
+
+    from rynmesh.llm_package.task_protocol import TaskProtocolError
+
+    service, _, model, _, grants, _, _, _, request, result = fixture(tmp_path)
+    grants.set("model-x", RID, allowed=True, expected_revision=0)
+    with pytest.raises(TaskProtocolError, match="positive hold"):
+        result(request("paid-zero", revision=1, max_amount=0))
+    assert model.calls == 0
+    service.manifest = replace(service.manifest, pricing=replace(service.manifest.pricing, input_per_1k=0, output_per_1k=0, minimum=0))
+    assert result(request("free-zero", revision=1, max_amount=0))["state"] == "succeeded"
+    assert model.calls == 1
+    grants.set("model-x", RID, allowed=False, expected_revision=1)
+    assert result(request("free-revoked", revision=1, max_amount=0))["state"] == "rejected"
+    assert model.calls == 1
 
 
 def test_owner_grants_gate_signed_provider_requests_and_replays(tmp_path):

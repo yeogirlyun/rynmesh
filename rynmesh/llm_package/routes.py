@@ -353,9 +353,11 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
                 )
-        if max_amount < 0 or (max_amount == 0 and not own_request):
-            # Reject before inference: without a positive hold every completed
-            # generation would fail the price check after burning compute.
+        pricing = self.manifest.pricing
+        zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
+        if max_amount < 0 or (max_amount == 0 and not own_request and not zero_price):
+            # A genuinely zero-price service needs no hold. Paid remote work
+            # must still reserve a positive amount before consuming compute.
             raise TaskProtocolError("max_amount must be a positive hold")
         if max_amount > self.manifest.pricing.maximum_per_task:
             raise TaskProtocolError("task maximum exceeds provider price limit")

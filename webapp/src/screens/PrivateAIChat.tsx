@@ -513,6 +513,7 @@ export default function PrivateAIChat() {
               <h1>Ask Ryn</h1>
               <Link to="/ask">History and model selection</Link>
               <span>{selectedService.service.model_alias}</span>
+              <span>Provided by {selectedService.node_name || selectedService.peer_id}. This device receives your questions.</span>
               <div className={styles.modelStatus}>
                 <span className={styles.statusBadge}>{llmServiceAvailability(selectedService)}</span>
                 {selectedService.access === "self" && !selectedService.online && <Link to="/services/manage">Manage local model</Link>}
@@ -607,7 +608,7 @@ export default function PrivateAIChat() {
           </div>
           <div className={styles.composerMeta}>
             <span><ShieldCheck size={12} /> {storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session"}</span>
-            <span>{selectedService.service.pricing?.minimum === undefined ? "Price unavailable" : `Estimated minimum ${selectedService.service.pricing.minimum} credits`}</span>
+            <span>{selectedService.service.pricing?.minimum === undefined ? "Price unavailable" : `Estimated minimum ${selectedService.service.pricing.minimum} Development Task Balance`}</span>
           </div>
         </div>
       </main>

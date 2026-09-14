@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../appContext";
 import { Button, Panel } from "../../components/ui";
 import { aiAccess, type AIGrant, type FriendAISnapshot } from "../../domain/aiAccess";
@@ -7,6 +7,8 @@ import type { FriendRecord } from "../../domain/friendTypes";
 import type { LLMProviderStatus } from "../../domain/nodeClient";
 
 export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
+  const [params] = useSearchParams();
+  const heading = useRef<HTMLHeadingElement>(null);
   const { client, confirm } = useAppContext();
   const [grants, setGrants] = useState<AIGrant[]>([]);
   const [remote, setRemote] = useState<FriendAISnapshot[]>([]);
@@ -18,6 +20,10 @@ export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
   const epoch = useRef(0);
   const working = useRef(false);
   const active = friends.filter((friend) => friend.status === "active");
+  const serviceChanged = Boolean(params.get("share") && provider?.service?.package_id !== params.get("share"));
+  const pricing = provider?.service?.pricing;
+  const price = pricing ? `Development Task Balance: ${pricing.input_per_1k} input / ${pricing.output_per_1k} output per 1k tokens; minimum ${pricing.minimum}, task maximum ${pricing.maximum_per_task}. This is not RMB billing.` : "Price unknown; check the service configuration before sharing.";
+  useEffect(() => { if (loaded && params.has("share")) heading.current?.focus(); }, [loaded, params]);
   const load = async () => {
     const generation = ++epoch.current;
     try {
@@ -53,14 +59,20 @@ export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
       setError(reason instanceof Error ? reason.message : "This friend could not be reached.");
     } finally { working.current = false; setBusy(false); }
   };
-  return <Panel><h2>AI with friends</h2>
+  return <Panel><h2 id="share-ai" tabIndex={-1} ref={heading}>AI with friends</h2>
     <p>Being friends does not grant AI access. Choose who can use each service; your friend's device sees the questions sent to their model.</p>
+    <p>Share my AI: select an existing friend below. Their questions are processed on your device. Keep Ryn online with the model ready.</p>
+    {loaded && serviceChanged ? <p role="alert">The selected service changed. <Link to="/services/manage">Return to your model and review it again.</Link></p> : null}
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
     <Button disabled={busy} onClick={() => void load()}>Refresh AI permissions</Button>
     {!loaded ? <p>Loading AI permissions…</p> : <>
       {provider?.service ? <div><h3>Your AI: {provider.service.model_alias}</h3>
         <p>{provider.ready ? "Model ready" : "Model not ready"} · {provider.publication_enabled ? "Friend sharing enabled" : "Friend sharing paused"}</p>
+        <p>{price}</p>
         <Link to="/services/manage">Manage local model</Link>
+        {provider.publication_enabled ? <Button disabled={busy} onClick={() => confirm({ title: "Pause sharing with all friends?", body: "New requests will be blocked. Existing permissions are kept so you can resume sharing later.", risk: "medium", confirmLabel: "Pause sharing", onConfirm: async () => {
+          working.current = true; setBusy(true); try { await client.pauseLLMService(); await load(); } finally { working.current = false; setBusy(false); }
+        } })}>Pause sharing with all friends</Button> : null}
         {!provider.publication_enabled ? <Button disabled={busy} onClick={() => confirm({ title: "Enable friend AI sharing?",
           body: "Publishes this service's model and capacity metadata to the network. Only explicitly authorized friends can submit requests. Prompts and model files are not published.",
           risk: "medium", confirmLabel: "Enable friend sharing", onConfirm: async () => {
@@ -75,9 +87,9 @@ export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
         return <section key={friend.relationship_id} aria-label={`AI with ${friend.node_name}`}>
           <h3>{friend.node_name}</h3>
           {service ? <><p>Your {provider?.service?.model_alias}: {grant?.effective ? "Allowed" : "Not allowed"}</p>
-            <Button disabled={busy} onClick={() => confirm({ title: `${grant?.effective ? "Revoke" : "Allow"} AI access for ${friend.node_name}?`,
+            <Button disabled={busy || (!grant?.effective && (serviceChanged || !pricing))} onClick={() => confirm({ title: `${grant?.effective ? "Revoke" : "Allow"} AI access for ${friend.node_name}?`,
               body: grant?.effective ? "Blocks new requests immediately. Running work will be asked to cancel, but computation may not stop immediately."
-                : `Allows ${friend.node_name} to use ${provider?.service?.model_alias} while friend sharing is enabled. Other services remain unchanged.`,
+                : `Allows ${friend.node_name} to use ${provider?.service?.model_alias} (${service}) while friend sharing is enabled. ${price} Questions are processed on your device.`,
               risk: "medium", confirmLabel: grant?.effective ? "Revoke access" : "Allow access",
               onConfirm: () => change(friend, service, !grant?.effective, grant) })}>{grant?.effective ? "Revoke AI access" : "Allow AI access"}</Button></> : null}
           {grants.filter((row) => row.relationship_id === friend.relationship_id && row.service_id !== service && row.allowed).map((old) =>

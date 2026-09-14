@@ -592,6 +592,7 @@ export default function Services() {
               </small>
             </div>
             <div className="button-row">
+              <Link to={`/friends?share=${encodeURIComponent(llmProvider.service.package_id)}#share-ai`}>Share my AI / 分享我的 AI</Link>
               {llmProvider.ready ? <Link to={`/ask?peer=${encodeURIComponent(node.peer_id)}&service=${encodeURIComponent(llmProvider.service.package_id)}&network=${encodeURIComponent(llmNetwork)}`}>Ask using this device</Link> : null}
               {!llmProvider.publication_enabled ? <Chip tone="info">Remote sharing is off. Local Ask Ryn remains available when ready.</Chip> : null}
               <Button
