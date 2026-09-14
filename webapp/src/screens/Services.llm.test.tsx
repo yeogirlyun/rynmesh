@@ -75,6 +75,7 @@ function renderServices(options: {
 
 describe("Services local LLM flow", () => {
   it.each([
+    ["local inference runtime dependency is missing; use Update runtime to repair it", /A local runtime dependency is missing.*Update runtime/],
     ["configured model file is missing", /The selected model file is missing/],
     ["the local inference runtime is not installed", /The local runtime is missing/],
   ])("keeps an actionable lifecycle error until retry: %s", async (message, expected) => {

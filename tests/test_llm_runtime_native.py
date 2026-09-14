@@ -559,6 +559,32 @@ def test_prepare_extracts_marks_the_server_executable_and_writes_the_marker(tmp_
     assert all(65 <= percent <= 80 for _stage, percent, _message in stages)
 
 
+@pytest.mark.parametrize("busy", [False, True])
+def test_update_repairs_missing_dependency_without_touching_model_or_active_sibling(tmp_path, monkeypatch, busy):
+    root = tmp_path / "llm"
+    entries = ZIP_ENTRIES if os.name == "nt" else TAR_ENTRIES
+    payload = _zip_archive(entries) if os.name == "nt" else _tar_archive(entries)
+    _pin(monkeypatch, payload, name="runtime.zip" if os.name == "nt" else "runtime.tar.gz")
+    _serve(monkeypatch, payload)
+    llm_runtime_native.prepare(root=root)
+    dependency = llm_runtime_install.managed_root(root) / entries[1][0]
+    dependency.unlink()
+    model = root / "model.gguf"
+    model.write_bytes(b"preserve owned model")
+    manifest = LLMPackageManifest(package_id="repair", mode="managed", public_model_alias="repair",
+                                  runtime_dir=str(root), model_path=str(model))
+    if busy:
+        llm_runtime_native._write_record(root, "sibling", 12345, "llama-server")
+        monkeypatch.setattr(llm_runtime_native, "_alive", lambda *args: True)
+        with pytest.raises(LifecycleError, match="stop other local model runtimes"):
+            llm_runtime_native.update(manifest)
+        assert not dependency.exists()
+    else:
+        llm_runtime_native.update(manifest)
+        assert dependency.read_bytes() == entries[1][1]
+    assert model.read_bytes() == b"preserve owned model"
+
+
 @pytest.mark.parametrize("failure_stage", ["extract", "marker", "cancel"])
 def test_interrupted_runtime_install_is_not_reused_on_retry(tmp_path, monkeypatch, failure_stage):
     root = tmp_path / "llm"
@@ -685,7 +711,8 @@ def test_start_health_self_test_and_stop_run_a_real_child_process(tmp_path, monk
         assert stat.S_IMODE(pid_file.stat().st_mode) == 0o600
         assert stat.S_IMODE((root / "runtime").stat().st_mode) == 0o700
         log = log_file.read_text(encoding="utf-8")
-        assert "fake llama-server listening" in log  # child output really is captured
+        assert "runtime_process_starting" in log
+        assert "fake llama-server listening" not in log  # Child output is untrusted private data.
         assert "Reply with exactly" not in log and "RYNMESH SELF TEST OK" not in log
 
         assert llm_runtime_native.stop(manifest) is True

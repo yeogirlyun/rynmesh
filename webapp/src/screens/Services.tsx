@@ -46,6 +46,7 @@ function llmErrorMessage(errorCode: string): string {
 // status panel (a raw backend message reported through job polling) so both
 // surfaces show the same mapped text for a given backend error string.
 function mapKnownLlmErrorText(message: string): string | null {
+  if (/local inference runtime dependency is missing/i.test(message)) return "A local runtime dependency is missing. Use Update runtime to repair the runtime files, then retry. Your model and conversations are kept.";
   if (/configured model file is missing/i.test(message)) return "The selected model file is missing. Restore the file or use Model setup to install or select it again, then start the runtime.";
   if (/local inference runtime is not installed/i.test(message)) return "The local runtime is missing. Use Update runtime to restore it, or use Model setup to install it again.";
   if (/configured model checksum no longer matches/i.test(message)) return "The model file failed verification. Use Model setup to download it again before starting the runtime.";
