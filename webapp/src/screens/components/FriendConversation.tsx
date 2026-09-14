@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Panel } from "../../components/ui";
 import type { FriendMessage, FriendRecord } from "../../domain/friendTypes";
-import { friendsApi } from "../../domain/friendsClient";
+import { friendDeliveryExplanation, friendsApi } from "../../domain/friendsClient";
 
 const MAX_FILE = 5 * 1024 * 1024;
 const stateLabels = {
   queued: "Waiting to send", sending: "Sending", mailbox: "In encrypted mailbox · waiting for confirmation",
-  delivered: "Delivered · confirmed by your friend", failed: "Could not deliver · retry available", expired: "Expired · not delivered",
+  delivered: "Delivered · confirmed by your friend", failed: "Could not confirm delivery · retry available", expired: "Expired · delivery unconfirmed",
 };
 type SendBody = Parameters<typeof friendsApi.send>[1];
 
@@ -86,6 +86,7 @@ export default function FriendConversation({ friend, focusMessage }: { friend: F
         <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{message.text}</p>
         {message.attachment ? <Button disabled={busy} onClick={() => void act(() => download(message))}>Save attachment: {message.attachment.filename} ({message.attachment.size ?? 0} bytes)</Button> : null}
         <p>{message.dir === "in" ? "Received" : stateLabels[message.delivery_state ?? "queued"]}</p>
+        {message.dir === "out" && friendDeliveryExplanation(message) ? <p role="status">{friendDeliveryExplanation(message)}</p> : null}
       </li>)}
     </ol>}
     {messages.some((message) => message.dir === "out" && ["queued", "mailbox", "failed"].includes(message.delivery_state ?? "")) ? <Button disabled={busy} onClick={() => void act(async () => { await friendsApi.retry(friend.peer_id); await refresh(); })}>Retry next pending message</Button> : null}

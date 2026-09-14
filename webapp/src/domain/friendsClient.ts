@@ -65,3 +65,16 @@ export function invitationText(invite: FriendInviteResult): string {
 export function extractInvite(text: string): string {
   return text.match(/rynmesh:\/\/[^\s]+/)?.[0] ?? text.trim();
 }
+
+export function friendDeliveryExplanation(message: Pick<FriendMessage, "delivery_state" | "error">): string {
+  if (message.delivery_state === "expired") return "The delivery window expired without confirmation. Your friend may already have received it. Nothing is resent automatically; review the content before sending a new message or card.";
+  if (!["failed", "queued"].includes(message.delivery_state ?? "")) return "";
+  const reasons: Record<string, string> = {
+    recipient_full: "Your friend's mailbox is full. Wait for space or a direct connection, then retry the same message or card.",
+    sender_quota: "Your pending mail to this friend has reached its limit. Wait for them to receive it, then retry the same message or card.",
+    rate_limited: "The mailbox is limiting send requests. Wait a little, then retry the same message or card.",
+    waiting_for_direct_connection: "This item is waiting for a direct connection. It has not been confirmed as delivered.",
+    mailbox_unavailable: "The mailbox could not be reached. Delivery is unconfirmed; check the connection and retry.",
+  };
+  return reasons[message.error ?? ""] ?? "";
+}

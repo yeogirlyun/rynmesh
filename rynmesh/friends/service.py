@@ -318,13 +318,36 @@ class FriendService:
                      message_id: str | None = None) -> dict[str, Any]:
         with file_transaction(self.store.root / ".delivery.lock"):
             local = self._send_message(peer_id, text=text, attachment=attachment, message_id=message_id)
-        # Never hold a local transaction while contacting a friend: simultaneous
+        # Never hold the receive transaction while contacting a friend: simultaneous
         # A→B and B→A sends must not wait on each other's receive transaction.
-        record, secret = self._relationship(peer_id)
         if isinstance(local.get("wire"), dict):
-            self._deliver_message(record, secret, local)
-            local = self._commit_delivery(peer_id, local)
+            local = self._attempt_delivery(peer_id, local)
         return {key: value for key, value in local.items() if key not in {"wire", "request_digest"}}
+
+    def _attempt_delivery(self, peer_id: str, snapshot: dict[str, Any], *, explicit_retry: bool = False) -> dict[str, Any]:
+        # Separate bounded lock stripes serialize attempts for one outgoing item.
+        # Receive paths never take these locks, so two-way sends cannot deadlock.
+        identifier = str(snapshot.get("card_id") or snapshot["msg_id"])
+        stripe = hashlib.sha256(f"{peer_id}:{identifier}".encode()).hexdigest()[:2]
+        with file_transaction(self.store.root / f".outgoing-{stripe}.lock"):
+            if snapshot.get("card_id"):
+                local = self.store.card(identifier) or snapshot
+            else:
+                rows = {str(row.get("msg_id")): row for row in self.messages.history(peer_id)}
+                local = rows.get(identifier, snapshot)
+            if not isinstance(local.get("wire"), dict) or local.get("delivered"):
+                return local
+            record, secret = self._relationship(peer_id)
+            # A request that overlapped a completed deposit must observe its
+            # receipt rather than spend another mailbox slot. A later explicit
+            # retry may still request a lost delivery acknowledgment again.
+            if explicit_retry and local.get("mailbox_id") == snapshot.get("mailbox_id"):
+                if local.get("delivery_state") in {"failed", "mailbox"}:
+                    local["delivery_state"] = "queued"
+            self._deliver_message(record, secret, local)
+            if local.get("card_id"):
+                return self.store.patch_card(identifier, local) or local
+            return self._commit_delivery(peer_id, local)
 
     def _commit_delivery(self, peer_id: str, local: dict[str, Any]) -> dict[str, Any]:
         with file_transaction(self.store.root / ".delivery.lock"):
@@ -347,12 +370,16 @@ class FriendService:
         if self.queue_mail is None or local.get("delivery_state") == "mailbox":
             return
         try:
-            receipt = self.queue_mail(record, path, local["wire"])
+            receipt = self.queue_mail(record, path, local["wire"], expires_at=local.get("expires_at"))
             local.update(delivered=False, delivery_state="mailbox", mailbox_id=receipt["message_id"], error="")
         except Exception as exc:
-            code = str(exc)
+            code = getattr(exc, "detail", "") or str(exc)
             if code in {"envelope_too_large", "message_too_large", "payload_too_large", "no_registry"}:
                 local.update(delivery_state="queued", error="waiting_for_direct_connection")
+            elif code == "message_expired":
+                local.update(delivered=False, delivery_state="expired", error="message_expired")
+            elif code in {"recipient_full", "sender_quota", "rate_limited"}:
+                local.update(delivered=False, delivery_state="failed", error=code)
             else:
                 local.update(delivery_state="failed", error="mailbox_unavailable")
 
@@ -495,10 +522,8 @@ class FriendService:
     def send_content_card(self, peer_id: str, card: dict[str, Any], *, card_id: str | None = None) -> dict[str, Any]:
         with file_transaction(self.store.root / ".cards.lock"):
             local = self._prepare_content_card(peer_id, card, card_id=card_id)
-        record, secret = self._relationship(peer_id)
         if isinstance(local.get("wire"), dict):
-            self._deliver_message(record, secret, local)
-            self.store.patch_card(local["card_id"], local)
+            local = self._attempt_delivery(peer_id, local)
         return self.public_card(self.store.card(local["card_id"]) or local)
 
     def _prepare_content_card(self, peer_id: str, card: dict[str, Any], *, card_id: str | None) -> dict[str, Any]:
@@ -566,12 +591,10 @@ class FriendService:
         local = self.store.card(card_id)
         if not local or local.get("dir") != "out":
             raise FriendError("friend_card_not_found")
-        record, secret = self._relationship(str(local.get("to", "")))
+        peer_id = str(local.get("to", ""))
+        self._relationship(peer_id)
         if isinstance(local.get("wire"), dict):
-            if local.get("delivery_state") in {"failed", "mailbox"}:
-                local["delivery_state"] = "queued"
-            self._deliver_message(record, secret, local)
-            self.store.patch_card(card_id, local)
+            local = self._attempt_delivery(peer_id, local, explicit_retry=True)
         return self.public_card(self.store.card(card_id) or local)
 
     @staticmethod
@@ -878,7 +901,7 @@ class FriendService:
         }} for row in latest.values()]
 
     def retry(self, peer_id: str, *, automatic: bool = False, limit: int = 10) -> dict[str, int]:
-        relationship, secret = self._relationship(peer_id)
+        self._relationship(peer_id)
         attempted = delivered = 0
         latest = {str(row.get("msg_id")): row for row in self.messages.history(peer_id)}
         cards = [row for row in self.store.list_cards() if row.get("dir") == "out" and row.get("to") == peer_id]
@@ -889,14 +912,8 @@ class FriendService:
             allowed = {"queued", "mailbox"} if automatic else {"queued", "mailbox", "failed"}
             if row.get("delivery_state") not in allowed or not isinstance(wire, dict):
                 continue
-            if not automatic and row.get("delivery_state") == "mailbox":
-                row["delivery_state"] = "queued"  # Explicit retry may ask for a missing receipt again.
             attempted += 1
-            self._deliver_message(relationship, secret, row)
+            row = self._attempt_delivery(peer_id, row, explicit_retry=not automatic)
             if row.get("delivered"):
                 delivered += 1
-            if row.get("card_id"):
-                self.store.patch_card(row["card_id"], row)
-            else:
-                self._commit_delivery(peer_id, row)
         return {"attempted": attempted, "delivered": delivered}

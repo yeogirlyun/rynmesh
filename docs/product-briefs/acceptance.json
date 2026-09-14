@@ -191,11 +191,14 @@
       "scenario": "双方互发文本、小附件、内容卡片",
       "expected": "内容完整；确认前不获取私有正文；超限附件发送前被阻止",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh peers exchanged exact text and small binary attachments through real HTTP, then shared a read/saved article, explicitly fetched its private body and shared the copy back. No document existed at the recipient before explicit fetch. Frontend oversized-file rejection remains component evidence, not a desktop file-picker check.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh peers exchanged exact text and small binary attachments through real HTTP, then shared a read/saved article, explicitly fetched its private body and shared the copy back. No document existed at the recipient before explicit fetch. Frontend oversized-file rejection remains component evidence, not a desktop file-picker check. 2026-09-14 mailbox recovery: Mailbox error explanations now distinguish recipient capacity, sender quota and rate limiting for messages and cards. Expiry is explicitly unconfirmed rather than asserting non-delivery; frontend interaction checks and production build passed, without a new browser run.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
+        "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
+        "docs/acceptance/friends-development/product-http-20260914-e.json"
       ],
       "implementation_commit": ""
     },
@@ -205,11 +208,14 @@
       "scenario": "B 离线，A 发送可入邮箱消息，B 再上线",
       "expected": "先显示入队，接收确认后显示送达；重复投递仅一条",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: With the receiver stopped, the sender reported mailbox and delivered=false. The sender then stopped so the receiver could only consume the real HTTP Registry mailbox; after sender restart the signed receipt changed its status to delivered. Repeating the send retained one received message.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: With the receiver stopped, the sender reported mailbox and delivered=false. The sender then stopped so the receiver could only consume the real HTTP Registry mailbox; after sender restart the signed receipt changed its status to delivered. Repeating the send retained one received message. 2026-09-14 mailbox recovery: Concurrent initial delivery/background retry previously spent multiple mailbox slots for the same logical item; bounded outgoing file locks now re-read and persist the current result around one attempt. Six concurrent same-ID message/card requests each used one envelope in the final controlled check. The original real HTTP first-sharing scenario passed again.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
+        "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
+        "docs/acceptance/friends-development/product-http-20260914-e.json"
       ],
       "implementation_commit": ""
     },
@@ -219,11 +225,14 @@
       "scenario": "邮箱满、消息过期、断网、重启后重试",
       "expected": "无伪造送达，状态可恢复，不重复分享",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Sender and receiver process restarts preserved an unconfirmed mailbox message, followed by one confirmed delivery. This run does not prove mailbox quota exhaustion or message-expiry recovery.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Sender and receiver process restarts preserved an unconfirmed mailbox message, followed by one confirmed delivery. This run does not prove mailbox quota exhaustion or message-expiry recovery. 2026-09-14 mailbox recovery: Real HTTP default quota run stored 16 envelopes and refused message 17 with sender_quota and delivered=false. Sender restart preserved the error, receiver return plus same-ID manual retry delivered exactly 17 messages, and another receiver restart preserved deduplication. Controlled file-mailbox tests also covered recipient_full, original-deadline enforcement at minute 61 after a minute-59 retry, and a late valid receipt resolving expired/unconfirmed to delivered. Desktop, different-egress and full-hour real-clock scope remain unproven.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
+        "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
+        "docs/acceptance/friends-development/product-http-20260914-e.json"
       ],
       "implementation_commit": ""
     },
@@ -275,11 +284,14 @@
       "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
       "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Added the friend-product-e2e GitHub Actions job. Its command passed locally through real node processes and HTTP Registry mailbox; workflow YAML parsed. GitHub Actions and different-public-egress hardware execution have not been performed.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Added the friend-product-e2e GitHub Actions job. Its command passed locally through real node processes and HTTP Registry mailbox; workflow YAML parsed. GitHub Actions and different-public-egress hardware execution have not been performed. 2026-09-14 mailbox recovery: The same CI job now also runs the real-default-mailbox-quota scenario. Both commands passed locally; YAML parsed. GitHub Actions execution is still pending.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
+        "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
+        "docs/acceptance/friends-development/product-http-20260914-e.json"
       ],
       "implementation_commit": ""
     },
