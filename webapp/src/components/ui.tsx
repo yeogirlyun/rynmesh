@@ -717,6 +717,7 @@ export function ConfirmDialog({
   active.current = request;
   const running = useRef(false);
   const dialog = useRef<HTMLDivElement>(null);
+  const failure = useRef<HTMLParagraphElement>(null);
   const cancel = useRef(onCancel);
   cancel.current = onCancel;
   useEffect(() => {
@@ -744,6 +745,7 @@ export function ConfirmDialog({
     };
   }, [request]);
   useEffect(() => { running.current = false; setBusy(false); setError(""); }, [request]);
+  useEffect(() => { if (error) failure.current?.focus(); }, [error]);
   if (!request) return null;
   const run = async () => {
     if (running.current) return;
@@ -768,7 +770,7 @@ export function ConfirmDialog({
         </div>
         <h2 id="confirm-title">{request.title}</h2>
         <p>{request.body}</p>
-        {error ? <p role="alert">{error}</p> : null}
+        {error ? <p ref={failure} tabIndex={-1} role="alert">{error}</p> : null}
         {request.details?.length ? <KV rows={request.details} /> : null}
         <div className="dialog-actions">
           <Button variant="ghost" disabled={busy} onClick={onCancel}>

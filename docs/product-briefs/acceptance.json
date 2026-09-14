@@ -145,9 +145,11 @@
       "scenario": "导出/擦除推荐数据，检查日志与网络",
       "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual Windows browser/production-node follow-up: JSON export includes four feedback events with matching explanation and undo fields. Export failure after stopping the node now shows a focused error; keyboard retry after restart requests a new download. Reset cancellation and real profile write failure preserved all events; releasing the file lock and retrying cleared feedback while retaining exact reading history, cache and source catalog. Restart retained zero feedback, and the browser still showed the saved article at 16%. Forwarded unauthenticated export returned 401; checked identity keys and 12 cached body blocks were absent from export or the applicable audit/public-node fields. A recording-provider test verified raw profile/feedback canaries are excluded from generated summary requests. Browser download persistence, old backup/interrupted-file recovery, all logs/diagnostics/network traffic and packaged desktop remain unverified; no full privacy pass is claimed.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/privacy-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/privacy-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
