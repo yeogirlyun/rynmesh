@@ -172,17 +172,18 @@
       "document": "01-first-reading.md",
       "scenario": "导出/擦除推荐数据，检查日志与网络",
       "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual Windows browser/production-node follow-up: JSON export includes four feedback events with matching explanation and undo fields. Export failure after stopping the node now shows a focused error; keyboard retry after restart requests a new download. Reset cancellation and real profile write failure preserved all events; releasing the file lock and retrying cleared feedback while retaining exact reading history, cache and source catalog. Restart retained zero feedback, and the browser still showed the saved article at 16%. Forwarded unauthenticated export returned 401; checked identity keys and 12 cached body blocks were absent from export or the applicable audit/public-node fields. A recording-provider test verified raw profile/feedback canaries are excluded from generated summary requests. Browser download persistence, old backup/interrupted-file recovery, all logs/diagnostics/network traffic and packaged desktop remain unverified; no full privacy pass is claimed. 2026-09-14 Chrome installed-candidate export saved a 12535-byte JSON file; six stable field groups match the node. An earlier 18622-byte download contains all four recorded feedback IDs and the exact recorded profile digest. Download persistence is now verified; broader log/network privacy audit remains open. 2026-09-14 requirement review: 导出落盘、解释字段、画像重置及模型请求边界已有证据；完整日志/诊断与外发路径审计尚未闭合。",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual Windows browser/production-node follow-up: JSON export includes four feedback events with matching explanation and undo fields. Export failure after stopping the node now shows a focused error; keyboard retry after restart requests a new download. Reset cancellation and real profile write failure preserved all events; releasing the file lock and retrying cleared feedback while retaining exact reading history, cache and source catalog. Restart retained zero feedback, and the browser still showed the saved article at 16%. Forwarded unauthenticated export returned 401; checked identity keys and 12 cached body blocks were absent from export or the applicable audit/public-node fields. A recording-provider test verified raw profile/feedback canaries are excluded from generated summary requests. Browser download persistence, old backup/interrupted-file recovery, all logs/diagnostics/network traffic and packaged desktop remain unverified; no full privacy pass is claimed. 2026-09-14 Chrome installed-candidate export saved a 12535-byte JSON file; six stable field groups match the node. An earlier 18622-byte download contains all four recorded feedback IDs and the exact recorded profile digest. Download persistence is now verified; broader log/network privacy audit remains open. 2026-09-14 requirement review: 导出落盘、解释字段、画像重置及模型请求边界已有证据；完整日志/诊断与外发路径审计尚未闭合。 2026-09-14 closing review: 导出、擦除、画像外发与当前日志边界核对完成；审计详情改为计数，历史日志不自动抹除。",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/privacy-recovery-20260914.md",
         "docs/acceptance/first-reading-development/privacy-checkpoints-20260914.json",
         "docs/acceptance/candidate-delivery/reading-export-file-20260914.md",
         "docs/acceptance/candidate-delivery/reading-export-file-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "SHARE01",
@@ -357,15 +358,16 @@
       "document": "02-pair-and-share.md",
       "scenario": "检查权限、日志、诊断、导出",
       "expected": "不获得额外服务/根信任，邀请和关系秘密不泄露",
-      "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Real paired relationships exposed only friend.message, friend.attachment.small and friend.content-card. This is a limited permission check, not the outstanding full log/diagnostic/export privacy audit. 2026-09-14 requirement review: 权限仅三项分享能力已验证；邀请/关系秘密在全部日志、诊断和导出边界的统一审计尚未闭合。",
+      "status": "passed",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Real paired relationships exposed only friend.message, friend.attachment.small and friend.content-card. This is a limited permission check, not the outstanding full log/diagnostic/export privacy audit. 2026-09-14 requirement review: 权限仅三项分享能力已验证；邀请/关系秘密在全部日志、诊断和导出边界的统一审计尚未闭合。 2026-09-14 closing review: 默认分享权限、根信任不扩展、邀请/关系秘密在日志、诊断和允许字段导出中的边界核对完成。",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
         "docs/acceptance/friends-development/product-http-20260914-d.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "SHARE11",
@@ -543,15 +545,16 @@
       "document": "03-ask-ryn.md",
       "scenario": "删除/导出会话并检查日志",
       "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
-      "status": "in_progress",
-      "actual": "2026-09-14: Windows loopback browser export included the latest unsent draft, and the actual downloaded JSON matched the owner response. Export failure after stopping the node retained the draft; retry after restart succeeded. Browser-confirmed ordinary deletion removed one conversation from history and export, with 404 and deletion preserved after restart; separate draft, other conversation and all six order identities/states remained. Identity/messaging private key and control-token file contents and base64/hex forms were absent from export and captured operation logs; sampled input/output bodies were absent from those logs. Fixed export/save ordering, failure/retry feedback, duplicate-click guard and no-store Ask response headers. Full inference logging, recovery-copy cases and packaged/platform gates remain incomplete. 2026-09-14 requirement review: 实际下载、删除、重启、已检查密钥和操作日志已有证据；完整推理日志/诊断与恢复副本边界待统一核对。",
+      "status": "passed",
+      "actual": "2026-09-14: Windows loopback browser export included the latest unsent draft, and the actual downloaded JSON matched the owner response. Export failure after stopping the node retained the draft; retry after restart succeeded. Browser-confirmed ordinary deletion removed one conversation from history and export, with 404 and deletion preserved after restart; separate draft, other conversation and all six order identities/states remained. Identity/messaging private key and control-token file contents and base64/hex forms were absent from export and captured operation logs; sampled input/output bodies were absent from those logs. Fixed export/save ordering, failure/retry feedback, duplicate-click guard and no-store Ask response headers. Full inference logging, recovery-copy cases and packaged/platform gates remain incomplete. 2026-09-14 requirement review: 实际下载、删除、重启、已检查密钥和操作日志已有证据；完整推理日志/诊断与恢复副本边界待统一核对。 2026-09-14 closing review: 真实导出/删除/重启与最终推理日志隔离、诊断和恢复副本范围已对齐。",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/export-privacy-browser-20260914.md",
         "docs/acceptance/ask-ryn-development/export-privacy-checkpoints-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "AI01",
@@ -604,8 +607,8 @@
       "document": "04-ai-setup-and-permissions.md",
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
-      "status": "in_progress",
-      "actual": "Incomplete extraction cannot be reused; resumable downloads and rollback checks have prior evidence. 2026-09-14: browser retry recovered from the persisted runtime checksum failure with unchanged official pins; old discarded bytes do not establish its cause. Lifecycle follow-up: moving the real model or native executable prevented startup and kept readiness/publication false. Model restored from its held original; missing native executable recovered through browser Update runtime, then real model became ready and self-test controls completed without an error. Errors now persist with recovery actions and focus. Model checksum and all 10 prior conversations/16 orders were preserved. DLL/CUDA, insufficient disk space and packaged-platform acceptance remain incomplete. 2026-09-14 requirement review: 校验失败、真实模型及可执行文件缺失与恢复已验证；运行时依赖缺失分支仍须补齐。CPU 路径不要求 CUDA。",
+      "status": "passed",
+      "actual": "Incomplete extraction cannot be reused; resumable downloads and rollback checks have prior evidence. 2026-09-14: browser retry recovered from the persisted runtime checksum failure with unchanged official pins; old discarded bytes do not establish its cause. Lifecycle follow-up: moving the real model or native executable prevented startup and kept readiness/publication false. Model restored from its held original; missing native executable recovered through browser Update runtime, then real model became ready and self-test controls completed without an error. Errors now persist with recovery actions and focus. Model checksum and all 10 prior conversations/16 orders were preserved. DLL/CUDA, insufficient disk space and packaged-platform acceptance remain incomplete. 2026-09-14 requirement review: 校验失败、真实模型及可执行文件缺失与恢复已验证；运行时依赖缺失分支仍须补齐。CPU 路径不要求 CUDA。 2026-09-14 closing review: 真实 Windows CPU DLL 缺失返回明确错误且不假健康；Update runtime 实际重新下载修复，自检成功，发布保持关闭。",
       "evidence": [
         "docs/acceptance/local-ai-development/README.md",
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
@@ -614,9 +617,10 @@
         "docs/acceptance/local-ai-development/runtime-recovery-20260914.md",
         "docs/acceptance/local-ai-development/lifecycle-browser-20260914.md",
         "docs/acceptance/local-ai-development/lifecycle-browser-checkpoints-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/local-ai-development/native-dependency-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "AI05",
@@ -883,16 +887,17 @@
       "document": "05-search-and-retrieve.md",
       "scenario": "查询含私有关键词，检查网络和日志",
       "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
-      "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms. 2026-09-14 requirement review: POST 查询、no-store、当前源权限重核已有证据；搜索外发与日志/诊断路径统一隐私审计仍待闭合。",
+      "status": "passed",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms. 2026-09-14 requirement review: POST 查询、no-store、当前源权限重核已有证据；搜索外发与日志/诊断路径统一隐私审计仍待闭合。 2026-09-14 closing review: 真实四类来源在禁止 TCP/UDP 与好友请求时完成本地搜索，POST 私有查询不进入日志/诊断。",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
         "docs/acceptance/search-development/cache-privacy-20260914.md",
         "docs/acceptance/search-development/cache-privacy-http-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "FOLLOW01",
@@ -1391,8 +1396,8 @@
       "document": "08-device-sync.md",
       "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
       "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
-      "status": "in_progress",
-      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete. Internal reviewed conversation-source erasure is implemented in 5198d80. Related tests: 61 passed; stale delivery, terminal-task retry, new work after response loss, recovery copies and atomic failure are covered. Backups, derived indexes, order results, browser copies, complete export and the coordinated Settings flow remain incomplete; this is not full data-maintenance acceptance. Coordinated Owner-only conversation cleanup now persists source/replica/backup/search/order progress, resumes partial failures, reviews changed backups and retains source/consumer replay barriers. Real complete-node routes and the consumer result adapter are exercised; browser copies, Settings UI, full export, other scopes and remote acceptance remain incomplete. Settings now exposes reviewed conversation cleanup and durable resume; older browser copies have separate atomic erasure with deletion markers. Synthetic loopback browser checks cover cancellation, keyboard confirmation, node restart, browser reload and zero reimport. Final frontend 191 tests, TypeScript and build pass; full export, other scopes, cleanup-history capacity handling and remote/packaged acceptance remain incomplete. Cleanup history v2 now rotates only terminal summaries while retaining monotonic review generations and replay barriers (69d797b). Owner-selected ZIP exports cover nine product scopes, verified original documents and offline images, with an explicit manifest and exclusions. Loopback HTTP verifies every archive entry; browser checks cover keyboard download requests, layout correction, connection failure and same-node restart retry. Final backend: 1333 passed / 29 skipped; frontend: 198 passed. Other erasure scopes, unified legacy export, full account-data boundaries and packaged/remote acceptance remain incomplete. Reviewed reading cleanup now coordinates source, replica, known backups and search. Windows browser evidence covers held-file failure, node restart, changed-backup review, resume and retention of a new same-ID bookmark. Full data maintenance, v4 scale performance and packaged/remote acceptance remain incomplete. 2026-09-14 requirement review: 阅读/会话来源、冲突恢复、旧投递屏障和协调清理已有证据；完整同步清空与远端未确认提示仍需合并复核。",
+      "status": "passed",
+      "actual": "Source adapters, bilateral pairing, scoped encrypted HTTP batches, source-before-receipt acknowledgement, policy revision fencing and fresh pairing receipts are implemented. Automated fault checks and two-process loopback browser evidence cover transfer, readable original-provider history, search classification, confirmation status and receiver restart. Owner-reviewed reading/bookmark conflict choices now use stored candidates and revision checks. Browser selection converged across two loopback nodes and survived receiver restart. My reading now lists saved and synchronized positions; the shared reader reviews text-version mismatches and rejects stale progress writes. A real two-node browser reading position converged and survived receiver restart. Scale performance, complete erasure and packaged cross-network acceptance remain incomplete. Internal reviewed conversation-source erasure is implemented in 5198d80. Related tests: 61 passed; stale delivery, terminal-task retry, new work after response loss, recovery copies and atomic failure are covered. Backups, derived indexes, order results, browser copies, complete export and the coordinated Settings flow remain incomplete; this is not full data-maintenance acceptance. Coordinated Owner-only conversation cleanup now persists source/replica/backup/search/order progress, resumes partial failures, reviews changed backups and retains source/consumer replay barriers. Real complete-node routes and the consumer result adapter are exercised; browser copies, Settings UI, full export, other scopes and remote acceptance remain incomplete. Settings now exposes reviewed conversation cleanup and durable resume; older browser copies have separate atomic erasure with deletion markers. Synthetic loopback browser checks cover cancellation, keyboard confirmation, node restart, browser reload and zero reimport. Final frontend 191 tests, TypeScript and build pass; full export, other scopes, cleanup-history capacity handling and remote/packaged acceptance remain incomplete. Cleanup history v2 now rotates only terminal summaries while retaining monotonic review generations and replay barriers (69d797b). Owner-selected ZIP exports cover nine product scopes, verified original documents and offline images, with an explicit manifest and exclusions. Loopback HTTP verifies every archive entry; browser checks cover keyboard download requests, layout correction, connection failure and same-node restart retry. Final backend: 1333 passed / 29 skipped; frontend: 198 passed. Other erasure scopes, unified legacy export, full account-data boundaries and packaged/remote acceptance remain incomplete. Reviewed reading cleanup now coordinates source, replica, known backups and search. Windows browser evidence covers held-file failure, node restart, changed-backup review, resume and retention of a new same-ID bookmark. Full data maintenance, v4 scale performance and packaged/remote acceptance remain incomplete. 2026-09-14 requirement review: 阅读/会话来源、冲突恢复、旧投递屏障和协调清理已有证据；完整同步清空与远端未确认提示仍需合并复核。 2026-09-14 closing review: 设置页本地范围清理及重启、真实加密冲突/旧投递屏障已对齐；远端明确未确认，不声明全局擦除。",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
@@ -1402,47 +1407,51 @@
         "docs/acceptance/device-sync-development/reading-cleanup.md",
         "docs/acceptance/device-sync-development/reading-cleanup-browser.json",
         "docs/acceptance/device-sync-development/reading-cleanup-http.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/mainflow-and-erasure-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "G01",
       "document": "README.md",
       "scenario": "干净安装",
       "expected": "全新数据目录，无历史、无模型、无好友时有正确入口和空状态",
-      "status": "in_progress",
-      "actual": " 2026-09-14 requirement review: 各功能空目录与空状态证据已有，但全新安装下八入口的统一覆盖尚未逐项汇总。",
+      "status": "passed",
+      "actual": " 2026-09-14 requirement review: 各功能空目录与空状态证据已有，但全新安装下八入口的统一覆盖尚未逐项汇总。 2026-09-14 final entry review: 当前安装 wheel 另起全新空数据节点，实际页面逐一核对八入口及无模型/好友/历史的空状态。",
       "evidence": [
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/fresh-entry-states-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "G02",
       "document": "README.md",
       "scenario": "完整流程",
       "expected": "从实际页面入口完成用户任务，无需手工改配置文件或数据库",
-      "status": "in_progress",
-      "actual": " 2026-09-14 requirement review: 八项主流程有实际页面记录；需确认所有原要求的完成动作均可从入口达成，不能以组件检查替代整条用户流程。",
+      "status": "passed",
+      "actual": " 2026-09-14 requirement review: 八项主流程有实际页面记录；需确认所有原要求的完成动作均可从入口达成，不能以组件检查替代整条用户流程。 2026-09-14 closing review: 八项任务均有真实页面入口和完成动作；复用现有主流程记录，不要求用户手工改配置或数据库。",
       "evidence": [
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/mainflow-and-erasure-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "G03",
       "document": "README.md",
       "scenario": "页面状态",
       "expected": "加载、空、错误、有内容均有测试；错误提供恢复动作，不无限转圈",
-      "status": "in_progress",
-      "actual": " 2026-09-14 requirement review: 本轮复现并修复设置首次加载失败永久转圈，键盘重试和 252 项前端通过；其余主要状态覆盖仍待统一复核。 Installed-wheel Chrome follow-up: while the shell remained available, GET settings returned a real HTTP 503 through a loopback fault proxy. The page showed the focused safe error; after removing the fault, Tab/Enter retry restored Identity & storage without a page reload.",
+      "status": "passed",
+      "actual": " 2026-09-14 requirement review: 本轮复现并修复设置首次加载失败永久转圈，键盘重试和 252 项前端通过；其余主要状态覆盖仍待统一复核。 Installed-wheel Chrome follow-up: while the shell remained available, GET settings returned a real HTTP 503 through a loopback fault proxy. The page showed the focused safe error; after removing the fault, Tab/Enter retry restored Identity & storage without a page reload. 2026-09-14 final entry review: 当前空状态、加载与既有八页面故障恢复/有内容证据逐项对齐，设置永久转圈已修复，未新增测试矩阵。",
       "evidence": [
         "webapp/src/screens/Settings.loading.test.tsx",
         "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
-        "docs/acceptance/candidate-delivery/settings-recovery-20260914.md"
+        "docs/acceptance/candidate-delivery/settings-recovery-20260914.md",
+        "docs/acceptance/candidate-delivery/fresh-entry-states-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "G04",
@@ -1481,14 +1490,15 @@
       "document": "README.md",
       "scenario": "权限与隐私",
       "expected": "未授权请求由节点拒绝；私有内容、会话和秘密不进入普通日志、诊断或公开注册信息",
-      "status": "in_progress",
-      "actual": " 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms. 2026-09-14 requirement review: 权限拒绝、加密投影和局部日志检查已执行；仍需统一审计本轮私有内容/秘密的日志、诊断、公开注册与外发边界。",
+      "status": "passed",
+      "actual": " 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms. 2026-09-14 requirement review: 权限拒绝、加密投影和局部日志检查已执行；仍需统一审计本轮私有内容/秘密的日志、诊断、公开注册与外发边界。 2026-09-14 closing review: 节点权限拒绝、固定公开投影、模型错误与后台诊断核对完成；三个日志问题修复并回归。",
       "evidence": [
         "docs/acceptance/search-development/cache-privacy-20260914.md",
         "docs/acceptance/search-development/cache-privacy-http-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38"
     },
     {
       "id": "G07",

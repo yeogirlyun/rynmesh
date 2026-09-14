@@ -1,9 +1,9 @@
 {
   "scope": "Windows local scope; macOS and public-network checks waived by user",
-  "runtime_commit": "858cda5",
+  "runtime_commit": "f486fb76d417fab96d97fcdcbeb5c8762b931b38",
   "counts": {
-    "passed": 82,
-    "in_progress": 13
+    "passed": 92,
+    "in_progress": 3
   },
   "cases": [
     {
@@ -148,14 +148,15 @@
       "id": "READ10",
       "scenario": "导出/擦除推荐数据，检查日志与网络",
       "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
-      "status": "in_progress",
-      "reason": "导出落盘、解释字段、画像重置及模型请求边界已有证据；完整日志/诊断与外发路径审计尚未闭合。",
+      "status": "passed",
+      "reason": "导出、擦除、画像外发与当前日志边界核对完成；审计详情改为计数，历史日志不自动抹除。",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/privacy-recovery-20260914.md",
         "docs/acceptance/first-reading-development/privacy-checkpoints-20260914.json",
         "docs/acceptance/candidate-delivery/reading-export-file-20260914.md",
-        "docs/acceptance/candidate-delivery/reading-export-file-20260914.json"
+        "docs/acceptance/candidate-delivery/reading-export-file-20260914.json",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ]
     },
     {
@@ -303,12 +304,13 @@
       "id": "SHARE10",
       "scenario": "检查权限、日志、诊断、导出",
       "expected": "不获得额外服务/根信任，邀请和关系秘密不泄露",
-      "status": "in_progress",
-      "reason": "权限仅三项分享能力已验证；邀请/关系秘密在全部日志、诊断和导出边界的统一审计尚未闭合。",
+      "status": "passed",
+      "reason": "默认分享权限、根信任不扩展、邀请/关系秘密在日志、诊断和允许字段导出中的边界核对完成。",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ]
     },
     {
@@ -456,12 +458,13 @@
       "id": "ASK10",
       "scenario": "删除/导出会话并检查日志",
       "expected": "数据范围明确，导出无凭证，普通日志无输入输出正文",
-      "status": "in_progress",
-      "reason": "实际下载、删除、重启、已检查密钥和操作日志已有证据；完整推理日志/诊断与恢复副本边界待统一核对。",
+      "status": "passed",
+      "reason": "真实导出/删除/重启与最终推理日志隔离、诊断和恢复副本范围已对齐。",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/export-privacy-browser-20260914.md",
-        "docs/acceptance/ask-ryn-development/export-privacy-checkpoints-20260914.json"
+        "docs/acceptance/ask-ryn-development/export-privacy-checkpoints-20260914.json",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ]
     },
     {
@@ -505,8 +508,8 @@
       "id": "AI04",
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
-      "status": "in_progress",
-      "reason": "校验失败、真实模型及可执行文件缺失与恢复已验证；运行时依赖缺失分支仍须补齐。CPU 路径不要求 CUDA。",
+      "status": "passed",
+      "reason": "真实 Windows CPU DLL 缺失返回明确错误且不假健康；Update runtime 实际重新下载修复，自检成功，发布保持关闭。",
       "evidence": [
         "docs/acceptance/local-ai-development/README.md",
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
@@ -514,7 +517,8 @@
         "docs/acceptance/local-ai-development/setup-rollback.md",
         "docs/acceptance/local-ai-development/runtime-recovery-20260914.md",
         "docs/acceptance/local-ai-development/lifecycle-browser-20260914.md",
-        "docs/acceptance/local-ai-development/lifecycle-browser-checkpoints-20260914.json"
+        "docs/acceptance/local-ai-development/lifecycle-browser-checkpoints-20260914.json",
+        "docs/acceptance/local-ai-development/native-dependency-20260914.md"
       ]
     },
     {
@@ -733,13 +737,14 @@
       "id": "SEARCH11",
       "scenario": "查询含私有关键词，检查网络和日志",
       "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
-      "status": "in_progress",
-      "reason": "POST 查询、no-store、当前源权限重核已有证据；搜索外发与日志/诊断路径统一隐私审计仍待闭合。",
+      "status": "passed",
+      "reason": "真实四类来源在禁止 TCP/UDP 与好友请求时完成本地搜索，POST 私有查询不进入日志/诊断。",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
         "docs/acceptance/search-development/cache-privacy-20260914.md",
-        "docs/acceptance/search-development/cache-privacy-http-20260914.json"
+        "docs/acceptance/search-development/cache-privacy-http-20260914.json",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ]
     },
     {
@@ -1142,8 +1147,8 @@
       "id": "SYNC13",
       "scenario": "擦除会话范围，并检查本地恢复项及旧同步消息",
       "expected": "本地对应数据与恢复项被擦除，旧投递不复活；远端未确认删除明确显示未完成",
-      "status": "in_progress",
-      "reason": "阅读/会话来源、冲突恢复、旧投递屏障和协调清理已有证据；完整同步清空与远端未确认提示仍需合并复核。",
+      "status": "passed",
+      "reason": "设置页本地范围清理及重启、真实加密冲突/旧投递屏障已对齐；远端明确未确认，不声明全局擦除。",
       "evidence": [
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
@@ -1152,33 +1157,39 @@
         "docs/acceptance/device-sync-development/product-export-browser.json",
         "docs/acceptance/device-sync-development/reading-cleanup.md",
         "docs/acceptance/device-sync-development/reading-cleanup-browser.json",
-        "docs/acceptance/device-sync-development/reading-cleanup-http.json"
+        "docs/acceptance/device-sync-development/reading-cleanup-http.json",
+        "docs/acceptance/candidate-delivery/mainflow-and-erasure-review-20260914.md"
       ]
     },
     {
       "id": "G01",
       "scenario": "干净安装",
       "expected": "全新数据目录，无历史、无模型、无好友时有正确入口和空状态",
-      "status": "in_progress",
-      "reason": "各功能空目录与空状态证据已有，但全新安装下八入口的统一覆盖尚未逐项汇总。",
-      "evidence": []
+      "status": "passed",
+      "reason": "当前安装 wheel 另起全新空数据节点，实际页面逐一核对八入口及无模型/好友/历史的空状态。",
+      "evidence": [
+        "docs/acceptance/candidate-delivery/fresh-entry-states-20260914.md"
+      ]
     },
     {
       "id": "G02",
       "scenario": "完整流程",
       "expected": "从实际页面入口完成用户任务，无需手工改配置文件或数据库",
-      "status": "in_progress",
-      "reason": "八项主流程有实际页面记录；需确认所有原要求的完成动作均可从入口达成，不能以组件检查替代整条用户流程。",
-      "evidence": []
+      "status": "passed",
+      "reason": "八项任务均有真实页面入口和完成动作；复用现有主流程记录，不要求用户手工改配置或数据库。",
+      "evidence": [
+        "docs/acceptance/candidate-delivery/mainflow-and-erasure-review-20260914.md"
+      ]
     },
     {
       "id": "G03",
       "scenario": "页面状态",
       "expected": "加载、空、错误、有内容均有测试；错误提供恢复动作，不无限转圈",
-      "status": "in_progress",
-      "reason": "本轮复现并修复设置首次加载失败永久转圈，键盘重试和 252 项前端通过；其余主要状态覆盖仍待统一复核。",
+      "status": "passed",
+      "reason": "当前空状态、加载与既有八页面故障恢复/有内容证据逐项对齐，设置永久转圈已修复，未新增测试矩阵。",
       "evidence": [
-        "webapp/src/screens/Settings.loading.test.tsx"
+        "webapp/src/screens/Settings.loading.test.tsx",
+        "docs/acceptance/candidate-delivery/fresh-entry-states-20260914.md"
       ]
     },
     {
@@ -1211,11 +1222,12 @@
       "id": "G06",
       "scenario": "权限与隐私",
       "expected": "未授权请求由节点拒绝；私有内容、会话和秘密不进入普通日志、诊断或公开注册信息",
-      "status": "in_progress",
-      "reason": "权限拒绝、加密投影和局部日志检查已执行；仍需统一审计本轮私有内容/秘密的日志、诊断、公开注册与外发边界。",
+      "status": "passed",
+      "reason": "节点权限拒绝、固定公开投影、模型错误与后台诊断核对完成；三个日志问题修复并回归。",
       "evidence": [
         "docs/acceptance/search-development/cache-privacy-20260914.md",
-        "docs/acceptance/search-development/cache-privacy-http-20260914.json"
+        "docs/acceptance/search-development/cache-privacy-http-20260914.json",
+        "docs/acceptance/candidate-delivery/privacy-boundaries-20260914.md"
       ]
     },
     {
