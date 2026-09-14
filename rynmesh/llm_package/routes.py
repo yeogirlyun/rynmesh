@@ -389,7 +389,7 @@ class ProviderService:
                 # cleanup). Answer immediately instead of spinning until the
                 # timeout and then claiming the task was "still in progress".
                 return self._sealed_failure(
-                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                 )
             deadline = time.monotonic() + self.manifest.timeout_seconds + 30
             while time.monotonic() < deadline:
@@ -402,7 +402,7 @@ class ProviderService:
                     if isinstance(encrypted, dict):
                         return dict(encrypted)
                     return self._sealed_failure(
-                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                     )
             raise TaskProtocolError("duplicate task is still in progress")
         with self._lock:
@@ -757,9 +757,25 @@ def _recover_consumer_orders(
                 raise
 
 
+def _missing_provider_response_code(record: dict[str, Any]) -> str:
+    if any(event.get("error_code") == "provider_restarted_before_completion" for event in record.get("history", [])):
+        return "provider_restarted_before_completion"
+    return "result_expired"
+
+
+def _recover_provider_orders(provider_orders: TaskOrderStore) -> None:
+    # Called once when the node installs its routes, before accepting requests.
+    # Old workers cannot resume; the external runtime may still be computing.
+    for record in provider_orders.list():
+        if record.get("state") not in TERMINAL_STATES:
+            provider_orders.transition(task_id=record["task_id"], state="failed",
+                metadata={"error_code": "provider_restarted_before_completion"})
+
+
 def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_key: Any,
                        resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> ConsumerCommands:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
+    _recover_provider_orders(provider_orders)
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
     # Ledger-backed: every hold/settle/release/earning is a signed event in
     # the node's credit ledger (category dev:task_balance, invisible to
@@ -1675,6 +1691,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if requested_transport not in {"auto", "direct", "p2p", "relay"}:
             raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
         transport_mode = requested_transport
+        failure_transport = transport_mode
         request_fingerprint = _request_fingerprint({
             "task_id": task_id,
             "idempotency_key": idempotency_key,
@@ -1771,6 +1788,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 transport_mode = "relay"
             if own_request:
                 transport_mode = "local"
+            failure_transport = transport_mode
             consumer_orders.transition(
                 task_id=task_id,
                 state="running",
@@ -1841,6 +1859,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     timeout_s=manifest.timeout_seconds + 30,
                 )
             elif endpoint and transport_mode in {"auto", "direct"}:
+                failure_transport = "direct"
                 try:
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
@@ -1862,6 +1881,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     raise TaskProtocolError("strict P2P path failed; relay fallback is disabled")
                 if not relay_url:
                     raise TaskProtocolError("direct provider path failed and no dedicated LLM relay is configured") from direct_error
+                failure_transport = "relay"
                 def _relay_exchange() -> dict[str, Any]:
                     reference = _upload_relay_ciphertext(
                         store, signed.to_dict(), relay_url=relay_url,
@@ -1952,7 +1972,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
             return result
         except Exception as exc:
-            error_code = _delivery_error_code(exc, transport=transport_mode)
+            error_code = _delivery_error_code(exc, transport=failure_transport)
             try:
                 balance.release(task_id=task_id, reason=error_code)
                 consumer_orders.transition(task_id=task_id, state="failed",

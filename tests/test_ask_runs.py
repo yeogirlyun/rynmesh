@@ -62,6 +62,7 @@ def setup(tmp_path):
     ('direct_transport_failed', 'direct connection failed', 'original task'),
     ('p2p_transport_failed', 'peer connection failed', 'original task'),
     ('encrypted_relay_failed', 'relay connection failed', 'original task'),
+    ('provider_restarted_before_completion', 'provider restarted', 'has not been submitted again'),
 ])
 def test_actionable_failures_survive_restart_without_resubmission(tmp_path, code, reason, action):
     history, runs, orders, request = setup(tmp_path)

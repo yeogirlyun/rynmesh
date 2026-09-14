@@ -422,12 +422,15 @@
       "scenario": "模拟未就绪、runtime_busy、p2p_capacity_exhausted、不可达",
       "expected": "原因和动作分别正确，不全部显示节点离线",
       "status": "in_progress",
-      "actual": "2026-09-14: Real loopback HTTP fault injection through adapter and encrypted Provider responses preserves busy/model/runtime error codes; recovered runtime does not re-execute the same task and accepts an explicit new task. Real socket timeout and closed-port failures are distinct. Ask worker tests preserve 12 failure reasons/actions across store/worker reload, including p2p codes previously dropped by validation. Browser follow-up on a fresh node verified busy, model-not-ready, runtime-unavailable and an actually stopped synthetic runtime; fixed preflight model-not-ready being misclassified as provider-unavailable. Manage model and refresh recover readiness. Four checkpoint pairs prove checking the original task and node restart do not change six run identities, twelve message digests, three inference orders or five runtime calls (including two setup probes). Browser P2P capacity and remote Provider failure, actual ICE fault injection and platform acceptance remain outstanding.",
+      "actual": "2026-09-14 Windows local browser evidence now covers runtime busy, model not ready, runtime/Provider unreachable, and real fixed-port ICE capacity exhaustion. Releasing the occupied ICE session allowed real host-direct encrypted UDP inference with no relay. Fixed runtime/preflight error-code loss, p2p receipt persistence, and auto transport losing the attempted route. Model settings, refresh, explicit new requests and original-task checks were exercised; no duplicate orders or ledger events. Synthetic HTTP fault cases and real CPU/ICE cases are distinguished in the records. Packaged desktop and public-network acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/runtime-error-recovery-20260914.md",
         "docs/acceptance/ask-ryn-development/error-browser-20260914.md",
-        "docs/acceptance/ask-ryn-development/error-browser-checkpoints-20260914.json"
+        "docs/acceptance/ask-ryn-development/error-browser-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/peer-failure-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/peer-failure-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/peer-failure-assertions-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -437,14 +440,17 @@
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: An attempted in-progress cancellation case completed generation before cancellation could be requested. No cancellation request was sent; this is not cancellation acceptance. Completed-task restart preservation was verified separately. 2026-09-14 two-node switch/recovery follow-up: Production Owner APIs observed a real remote Provider running before cancelling: response remained running/cancel_requested, final cancelled, one hold/release and no settlement/income. A second real running task was interrupted by stopping only the dedicated consumer; restart recovered the same task as failed/consumer_restarted_before_completion. Provider could finish independently; no duplicate order/settlement. Browser Check original task only checked that failed task. Browser in-progress cancellation and actual timeout remain unverified.",
+      "actual": "Real native CPU tasks were observed running before Owner API cancellation and deliberate consumer/Provider process interruption. Cancellation initially remained running/cancel_requested, then became cancelled; this did not claim computation stopped immediately. Consumer restart recovered the original failed task without resubmission. A browser-submitted Provider task was interrupted while running; fixed Provider startup retaining a ghost running order, now failed/provider_restarted_before_completion. Duplicate signed requests do not infer again. Browser checks of the original tasks and final dual-node restart preserved identities and ledger events. Failed tasks released once with no earnings; explicit new recovery tasks settled and earned once. Browser in-progress cancellation, complete timeout and packaged/public-network scenarios remain unverified.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
         "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json",
         "docs/acceptance/ask-ryn-development/model-switch-recovery-20260914.md",
         "docs/acceptance/ask-ryn-development/model-switch-checkpoints-20260914.json",
-        "docs/acceptance/ask-ryn-development/running-recovery-20260914.json"
+        "docs/acceptance/ask-ryn-development/running-recovery-20260914.json",
+        "docs/acceptance/ask-ryn-development/peer-failure-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/peer-failure-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/peer-failure-assertions-20260914.json"
       ],
       "implementation_commit": ""
     },
