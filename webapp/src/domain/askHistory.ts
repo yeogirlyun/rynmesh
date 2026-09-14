@@ -45,6 +45,12 @@ export interface AskRunRequest {
   ai_permission?: { relationship_id: string; revision: number };
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }
+export interface LegacyMigrationResult {
+  imported: number; alreadyPresent: number; skippedDeleted: number; retained: number;
+}
+export function legacyMigrationNotice(result: LegacyMigrationResult) {
+  return `${result.imported} imported; ${result.alreadyPresent} already on node; ${result.skippedDeleted} skipped because previously deleted; ${result.retained} need recovery. Browser originals kept.`;
+}
 export class AskRequestError extends Error {
   constructor(readonly status: number, message: string, readonly code = "") { super(message); }
 }
@@ -100,15 +106,18 @@ export const askHistory = {
   export: () => request<{ version: string; conversations: LLMConversation[] }>("/export"),
   async importLegacy() {
     const source = await legacy.readLegacyConversations();
-    let imported = 0, retained = source.unreadable;
+    const result: LegacyMigrationResult = { imported: 0, alreadyPresent: 0, skippedDeleted: 0, retained: source.unreadable };
     for (const conversation of source.conversations) {
       try {
-        await request("/migrate", "POST", { source: "ryn-private-ai-chat-v1", conversation });
-        imported += 1;
-      } catch { retained += 1; }
+        const receipt = await request<{ status: string }>("/migrate", "POST", { source: "ryn-private-ai-chat-v1", conversation });
+        if (receipt.status === "imported") result.imported += 1;
+        else if (receipt.status === "already_imported") result.alreadyPresent += 1;
+        else if (receipt.status === "deleted") result.skippedDeleted += 1;
+        else result.retained += 1;
+      } catch { result.retained += 1; }
     }
     // The encrypted browser originals remain recovery copies, never live history.
-    return { imported, retained };
+    return result;
   },
 };
 

@@ -106,6 +106,14 @@ it("does not replace an explicitly requested missing provider with a working one
   expect(submit).not.toHaveBeenCalled();
 });
 
+it("reports retained and skipped migration records without claiming they were imported", async () => {
+  vi.spyOn(askHistory, "importLegacy").mockResolvedValue({ imported: 0, alreadyPresent: 1, skippedDeleted: 1, retained: 2 });
+  const { user, confirm } = mount();
+  await user.click(await screen.findByRole("button", { name: "Import older browser conversations" }));
+  await act(() => confirm.mock.calls[0][0].onConfirm());
+  expect(await screen.findByRole("status")).toHaveTextContent("0 imported; 1 already on node; 1 skipped because previously deleted; 2 need recovery. Browser originals kept.");
+});
+
 it("opens a recovered branch as readable history without a model and focuses it", async () => {
   const value = { ...createConversation({ serviceKey: "old::model", serviceName: "Old model", providerPeerId: "old", networkId: "rynmesh-main" }),
     title: "Recovered garden answer", messages: [{ id: "m", role: "assistant" as const, content: "The retained answer from the other computer.", createdAt: new Date().toISOString(), status: "complete" as const }] };

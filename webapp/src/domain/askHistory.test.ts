@@ -22,7 +22,7 @@ it("retains encrypted browser originals when migration partially fails", async (
   const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ status: "imported" })))
     .mockRejectedValueOnce(new Error("Lost connection"));
   vi.stubGlobal("fetch", fetch);
-  expect(await askHistory.importLegacy()).toEqual({ imported: 1, retained: 2 });
+  expect(await askHistory.importLegacy()).toEqual({ imported: 1, alreadyPresent: 0, skippedDeleted: 0, retained: 2 });
   expect(remove).not.toHaveBeenCalled();
   const migrated = JSON.parse(fetch.mock.calls[0][1].body);
   expect(migrated.conversation.serviceKey).toBe(first.serviceKey);
@@ -35,6 +35,18 @@ it("clears only the selected provider service and network", async () => {
   const remove = vi.spyOn(askHistory, "remove").mockResolvedValue({ removed: 1 });
   await conversationRepository("live").clear(own.serviceKey, own.networkId);
   expect(remove).toHaveBeenCalledExactlyOnceWith(own);
+});
+
+it("does not count existing, deleted or unrecognized migration receipts as new imports", async () => {
+  vi.spyOn(legacy, "readLegacyConversations").mockResolvedValue({ conversations: Array.from({ length: 4 }, conversation), unreadable: 0 });
+  const remove = vi.spyOn(legacy, "deleteConversation");
+  vi.stubGlobal("fetch", vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "imported" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "already_imported" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "deleted" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "unknown" }))));
+  expect(await askHistory.importLegacy()).toEqual({ imported: 1, alreadyPresent: 1, skippedDeleted: 1, retained: 1 });
+  expect(remove).not.toHaveBeenCalled();
 });
 
 it("preserves the confirmed deletion code and sends explicit replacement intent", async () => {

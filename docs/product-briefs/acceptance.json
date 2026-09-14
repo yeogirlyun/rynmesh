@@ -365,9 +365,11 @@
       "scenario": "迁移旧会话，重复执行并模拟失败",
       "expected": "不重复、不丢服务键；失败保留原数据，重试可完成",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 real-browser legacy migration: two explicitly synthetic encrypted IndexedDB records imported through production UI. Actual Windows atomic replacement failure retained both browser originals and imported none; release/retry preserved providers, service keys, original timestamps, all message digests and task IDs. Reimport kept node rename, did not duplicate, and did not restore deleted history; all persisted across node/page reload. Fixed success counts that included already-imported/deleted/unknown receipts; both UI entry points now report exact outcomes. 241 frontend tests passed. Browser corruption/upgrade blocking and packaged-platform paths remain unverified.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/legacy-migration-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/migration-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },

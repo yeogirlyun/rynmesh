@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--legacy-fixture", action="store_true", help="Serve the explicit synthetic browser-history preparation UI.")
     args = parser.parse_args()
     home = args.home.resolve()
     if home.name != "rynmesh-ai-recovery-acceptance":
@@ -71,6 +72,12 @@ def main():
 
     model_download._urlopen = observe_open
     app = create_app(RynmeshStore(home=home, network_dir=home / "network", node_name="AI recovery acceptance"))
+    if args.legacy_fixture:
+        from starlette.routing import Mount
+        from starlette.staticfiles import StaticFiles
+        directory = home / 'legacy-fixture'
+        assert (directory / 'index.html').is_file() and (directory / 'legacy-store.js').is_file()
+        app.router.routes.insert(0, Mount('/acceptance-legacy', app=StaticFiles(directory=directory, html=True)))
     marker.write_text(json.dumps({
         "kind": "ryn.ai-recovery-acceptance.v1", "pid": os.getpid(),
         "port": 18924, "started_at": datetime.now(UTC).isoformat(),

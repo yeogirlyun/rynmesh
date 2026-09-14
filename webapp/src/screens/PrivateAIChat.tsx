@@ -25,7 +25,7 @@ import {
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
-import { askHistory, AskRequestError, conversationRepository, type AskPreview, type AskRunRequest } from "../domain/askHistory";
+import { askHistory, AskRequestError, conversationRepository, legacyMigrationNotice, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import styles from "./PrivateAIChat.module.css";
@@ -499,7 +499,7 @@ export default function PrivateAIChat() {
         </button>
         {client.mode === "live" ? <button type="button" onClick={() => confirm({ title: "Import older browser conversations?", body: "This reads encrypted history from this browser and saves it on your node. Original provider bindings are retained. Browser originals stay available as recovery copies.", confirmLabel: "Import conversations", risk: "medium", onConfirm: async () => {
           const result = await askHistory.importLegacy();
-          setMigrationNotice(`${result.imported} conversations confirmed on the node; ${result.retained} need recovery. Browser originals have been kept.`);
+          setMigrationNotice(legacyMigrationNotice(result));
           setConversations((await history.list(serviceKey(selectedService))).filter((row) => row.networkId === networkId));
         } })}>Import older browser conversations</button> : null}
         {migrationNotice ? <p role="status">{migrationNotice}</p> : null}

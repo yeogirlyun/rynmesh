@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import type { AppOutletContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
-import { askHistory } from "../domain/askHistory";
+import { askHistory, legacyMigrationNotice } from "../domain/askHistory";
 import { friendsApi } from "../domain/friendsClient";
 import { createConversation, readLegacyConversations, saveConversation, type LLMConversation } from "../domain/llmConversationStore";
 import { llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
@@ -122,7 +122,7 @@ function AskRynHome() {
         </ul>}
         {client.mode === "live" ? <>
           <Button onClick={() => void exportHistory().catch((cause: Error) => setError(cause.message))}>Export conversations and draft</Button>
-          <Button onClick={() => confirm({ title: "Import older browser conversations?", risk: "medium", confirmLabel: "Import conversations", body: "Read this browser's encrypted history into the node, keeping original providers and service keys. Browser originals remain recovery copies.", onConfirm: async () => { const result = await askHistory.importLegacy(); setNotice(`${result.imported} confirmed on node; ${result.retained} need recovery. Browser originals kept.`); await load(); } })}>Import older browser conversations</Button>
+          <Button onClick={() => confirm({ title: "Import older browser conversations?", risk: "medium", confirmLabel: "Import conversations", body: "Read this browser's encrypted history into the node, keeping original providers and service keys. Browser originals remain recovery copies.", onConfirm: async () => { const result = await askHistory.importLegacy(); setNotice(legacyMigrationNotice(result)); await load(); } })}>Import older browser conversations</Button>
         </> : null}
       </Panel>
       <div className={styles.workspace}>
