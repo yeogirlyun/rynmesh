@@ -440,7 +440,7 @@
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
       "status": "in_progress",
-      "actual": "Real native CPU tasks were observed running before Owner API cancellation and deliberate consumer/Provider process interruption. Cancellation initially remained running/cancel_requested, then became cancelled; this did not claim computation stopped immediately. Consumer restart recovered the original failed task without resubmission. A browser-submitted Provider task was interrupted while running; fixed Provider startup retaining a ghost running order, now failed/provider_restarted_before_completion. Duplicate signed requests do not infer again. Browser checks of the original tasks and final dual-node restart preserved identities and ledger events. Failed tasks released once with no earnings; explicit new recovery tasks settled and earned once. Browser in-progress cancellation, complete timeout and packaged/public-network scenarios remain unverified.",
+      "actual": "Real native CPU tasks were observed running before Owner API cancellation and deliberate consumer/Provider interruption. Original tasks recovered without resubmission, with one release and no earnings; explicit recovery tasks settled once. Fixed Provider startup retaining ghost running orders. Browser follow-up used a clearly synthetic delayed HTTP runtime: Stop generating was clicked after a running task was observed; UI first reported cancellation requested without claiming immediate computation stop. Another task hit the unchanged 120-second timeout after 120.140248 seconds; its delayed response at 125 seconds was rejected. Browser original-task checks and node restart preserved messages, task identities, states and ledger events; only explicit new input created the successful recovery task. These browser cancel/timeout calls used zero-fee self service. The real CPU attempt finished before Stop could be clicked and is not cancellation evidence. Nonzero-fee full timeout, packaged platforms and public networks remain unverified.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
@@ -450,9 +450,14 @@
         "docs/acceptance/ask-ryn-development/running-recovery-20260914.json",
         "docs/acceptance/ask-ryn-development/peer-failure-browser-20260914.md",
         "docs/acceptance/ask-ryn-development/peer-failure-checkpoints-20260914.json",
-        "docs/acceptance/ask-ryn-development/peer-failure-assertions-20260914.json"
+        "docs/acceptance/ask-ryn-development/peer-failure-assertions-20260914.json",
+        "docs/acceptance/ask-ryn-development/cancel-timeout-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/cancel-timeout-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/timeout-browser-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/full-timeout-observation-20260914.json",
+        "docs/acceptance/ask-ryn-development/cancel-timeout-assertions-20260914.json"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "f58def8"
     },
     {
       "id": "ASK09",
