@@ -74,6 +74,33 @@ it("restores keywords and filters after opening a result", async () => {
   expect(await screen.findByRole("heading", { name: "Current result" })).toBeInTheDocument();
 });
 
+it("moves keyboard focus to the first newly loaded result when pagination ends", async () => {
+  const first = { ...page("First result"), total: 3, next_cursor: "second" };
+  const second = { ...page("New result", "Last result"), total: 3 };
+  vi.mocked(localSearch.query).mockImplementation(async (request) => request.cursor === "second" ? second : first);
+  const user = mount();
+  fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "result" } });
+  const more = await screen.findByRole("button", { name: "Load more results" });
+  more.focus();
+  await user.keyboard("{Enter}");
+  await screen.findByRole("heading", { name: "Last result" });
+  expect(screen.queryByRole("button", { name: "Load more results" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("link", { name: "Read local content" })[1]).toHaveFocus();
+});
+
+it("does not move focus back to results if the user left pagination while waiting", async () => {
+  let finish!: (value: SearchPage) => void;
+  vi.mocked(localSearch.query).mockImplementation(async (request) => request.cursor === "second"
+    ? new Promise((resolve) => { finish = resolve; })
+    : { ...page("First result"), total: 2, next_cursor: "second" });
+  const user = mount();
+  fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "result" } });
+  await user.click(await screen.findByRole("button", { name: "Load more results" }));
+  screen.getByLabelText("Search source").focus();
+  await act(async () => finish({ ...page("New result"), total: 2 }));
+  expect(screen.getByLabelText("Search source")).toHaveFocus();
+});
+
 it("reloads every previously loaded page before restoring the app content scroller", async () => {
   const first = { ...page(...Array.from({ length: 20 }, (_, i) => `Row ${i}`)), total: 40, next_cursor: "second" };
   const second = { ...page(...Array.from({ length: 20 }, (_, i) => `Row ${i + 20}`)), total: 40 };

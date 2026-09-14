@@ -42,8 +42,16 @@ export default function Search() {
   const [onlineReading, setOnlineReading] = useState(false);
   const sequence = useRef(0);
   const screenRoot = useRef<HTMLDivElement>(null);
+  const resultsRoot = useRef<HTMLOListElement>(null);
+  const newResultFocus = useRef<number | null>(null);
   const indexStamp = useRef<number | null>(null);
   const restoreScroll = useRef<number | null>(location.state?.searchScroll ?? null);
+  useEffect(() => {
+    if (newResultFocus.current === null || !page) return;
+    const row = resultsRoot.current?.children.item(newResultFocus.current);
+    newResultFocus.current = null;
+    row?.querySelector<HTMLAnchorElement>("a[href]")?.focus();
+  }, [page]);
   const request = useCallback((cursor = "") => ({ query: form.query, kind: form.kind, source: form.source, friend_id: form.friend,
     sort: form.sort, cursor, ...(form.after ? { after: new Date(`${form.after}T00:00:00`).getTime() / 1000 } : {}),
     ...(form.before ? { before: new Date(`${form.before}T23:59:59.999`).getTime() / 1000 } : {}) }), [form]);
@@ -110,10 +118,16 @@ export default function Search() {
   };
   const more = async () => {
     if (!page?.next_cursor) return;
+    const trigger = window.document.activeElement;
     const generation = ++sequence.current; setBusy(true); setError("");
     try {
       const next = await localSearch.query(request(page.next_cursor));
-      if (generation === sequence.current) setPage({ ...next, results: [...page.results, ...next.results] });
+      if (generation === sequence.current) {
+        if (next.results.length && (window.document.activeElement === trigger || window.document.activeElement === window.document.body)) {
+          newResultFocus.current = page.results.length;
+        }
+        setPage({ ...next, results: [...page.results, ...next.results] });
+      }
     } catch (cause) { if (generation === sequence.current) { setPage(null); setError((cause as Error).message); } }
     finally { if (generation === sequence.current) setBusy(false); }
   };
@@ -155,7 +169,7 @@ export default function Search() {
         {page.unavailable_sources?.includes('saved_documents') ? <p role="status">Some saved document data is unavailable. Results may be incomplete. <Link to="/settings" onClick={remember}>Review document copies in Settings</Link>, then refresh results. Other local content remains searchable.</p> : null}
         {page.unavailable_sources?.includes('offline_downloads') ? <p role="status">Some downloaded content is unavailable. <Link to="/offline" onClick={remember}>Check offline reading</Link>, then refresh results. Other local content remains searchable.</p> : null}
         {!page.results.length && !page.partial ? <p>No matches. Try another keyword or clear the filters.</p> : <p>{page.total} matches</p>}
-        <ol>{page.results.map((result) => <li key={result.id} style={{ marginBlock: "1.5rem" }}>
+        <ol ref={resultsRoot}>{page.results.map((result) => <li key={result.id} style={{ marginBlock: "1.5rem" }}>
           <h2><Highlight value={result.title_match} /></h2><p>{result.kinds.map((kind) => labels[kind]).join(" · ")} · {result.source} · {result.timestamp > 0 ? new Date(result.timestamp * 1000).toLocaleString() : "Date unavailable"}</p>
           <p><Highlight value={result.snippet} /></p>{result.body_state !== "available" ? <p>Full text unavailable locally; metadata only.</p> : null}
           {result.text_truncated ? <p>The saved extraction is truncated. Only the extracted text was searched.</p> : null}

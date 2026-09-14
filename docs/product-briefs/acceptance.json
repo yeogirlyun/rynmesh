@@ -665,11 +665,13 @@
       "scenario": "切换类型/时间/好友筛选，再返回列表",
       "expected": "仅保留符合条件结果，关键词、筛选和位置保持",
       "status": "in_progress",
-      "actual": "Browser loaded 40 rows, opened second-page article and returned with 40 rows and keyword preserved. Component test restores .app-main scrollTop=1600; exact browser pixels, full keyboard and packaged desktop remain unverified.",
+      "actual": "Browser loaded 40 rows, opened second-page article and returned with 40 rows and keyword preserved. Component test restores .app-main scrollTop=1600; exact browser pixels, full keyboard and packaged desktop remain unverified. 2026-09-14 actual Chrome keyboard follow-up reproduced focus falling to BODY after the last Load more button disappeared. Fixed pagination to focus the first new result, preserving focus if the user moved elsewhere while waiting. New build browser verification: 20 to 24 results, focused result index 20 opens its exact Ask message, and browser back retains keyword/type/source/sort plus scrollTop 2375 (scrollHeight 3245, clientHeight 870). Scoped frontend 15, TypeScript/build passed. Simulated Alt+Left did not navigate; the supported browser back tool verified restoration, not an end-to-end native keyboard shortcut. Date/friend filter combinations, complete keyboard and packaged-platform acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
-        "docs/acceptance/search-development/browser-pagination.json"
+        "docs/acceptance/search-development/browser-pagination.json",
+        "docs/acceptance/search-development/keyboard-return-20260914.md",
+        "docs/acceptance/search-development/keyboard-return-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -1313,8 +1315,11 @@
       "scenario": "可访问性",
       "expected": "主要流程可仅用键盘完成；弹窗焦点正确；状态不只靠颜色表达",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": " 2026-09-14 actual Chrome keyboard follow-up reproduced focus falling to BODY after the last Load more button disappeared. Fixed pagination to focus the first new result, preserving focus if the user moved elsewhere while waiting. New build browser verification: 20 to 24 results, focused result index 20 opens its exact Ask message, and browser back retains keyword/type/source/sort plus scrollTop 2375 (scrollHeight 3245, clientHeight 870). Scoped frontend 15, TypeScript/build passed. Simulated Alt+Left did not navigate; the supported browser back tool verified restoration, not an end-to-end native keyboard shortcut. Date/friend filter combinations, complete keyboard and packaged-platform acceptance remain incomplete.",
+      "evidence": [
+        "docs/acceptance/search-development/keyboard-return-20260914.md",
+        "docs/acceptance/search-development/keyboard-return-checkpoints-20260914.json"
+      ],
       "implementation_commit": ""
     },
     {
