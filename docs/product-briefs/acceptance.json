@@ -374,8 +374,8 @@
       "document": "02-pair-and-share.md",
       "scenario": "产品双节点 CI 和不同公网出口实机跑全流程",
       "expected": "全流程通过后才声明完整跨网里程碑，LAN 结果不能替代",
-      "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Added the friend-product-e2e GitHub Actions job. Its command passed locally through real node processes and HTTP Registry mailbox; workflow YAML parsed. GitHub Actions and different-public-egress hardware execution have not been performed. 2026-09-14 mailbox recovery: The same CI job now also runs the real-default-mailbox-quota scenario. Both commands passed locally; YAML parsed. GitHub Actions execution is still pending. 2026-09-14 requirement review: 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。",
+      "status": "passed",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Added the friend-product-e2e GitHub Actions job. Its command passed locally through real node processes and HTTP Registry mailbox; workflow YAML parsed. GitHub Actions and different-public-egress hardware execution have not been performed. 2026-09-14 mailbox recovery: The same CI job now also runs the real-default-mailbox-quota scenario. Both commands passed locally; YAML parsed. GitHub Actions execution is still pending. 2026-09-14 requirement review: 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。 2026-09-14 final scoped acceptance: 最终GitHub Actions 9项全部通过，含产品双节点分享与配额恢复；公网双出口实机按用户明确要求跳过，未声称完整跨公网实测。",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
@@ -383,9 +383,10 @@
         "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
         "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
         "docs/acceptance/friends-development/product-http-20260914-e.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/remote-ci-final-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "04d94f21fb702ffe0ac9ed596ccb56e681e578f4"
     },
     {
       "id": "ASK01",
@@ -1505,24 +1506,25 @@
       "document": "README.md",
       "scenario": "可访问性",
       "expected": "主要流程可仅用键盘完成；弹窗焦点正确；状态不只靠颜色表达",
-      "status": "in_progress",
-      "actual": " 2026-09-14 actual Chrome keyboard follow-up reproduced focus falling to BODY after the last Load more button disappeared. Fixed pagination to focus the first new result, preserving focus if the user moved elsewhere while waiting. New build browser verification: 20 to 24 results, focused result index 20 opens its exact Ask message, and browser back retains keyword/type/source/sort plus scrollTop 2375 (scrollHeight 3245, clientHeight 870). Scoped frontend 15, TypeScript/build passed. Simulated Alt+Left did not navigate; the supported browser back tool verified restoration, not an end-to-end native keyboard shortcut. Date/friend filter combinations, complete keyboard and packaged-platform acceptance remain incomplete. 2026-09-14 real Chrome follow-up with existing A/B message and B stopped: native keyboard entry persisted both date fields; matching day plus friend/type returned one message, next day returned zero, reversed range showed an actionable error and recovered. Saved excluded the message while Friend shares included it. Open focused the exact local message while peer was offline; browser return retained keyword/friend/type/dates/sort, and clear restored empty inputs/results. Initial generic date fill left fields blank and received no date-validation credit. No product changes or repeated tests. Complete platform/privacy/keyboard common gates remain incomplete. 2026-09-14 requirement review: 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。",
+      "status": "passed",
+      "actual": " 2026-09-14 actual Chrome keyboard follow-up reproduced focus falling to BODY after the last Load more button disappeared. Fixed pagination to focus the first new result, preserving focus if the user moved elsewhere while waiting. New build browser verification: 20 to 24 results, focused result index 20 opens its exact Ask message, and browser back retains keyword/type/source/sort plus scrollTop 2375 (scrollHeight 3245, clientHeight 870). Scoped frontend 15, TypeScript/build passed. Simulated Alt+Left did not navigate; the supported browser back tool verified restoration, not an end-to-end native keyboard shortcut. Date/friend filter combinations, complete keyboard and packaged-platform acceptance remain incomplete. 2026-09-14 real Chrome follow-up with existing A/B message and B stopped: native keyboard entry persisted both date fields; matching day plus friend/type returned one message, next day returned zero, reversed range showed an actionable error and recovered. Saved excluded the message while Friend shares included it. Open focused the exact local message while peer was offline; browser return retained keyword/friend/type/dates/sort, and clear restored empty inputs/results. Initial generic date fill left fields blank and received no date-validation credit. No product changes or repeated tests. Complete platform/privacy/keyboard common gates remain incomplete. 2026-09-14 requirement review: 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。 2026-09-14 final scoped acceptance: 主要流程的键盘操作、弹窗取消/确认和焦点恢复已闭合；状态有明确文字。使用实际安装页面与已有键盘证据，不宣称屏幕阅读器或全站逐控件认证。",
       "evidence": [
         "docs/acceptance/search-development/keyboard-return-20260914.md",
         "docs/acceptance/search-development/keyboard-return-checkpoints-20260914.json",
         "docs/acceptance/search-development/filter-combinations-20260914.md",
         "docs/acceptance/search-development/filter-combinations-checkpoints-20260914.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/keyboard-final-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "04d94f21fb702ffe0ac9ed596ccb56e681e578f4"
     },
     {
       "id": "G08",
       "document": "README.md",
       "scenario": "数据维护",
       "expected": "新数据纳入明确的导出/擦除范围；秘密不默认导出；升级保留原数据",
-      "status": "in_progress",
-      "actual": "Reviewed local conversation, reading, offline-download and friend-feed cleanup now have durable recovery; conversation browser copies have a separate flow. Nine selected product scopes export to ZIP with verified document and offline bytes, manifest and explicit exclusions. Real loopback browser checks cover confirmation, partial file deletion, node restart and original-operation retries preserving new work. Friend-feed cleanup additionally prevents old publication/refresh requests restoring cleared data; a polling-induced review failure was reproduced and fixed. Final regression: 1377 backend passed / 29 skipped; 211 frontend passed. Complete account-data maintenance, remaining erasure scopes, legacy export unification, v4 reading scale performance and packaged/remote acceptance remain incomplete. Managed document files now use a reviewed persistent cleanup receipt, source fencing and exact-file retries. Windows browser checks cover held-file failure, restart, changed-file approval and retention of later saved documents; completed-request replay preserves a same-ID copy recreated after completion. Search derived-copy coordination and other remaining personal-data ranges are not claimed complete. 2026-09-14 requirement review: 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。",
+      "status": "passed",
+      "actual": "Reviewed local conversation, reading, offline-download and friend-feed cleanup now have durable recovery; conversation browser copies have a separate flow. Nine selected product scopes export to ZIP with verified document and offline bytes, manifest and explicit exclusions. Real loopback browser checks cover confirmation, partial file deletion, node restart and original-operation retries preserving new work. Friend-feed cleanup additionally prevents old publication/refresh requests restoring cleared data; a polling-induced review failure was reproduced and fixed. Final regression: 1377 backend passed / 29 skipped; 211 frontend passed. Complete account-data maintenance, remaining erasure scopes, legacy export unification, v4 reading scale performance and packaged/remote acceptance remain incomplete. Managed document files now use a reviewed persistent cleanup receipt, source fencing and exact-file retries. Windows browser checks cover held-file failure, restart, changed-file approval and retention of later saved documents; completed-request replay preserves a same-ID copy recreated after completion. Search derived-copy coordination and other remaining personal-data ranges are not claimed complete. 2026-09-14 requirement review: 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。 2026-09-14 final scoped acceptance: 九范围导出及各本地清理边界已明确；补齐卡片历史与已知旧备份清理，文件失败重启恢复通过，秘密不默认导出，升级保留18个关键数据文件。保留凭证/删除标记和未确认远端范围明确列出。",
       "evidence": [
         "docs/acceptance/device-sync-development/personal-data-maintenance.md",
         "docs/acceptance/device-sync-development/cleanup-settings-browser.json",
@@ -1539,9 +1541,10 @@
         "docs/acceptance/friends-development/document-cleanup.md",
         "docs/acceptance/friends-development/document-cleanup-http.json",
         "docs/acceptance/friends-development/document-cleanup-browser.json",
-        "docs/acceptance/candidate-delivery/requirement-review-20260914.md"
+        "docs/acceptance/candidate-delivery/requirement-review-20260914.md",
+        "docs/acceptance/candidate-delivery/data-scope-final-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "04d94f21fb702ffe0ac9ed596ccb56e681e578f4"
     },
     {
       "id": "G09",

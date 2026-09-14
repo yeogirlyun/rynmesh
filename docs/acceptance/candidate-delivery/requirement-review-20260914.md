@@ -1,18 +1,12 @@
-# 原始 95 条用例：本轮范围复核
+# 原始 95 条用例：最终范围复核
 
-2026-09-14。**92 条在本轮范围内通过，3 条继续核对**。原始需求和通过条件不变；macOS 与公网按用户指令跳过，不记为实测通过。
+2026-09-14。**95 条在用户确认的本轮范围内通过，剩余必测项 0 条。** 原始需求及通过条件保留；macOS 实机和公网双出口部分按用户明确指令跳过，不记成实测通过。
 
-候选代码 `f486fb7`。本轮修复三个日志问题及受管理运行时依赖无法修复的问题；真实 Windows CPU 依赖故障和 Update runtime 恢复自检通过。最终受影响范围后端 138 passed / 17 skipped、AI 页面 34 passed，类型检查、构建及 Ruff 通过。前端其他页面沿用此前 252 项全量结果，不叠加测试次数。最终代码未重新跑完整后端套件，见[测试时间和范围](privacy-boundaries-20260914.md)。
+安装实现 `04d94f2`，远程被测提交 `25aa0b8`（产品代码相同）。最终远程 **9/9 项 CI 成功**：后端 **1521 passed / 3 skipped**，前端 **256 passed / 46 文件**；类型、构建、Ruff、产品双节点、LLM 和中转端到端、两种 macOS 架构编译均通过。[远程结论与原始运行](remote-ci-final-20260914.md)。macOS 编译未替代实机验收。
 
-判定按逐条证据，不按测试数量或耗时推算。主流程需要实际页面，分支使用明确标识的真实存储/加密/HTTP 与组件证据。未宣称整体产品或远端 CI 验收完成。
+判定按逐条页面、真实存储/加密/HTTP 和组件证据，不按数量推算完成。最后三项已闭合：[键盘主流程](keyboard-final-20260914.md)、[数据维护与升级](data-scope-final-20260914.md)、[产品 CI](remote-ci-final-20260914.md)。历史阶段的待验说明由本文更新，失败记录保留。
 
-## 尚未闭合的项目
-
-| 编号 | 缺口 |
-|---|---|
-| SHARE11 | 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。 |
-| G07 | 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。 |
-| G08 | 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。 |
+本轮未合并到上游 main、未发布正式版本。可用安装包及两个本机试用节点见[试用说明](../../product-briefs/TRY_CANDIDATE.md)。
 
 ## 逐项结果
 
@@ -38,7 +32,7 @@
 | SHARE08 | 通过 | 撤销前受保护请求 200，离线撤销后及重启后均 403，旧关系不复活。 [browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json)、[two-node-20260914.md](two-node-20260914.md) |
 | SHARE09 | 通过 | 撤销确认解释不能收回独立副本，新获取拒绝；保存副本重启后仍可读。 [browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json)、[two-node-20260914.md](two-node-20260914.md) |
 | SHARE10 | 通过 | 默认分享权限、根信任不扩展、邀请/关系秘密在日志、诊断和允许字段导出中的边界核对完成。 [product-http-20260914-d.json](../friends-development/product-http-20260914-d.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
-| SHARE11 | 继续核对 | 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。 [mailbox-quota-http-20260914-b.json](../friends-development/mailbox-quota-http-20260914-b.json)、[product-http-20260914-e.json](../friends-development/product-http-20260914-e.json) |
+| SHARE11 | 通过（本轮范围） | 最终GitHub Actions 9项全部通过，含产品双节点分享与配额恢复；公网双出口实机按用户明确要求跳过，未声称完整跨公网实测。 [remote-ci-final-20260914.md](remote-ci-final-20260914.md) |
 | ASK01 | 通过 | 空节点无示例会话、无模型有管理入口；真实原生模型从 Ask 入口完成问答。 [runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md)、[TRY_CANDIDATE.md](../../product-briefs/TRY_CANDIDATE.md) |
 | ASK02 | 通过 | 侧栏与主页相同会话身份、任务和原服务绑定，真实问答重启后可读。 [article-browser-20260914.md](../ask-ryn-development/article-browser-20260914.md)、[browser-checkpoints-20260914.json](../ask-ryn-development/browser-checkpoints-20260914.json) |
 | ASK03 | 通过 | 实际加密 IndexedDB 迁移遇原子写失败保留原件；重试、重复导入及删除后再导入不丢绑定、不重复。 [legacy-migration-browser-20260914.md](../ask-ryn-development/legacy-migration-browser-20260914.md)、[migration-checkpoints-20260914.json](../ask-ryn-development/migration-checkpoints-20260914.json) |
@@ -109,7 +103,7 @@
 | G04 | 通过 | 各功能专属重启用例与真实进程记录覆盖保留、恢复或明确失败，原任务身份不自动重发。 [sync-policy-20260914.md](sync-policy-20260914.md)、[model-switch-recovery-20260914.md](../ask-ryn-development/model-switch-recovery-20260914.md) |
 | G05 | 通过 | 各功能真实存储/加密与路由重试检查覆盖并发、原身份、重复投递与结算；已有页面错误不伪造成功。 [mailbox-recovery-20260914.md](../friends-development/mailbox-recovery-20260914.md)、[README.md](../ai-permissions-development/README.md) |
 | G06 | 通过 | 节点权限拒绝、固定公开投影、模型错误与后台诊断核对完成；三个日志问题修复并回归。 [cache-privacy-http-20260914.json](../search-development/cache-privacy-http-20260914.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
-| G07 | 继续核对 | 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。 [filter-combinations-20260914.md](../search-development/filter-combinations-20260914.md)、[filter-combinations-checkpoints-20260914.json](../search-development/filter-combinations-checkpoints-20260914.json) |
-| G08 | 继续核对 | 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。 [document-cleanup-http.json](../friends-development/document-cleanup-http.json)、[document-cleanup-browser.json](../friends-development/document-cleanup-browser.json) |
+| G07 | 通过（本轮范围） | 主要流程的键盘操作、弹窗取消/确认和焦点恢复已闭合；状态有明确文字。使用实际安装页面与已有键盘证据，不宣称屏幕阅读器或全站逐控件认证。 [keyboard-final-20260914.md](keyboard-final-20260914.md) |
+| G08 | 通过（本轮范围） | 九范围导出及各本地清理边界已明确；补齐卡片历史与已知旧备份清理，文件失败重启恢复通过，秘密不默认导出，升级保留18个关键数据文件。保留凭证/删除标记和未确认远端范围明确列出。 [data-scope-final-20260914.md](data-scope-final-20260914.md) |
 | G09 | 通过 | 损坏搜索源、坏同步副本、模型忙碌/不可达、来源和好友失败均有独立恢复记录；阅读及 HTTP 健康保持可用。 [test_device_sync_reading_bridge.py](../../../tests/test_device_sync_reading_bridge.py)、[cancel-timeout-browser-20260914.md](../ask-ryn-development/cancel-timeout-browser-20260914.md) |
 | G10 | 通过 | 每条原用例保留条件、实际结果与证据；提交/平台/计时边界明确，本地结果不冒充远端 CI，跳过不冒充通过。 [two-node-20260914.md](two-node-20260914.md)、[ACCEPTANCE_SCOPE.md](../../product-briefs/ACCEPTANCE_SCOPE.md) |
