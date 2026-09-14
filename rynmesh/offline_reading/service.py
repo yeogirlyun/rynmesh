@@ -60,6 +60,8 @@ class OfflineSources:
                 article = {'title': reference['title'], 'blocks': [{'tag': 'p', 'text': text}], 'images': []}
             elif resource['mime'] in {'text/html', 'application/xhtml+xml', ''}:
                 article = extract_readable(resource['data'], url=resource['url'])
+                if article.get('access_required'):
+                    raise OfflineError('offline_source_access_required')
             else:
                 raise OfflineError('offline_source_format_unsupported')
             if not any(block['tag'] in {'p', 'li', 'blockquote', 'pre'} and block['text'].strip() for block in article['blocks']):

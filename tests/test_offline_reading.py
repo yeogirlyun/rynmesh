@@ -285,6 +285,29 @@ def test_unsupported_or_empty_page_does_not_become_success(tmp_path, body, mime,
     assert f.service.store.used() == 0
 
 
+def test_password_gate_does_not_replace_a_readable_offline_copy(tmp_path):
+    f = fixture(tmp_path, images=False)
+    original = download(f)
+    gate = b'''<html><title>Sign in</title><body><main>
+        <p>Please sign in with your account to continue reading this article.</p>
+        <form action="/session"><input type="password" name="password"></form>
+        </main></body></html>'''
+    f.sources.fetch = lambda url, **kwargs: {'data': gate, 'mime': 'text/html', 'url': url}
+    f.service.request(f.item['item_id'], update=True)
+    with pytest.raises(OfflineError, match='offline_source_access_required'):
+        f.service.run_once()
+    assert row(f)['error_code'] == 'offline_source_access_required'
+    assert f.service.read(f.item['item_id']) == original
+
+
+def test_article_with_separate_sign_in_form_can_be_saved(tmp_path):
+    f = fixture(tmp_path, images=False)
+    page = f'''<html><body><aside><form><input type="password"></form></aside>
+        <article><p>{BODY}</p></article></body></html>'''.encode()
+    f.sources.fetch = lambda url, **kwargs: {'data': page, 'mime': 'text/html', 'url': url}
+    assert download(f)['text'] == BODY
+
+
 def test_owner_routes_limits_dynamic_reinstallation_and_version_bound_images(tmp_path):
     f = fixture(tmp_path)
     app, workers = FastAPI(), BackgroundWorkerRegistry()

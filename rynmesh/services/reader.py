@@ -29,7 +29,7 @@ MAX_BLOCKS = 400
 MIN_PARAGRAPH_CHARS = 25
 CACHE_TTL_S = 24 * 3600
 # Bump whenever extraction behaviour changes; older entries are then ignored.
-EXTRACTOR_VERSION = 2
+EXTRACTOR_VERSION = 3
 
 # Containers whose text is never article body.
 _SKIP_TAGS = {
@@ -101,6 +101,8 @@ class _Extractor(HTMLParser):
         self.lead_image = ""
         self._stack: list[str] = []
         self._skip_depth = 0
+        self._skip_tag = ""
+        self._password_groups: set[int] = set()
         self._in_title = False
         # container id -> list of (tag, text)
         self._groups: dict[int, list[tuple[str, str]]] = {}
@@ -132,12 +134,19 @@ class _Extractor(HTMLParser):
     def handle_starttag(self, tag: str, attrs_list: list[tuple[str, str | None]]) -> None:
         attrs = {k: (v or "") for k, v in attrs_list}
         if self._skip_depth:
+            # A password form beside the selected prose can be an HTTP-200
+            # sign-in gate. Forms inside ignored navigation/sidebars do not
+            # belong to the article and must not block a public download.
+            if (self._skip_tag == "form" and tag == "input"
+                    and attrs.get("type", "").strip().lower() == "password" and self._group_stack):
+                self._password_groups.add(self._group_stack[-1])
             if tag not in _VOID_TAGS:
                 self._skip_depth += 1
             return
         if tag in _SKIP_TAGS:
             if tag not in _VOID_TAGS:
                 self._skip_depth = 1
+                self._skip_tag = tag
             return
 
         if tag == "title":
@@ -259,6 +268,7 @@ def extract_readable(data: bytes, *, url: str = "") -> dict[str, Any]:
         "byline": parser.byline.strip()[:200],
         "lead_image": parser.lead_image.strip(),
         "blocks": blocks,
+        "access_required": parser.best_group in parser._password_groups,
         "word_count": words,
         "images": list(image_urls.values()),
         "images_omitted": parser.images_omitted,

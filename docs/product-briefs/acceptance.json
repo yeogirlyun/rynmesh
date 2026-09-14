@@ -1011,10 +1011,11 @@
       "scenario": "已有旧版，更新时断网或校验失败",
       "expected": "旧版仍能读；新版本验证后才替换，并更新下载时间",
       "status": "in_progress",
-      "actual": "Actual browser update with the source stopped fails while old body hash, job identity and time remain. Packaged and complete version-switch acceptance remain pending.",
+      "actual": "Actual browser update with the source stopped fails while old body hash, job identity and time remain. An HTTP-200 password gate replacing the previous copy was reproduced and fixed; regression verifies the complete prior copy is preserved. Packaged and complete version-switch acceptance remain pending.",
       "evidence": [
         "docs/acceptance/offline-reading-development/README.md",
-        "docs/acceptance/offline-reading-development/windows-browser.json"
+        "docs/acceptance/offline-reading-development/windows-browser.json",
+        "docs/acceptance/offline-reading-development/password-gate-fix-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -1052,9 +1053,10 @@
       "scenario": "无正文、需登录、已失权内容尝试下载",
       "expected": "返回实际失败原因，不产生空的成功记录，不绕过授权",
       "status": "in_progress",
-      "actual": "Backend rejects empty or unsupported pages, HTTP 403 and invalid local copies. Complete login-page and friend authorization UI flows are pending.",
+      "actual": "Backend rejects empty or unsupported pages, HTTP 403 and invalid local copies. A reproduced HTTP-200 password gate is now rejected without replacing the prior offline body; a separate sidebar login form does not block public article download. Complete login-page and friend authorization UI flows are pending.",
       "evidence": [
-        "docs/acceptance/offline-reading-development/README.md"
+        "docs/acceptance/offline-reading-development/README.md",
+        "docs/acceptance/offline-reading-development/password-gate-fix-20260914.md"
       ],
       "implementation_commit": ""
     },
