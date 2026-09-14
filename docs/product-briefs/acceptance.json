@@ -422,10 +422,12 @@
       "scenario": "模拟未就绪、runtime_busy、p2p_capacity_exhausted、不可达",
       "expected": "原因和动作分别正确，不全部显示节点离线",
       "status": "in_progress",
-      "actual": "2026-09-14: Real loopback HTTP fault injection through adapter and encrypted Provider responses preserves busy/model/runtime error codes; recovered runtime does not re-execute the same task and accepts an explicit new task. Real socket timeout and closed-port failures are distinct. Ask worker tests with an order stub preserve 12 failure reasons/actions and error codes across store/worker reload without resubmission, including p2p codes previously dropped by validation. This is backend evidence; browser recovery controls, actual ICE fault injection and platform acceptance remain outstanding.",
+      "actual": "2026-09-14: Real loopback HTTP fault injection through adapter and encrypted Provider responses preserves busy/model/runtime error codes; recovered runtime does not re-execute the same task and accepts an explicit new task. Real socket timeout and closed-port failures are distinct. Ask worker tests preserve 12 failure reasons/actions across store/worker reload, including p2p codes previously dropped by validation. Browser follow-up on a fresh node verified busy, model-not-ready, runtime-unavailable and an actually stopped synthetic runtime; fixed preflight model-not-ready being misclassified as provider-unavailable. Manage model and refresh recover readiness. Four checkpoint pairs prove checking the original task and node restart do not change six run identities, twelve message digests, three inference orders or five runtime calls (including two setup probes). Browser P2P capacity and remote Provider failure, actual ICE fault injection and platform acceptance remain outstanding.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
-        "docs/acceptance/ask-ryn-development/runtime-error-recovery-20260914.md"
+        "docs/acceptance/ask-ryn-development/runtime-error-recovery-20260914.md",
+        "docs/acceptance/ask-ryn-development/error-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/error-browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },

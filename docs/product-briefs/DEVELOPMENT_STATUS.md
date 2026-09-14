@@ -63,6 +63,8 @@
 
 ## 本轮记录
 
+- 2026-09-14：补充 Ask 浏览器忙碌、未就绪、运行时不可用和实际停止运行时后的恢复验收，发现并修复提交前将模型未就绪误归为 Provider 不可达的问题。原任务核对及节点重启保留六个任务身份，没有补发；相关专项 18 passed、回归 129 passed / 4 skipped。P2P 浏览器分支与完整平台验收继续待完成，见[浏览器失败恢复记录](../acceptance/ask-ryn-development/error-browser-20260914.md)。
+
 - 2026-09-14：修复运行时 HTTP 错误被归为普通推理失败、含数字的 P2P 错误码归档丢失两处问题，补充失败原因和恢复提示。真实本机 HTTP 故障/恢复、原任务去重及归档重建专项 35 passed，相关后端回归 179 passed / 17 skipped；本轮没有浏览器或硬件实测，ASK07 保持未完成。详见[错误恢复记录](../acceptance/ask-ryn-development/runtime-error-recovery-20260914.md)。
 
 - 2026-09-14：恢复浏览器验收通道，完成真实原生模型安装恢复和重启后页面问答；修复本机模型停止状态提示。前端 230 passed，TypeScript、构建与验收脚本 Ruff 通过。见 [安装与问答记录](../acceptance/local-ai-development/runtime-recovery-20260914.md)。打包桌面及其余原有验收缺口保持未完成。
