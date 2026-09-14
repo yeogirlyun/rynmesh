@@ -16,6 +16,42 @@ from rynmesh.services import peer_box
 from rynmesh.store import RynmeshStore
 
 
+@pytest.mark.parametrize('health,expected', [
+    ({'ok': False, 'error_code': 'model_not_ready'}, 'model_not_ready'),
+    ({'ok': False, 'error_code': 'runtime_connection_failed'}, 'runtime_connection_failed'),
+    ({'ok': False, 'error_code': 'PRIVATE_ERROR_CANARY'}, 'service_unhealthy'),
+    ({'ok': False, 'error_code': {'bad': 'shape'}}, 'service_unhealthy'),
+    ({'ok': True}, 'provider_unavailable'),
+])
+def test_unready_preflight_preserves_reason_without_reserving_or_delivering(tmp_path, monkeypatch, health, expected):
+    store = RynmeshStore(home=tmp_path / 'node', network_dir=tmp_path / 'network')
+    key = peer_box.load_or_create_messaging_key(store.home / 'messaging.x25519')
+    public = {'online': False, 'ready': health['ok'], 'health': health,
+              'service': {'package_id': 'model'}}
+    monkeypatch.setattr(store, 'list_job_capacities', lambda **_: {'capacities': [{
+        'peer_id': 'synthetic-provider', 'updated_at': datetime.now(timezone.utc).isoformat(),
+        'metadata': {'llm_service': public}}]})
+    app = FastAPI()
+    commands = consumer.install_llm_routes(app, store=store, home=store.home, messaging_key=key,
+        resolve_endpoint=lambda _: pytest.fail('Unready provider must not receive a task'),
+        resolve_pubkey=lambda _: pytest.fail('Unready provider must not receive a task'))
+    client = TestClient(app)
+    before = client.get('/api/local/task-balance').json()
+    task_id = 'task_' + 'd' * 32
+    commands.submit({'task_id': task_id, 'provider_peer_id': 'synthetic-provider',
+                     'service_id': 'model', 'prompt': 'Synthetic preflight request'})
+    deadline = time.monotonic() + 5
+    result = {}
+    while time.monotonic() < deadline:
+        result = commands.status(task_id)
+        if result.get('state') == 'failed':
+            break
+        time.sleep(0.01)
+    assert result.get('error_code') == expected, result
+    assert client.get('/api/local/llm/orders').json()['orders'] == []
+    assert client.get('/api/local/task-balance').json() == before
+
+
 @pytest.mark.parametrize("retention", [0, 3600])
 def test_existing_consumer_result_is_archived_before_transient_ack(tmp_path, monkeypatch, retention):
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")

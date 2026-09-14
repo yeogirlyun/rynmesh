@@ -31,7 +31,7 @@ from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
 
 from . import runtime_native
-from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
+from .adapters import RUNTIME_ERROR_CODES, AdapterError, LLMAdapter, adapter_from_manifest
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_commands import ConsumerCommands
 from .lifecycle import (
@@ -111,6 +111,8 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
+    if message in RUNTIME_ERROR_CODES or message == "service_unhealthy":
+        return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
     if "capacity_exhausted" in message or "provider is busy" in message:
@@ -1607,6 +1609,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         selected = next((item for item in records
                          if item.get("peer_id") == provider_peer_id
                          and dict(item.get("service") or {}).get("package_id") == service_id), None)
+        if selected and (selected.get("ready") is False or dict(selected.get("health") or {}).get("ok") is False):
+            health_code = dict(selected.get("health") or {}).get("error_code")
+            code = health_code if isinstance(health_code, str) and health_code in RUNTIME_ERROR_CODES else "service_unhealthy"
+            raise HTTPException(status_code=409, detail=code)
         if not selected or not selected.get("online"):
             raise HTTPException(status_code=409, detail="service is absent, stale, offline, or unhealthy")
         if _record_is_stale(selected.get("updated_at")):

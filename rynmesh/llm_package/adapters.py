@@ -156,13 +156,13 @@ class OpenAICompatibleAdapter:
             names = [str(item.get("id") or item.get("name") or item.get("model") or "") for item in models]
             selected = self.model or next((name for name in names if name), "")
             if self.model and self.model not in names:
-                return {"ok": False, "error": "configured model not reported", "model_count": len(models)}
+                return {"ok": False, "error": "configured model not reported", "error_code": "model_not_found", "model_count": len(models)}
             if not self.model:
                 self.model = selected
-            return {"ok": bool(selected), "model_count": len(models), "model": selected,
+            return {"ok": bool(selected), **({"error_code": "model_not_ready"} if not selected else {}), "model_count": len(models), "model": selected,
                     "latency_ms": int((time.monotonic() - started) * 1000)}
         except AdapterError as exc:
-            return {"ok": False, "error": str(exc), "latency_ms": int((time.monotonic() - started) * 1000)}
+            return {"ok": False, "error": str(exc), "error_code": exc.code, "latency_ms": int((time.monotonic() - started) * 1000)}
 
     def capabilities(self) -> dict[str, Any]:
         if not self.model and not self.health().get("ok"):
