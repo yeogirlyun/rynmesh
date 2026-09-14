@@ -13,7 +13,7 @@ import type {
   LLMSetupRequest,
   TaskBalanceSummary,
 } from "../domain/nodeClient";
-import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
+import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { JobCapacity, WorkResult } from "../domain/types";
 
 const VEO_CAPABILITY = "signal50.veo_motion.v1";
@@ -865,7 +865,7 @@ export default function Services() {
           </label>
           {selectedLlm ? (
             <div className="service-result">
-              <Chip tone={selectedLlm.online ? "ok" : "danger"}>{selectedLlm.online ? "online" : "offline"}</Chip>
+              <Chip tone={selectedLlm.online ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</Chip>
               <span>
                 {selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}
                 {` · Context ${selectedLlm.service.context_window} · max output ${selectedLlm.service.max_output_tokens}`}
@@ -909,7 +909,7 @@ export default function Services() {
               Final settlement uses actual usage; unused reservation is released.
             </small>
             {!selectedLlm ? <Chip tone="warn">Choose a Provider</Chip> : null}
-            {selectedLlm && !selectedLlm.online ? <Chip tone="danger">Provider offline</Chip> : null}
+            {selectedLlm && !selectedLlm.online ? <Chip tone="warn">{llmServiceAvailability(selectedLlm)}</Chip> : null}
             {selectedLlm?.capacity?.available === 0 ? <Chip tone="warn">Provider busy</Chip> : null}
             {!maxTokensValid ? <Chip tone="danger">Enter 1–{selectedLlm?.service.max_output_tokens || "provider max"} whole tokens</Chip> : null}
             {!contextWithinProviderLimit ? <Chip tone="danger">Prompt plus output exceeds the Provider context window</Chip> : null}

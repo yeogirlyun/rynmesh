@@ -49,7 +49,9 @@ def main():
             row = {"name": path.relative_to(home).as_posix()}
             with path.open("rb") as source:
                 row["bytes"] = source.seek(0, 2)
-                if args.offline or job.get("state") in {"failed", "cancelled", "succeeded"}:
+                # The managed downloader publishes .gguf only after verifying
+                # the complete .part file; runtime preparation may still run.
+                if args.offline or path.suffix == ".gguf" or job.get("state") in {"failed", "cancelled", "succeeded"}:
                     source.seek(0)
                     row["sha256"] = hashlib.file_digest(source, "sha256").hexdigest()
             files.append(row)

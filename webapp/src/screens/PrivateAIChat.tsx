@@ -14,7 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LLM_TERMINAL_STATES, llmServiceRecordKey } from "../domain/llmOrders";
+import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
@@ -514,7 +514,8 @@ export default function PrivateAIChat() {
               <Link to="/ask">History and model selection</Link>
               <span>{selectedService.service.model_alias}</span>
               <div className={styles.modelStatus}>
-                <span className={styles.statusBadge}>{selectedService.online ? selectedService.capacity?.available === 0 ? "Busy" : "Available in discovery" : "Not ready or unreachable"}</span>
+                <span className={styles.statusBadge}>{llmServiceAvailability(selectedService)}</span>
+                {selectedService.access === "self" && !selectedService.online && <Link to="/services/manage">Manage local model</Link>}
                 <span className={styles.statusBadge}><LockKeyhole size={11} /> Encrypted</span>
               </div>
             </div>

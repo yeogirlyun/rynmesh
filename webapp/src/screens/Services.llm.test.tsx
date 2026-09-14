@@ -348,8 +348,24 @@ describe("Services local LLM flow", () => {
     const service = (await makeFixtureNodeClient().listLLMServices())[0];
     const { submit } = renderServices({ services: [{ ...service, online: false }] });
 
-    expect(await screen.findByText("Provider offline")).toBeInTheDocument();
+    expect((await screen.findAllByText("Availability unknown — refresh services")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a stopped local model distinct from an offline node and offers runtime recovery", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0];
+    const { user, client, submit } = renderServices({
+      services: [{ ...service, access: "self", ready: false, online: false }],
+      providerStatus: { configured: true, ready: false, online: false, service: service.service,
+        lifecycle: { runtime: { installed: true, running: false, status: "stopped" } } },
+    });
+    expect((await screen.findAllByText("Local model not ready — start it or check model settings")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Provider offline")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
+    const start = vi.spyOn(client, "runLLMServiceAction");
+    await user.click(screen.getByRole("button", { name: "Start runtime" }));
+    expect(start).toHaveBeenCalledWith("start");
     expect(submit).not.toHaveBeenCalled();
   });
 
