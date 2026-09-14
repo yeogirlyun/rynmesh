@@ -405,9 +405,12 @@
       "scenario": "从服务 A 切换 B",
       "expected": "显示 B 接收方；A 历史保持绑定；未经确认 B 收不到旧内容",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 two-node switch/recovery follow-up: Two actual native-model nodes: browser pairing and separate AI grant, reviewed recipient switch, cancel with no new order, then a separate empty friend conversation. No old messages/context copied; friend returned a real answer with one settlement. All pre-existing conversation digests on both nodes remained unchanged through switch and restart.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/model-switch-recovery-20260914.md",
+        "docs/acceptance/ask-ryn-development/model-switch-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/running-recovery-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -429,11 +432,14 @@
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: An attempted in-progress cancellation case completed generation before cancellation could be requested. No cancellation request was sent; this is not cancellation acceptance. Completed-task restart preservation was verified separately.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: An attempted in-progress cancellation case completed generation before cancellation could be requested. No cancellation request was sent; this is not cancellation acceptance. Completed-task restart preservation was verified separately. 2026-09-14 two-node switch/recovery follow-up: Production Owner APIs observed a real remote Provider running before cancelling: response remained running/cancel_requested, final cancelled, one hold/release and no settlement/income. A second real running task was interrupted by stopping only the dedicated consumer; restart recovered the same task as failed/consumer_restarted_before_completion. Provider could finish independently; no duplicate order/settlement. Browser Check original task only checked that failed task. Browser in-progress cancellation and actual timeout remain unverified.",
       "evidence": [
         "docs/acceptance/ask-ryn-development/README.md",
         "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
-        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/model-switch-recovery-20260914.md",
+        "docs/acceptance/ask-ryn-development/model-switch-checkpoints-20260914.json",
+        "docs/acceptance/ask-ryn-development/running-recovery-20260914.json"
       ],
       "implementation_commit": ""
     },
