@@ -7,8 +7,8 @@
       "document": "01-first-reading.md",
       "scenario": "干净安装、正常网络、无模型与好友",
       "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run. 2026-09-14 browser follow-up: Fresh unseeded Windows production-node browser run: real public content ready at 26.80 seconds; actual open and bookmark completed at 167.15 seconds from initial node startup, including an intentional unfinished-guide restart. No model or friends configured. This is not installation or packaged-desktop timing. 2026-09-14 all-source failure acceptance exposed synthetic starter cards counted as available recommendations in an empty node. The endpoint now returns only real candidates and rejects starter feedback; browser after restart showed zero available recommendations and an actionable empty state.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run. 2026-09-14 browser follow-up: Fresh unseeded Windows production-node browser run: real public content ready at 26.80 seconds; actual open and bookmark completed at 167.15 seconds from initial node startup, including an intentional unfinished-guide restart. No model or friends configured. This is not installation or packaged-desktop timing. 2026-09-14 all-source failure acceptance exposed synthetic starter cards counted as available recommendations in an empty node. The endpoint now returns only real candidates and rejects starter feedback; browser after restart showed zero available recommendations and an actionable empty state. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
@@ -16,70 +16,81 @@
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
         "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
         "docs/acceptance/first-reading-development/all-sources-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md",
+        "docs/product-briefs/TRY_CANDIDATE.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ02",
       "document": "01-first-reading.md",
       "scenario": "关闭未完成引导后重启",
       "expected": "应用可用，首页可继续，未错误标记完成",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser Continue later before opening preserved incomplete state; node restart offered Continue first reading. Resuming opened a real article without crediting an earlier failed/absent action. Packaged desktop remains untested.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser Continue later before opening preserved incomplete state; node restart offered Continue first reading. Resuming opened a real article without crediting an earlier failed/absent action. Packaged desktop remains untested. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ03",
       "document": "01-first-reading.md",
       "scenario": "收藏并阅读后重启",
       "expected": "收藏仅一条，阅读位置可恢复",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance. 2026-09-14: the real public-source HTTP run saved one BBC article twice without duplicates, stored progress 0.37, restarted the node to a different PID, and recovered the exact history record and matching cached body hash. This proves storage/API recovery, not desktop scroll restoration. 2026-09-14 browser follow-up: Actual browser My reading found one saved public article at 16%; process restart retained the exact history digest and reopening visibly restored the middle of the article. Final restart retained the same bookmarked record and approximately 16% position. Ordinary reading view now supports save/remove with confirmed receipts.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance. 2026-09-14: the real public-source HTTP run saved one BBC article twice without duplicates, stored progress 0.37, restarted the node to a different PID, and recovered the exact history record and matching cached body hash. This proves storage/API recovery, not desktop scroll restoration. 2026-09-14 browser follow-up: Actual browser My reading found one saved public article at 16%; process restart retained the exact history digest and reopening visibly restored the middle of the article. Final restart retained the same bookmarked record and approximately 16% position. Ordinary reading view now supports save/remove with confirmed receipts. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/device-sync-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
         "docs/acceptance/first-reading-development/public-source-http-20260914.json",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ04",
       "document": "01-first-reading.md",
       "scenario": "一个来源失败，单独重试",
       "expected": "显示对应错误与失败次数；正常来源内容保留且不强制重抓",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: retrying one genuinely failed YouTube source updated its check time and failure count from 2 to 3 while all 13 other source-health records remained unchanged and 30 items remained available. The source still failed; successful network recovery and UI interaction are not claimed. 2026-09-14 browser follow-up: Browser added an independent HTTP source, then retried real 503 and recovery to 200. Cached item, failure count and check/success times were visible; all 14 other source-health records stayed exactly unchanged on both targeted retries. Reading data survived. Packaged desktop remains untested.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: retrying one genuinely failed YouTube source updated its check time and failure count from 2 to 3 while all 13 other source-health records remained unchanged and 30 items remained available. The source still failed; successful network recovery and UI interaction are not claimed. 2026-09-14 browser follow-up: Browser added an independent HTTP source, then retried real 503 and recovery to 200. Cached item, failure count and check/success times were visible; all 14 other source-health records stayed exactly unchanged on both targeted retries. Reading data survived. Packaged desktop remains untested. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
         "docs/acceptance/first-reading-development/public-source-http-20260914.json",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ05",
       "document": "01-first-reading.md",
       "scenario": "全部来源断网，分别准备有缓存和无缓存",
       "expected": "有缓存可读且有标记；无缓存有恢复入口，联网重试后可用",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual browser with a fresh production node and per-process HTTPS fault proxy: all 14 default sources failed with no cache, no history and an incomplete first-success state; UI offered retry. Restoring genuine TLS and clicking Refresh recovered all 14 sources and 30 real recommendations; opened and saved a public article. Blocking all 14 again retained 30 recommendations, 13 cached sources and original success times. Browser reopened the body while blocked, restarted the node with the exact saved history retained and reopened again; only one upstream article request occurred across three opens. Final online refresh recovered 13/14 sources, kept 30 recommendations and one saved record; Hacker News remained genuinely unavailable. Browser source-failure evidence does not prove packaged desktop, full-device offline resources or the common gates.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual browser with a fresh production node and per-process HTTPS fault proxy: all 14 default sources failed with no cache, no history and an incomplete first-success state; UI offered retry. Restoring genuine TLS and clicking Refresh recovered all 14 sources and 30 real recommendations; opened and saved a public article. Blocking all 14 again retained 30 recommendations, 13 cached sources and original success times. Browser reopened the body while blocked, restarted the node with the exact saved history retained and reopened again; only one upstream article request occurred across three opens. Final online refresh recovered 13/14 sources, kept 30 recommendations and one saved record; Hacker News remained genuinely unavailable. Browser source-failure evidence does not prove packaged desktop, full-device offline resources or the common gates. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/all-sources-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ06",
@@ -102,42 +113,48 @@
       "document": "01-first-reading.md",
       "scenario": "分别反馈 More/Less/Hide，再撤销一条",
       "expected": "操作、时间和信号可见；仅撤销指定操作，重新计算排名，重启保持",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser More/Less/Hide displayed time and signal explanations; undo changed only the selected event. A later successful Less replaced the earlier More for that item. Four resulting events including undone/replaced states survived node restart exactly.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser More/Less/Hide displayed time and signal explanations; undo changed only the selected event. A later successful Less replaced the earlier More for that item. Four resulting events including undone/replaced states survived node restart exactly. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ08",
       "document": "01-first-reading.md",
       "scenario": "收藏/反馈写入失败，恢复后重试",
       "expected": "不伪造成功；恢复后只有一条记录",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Real Windows file-share locks independently blocked consumption and profile atomic replacement. Browser reported unconfirmed saves and kept prior state. After release, retries produced one bookmarked record and one additional successful feedback event; unrelated events unchanged. Both datasets survived node restart exactly. This does not complete the packaged-platform/common gates.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Real Windows file-share locks independently blocked consumption and profile atomic replacement. Browser reported unconfirmed saves and kept prior state. After release, retries produced one bookmarked record and one additional successful feedback event; unrelated events unchanged. Both datasets survived node restart exactly. This does not complete the packaged-platform/common gates. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ09",
       "document": "01-first-reading.md",
       "scenario": "完成后再次启动",
       "expected": "不强制重复引导，能继续阅读并找到连接朋友入口",
-      "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: After final process restart, browser Home showed real recommendations, Continue reading and Friends without forced onboarding. Completion screen had offered Connect a friend. Packaged desktop remains untested.",
+      "status": "passed",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: After final process restart, browser Home showed real recommendations, Continue reading and Friends without forced onboarding. Completion screen had offered Connect a friend. Packaged desktop remains untested. 2026-09-14 scoped review: this individual case passes for the authorized Windows installed-wheel/browser scope, reusing its cited production-browser and persistence evidence. macOS and public-network checks are waived. Common gates remain separately tracked; this is not an all-product completion claim.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/product-briefs/ACCEPTANCE_SCOPE.md",
+        "docs/acceptance/candidate-delivery/local-case-review-20260914.md"
       ],
-      "implementation_commit": ""
+      "implementation_commit": "1829eb20296cb3d5ceb23e6409d57ae686a3e6a9"
     },
     {
       "id": "READ10",
@@ -145,11 +162,13 @@
       "scenario": "导出/擦除推荐数据，检查日志与网络",
       "expected": "解释记录纳入相应范围，画像不发给模型或外部服务，日志无私有正文",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual Windows browser/production-node follow-up: JSON export includes four feedback events with matching explanation and undo fields. Export failure after stopping the node now shows a focused error; keyboard retry after restart requests a new download. Reset cancellation and real profile write failure preserved all events; releasing the file lock and retrying cleared feedback while retaining exact reading history, cache and source catalog. Restart retained zero feedback, and the browser still showed the saved article at 16%. Forwarded unauthenticated export returned 401; checked identity keys and 12 cached body blocks were absent from export or the applicable audit/public-node fields. A recording-provider test verified raw profile/feedback canaries are excluded from generated summary requests. Browser download persistence, old backup/interrupted-file recovery, all logs/diagnostics/network traffic and packaged desktop remain unverified; no full privacy pass is claimed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual Windows browser/production-node follow-up: JSON export includes four feedback events with matching explanation and undo fields. Export failure after stopping the node now shows a focused error; keyboard retry after restart requests a new download. Reset cancellation and real profile write failure preserved all events; releasing the file lock and retrying cleared feedback while retaining exact reading history, cache and source catalog. Restart retained zero feedback, and the browser still showed the saved article at 16%. Forwarded unauthenticated export returned 401; checked identity keys and 12 cached body blocks were absent from export or the applicable audit/public-node fields. A recording-provider test verified raw profile/feedback canaries are excluded from generated summary requests. Browser download persistence, old backup/interrupted-file recovery, all logs/diagnostics/network traffic and packaged desktop remain unverified; no full privacy pass is claimed. 2026-09-14 Chrome installed-candidate export saved a 12535-byte JSON file; six stable field groups match the node. An earlier 18622-byte download contains all four recorded feedback IDs and the exact recorded profile digest. Download persistence is now verified; broader log/network privacy audit remains open.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/privacy-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/privacy-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/privacy-checkpoints-20260914.json",
+        "docs/acceptance/candidate-delivery/reading-export-file-20260914.md",
+        "docs/acceptance/candidate-delivery/reading-export-file-20260914.json"
       ],
       "implementation_commit": ""
     },
