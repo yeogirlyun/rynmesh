@@ -18,14 +18,20 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home', type=Path, required=True)
-    parser.add_argument('--target', choices=('consumption.json', 'recommendation-profile.json'), required=True)
+    parser.add_argument('--target', choices=('consumption.json', 'recommendation-profile.json', 'ask-ryn/history.json'), required=True)
     args = parser.parse_args()
     home = args.home.resolve()
-    assert os.name == 'nt' and home.name.startswith('rynmesh-first-reading-acceptance-')
-    marker = json.loads((home / '.first-reading-fixture.json').read_text(encoding='utf-8'))
-    assert marker['kind'] == 'ryn.first-reading-acceptance.v1'
+    assert os.name == 'nt'
+    if args.target == 'ask-ryn/history.json':
+        assert home.name == 'rynmesh-ai-recovery-acceptance'
+        marker = json.loads((home / '.ai-recovery-fixture.json').read_text(encoding='utf-8'))
+        assert marker['kind'] == 'ryn.ai-recovery-acceptance.v1'
+    else:
+        assert home.name.startswith('rynmesh-first-reading-acceptance-')
+        marker = json.loads((home / '.first-reading-fixture.json').read_text(encoding='utf-8'))
+        assert marker['kind'] == 'ryn.first-reading-acceptance.v1'
     path = (home / args.target).resolve()
-    assert path.parent == home and path.is_file()
+    assert path.is_relative_to(home) and path.is_file()
     api = ctypes.WinDLL('kernel32', use_last_error=True)
     api.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
         wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
