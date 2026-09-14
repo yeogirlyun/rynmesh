@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { digestApi, type DiscoveryStatus } from "../domain/digestClient";
@@ -14,6 +14,32 @@ const status = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("Source health", () => {
+  it("distinguishes sources never checked from a failed first check without inventing success or cache", () => {
+    const fresh = {
+      ...status,
+      source_health: ["Built-in feed", "Custom feed"].map((title, index) => ({
+        ...status.source_health[0], id: `fresh-${index}`, title, ok: false, status: "not_checked",
+        item_count: 0, last_checked_unix: 0, last_success_unix: 0, consecutive_failures: 0,
+      })),
+    } as DiscoveryStatus;
+    const { rerender } = render(<SourceHealthPanel status={fresh} onRefresh={vi.fn()} />);
+    for (const row of screen.getAllByRole("listitem")) {
+      expect(within(row).getByText("Not checked")).toBeInTheDocument();
+      expect(within(row).getByText(/0 items · Last checked: Never · Last success: Never · Consecutive failures: 0/)).toBeInTheDocument();
+    }
+    rerender(<SourceHealthPanel status={{ ...fresh, source_health: fresh.source_health.map((source) => ({
+      ...source, status: "failed", error: "source_fetch_failed", last_checked_unix: 120, consecutive_failures: 1,
+    })) }} onRefresh={vi.fn()} />);
+    for (const row of screen.getAllByRole("listitem")) {
+      expect(within(row).getByText("Unavailable")).toBeInTheDocument();
+      expect(within(row).getByText(/Last success: Never · Consecutive failures: 1/)).toBeInTheDocument();
+      expect(within(row).queryByText(/Last checked: Never/)).not.toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: /^Retry / })).toBeEnabled();
+    }
+    expect(screen.queryByText("Available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Using cached content")).not.toBeInTheDocument();
+  });
+
   it("shows healthy and cached source details and retries only the selected source", async () => {
     const retry = vi.spyOn(digestApi, "retrySource").mockResolvedValue({ status } as Awaited<ReturnType<typeof digestApi.retrySource>>);
     const all = vi.spyOn(digestApi, "refreshDigest");

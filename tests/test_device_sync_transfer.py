@@ -215,6 +215,39 @@ def test_scope_change_requires_both_peers_and_new_confirmation(tmp_path):
     assert mesh.left.status(mesh.pair_id)['state'] == 'confirmed'
 
 
+def test_disabling_conversation_sync_preserves_history_and_resumes_without_duplicates(tmp_path):
+    mesh = Mesh(tmp_path, ['conversations'])
+    original = sample()
+    mesh.history(mesh.a).save(original, expected_revision=0)
+    mesh.left.send(mesh.pair_id, 'conversations')
+    retained = mesh.history(mesh.b).get(original['id'])
+    old_wire = mesh.left.prepare(mesh.pair_id, 'conversations')
+
+    mesh.a.configure(mesh.pair_id, expected_revision=1, scopes=[], paused=False)
+    mesh.a.exchange_policy(mesh.pair_id)
+    current = mesh.history(mesh.a).get(original['id'])
+    message = {'id': 'completed-while-disabled', 'role': 'assistant', 'status': 'complete',
+               'content': 'A completed answer kept locally while conversation sync is disabled.',
+               'createdAt': current['updatedAt']}
+    mesh.history(mesh.a).save({**current, 'messages': [*current['messages'], message]},
+                             expected_revision=current['revision'])
+    with pytest.raises(SyncError, match='sync_scope_denied'):
+        mesh.left.send(mesh.pair_id, 'conversations')
+    with pytest.raises(SyncError):
+        mesh.right.receive(old_wire)
+    assert mesh.history(mesh.b).get(original['id']) == retained
+
+    mesh.a.configure(mesh.pair_id, expected_revision=2, scopes=['conversations'], paused=False)
+    mesh.a.exchange_policy(mesh.pair_id)
+    mesh.left.send(mesh.pair_id, 'conversations')
+    updated = mesh.history(mesh.b).get(original['id'])
+    assert updated['messages'] == [*retained['messages'], message]
+    assert updated['serviceKey'] == retained['serviceKey']
+    assert mesh.left.status(mesh.pair_id)['state'] == 'confirmed'
+    mesh.left.send(mesh.pair_id, 'conversations')
+    assert mesh.history(mesh.b).get(original['id']) == updated
+
+
 def test_conflicts_remain_visible_in_sources_and_transfer_summary(tmp_path):
     mesh = Mesh(tmp_path)
     mesh.history(mesh.a).save(sample(), expected_revision=0)
