@@ -28,6 +28,13 @@ def install_local_search(app, *, store, home, workers, messaging_key, local_cont
     if any(getattr(route, "name", "") == "local_search_status" for route in app.routes):
         return app.state.local_search.index
 
+    @app.middleware("http")
+    async def prevent_search_caching(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/local/search/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     async def call(method, *args, **kwargs):
         try:
             return await asyncio.to_thread(getattr(app.state.local_search.index, method), *args, **kwargs)

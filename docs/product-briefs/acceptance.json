@@ -692,7 +692,7 @@
       "scenario": "修改、增加和删除记录",
       "expected": "索引正常时建议 5 秒内更新；删除后旧索引也不能继续返回正文片段",
       "status": "in_progress",
-      "actual": "Original TCP rename took 6.930s. After reducing worker completion delay to 1s, two TCP samples created in 4.095/2.326s and renamed in 4.108/4.827s. Old title/deleted snippets hidden on first query; deleted direct-open denied with 409. Broader mutation paths and general gates remain pending. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete.",
+      "actual": "Original TCP rename took 6.930s. After reducing worker completion delay to 1s, two TCP samples created in 4.095/2.326s and renamed in 4.108/4.827s. Old title/deleted snippets hidden on first query; deleted direct-open denied with 409. Broader mutation paths and general gates remain pending. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete. 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
@@ -701,7 +701,9 @@
         "docs/acceptance/search-development/tcp-current.json",
         "docs/acceptance/search-development/source-isolation.md",
         "docs/acceptance/search-development/source-isolation-http.json",
-        "docs/acceptance/search-development/source-isolation-browser.json"
+        "docs/acceptance/search-development/source-isolation-browser.json",
+        "docs/acceptance/search-development/cache-privacy-20260914.md",
+        "docs/acceptance/search-development/cache-privacy-http-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -784,10 +786,12 @@
       "scenario": "查询含私有关键词，检查网络和日志",
       "expected": "搜索不上传关键词或正文，日志只记录必要状态和耗时",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/windows-browser-node.json"
+        "docs/acceptance/search-development/windows-browser-node.json",
+        "docs/acceptance/search-development/cache-privacy-20260914.md",
+        "docs/acceptance/search-development/cache-privacy-http-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -1288,8 +1292,11 @@
       "scenario": "权限与隐私",
       "expected": "未授权请求由节点拒绝；私有内容、会话和秘密不进入普通日志、诊断或公开注册信息",
       "status": "pending",
-      "actual": "",
-      "evidence": [],
+      "actual": " 2026-09-14: Search now uses no-store in both HTTP responses and frontend requests. Regression checks first reproduced the absent header/cache policy. Real production-node TCP acceptance created and deleted a synthetic conversation via Owner API: nine success/error responses forbid caching, original open returns 200 then 409 after deletion and the query becomes empty. A separate real-store regression verifies deletion gating while the stale index still exists. Scoped backend 24 and frontend 13 checks passed; TypeScript/build passed. This does not measure actual browser cache retention, cross-node revocation, complete traffic/log privacy or packaged platforms.",
+      "evidence": [
+        "docs/acceptance/search-development/cache-privacy-20260914.md",
+        "docs/acceptance/search-development/cache-privacy-http-20260914.json"
+      ],
       "implementation_commit": ""
     },
     {

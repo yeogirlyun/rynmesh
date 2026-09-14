@@ -9,7 +9,7 @@ export type SearchPage = { results: SearchResult[]; total: number; next_cursor: 
 export type SearchDocument = Omit<SearchResult, "snippet" | "title_match"> & { text: string; reading_record?: ConsumptionRecord; offline_key?: string };
 export type SearchRequest = { query: string; kind?: string; source?: string; friend_id?: string; after?: number; before?: number; sort?: string; cursor?: string };
 async function request<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(nodeControlUrl(`/search${path}`), { credentials: "include", signal,
+  const response = await fetch(nodeControlUrl(`/search${path}`), { credentials: "include", cache: "no-store", signal,
     method: body === undefined ? "GET" : "POST", headers: { "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) {
