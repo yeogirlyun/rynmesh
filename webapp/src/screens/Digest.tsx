@@ -318,6 +318,7 @@ export default function Digest() {
   if (loading) return <LoadingPanel />;
 
   const items = digest?.items ?? [];
+  const allSourcesUnavailable = !!discovery?.source_count && discovery.failed_sources === discovery.source_count;
   const syncedReading = viewer ? consumption.find((record) => record.item_id === viewer.items[viewer.index]?.item_id
     && record.sync_revisions?.reading && !["video", "audio", "image"].includes(record.item.content_kind ?? "document")) : undefined;
   const generated = digest?.generated_at_unix ? timeAgo(digest.generated_at_unix) : null;
@@ -357,11 +358,11 @@ export default function Digest() {
         <div className="recommendation-status-heading">
           <div>
             <span className="eyebrow">Discovery health</span>
-            <h2>{discovery?.item_count ? `${discovery.item_count} items are ready` : "Ryn is collecting your first items"}</h2>
+            <h2>{discovery?.item_count ? `${discovery.item_count} items are ready` : allSourcesUnavailable ? "Content sources are unavailable" : "Ryn is collecting your first items"}</h2>
             <p>{discovery?.message || "The background agent is preparing its first zero-setup review."}</p>
           </div>
           <Chip tone={discovery?.phase === "error" ? "danger" : discovery?.degraded ? "warn" : discovery?.item_count ? "ok" : "info"}>
-            {discovery?.phase === "refreshing" ? "reviewing now" : discovery?.degraded ? "using healthy sources" : discovery?.item_count ? "ready" : "starting"}
+            {discovery?.phase === "refreshing" ? "reviewing now" : allSourcesUnavailable ? discovery?.cached_sources ? "using cached content" : "waiting for connection" : discovery?.degraded ? "using healthy sources" : discovery?.item_count ? "ready" : "starting"}
           </Chip>
         </div>
         <div className="recommendation-readiness-grid">
@@ -369,7 +370,7 @@ export default function Digest() {
             <CheckCircle2 size={18} />
             <span>Public sources</span>
             <strong>{discovery ? `${discovery.healthy_sources}/${discovery.source_count} healthy` : "Checking"}</strong>
-            <p>{discovery?.cached_sources ? `${discovery.cached_sources} unavailable source${discovery.cached_sources === 1 ? " is" : "s are"} serving cached items.` : "Each source is checked independently, so one failure cannot blank your feed."}</p>
+            <p>{discovery?.cached_sources ? `${discovery.cached_sources} unavailable source${discovery.cached_sources === 1 ? " is" : "s are"} serving cached items.` : allSourcesUnavailable ? "No cached recommendations are available. Check your connection and use Refresh to retry." : "Each source is checked independently, so one failure cannot blank your feed."}</p>
           </div>
           <div>
             <Clock3 size={18} />
@@ -387,7 +388,7 @@ export default function Digest() {
         {discovery?.failed_sources ? (
           <div className="recommendation-runtime-note">
             <AlertTriangle size={15} />
-            {discovery.failed_sources} source{discovery.failed_sources === 1 ? " is" : "s are"} temporarily unavailable. Ryn kept the remaining feed usable and scheduled an earlier retry.
+            {allSourcesUnavailable ? "All sources are temporarily unavailable. Check your connection and use Refresh to retry." : `${discovery.failed_sources} source${discovery.failed_sources === 1 ? " is" : "s are"} temporarily unavailable. Ryn kept the remaining feed usable and scheduled an earlier retry.`}
           </div>
         ) : null}
       </Panel>
@@ -547,9 +548,9 @@ export default function Digest() {
       ) : (
         <EmptyState
           icon={NavIcons.digest}
-          title={sources.length ? "The agent is reviewing fresh content" : "Starting proactive discovery"}
+          title={allSourcesUnavailable ? "No content available yet" : sources.length ? "The agent is reviewing fresh content" : "Starting proactive discovery"}
           body={
-            sources.length
+            allSourcesUnavailable ? "Check your connection and use Refresh to retry. No model is required." : sources.length
               ? "This page updates after the current review. You can request an immediate refresh above."
               : "Default sources are installed automatically; no setup is required."
           }

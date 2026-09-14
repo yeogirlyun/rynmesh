@@ -26,7 +26,7 @@ from . import transport_plugins as _transport_plugins  # noqa: F401 — register
 from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
-from .recommendation_profile import RecommendationProfileStore, starter_items
+from .recommendation_profile import RecommendationProfileStore
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
 from .transport import Transport, TransportError, get_transport
@@ -1873,40 +1873,11 @@ def create_app(store: RynmeshStore | None = None):
         now_unix = time.time()
         items = network_content(control_network_id())
         items.extend(_digest_service().recommendation_items())
-        has_starters = False
-        if not any(
-            str(item.get("fetch_status", "")) not in {"local", "fetched_full"}
-            and str(item.get("safety_outcome", "")) != "blocked"
-            for item in items
-        ):
-            items.extend(
-                starter_items(
-                    _recommendation_profile.get(),
-                    seed_key=active_store.peer_id,
-                    now_unix=now_unix,
-                )
-            )
-            has_starters = True
         profile_signals = _recommendation_profile.signals()
-        recommendations = recommendation_service.recommend_from_items(
-            items,
-            now_unix=now_unix,
-            query=str(body.get("query", "") or ""),
-            limit=int(body.get("limit", 6) or 6),
-            profile=profile_signals,
-        )
-        if recommendations or body.get("query") or has_starters:
-            return recommendations
-        items.extend(
-            starter_items(
-                _recommendation_profile.get(),
-                seed_key=active_store.peer_id,
-                now_unix=now_unix,
-            )
-        )
         return recommendation_service.recommend_from_items(
             items,
             now_unix=now_unix,
+            query=str(body.get("query", "") or ""),
             limit=int(body.get("limit", 6) or 6),
             profile=profile_signals,
         )
@@ -1944,13 +1915,6 @@ def create_app(store: RynmeshStore | None = None):
         content_id = str(body.get("contentId", "") or "")
         candidates = network_content(control_network_id())
         candidates.extend(_digest_service().recommendation_items())
-        candidates.extend(
-            starter_items(
-                _recommendation_profile.get(),
-                seed_key=active_store.peer_id,
-                now_unix=time.time(),
-            )
-        )
         item = next(
             (candidate for candidate in candidates if candidate.get("content_id") == content_id),
             None,
