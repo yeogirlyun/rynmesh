@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--home', type=Path, required=True)
     parser.add_argument('--label', required=True)
+    parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     home = args.home.resolve()
     if not home.name.startswith('rynmesh-first-reading-acceptance-'):
@@ -55,7 +56,7 @@ def main():
             'event_id', 'content_id', 'action', 'updated_at', 'undone_at', 'active')}
             for row in signals['items']]
         observation['model_configured'] = read('llm/service/status').get('configured', False)
-    path = Path(__file__).resolve().parents[1] / 'docs/acceptance/first-reading-development/browser-checkpoints-20260914.json'
+    path = args.output or Path(__file__).resolve().parents[1] / 'docs/acceptance/first-reading-development/browser-checkpoints-20260914.json'
     evidence = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {
         'scope': 'API checkpoints supplementing actual browser actions; Windows production node, not packaged desktop',
         'fixture': home.name, 'observations': []}

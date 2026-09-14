@@ -8,13 +8,15 @@
       "scenario": "干净安装、正常网络、无模型与好友",
       "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run. 2026-09-14 browser follow-up: Fresh unseeded Windows production-node browser run: real public content ready at 26.80 seconds; actual open and bookmark completed at 167.15 seconds from initial node startup, including an intentional unfinished-guide restart. No model or friends configured. This is not installation or packaged-desktop timing.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run. 2026-09-14 browser follow-up: Fresh unseeded Windows production-node browser run: real public content ready at 26.80 seconds; actual open and bookmark completed at 167.15 seconds from initial node startup, including an intentional unfinished-guide restart. No model or friends configured. This is not installation or packaged-desktop timing. 2026-09-14 all-source failure acceptance exposed synthetic starter cards counted as available recommendations in an empty node. The endpoint now returns only real candidates and rejects starter feedback; browser after restart showed zero available recommendations and an actionable empty state.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/home-recovery-20260914.md",
         "docs/acceptance/first-reading-development/public-source-http-20260914.json",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/acceptance/first-reading-development/all-sources-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -71,9 +73,11 @@
       "scenario": "全部来源断网，分别准备有缓存和无缓存",
       "expected": "有缓存可读且有标记；无缓存有恢复入口，联网重试后可用",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 actual browser with a fresh production node and per-process HTTPS fault proxy: all 14 default sources failed with no cache, no history and an incomplete first-success state; UI offered retry. Restoring genuine TLS and clicking Refresh recovered all 14 sources and 30 real recommendations; opened and saved a public article. Blocking all 14 again retained 30 recommendations, 13 cached sources and original success times. Browser reopened the body while blocked, restarted the node with the exact saved history retained and reopened again; only one upstream article request occurred across three opens. Final online refresh recovered 13/14 sources, kept 30 recommendations and one saved record; Hacker News remained genuinely unavailable. Browser source-failure evidence does not prove packaged desktop, full-device offline resources or the common gates.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/all-sources-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -83,11 +87,13 @@
       "scenario": "查看内置和自定义来源",
       "expected": "所有健康字段真实，从未检查或从未成功有明确文字",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser default/custom source health matched API during 200/503/recovery: counts, times, failures and cached status. Never-checked and never-successful branches remain unverified in this browser run.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14 browser follow-up: Browser default/custom source health matched API during 200/503/recovery: counts, times, failures and cached status. Never-checked and never-successful branches remain unverified in this browser run. 2026-09-14 actual empty-node source failure showed Last success: Never for all 14 built-in sources; cached failure retained real last-success times. Never-checked and all corresponding custom-source branches remain incompletely verified.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
         "docs/acceptance/first-reading-development/browser-recovery-20260914.md",
-        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json"
+        "docs/acceptance/first-reading-development/browser-checkpoints-20260914.json",
+        "docs/acceptance/first-reading-development/all-sources-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/network-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
