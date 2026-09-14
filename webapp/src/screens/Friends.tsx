@@ -22,11 +22,12 @@ export default function Friends() {
   const revision = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const load = useCallback(async () => {
     const [result, invitations] = await Promise.all([friendsApi.list(), friendsApi.invites()]);
-    setFriends(result.friends); setLoaded(true);
+    setFriends(result.friends); setLoaded(true); setLoadError("");
     setInvite((current) => {
       const stored = invitations.invites.find((row) => row.invite_id === current?.invite.invite_id);
       return stored && (stored.status !== "active" || Date.parse(stored.expires_at) <= Date.now()) ? null : current;
@@ -45,7 +46,7 @@ export default function Friends() {
       if (running) return;
       running = true;
       try { await load(); }
-      catch { if (active) setError("Could not load friends. Retry to restore your list."); }
+      catch { if (active) setLoadError("Could not load friends. Retry to restore your list."); }
       finally { running = false; }
     };
     void poll();
@@ -66,7 +67,7 @@ export default function Friends() {
 
   return <div className="screen-stack">
     <PageHeader eyebrow="Private sharing" title="Friends" context="Invite someone you know, review their identity, then share your first message." />
-    {error ? <div role="alert">{error} <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button></div> : null}
+    {error || loadError ? <div role="alert">{error || loadError} <Button disabled={busy} onClick={() => void act(load)}>Refresh friends</Button></div> : null}
     {notice ? <p role="status">{notice}</p> : null}
     <div className={styles.heroGrid}>
       <Panel className={styles.actionCard}>

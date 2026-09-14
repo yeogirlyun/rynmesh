@@ -19,7 +19,37 @@ beforeEach(() => {
   vi.spyOn(friendsApi, "cards").mockResolvedValue({ cards: [] });
   vi.spyOn(friendsApi, "history").mockResolvedValue({ messages: [] });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it("clears stale friend and card load warnings when background polling recovers", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.mocked(friendsApi.list).mockRejectedValueOnce(new Error("offline"));
+  vi.mocked(friendsApi.cards).mockRejectedValueOnce(new Error("offline"));
+  render(<MemoryRouter><Friends /></MemoryRouter>);
+  expect(await screen.findByText(/Could not load friends/)).toBeInTheDocument();
+  expect(await screen.findByText(/Could not refresh shared content/)).toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(screen.queryByText(/Could not load friends/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Could not refresh shared content/)).not.toBeInTheDocument();
+  expect(screen.getByText(/No friends yet/)).toBeInTheDocument();
+});
+
+it("clears a recovered message load failure without hiding an unconfirmed send", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.mocked(friendsApi.history).mockRejectedValueOnce(new Error("offline"));
+  vi.spyOn(friendsApi, "send").mockRejectedValue(new Error("Send unconfirmed"));
+  const user = userEvent.setup();
+  render(<FriendConversation friend={friend} />);
+  expect(await screen.findByText(/Could not refresh messages/)).toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(screen.queryByText(/Could not refresh messages/)).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Message"), "Pending text");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Send unconfirmed");
+  await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(screen.getByRole("alert")).toHaveTextContent("Send unconfirmed");
+  expect(screen.getByRole("button", { name: "Retry this send" })).toBeEnabled();
+});
 
 describe("Friend pairing recovery", () => {
   it("never accepts a stale preview after the pasted invite changes", async () => {

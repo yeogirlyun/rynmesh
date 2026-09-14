@@ -25,6 +25,7 @@ export default function FriendConversation({ friend, focusMessage }: { friend: F
   const [pending, setPending] = useState<SendBody | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
   useEffect(() => {
@@ -34,7 +35,7 @@ export default function FriendConversation({ friend, focusMessage }: { friend: F
   }, [loaded, focusMessage]);
   const refresh = useCallback(async () => {
     const result = await friendsApi.history(friend.peer_id);
-    if (alive.current) { setMessages(result.messages); setLoaded(true); }
+    if (alive.current) { setMessages(result.messages); setLoaded(true); setLoadError(""); }
   }, [friend.peer_id]);
   useEffect(() => {
     alive.current = true;
@@ -43,7 +44,7 @@ export default function FriendConversation({ friend, focusMessage }: { friend: F
       if (running) return;
       running = true;
       try { await refresh(); }
-      catch { if (alive.current) setError("Could not refresh messages. Retry when the local node is available."); }
+      catch { if (alive.current) setLoadError("Could not refresh messages. Retry when the local node is available."); }
       finally { running = false; }
     };
     void poll();
@@ -77,7 +78,7 @@ export default function FriendConversation({ friend, focusMessage }: { friend: F
   return <Panel>
     <h2>Messages with {friend.node_name}</h2>
     <p>Attachments: up to 5 MiB for direct delivery. The mailbox accepts envelopes up to 64 KiB including encryption; larger messages wait for a direct connection.</p>
-    {error ? <p role="alert">{error}</p> : null}
+    {error || loadError ? <p role="alert">{error || loadError}</p> : null}
     <Button disabled={busy} onClick={() => void act(refresh)}>Refresh messages</Button>
     {!loaded ? <p>Loading messages…</p> : messages.length === 0 ? <p>Send your first message.</p> : <ol aria-label="Conversation">
       {messages.map((message) => <li key={message.msg_id} id={`friend-message-${message.msg_id}`} tabIndex={-1}

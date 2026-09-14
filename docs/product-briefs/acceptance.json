@@ -159,11 +159,13 @@
       "scenario": "A 已安装，B 未安装",
       "expected": "B 凭邀请文本完成安装/打开、审核、接受和分享，无需手工改配置",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh-node HTTP pairing and first sharing passed without seeded relations or cards. Desktop installation/opening and invitation text/QR interaction remain unproven.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh-node HTTP pairing and first sharing passed without seeded relations or cards. Desktop installation/opening and invitation text/QR interaction remain unproven. 2026-09-14 fresh-node browser follow-up: Fresh unseeded nodes completed browser create/copy invitation, offline acceptance failure and same-invite retry, pairing, messages and content sharing. Package installation remains untested.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -173,11 +175,13 @@
       "scenario": "粘贴邀请但不确认",
       "expected": "身份、权限可检查，未向待审核端点请求",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Local invite inspection succeeded while the inviter process was stopped, exposed the signed identity and three sharing permissions, and created no relation. Existing route tests separately assert no outbound request during inspection; browser review remains untested in this run.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Local invite inspection succeeded while the inviter process was stopped, exposed the signed identity and three sharing permissions, and created no relation. Existing route tests separately assert no outbound request during inspection; browser review remains untested in this run. 2026-09-14 fresh-node browser follow-up: Browser review while inviter was stopped showed identity, endpoint and permissions; before confirmation the observed friend-service outgoing request count and relationships were zero.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -215,14 +219,16 @@
       "scenario": "双方互发文本、小附件、内容卡片",
       "expected": "内容完整；确认前不获取私有正文；超限附件发送前被阻止",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh peers exchanged exact text and small binary attachments through real HTTP, then shared a read/saved article, explicitly fetched its private body and shared the copy back. No document existed at the recipient before explicit fetch. Frontend oversized-file rejection remains component evidence, not a desktop file-picker check. 2026-09-14 mailbox recovery: Mailbox error explanations now distinguish recipient capacity, sender quota and rate limiting for messages and cards. Expiry is explicitly unconfirmed rather than asserting non-delivery; frontend interaction checks and production build passed, without a new browser run.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Fresh peers exchanged exact text and small binary attachments through real HTTP, then shared a read/saved article, explicitly fetched its private body and shared the copy back. No document existed at the recipient before explicit fetch. Frontend oversized-file rejection remains component evidence, not a desktop file-picker check. 2026-09-14 mailbox recovery: Mailbox error explanations now distinguish recipient capacity, sender quota and rate limiting for messages and cards. Expiry is explicitly unconfirmed rather than asserting non-delivery; frontend interaction checks and production build passed, without a new browser run. 2026-09-14 fresh-node browser follow-up: Browser bidirectional text and content cards verified identical message IDs/digests and downloaded-body digests. Recipient had zero documents/private fetches before explicit Download and read. Browser attachment branches remain untested.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
         "docs/acceptance/friends-development/product-http-20260914-d.json",
         "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
         "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
-        "docs/acceptance/friends-development/product-http-20260914-e.json"
+        "docs/acceptance/friends-development/product-http-20260914-e.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -232,14 +238,16 @@
       "scenario": "B 离线，A 发送可入邮箱消息，B 再上线",
       "expected": "先显示入队，接收确认后显示送达；重复投递仅一条",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: With the receiver stopped, the sender reported mailbox and delivered=false. The sender then stopped so the receiver could only consume the real HTTP Registry mailbox; after sender restart the signed receipt changed its status to delivered. Repeating the send retained one received message. 2026-09-14 mailbox recovery: Concurrent initial delivery/background retry previously spent multiple mailbox slots for the same logical item; bounded outgoing file locks now re-read and persist the current result around one attempt. Six concurrent same-ID message/card requests each used one envelope in the final controlled check. The original real HTTP first-sharing scenario passed again.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: With the receiver stopped, the sender reported mailbox and delivered=false. The sender then stopped so the receiver could only consume the real HTTP Registry mailbox; after sender restart the signed receipt changed its status to delivered. Repeating the send retained one received message. 2026-09-14 mailbox recovery: Concurrent initial delivery/background retry previously spent multiple mailbox slots for the same logical item; bounded outgoing file locks now re-read and persist the current result around one attempt. Six concurrent same-ID message/card requests each used one envelope in the final controlled check. The original real HTTP first-sharing scenario passed again. 2026-09-14 fresh-node browser follow-up: Browser offline send displayed mailbox/unconfirmed; recipient received with sender stopped, sender restart collected receipt; both had exactly three distinct messages.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
         "docs/acceptance/friends-development/product-http-20260914-d.json",
         "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
         "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
-        "docs/acceptance/friends-development/product-http-20260914-e.json"
+        "docs/acceptance/friends-development/product-http-20260914-e.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -249,14 +257,16 @@
       "scenario": "邮箱满、消息过期、断网、重启后重试",
       "expected": "无伪造送达，状态可恢复，不重复分享",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Sender and receiver process restarts preserved an unconfirmed mailbox message, followed by one confirmed delivery. This run does not prove mailbox quota exhaustion or message-expiry recovery. 2026-09-14 mailbox recovery: Real HTTP default quota run stored 16 envelopes and refused message 17 with sender_quota and delivered=false. Sender restart preserved the error, receiver return plus same-ID manual retry delivered exactly 17 messages, and another receiver restart preserved deduplication. Controlled file-mailbox tests also covered recipient_full, original-deadline enforcement at minute 61 after a minute-59 retry, and a late valid receipt resolving expired/unconfirmed to delivered. Desktop, different-egress and full-hour real-clock scope remain unproven.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Sender and receiver process restarts preserved an unconfirmed mailbox message, followed by one confirmed delivery. This run does not prove mailbox quota exhaustion or message-expiry recovery. 2026-09-14 mailbox recovery: Real HTTP default quota run stored 16 envelopes and refused message 17 with sender_quota and delivered=false. Sender restart preserved the error, receiver return plus same-ID manual retry delivered exactly 17 messages, and another receiver restart preserved deduplication. Controlled file-mailbox tests also covered recipient_full, original-deadline enforcement at minute 61 after a minute-59 retry, and a late valid receipt resolving expired/unconfirmed to delivered. Desktop, different-egress and full-hour real-clock scope remain unproven. 2026-09-14 fresh-node browser follow-up: Browser restart recovery retained message identities and honest delivery states. Fixed stale friend/card/message polling load errors without hiding unconfirmed action errors; 238 frontend tests passed. Other failure branches retain prior separate evidence.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
         "docs/acceptance/friends-development/product-http-20260914-d.json",
         "docs/acceptance/friends-development/mailbox-recovery-20260914.md",
         "docs/acceptance/friends-development/mailbox-quota-http-20260914-b.json",
-        "docs/acceptance/friends-development/product-http-20260914-e.json"
+        "docs/acceptance/friends-development/product-http-20260914-e.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -266,11 +276,13 @@
       "scenario": "B 在线/离线时 A 分别撤销",
       "expected": "A 立即拒绝下一次受保护请求，重启或重新发现不复活关系",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Direct old-credential probing found a real defect: rejected card-fetch authentication escaped as HTTP 500. Catching FriendError now returns 403; the final real-process run verified 200 before revocation, 403 immediately afterward with the other peer offline, and 403 after sender restart.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: Direct old-credential probing found a real defect: rejected card-fetch authentication escaped as HTTP 500. Catching FriendError now returns 403; the final real-process run verified 200 before revocation, 403 immediately afterward with the other peer offline, and 403 after sender restart. 2026-09-14 fresh-node browser follow-up: Browser revoked while recipient offline; real old-credential private fetch returned 200 before, 403 after and 403 after sender restart. Recipient later processed notice.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -280,11 +292,13 @@
       "scenario": "撤销后访问私有卡片",
       "expected": "新的正文获取被拒绝，界面说明已保存副本无法远程收回",
       "status": "in_progress",
-      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: The final real-process run denied new private-card fetching after revocation while the previously saved body remained readable. The copy warning is still backed by earlier browser/component evidence, not new desktop evidence.",
+      "actual": "Pairing, messages, content cards, explicit private document downloads and revocation have automated and local-browser evidence; recovery/privacy integration, packaged desktop and public-network acceptance remain incomplete. 2026-09-14: The final real-process run denied new private-card fetching after revocation while the previously saved body remained readable. The copy warning is still backed by earlier browser/component evidence, not new desktop evidence. 2026-09-14 fresh-node browser follow-up: Browser removal confirmation explained saved copies cannot be recalled. New private fetch rejected after revocation; recipient still opened its saved body after restart with unchanged digest.",
       "evidence": [
         "docs/acceptance/friends-development/README.md",
         "docs/acceptance/friends-development/product-http-20260914.md",
-        "docs/acceptance/friends-development/product-http-20260914-d.json"
+        "docs/acceptance/friends-development/product-http-20260914-d.json",
+        "docs/acceptance/friends-development/browser-first-sharing-20260914.md",
+        "docs/acceptance/friends-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
