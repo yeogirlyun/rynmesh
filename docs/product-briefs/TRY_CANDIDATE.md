@@ -1,6 +1,6 @@
 # 当前候选怎么试用
 
-2026-09-14。当前安装代码：`858cda5028842d659c8afd31a08a5cc6440faa27`，在首个候选 `04f6d28` 基础上修复登录页面误覆盖离线正文，以及设置页首次加载失败后一直转圈。本机已生成带前端的 Python wheel，并更新独立运行环境，继续使用原来的数据目录。当前为本机试用候选；macOS 与公网验收已由用户同意跳过，见[本轮范围确认](ACCEPTANCE_SCOPE.md)。
+2026-09-14。当前安装代码：`f486fb76d417fab96d97fcdcbeb5c8762b931b38`，在首个候选 `04f6d28` 基础上修复登录页面误覆盖离线正文，以及设置页首次加载失败后一直转圈。本机已生成带前端的 Python wheel，并更新独立运行环境，继续使用原来的数据目录。当前为本机试用候选；macOS 与公网验收已由用户同意跳过，见[本轮范围确认](ACCEPTANCE_SCOPE.md)。
 
 ## 启动
 
@@ -46,4 +46,8 @@
 
 双节点交付验证见[页面流程与限制](../acceptance/candidate-delivery/two-node-20260914.md)。
 
-最新验收复核：原始 95 条中，本轮范围内 82 条通过、13 条继续核对；不是全部产品完成声明。见[逐项结论](../acceptance/candidate-delivery/requirement-review-20260914.md)。设置加载错误修复已在安装包实际页面通过 503 → 错误聚焦 → Tab/Enter 重试恢复；18 个关键数据文件升级前后摘要保持。
+最新验收复核：原始 95 条中，本轮范围内 92 条通过、3 条继续核对；不是全部产品完成声明。见[逐项结论](../acceptance/candidate-delivery/requirement-review-20260914.md)。设置加载错误修复已在安装包实际页面通过 503 → 错误聚焦 → Tab/Enter 重试恢复；18 个关键数据文件升级前后摘要保持。
+
+最新增量：运行时依赖缺失可通过 Update runtime 修复；审计、注册诊断与原生子进程日志不再复制原始私有输入。见[本轮边界记录](../acceptance/candidate-delivery/privacy-boundaries-20260914.md)。
+
+`f486fb7` wheel 已装入同一独立环境，两个试用节点已重启并加载新资源 `index-DhKuxa6a.js`；18 个关键数据文件的升级前后摘要一致，pip check、两个节点状态和健康接口通过。[本次安装记录](../acceptance/candidate-delivery/installed-f486fb7.json)包含包 SHA256。另建空目录已实际核对八个入口，临时节点随后停止，正式试用节点继续运行。

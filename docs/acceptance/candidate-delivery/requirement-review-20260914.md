@@ -1,36 +1,20 @@
 # 原始 95 条用例：本轮范围复核
 
-2026-09-14。逐项沿用原条件，不新增验收目标。macOS 和公网按用户指令跳过；Windows 浏览器、已安装 wheel、独立回环节点和明确标识的组件/真实存储集成证据分别记录。
+2026-09-14。**92 条在本轮范围内通过，3 条继续核对**。原始需求和通过条件不变；macOS 与公网按用户指令跳过，不记为实测通过。
 
-当前结论：**82 条在本轮范围内通过，13 条继续核对**。这不是全部产品验收完成，也不是按测试数量推算的完成率。
+候选代码 `f486fb7`。本轮修复三个日志问题及受管理运行时依赖无法修复的问题；真实 Windows CPU 依赖故障和 Update runtime 恢复自检通过。最终受影响范围后端 138 passed / 17 skipped、AI 页面 34 passed，类型检查、构建及 Ruff 通过。前端其他页面沿用此前 252 项全量结果，不叠加测试次数。最终代码未重新跑完整后端套件，见[测试时间和范围](privacy-boundaries-20260914.md)。
 
-生产代码 `858cda5` 只新增设置首个加载失败的恢复；后端与已验证 `1829eb2` 相同。定向证据补充提交 `bc154ed`。全量后端已有 1482 passed / 29 skipped；本轮全量前端 252 passed / 45 files（31.93 秒），TypeScript 与 Vite 构建通过。另行执行好友取消关注、会话范围恢复各 1 项通过，来源状态组件 4 项通过；不叠加为新的全量数字。
-
-设置页回归在修复前实际失败并报告未处理 rejection；修复后错误可聚焦、Tab/Enter 重试成功。来源状态测试首次 TypeScript 检查发现测试输入用了非协议状态名，已改为真实 `failed` 并重跑通过；未修改产品状态规则。
-
-判定规则：一个功能的主流程须有实际页面证据，分支可由真实存储/加密/HTTP 与组件证据共同验证；不把每个分支重新跑成一个浏览器或硬件矩阵。每条结果写明模拟、实际与未测边界。通用门槛独立保留，未通过时不宣称整项发布完成。
+判定按逐条证据，不按测试数量或耗时推算。主流程需要实际页面，分支使用明确标识的真实存储/加密/HTTP 与组件证据。未宣称整体产品或远端 CI 验收完成。
 
 ## 尚未闭合的项目
 
 | 编号 | 缺口 |
 |---|---|
-| READ10 | 导出落盘、解释字段、画像重置及模型请求边界已有证据；完整日志/诊断与外发路径审计尚未闭合。 |
-| SHARE10 | 权限仅三项分享能力已验证；邀请/关系秘密在全部日志、诊断和导出边界的统一审计尚未闭合。 |
 | SHARE11 | 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。 |
-| ASK10 | 实际下载、删除、重启、已检查密钥和操作日志已有证据；完整推理日志/诊断与恢复副本边界待统一核对。 |
-| AI04 | 校验失败、真实模型及可执行文件缺失与恢复已验证；运行时依赖缺失分支仍须补齐。CPU 路径不要求 CUDA。 |
-| SEARCH11 | POST 查询、no-store、当前源权限重核已有证据；搜索外发与日志/诊断路径统一隐私审计仍待闭合。 |
-| SYNC13 | 阅读/会话来源、冲突恢复、旧投递屏障和协调清理已有证据；完整同步清空与远端未确认提示仍需合并复核。 |
-| G01 | 各功能空目录与空状态证据已有，但全新安装下八入口的统一覆盖尚未逐项汇总。 |
-| G02 | 八项主流程有实际页面记录；需确认所有原要求的完成动作均可从入口达成，不能以组件检查替代整条用户流程。 |
-| G03 | 本轮复现并修复设置首次加载失败永久转圈，键盘重试和 252 项前端通过；其余主要状态覆盖仍待统一复核。 |
-| G06 | 权限拒绝、加密投影和局部日志检查已执行；仍需统一审计本轮私有内容/秘密的日志、诊断、公开注册与外发边界。 |
 | G07 | 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。 |
 | G08 | 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。 |
 
 ## 逐项结果
-
-原操作与通过条件仍以 `docs/product-briefs/acceptance.json` 和八份需求文档为准；下表是最新结论，早期证据中的待验表述不自动生成新任务。
 
 | 编号 | 本轮结果 | 核对依据与边界 |
 |---|---|---|
@@ -43,7 +27,7 @@
 | READ07 | 通过 | 三种反馈、单项撤销、替代状态、信号解释及重启保留已验证。 [ACCEPTANCE_SCOPE.md](../../product-briefs/ACCEPTANCE_SCOPE.md)、[local-case-review-20260914.md](local-case-review-20260914.md) |
 | READ08 | 通过 | 真实文件占用使收藏/反馈写入失败；释放后原操作重试，记录不重复。 [ACCEPTANCE_SCOPE.md](../../product-briefs/ACCEPTANCE_SCOPE.md)、[local-case-review-20260914.md](local-case-review-20260914.md) |
 | READ09 | 通过 | 首次完成后重启不强制引导，继续阅读与好友入口可见。 [ACCEPTANCE_SCOPE.md](../../product-briefs/ACCEPTANCE_SCOPE.md)、[local-case-review-20260914.md](local-case-review-20260914.md) |
-| READ10 | 继续核对 | 导出落盘、解释字段、画像重置及模型请求边界已有证据；完整日志/诊断与外发路径审计尚未闭合。 [reading-export-file-20260914.md](reading-export-file-20260914.md)、[reading-export-file-20260914.json](reading-export-file-20260914.json) |
+| READ10 | 通过 | 导出、擦除、画像外发与当前日志边界核对完成；审计详情改为计数，历史日志不自动抹除。 [reading-export-file-20260914.json](reading-export-file-20260914.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
 | SHARE01 | 通过 | 已安装 wheel 双节点从邀请文本审核、接受至首次消息和正文分享，macOS 安装分支跳过。 [browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json)、[two-node-20260914.md](two-node-20260914.md) |
 | SHARE02 | 通过 | 邀请方离线时本地审核身份/权限，确认前观察到零好友出站请求、零关系。 [browser-first-sharing-20260914.md](../friends-development/browser-first-sharing-20260914.md)、[browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json) |
 | SHARE03 | 通过 | 三节点两次接受请求实际重叠，只建立一条关系；另一方明确提示邀请已用。 [invite-attachments-browser-20260914.md](../friends-development/invite-attachments-browser-20260914.md)、[invite-attachment-checkpoints-20260914.json](../friends-development/invite-attachment-checkpoints-20260914.json) |
@@ -53,7 +37,7 @@
 | SHARE07 | 通过 | 真实默认配额第 17 条被拒绝且重启保留；收取后同身份恢复。期限及迟到回执用受控时钟和真实文件邮箱验证。 [browser-first-sharing-20260914.md](../friends-development/browser-first-sharing-20260914.md)、[browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json) |
 | SHARE08 | 通过 | 撤销前受保护请求 200，离线撤销后及重启后均 403，旧关系不复活。 [browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json)、[two-node-20260914.md](two-node-20260914.md) |
 | SHARE09 | 通过 | 撤销确认解释不能收回独立副本，新获取拒绝；保存副本重启后仍可读。 [browser-checkpoints-20260914.json](../friends-development/browser-checkpoints-20260914.json)、[two-node-20260914.md](two-node-20260914.md) |
-| SHARE10 | 继续核对 | 权限仅三项分享能力已验证；邀请/关系秘密在全部日志、诊断和导出边界的统一审计尚未闭合。 [product-http-20260914.md](../friends-development/product-http-20260914.md)、[product-http-20260914-d.json](../friends-development/product-http-20260914-d.json) |
+| SHARE10 | 通过 | 默认分享权限、根信任不扩展、邀请/关系秘密在日志、诊断和允许字段导出中的边界核对完成。 [product-http-20260914-d.json](../friends-development/product-http-20260914-d.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
 | SHARE11 | 继续核对 | 产品双节点与配额 CI 命令已有本地实际通过结果；GitHub Actions 未执行，公网部分由用户跳过。 [mailbox-quota-http-20260914-b.json](../friends-development/mailbox-quota-http-20260914-b.json)、[product-http-20260914-e.json](../friends-development/product-http-20260914-e.json) |
 | ASK01 | 通过 | 空节点无示例会话、无模型有管理入口；真实原生模型从 Ask 入口完成问答。 [runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md)、[TRY_CANDIDATE.md](../../product-briefs/TRY_CANDIDATE.md) |
 | ASK02 | 通过 | 侧栏与主页相同会话身份、任务和原服务绑定，真实问答重启后可读。 [article-browser-20260914.md](../ask-ryn-development/article-browser-20260914.md)、[browser-checkpoints-20260914.json](../ask-ryn-development/browser-checkpoints-20260914.json) |
@@ -64,16 +48,16 @@
 | ASK07 | 通过 | 页面验证 busy、not_ready、unreachable 和实际固定端口容量不足，释放会话后恢复推理。 [peer-failure-checkpoints-20260914.json](../ask-ryn-development/peer-failure-checkpoints-20260914.json)、[peer-failure-assertions-20260914.json](../ask-ryn-development/peer-failure-assertions-20260914.json) |
 | ASK08 | 通过 | 真实 CPU 取消/中断与非零开发额度去重；页面实际取消及 120 秒超时、迟到响应、原任务核对与重启。超时页面用零费合成服务，非 GPU 停算证明。 [full-timeout-observation-20260914.json](../ask-ryn-development/full-timeout-observation-20260914.json)、[cancel-timeout-assertions-20260914.json](../ask-ryn-development/cancel-timeout-assertions-20260914.json) |
 | ASK09 | 通过 | 恶意引用作为 JSON 数据/用户材料，结构化角色及接收方保持；实际模型订单仍发原本机，结果作为文本归档。 [test_ask_context.py](../../../tests/test_ask_context.py)、[runs.py](../../../rynmesh/ask_ryn/runs.py) |
-| ASK10 | 继续核对 | 实际下载、删除、重启、已检查密钥和操作日志已有证据；完整推理日志/诊断与恢复副本边界待统一核对。 [export-privacy-browser-20260914.md](../ask-ryn-development/export-privacy-browser-20260914.md)、[export-privacy-checkpoints-20260914.json](../ask-ryn-development/export-privacy-checkpoints-20260914.json) |
-| AI01 | 通过 | Windows 原生 CPU 模型经产品页面安装恢复与真实问答，不使用 Docker；macOS 桌面跳过。 [runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md) |
+| ASK10 | 通过 | 真实导出/删除/重启与最终推理日志隔离、诊断和恢复副本范围已对齐。 [export-privacy-checkpoints-20260914.json](../ask-ryn-development/export-privacy-checkpoints-20260914.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
+| AI01 | 通过 | Windows 原生 CPU 模型经产品页面安装恢复与真实问答，不使用 Docker；macOS 桌面跳过。 [README.md](../local-ai-development/README.md)、[runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md) |
 | AI02 | 通过 | 来源、许可、资源需求可见，重试必须重新确认，真实下载安装未绕过固定摘要。 [README.md](../local-ai-development/README.md)、[runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md) |
 | AI03 | 通过 | 实际取消保留 5 MiB、节点中断保留 16 MiB，206 从检查点续传，最终正常校验并完成真实问答。 [windows-install-recovery.json](../local-ai-development/windows-install-recovery.json)、[runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md) |
-| AI04 | 继续核对 | 校验失败、真实模型及可执行文件缺失与恢复已验证；运行时依赖缺失分支仍须补齐。CPU 路径不要求 CUDA。 [lifecycle-browser-20260914.md](../local-ai-development/lifecycle-browser-20260914.md)、[lifecycle-browser-checkpoints-20260914.json](../local-ai-development/lifecycle-browser-checkpoints-20260914.json) |
+| AI04 | 通过 | 真实 Windows CPU DLL 缺失返回明确错误且不假健康；Update runtime 实际重新下载修复，自检成功，发布保持关闭。 [lifecycle-browser-checkpoints-20260914.json](../local-ai-development/lifecycle-browser-checkpoints-20260914.json)、[native-dependency-20260914.md](../local-ai-development/native-dependency-20260914.md) |
 | AI05 | 通过 | 真实节点重启保留配置与会话，页面启动模型重新检查健康，原会话可继续真实问答。 [README.md](../local-ai-development/README.md)、[runtime-recovery-20260914.md](../local-ai-development/runtime-recovery-20260914.md) |
-| AI06 | 通过 | 真实签名 Provider 请求在未授权时拒绝且模型零调用；真实双节点页面另证好友关系本身不开放 AI。 [test_ai_access_provider.py](../../../tests/test_ai_access_provider.py) |
-| AI07 | 通过 | 真实模型获准 B 调用成功；签名加密三身份集成验证 C 与 B 请求模型 Y 被拒绝。 [test_ai_access_provider.py](../../../tests/test_ai_access_provider.py) |
+| AI06 | 通过 | 真实签名 Provider 请求在未授权时拒绝且模型零调用；真实双节点页面另证好友关系本身不开放 AI。 [windows-two-node-native.json](../ai-permissions-development/windows-two-node-native.json)、[test_ai_access_provider.py](../../../tests/test_ai_access_provider.py) |
+| AI07 | 通过 | 真实模型获准 B 调用成功；签名加密三身份集成验证 C 与 B 请求模型 Y 被拒绝。 [windows-two-node-native.json](../ai-permissions-development/windows-two-node-native.json)、[test_ai_access_provider.py](../../../tests/test_ai_access_provider.py) |
 | AI08 | 通过 | 真实任务 running 后撤销，新旧权限拒绝；取消任务释放一次，完成任务各结算一次，不声称立即停算。 [README.md](../ai-permissions-development/README.md)、[windows-two-node-native.json](../ai-permissions-development/windows-two-node-native.json) |
-| AI09 | 通过 | 重启、旧版本、重新授权和重新好友关系的权限验证均拒绝继承旧授权。 [test_ai_access.py](../../../tests/test_ai_access.py) |
+| AI09 | 通过 | 重启、旧版本、重新授权和重新好友关系的权限验证均拒绝继承旧授权。 [windows-two-node-native.json](../ai-permissions-development/windows-two-node-native.json)、[test_ai_access.py](../../../tests/test_ai_access.py) |
 | AI10 | 通过 | 真实模型停止、占用导致删除失败、释放后删除成功及重启，实际空间与 10 段历史/16 笔订单对应。 [lifecycle-browser-20260914.md](../local-ai-development/lifecycle-browser-20260914.md)、[lifecycle-browser-checkpoints-20260914.json](../local-ai-development/lifecycle-browser-checkpoints-20260914.json) |
 | SEARCH01 | 通过 | 真实四类存储分别查询并从浏览器打开对应文章、好友消息和 Ask 命中。 [README.md](../search-development/README.md)、[windows-browser-node.json](../search-development/windows-browser-node.json) |
 | SEARCH02 | 通过 | 中文无空格、英文大小写及中英混合查询和 Unicode 高亮由实际页面及核心检查覆盖。 [README.md](../search-development/README.md)、[windows-browser-node.json](../search-development/windows-browser-node.json) |
@@ -85,14 +69,14 @@
 | SEARCH08 | 通过 | 真实延迟首屏及分页响应晚于新查询，页面仍保留新结果；清空和快速输入不被旧响应覆盖。 [response-order-browser-20260914.md](../search-development/response-order-browser-20260914.md)、[response-order-http-20260914.json](../search-development/response-order-http-20260914.json) |
 | SEARCH09 | 通过 | 实际进程在损坏索引重建中终止后恢复 10000 条，1004 个原始文件摘要不变。 [windows-browser-node.json](../search-development/windows-browser-node.json)、[process-recovery.json](../search-development/process-recovery.json) |
 | SEARCH10 | 通过 | 声明环境下真实存储 TCP 首屏查询 p95 1.627 秒；完整分页 10000 唯一身份。该计时不含浏览器绘制。 [real-store-scale-current.json](../search-development/real-store-scale-current.json)、[tcp-current.json](../search-development/tcp-current.json) |
-| SEARCH11 | 继续核对 | POST 查询、no-store、当前源权限重核已有证据；搜索外发与日志/诊断路径统一隐私审计仍待闭合。 [cache-privacy-20260914.md](../search-development/cache-privacy-20260914.md)、[cache-privacy-http-20260914.json](../search-development/cache-privacy-http-20260914.json) |
-| FOLLOW01 | 通过 | 默认未关注及明确关注有页面证据；真实存储/加密通信 23 项分页验证 20+3，无丢失。 [test_friend_feed.py](../../../tests/test_friend_feed.py) |
+| SEARCH11 | 通过 | 真实四类来源在禁止 TCP/UDP 与好友请求时完成本地搜索，POST 私有查询不进入日志/诊断。 [cache-privacy-http-20260914.json](../search-development/cache-privacy-http-20260914.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
+| FOLLOW01 | 通过 | 默认未关注及明确关注有页面证据；真实存储/加密通信 23 项分页验证 20+3，无丢失。 [windows-three-node.json](../friend-feed-development/windows-three-node.json)、[test_friend_feed.py](../../../tests/test_friend_feed.py) |
 | FOLLOW02 | 通过 | 真实三节点仅 B 受众，C 列表为空且直接获取拒绝。 [README.md](../friend-feed-development/README.md)、[windows-three-node.json](../friend-feed-development/windows-three-node.json) |
 | FOLLOW03 | 通过 | 页面组件确认包含现在和以后好友；四个真实密钥身份集成中新加 D 仅能读取全部好友发布。 [test_friend_feed.py](../../../tests/test_friend_feed.py)、[FriendFeed.test.tsx](../../../webapp/src/screens/FriendFeed.test.tsx) |
 | FOLLOW04 | 通过 | 保存文档及草稿不发布，真实节点其他好友列表保持空；发布另行确认。 [README.md](../friend-feed-development/README.md)、[windows-three-node.json](../friend-feed-development/windows-three-node.json) |
 | FOLLOW05 | 通过 | 实际页面发布后 51.572 秒内观察到自动更新；手动刷新及后续修订获取已有记录。仅为所记录本机环境。 [README.md](../friend-feed-development/README.md)、[windows-three-node.json](../friend-feed-development/windows-three-node.json) |
 | FOLLOW06 | 通过 | 重复刷新去重、修订变未读、真实三进程重启保留关注/版本/已读；后续页撤权另有集成覆盖。 [audience-recovery-browser-20260914.md](../friend-feed-development/audience-recovery-browser-20260914.md)、[audience-recovery-checkpoints-20260914.json](../friend-feed-development/audience-recovery-checkpoints-20260914.json) |
-| FOLLOW07 | 通过 | 实际取消关注保留副本；补充在取消后发布新条目，工作器零获取、列表为空、关系和副本不变。 [test_friend_feed.py](../../../tests/test_friend_feed.py) |
+| FOLLOW07 | 通过 | 实际取消关注保留副本；补充在取消后发布新条目，工作器零获取、列表为空、关系和副本不变。 [cleanup-browser.json](../friend-feed-development/cleanup-browser.json)、[test_friend_feed.py](../../../tests/test_friend_feed.py) |
 | FOLLOW08 | 通过 | 实际页面收窄受众与停止分享，旧新版本获取被拒绝；解析中关系撤销另由真实加密集成验证。 [audience-recovery-browser-20260914.md](../friend-feed-development/audience-recovery-browser-20260914.md)、[audience-recovery-checkpoints-20260914.json](../friend-feed-development/audience-recovery-checkpoints-20260914.json) |
 | FOLLOW09 | 通过 | Bob 离线跨越收窄，最后检查时间与旧版本保留；重连移除失权条目，独立副本可读。 [audience-recovery-browser-20260914.md](../friend-feed-development/audience-recovery-browser-20260914.md)、[audience-recovery-checkpoints-20260914.json](../friend-feed-development/audience-recovery-checkpoints-20260914.json) |
 | FOLLOW10 | 通过 | 真实文件占用导致发布失败，草稿重启保留并重试同身份成功；离线/空状态不伪造已读。 [audience-recovery-browser-20260914.md](../friend-feed-development/audience-recovery-browser-20260914.md)、[audience-recovery-checkpoints-20260914.json](../friend-feed-development/audience-recovery-checkpoints-20260914.json) |
@@ -100,31 +84,31 @@
 | OFFLINE02 | 通过 | 普通收藏初始无下载，读取未提交副本返回未下载；页面不提供离线可读按钮、不自动创建下载。 [test_offline_reading.py](../../../tests/test_offline_reading.py)、[OfflineReading.test.tsx](../../../webapp/src/screens/OfflineReading.test.tsx) |
 | OFFLINE03 | 通过 | 真实浏览器正文与本地 PNG 可读，缺图有标记；不宣称全部资源完整。 [README.md](../offline-reading-development/README.md)、[windows-browser.json](../offline-reading-development/windows-browser.json) |
 | OFFLINE04 | 通过 | 真实进程终止恢复、加密检查点重核、取消与迟到写入隔离及页面取消请求状态有对应自动证据。 [test_offline_reading.py](../../../tests/test_offline_reading.py)、[OfflineReading.test.tsx](../../../webapp/src/screens/OfflineReading.test.tsx) |
-| OFFLINE05 | 通过 | 实际页面来源不可达保留旧正文/时间；集成检查新版本校验后替换，并拒绝旧图片版本；密码页回归保持旧副本。 [test_offline_reading.py](../../../tests/test_offline_reading.py) |
-| OFFLINE06 | 通过 | 真实存储单项/总量与模拟可用空间不足拒绝且旧版可读，页面展示限制及清理动作；未填满实际磁盘。 [test_offline_reading.py](../../../tests/test_offline_reading.py) |
+| OFFLINE05 | 通过 | 实际页面来源不可达保留旧正文/时间；集成检查新版本校验后替换，并拒绝旧图片版本；密码页回归保持旧副本。 [password-gate-fix-20260914.md](../offline-reading-development/password-gate-fix-20260914.md)、[test_offline_reading.py](../../../tests/test_offline_reading.py) |
+| OFFLINE06 | 通过 | 真实存储单项/总量与模拟可用空间不足拒绝且旧版可读，页面展示限制及清理动作；未填满实际磁盘。 [windows-browser.json](../offline-reading-development/windows-browser.json)、[test_offline_reading.py](../../../tests/test_offline_reading.py) |
 | OFFLINE07 | 通过 | 实际页面清理/文件占用失败/重启/原操作恢复，释放已审核字节且保留新副本、收藏和进度，旧全文搜索清除。 [cleanup-retry-browser.json](../offline-reading-development/cleanup-retry-browser.json)、[cleanup-retry-http.json](../offline-reading-development/cleanup-retry-http.json) |
 | OFFLINE08 | 通过 | 空正文、非支持内容、HTTP 拒绝及密码页不产生可读成功记录；真实加密好友版本获取按现权限拒绝。 [test_offline_reading.py](../../../tests/test_offline_reading.py)、[test_offline_material.py](../../../tests/test_offline_material.py) |
-| OFFLINE09 | 通过 | 真实加密授权链覆盖保存、更新、撤权后拒绝新旧远程版本、源不可达重启读独立副本；撤销页面说明不远程收回。 [test_offline_material.py](../../../tests/test_offline_material.py) |
-| OFFLINE10 | 通过 | 实际延迟图片后恢复阅读区域；组件验证保存进度、关闭返回焦点、无自动外站回退、外链仅点击访问。 [OfflineReading.test.tsx](../../../webapp/src/screens/OfflineReading.test.tsx) |
-| SYNC01 | 通过 | 已安装双节点页面双端审核；真实密钥协议检查未批准、过期、重复邀请和第二设备拒绝。 [test_device_sync_pairing.py](../../../tests/test_device_sync_pairing.py) |
+| OFFLINE09 | 通过 | 真实加密授权链覆盖保存、更新、撤权后拒绝新旧远程版本、源不可达重启读独立副本；撤销页面说明不远程收回。 [README.md](../offline-reading-development/README.md)、[test_offline_material.py](../../../tests/test_offline_material.py) |
+| OFFLINE10 | 通过 | 实际延迟图片后恢复阅读区域；组件验证保存进度、关闭返回焦点、无自动外站回退、外链仅点击访问。 [windows-browser.json](../offline-reading-development/windows-browser.json)、[OfflineReading.test.tsx](../../../webapp/src/screens/OfflineReading.test.tsx) |
+| SYNC01 | 通过 | 已安装双节点页面双端审核；真实密钥协议检查未批准、过期、重复邀请和第二设备拒绝。 [two-node-20260914.md](two-node-20260914.md)、[test_device_sync_pairing.py](../../../tests/test_device_sync_pairing.py) |
 | SYNC02 | 通过 | 双端范围交集；实际收藏范围同步，集成断言未选会话/进度不读不传，字段投影排除正文和凭证。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py)、[test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
-| SYNC03 | 通过 | 真实三范围源合并与回执，保留双方原数据和原服务键；重复记录/消息与重启另有集成覆盖。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
+| SYNC03 | 通过 | 真实三范围源合并与回执，保留双方原数据和原服务键；重复记录/消息与重启另有集成覆盖。 [README.md](../device-sync-development/README.md)、[test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
 | SYNC04 | 通过 | 已声明回环路由/真实源环境下万条基线 100 次更改及确认 56.831 秒、200 回执、164476 加密 JSON 字节；首次合并另计，不含完整节点后台负载。 [scale-v4-10000-resumed.json](../device-sync-development/scale-v4-10000-resumed.json)、[scale-v4-10000-cached.json](../device-sync-development/scale-v4-10000-cached.json) |
 | SYNC05 | 通过 | 丢响应、重启、乱序、重复和本地新写入组合保留原数据，来源未落盘不确认；实际双节点状态对应。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py)、[test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
-| SYNC06 | 通过 | 并发取消优先、旧快照不复活，观察结果后明确再收藏恢复；真实因果存储与来源检查覆盖。 [test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
-| SYNC07 | 通过 | 因果算法不使用机器时间选择，向前重读有效；页面明确选 20% 后双端收敛并重启保留，不默认选最大值。 [test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
+| SYNC06 | 通过 | 并发取消优先、旧快照不复活，观察结果后明确再收藏恢复；真实因果存储与来源检查覆盖。 [README.md](../device-sync-development/README.md)、[test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
+| SYNC07 | 通过 | 因果算法不使用机器时间选择，向前重读有效；页面明确选 20% 后双端收敛并重启保留，不默认选最大值。 [README.md](../device-sync-development/README.md)、[test_device_sync_records.py](../../../tests/test_device_sync_records.py) |
 | SYNC08 | 通过 | 实际页面完整展开分支，删除冲突独立恢复；保留、再次保留与丢弃确认/取消/重启都有对应证据。 [recovery-replacement-browser.json](../device-sync-development/recovery-replacement-browser.json)、[recovery-discard-browser.json](../device-sync-development/recovery-discard-browser.json) |
-| SYNC09 | 通过 | 真实加密传输中源/副本分别写入失败不发回执；保留待确认并原请求重试成功。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
-| SYNC10 | 通过 | 安装候选实际暂停/恢复/关闭收藏范围；新增会话范围集成覆盖停传、旧报文拒绝、旧历史保留、恢复补齐无重复。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
+| SYNC09 | 通过 | 真实加密传输中源/副本分别写入失败不发回执；保留待确认并原请求重试成功。 [README.md](../device-sync-development/README.md)、[test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
+| SYNC10 | 通过 | 安装候选实际暂停/恢复/关闭收藏范围；新增会话范围集成覆盖停传、旧报文拒绝、旧历史保留、恢复补齐无重复。 [sync-policy-20260914.md](sync-policy-20260914.md)、[test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py) |
 | SYNC11 | 通过 | 安装候选移除后双端重启仍撤销，后续修改不传；集成拒绝旧认证批次并要求重新配对。 [README.md](../device-sync-development/README.md)、[sync-policy-20260914.md](sync-policy-20260914.md) |
 | SYNC12 | 通过 | 同步历史在未安装原模型时可读，绑定和材料保留；页面提示不可用，不自行换 Provider。 [README.md](../device-sync-development/README.md) |
-| SYNC13 | 继续核对 | 阅读/会话来源、冲突恢复、旧投递屏障和协调清理已有证据；完整同步清空与远端未确认提示仍需合并复核。 [reading-cleanup-browser.json](../device-sync-development/reading-cleanup-browser.json)、[reading-cleanup-http.json](../device-sync-development/reading-cleanup-http.json) |
-| G01 | 继续核对 | 各功能空目录与空状态证据已有，但全新安装下八入口的统一覆盖尚未逐项汇总。  |
-| G02 | 继续核对 | 八项主流程有实际页面记录；需确认所有原要求的完成动作均可从入口达成，不能以组件检查替代整条用户流程。  |
-| G03 | 继续核对 | 本轮复现并修复设置首次加载失败永久转圈，键盘重试和 252 项前端通过；其余主要状态覆盖仍待统一复核。 [Settings.loading.test.tsx](../../../webapp/src/screens/Settings.loading.test.tsx) |
+| SYNC13 | 通过 | 设置页本地范围清理及重启、真实加密冲突/旧投递屏障已对齐；远端明确未确认，不声明全局擦除。 [reading-cleanup-http.json](../device-sync-development/reading-cleanup-http.json)、[mainflow-and-erasure-review-20260914.md](mainflow-and-erasure-review-20260914.md) |
+| G01 | 通过 | 当前安装 wheel 另起全新空数据节点，实际页面逐一核对八入口及无模型/好友/历史的空状态。 [实际入口和状态证据](fresh-entry-states-20260914.md) |
+| G02 | 通过 | 八项任务均有真实页面入口和完成动作；复用现有主流程记录，不要求用户手工改配置或数据库。 [mainflow-and-erasure-review-20260914.md](mainflow-and-erasure-review-20260914.md) |
+| G03 | 通过 | 当前空状态、加载与既有八页面故障恢复/有内容证据逐项对齐，设置永久转圈已修复，未新增测试矩阵。 [实际入口和状态证据](fresh-entry-states-20260914.md) |
 | G04 | 通过 | 各功能专属重启用例与真实进程记录覆盖保留、恢复或明确失败，原任务身份不自动重发。 [sync-policy-20260914.md](sync-policy-20260914.md)、[model-switch-recovery-20260914.md](../ask-ryn-development/model-switch-recovery-20260914.md) |
-| G05 | 通过 | 各功能真实存储/加密与路由重试检查覆盖并发、原身份、重复投递与结算；已有页面错误不伪造成功。 [test_device_sync_transfer.py](../../../tests/test_device_sync_transfer.py)、[test_friend_feed.py](../../../tests/test_friend_feed.py) |
-| G06 | 继续核对 | 权限拒绝、加密投影和局部日志检查已执行；仍需统一审计本轮私有内容/秘密的日志、诊断、公开注册与外发边界。 [cache-privacy-20260914.md](../search-development/cache-privacy-20260914.md)、[cache-privacy-http-20260914.json](../search-development/cache-privacy-http-20260914.json) |
+| G05 | 通过 | 各功能真实存储/加密与路由重试检查覆盖并发、原身份、重复投递与结算；已有页面错误不伪造成功。 [mailbox-recovery-20260914.md](../friends-development/mailbox-recovery-20260914.md)、[README.md](../ai-permissions-development/README.md) |
+| G06 | 通过 | 节点权限拒绝、固定公开投影、模型错误与后台诊断核对完成；三个日志问题修复并回归。 [cache-privacy-http-20260914.json](../search-development/cache-privacy-http-20260914.json)、[privacy-boundaries-20260914.md](privacy-boundaries-20260914.md) |
 | G07 | 继续核对 | 阅读、搜索、发送确认、冲突和清理焦点已有证据；全应用主要流程的键盘覆盖还未形成完整结论。 [filter-combinations-20260914.md](../search-development/filter-combinations-20260914.md)、[filter-combinations-checkpoints-20260914.json](../search-development/filter-combinations-checkpoints-20260914.json) |
 | G08 | 继续核对 | 九范围 ZIP、阅读偏好 JSON 与多种协调擦除已有证据；每类新增数据的明确保留/导出/擦除范围与升级证据仍须逐项闭合。 [document-cleanup-http.json](../friends-development/document-cleanup-http.json)、[document-cleanup-browser.json](../friends-development/document-cleanup-browser.json) |
 | G09 | 通过 | 损坏搜索源、坏同步副本、模型忙碌/不可达、来源和好友失败均有独立恢复记录；阅读及 HTTP 健康保持可用。 [test_device_sync_reading_bridge.py](../../../tests/test_device_sync_reading_bridge.py)、[cancel-timeout-browser-20260914.md](../ask-ryn-development/cancel-timeout-browser-20260914.md) |
