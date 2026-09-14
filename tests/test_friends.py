@@ -74,6 +74,28 @@ def _node(tmp_path, name: str, port: int, mesh: Mesh) -> FriendService:
     return service
 
 
+def test_invite_listing_expires_without_an_accept_attempt_and_preserves_terminal_states(tmp_path):
+    mesh = Mesh()
+    alice = _node(tmp_path, 'alice', 18781, mesh)
+    bob = _node(tmp_path, 'bob', 18782, mesh)
+    now = datetime.now(UTC)
+    alice.clock = lambda: now
+    expired = alice.create_invite()
+    cancelled = alice.create_invite()
+    alice.cancel_invite(cancelled['invite']['invite_id'])
+    used = alice.create_invite()
+    bob.join(used['invite_uri'])
+    before = alice.store.state()
+    assert next(row for row in alice.list_invites() if row['invite_id'] == expired['invite']['invite_id'])['status'] == 'active'
+    alice.clock = lambda: now + timedelta(minutes=16)
+    listed = {row['invite_id']: row for row in alice.list_invites()}
+    assert listed[expired['invite']['invite_id']]['status'] == 'expired'
+    assert listed[cancelled['invite']['invite_id']]['status'] == 'cancelled'
+    assert listed[used['invite']['invite_id']]['status'] == 'used'
+    assert all('secret_hash' not in row for row in listed.values())
+    assert alice.store.state() == before
+
+
 def _pair(tmp_path):
     mesh = Mesh()
     alice = _node(tmp_path, "Alice", 18081, mesh)

@@ -109,10 +109,16 @@ class FriendService:
         return self._public_invite(signed.payload)
 
     def list_invites(self) -> list[dict[str, Any]]:
-        return [
-            {key: value for key, value in row.items() if key != "secret_hash"}
-            for row in self.store.list_invites()
-        ]
+        now_iso = self.clock().isoformat()
+        result = []
+        for row in self.store.list_invites():
+            public = {key: value for key, value in row.items() if key != "secret_hash"}
+            # Expiration does not require someone to attempt accepting the
+            # invite. Project it on reads without rewriting persisted history.
+            if public.get("status") == "active" and str(public.get("expires_at", "")) <= now_iso:
+                public["status"] = "expired"
+            result.append(public)
+        return result
 
     def cancel_invite(self, invite_id: str) -> dict[str, Any]:
         record = self.store.cancel_invite(invite_id, self.clock().isoformat())
