@@ -16,7 +16,15 @@ from urllib.parse import urlparse
 
 
 class AdapterError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "inference_failed") -> None:
+        super().__init__(message)
+        self.code = code if code in RUNTIME_ERROR_CODES else "inference_failed"
+
+
+RUNTIME_ERROR_CODES = frozenset({
+    "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
+    "runtime_connection_failed", "inference_timeout", "inference_failed",
+})
 
 
 class LLMAdapter(Protocol):
@@ -107,8 +115,25 @@ class OpenAICompatibleAdapter:
                     if task_id:
                         with self._lock:
                             self._active_responses.pop(task_id, None)
-        except (OSError, urllib.error.HTTPError) as exc:
-            raise AdapterError(f"local API request failed ({path}): {exc}") from exc
+        except urllib.error.HTTPError as exc:
+            code = "inference_failed"
+            # Read only a bounded error envelope. Never expose runtime body text,
+            # which can contain prompts, paths, or credentials.
+            try:
+                raw_error = exc.read(16 * 1024 + 1)
+                value = json.loads(raw_error) if len(raw_error) <= 16 * 1024 else None
+                detail = value.get("detail") if isinstance(value, dict) else None
+                if isinstance(detail, str) and detail in RUNTIME_ERROR_CODES:
+                    code = detail
+            except (OSError, ValueError):
+                pass
+            finally:
+                exc.close()
+            raise AdapterError(f"local API request failed: {code}", code=code) from None
+        except OSError as exc:
+            timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+            code = "inference_timeout" if timed_out else "runtime_connection_failed"
+            raise AdapterError(f"local API request failed: {code}", code=code) from None
         if len(raw) > 4 * 1024 * 1024:
             raise AdapterError("local API response exceeded 4 MiB")
         try:
