@@ -433,9 +433,10 @@
       "scenario": "查看推荐并安装",
       "expected": "来源、许可、大小和空间需求可见，确认后下载",
       "status": "in_progress",
-      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete. 2026-09-14: real production browser retained source/license/resources and required fresh confirmation before retry; normal native installation completed and publishing remained off.",
       "evidence": [
-        "docs/acceptance/local-ai-development/README.md"
+        "docs/acceptance/local-ai-development/README.md",
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -445,13 +446,14 @@
       "scenario": "下载中断、取消、重启后继续",
       "expected": "依据验证进度恢复，无重复安装，未完成不标就绪",
       "status": "in_progress",
-      "actual": "Backend recovery and rollback regressions pass. Windows production-browser acceptance retained 5 MiB after real download cancellation and 16 MiB after node termination, with equal hashes across restarts and real source 206 responses from both saved offsets. A discovered form-reset defect is fixed: managed profile, package and port return on reload, consent is renewed, and legacy jobs cannot silently retry a default API. The full real-model download is still running; final verification, inference and packaged desktop recovery remain pending.",
+      "actual": "Backend recovery and rollback regressions pass. Windows production-browser acceptance retained 5 MiB after real download cancellation and 16 MiB after node termination, with equal hashes across restarts and real source 206 responses from both saved offsets. A discovered form-reset defect is fixed: managed profile, package and port return on reload, consent is renewed, and legacy jobs cannot silently retry a default API. The full real-model download is still running; final verification, inference and packaged desktop recovery remain pending. 2026-09-14: completed the genuine previously resumed model download through runtime verification and real inference; no bypass model/runtime was copied into the installer. Packaged desktop remains untested.",
       "evidence": [
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
         "docs/acceptance/local-ai-development/model-download-recovery.md",
         "docs/acceptance/local-ai-development/setup-rollback.md",
         "docs/acceptance/local-ai-development/windows-managed-recovery.md",
-        "docs/acceptance/local-ai-development/windows-install-recovery.json"
+        "docs/acceptance/local-ai-development/windows-install-recovery.json",
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -461,12 +463,13 @@
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
       "status": "in_progress",
-      "actual": "Incomplete runtime extraction cannot be reused; downloads preserve resumable bytes on interruption. Setup rollback now verifies restored configuration and reports an unavailable model separately from file restoration failure; pending recovery is not advertised as a service. Full desktop and model recovery acceptance is incomplete.",
+      "actual": "Incomplete runtime extraction cannot be reused; downloads preserve resumable bytes on interruption. Setup rollback now verifies restored configuration and reports an unavailable model separately from file restoration failure; pending recovery is not advertised as a service. Full desktop and model recovery acceptance is incomplete. 2026-09-14: browser retry recovered from the persisted runtime checksum failure with unchanged official pins. Old discarded bytes do not establish its historical cause. Missing-model/dependency subcases remain outside this run.",
       "evidence": [
         "docs/acceptance/local-ai-development/README.md",
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
         "docs/acceptance/local-ai-development/model-download-recovery.md",
-        "docs/acceptance/local-ai-development/setup-rollback.md"
+        "docs/acceptance/local-ai-development/setup-rollback.md",
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -476,9 +479,10 @@
       "scenario": "就绪后重启问答",
       "expected": "配置保留，重新核对健康，可获得真实回答",
       "status": "in_progress",
-      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete. 2026-09-14: real browser question succeeded, node restarted to a different PID, exact history/binding survived; browser Start runtime restored health and another question in the original conversation returned correctly at zero cost.",
       "evidence": [
-        "docs/acceptance/local-ai-development/README.md"
+        "docs/acceptance/local-ai-development/README.md",
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
       ],
       "implementation_commit": ""
     },
@@ -540,9 +544,10 @@
       "scenario": "停止/移除模型后查看历史",
       "expected": "运行状态和空间更新，会话保留，对应模型入口显示不可用",
       "status": "in_progress",
-      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete.",
+      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete. 2026-09-14: browser Stop runtime updated actual readiness to false while node health remained 200 and four conversation messages remained readable. Fixed incorrect local-offline labels and added model management links. Model removal is not covered by this run.",
       "evidence": [
-        "docs/acceptance/local-ai-development/README.md"
+        "docs/acceptance/local-ai-development/README.md",
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
       ],
       "implementation_commit": ""
     },

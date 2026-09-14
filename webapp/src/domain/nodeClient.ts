@@ -32,6 +32,8 @@ export interface LLMServiceRecord {
   peer_id: string;
   node_name?: string;
   online: boolean;
+  ready?: boolean;
+  access?: "self" | "friend";
   capacity?: { available?: number; max_concurrent?: number; running?: number };
   benchmark?: { latency_ms?: number; tokens_per_second?: number };
   service: {

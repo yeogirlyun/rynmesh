@@ -6,7 +6,7 @@ import { Button, PageHeader, Panel } from "../components/ui";
 import { askHistory } from "../domain/askHistory";
 import { friendsApi } from "../domain/friendsClient";
 import { createConversation, readLegacyConversations, saveConversation, type LLMConversation } from "../domain/llmConversationStore";
-import { llmServiceRecordKey } from "../domain/llmOrders";
+import { llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { LLMServiceRecord } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 import styles from "./AskRyn.module.css";
@@ -17,12 +17,6 @@ export function conversationUrl(row: LLMConversation, continueChat = false) {
   const query = new URLSearchParams({ conversation: row.id, network: row.networkId });
   if (continueChat) { query.set("peer", row.providerPeerId); query.set("service", row.serviceKey.slice(row.providerPeerId.length + 2)); }
   return `/ask?${query}`;
-}
-
-export function serviceAvailability(service: LLMServiceRecord) {
-  if (!service.online) return "Not ready or unreachable";
-  if (service.capacity?.available === 0) return "Busy — wait or choose another service";
-  return "Available in discovery";
 }
 
 export default function AskRyn() {
@@ -150,13 +144,13 @@ function AskRynHome() {
           <label>Your draft<textarea aria-label="Your draft" rows={4} disabled={!draftReady} value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => void persistDraft(draft).catch(() => undefined)} placeholder="Write a question even before a model is ready…" /></label>
           {draftStatus ? <p role="status">{draftStatus}</p> : null}
           <Button disabled={!draftReady} onClick={() => void persistDraft(draft).catch(() => undefined)}>Save draft</Button>
-          <Link to="/services/manage">Set up a local model</Link>
+          <Link to="/services/manage">{services.some((service) => service.access === "self") ? "Manage local model" : "Set up a local model"}</Link>
           {!loading && !services.length ? <p>No model service is available. You can keep your draft, read saved history, or set up local AI.</p> : null}
           <ul className={styles.services}>{services.map((service) => <li key={llmServiceRecordKey(service)}>
             <strong>{service.service.model_alias}</strong>
             <p>{service.peer_id === node.peer_id ? "This node" : friends.includes(service.peer_id) ? "Friend" : "Remote provider"}: {service.node_name || service.peer_id}</p>
             <small>{service.peer_id} · {service.service.package_id}</small>
-            <p>{serviceAvailability(service)} · Context: {service.service.context_window} tokens</p>
+            <p>{llmServiceAvailability(service)} · Context: {service.service.context_window} tokens</p>
             <p>{service.service.pricing?.minimum === undefined ? "Price unavailable" : `Minimum ${service.service.pricing.minimum} ${service.service.pricing.currency}; input ${service.service.pricing.input_per_1k}/1k, output ${service.service.pricing.output_per_1k}/1k`}</p>
             <Button onClick={() => openService(service)}>Choose {service.service.model_alias}</Button>
           </li>)}</ul>
