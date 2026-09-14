@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -70,10 +70,49 @@ function renderServices(options: {
       </Routes>
     </MemoryRouter>,
   );
-  return { ...result, client, discover, submit, notify: context.notify, user: userEvent.setup() };
+  return { ...result, client, discover, submit, confirm: context.confirm, notify: context.notify, user: userEvent.setup() };
 }
 
 describe("Services local LLM flow", () => {
+  it.each([
+    ["configured model file is missing", /The selected model file is missing/],
+    ["the local inference runtime is not installed", /The local runtime is missing/],
+  ])("keeps an actionable lifecycle error until retry: %s", async (message, expected) => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    const { client, user } = renderServices({ providerStatus: { configured: true, online: false, service,
+      lifecycle: { mode: "managed", runtime: { managed: true, running: false } } } });
+    const action = vi.spyOn(client, "runLLMServiceAction").mockRejectedValueOnce(new Error(String(message)));
+    await user.click(await screen.findByRole("button", { name: "Start runtime" }));
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(expected);
+    expect(error).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start runtime" })).toBeEnabled());
+    action.mockResolvedValue({ ok: true });
+    await user.click(screen.getByRole("button", { name: "Start runtime" }));
+    await waitFor(() => expect(screen.queryByText(expected)).not.toBeInTheDocument());
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates model storage after confirmed deletion and reports preserved shared runtime files", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    const providerStatus: LLMProviderStatus = { configured: true, online: false, service,
+      lifecycle: { mode: "managed", runtime: { managed: true, running: false },
+        storage: { model_owned: true, model_present: true, model_bytes: 1048576 } } };
+    const { client, user, confirm, notify } = renderServices({ providerStatus });
+    const action = vi.spyOn(client, "runLLMServiceAction").mockResolvedValue({ result: { removed: ["runtime_process", "managed_model"], model_preserved: false } });
+    expect(await screen.findByText(/Model file: 1.0 MiB/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete managed model" }));
+    const review = vi.mocked(confirm).mock.calls[0][0];
+    expect(review.body).toContain("Shared native runtime files, private configuration and conversations are preserved");
+    expect(action).not.toHaveBeenCalled();
+    vi.mocked(client.getLLMServiceStatus).mockResolvedValue({ ...providerStatus, lifecycle: { ...providerStatus.lifecycle,
+      storage: { model_owned: true, model_present: false, model_bytes: 0 } } });
+    await act(async () => { await review.onConfirm(); });
+    expect(await screen.findByText(/Model file: missing · 0 MiB/)).toBeInTheDocument();
+    expect(action).toHaveBeenCalledWith("uninstall", { delete_environment: true, delete_model: true, confirm_model_delete: true });
+    expect(notify).toHaveBeenCalledWith("ok", expect.stringContaining("shared runtime files remain installed"));
+  });
+
   it("restores the managed model choices after restart and requires a fresh confirmation", async () => {
     const { client, user } = renderServices({ setupStatuses: [{
       job_id: "setup_managed_resume", state: "cancelled", stage: "cancelled", progress: 0, retryable: true,

@@ -104,6 +104,7 @@ export interface LLMProviderStatus {
     mode?: string;
     runtime?: { managed?: boolean; installed?: boolean; running?: boolean; status?: string };
     health?: Record<string, unknown>;
+    storage?: { model_owned: boolean; model_present: boolean | null; model_bytes: number | null };
     error?: string;
   };
 }
