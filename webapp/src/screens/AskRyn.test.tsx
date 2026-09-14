@@ -77,6 +77,27 @@ it("reviews the recipient and opens a separate provider conversation without for
   expect(submit).not.toHaveBeenCalled();
 });
 
+it("keeps the supplied article excerpt recoverable in archived history without a model", async () => {
+  const row = { ...createConversation({ serviceKey: "old::model", serviceName: "Old model", providerPeerId: "old", networkId: "rynmesh-main" }),
+    messages: [{ id: "answer", role: "assistant" as const, content: "Three trees", createdAt: new Date().toISOString(), status: "complete" as const,
+      contextIds: ["import:source"], contextBytes: [3] }], revision: 1 };
+  const context = vi.spyOn(askHistory, "context").mockRejectedValueOnce(new Error("Source temporarily unavailable"))
+    .mockResolvedValue({ library_id: "import:source", title: "Garden notebook", source_url: "https://example.test/garden",
+      sha256: "a".repeat(64), extraction_truncated: false, text_bytes: 11, text: "abcEXCLUDED" });
+  const { user, submit } = mount(conversationUrl(row), [], [row]);
+  await screen.findByText("Three trees");
+  await user.click(screen.getByText("Sources supplied for this answer"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Source temporarily unavailable");
+  await user.click(screen.getByRole("button", { name: "Retry source" }));
+  expect(await screen.findByText(/Supplied excerpt: 3 bytes of 11/)).toHaveTextContent("Truncated for the context budget");
+  await user.click(screen.getByText("Read supplied excerpt"));
+  expect(screen.getByText("abc")).toBeInTheDocument();
+  expect(screen.queryByText(/EXCLUDED/)).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "https://example.test/garden" })).toHaveAttribute("href", "https://example.test/garden");
+  expect(context).toHaveBeenCalledTimes(2);
+  expect(submit).not.toHaveBeenCalled();
+});
+
 it("does not replace an explicitly requested missing provider with a working one", async () => {
   const base = (await makeFixtureNodeClient().listLLMServices())[0];
   const { submit } = mount("/ask?peer=missing&service=missing-model", [base]);
