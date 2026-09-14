@@ -32,10 +32,11 @@ def _compose(*args: str, env: dict[str, str] | None = None) -> None:
                    env=env, check=True)
 
 
-def _json(url: str, body: dict[str, Any] | None = None, timeout: float = 20) -> dict[str, Any]:
+def _json(url: str, body: dict[str, Any] | None = None, timeout: float = 20,
+          *, method: str | None = None) -> dict[str, Any]:
     request = urllib.request.Request(
         url, data=json.dumps(body).encode() if body is not None else None,
-        headers=TOKEN_HEADERS, method="POST" if body is not None else "GET",
+        headers=TOKEN_HEADERS, method=method or ("POST" if body is not None else "GET"),
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
@@ -78,6 +79,33 @@ def up(mode: str) -> None:
     _wait(CONSUMER + "/health")
 
 
+def _authorize_consumer(provider_id: str, service_id: str) -> dict[str, Any]:
+    """Exercise owner pairing/grant APIs; registry visibility grants no AI access."""
+    relationships = _json(CONSUMER + "/api/local/friends")["friends"]
+    relationship = next((row for row in relationships
+                         if row["peer_id"] == provider_id and row["status"] == "active"), None)
+    if relationship is None:
+        invitation = _json(PROVIDER + "/api/local/friends/invites", {})
+        relationship = _json(CONSUMER + "/api/local/friends/join", {
+            "invite_uri": invitation["invite_uri"],
+        })
+    relationship_id = relationship["relationship_id"]
+    grants = _json(PROVIDER + "/api/local/ai-access")["grants"]
+    prior = next((row for row in grants if row["service_id"] == service_id
+                  and row["relationship_id"] == relationship_id), {})
+    _json(PROVIDER + "/api/local/ai-access/" + quote(service_id, safe="") + "/" + relationship_id,
+          {"allowed": True, "expected_revision": prior.get("revision", 0)}, method="PUT")
+    catalog = _json(CONSUMER + "/api/local/ai-access/friend-services?peer_id="
+                    + quote(provider_id, safe=""), {})
+    if catalog.get("status") != "authorized":
+        raise RuntimeError("E2E consumer did not receive explicit AI authorization")
+    selected = next((row for row in catalog.get("services", [])
+                     if row.get("service", {}).get("package_id") == service_id), None)
+    if selected is None or not selected.get("online"):
+        raise RuntimeError("E2E authorized service is unavailable")
+    return selected["ai_permission"]
+
+
 def verify(mode: str) -> dict[str, Any]:
     service_id = {"test": "e2e-test-service", "relay-test": "e2e-test-service", "real": "e2e-real-service",
                   "host-real": "e2e-host-real-service"}[mode]
@@ -85,6 +113,7 @@ def verify(mode: str) -> dict[str, Any]:
         "network_id": "rynmesh-llm-e2e", "benchmark": True,
     }, timeout=180)
     provider_id = str(published["record"]["peer_id"])
+    permission = _authorize_consumer(provider_id, service_id)
     deadline = time.monotonic() + 30
     discovered: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -101,6 +130,7 @@ def verify(mode: str) -> dict[str, Any]:
     result = _json("http://127.0.0.1:18892/api/local/llm/orders", {
         "network_id": "rynmesh-llm-e2e", "provider_peer_id": provider_id,
         "service_id": service_id,
+        "ai_permission": permission,
         "prompt": "Reply with a short confirmation that the encrypted two-node path works.",
         "max_tokens": 32, "transport": requested_transport,
     }, timeout=240)

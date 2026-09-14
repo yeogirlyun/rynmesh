@@ -273,7 +273,7 @@ def test_managed_executable_without_a_current_completion_record_is_not_available
 
 
 def test_available_reason_never_names_a_filesystem_path(monkeypatch):
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: None)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: None)
     monkeypatch.setattr(llm_runtime_native, "asset", lambda: None)
     ok, reason = llm_runtime_native.available()
     assert ok is False
@@ -904,7 +904,7 @@ def test_an_install_that_fails_after_start_stops_the_server_it_started(tmp_path,
     """A failed verification must not leave an orphan holding an unsaved key."""
     root = tmp_path / "llm"
     server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     monkeypatch.setenv("RYNMESH_FAKE_EMPTY_COMPLETION", "1")
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
@@ -1047,7 +1047,7 @@ def test_backend_resolves_the_native_runtime():
 def test_install_managed_on_the_native_runtime_keeps_local_details_private(tmp_path, monkeypatch):
     root = tmp_path / "llm"
     server = _write_fake_server(tmp_path / "llama-server", SERVER_BODY)
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
 

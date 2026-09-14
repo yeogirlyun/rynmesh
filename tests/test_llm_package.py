@@ -522,7 +522,7 @@ def test_install_managed_with_an_explicit_profile_uses_the_catalog_entry(tmp_pat
 
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
 
     def fake_download(_url, destination, expected_sha256, **_kwargs):
@@ -567,7 +567,7 @@ def test_install_managed_reuses_a_verified_legacy_model_gguf_without_downloading
     """A pre-profiles `model.gguf` that still matches is reused, not re-fetched."""
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
 
@@ -603,7 +603,7 @@ def test_install_managed_with_auto_profile_picks_the_recommended_catalog_entry(t
 
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
 
     def fake_download(_url, destination, expected_sha256, **_kwargs):
@@ -726,7 +726,7 @@ def test_install_managed_custom_override_on_a_no_fit_hardware_report_raises_with
 def test_install_managed_custom_override_with_accept_risk_proceeds_on_no_fit_hardware(tmp_path, monkeypatch):
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
 
