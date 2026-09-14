@@ -1,6 +1,6 @@
 # 当前候选怎么试用
 
-2026-09-14。当前安装代码：`1829eb20296cb3d5ceb23e6409d57ae686a3e6a9`，在首个候选 `04f6d28` 基础上修复登录页面误覆盖离线正文。本机已生成带前端的 Python wheel，并更新独立运行环境，继续使用原来的数据目录。当前为本机试用候选；macOS 与公网验收已由用户同意跳过，见[本轮范围确认](ACCEPTANCE_SCOPE.md)。
+2026-09-14。当前安装代码：`858cda5028842d659c8afd31a08a5cc6440faa27`，在首个候选 `04f6d28` 基础上修复登录页面误覆盖离线正文，以及设置页首次加载失败后一直转圈。本机已生成带前端的 Python wheel，并更新独立运行环境，继续使用原来的数据目录。当前为本机试用候选；macOS 与公网验收已由用户同意跳过，见[本轮范围确认](ACCEPTANCE_SCOPE.md)。
 
 ## 启动
 
@@ -14,7 +14,7 @@
 
 第二个独立节点现已可用：双击 `Start-Second-Ryn.cmd`，打开 <http://127.0.0.1:18991/>；停止使用 `Stop-Second-Ryn.cmd`。其数据保存在 `second-user-data/`。两个节点已实际完成设备双端审核、收藏同步，以及好友邀请、消息、文章分享与撤销。同步暂停、恢复、范围关闭和设备移除也已完成页面验证；两端重启后设备关系仍已移除。现在好友与设备关系均需通过页面重新邀请才会继续传输，旧本地副本保留。此设置只供本机双节点验证。
 
-当前安装包：`dist/candidate-1829eb2/rynmesh-0.6.2-py3-none-any.whl`。SHA-256：`debb6a4cd38622827cc5d44f501b75688979405572ed3a10fc6d169e6ad8bb5a`。启动入口仍在 `dist/candidate-04f6d28/`，其中 `installed-candidate.json` 记录当前安装版本；旧 wheel 与原 `candidate.json` 保留作为首版记录。
+当前安装包：`dist/candidate-858cda5/rynmesh-0.6.2-py3-none-any.whl`。SHA-256：`644e86a40ba96661a4eefe4f48c149aa83ea59fc2b824a91a958269a8af968eb`。启动入口仍在 `dist/candidate-04f6d28/`，其中 `installed-candidate.json` 记录当前安装版本；旧 wheel 与原 `candidate.json` 保留作为首版记录。
 
 `candidate.json` 记录代码和包校验值，`installed-requirements.txt` 记录本次实际依赖。运行环境不可直接搬到另一台机器；迁移时使用 Python 3.10+ 创建新虚拟环境，再安装此 wheel 的 `documents` 可选依赖。wheel 已包含网页，不需要 Node.js 或源码开发服务器。
 
@@ -45,3 +45,5 @@
 后续修复：登录提示覆盖离线正文已复现并修复，相关 53 项回归通过。新版 wheel 已安装到同一环境并启动，健康检查 200，确认安装包中的提取器含修复。见[缺陷与验证记录](../acceptance/offline-reading-development/password-gate-fix-20260914.md)。
 
 双节点交付验证见[页面流程与限制](../acceptance/candidate-delivery/two-node-20260914.md)。
+
+最新验收复核：原始 95 条中，本轮范围内 82 条通过、13 条继续核对；不是全部产品完成声明。见[逐项结论](../acceptance/candidate-delivery/requirement-review-20260914.md)。设置加载错误修复已在安装包实际页面通过 503 → 错误聚焦 → Tab/Enter 重试恢复；18 个关键数据文件升级前后摘要保持。
