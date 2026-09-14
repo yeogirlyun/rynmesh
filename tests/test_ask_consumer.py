@@ -52,6 +52,58 @@ def test_unready_preflight_preserves_reason_without_reserving_or_delivering(tmp_
     assert client.get('/api/local/task-balance').json() == before
 
 
+@pytest.mark.parametrize('relay_configured', [False, True])
+def test_auto_connection_reports_attempted_route_without_disabling_fallback(tmp_path, monkeypatch, relay_configured):
+    monkeypatch.setenv('RYNMESH_LLM_TRANSPORT', 'auto')
+    monkeypatch.setenv('RYNMESH_LLM_FORCE_RELAY', '0')
+    monkeypatch.setenv('RYNMESH_LLM_RELAY_URL', 'http://synthetic-relay.invalid' if relay_configured else '')
+    store = RynmeshStore(home=tmp_path / 'node', network_dir=tmp_path / 'network')
+    peer = RynmeshStore(home=tmp_path / 'peer', network_dir=tmp_path / 'network')
+    key = peer_box.load_or_create_messaging_key(store.home / 'messaging.x25519')
+    peer_key = peer_box.load_or_create_messaging_key(peer.home / 'messaging.x25519')
+    manifest = LLMPackageManifest(package_id='model', mode='openai_compatible', public_model_alias='Fault test', base_url='http://127.0.0.1')
+    public = {'online': True, 'service': manifest.public_dict(), 'node_messaging_pub': peer_box.public_key_b64(peer_key), 'capacity': {'available': 1}}
+    monkeypatch.setattr(store, 'list_job_capacities', lambda **_: {'capacities': [{
+        'peer_id': peer.peer_id, 'updated_at': datetime.now(timezone.utc).isoformat(), 'metadata': {'llm_service': public}}]})
+    attempts = []
+    def direct(*_, **__):
+        attempts.append('direct')
+        raise ConnectionRefusedError('Synthetic closed endpoint')
+    def relay(*_, **__):
+        attempts.append('relay')
+        raise ConnectionRefusedError('Synthetic closed relay')
+    monkeypatch.setattr(consumer, '_peer_post_json', direct)
+    monkeypatch.setattr(consumer, '_upload_relay_ciphertext', relay)
+    app = FastAPI()
+    commands = consumer.install_llm_routes(app, store=store, home=store.home, messaging_key=key,
+        resolve_endpoint=lambda _: 'http://synthetic-peer.invalid', resolve_pubkey=lambda _: peer_box.public_key_b64(peer_key))
+    client = TestClient(app)
+    before = client.get('/api/local/task-balance').json()
+    task_id = 'task_' + 'e' * 32
+    request = {'task_id': task_id, 'provider_peer_id': peer.peer_id, 'service_id': 'model', 'prompt': 'Synthetic connection test', 'transport': 'auto'}
+    commands.submit(request)
+    deadline = time.monotonic() + 5
+    result = {}
+    while time.monotonic() < deadline:
+        result = commands.status(task_id)
+        if result.get('state') == 'failed':
+            break
+        time.sleep(0.01)
+    expected = 'encrypted_relay_failed' if relay_configured else 'direct_transport_failed'
+    assert result.get('error_code') == expected, result
+    # The durable order can finish just before its background receipt updates.
+    # Resubmitting that identity in either window must never run it again.
+    repeated = commands.submit(request)
+    while repeated['state'] != 'failed' and time.monotonic() < deadline:
+        time.sleep(0.01)
+        repeated = commands.submit(request)
+    assert repeated['state'] == 'failed'
+    assert attempts == (['direct', 'relay'] if relay_configured else ['direct'])
+    balance = client.get('/api/local/task-balance').json()
+    assert balance['held'] == 0 and balance['available'] == before['available']
+    assert [event['kind'] for event in balance['events'] if event.get('task_id') == task_id] == ['hold', 'release']
+
+
 @pytest.mark.parametrize("retention", [0, 3600])
 def test_existing_consumer_result_is_archived_before_transient_ack(tmp_path, monkeypatch, retention):
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")

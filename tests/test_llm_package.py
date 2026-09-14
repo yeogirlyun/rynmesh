@@ -1646,6 +1646,47 @@ def test_local_cancellation_uses_the_same_provider_without_peer_delivery(tmp_pat
     assert TestClient(app).get("/api/local/task-balance").json()["held"] == 0
 
 
+@pytest.mark.parametrize('old_state', ['created', 'accepted', 'running'])
+def test_provider_restart_fails_unfinished_orders_without_replaying_or_touching_completed(tmp_path, old_state):
+    provider = RynmeshStore(home=tmp_path / 'provider', network_dir=tmp_path / 'network')
+    key = peer_box.load_or_create_messaging_key(provider.home / 'messaging.x25519')
+    orders = TaskOrderStore(provider.home / 'llm/provider-orders')
+    body = {'task_id': 'interrupted', 'service_id': 'svc', 'prompt': 'Synthetic recovery request',
+            'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key)}
+    orders.claim(task_id='interrupted', bindings={'consumer_peer_id': provider.peer_id, 'service_id': 'svc',
+        'idempotency_key': 'interrupted', 'request_fingerprint': llm_routes._request_fingerprint(body, provider.private_key_bytes)})
+    if old_state in {'accepted', 'running'}:
+        orders.transition(task_id='interrupted', state='accepted')
+    if old_state == 'running':
+        orders.transition(task_id='interrupted', state='running')
+    orders.claim(task_id='finished', bindings={'service_id': 'svc'})
+    for state in ['accepted', 'running', 'succeeded']:
+        orders.transition(task_id='finished', state=state)
+    completed = orders.get('finished')
+    for _ in range(2):
+        install_llm_routes(FastAPI(), store=provider, home=provider.home, messaging_key=key,
+            resolve_endpoint=lambda _: '', resolve_pubkey=lambda _: '')
+    recovered = orders.get('interrupted')
+    assert recovered['state'] == 'failed'
+    assert sum(e['state'] == 'failed' for e in recovered['history']) == 1
+    assert recovered['history'][-1]['error_code'] == 'provider_restarted_before_completion'
+    assert orders.get('finished') == completed
+    adapter = _FakeAdapter()
+    service = ProviderService(manifest=LLMPackageManifest(package_id='svc', mode='openai_compatible',
+        public_model_alias='Synthetic recovery', base_url='http://127.0.0.1:1'), adapter=adapter,
+        store=provider, task_store=orders, balance=TaskBalanceLedger(tmp_path / 'balance.json'), messaging_key=key)
+    request = seal_task(body=body, task_id='interrupted', kind='llm_request', sender_peer_id=provider.peer_id,
+        recipient_peer_id=provider.peer_id, sender_signing_key=provider.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires()).to_dict()
+    for _ in range(2):
+        _, reply = open_task(service.handle(request), recipient_peer_id=provider.peer_id,
+            recipient_messaging_key=key, expected_kind='llm_response')
+        assert reply['error_code'] == 'provider_restarted_before_completion'
+        assert reply['state'] == 'failed'
+    assert adapter.calls == 0
+    assert orders.get('interrupted') == recovered
+
+
 def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     net = tmp_path / "net"
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)

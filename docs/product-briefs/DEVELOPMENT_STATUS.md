@@ -63,6 +63,8 @@
 
 ## 本轮记录
 
+- 2026-09-14：真实固定端口占用经 Ask 页面返回容量不足，释放后实际 ICE/UDP 推理成功；补齐好友不可达、运行中断及双节点重启证据。修复自动连接丢失直连错误原因、Provider 重启遗留 running 两处缺陷。五笔新增任务的结算/释放各一次，旧会话不变。完整后端 1475 passed / 29 skipped；平台/公网及其余用例保持待验，详见[好友失败恢复记录](../acceptance/ask-ryn-development/peer-failure-browser-20260914.md)。
+
 - 2026-09-14：补充 Ask 浏览器忙碌、未就绪、运行时不可用和实际停止运行时后的恢复验收，发现并修复提交前将模型未就绪误归为 Provider 不可达的问题。原任务核对及节点重启保留六个任务身份，没有补发；相关专项 18 passed、回归 129 passed / 4 skipped。P2P 浏览器分支与完整平台验收继续待完成，见[浏览器失败恢复记录](../acceptance/ask-ryn-development/error-browser-20260914.md)。
 
 - 2026-09-14：修复运行时 HTTP 错误被归为普通推理失败、含数字的 P2P 错误码归档丢失两处问题，补充失败原因和恢复提示。真实本机 HTTP 故障/恢复、原任务去重及归档重建专项 35 passed，相关后端回归 179 passed / 17 skipped；本轮没有浏览器或硬件实测，ASK07 保持未完成。详见[错误恢复记录](../acceptance/ask-ryn-development/runtime-error-recovery-20260914.md)。

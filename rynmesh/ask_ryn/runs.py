@@ -164,6 +164,7 @@ class AskRunService:
                     "p2p_capacity_exhausted": "No connection session is available. Wait for the active session to close.",
                     "insufficient_balance": "There are not enough credits for this request.",
                     "consumer_restarted_before_completion": "The node restarted before the task completed. Its original order was recovered as failed; it has not been submitted again.",
+                    "provider_restarted_before_completion": "The provider restarted before completing the original task. It was recorded as failed and has not been submitted again; this does not confirm that computation stopped immediately.",
                 }.get(str(result.get("error_code")), content)
             run["state"] = state
             # No untrusted provider error detail or frozen prompt in receipts.
