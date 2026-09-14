@@ -214,3 +214,43 @@ def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_pat
     assert client.post("/api/local/search/query", headers=owner, json={}).status_code == 400
     assert client.post("/api/local/search/query", headers=owner, content=b"x" * 8193).status_code == 413
     assert peer_box.public_key_b64(alice.messaging_private) not in str(status)
+
+
+def test_search_private_responses_never_cache_and_recheck_deleted_content(tmp_path):
+    adapter, _, _, _, conversations, alice, _, _ = sources(tmp_path)
+    conversation = sample()
+    conversations.save(conversation, expected_revision=0)
+    app = FastAPI()
+
+    def guard(request):
+        if request.headers.get("x-owner") != "yes":
+            raise HTTPException(401)
+
+    engine = install_local_search(app, store=SimpleNamespace(home=alice.home),
+        home=tmp_path, workers=BackgroundWorkerRegistry(),
+        messaging_key=alice.messaging_private, local_control=guard, source=adapter.snapshot)
+    engine.rebuild()
+    client = TestClient(app)
+    owner = {"x-owner": "yes"}
+    result = client.post("/api/local/search/query", headers=owner, json={"query": "秘密文章正文"})
+    assert result.status_code == 200
+    identifier = result.json()["results"][0]["id"]
+    opened = client.get("/api/local/search/open", headers=owner, params={"identifier": identifier})
+    assert opened.status_code == 200 and opened.json()["text"]
+    responses = [result, opened,
+        client.get("/api/local/search/status", headers=owner),
+        client.post("/api/local/search/rebuild", headers=owner),
+        client.get("/api/local/search/open", params={"identifier": identifier}),
+        client.post("/api/local/search/query", headers=owner, json={}),
+        client.get("/api/local/search/open", headers=owner),
+        client.get("/api/local/search/open", headers=owner, params={"identifier": "missing"})]
+    assert [response.status_code for response in responses] == [200, 200, 200, 200, 401, 400, 422, 409]
+    # Delete the original while its old index entry still exists.
+    conversations.remove(conversation["id"], expected_revision=1)
+    denied = client.get("/api/local/search/open", headers=owner, params={"identifier": identifier})
+    assert denied.status_code == 409
+    refreshed = client.post("/api/local/search/query", headers=owner, json={"query": "秘密文章正文"})
+    assert refreshed.status_code == 200 and refreshed.json()["total"] == 0
+    responses.extend([denied, refreshed])
+    for response in responses:
+        assert response.headers.get("cache-control") == "no-store"
