@@ -748,10 +748,12 @@
       "scenario": "连续快速输入并使旧请求晚返回",
       "expected": "页面最终显示最新关键词结果，不被旧响应覆盖",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14 actual Chrome and production-node response-delay transport: older first-page and pagination responses were held for 33.359 and 36.547 seconds, completing after a newer query; the page retained one new result and no old results. Clearing during a held next-page request stayed empty after its 29.922-second late response. Three rapid input changes (~156 ms in one browser operation) produced only one final query. Eight actual 200 responses, timing verifier and Ruff passed; no product implementation changes or repeated scale tests. Server send completion is not claimed as browser consumption of an aborted first-page response; pagination has no equivalent abort signal and the page still discarded its stale result. Delayed errors, keyboard and packaged-platform gates remain unverified.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/windows-browser-node.json"
+        "docs/acceptance/search-development/windows-browser-node.json",
+        "docs/acceptance/search-development/response-order-browser-20260914.md",
+        "docs/acceptance/search-development/response-order-http-20260914.json"
       ],
       "implementation_commit": ""
     },
