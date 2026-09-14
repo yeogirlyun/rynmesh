@@ -32,14 +32,30 @@ export default function Settings() {
   const { client, confirm, notify, refreshShell } = useAppContext();
   const [active, setActive] = useState<(typeof sections)[number]>("Identity & storage");
   const [settings, setSettings] = useState<NodeSettings | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const loadResult = useRef<HTMLParagraphElement>(null);
   const [privacyRevision, setPrivacyRevision] = useState(0);
   const readingChanged = useCallback(() => setPrivacyRevision((value) => value + 1), []);
 
   useEffect(() => {
-    void client.getSettings().then(setSettings);
-  }, [client]);
+    let active = true;
+    setSettings(null);
+    setLoadError("");
+    void client.getSettings().then((value) => {
+      if (active) setSettings(value);
+    }).catch(() => {
+      if (active) setLoadError("Settings could not be loaded. Check the local node connection, then retry.");
+    });
+    return () => { active = false; };
+  }, [client, loadAttempt]);
 
-  if (!settings) return <LoadingPanel />;
+  useEffect(() => { if (loadError) loadResult.current?.focus(); }, [loadError]);
+
+  if (!settings) return loadError ? <Panel>
+    <p ref={loadResult} tabIndex={-1} role="alert">{loadError}</p>
+    <Button onClick={() => { setLoadError(""); setLoadAttempt((value) => value + 1); }}>Retry settings</Button>
+  </Panel> : <LoadingPanel />;
 
   const update = async (patch: Partial<NodeSettings>) => {
     const next = await client.updateSettings(patch);
