@@ -113,7 +113,7 @@ def test_all_friends_requires_confirmation_and_includes_later_friend_only_when_s
 
 
 def test_refresh_revision_read_restart_unsubscribe_and_independent_copy(tmp_path):
-    mesh, nodes, feeds, contents, reference, _ = setup(tmp_path)
+    mesh, nodes, feeds, contents, reference, wires = setup(tmp_path)
     author, bob, *_ = nodes
     a, b, *_ = feeds
     published = publish(a, reference, selected(author, bob))
@@ -142,6 +142,14 @@ def test_refresh_revision_read_restart_unsubscribe_and_independent_copy(tmp_path
     assert b.timeline()[0]['checked_at'] == checked and b.timeline()[0]['error_code'] == 'feed_friend_unreachable'
     b.subscribe(rid, enabled=False, expected_revision=1)
     assert b.timeline() == [] and b.run_once() is False
+    assert contents[1].imports.read_bytes(copied['import_id']) == 'Private article body 中文'.encode()
+    # New publications after unsubscribe must not trigger a fetch or remove the saved copy.
+    mesh.online.add(author.endpoint)
+    publish(a, reference, selected(author, bob))
+    before = len(wires)
+    assert b.run_once() is False and b.timeline() == []
+    assert len(wires) == before
+    assert bob.store.relationship_for_peer(author.peer_id)['status'] == 'active'
     assert contents[1].imports.read_bytes(copied['import_id']) == 'Private article body 中文'.encode()
 
 
