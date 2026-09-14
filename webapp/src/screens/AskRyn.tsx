@@ -10,7 +10,7 @@ import { llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders
 import type { LLMServiceRecord } from "../domain/nodeClient";
 import PrivateAIChat from "./PrivateAIChat";
 import styles from "./AskRyn.module.css";
-import AskMaterials from "../components/AskMaterials";
+import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import AskSyncConflicts from "../components/AskSyncConflicts";
 
 export function conversationUrl(row: LLMConversation, continueChat = false) {
@@ -130,7 +130,7 @@ function AskRynHome() {
         {selection ? <div id="ask-selected-conversation" className={styles.selection} role="region" aria-label="Selected conversation" tabIndex={-1}><Panel title={selection.title}>
           <p>Original recipient: {selection.providerPeerId} · {selection.serviceName} · {selection.networkId}</p>
           <small>Conversation ID: {selection.id}</small>
-          <div className={styles.transcript}>{selection.messages.length ? selection.messages.map((message) => <article key={message.id} id={`ask-message-${message.id}`} tabIndex={-1} style={message.id === params.get("message") ? { outline: "2px solid currentColor" } : undefined}><strong>{message.role === "user" ? "You" : "Ryn"}</strong><p>{message.content}</p><small>{message.status}</small></article>) : <p>No messages yet.</p>}</div>
+          <div className={styles.transcript}>{selection.messages.length ? selection.messages.map((message) => <article key={message.id} id={`ask-message-${message.id}`} tabIndex={-1} style={message.id === params.get("message") ? { outline: "2px solid currentColor" } : undefined}><strong>{message.role === "user" ? "You" : "Ryn"}</strong><p>{message.content}</p><small>{message.status}</small>{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</article>) : <p>No messages yet.</p>}</div>
           {selection.draft ? <p>Saved draft: {selection.draft}</p> : null}
           {services.some((service) => llmServiceRecordKey(service) === selection.serviceKey) ? <Link to={conversationUrl(selection, true)}>Continue with original provider</Link> : <p>The original service is unavailable. Your history is still readable; a different service starts a separate conversation.</p>}
           {client.mode === "live" ? <>

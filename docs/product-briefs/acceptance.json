@@ -351,9 +351,11 @@
       "scenario": "页面提问，从侧栏打开，再重启",
       "expected": "同一会话 ID、相同历史与任务状态，完成的回答可继续",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: Two new real-model browser conversations opened from the sidebar with the same ID. Node restart preserved exact history digests, task IDs and original service bindings; saved answers and excerpts remained readable with the model stopped.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -375,9 +377,11 @@
       "scenario": "从文章进入问答",
       "expected": "来源可见，引用对应实际提供材料，并可返回打开",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: Browser article entry displayed source and recipient before actual native-model inference. The short answer was factually correct but omitted the requested inline citation marker; the application supplied-source viewer retained exact 474-byte material. Fixed missing source viewer in archived history, including model-unavailable and source-retry regression.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -387,9 +391,11 @@
       "scenario": "超长正文叠加长历史",
       "expected": "总预算不越界，截断或删减提示发送前可见",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: Real 65404-byte article and actual long-question history: first preview included 746 bytes with explicit truncation and budget 4088/4096; follow-up omitted one history message, included 1408 bytes, budget 3409/4096. Actual model answers completed and archived prompt digests/byte limits exactly matched both previews.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -423,9 +429,11 @@
       "scenario": "生成中取消、超时、重启后重试",
       "expected": "不提前声称 GPU 已停；核对原任务，不重复发单与结算",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: An attempted in-progress cancellation case completed generation before cancellation could be requested. No cancellation request was sent; this is not cancellation acceptance. Completed-task restart preservation was verified separately.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -435,9 +443,11 @@
       "scenario": "文章含要求泄露数据或执行操作的文字",
       "expected": "不触发自动授权、切换接收者或执行外部操作；文章按引用处理",
       "status": "in_progress",
-      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding.",
+      "actual": "Development checks cover unified entry, encrypted history, reviewed article context and node-owned run archiving. Real-model and complete product acceptance remain outstanding. 2026-09-14 article browser follow-up: Synthetic hostile article text was included as untrusted material. Real browser questions retained the original local recipient and actual local-runtime orders; no complete network/permission audit was performed.",
       "evidence": [
-        "docs/acceptance/ask-ryn-development/README.md"
+        "docs/acceptance/ask-ryn-development/README.md",
+        "docs/acceptance/ask-ryn-development/article-browser-20260914.md",
+        "docs/acceptance/ask-ryn-development/browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
