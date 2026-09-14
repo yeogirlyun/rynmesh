@@ -46,6 +46,9 @@ function llmErrorMessage(errorCode: string): string {
 // status panel (a raw backend message reported through job polling) so both
 // surfaces show the same mapped text for a given backend error string.
 function mapKnownLlmErrorText(message: string): string | null {
+  if (/configured model file is missing/i.test(message)) return "The selected model file is missing. Restore the file or use Model setup to install or select it again, then start the runtime.";
+  if (/local inference runtime is not installed/i.test(message)) return "The local runtime is missing. Use Update runtime to restore it, or use Model setup to install it again.";
+  if (/configured model checksum no longer matches/i.test(message)) return "The model file failed verification. Use Model setup to download it again before starting the runtime.";
   if (/insufficient development task balance/i.test(message)) return LLM_ERROR_MESSAGES.insufficient_task_balance;
   if (/capacity[_ ]exhausted/i.test(message)) return LLM_ERROR_MESSAGES.capacity_exhausted;
   if (/docker is not installed/i.test(message)) return "Docker is required for managed or GGUF modes. Start Docker, or connect an existing local model API.";
@@ -109,6 +112,9 @@ export default function Services() {
   useEffect(() => { setLlmSetupConfirmed(false); }, [llmSetupMode, llmProfile, reviewedProfile?.profile]);
   const [llmSetupJob, setLlmSetupJob] = useState<LLMSetupJob | null>(null);
   const [llmLifecycleAction, setLlmLifecycleAction] = useState("");
+  const [llmLifecycleError, setLlmLifecycleError] = useState("");
+  const lifecycleErrorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (llmLifecycleError) lifecycleErrorRef.current?.focus(); }, [llmLifecycleError]);
   const [llmHistoryQuery, setLlmHistoryQuery] = useState("");
   const [llmHistoryPage, setLlmHistoryPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -438,17 +444,17 @@ export default function Services() {
     options?: { delete_environment?: boolean; delete_model?: boolean; confirm_model_delete?: boolean },
   ) => {
     setLlmLifecycleAction(action);
+    setLlmLifecycleError("");
     try {
-      if (options) await client.runLLMServiceAction(action, options);
-      else await client.runLLMServiceAction(action);
+      const response = options ? await client.runLLMServiceAction(action, options) : await client.runLLMServiceAction(action);
+      const result = response.result as { removed?: string[]; model_preserved?: boolean } | undefined;
       notify("ok", action === "uninstall"
-        ? options?.delete_model
-          ? "Managed runtime and Rynmesh-owned model data were removed; private configuration was preserved"
-          : "Managed runtime removed; model data and private configuration were preserved"
+        ? `${result?.removed?.includes("runtime_process") ? "Runtime process removed; shared runtime files remain installed." : "Runtime removal completed."} ${result?.model_preserved === false ? "Managed model file removed." : "Model data preserved."} Private configuration and conversations are preserved.`
         : `Local model ${action} completed; publishing remains paused until enabled`);
       await refresh(true);
     } catch (error) {
-      notify("danger", friendlyError(error, `Local model ${action} failed`));
+      setLlmLifecycleError(friendlyError(error, `Local model ${action} failed`));
+      await refresh(true);
     } finally {
       setLlmLifecycleAction("");
     }
@@ -616,8 +622,8 @@ export default function Services() {
                     variant="danger"
                     disabled={Boolean(llmLifecycleAction)}
                     onClick={() => confirm({
-                      title: "Uninstall managed runtime?",
-                      body: "This stops and removes the managed runtime. Model data, private configuration and conversations are preserved.",
+                      title: "Remove this model's runtime instance?",
+                      body: "This stops and removes this model's runtime instance. Shared native runtime files, model data, private configuration and conversations are preserved.",
                       risk: "high",
                       confirmLabel: "Uninstall runtime",
                       onConfirm: () => runLlmLifecycle("uninstall"),
@@ -631,7 +637,7 @@ export default function Services() {
                       disabled={Boolean(llmLifecycleAction)}
                       onClick={() => confirm({
                         title: "Delete the managed model too?",
-                        body: "This removes the managed runtime and Rynmesh-owned model data. Imported or user-owned files are never deleted.",
+                        body: "This removes the model's runtime instance and Rynmesh-owned model file. Shared native runtime files, private configuration and conversations are preserved. Imported or user-owned files are never deleted.",
                         risk: "high",
                         confirmLabel: "Delete managed model",
                         onConfirm: () => runLlmLifecycle("uninstall", {
@@ -650,6 +656,11 @@ export default function Services() {
                 <Chip mono>{llmProvider.lifecycle.runtime.status}</Chip>
               ) : null}
             </div>
+            {llmLifecycleError ? <p ref={lifecycleErrorRef} tabIndex={-1} role="alert">{llmLifecycleError}</p> : null}
+            {llmProvider.lifecycle?.storage ? <p role="status">
+              Model file: {llmProvider.lifecycle.storage.model_present === false ? "missing · 0 MiB" : llmProvider.lifecycle.storage.model_bytes === null ? "size unavailable — refresh to check again" : `${(llmProvider.lifecycle.storage.model_bytes / 1024 / 1024).toFixed(1)} MiB`}
+              {llmProvider.lifecycle.storage.model_owned ? " · managed by Rynmesh" : " · externally managed"}. Shared runtime files are separate.
+            </p> : null}
           </div>
         ) : (
           <div className="empty-state">

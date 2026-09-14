@@ -535,13 +535,15 @@
       "scenario": "校验失败、移走模型、依赖缺失",
       "expected": "错误明确且可恢复，不发布假健康服务",
       "status": "in_progress",
-      "actual": "Incomplete runtime extraction cannot be reused; downloads preserve resumable bytes on interruption. Setup rollback now verifies restored configuration and reports an unavailable model separately from file restoration failure; pending recovery is not advertised as a service. Full desktop and model recovery acceptance is incomplete. 2026-09-14: browser retry recovered from the persisted runtime checksum failure with unchanged official pins. Old discarded bytes do not establish its historical cause. Missing-model/dependency subcases remain outside this run.",
+      "actual": "Incomplete extraction cannot be reused; resumable downloads and rollback checks have prior evidence. 2026-09-14: browser retry recovered from the persisted runtime checksum failure with unchanged official pins; old discarded bytes do not establish its cause. Lifecycle follow-up: moving the real model or native executable prevented startup and kept readiness/publication false. Model restored from its held original; missing native executable recovered through browser Update runtime, then real model became ready and self-test controls completed without an error. Errors now persist with recovery actions and focus. Model checksum and all 10 prior conversations/16 orders were preserved. DLL/CUDA, insufficient disk space and packaged-platform acceptance remain incomplete.",
       "evidence": [
         "docs/acceptance/local-ai-development/README.md",
         "docs/acceptance/local-ai-development/runtime-install-recovery.md",
         "docs/acceptance/local-ai-development/model-download-recovery.md",
         "docs/acceptance/local-ai-development/setup-rollback.md",
-        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md",
+        "docs/acceptance/local-ai-development/lifecycle-browser-20260914.md",
+        "docs/acceptance/local-ai-development/lifecycle-browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -616,10 +618,12 @@
       "scenario": "停止/移除模型后查看历史",
       "expected": "运行状态和空间更新，会话保留，对应模型入口显示不可用",
       "status": "in_progress",
-      "actual": "Local-only inference and installation review are implemented. Windows native installation is being exercised; full desktop and model recovery acceptance is incomplete. 2026-09-14: browser Stop runtime updated actual readiness to false while node health remained 200 and four conversation messages remained readable. Fixed incorrect local-offline labels and added model management links. Model removal is not covered by this run.",
+      "actual": "2026-09-14: prior browser stop/history evidence retained. Lifecycle follow-up: cancelling deletion left the model ready. Actual Windows file lock caused deletion to fail: runtime stopped, model retained at 491400032 bytes, no false zero-space result. After releasing the lock, browser-confirmed retry removed the selected model file; UI reports missing/0 MiB, readiness false, shared native runtime and private manifest preserved. Restart retained all 10 complete conversation records and all 16 order identities/states; an original conversation remained readable with its provider binding. Added actual selected-model size and accurate removal scope/result text. Packaged/platform and common gates remain incomplete.",
       "evidence": [
         "docs/acceptance/local-ai-development/README.md",
-        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md"
+        "docs/acceptance/local-ai-development/runtime-recovery-20260914.md",
+        "docs/acceptance/local-ai-development/lifecycle-browser-20260914.md",
+        "docs/acceptance/local-ai-development/lifecycle-browser-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
