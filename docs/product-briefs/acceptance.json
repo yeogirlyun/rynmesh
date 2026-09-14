@@ -8,9 +8,11 @@
       "scenario": "干净安装、正常网络、无模型与好友",
       "expected": "无配置看到真实内容并完成打开、收藏；记录耗时，建议启动至完成不超过 3 分钟",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: a new unseeded Windows node with desktop public-source defaults and no model obtained 30 real items (11/14 sources healthy). The first Reddit reader result had no body and received no reading credit; a BBC article returned 18 blocks, then reading and bookmarking completed over real TCP. Packaged desktop and browser interaction remain untested in this run.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/home-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -32,10 +34,12 @@
       "scenario": "收藏并阅读后重启",
       "expected": "收藏仅一条，阅读位置可恢复",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. The new My reading entry also restores synced positions. Two loopback nodes retained one saved item and 26.08% after receiver restart; the final browser build restored scrollTop 1798 with a scrollable range of 6895 pixels. This is not packaged desktop acceptance. 2026-09-14: the real public-source HTTP run saved one BBC article twice without duplicates, stored progress 0.37, restarted the node to a different PID, and recovered the exact history record and matching cached body hash. This proves storage/API recovery, not desktop scroll restoration.",
       "evidence": [
         "docs/acceptance/first-reading-development/README.md",
-        "docs/acceptance/device-sync-development/README.md"
+        "docs/acceptance/device-sync-development/README.md",
+        "docs/acceptance/first-reading-development/home-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -45,9 +49,11 @@
       "scenario": "一个来源失败，单独重试",
       "expected": "显示对应错误与失败次数；正常来源内容保留且不强制重抓",
       "status": "in_progress",
-      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed.",
+      "actual": "Implementation and automated recovery checks are in progress; packaged desktop acceptance has not been performed. 2026-09-14: retrying one genuinely failed YouTube source updated its check time and failure count from 2 to 3 while all 13 other source-health records remained unchanged and 30 items remained available. The source still failed; successful network recovery and UI interaction are not claimed.",
       "evidence": [
-        "docs/acceptance/first-reading-development/README.md"
+        "docs/acceptance/first-reading-development/README.md",
+        "docs/acceptance/first-reading-development/home-recovery-20260914.md",
+        "docs/acceptance/first-reading-development/public-source-http-20260914.json"
       ],
       "implementation_commit": ""
     },
