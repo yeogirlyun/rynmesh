@@ -679,10 +679,12 @@
       "scenario": "同一内容同时收藏、读过、被分享",
       "expected": "一个内容结果包含多个来源入口；不同消息不被误合并",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14 actual Chrome/two-node follow-up: reused real prior A/C pairing, shared an article through the UI, searched only card metadata before an explicit receiver download, then found one saved/history/share result. Holding the old encrypted index file unchanged through sender-initiated revocation still filtered both protected message results and rejected their direct opens with 409. Independent saved body remained 200 with the same digest; after index recovery and receiver restart with sender/source offline, saved/history search and browser reading remained available, while old message URLs showed access removed. No product code changed and existing performance/unit checks were not repeated. Evidence covers online loopback notification, not public-NAT latency, packaged desktops or complete common gates.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/windows-browser-node.json"
+        "docs/acceptance/search-development/windows-browser-node.json",
+        "docs/acceptance/search-development/revocation-browser-20260914.md",
+        "docs/acceptance/search-development/revocation-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -713,10 +715,12 @@
       "scenario": "失去好友访问授权，保留旧索引",
       "expected": "受保护结果与片段立即被权限检查过滤，直接打开也拒绝",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. 2026-09-14 actual Chrome/two-node follow-up: reused real prior A/C pairing, shared an article through the UI, searched only card metadata before an explicit receiver download, then found one saved/history/share result. Holding the old encrypted index file unchanged through sender-initiated revocation still filtered both protected message results and rejected their direct opens with 409. Independent saved body remained 200 with the same digest; after index recovery and receiver restart with sender/source offline, saved/history search and browser reading remained available, while old message URLs showed access removed. No product code changed and existing performance/unit checks were not repeated. Evidence covers online loopback notification, not public-NAT latency, packaged desktops or complete common gates.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
-        "docs/acceptance/search-development/windows-browser-node.json"
+        "docs/acceptance/search-development/windows-browser-node.json",
+        "docs/acceptance/search-development/revocation-browser-20260914.md",
+        "docs/acceptance/search-development/revocation-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
@@ -726,13 +730,15 @@
       "scenario": "未获取正文、断网、来源删除分别测试",
       "expected": "不假装搜过未取得正文；本地数据可搜；不能打开时有真实原因",
       "status": "in_progress",
-      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete.",
+      "actual": "Four real local stores, owner-only POST queries and current-source checks are implemented. Store/route/component and real-node browser checks provide partial evidence; scale timing and process recovery are recorded separately. Full permission/privacy, keyboard, offline and packaged desktop acceptance remain unfinished. Damaged document metadata/body/control/timestamps are isolated from healthy search results, with explicit bounded source warnings. Stale index queries and direct opens do not disclose pending-cleanup bodies. Windows browser checks show two healthy results during one damaged copy, normal reading and Settings recovery access; fixture restoration recovers all three results and removes the warning. Final backend 1393 passed / 29 skipped, frontend 216 passed; broader platform and full requirement acceptance remain incomplete. 2026-09-14 actual Chrome/two-node follow-up: reused real prior A/C pairing, shared an article through the UI, searched only card metadata before an explicit receiver download, then found one saved/history/share result. Holding the old encrypted index file unchanged through sender-initiated revocation still filtered both protected message results and rejected their direct opens with 409. Independent saved body remained 200 with the same digest; after index recovery and receiver restart with sender/source offline, saved/history search and browser reading remained available, while old message URLs showed access removed. No product code changed and existing performance/unit checks were not repeated. Evidence covers online loopback notification, not public-NAT latency, packaged desktops or complete common gates.",
       "evidence": [
         "docs/acceptance/search-development/README.md",
         "docs/acceptance/search-development/windows-browser-node.json",
         "docs/acceptance/search-development/source-isolation.md",
         "docs/acceptance/search-development/source-isolation-http.json",
-        "docs/acceptance/search-development/source-isolation-browser.json"
+        "docs/acceptance/search-development/source-isolation-browser.json",
+        "docs/acceptance/search-development/revocation-browser-20260914.md",
+        "docs/acceptance/search-development/revocation-checkpoints-20260914.json"
       ],
       "implementation_commit": ""
     },
