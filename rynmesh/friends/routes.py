@@ -295,7 +295,7 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         try:
             relationship = await asyncio.to_thread(current().verify_request, path="/api/peer/friends/content-card/fetch", body=canonical_json(body), headers=request.headers)
             return await asyncio.to_thread(current().serve_content_card, body, relationship)
-        except (ValueError, OSError):
+        except (FriendError, ValueError, OSError):
             raise HTTPException(403, detail="friend_request_rejected") from None
 
     @app.get("/api/local/friends/{peer_id:path}/attachments/{message_id}")

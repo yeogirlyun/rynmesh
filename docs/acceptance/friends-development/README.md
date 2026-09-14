@@ -2,6 +2,9 @@
 
 日期：2026-09-11。分支：`codex/user-product-development`。这是开发证据，SHARE01–11 尚未完整验收。
 
+2026-09-14 补充：[从空节点开始的首次分享 HTTP 验收](product-http-20260914.md)，
+包含实际 HTTP 邮箱、进程重启及旧凭证撤销检查；发现并修复私有正文拒绝访问错误返回 500 的问题。
+
 ## 当前实现
 
 - 从 `feature/user-requirements-suite` 复用好友模型和页面样式，统一到独立 `friends` 路由包；保留主线邮箱、Transport、后台任务注册表与原子写入。
