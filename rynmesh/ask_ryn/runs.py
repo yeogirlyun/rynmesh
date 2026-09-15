@@ -32,7 +32,7 @@ def run_records(data: dict) -> dict:
 
 
 def public_run(row: dict) -> dict:
-    return {key: row[key] for key in ("task_id", "conversation_id", "state", "cancel_requested", "error_code") if key in row}
+    return {key: row[key] for key in ("task_id", "conversation_id", "state", "cancel_requested", "error_code", "cancel_error_code", "cancel_delivered") if key in row}
 
 
 class AskRunService:
@@ -131,6 +131,15 @@ class AskRunService:
         conversation["revision"] += 1
         clean_conversation(conversation)
 
+    def _mark(self, task_id: str, **fields) -> None:
+        with file_transaction(self.history.lock):
+            envelope, data = self.history._read()
+            run = run_records(data).get(task_id)
+            if run is None or run["state"] in TERMINAL:
+                return  # A terminal row is already archived; never reopen it.
+            run.update(fields)
+            self.history._write(envelope, data)
+
     def _finish(self, task_id: str, result: dict) -> None:
         with file_transaction(self.history.lock):
             envelope, data = self.history._read()
@@ -196,11 +205,18 @@ class AskRunService:
         if dispatch and run["cancel_requested"]:
             self._finish(task_id, {"state": "cancelled"})
             return WorkerRunResult(activity=True)
+        cancel_error = None
         try:
             if dispatch:
                 commands.submit(run["body"])
-            if run["cancel_requested"]:
-                commands.cancel(task_id)
+            if run["cancel_requested"] and not run.get("cancel_delivered"):
+                try:
+                    commands.cancel(task_id)
+                    self._mark(task_id, cancel_delivered=True)
+                except HTTPException as exc:
+                    # A rejected cancel (e.g. balance release conflict) must
+                    # never stop the status check from reaching a real result.
+                    cancel_error = exc
             result = commands.status(task_id)
         except HTTPException as exc:
             if exc.status_code == 404:
@@ -212,6 +228,10 @@ class AskRunService:
             # Registry errors must not contain a question, response or provider
             # error body. A later iteration reconciles the durable task ID.
             raise ConversationError("ask_run_check_unavailable") from None
+        if cancel_error is not None:
+            detail = cancel_error.detail
+            code = detail if isinstance(detail, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,95}", detail) else "cancel_rejected"
+            self._mark(task_id, cancel_error_code=code)
         if result.get("state") in TERMINAL and not result.get("result_pending"):
             self._finish(task_id, result)
             commands.acknowledge(task_id)  # Only after encrypted history commits.
