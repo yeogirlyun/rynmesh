@@ -3,51 +3,58 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Features — RynMesh</title>
-  <meta name="description" content="See what the Ryn local-first personal AI assistant can do today, what remains alpha, and what comes next.">
+  <meta name="description" content="What the Ryn local-first personal AI app does today in v0.7.0, what is still rough, and what comes next.">
   <link rel="canonical" href="https://www.rynmesh.ai/features/">
   <link rel="icon" href="/assets/brand/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/site.css?v=20260817c"><script src="/assets/site.js?v=20260817c" defer></script>
+  <link rel="stylesheet" href="/assets/site.css?v=20260916a"><script src="/assets/site.js?v=20260916a" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header"><div class="nav-wrap">
     <a class="brand" href="/" aria-label="RynMesh home"><img src="/assets/brand/mark-3d-green.svg" alt=""><span class="brand-name">Ryn<span>Mesh</span></span></a>
-    <nav class="main-nav" data-main-nav aria-label="Main navigation"><a href="/features/" aria-current="page">Features</a><a href="/status/">Project status</a><a href="/contribute/">Contribute</a><a href="https://github.com/yeogirlyun/rynmesh/tree/main/docs">Documentation</a></nav>
+    <nav class="main-nav" data-main-nav aria-label="Main navigation"><a href="/features/" aria-current="page">Features</a><a href="/status/">Roadmap</a><a href="/contribute/">Contribute</a><a href="https://github.com/yeogirlyun/rynmesh/tree/main/docs">Documentation</a></nav>
     <button class="menu-button" type="button" data-menu-button aria-expanded="false" aria-label="Open navigation">☰</button>
     <div class="nav-actions"><a class="button button-secondary" href="https://github.com/yeogirlyun/rynmesh">GitHub</a><a class="button button-primary" href="/download/">Download Ryn</a></div>
   </div></header>
   <main id="main">
-    <header class="page-hero"><div class="shell"><p class="eyebrow">Product inventory</p><h1>One local node. A growing personal-assistant surface.</h1><p class="lede">These statuses describe the public v0.7.0 source. Alpha means useful behavior exists, but contracts and storage may still change before 1.0.</p></div></header>
+    <header class="page-hero"><div class="shell"><p class="eyebrow">Product inventory · v0.7.0</p><h1>One local node. A reader, an AI, and a circle of friends.</h1><p class="lede">These statuses describe the public v0.7.0 source. Alpha means the behavior works and is tested, but contracts and storage may still change before 1.0.</p></div></header>
     <section class="section"><div class="shell">
       <div class="feature-list">
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Proactive For You recommendations</h3><p>Built-in public sources provide initial video, article, research, podcast, audiobook, and visual choices without preference setup.</p></article>
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Direction and preferences</h3><p>Written direction plus topic and platform controls guide discovery while remaining optional.</p></article>
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Feedback-driven profile</h3><p>More, Less, Hide, open, bookmark, topic, and source activity update a local recommendation profile.</p></article>
-        <article class="feature-card"><span class="badge progress">Hardening</span><h3>Content viewer</h3><p>Articles, images, feed-provided audio, and YouTube items open with recommendation evidence. Accessibility and media privacy hardening remain active work.</p></article>
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Daily Digest</h3><p>A briefing surface summarizes current discoveries. Its legacy and For You contracts are being consolidated.</p></article>
-        <article class="feature-card"><span class="badge available">Optional model</span><h3>Search &amp; Ask</h3><p>Search local knowledge and use a reachable local Ollama model or an explicitly configured cloud provider for generated answers.</p></article>
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Signed publishing</h3><p>Publish video, images, audio, documents, slides, datasets, and other files with signed manifests and provenance evidence.</p></article>
-        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Peer discovery and messaging</h3><p>Direct peer HTTP transport, registry-assisted discovery, relay jobs, and encrypted messaging exist for controlled alpha use.</p></article>
-        <article class="feature-card"><span class="badge design">Planned milestone</span><h3>Trusted friends</h3><p>Invitations, friend-attributed recommendations, and intentional sharing among a small trusted group are the next social milestone.</p></article>
-        <article class="feature-card"><span class="badge planned">Later milestone</span><h3>Open service mesh</h3><p>Budgeted agent-to-agent services and broader untrusted-peer operation require additional protocol, safety, and abuse hardening.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>For You recommendations without setup</h3><p>Built-in public sources provide video, article, research, podcast, audiobook and visual picks from the first launch, ranked locally without a model.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Direction, preferences and feedback</h3><p>Written direction plus topic and platform controls guide discovery. More, Less, Hide, opens and bookmarks update a profile that lives on your disk.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>First reading and bookmarks</h3><p>Read and bookmark real content right after install. Reading history, progress and read-later links are stored locally and can be exported or erased.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Offline reading</h3><p>Download articles and their images and read them without a network connection. Clearing a download forgets its title and link too.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Multi-device sync</h3><p>Pair a second computer with a code you read off the other screen. Reading progress, bookmarks and conversations sync over an encrypted link; conflicts are shown, never guessed.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Ask Ryn</h3><p>Ask about the article you are reading, keep the history, switch models from one entry point. Cancel, retry and timeouts are honest about what the node confirmed.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Local AI and friend permissions</h3><p>Enable a bundled local model with one click and decide, friend by friend, who may use it. A cloud provider is used only with explicit permission and your own credentials.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Friend pairing and sharing</h3><p>Invite with a link or QR code after reviewing the endpoint, share an article, chat with attachments, and revoke at any time. Works across NATs through a sealed relay mailbox.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Follow friends' updates</h3><p>A separate feed of what friends choose to share, with unread markers, subscription control and cleanup.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Search and retrieve</h3><p>One search recovers your content, friends' shares and chat history, and tells you when an item could not be indexed.</p></article>
+        <article class="feature-card"><span class="badge progress">Hardening</span><h3>Content viewer</h3><p>Articles, images, feed-provided audio and YouTube items open with recommendation evidence. Accessibility, PDF support and media privacy are active work.</p></article>
+        <article class="feature-card"><span class="badge progress">Hardening</span><h3>Daily Digest</h3><p>A briefing summarizes current discoveries. Its legacy and For You contracts are being consolidated.</p></article>
+        <article class="feature-card"><span class="badge available">Available in alpha</span><h3>Signed publishing</h3><p>Publish files with signed manifests and provenance evidence; peers verify hashes before anything propagates.</p></article>
+        <article class="feature-card"><span class="badge progress">Preview</span><h3>Private AI as a service</h3><p>Encrypted node-to-node tasks with a settlement ledger of non-transferable credits. Streamed answers and a general service protocol come next.</p></article>
+        <article class="feature-card"><span class="badge design">Next</span><h3>Friends' shares inside For You</h3><p>Rank friend-shared content in the main feed with an inspectable record of who published it and which node served it.</p></article>
+        <article class="feature-card"><span class="badge planned">Later milestone</span><h3>Open service mesh</h3><p>Budgeted agent-to-agent services and untrusted-peer operation require additional protocol, safety and abuse hardening first.</p></article>
       </div>
     </div></section>
     <section class="section section-line" id="tour"><div class="shell">
-      <div class="section-head"><div><p class="eyebrow">Product tour</p><h2>From node health to useful attention.</h2><p>These are real product captures, not aspirational mockups. The interface continues to change during alpha.</p></div><a class="button button-secondary" href="/download/">Try the current release</a></div>
+      <div class="section-head"><div><p class="eyebrow">Product tour</p><h2>From node health to useful attention.</h2><p>Real product captures, not mockups. The interface keeps changing during alpha; the v0.7.0 friends, Ask Ryn, offline and device screens are not pictured yet.</p></div><a class="button button-secondary" href="/download/">Try the current release</a></div>
       <div class="product-frame"><img src="/assets/screens/node-home.webp" alt="RynMesh local node home screen showing daemon status, local identity, recommendation highlights, and node counters" width="1600" height="825"></div>
-      <div class="product-caption"><p><strong>Local node console.</strong> See daemon status, identity, content counts, and current recommendation highlights.</p><span class="badge available">Available in alpha</span></div>
+      <div class="product-caption"><p><strong>Local node console.</strong> Daemon status, identity, content counts, and current recommendation highlights.</p><span class="badge available">Available in alpha</span></div>
       <div style="height:38px"></div>
       <div class="product-frame"><img src="/assets/screens/for-you.webp" alt="RynMesh recommendations screen with direction, topic and platform preferences, recommendation cards, reasons, provenance and feedback actions" width="1600" height="825" loading="lazy"></div>
       <div class="product-caption"><p><strong>For You.</strong> Guide attention, inspect evidence, open content, and teach the local profile through feedback.</p><span class="badge available">Available in alpha</span></div>
     </div></section>
     <section class="section section-line"><div class="shell split">
-      <div><p class="eyebrow">Important boundaries</p><h2>What the release does not promise.</h2><p>RynMesh is alpha software. It is not yet a hardened open network for arbitrary untrusted peers, and its macOS community packages are not Apple-notarized.</p></div>
+      <div><p class="eyebrow">Important boundaries</p><h2>What the release does not promise.</h2><p>RynMesh is alpha software. It is not a network of strangers, its credits are not money, and the macOS packages are not Apple-notarized.</p></div>
       <div class="principles">
-        <article class="principle"><strong>01</strong><div><h3>No model required for recommendations</h3><p>Generated briefings and answers do require an available model.</p></div></article>
-        <article class="principle"><strong>02</strong><div><h3>No peer required for personal use</h3><p>Registry and peer infrastructure are optional for the first milestone.</p></div></article>
-        <article class="principle"><strong>03</strong><div><h3>No silent cloud profile</h3><p>Recommendation feedback stays in the node’s local state.</p></div></article>
+        <article class="principle"><strong>01</strong><div><h3>No model required for recommendations</h3><p>Generated briefings and answers do require a local or explicitly configured model.</p></div></article>
+        <article class="principle"><strong>02</strong><div><h3>No peer required for personal use</h3><p>Friends and device sync are optional; the reader works alone.</p></div></article>
+        <article class="principle"><strong>03</strong><div><h3>No silent cloud profile</h3><p>Feedback, history and conversations stay in the node's local state.</p></div></article>
+        <article class="principle"><strong>04</strong><div><h3>No strangers</h3><p>Only people you invite can reach your node. Open discovery waits for the safety work in milestone 4.</p></div></article>
       </div>
     </div></section>
   </main>
-  <footer class="site-footer"><div class="footer-wrap"><p>RynMesh · MIT · Honest alpha status</p><nav class="footer-links"><a href="/status/">Status</a><a href="/contribute/">Contribute</a><a href="https://github.com/yeogirlyun/rynmesh/blob/main/docs/PRODUCT_MILESTONES.md">Full inventory</a></nav></div></footer>
+  <footer class="site-footer"><div class="footer-wrap"><p>RynMesh · MIT · Honest alpha status</p><nav class="footer-links"><a href="/status/">Roadmap</a><a href="/contribute/">Contribute</a><a href="https://github.com/yeogirlyun/rynmesh/blob/main/docs/RELEASE_NOTES_0_7_0.md">Release notes</a></nav></div></footer>
 </body></html>
