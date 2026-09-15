@@ -36,6 +36,20 @@ MAX_SHARED_RESPONSE_BYTES = ((((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 65536 
 # the secret out of the body and submit a join of their own.
 INVITE_SECRET_INFO = b"rynmesh-friend-invite-secret-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def invite_secret_info(joiner_peer_id: str) -> bytes:
+    """The HKDF label the invite secret is sealed under, bound to who is joining.
+
+    Sealing to the inviter's messaging key alone binds the secret to a key pair,
+    not to an identity: an on-path attacker could keep the joiner's box *and* its
+    `messaging_pub` and swap only `peer_id`/`endpoint`, becoming the friend under
+    an identity of their own. Mixing the joiner's peer id into the label means the
+    inviter derives the opening key from the peer id the body claims, so a body
+    rewritten under another identity derives a different key and never opens.
+    """
+
+    return INVITE_SECRET_INFO + b"|" + joiner_peer_id.encode("utf-8")
 _CARD_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -153,7 +167,7 @@ class FriendService:
                 self.messaging_private,
                 str(signed.payload["messaging_pub"]),
                 secret,
-                info=INVITE_SECRET_INFO,
+                info=invite_secret_info(self.peer_id),
             )
         except Exception as exc:
             # A hand-crafted invite can carry an unusable messaging key. That is
@@ -223,14 +237,15 @@ class FriendService:
             if body.get("kind") != "ryn.friend-join.v2" or "invite_secret" in body:
                 raise FriendError("invalid_join")
             box = body["invite_secret_box"]
-            # Bound to the joiner's messaging key, which the signed proof covers:
-            # a body rewritten under another identity no longer opens.
+            # Opened with the messaging key and under the peer id this body claims,
+            # both of which the signed proof covers. Keeping a captured box while
+            # rewriting either one derives a different key, so it does not open.
             secret = peer_box.open_sealed(
                 self.messaging_private,
                 str(body["messaging_pub"]),
                 str(box["nonce"]),
                 str(box["ciphertext"]),
-                info=INVITE_SECRET_INFO,
+                info=invite_secret_info(str(body["peer_id"])),
             )
             proof = SignedPayload.from_dict(body["proof"])
             unsigned = {key: value for key, value in body.items() if key != "proof"}

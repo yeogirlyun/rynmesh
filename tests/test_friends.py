@@ -378,6 +378,25 @@ def _capture_accept_body(joiner: FriendService, mesh: Mesh, *, block: bool = Fal
     return captured
 
 
+def _encodings(secret: bytes) -> list[bytes]:
+    """Every spelling of the secret a body could plausibly smuggle it under."""
+
+    return [
+        secret,
+        base64.b64encode(secret),
+        base64.b64encode(secret).rstrip(b"="),
+        base64.urlsafe_b64encode(secret),
+        base64.urlsafe_b64encode(secret).rstrip(b"="),
+    ]
+
+
+def _resign(body: dict, joiner: FriendService) -> dict:
+    """Re-sign a rewritten join body so only the field under test is at fault."""
+
+    unsigned = {key: value for key, value in body.items() if key != "proof"}
+    return {**unsigned, "proof": sign_payload(unsigned, private_key_bytes=joiner.identity_private).to_dict()}
+
+
 def test_join_body_never_carries_plaintext_invite_secret(tmp_path) -> None:
     mesh = Mesh()
     alice = _node(tmp_path, "Alice", 18081, mesh)
@@ -391,15 +410,82 @@ def test_join_body_never_carries_plaintext_invite_secret(tmp_path) -> None:
     assert body["kind"] == "ryn.friend-join.v2"
     box = body["invite_secret_box"]
     assert set(box) == {"nonce", "ciphertext"}
-    assert secret not in canonical_json(body)
-    # Only the inviter's messaging key opens the box, and only under its own label.
+    wire = canonical_json(body)
+    for spelling in _encodings(secret):
+        assert spelling not in wire
+    # Only the inviter's messaging key opens the box, and only under the label for
+    # the peer id the body claims.
     assert peer_box.open_sealed(
         alice.messaging_private,
         body["messaging_pub"],
         box["nonce"],
         box["ciphertext"],
-        info=b"rynmesh-friend-invite-secret-v1",
+        info=b"rynmesh-friend-invite-secret-v1|" + bob.peer_id.encode(),
     ) == secret
+
+
+def test_captured_join_cannot_be_relabelled_onto_another_peer_id(tmp_path) -> None:
+    """The box binds the joining identity, not merely the messaging key pair."""
+
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    carol = _node(tmp_path, "Carol", 18083, mesh)
+    uri = alice.create_invite()["invite_uri"]
+
+    stolen = _capture_accept_body(bob, mesh, block=True)
+    with pytest.raises(FriendError, match="could_not_join_friend"):
+        bob.join(uri)
+    bob.post_json = mesh.post
+    assert stolen
+
+    # Carol keeps Bob's messaging_pub and his box, and rewrites only who she is.
+    forged = _resign({
+        **stolen,
+        "peer_id": carol.peer_id,
+        "node_name": "Carol",
+        "endpoint": carol.endpoint,
+        "timestamp": int(datetime.now(UTC).timestamp()),
+        "nonce": uuid.uuid4().hex,
+    }, carol)
+    assert forged["messaging_pub"] == stolen["messaging_pub"]
+    assert forged["invite_secret_box"] == stolen["invite_secret_box"]
+    with pytest.raises(FriendError, match="invalid_join"):
+        alice.accept(forged)
+    assert alice.list_friends() == []
+    assert [row["status"] for row in alice.list_invites()] == ["active"]
+
+    accepted = alice.accept(stolen)
+    assert accepted["receiver"] == bob.peer_id
+    assert [row["peer_id"] for row in alice.list_friends()] == [bob.peer_id]
+
+
+@pytest.mark.parametrize("break_box", [
+    lambda box: None,
+    lambda box: "not-a-mapping",
+    lambda box: {"ciphertext": box["ciphertext"]},
+    lambda box: {"nonce": box["nonce"]},
+    lambda box: {},
+])
+def test_structurally_malformed_invite_secret_box_is_rejected(tmp_path, break_box) -> None:
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    uri = alice.create_invite()["invite_uri"]
+
+    stolen = _capture_accept_body(bob, mesh, block=True)
+    with pytest.raises(FriendError, match="could_not_join_friend"):
+        bob.join(uri)
+    bob.post_json = mesh.post
+
+    broken = {key: value for key, value in stolen.items() if key != "invite_secret_box"}
+    replacement = break_box(stolen["invite_secret_box"])
+    if replacement is not None:
+        broken["invite_secret_box"] = replacement
+    with pytest.raises(FriendError, match="invalid_join"):
+        alice.accept(_resign(broken, bob))
+    assert alice.list_friends() == []
+    assert [row["status"] for row in alice.list_invites()] == ["active"]
 
 
 def test_invite_with_an_unusable_messaging_key_fails_the_join_cleanly(tmp_path) -> None:
