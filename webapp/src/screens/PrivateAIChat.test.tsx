@@ -120,6 +120,24 @@ describe("Private AI chat", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the reviewed request retryable and frees the composer when the node times out", async () => {
+    const save = liveHistory();
+    const { submit, user, confirm } = renderChat("live");
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(0,
+      "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.", "ask_request_timeout"));
+    await user.type(screen.getByLabelText("Message Private AI"), "Question that times out");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    await act(() => confirm.mock.calls[0][0].onConfirm());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.",
+    );
+    expect(screen.getByRole("button", { name: "Retry same reviewed request" })).toBeEnabled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
   it("reuses the reviewed task identity after a lost response and never calls legacy submission", async () => {
     liveHistory();
     const { submit, user, confirm } = renderChat("live");
@@ -142,6 +160,37 @@ describe("Private AI chat", () => {
     expect(vi.mocked(askHistory.beginRun).mock.calls[1][0]).toEqual(request);
     expect(submit).not.toHaveBeenCalled();
   });
+
+  it("recovers the composer when the node has no record of the task being cancelled", async () => {
+    const save = liveHistory();
+    const first = renderChat("live");
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    const prior = save.mock.calls[0][0];
+    const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId: "task_original", createdAt: prior.createdAt }] };
+    await save(running);
+    first.unmount();
+    const { user } = renderChat("live");
+    expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
+    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.", "ask_run_not_found"));
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
+  });
+
+  it("clears the poll-unreachable error once the node responds again, without touching other errors", async () => {
+    liveHistory();
+    renderChat("live");
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByLabelText("Message Private AI");
+    // The 1.5s poll runs on a real interval created at mount; drive it with
+    // real time (as the existing node-owned-task test above does) rather
+    // than fake timers, since the interval is already scheduled before this
+    // test gets a chance to install fake timers.
+    vi.mocked(askHistory.list).mockImplementationOnce(async () => { throw new Error("offline"); });
+    expect(await screen.findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent(
+      "The node could not be reached. Saved tasks continue on the node; no new request was submitted.",
+    );
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 3000 });
+  }, 10_000);
 
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();

@@ -1,9 +1,31 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { askHistory, conversationRepository } from "./askHistory";
+import { askHistory, AskRequestError, conversationRepository } from "./askHistory";
 import * as legacy from "./llmConversationStore";
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const conversation = () => legacy.createConversation({ serviceKey: "provider::model", serviceName: "Model", providerPeerId: "provider", networkId: "network" });
+
+it("times out a hung request after 30 seconds so the caller can recover", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const fetch = vi.fn((_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    options.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+  }));
+  vi.stubGlobal("fetch", fetch);
+  const pending = expect(askHistory.beginRun({
+    task_id: "task_1", conversation_id: "conversation", expected_revision: 1, question: "Question", prompt_sha256: "sha",
+  })).rejects.toMatchObject({
+    status: 0, code: "ask_request_timeout",
+    message: "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.",
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  await pending;
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("does not report a timeout for an ordinary fetch failure", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+  await expect(askHistory.list()).rejects.not.toMatchObject({ code: "ask_request_timeout" });
+});
 
 it("uses node revisions and propagates conflicts without browser writes", async () => {
   const browserWrite = vi.spyOn(legacy, "saveConversation");

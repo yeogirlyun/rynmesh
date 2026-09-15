@@ -32,6 +32,7 @@ import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
+const NODE_UNREACHABLE_ERROR = "The node could not be reached. Saved tasks continue on the node; no new request was submitted.";
 
 function serviceKey(service: LLMServiceRecord) {
   // Aliases are display names and are not unique. Scope history by both the
@@ -129,8 +130,10 @@ export default function PrivateAIChat() {
       if (checking) return;
       checking = true;
       void history.list(selectedServiceKeyRef.current).then((rows) => {
-        if (active) setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
-      }).catch(() => { if (active) setError("The node could not be reached. Saved tasks continue on the node; no new request was submitted."); })
+        if (!active) return;
+        setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
+        setError((current) => (current === NODE_UNREACHABLE_ERROR ? "" : current));
+      }).catch(() => { if (active) setError(NODE_UNREACHABLE_ERROR); })
         .finally(() => { checking = false; });
     }, 1500);
     return () => { active = false; window.clearInterval(timer); };
@@ -411,7 +414,15 @@ export default function PrivateAIChat() {
       const taskId = nodeTask || activeTaskId;
       if (taskId) {
         try { await askHistory.cancelRun(taskId); cancelRequestedRef.current = false; await refreshNodeHistory(); }
-        catch { setError("Cancellation has not been confirmed. The task may still be running; check it again."); }
+        catch (cause) {
+          if (cause instanceof AskRequestError && cause.code === "ask_run_not_found") {
+            setError("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
+            setSending(false);
+            setActiveTaskId("");
+          } else {
+            setError("Cancellation has not been confirmed. The task may still be running; check it again.");
+          }
+        }
       }
       return;
     }
