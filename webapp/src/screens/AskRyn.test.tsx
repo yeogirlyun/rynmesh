@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -16,7 +16,7 @@ beforeEach(() => {
   vi.spyOn(askHistory, "saveDraft").mockImplementation(async (text, revision) => ({ text, revision: revision + 1 }));
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 function mockDownload() {
   const create = vi.fn(() => "blob:ask-export");
@@ -76,6 +76,22 @@ it.each(["save", "export"])("keeps the draft and supports retry when %s fails", 
   await user.click(screen.getByRole("button", { name: "Export conversations and draft" }));
   expect(await screen.findByText(/Export prepared and download requested/)).toHaveFocus();
   expect(download.click).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the exported blob's object URL alive until the browser starts the download", async () => {
+  const download = mockDownload();
+  vi.spyOn(askHistory, "export").mockResolvedValue({ version: "ryn.ask-export.v1", conversations: [] });
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Export conversations and draft" })).toBeEnabled());
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Export conversations and draft" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(download.click).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:ask-export");
+  } finally { vi.useRealTimers(); }
 });
 
 function mount(initial = "/ask", services: LLMServiceRecord[] = [], rows: LLMConversation[] = []) {
