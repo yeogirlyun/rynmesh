@@ -86,6 +86,8 @@ class LocalSearchSources:
 
         def content(identifier, title, text, source, stamp, kinds, record=None, body_state="available"):
             clipped, truncated = _clip_text(text)
+            # "truncated": this search-store row was clipped to MAX_TEXT here, distinct from
+            # the "text_truncated" key set below, which records upstream extraction truncation.
             return {"id": identifier, "title": _clip(title), "text": clipped, "source": _clip(source),
                     "timestamp": stamp, "kinds": kinds, "friend_ids": [], "body_state": body_state,
                     "reading_record": record, "truncated": truncated,
@@ -146,6 +148,8 @@ class LocalSearchSources:
                     kinds, record, body_state)
             else:
                 rows[identifier]["kinds"] = sorted(set(rows[identifier]["kinds"] + kinds))
+            # "text_truncated": extraction-time truncation from the saved-document body itself,
+            # separate from the row's own "truncated" (this store's 1 MiB search-index clip).
             rows[identifier]["text_truncated"] = truncated or rows[identifier].get("text_truncated", False)
             if text:
                 verified[identity] = identifier
@@ -176,6 +180,8 @@ class LocalSearchSources:
                     rows[identifier] = content(identifier, body['title'], text, body['source'],
                         _stamp(body['downloaded_at']), sorted(set(['saved'] + (prior or {}).get('kinds', []))), record)
                 rows[identifier]['offline_key'] = saved['key']
+                # "text_truncated": the offline body extraction was truncated upstream, not the
+                # row's own "truncated" (this store's 1 MiB search-index clip, set in content()).
                 rows[identifier]['text_truncated'] = bool(body['truncated'])
                 if body.get('url'):
                     verified[(body['url'], hashlib.sha256(text.encode()).hexdigest())] = identifier
@@ -203,6 +209,8 @@ class LocalSearchSources:
             peer_id = relation["peer_id"]
             for message in friends.history(peer_id):
                 query = urlencode({"peer": peer_id, "message": message["msg_id"]})
+                # "truncated" here is this row's own 1 MiB search-index clip; chat messages have
+                # no upstream extraction step, so there is no separate "text_truncated" for them.
                 text, truncated = _clip_text(message.get("text", "") +
                     ("\n" + message["attachment"]["filename"] if message.get("attachment") else ""))
                 rows["message:" + peer_id + ":" + message["msg_id"]] = {
@@ -216,6 +224,8 @@ class LocalSearchSources:
             messages = conversation["messages"] or [{"id": "empty", "content": "", "createdAt": conversation["updatedAt"]}]
             for message in messages:
                 identifier = "ask:" + conversation["id"] + ":" + message["id"]
+                # "truncated" here is this row's own 1 MiB search-index clip, not the unrelated
+                # "text_truncated" key used elsewhere for upstream extraction truncation.
                 text, truncated = _clip_text(message["content"])
                 rows[identifier] = {"id": identifier, "title": _clip(conversation["title"]), "text": text, "truncated": truncated,
                     "source": _clip(conversation["serviceName"]), "timestamp": _stamp(message["createdAt"]),

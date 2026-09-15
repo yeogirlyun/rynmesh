@@ -4,7 +4,7 @@ import type { ConsumptionRecord } from "./digestClient";
 export type SearchSnippet = { text: string; matches: [number, number][]; offset_unit: "unicode_codepoints"; prefix_omitted: boolean; suffix_omitted: boolean };
 export type SearchResult = { id: string; title: string; source: string; timestamp: number; kinds: string[]; body_state: string; text_truncated?: boolean;
   targets: { label: string; href: string }[]; snippet: SearchSnippet; title_match: SearchSnippet };
-export type SearchStatus = { state: string; error_code: string; indexed_count: number; updated_at: number | null; unavailable_sources?: string[] };
+export type SearchStatus = { state: string; error_code: string; indexed_count: number; updated_at: number | null; unavailable_sources?: string[]; skipped_rows?: number };
 export type SearchPage = { results: SearchResult[]; total: number; next_cursor: string; partial: boolean; indexing_pending?: boolean; unavailable_sources?: string[]; index: SearchStatus };
 export type SearchDocument = Omit<SearchResult, "snippet" | "title_match"> & { text: string; reading_record?: ConsumptionRecord; offline_key?: string };
 export type SearchRequest = { query: string; kind?: string; source?: string; friend_id?: string; after?: number; before?: number; sort?: string; cursor?: string };
