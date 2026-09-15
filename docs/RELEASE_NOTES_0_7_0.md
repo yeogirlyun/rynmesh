@@ -2,9 +2,12 @@
 
 Rynmesh is alpha software. This release delivers the eight P2 "Friend Mesh"
 user-facing features from `docs/product-briefs/`, plus 21 release-hardening
-fixes (PR #57) found during pre-release review of that work. See
-`docs/PR_57_RELEASE_HARDENING_WORK_PLAN.md` for the full finding-by-finding
-record and `git log --oneline 094f03a..v0.7.0` for the exact commits.
+tasks (19 fixes, 2 test-coverage sweeps; PR #57) found during pre-release
+review of that work. See `docs/PR_57_RELEASE_HARDENING_WORK_PLAN.md` for the
+full finding-by-finding record and `git log --oneline 094f03a..HEAD` on the
+`release/v0.7.0` branch for the exact commits (the `v0.7.0` tag does not
+exist yet — it is applied by the maintainer once this branch merges, per
+`CONTRIBUTING.md`'s release procedure).
 
 ## New user-facing features
 
@@ -17,7 +20,8 @@ record and `git log --oneline 094f03a..v0.7.0` for the exact commits.
 4. **AI setup and friend permissions** — enable local AI with one click and
    decide who can use it.
 5. **Search and retrieve** — one search recovers content, shares, and chat
-   history.
+   history; Search now also tells you how many items could not be indexed
+   and will not appear in results.
 6. **Follow friends' content updates** — keep seeing new content friends
    choose to share.
 7. **Offline reading** — read downloaded content without a network
@@ -37,6 +41,10 @@ record and `git log --oneline 094f03a..v0.7.0` for the exact commits.
 - A succeeded, paid Ask Ryn answer is kept until it is safely archived,
   instead of being lost and reported as "interrupted" if it vanishes before
   the next check.
+- A succeeded answer awaiting archive is now purged no later than 7 days
+  after its original success; a later settlement checkpoint (written, for
+  example, on every node restart) no longer resets that 7-day clock and
+  silently extends how long the response is kept.
 
 ### Device sync and pairing
 
