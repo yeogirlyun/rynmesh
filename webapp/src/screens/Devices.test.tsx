@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.spyOn(deviceSyncApi, "readingConflicts").mockResolvedValue({ conflicts: [], local_actor: "local" });
   confirm.mockReset();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("requires an explicit scope choice and preserves a copyable invite when clipboard fails", async () => {
   const invite = vi.spyOn(deviceSyncApi, "invite").mockImplementation(async () => {
@@ -104,6 +104,16 @@ it("shows pairing as distinct from synced data and requires review before remova
   await act(async () => confirm.mock.calls[0][0].onConfirm());
   expect(remove.mock.calls[0][0].revision).toBe(4);
   expect(await screen.findByText(/Removed locally; waiting to notify/)).toBeInTheDocument();
+});
+
+it("names the device-sync not-found error when a pairing row is gone from the node", async () => {
+  state.devices = [{ ...pair, status: "active", revision: 4 }];
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "sync_pairing_not_found" }), { status: 404 })));
+  show();
+  expect(await screen.findByText("Pairing confirmed")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Remove device" }));
+  await act(async () => confirm.mock.calls[0][0].onConfirm());
+  expect(await screen.findByRole("alert")).toHaveTextContent("no longer exists on the node");
 });
 
 it("keeps existing controls available when a network address is missing", async () => {

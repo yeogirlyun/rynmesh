@@ -447,7 +447,16 @@ class PairingService:
             raise SyncError('sync_pairing_invalid')
 
         def receive(data):
-            row = self._pair(data, value['pair_id'])
+            actor_id(value['pair_id'])
+            row = data['pairs'].get(value['pair_id'])
+            if row is None:
+                # revoke is idempotent, and an old pair can be compacted away (its own
+                # revocation, or trimmed once MAX_RECORDS other revocations followed it): a
+                # signed revoke wire for a row that is simply gone is "already revoked", not
+                # a failure, so this reports the same success a still-present row would.
+                return {'pair_id': value['pair_id'], 'state': 'revoked'}
+            if not self._same_identity(row['local'], self.identity):
+                raise SyncError('sync_device_identity_changed')
             if not self._same_identity(row['remote'], sender):
                 raise SyncError('sync_pairing_invalid')
             row['status'] = 'revoked'

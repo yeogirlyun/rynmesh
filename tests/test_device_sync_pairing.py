@@ -1,4 +1,5 @@
 """Real-key, durable two-owner protocol tests; transport is an in-memory bus."""
+import uuid
 from copy import deepcopy
 
 import pytest
@@ -7,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from rynmesh.device_sync import pair_crypto as crypto
 from rynmesh.device_sync.pairing import POLICY, POLICY_CHANNEL, PairingService
-from rynmesh.device_sync.records import SyncError
+from rynmesh.device_sync.records import SyncError, fingerprint
 
 
 class Devices:
@@ -166,6 +167,54 @@ def test_receive_join_for_a_compacted_expired_invite_reports_not_found(devices):
 
     with pytest.raises(SyncError, match='sync_invite_invalid'):
         a.receive_join(wire)
+
+
+def test_trimming_the_oldest_revoked_pair_clears_its_linked_invite(devices):
+    a, b, pair_id = devices.pair()
+    a.revoke(pair_id, expected_revision=1)
+    # revoke() never touches the invite: A's claimed invite is still linked to the pair it
+    # just revoked, and is now the oldest revoked row in the store.
+    invites = a.store.snapshot()['invites']
+    invite_id = next(iter(invites))
+    assert invites[invite_id]['pair_id'] == pair_id
+
+    revoked = a.store.snapshot()['pairs'][pair_id]
+    local, remote = revoked['local'], revoked['remote']
+
+    def seed(data):
+        # Bulk-insert 256 more schema-valid revoked pairs (reusing A's real identity blocks)
+        # so the oldest one -- the real, signed pair created above -- is the one that gets
+        # trimmed once the revoked count crosses MAX_RECORDS.
+        for index in range(256):
+            synthetic_id = fingerprint(f'synthetic-revoked-{index}')
+            data['pairs'][synthetic_id] = {'id': synthetic_id, 'role': 'inviter', 'local': local, 'remote': remote,
+                'invite_id': uuid.uuid4().hex, 'requested_scopes': [], 'expires': 2000, 'status': 'revoked'}
+        return None
+    a.store.mutate(seed)  # must not raise sync_pairing_store_unavailable on the dangling pair_id
+
+    snapshot = a.store.snapshot()
+    assert pair_id not in snapshot['pairs']  # the oldest revoked pair was trimmed
+    assert sum(1 for row in snapshot['pairs'].values() if row['status'] == 'revoked') == 256
+    if invite_id in snapshot['invites']:
+        assert snapshot['invites'][invite_id]['pair_id'] is None  # cleared, not dangling
+    # else: the invite itself was also dropped -- an equally acceptable outcome.
+
+    # The store must still be writable, not permanently locked by a dangling reference.
+    a.create_invite(['bookmarks'], ttl_seconds=60)
+
+
+def test_receive_revoke_for_an_already_compacted_pair_is_idempotent(devices):
+    a, b, pair_id = devices.pair()
+    assert a.revoke(pair_id, expected_revision=1)['status'] == 'revoked'
+    wire = a.store.snapshot()['pairs'][pair_id]['revoke_wire']
+
+    def drop(data):
+        data['pairs'].pop(pair_id)
+        return None
+    b.store.mutate(drop)  # simulate the pair already having been compacted away on B's side
+
+    result = a._response(wire, b.receive_revoke(wire), b.identity)
+    assert result['state'] == 'revoked' and result['pair_id'] == pair_id
 
 
 def test_invite_cannot_admit_second_device_or_changed_intent(devices):
