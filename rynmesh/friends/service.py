@@ -33,7 +33,9 @@ MAX_SHARED_CONTENT_BYTES = 5 * 1024 * 1024
 MAX_SHARED_RESPONSE_BYTES = ((((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 65536 + 2) // 3) * 4 + 65536
 # The join carries the invite secret sealed to the inviter's messaging key under
 # its own HKDF label, so an on-path attacker who blocks the real join cannot lift
-# the secret out of the body and submit a join of their own.
+# the secret out of the body and submit a join of their own. This is the base of
+# that label only: invite_secret_info() extends it with the joiner's peer id, so
+# the sealed secret is bound to who is joining and not merely to the key pair.
 INVITE_SECRET_INFO = b"rynmesh-friend-invite-secret-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
