@@ -32,6 +32,17 @@ it("reviews files and retained data before confirmation", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("1 reviewed document copies cleared");
   expect(screen.getByRole("status")).toHaveFocus();
 });
+it("shows remote confirmation when the node confirms other devices are cleared", async () => {
+  setup();
+  vi.spyOn(libraryCleanup, "begin").mockResolvedValue({ ...finished, remote_confirmed: true });
+  const user = userEvent.setup(); render(<PrivateCopiesPanel />);
+  await screen.findByRole("button", { name: "Remove Private reading.txt" });
+  await user.click(screen.getByRole("button", { name: "Review all document copies" }));
+  vi.mocked(libraryCleanup.status).mockResolvedValue({ ...finished, remote_confirmed: true });
+  vi.mocked(friendsApi.documents).mockResolvedValue({ documents: [] });
+  await act(() => confirm.mock.calls[0][0].onConfirm());
+  expect(screen.getByRole("status")).toHaveTextContent("Remote devices confirmed.");
+});
 it("keeps the original scope and request after a lost response", async () => {
   setup();
   const selected = { ...review, scope: "imp" };
