@@ -192,7 +192,14 @@ class LocalSearchSources:
             if card.get("dir") != "in" or relation is None:
                 continue
             info = card["card"]
-            identifier = aliases.get(card.get("fetched_library_id")) or verified.get((info.get("source_url", ""), info.get("sha256")))
+            # A card's own source_url/sha256 are friend-supplied and unverified until this
+            # relationship's fetch has confirmed the bytes hash to that sha256. Before that,
+            # only an exact fetched_library_id alias (set solely by the fetch path) may merge
+            # the card into an existing row; otherwise it gets its own untethered row below.
+            verified_for_relation = card.get("fetch_state") == "fetched" and card.get("sha256_verified") is True
+            identifier = aliases.get(card.get("fetched_library_id"))
+            if identifier is None and verified_for_relation:
+                identifier = verified.get((info.get("source_url", ""), info.get("sha256")))
             target = {"label": "Open share", "href": "/friends?" + urlencode({"card": card["card_id"]})}
             if identifier is None:
                 identifier = "card:" + card["card_id"]
