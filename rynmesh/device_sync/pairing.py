@@ -42,7 +42,7 @@ class PairingService:
     def __init__(self, home, *, identity_private, messaging_key, name, endpoint, post_json, clock=time.time, allow_loopback=False):
         self.identity_private, self.messaging_key = identity_private, messaging_key
         self.post_json, self.clock, self.allow_loopback = post_json, clock, allow_loopback
-        self.store = PairingStore(home, messaging_key)
+        self.store = PairingStore(home, messaging_key, clock=self.clock)
         self.identity = {'peer_id': public_key_from_private(identity_private),
             'messaging_pub': peer_box.public_key_b64(messaging_key), 'actor': self.store.actor,
             'name': name, 'endpoint': endpoint}
