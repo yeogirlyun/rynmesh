@@ -233,8 +233,13 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
                 attempts.pop(host)
         host = request.client.host if request.client else 'unknown'
         recent = attempts.get(host, [])
-        if len(recent) >= 60 or host not in attempts and len(attempts) >= 256:
+        if len(recent) >= 60:
             raise HTTPException(429, detail='sync_rate_limited', headers={'Retry-After': '60'})
+        if host not in attempts and len(attempts) >= 256:
+            # Table is full of tracked hosts: evict the least-recently-active one instead of
+            # refusing every new peer once a rotating attacker fills the table.
+            stalest = min(attempts, key=lambda candidate: attempts[candidate][-1])
+            attempts.pop(stalest)
         attempts.setdefault(host, []).append(now)
         wire = await body(request, MAX_DATA_WIRE_BYTES if action == 'batch' else MAX_WIRE_BYTES)
         try:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -21,12 +22,13 @@ STATUSES = {'awaiting_owner', 'awaiting_inviter', 'awaiting_peer', 'awaiting_ack
 
 
 class PairingStore:
-    def __init__(self, home, messaging_key):
+    def __init__(self, home, messaging_key, *, clock=time.time):
         self.path = Path(home) / 'device-sync' / 'pairings.json'
         self.lock = self.path.parent / '.pairings.lock'
         self.key = messaging_key
         self.pub = peer_box.public_key_b64(messaging_key)
         self.actor = fingerprint(self.pub)
+        self.clock = clock
 
     def _read(self):
         if not self.path.exists():
@@ -55,9 +57,14 @@ class PairingStore:
             raise SyncError('sync_version_unsupported')
         if data.get('actor') != self.actor:
             raise SyncError('sync_device_identity_changed')
-        for section in ('invites', 'pairs'):
-            if not isinstance(data.get(section), dict) or len(data[section]) > MAX_RECORDS:
-                raise SyncError('sync_pairing_capacity_exhausted')
+        if not isinstance(data.get('invites'), dict) or len(data['invites']) > MAX_RECORDS:
+            raise SyncError('sync_pairing_capacity_exhausted')
+        if not isinstance(data.get('pairs'), dict):
+            raise SyncError('sync_pairing_capacity_exhausted')
+        # Revoked pairs are kept for history but never count against the live cap; see _compact.
+        live_pairs = sum(1 for pair in data['pairs'].values() if isinstance(pair, dict) and pair.get('status') != 'revoked')
+        if live_pairs > MAX_RECORDS:
+            raise SyncError('sync_pairing_capacity_exhausted')
         for identifier, pair in data['pairs'].items():
             actor_id(identifier)
             if not isinstance(pair, dict) or pair.get('id') != identifier or pair.get('status') not in STATUSES:
@@ -105,11 +112,57 @@ class PairingStore:
                 if pair is None or pair['role'] != 'inviter' or pair['invite_id'] != identifier:
                     raise SyncError('sync_pairing_store_unavailable')
 
+    @staticmethod
+    def _trim_revoked(data):
+        """Bound revoked pairs to MAX_RECORDS, dropping the oldest first (insertion order).
+
+        Revoked is a terminal state nothing retries against for a graceful reply (unlike a
+        cancelled invite or a just-rejected pair; see _compact), so trimming it needs no delay
+        and runs again after the operation to catch a revoke() it just performed.
+        """
+        pairs = data['pairs']
+        revoked = [identifier for identifier, pair in pairs.items() if pair['status'] == 'revoked']
+        for identifier in revoked[:max(0, len(revoked) - MAX_RECORDS)]:
+            pairs.pop(identifier)
+
+    def _compact(self, data, now):
+        """Drop finished rows before the cap check so churn never starves new invites or pairs.
+
+        Active/awaiting rows are never touched.
+
+        A claimed invite whose pair is dropped in *this same pass* is kept one extra mutate
+        cycle (its dangling pair_id is cleared instead): receive_join's crossed-request/retry
+        handling reads the invite's own status to reply gracefully (e.g. still-cancelled), and
+        dropping both rows in the same instant would turn that graceful reply into a raw
+        not-found. The invite is reclaimed on the next cycle once its pair link is gone.
+        """
+        pairs = data['pairs']
+        linked = set(pairs)  # pair ids present before this pass's own drops
+        dropped = {identifier for identifier, pair in pairs.items() if pair['status'] == 'rejected'}
+        for identifier in dropped:
+            pairs.pop(identifier)
+        self._trim_revoked(data)
+
+        invites = data['invites']
+        finished = [identifier for identifier, invite in invites.items()
+                    if (invite['status'] == 'cancelled' or invite['proof']['payload']['expires'] <= now)
+                    and (invite.get('pair_id') is None or invite['pair_id'] not in linked)]
+        for identifier in finished:
+            invites.pop(identifier)
+
+        if dropped:
+            # A dropped pair must not leave a dangling reference on a surviving invite.
+            for invite in invites.values():
+                if invite.get('pair_id') in dropped:
+                    invite['pair_id'] = None
+
     def mutate(self, operation):
         with file_transaction(self.lock):
             envelope, data = self._read()
             before = canonical_json(data)
+            self._compact(data, self.clock())
             result = operation(data)
+            self._trim_revoked(data)  # catch a revoke() the operation just performed
             self._validate(data)
             plaintext = canonical_json(data)
             if len(plaintext) > MAX_PLAINTEXT:

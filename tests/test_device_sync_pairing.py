@@ -124,8 +124,48 @@ def test_expired_or_cancelled_pending_invite_never_activates(devices, cancel):
     else:
         devices.now += 61
     assert b.retry(pair_id)['status'] == 'rejected'
-    with pytest.raises(SyncError, match='sync_device_not_active'):
+    # A cancelled pair is a finished row the store compacts away on its next mutate, so a
+    # later lookup reports "not found" rather than "not active"; an expired-but-never-approved
+    # pair stays awaiting (never dropped) and is still found, just not active.
+    expected = 'sync_pairing_not_found' if cancel else 'sync_device_not_active'
+    with pytest.raises(SyncError, match=expected):
         authorized(a, b, pair_id)
+
+
+def test_expired_and_cancelled_invites_free_capacity(devices):
+    a = devices.node('A')
+    scopes = ['bookmarks']
+    for _ in range(256):
+        a.create_invite(scopes, ttl_seconds=60)
+    assert len(a.list_invites()) == 256
+
+    devices.now += 61  # past every invite's TTL
+    for _ in range(44):
+        a.create_invite(scopes, ttl_seconds=60)  # the expired batch must be compacted away, not refused
+    assert len(a.list_invites()) == 44
+
+    for _ in range(212):
+        a.create_invite(scopes, ttl_seconds=3600)
+    assert len(a.list_invites()) == 256
+
+    cancel_id = a.list_invites()[0]['id']
+    a.cancel_invite(cancel_id)
+    a.create_invite(scopes, ttl_seconds=3600)  # cancelling one must free a slot at the cap
+    assert len(a.list_invites()) == 256
+
+
+def test_receive_join_for_a_compacted_expired_invite_reports_not_found(devices):
+    a, b = devices.node('A'), devices.node('B')
+    invite = a.create_invite(['bookmarks'], ttl_seconds=60)
+    pair_id = b.start_join(invite['uri'], ['bookmarks'])['id']
+    wire = b.store.snapshot()['pairs'][pair_id]['join_wire']
+
+    devices.now += 61  # past the invite's TTL
+    a.create_invite(['bookmarks'], ttl_seconds=60)  # forces a mutate that compacts the expired invite away
+    assert invite['invite']['id'] not in a.store.snapshot()['invites']
+
+    with pytest.raises(SyncError, match='sync_invite_invalid'):
+        a.receive_join(wire)
 
 
 def test_invite_cannot_admit_second_device_or_changed_intent(devices):

@@ -1,6 +1,7 @@
 """Pairing through installed owner/peer HTTP handlers and the shared worker."""
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -138,6 +139,29 @@ def test_peer_routes_bound_input_rate_and_error_details(tmp_path):
     result = node.client.post(path, json={})
     assert result.status_code == 429 and result.headers['retry-after'] == '60'
     assert len(node.app.state.device_sync.attempts) == 1
+
+
+def test_new_peer_host_is_admitted_when_table_is_full(tmp_path):
+    node = Node(tmp_path / 'A')
+    path = '/api/peer/device-sync/join'
+    attempts = node.app.state.device_sync.attempts
+    now = time.monotonic()
+    for index in range(256):
+        attempts[f'host-{index}'] = [now - 1 + index * 0.001]  # host-0's newest stamp is the oldest
+    assert len(attempts) == 256
+
+    result = node.client.post(path, json={})
+    assert result.status_code == 403  # admitted into handling, not rate limited
+    assert len(attempts) == 256  # table stays bounded
+    assert 'host-0' not in attempts  # the stalest host was evicted to make room
+    assert 'testclient' in attempts  # the new host was admitted
+
+    # A host already at its own 60/min ceiling must still be refused, even though the
+    # table itself is not full.
+    attempts.clear()
+    attempts['testclient'] = [now] * 60
+    result = node.client.post(path, json={})
+    assert result.status_code == 429 and result.headers['retry-after'] == '60'
 
 
 def test_slow_pairing_io_does_not_block_http_event_loop(tmp_path):
