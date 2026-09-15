@@ -33,6 +33,9 @@ import styles from "./PrivateAIChat.module.css";
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
 const SUGGESTIONS = ["Summarize a document", "Draft a professional email", "Explain a difficult topic"];
 const NODE_UNREACHABLE_ERROR = "The node could not be reached. Saved tasks continue on the node; no new request was submitted.";
+const ASK_RUN_NOT_FOUND_ERROR = "The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.";
+const RECOVERY_UNCONFIRMED_ERROR = "The node could not confirm clearing this task. Reload history and try again.";
+const RUNNING_MESSAGE_STATUSES = new Set(["queued", "running", "cancel_requested"]);
 
 function serviceKey(service: LLMServiceRecord) {
   // Aliases are display names and are not unique. Scope history by both the
@@ -114,12 +117,14 @@ export default function PrivateAIChat() {
   const selectedConversation = (selectedId ? conversations.find((conversation) => conversation.id === selectedId) : conversations[0]) ?? null;
   const selectedConversationRef = useRef(selectedConversation?.id);
   selectedConversationRef.current = selectedConversation?.id;
-  const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && ["queued", "running", "cancel_requested"].includes(message.status))?.taskId : undefined;
+  const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
 
   const refreshNodeHistory = async () => {
     const rows = await history.list(selectedServiceKeyRef.current);
-    if (mountedRef.current) setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
+    const filtered = rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current);
+    if (mountedRef.current) setConversations(filtered);
+    return filtered;
   };
 
   useEffect(() => {
@@ -408,6 +413,47 @@ export default function PrivateAIChat() {
     }
   };
 
+  // A resumed-from-history running message keeps `isSending` true (`nodeTask`
+  // derives from message status) even after `sending`/`activeTaskId` are
+  // cleared, so once the node reports ask_run_not_found the stale message
+  // itself must be rewritten to `interrupted` — through the normal save
+  // path, against the node's current revision, so a reload does not
+  // resurrect it as still running and a stale local copy does not clobber a
+  // newer one from another device. Every await here is guarded: nothing may
+  // escape into an unhandled rejection from the click handler that calls this.
+  const recoverInterruptedTask = async (taskId: string) => {
+    try {
+      let rows = await refreshNodeHistory();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (!mountedRef.current) return;
+        const conversation = rows.find((row) => row.messages.some((message) => message.taskId === taskId));
+        const stale = conversation?.messages.find((message) => message.taskId === taskId && RUNNING_MESSAGE_STATUSES.has(message.status));
+        if (!conversation || !stale || deletedIdsRef.current.has(conversation.id)) {
+          // Already resolved (by this recovery, another device, or deletion).
+          setError(ASK_RUN_NOT_FOUND_ERROR);
+          return;
+        }
+        const messages = conversation.messages.map((message) => message === stale
+          ? { ...message, status: "interrupted" as const, content: "The node has no record of this task; nothing is running there." }
+          : message);
+        try {
+          await replaceConversation({ ...conversation, messages }, false);
+          setError(ASK_RUN_NOT_FOUND_ERROR);
+          return;
+        } catch (saveError) {
+          if (attempt === 0 && saveError instanceof AskRequestError && saveError.code === "ask_revision_conflict") {
+            rows = await refreshNodeHistory();
+            continue;
+          }
+          if (mountedRef.current) setError(RECOVERY_UNCONFIRMED_ERROR);
+          return;
+        }
+      }
+    } catch {
+      if (mountedRef.current) setError(RECOVERY_UNCONFIRMED_ERROR);
+    }
+  };
+
   const stopGeneration = async () => {
     if (client.mode === "live") {
       cancelRequestedRef.current = true;
@@ -416,21 +462,9 @@ export default function PrivateAIChat() {
         try { await askHistory.cancelRun(taskId); cancelRequestedRef.current = false; await refreshNodeHistory(); }
         catch (cause) {
           if (cause instanceof AskRequestError && cause.code === "ask_run_not_found") {
-            setError("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
             setSending(false);
             setActiveTaskId("");
-            // A resumed-from-history running message keeps `isSending` true
-            // (nodeTask derives from message status) even after sending is
-            // cleared above, so the stale message itself must be marked
-            // interrupted — through the normal save path, so a reload does
-            // not resurrect it as still running.
-            if (selectedConversation && !deletedIdsRef.current.has(selectedConversation.id)) {
-              const messages = selectedConversation.messages.map((message) => message.taskId === taskId
-                ? { ...message, status: "interrupted" as const, content: "The node has no record of this task; nothing is running there." }
-                : message);
-              try { await replaceConversation({ ...selectedConversation, messages }, false); } catch { /* local recovery is best-effort */ }
-            }
-            await refreshNodeHistory();
+            await recoverInterruptedTask(taskId);
           } else {
             setError("Cancellation has not been confirmed. The task may still be running; check it again.");
           }
