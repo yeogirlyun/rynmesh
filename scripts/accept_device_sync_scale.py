@@ -180,7 +180,8 @@ def measure(home, count, changes, result, *, baseline=None, reading_cleanup=Fals
             invite = left.pairing.create_invite(['bookmarks'])
             pair = right.pairing.join(invite['uri'], ['bookmarks'])
             pair_id = pair['id']
-            left.pairing.approve(pair_id, review_token=pair['review_token'], scopes=['bookmarks'])
+            left.pairing.approve(pair_id, review_token=pair['review_token'], scopes=['bookmarks'],
+                                 verification_code=pair['verification_code'])
             right.pairing.retry(pair_id)
             result['phase'] = 'baseline_migration'
             started = time.perf_counter()
