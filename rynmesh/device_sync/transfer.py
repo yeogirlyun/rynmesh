@@ -24,6 +24,10 @@ MAX_WIRE_BYTES = 18 * 1024 * 1024
 DATA = 'ryn.device-data.v1'
 ACK = 'ryn.device-data-ack.v1'
 CHANNEL = b'rynmesh-device-data-v1:'
+# Identifiers of refused rows kept past the per-scope id map, so a re-reported
+# refusal is recognised instead of counted again. Bounded because the pairing
+# file holds every pairing on the device.
+OVERFLOW_LIMIT = 1000
 
 
 class DeviceTransfer:
@@ -207,28 +211,46 @@ class DeviceTransfer:
     def _rejected(state, scope, answers):
         """Keep the rows this peer refused and drop the ones it has now merged.
 
-        The exact count is kept beside the ids, because the id map is bounded to
-        one batch per scope: this is a status note for the owner, and the pairing
-        file holds every pairing on the device.
+        The id map is bounded to one batch per scope, so a refusal past that cap
+        keeps only its identifier, in `overflow`. Identity is what makes the
+        count truthful: counting a bare refusal would count the same row again
+        on every cycle that re-reports it, and an acceptance could then settle a
+        refusal that was never counted. `overflow` is itself capped; past that,
+        rows stop being counted at all and `overflow_truncated` says so, rather
+        than letting one pairing row grow without bound in the pairing file.
         """
         rejected = state.setdefault('rejected', {})
         entry = rejected.get(scope) or {}
-        rows, count = entry.get('rows', {}), entry.get('count', 0)
+        rows = entry.get('rows', {})
+        overflow = set(entry.get('overflow', ()))
+        truncated = bool(entry.get('overflow_truncated'))
+        count = entry.get('count', 0)
         for identifier, code in answers.items():
             if not code:
-                # An accepted row settles one refusal, including one the cap
-                # left unnamed; the floor below keeps the count truthful.
-                rows.pop(identifier, None)
-                count -= 1
+                # An accepted row settles exactly the one refusal it names,
+                # whether that refusal was named in `rows` or only counted.
+                if rows.pop(identifier, None) is not None:
+                    count -= 1
+                elif identifier in overflow:
+                    overflow.discard(identifier)
+                    count -= 1
             elif identifier in rows:
                 rows[identifier] = code
-            else:
+            elif identifier in overflow:
+                pass  # Already counted; the cap left no room for its code.
+            elif len(rows) < MAX_BATCH:
+                rows[identifier] = code
                 count += 1
-                if len(rows) < MAX_BATCH:
-                    rows[identifier] = code
-        count = max(count, len(rows), 0)
+            elif len(overflow) < OVERFLOW_LIMIT:
+                overflow.add(identifier)
+                count += 1
+            else:
+                truncated = True
+        count = min(max(count, 0), len(rows) + len(overflow))
         if count:
-            rejected[scope] = {'count': count, 'rows': rows}
+            rejected[scope] = {'count': count, 'rows': rows,
+                               **({'overflow': sorted(overflow)} if overflow else {}),
+                               **({'overflow_truncated': True} if truncated else {})}
         else:
             rejected.pop(scope, None)
         if not rejected:

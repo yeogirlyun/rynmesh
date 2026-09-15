@@ -130,7 +130,8 @@ def test_quarantine_section_survives_restart_and_a_malformed_one_is_rejected(tmp
     key = a._key('reading', 'article')
     entry = {'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict', 'revision': 'b' * 64}
     a._mutate(lambda data: data.update(quarantine={key: entry}))
-    assert replica(tmp_path / 'a').status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    assert replica(tmp_path / 'a').status() == {
+        'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}], 'quarantined_count': 1}
     malformed = ({key: entry | {'code': 'sync_version_unsupported'}},  # Not a per-row code.
                  {key: {name: value for name, value in entry.items() if name != 'revision'}},
                  {key: 'sync_dot_conflict'}, {key: entry | {'revision': 'not-a-revision'}},
@@ -209,7 +210,7 @@ def test_reconcile_does_not_treat_python_numeric_equality_as_identical_operation
     changed[0]['record']['heads'][0]['value']['progress'] = float(old) if type(old) is int else int(old)
     b.reconcile_source(changed, scopes=['reading'])
     assert b.read('reading', 'article')['revision'] == records.fingerprint(batch[0]['record'])
-    assert b.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    assert b.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}], 'quarantined_count': 1}
     quarantined = b.path.read_bytes()
     b.reconcile_source(changed, scopes=['reading'])
     assert b.path.read_bytes() == quarantined

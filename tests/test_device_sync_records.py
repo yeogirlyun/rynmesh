@@ -220,7 +220,8 @@ def test_source_reconcile_quarantines_conflicting_row_and_keeps_other_rows(tmp_p
     rows = [{'scope': 'bookmarks', 'id': 'article', 'record': forged},
             {'scope': 'bookmarks', 'id': 'other', 'record': good}]
     store.reconcile_source(rows, scopes=['bookmarks'])
-    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_dot_conflict'}],
+                              'quarantined_count': 1}
     assert store.read('bookmarks', 'other')['bookmarked'] is True
     assert store.read('bookmarks', 'article')['revision'] == r.fingerprint(first)
     committed = store.path.read_bytes()
@@ -228,7 +229,7 @@ def test_source_reconcile_quarantines_conflicting_row_and_keeps_other_rows(tmp_p
     assert store.path.read_bytes() == committed
     corrected = r.write('bookmarks', 'article', first, B, bookmark(False))
     store.reconcile_source([{'scope': 'bookmarks', 'id': 'article', 'record': corrected}], scopes=['bookmarks'])
-    assert store.status() == {'quarantined': []}
+    assert store.status() == {'quarantined': [], 'quarantined_count': 0}
     assert store.read('bookmarks', 'article')['bookmarked'] is False
 
 
@@ -243,7 +244,8 @@ def test_row_rejected_on_first_import_is_listed_and_evicted_once_the_source_drop
     rows = [{'scope': 'bookmarks', 'id': 'article', 'record': unusable},
             {'scope': 'bookmarks', 'id': 'other', 'record': good}]
     store.reconcile_source(rows, scopes=['bookmarks'])
-    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_item_link_invalid'}]}
+    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_item_link_invalid'}],
+                              'quarantined_count': 1}
     assert store.read('bookmarks', 'article')['candidates'] == []
     assert store.read('bookmarks', 'other')['bookmarked'] is True
     position = r.write('reading', 'article', r.empty(), A, reading(0.5))
@@ -255,6 +257,7 @@ def test_row_rejected_on_first_import_is_listed_and_evicted_once_the_source_drop
     # The source no longer holds the bookmark: its entry goes with it, and a
     # scope the import did not cover keeps its own.
     store.reconcile_source([rows[1]], scopes=['bookmarks'])
-    assert store.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_item_link_invalid'}]}
+    assert store.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_item_link_invalid'}],
+                              'quarantined_count': 1}
     store.reconcile_source([], scopes=['reading'])
-    assert store.status() == {'quarantined': []}
+    assert store.status() == {'quarantined': [], 'quarantined_count': 0}
