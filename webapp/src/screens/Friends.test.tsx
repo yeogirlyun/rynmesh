@@ -144,3 +144,17 @@ describe("Friend delivery recovery", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   });
 });
+
+describe("Friend revocation delivery", () => {
+  it("shows undeliverable removals as terminal, without a success claim or retry", async () => {
+    const undeliverable: FriendRecord = { ...friend, relationship_id: "r2", node_name: "Bob",
+      status: "revoked", revoked_at: "2026-09-15T00:00:00Z", revocation_delivery: "undeliverable" };
+    vi.mocked(friendsApi.list).mockResolvedValue({ friends: [undeliverable] });
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    expect(await screen.findByText("Bob: Removed on this device. The removal notice could not be sent because "
+      + "this friend's credentials were no longer available; they will see an error on their next request."))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/waiting to notify their device/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry removal notice" })).not.toBeInTheDocument();
+  });
+});

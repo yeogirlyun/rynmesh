@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from test_friends import Mesh, _node
+from test_friends import Mesh, _node, _pair
 
 from rynmesh.friends.service import FriendError
 from rynmesh.friends.store import FriendStore
@@ -121,3 +121,27 @@ def test_legacy_friend_state_migrates_once_and_unknown_fields_survive(tmp_path):
         with pytest.raises((OSError, ValueError)):
             store.put_invite("new", {})
         assert store.state_path.read_text() == raw
+
+
+def test_revoke_without_a_stored_secret_is_undeliverable_and_never_retried_by_the_worker(tmp_path):
+    mesh, alice, bob = _pair(tmp_path)
+    relation = alice.list_friends()[0]["relationship_id"]
+    with alice.store._guard():
+        state = alice.store._read(alice.store.state_path, alice.store._empty())
+        state["secrets"].pop(relation, None)
+        alice.store._write(alice.store.state_path, state)
+    assert alice.store.secret(relation) is None
+
+    revoked = alice.revoke(relation)
+    assert revoked["status"] == "revoked"
+    assert revoked["revocation_delivery"] == "undeliverable"
+    assert "revocation_wire" not in alice.store.relationship(relation, active_only=False)
+
+    # Mirrors the worker's tick() selection in friends/routes.py: only active friends
+    # or ones with a pending removal notice are ever polled again.
+    friend_row = next(row for row in alice.list_friends() if row["relationship_id"] == relation)
+    worker_would_select = friend_row["status"] == "active" or friend_row.get("revocation_delivery") == "pending"
+    assert worker_would_select is False
+
+    result = alice.retry_revocation(relation)
+    assert result == {"delivered": False, "reason": "friend_credentials_unavailable"}

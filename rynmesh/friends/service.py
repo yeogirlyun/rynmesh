@@ -881,13 +881,15 @@ class FriendService:
         relationship = self.store.relationship(relationship_id, active_only=False)
         if not relationship or relationship.get("status") != "revoked":
             raise FriendError("friend_not_found")
+        if relationship.get("revocation_delivery") == "undeliverable":
+            return {"delivered": False, "reason": "friend_credentials_unavailable"}
         wire = relationship.get("revocation_wire")
         secret = self.store.pending_revocation_secret(relationship_id)
         if not isinstance(wire, dict) or not secret:
             return {"delivered": relationship.get("revocation_delivery") == "delivered"}
         delivered = self._send_wire(relationship, secret, "/api/peer/friends/revoke", wire)
         mailbox_id = ""
-        if not delivered and self.queue_mail and (not automatic or not relationship.get("revocation_mailbox_id")):
+        if not delivered and self.queue_mail and not relationship.get("revocation_mailbox_id"):
             try:
                 queued = self.queue_mail(relationship, "/api/peer/friends/revoke", wire)
                 mailbox_id = str(queued.get("message_id", ""))

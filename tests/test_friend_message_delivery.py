@@ -59,3 +59,28 @@ def test_local_outbox_failure_never_sends_an_unrecorded_message(tmp_path, monkey
     with pytest.raises(OSError):
         bob.send_message(alice.peer_id, text="Must not be sent")
     assert alice.history(bob.peer_id) == []
+
+
+def test_manual_revocation_retry_reuses_the_already_queued_mailbox_message(tmp_path):
+    mesh, alice, bob = _pair(tmp_path)
+    relation = alice.list_friends()[0]["relationship_id"]
+    mesh.online.clear()
+    deposits = []
+
+    def queue_mail(relationship, path, wire, **kwargs):
+        deposits.append(wire)
+        return {"message_id": f"mbx{len(deposits)}"}
+
+    alice.queue_mail = queue_mail
+    revoked = alice.revoke(relation)
+    assert revoked["revocation_delivery"] == "pending"
+    assert len(deposits) == 1
+    mailbox_id = alice.store.relationship(relation, active_only=False)["revocation_mailbox_id"]
+    assert mailbox_id
+
+    # The direct-delivery attempt still runs on every manual retry, but a new
+    # mailbox message is only deposited when none is already queued.
+    result = alice.retry_revocation(relation)
+    assert result == {"delivered": False}
+    assert len(deposits) == 1
+    assert alice.store.relationship(relation, active_only=False)["revocation_mailbox_id"] == mailbox_id
