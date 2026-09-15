@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import ContentViewer from "../components/ContentViewer";
 import { Button, PageHeader, Panel } from "../components/ui";
+import { runThenReload } from "../domain/actThenReload";
 import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
 import { bytesLabel, offlineActive, offlineApi, offlineError, offlineLabels, OfflineOperationError, type OfflineRecord, type OfflineStatus } from "../domain/offlineReading";
 import { contentFromHistory } from "../domain/readingHistory";
@@ -44,13 +45,15 @@ export default function OfflineReading() {
   const act = async (operation: () => Promise<unknown>) => {
     if (acting.current) return;
     acting.current = true; setBusy(true); setError(""); setNotice("");
-    try { await operation(); await refresh(); }
-    catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry.");
-      if (cause instanceof OfflineOperationError && ['offline_clear_review_changed', 'offline_cleanup_pending'].includes(cause.code)) setAttempt(null);
-      try { await refresh(); } catch { /* Preserve the original error and last confirmed snapshot. */ }
-    }
-    finally { acting.current = false; if (mounted.current) setBusy(false); }
+    await runThenReload(operation, refresh, {
+      onError: async (cause) => {
+        if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry.");
+        if (cause instanceof OfflineOperationError && ['offline_clear_review_changed', 'offline_cleanup_pending'].includes(cause.code)) setAttempt(null);
+        try { await refresh(); } catch { /* Preserve the original error and last confirmed snapshot. */ }
+      },
+      onNotice: (message) => { if (mounted.current) setNotice(message); },
+    });
+    acting.current = false; if (mounted.current) setBusy(false);
   };
   const clear = async (row?: OfflineRecord) => {
     if (acting.current) return;

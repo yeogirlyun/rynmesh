@@ -67,6 +67,19 @@ it("saves a draft without publishing and requires an explicit future-friend revi
   expect(await screen.findByRole("status")).toHaveTextContent("does not mean anyone has received or read it");
 });
 
+it("shows a reload notice and no error when a confirmed draft save's feed refresh fails", async () => {
+  const user = mount();
+  await screen.findByRole("button", { name: "Follow Alice" });
+  await user.selectOptions(screen.getByLabelText("Publication content"), "article");
+  await user.selectOptions(screen.getByLabelText("Publication audience"), "all_friends");
+  vi.mocked(feedApi.snapshot).mockRejectedValueOnce(new Error("snapshot down"));
+  await user.click(screen.getByRole("button", { name: "Save draft for review" }));
+  expect(feedApi.draft).toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Done on the node. The latest status could not be loaded; refresh to see it.");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("restores a saved draft for editing and prevents publishing unsaved audience changes", async () => {
   vi.mocked(feedApi.publications).mockResolvedValue({ publications: [draft] });
   const user = mount();

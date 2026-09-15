@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
+import { runThenReload } from "../domain/actThenReload";
 import { captureFailureReason, deviceSyncApi, pairLabels, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
@@ -90,9 +91,11 @@ export default function Devices() {
   }, []);
   const act = async (operation: () => Promise<unknown>) => {
     setBusy(true); setError(""); setNotice("");
-    try { await operation(); await load(); }
-    catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Refresh and retry."); }
-    finally { if (mounted.current) setBusy(false); }
+    await runThenReload(operation, load, {
+      onError: (cause) => { if (mounted.current) setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Refresh and retry."); },
+      onNotice: (message) => { if (mounted.current) setNotice(message); },
+    });
+    if (mounted.current) setBusy(false);
   };
   useEffect(() => {
     mounted.current = true;

@@ -50,6 +50,19 @@ it("keeps an unconfirmed choice available for an identical retry", async () => {
   expect(await screen.findByText("No reading conflicts to resolve.")).toBeInTheDocument();
 });
 
+it("shows a reload notice and no error when a confirmed choice's refresh fails", async () => {
+  const resolve = vi.spyOn(deviceSyncApi, "resolveReading").mockImplementation(async () => { conflicts = []; });
+  refreshParent.mockRejectedValueOnce(new Error("refresh failed"));
+  const user = userEvent.setup();
+  show();
+  await user.click(await screen.findByRole("radio", { name: /20% read/ }));
+  await user.click(screen.getByRole("button", { name: "Use this choice" }));
+  expect(resolve).toHaveBeenCalledWith(issue, "local:1");
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Done on the node. The latest status could not be loaded; refresh to see it.");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("drops the selection when refresh reveals a newer review revision", async () => {
   const user = userEvent.setup();
   show();

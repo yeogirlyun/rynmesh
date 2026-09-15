@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Panel } from "./ui";
+import { runThenReload } from "../domain/actThenReload";
 import { deviceSyncApi } from "../domain/deviceSync";
 import type { DevicePair, ReadingConflict } from "../domain/deviceSync";
 
@@ -59,13 +60,18 @@ export default function ReadingSyncConflicts({ devices, onResolved }: { devices:
   }, [load]);
   const resolve = async (issue: ReadingConflict, choice: string) => {
     setBusy(true); setError(""); setNotice("");
-    try {
-      await deviceSyncApi.resolveReading(issue, choice);
-      if (active.current) setNotice("Choice saved on this device. Check the device status for sync confirmation.");
-      await load(); await onResolved();
-    } catch (cause) {
-      if (active.current) setError(cause instanceof Error ? cause.message : "This choice could not be confirmed. Refresh and review again.");
-    } finally { if (active.current) setBusy(false); }
+    await runThenReload(
+      async () => {
+        await deviceSyncApi.resolveReading(issue, choice);
+        if (active.current) setNotice("Choice saved on this device. Check the device status for sync confirmation.");
+      },
+      async () => { await load(); await onResolved(); },
+      {
+        onError: (cause) => { if (active.current) setError(cause instanceof Error ? cause.message : "This choice could not be confirmed. Refresh and review again."); },
+        onNotice: (message) => { if (active.current) setNotice(message); },
+      },
+    );
+    if (active.current) setBusy(false);
   };
   return <Panel><h2 id="reading-sync-conflicts">Review reading changes</h2>
     <p>Different devices may keep different positions or saved choices. Review the candidates; a larger percentage or a newer computer clock does not decide for you.</p>
