@@ -38,6 +38,7 @@ def public_run(row: dict) -> dict:
 class AskRunService:
     def __init__(self, history: ConversationStore, context: Callable, commands: Callable):
         self.history, self.context, self.commands = history, context, commands
+        self._last_checked: dict[str, float] = {}
 
     def begin(self, value: dict) -> dict:
         task_id = value.get("task_id")
@@ -114,22 +115,23 @@ class AskRunService:
                 self.history._write(envelope, data)
             return public_run(row)
 
-    def _message(self, data: dict, run: dict, status: str, content: str, result: dict | None = None) -> None:
+    def _message(self, data: dict, run: dict, status: str, content: str, result: dict | None = None) -> bool:
         conversation = data["conversations"].get(run["conversation_id"])
         if conversation is None:
-            return  # Deleted history never comes back through a late result.
+            return False  # Deleted history never comes back through a late result.
         message = next((row for row in conversation["messages"] if row.get("id") == "answer_" + run["task_id"]), None)
         if message is None:
-            return
+            return False
         update = {"status": status, "content": content}
         if result:
             update.update({target: result[source] for source, target in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"), ("amount", "cost")) if result.get(source) is not None})
         if all(message.get(key) == value for key, value in update.items()):
-            return
+            return False
         message.update(update)
         conversation["updatedAt"] = datetime.now(timezone.utc).isoformat()
         conversation["revision"] += 1
         clean_conversation(conversation)
+        return True
 
     def _mark(self, task_id: str, **fields) -> None:
         with file_transaction(self.history.lock):
@@ -193,14 +195,19 @@ class AskRunService:
             pending = [row for row in run_records(data).values() if row["state"] not in TERMINAL]
             if not pending:
                 return WorkerRunResult()
-            run = min(pending, key=lambda row: row.get("last_checked", 0))
-            run["last_checked"] = time.time()
+            run = min(pending, key=lambda row: self._last_checked.get(row["task_id"], 0.0))
+            self._last_checked[run["task_id"]] = time.time()
             dispatch = run["state"] == "queued"
-            if run["conversation_id"] not in data["conversations"]:
+            changed = False
+            if dispatch:
+                run["state"] = "dispatching"
+                changed = True
+            if run["conversation_id"] not in data["conversations"] and not run["cancel_requested"]:
                 run["cancel_requested"] = True
-            run["state"] = "dispatching" if dispatch else run["state"]
+                changed = True
             run = copy.deepcopy(run)
-            self.history._write(envelope, data)
+            if changed:
+                self.history._write(envelope, data)
         task_id = run["task_id"]
         if dispatch and run["cancel_requested"]:
             self._finish(task_id, {"state": "cancelled"})
@@ -240,7 +247,9 @@ class AskRunService:
                 envelope, data = self.history._read()
                 current = run_records(data)[task_id]
                 if current["state"] not in TERMINAL:
+                    row_changed = current["state"] != "running"
                     current["state"] = "running"
-                    self._message(data, current, "cancel_requested" if current["cancel_requested"] else "running", "Cancellation requested; checking the original task." if current["cancel_requested"] else "The node is waiting for the original task. You can leave this page.")
-                    self.history._write(envelope, data)
+                    message_changed = self._message(data, current, "cancel_requested" if current["cancel_requested"] else "running", "Cancellation requested; checking the original task." if current["cancel_requested"] else "The node is waiting for the original task. You can leave this page.")
+                    if row_changed or message_changed:
+                        self.history._write(envelope, data)
         return WorkerRunResult(activity=True)

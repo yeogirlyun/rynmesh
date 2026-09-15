@@ -187,7 +187,7 @@ def test_storage_failure_does_not_acknowledge_result_or_duplicate_output(tmp_pat
     def fail_archive(envelope, data):
         nonlocal writes
         writes += 1
-        if writes == 2:
+        if writes == 1:
             raise OSError("disk full")
         writer(envelope, data)
     monkeypatch.setattr(history, "_write", fail_archive)
@@ -256,6 +256,18 @@ def test_cancel_is_sent_once_and_recorded_when_rejected(tmp_path):
     assert orders.cancelled == [request["task_id"]]      # delivered once, not per tick
     run = runs.get(request["task_id"])
     assert run["state"] == "running" and run["cancel_requested"] is True
+
+
+def test_idle_running_ticks_do_not_rewrite_history(tmp_path, monkeypatch):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()          # queued -> dispatching -> running (writes allowed)
+    writes = []
+    original = history._write
+    monkeypatch.setattr(history, "_write", lambda *args, **kwargs: (writes.append(1), original(*args, **kwargs))[1])
+    runs.run_once(); runs.run_once()
+    assert writes == []
+    assert runs.get(request["task_id"])["state"] == "running"
 
 
 def test_parallel_edits_keep_title_and_cannot_replace_active_messages(tmp_path):
