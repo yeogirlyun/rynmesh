@@ -70,13 +70,26 @@ export async function recoveryConversationId(issue: AskSyncConflict, choice: Ask
   return "restored_" + [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+const REQUEST_TIMEOUT_MS = 30_000;
+
+async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+  // Built manually rather than via AbortSignal.timeout: that native timer is
+  // not driven by a runtime's faked setTimeout, so a caller-supplied signal
+  // (or a test controlling time) stays deterministic either way.
+  const controller = signal ? undefined : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS) : undefined;
   let response: Response;
   try {
     response = await fetch(nodeControlUrl(`/ask${path}`), { method, credentials: "include", headers: { "Content-Type": "application/json" },
+      signal: signal ?? controller!.signal,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  } catch {
+  } catch (cause) {
+    if (controller?.signal.aborted) {
+      throw new AskRequestError(0, "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.", "ask_request_timeout");
+    }
     throw new Error("The node did not confirm saving this conversation. Reconnect and retry; keep this page open to retain your input.");
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
   if (!response.ok) {
     const value = await response.json().catch(() => ({})) as { detail?: string };
