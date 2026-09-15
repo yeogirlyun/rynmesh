@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
+import { runThenReload } from "../domain/actThenReload";
 import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
 import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
@@ -39,6 +40,11 @@ export default function Friends() {
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry."); }
     finally { setBusy(false); }
   };
+  // A confirmed removal followed by a failed reload is not a failed removal:
+  // nesting load() inside the operation would report the node's work as an error.
+  const actThenReload = (operation: () => Promise<unknown>) => act(() => runThenReload(operation, load, {
+    onError: (cause) => { throw cause; }, onNotice: setNotice,
+  }));
   useEffect(() => {
     let active = true;
     let running = false;
@@ -106,9 +112,9 @@ export default function Friends() {
       {!loaded ? <p>Loading friends…</p> : activeFriends.length === 0 ? <p>No friends yet. Create or paste an invite above.</p> : activeFriends.map((friend) => <div className={styles.friendCard} key={friend.relationship_id}>
         <div><h3>{friend.node_name}</h3><span className={styles.meta}>{friend.endpoint}</span></div>
         <div className={styles.choiceRow}><Button onClick={() => setSelected(friend.peer_id)}>Message {friend.node_name}</Button>
-          <Button disabled={busy} onClick={() => confirm({ title: `Remove ${friend.node_name}?`, body: "New messages and private content requests are blocked immediately on this device. The other device may receive the notice later. Copies they already saved cannot be recalled.", risk: "high", confirmLabel: "Remove friend", onConfirm: () => act(async () => { await friendsApi.revoke(friend.relationship_id); await load(); }) })}>Remove</Button></div>
+          <Button disabled={busy} onClick={() => confirm({ title: `Remove ${friend.node_name}?`, body: "New messages and private content requests are blocked immediately on this device. The other device may receive the notice later. Copies they already saved cannot be recalled.", risk: "high", confirmLabel: "Remove friend", onConfirm: () => actThenReload(() => friendsApi.revoke(friend.relationship_id)) })}>Remove</Button></div>
       </div>)}
-      {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: removed locally; waiting to notify their device.</p><Button disabled={busy} onClick={() => void act(async () => { await friendsApi.retryRevocation(friend.relationship_id); await load(); })}>Retry removal notice</Button></div>)}
+      {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "pending").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: removed locally; waiting to notify their device.</p><Button disabled={busy} onClick={() => void actThenReload(() => friendsApi.retryRevocation(friend.relationship_id))}>Retry removal notice</Button></div>)}
       {friends.filter((friend) => friend.status === "revoked" && friend.revocation_delivery === "undeliverable").map((friend) => <div className={styles.friendCard} key={friend.relationship_id}><p>{friend.node_name}: Removed on this device. The removal notice could not be sent because this friend's credentials were no longer available; they will see an error on their next request.</p></div>)}
     </Panel>
     {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} focusMessage={params.get("message")} /> : params.get("peer") && loaded ? <p role="alert">This friend is unavailable or access was removed.</p> : null}

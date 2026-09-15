@@ -82,24 +82,37 @@ async function request<T>(path: string, method = "GET", body?: unknown, timeoutM
   // caller-supplied signal to fight over.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
+  const expired = () => new AskRequestError(0, `The node did not confirm this request within ${Math.round(timeoutMs / 1000)} seconds. Check the original task before retrying the same reviewed request.`, "ask_request_timeout");
+  // The timeout must cover reading the body, not only the headers: a node that
+  // answers and then stalls the response stream would otherwise hang the caller
+  // forever. Aborting cancels a real stream; racing also covers a body promise
+  // that simply never settles.
+  const deadline = new Promise<never>((_, reject) => controller.signal.addEventListener("abort", () => reject(expired())));
+  // An abort during the fetch itself is reported below, so this rejection may
+  // never be raced. Claim it here so it is never an unhandled rejection.
+  void deadline.catch(() => {});
+  const within = <V>(value: Promise<V>) => Promise.race([value, deadline]);
   try {
-    response = await fetch(nodeControlUrl(`/ask${path}`), { method, credentials: "include", headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  } catch {
-    if (controller.signal.aborted) {
-      throw new AskRequestError(0, `The node did not confirm this request within ${Math.round(timeoutMs / 1000)} seconds. Check the original task before retrying the same reviewed request.`, "ask_request_timeout");
+    let response: Response;
+    try {
+      response = await fetch(nodeControlUrl(`/ask${path}`), { method, credentials: "include", headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    } catch {
+      if (controller.signal.aborted) throw expired();
+      throw new Error("The node did not confirm saving this conversation. Reconnect and retry; keep this page open to retain your input.");
     }
-    throw new Error("The node did not confirm saving this conversation. Reconnect and retry; keep this page open to retain your input.");
+    if (!response.ok) {
+      const value = await within(response.json()).catch((cause) => {
+        if (cause instanceof AskRequestError) throw cause;  // The timeout, not an unreadable body.
+        return {};
+      }) as { detail?: string };
+      throw new AskRequestError(response.status, errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.", value.detail ?? "");
+    }
+    return await within(response.json()) as T;
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    const value = await response.json().catch(() => ({})) as { detail?: string };
-    throw new AskRequestError(response.status, errors[value.detail ?? ""] ?? "Conversation history is unavailable. Reconnect to your node and reload history.", value.detail ?? "");
-  }
-  return response.json() as Promise<T>;
 }
 
 export const askHistory = {
