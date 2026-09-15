@@ -232,6 +232,32 @@ def test_cancel_is_intent_until_original_order_confirms_and_late_success_is_save
     assert history.get("conversation")["messages"][-1]["cost"] == 0.1
 
 
+def test_cancel_rejection_never_blocks_result_archiving(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()                      # dispatch
+    runs.cancel(request["task_id"])
+
+    def failing_cancel(task_id):
+        orders.cancelled.append(task_id)
+        raise HTTPException(409, detail="ledger locked")
+    orders.cancel = failing_cancel
+    orders.results[request["task_id"]] = {"state": "succeeded", "output": "answer"}
+    runs.run_once()
+    assert runs.get(request["task_id"])["state"] == "succeeded"
+    assert orders.acknowledged == [request["task_id"]]
+    assert runs.get(request["task_id"])["cancel_error_code"] == "cancel_rejected"
+
+
+def test_cancel_is_sent_once_and_recorded_when_rejected(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request); runs.run_once(); runs.cancel(request["task_id"])
+    runs.run_once(); runs.run_once()
+    assert orders.cancelled == [request["task_id"]]      # delivered once, not per tick
+    run = runs.get(request["task_id"])
+    assert run["state"] == "running" and run["cancel_requested"] is True
+
+
 def test_parallel_edits_keep_title_and_cannot_replace_active_messages(tmp_path):
     history, runs, orders, request = setup(tmp_path)
     runs.begin(request)
