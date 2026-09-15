@@ -22,6 +22,20 @@ it("times out a hung request after 30 seconds so the caller can recover", async 
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+it("times out a response whose body never arrives, not only a hung request", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  // Headers answered, body never delivered: without covering the body read the
+  // caller would wait forever on a request the timeout claims to bound.
+  const stalled = { ok: true, status: 200, json: () => new Promise(() => {}) };
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stalled));
+  const pending = expect(askHistory.list()).rejects.toMatchObject({
+    status: 0, code: "ask_request_timeout",
+    message: "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.",
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  await pending;
+});
+
 it("gives the export request a longer timeout than the 30s default", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   let resolveFetch!: (response: Response) => void;

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RELOAD_FAILURE_NOTICE } from "../domain/actThenReload";
 import { friendsApi, invitationText, extractInvite } from "../domain/friendsClient";
 import type { FriendInvitePreview, FriendRecord } from "../domain/friendTypes";
 import Friends from "./Friends";
@@ -181,6 +182,33 @@ describe("Friend removal", () => {
     expect(revoke).toHaveBeenCalledWith(friend.relationship_id);
     expect(await screen.findByText("No friends yet. Create or paste an invite above.")).toBeInTheDocument();
     expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+  });
+
+  it("reports a confirmed removal whose status reload failed as done, not as an error", async () => {
+    vi.mocked(friendsApi.list).mockResolvedValue({ friends: [friend] });
+    const revoke = vi.spyOn(friendsApi, "revoke").mockResolvedValue({});
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    vi.mocked(friendsApi.list).mockRejectedValueOnce(new Error("list down"));
+    await act(() => mocks.confirm.mock.calls[0][0].onConfirm());
+    expect(revoke).toHaveBeenCalledWith(friend.relationship_id);
+    expect(await screen.findByText(RELOAD_FAILURE_NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("reports a confirmed retry whose status reload failed as done, not as an error", async () => {
+    const pending: FriendRecord = { ...friend, relationship_id: "r2", node_name: "Bob", status: "revoked", revocation_delivery: "pending" };
+    vi.mocked(friendsApi.list).mockResolvedValue({ friends: [pending] });
+    const retry = vi.spyOn(friendsApi, "retryRevocation").mockResolvedValue({});
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    const user = userEvent.setup();
+    await screen.findByText("Bob: removed locally; waiting to notify their device.");
+    vi.mocked(friendsApi.list).mockRejectedValueOnce(new Error("list down"));
+    await user.click(screen.getByRole("button", { name: "Retry removal notice" }));
+    expect(retry).toHaveBeenCalledWith(pending.relationship_id);
+    expect(await screen.findByText(RELOAD_FAILURE_NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("clears a pending removal notice once a retry confirms delivery", async () => {
