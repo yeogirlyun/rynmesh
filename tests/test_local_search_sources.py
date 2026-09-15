@@ -200,8 +200,9 @@ def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_pat
     spec = workers.specs()[0]
     assert spec.initial_delay_s == 1 and spec.policy.busy_delay_s == 1
     client = TestClient(app)
-    for path, method in (("status", "get"), ("query", "post"), ("rebuild", "post"), ("open?identifier=x", "get")):
+    for path, method in (("status", "get"), ("query", "post"), ("rebuild", "post"), ("open", "post")):
         assert getattr(client, method)("/api/local/search/" + path).status_code == 401
+    assert client.get("/api/local/search/open").status_code == 405
     owner = {"x-owner": "yes"}
     assert client.post("/api/local/search/rebuild", headers=owner).status_code == 200
     marker = "秘密文章正文"
@@ -239,19 +240,26 @@ def test_search_private_responses_never_cache_and_recheck_deleted_content(tmp_pa
     result = client.post("/api/local/search/query", headers=owner, json={"query": "秘密文章正文"})
     assert result.status_code == 200
     identifier = result.json()["results"][0]["id"]
-    opened = client.get("/api/local/search/open", headers=owner, params={"identifier": identifier})
+    opened = client.post("/api/local/search/open", headers=owner, json={"identifier": identifier})
     assert opened.status_code == 200 and opened.json()["text"]
     responses = [result, opened,
         client.get("/api/local/search/status", headers=owner),
         client.post("/api/local/search/rebuild", headers=owner),
-        client.get("/api/local/search/open", params={"identifier": identifier}),
+        client.post("/api/local/search/open", json={"identifier": identifier}),
         client.post("/api/local/search/query", headers=owner, json={}),
-        client.get("/api/local/search/open", headers=owner),
-        client.get("/api/local/search/open", headers=owner, params={"identifier": "missing"})]
-    assert [response.status_code for response in responses] == [200, 200, 200, 200, 401, 400, 422, 409]
+        client.post("/api/local/search/open", headers=owner),
+        client.post("/api/local/search/open", headers=owner, json={"identifier": "missing"})]
+    assert [response.status_code for response in responses] == [200, 200, 200, 200, 401, 400, 400, 409]
+    # A query-string identifier is ignored; the body is what resolves.
+    ignored = client.post("/api/local/search/open?identifier=" + identifier, headers=owner, json={"identifier": "missing"})
+    assert ignored.status_code == 409
+    # The 512-char body limit still applies.
+    oversized = client.post("/api/local/search/open", headers=owner, json={"identifier": "x" * 513})
+    assert oversized.status_code == 400
+    assert client.get("/api/local/search/open", headers=owner).status_code == 405
     # Delete the original while its old index entry still exists.
     conversations.remove(conversation["id"], expected_revision=1)
-    denied = client.get("/api/local/search/open", headers=owner, params={"identifier": identifier})
+    denied = client.post("/api/local/search/open", headers=owner, json={"identifier": identifier})
     assert denied.status_code == 409
     refreshed = client.post("/api/local/search/query", headers=owner, json={"query": "秘密文章正文"})
     assert refreshed.status_code == 200 and refreshed.json()["total"] == 0

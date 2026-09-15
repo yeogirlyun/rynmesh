@@ -48,11 +48,25 @@ def install_ai_access(app: Any, *, home: str | Path, local_control: Callable,
         return {"friends": await asyncio.to_thread(catalog.snapshots) if catalog else []}
 
     @app.post("/api/local/ai-access/friend-services")
-    async def refresh_friend(peer_id: str, request: Request):
+    async def refresh_friend(request: Request):
         app.state.ai_access.local_control(request)
         catalog = app.state.ai_access.catalog
         if not catalog:
             raise HTTPException(503, detail="ai_catalog_unavailable")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 4096:
+                raise HTTPException(413, detail="ai_request_too_large")
+        try:
+            body = json.loads(raw)
+            if not isinstance(body, dict) or "peer_id" not in body or set(body) - {"peer_id"}:
+                raise ValueError
+            peer_id = body["peer_id"]
+            if not isinstance(peer_id, str) or not peer_id:
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(400, detail="ai_request_invalid") from None
         try:
             return await asyncio.to_thread(catalog.refresh, peer_id)
         except Exception:

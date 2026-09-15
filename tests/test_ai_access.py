@@ -3,7 +3,10 @@ import stat
 from copy import deepcopy
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
+from rynmesh.ai_access.routes import install_ai_access
 from rynmesh.ai_access.store import AIAccessError, AIAccessStore
 from rynmesh.atomic_io import atomic_write_json, read_json
 
@@ -86,3 +89,43 @@ def test_unknown_fields_preserved_and_future_permissions_refused(tmp_path):
     with pytest.raises(AIAccessError, match="version_unsupported"):
         store.set("model-x", RID, allowed=True, expected_revision=2)
     assert store.path.read_bytes() == before
+
+
+class StubCatalog:
+    def __init__(self):
+        self.calls = []
+
+    def refresh(self, peer_id):
+        self.calls.append(peer_id)
+        return {"peer_id": peer_id, "status": "authorized", "services": []}
+
+
+def test_refresh_friend_reads_peer_id_from_body_and_ignores_the_query_string(tmp_path):
+    def guard(request):
+        if request.headers.get("x-test-owner") != "owner":
+            raise HTTPException(401)
+
+    app = FastAPI()
+    install_ai_access(app, home=tmp_path, local_control=guard, relationship=lambda rid: None)
+    catalog = StubCatalog()
+    app.state.ai_access.catalog = catalog
+    client = TestClient(app)
+    owner = {"x-test-owner": "owner"}
+    path = "/api/local/ai-access/friend-services"
+
+    assert client.post(path, json={"peer_id": "x"}).status_code == 401
+
+    response = client.post(f"{path}?peer_id=from-query", headers=owner, json={"peer_id": "from-body"})
+    assert response.status_code == 200
+    assert catalog.calls == ["from-body"]
+
+    missing = client.post(path, headers=owner, json={})
+    assert missing.status_code == 400 and missing.json()["detail"] == "ai_request_invalid"
+
+    non_string = client.post(path, headers=owner, json={"peer_id": 5})
+    assert non_string.status_code == 400 and non_string.json()["detail"] == "ai_request_invalid"
+
+    malformed = client.post(path, headers=owner, content=b"not json")
+    assert malformed.status_code == 400 and malformed.json()["detail"] == "ai_request_invalid"
+
+    assert catalog.calls == ["from-body"]
