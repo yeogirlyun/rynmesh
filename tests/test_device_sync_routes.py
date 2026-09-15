@@ -401,3 +401,58 @@ def test_rejected_row_is_acknowledged_and_other_rows_keep_flowing(tmp_path):
     a.reader.record(ITEM, 'progress', progress=.95)
     assert a.request('GET')['devices'][0]['sync']['pending'] == 1
     assert batch() == [ITEM['item_id']]
+
+    class Merging:
+        """A peer whose source merges every row it is given this time."""
+
+        def receive(self, rows, *, scopes):
+            return [{'scope': row['scope'], 'id': row['id'], 'revision': records.fingerprint(row['record'])} for row in rows]
+
+    b.app.state.device_sync.transfer._initialize = lambda current, scope: Merging()
+    a.tick()
+    sync = a.request('GET')['devices'][0]['sync']
+    assert sync['rejected_by_peer'] == {} and sync['state'] == 'confirmed' and sync['pending'] == 0
+
+
+def test_rejected_ids_are_capped_while_the_count_stays_whole():
+    from rynmesh.device_sync.store import MAX_BATCH
+    from rynmesh.device_sync.transfer import DeviceTransfer
+    state, refused = {}, {f'row-{index}': 'sync_dot_conflict' for index in range(MAX_BATCH + 20)}
+    DeviceTransfer._rejected(state, 'reading', refused)
+    # The pairing file keeps one batch of ids; the owner is still told them all.
+    assert state['rejected']['reading']['count'] == MAX_BATCH + 20
+    assert len(state['rejected']['reading']['rows']) == MAX_BATCH
+    DeviceTransfer._rejected(state, 'reading', dict.fromkeys(refused, ''))
+    assert 'rejected' not in state
+    # A row refused twice is one row, and another row's acceptance is not its own.
+    DeviceTransfer._rejected(state, 'reading', {'row-1': 'sync_dot_conflict'})
+    DeviceTransfer._rejected(state, 'reading', {'row-1': 'sync_value_invalid', 'row-2': ''})
+    assert state['rejected'] == {'reading': {'count': 1, 'rows': {'row-1': 'sync_value_invalid'}}}
+    DeviceTransfer._rejected(state, 'reading', {'row-1': ''})
+    assert 'rejected' not in state
+
+
+def test_sender_refuses_an_acknowledgement_that_is_not_the_batch_it_signed():
+    from rynmesh.device_sync.records import SyncError
+    from rynmesh.device_sync.transfer import DeviceTransfer
+    honest = [{'scope': 'reading', 'id': 'first', 'revision': 'a' * 64},
+              {'scope': 'reading', 'id': 'second', 'revision': 'b' * 64}]
+    # _accept_receipt delegates its whole receipt comparison to _answers.
+    assert DeviceTransfer._answers([honest[0], honest[1] | {'rejected': 'sync_dot_conflict'}], honest) \
+        == {'first': '', 'second': 'sync_dot_conflict'}
+    refused = (
+        [honest[0], honest[1] | {'rejected': 'not_a_code'}],
+        [honest[0], honest[1] | {'rejected': {}}],
+        [honest[0], honest[1] | {'rejected': ''}],
+        [honest[0], honest[1] | {'rejected': 'sync_scope_denied'}],  # A batch error is not a row note.
+        [honest[1], honest[0]],
+        [honest[0], honest[1] | {'id': 'ghost'}],
+        [honest[0], honest[1], honest[0]],
+        honest[:1],
+        [honest[0], 'second'],
+        {'receipts': honest},
+        None,
+    )
+    for receipts in refused:
+        with pytest.raises(SyncError, match='sync_receipt_invalid'):
+            DeviceTransfer._answers(receipts, honest)

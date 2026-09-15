@@ -162,9 +162,17 @@ it("names the records the other device could not merge and drops them once it ac
   show();
   const card = await screen.findByRole("article", { name: "Device My laptop" });
   expect(within(card).getByRole("status")).toHaveTextContent(
-    "1 Reading progress records could not be merged by My laptop. They will be sent again after they change on this device.");
-  expect(screen.queryByText(/Ask Ryn history records could not be merged/)).not.toBeInTheDocument();
+    "1 record in Reading progress could not be merged by My laptop. They will be sent again after they change on this device.");
+  // The confirmed headline covers the accepted rows only while any row is refused.
+  expect(screen.getByText("Remaining local changes confirmed by the other device.")).toBeInTheDocument();
+  expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
+  expect(screen.queryByText(/in Ask Ryn history could not be merged/)).not.toBeInTheDocument();
+  state.devices[0].sync = { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: { bookmarks: 2 } };
+  await user.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText(/2 records in Saved content could not be merged by My laptop\./)).toBeInTheDocument();
+  expect(screen.queryByText(/in Reading progress could not be merged/)).not.toBeInTheDocument();
   state.devices[0].sync = { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: {} };
   await user.click(screen.getByRole("button", { name: "Refresh devices" }));
   await waitFor(() => expect(screen.queryByText(/could not be merged/)).not.toBeInTheDocument());
+  expect(screen.getByText("Selected local changes confirmed by the other device.")).toBeInTheDocument();
 });

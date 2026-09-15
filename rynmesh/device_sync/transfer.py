@@ -207,19 +207,30 @@ class DeviceTransfer:
     def _rejected(state, scope, answers):
         """Keep the rows this peer refused and drop the ones it has now merged.
 
-        Bounded by one batch per scope: this is a status note for the owner, and
-        the pairing file holds every pairing on the device.
+        The exact count is kept beside the ids, because the id map is bounded to
+        one batch per scope: this is a status note for the owner, and the pairing
+        file holds every pairing on the device.
         """
         rejected = state.setdefault('rejected', {})
-        rows = rejected.get(scope, {})
+        entry = rejected.get(scope) or {}
+        rows, count = entry.get('rows', {}), entry.get('count', 0)
         for identifier, code in answers.items():
             if not code:
+                # An accepted row settles one refusal, including one the cap
+                # left unnamed; the floor below keeps the count truthful.
                 rows.pop(identifier, None)
-            elif identifier in rows or len(rows) < MAX_BATCH:
+                count -= 1
+            elif identifier in rows:
                 rows[identifier] = code
-        rejected[scope] = rows
-        if not rows:
-            rejected.pop(scope)
+            else:
+                count += 1
+                if len(rows) < MAX_BATCH:
+                    rows[identifier] = code
+        count = max(count, len(rows), 0)
+        if count:
+            rejected[scope] = {'count': count, 'rows': rows}
+        else:
+            rejected.pop(scope, None)
         if not rejected:
             state.pop('rejected')
 
@@ -351,10 +362,10 @@ class DeviceTransfer:
                 stamps = saved.get('confirmed', {})
                 last = min(stamps[scope] for scope in scopes) if all(scope in stamps for scope in scopes) else None
                 error = next((saved.get('errors', {}).get(scope) for scope in scopes if saved.get('errors', {}).get(scope)), '')
-                # Rows the peer answered but refused. They are settled, never
-                # confirmed: the owner is told instead of being shown a clean
-                # scope, and they go only when they change on this device.
-                refused = {scope: len(saved.get('rejected', {}).get(scope, {})) for scope in scopes}
+                # A confirmed scope reports the rows the peer accepted, so this
+                # count is the only signal for the rows it refused: they are
+                # settled here and go again when they change on this device.
+                refused = {scope: saved.get('rejected', {}).get(scope, {}).get('count', 0) for scope in scopes}
                 state = 'conflict' if conflicts else 'waiting' if error else 'pending' if pending or last is None else 'confirmed'
                 return {'state': state, 'pending': pending, 'last_success_at': last, 'error_code': error, 'conflicts': conflicts,
                         'rejected_by_peer': {scope: count for scope, count in refused.items() if count}}

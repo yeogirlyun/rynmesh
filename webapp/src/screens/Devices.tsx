@@ -27,6 +27,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
   const [checked, setChecked] = useState(false);
   const active = pair.status === "active";
   const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
+  const refused = syncScopes.filter((scope) => rejected[scope]);
   return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
     {pair.status !== "revoked" ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
@@ -39,15 +40,16 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
     {active ? <>
       <p>{pair.paused ? "Paused on this device." : pair.remote_paused ? "Paused on the other device." : "Both devices have confirmed the pairing."}</p>
       {pair.sync ? <div role="status">
-        <p>{({ confirmed: "Selected local changes confirmed by the other device.", pending: "Changes are waiting for confirmation.",
+        <p>{refused.length > 0 && pair.sync.state === "confirmed" ? "Remaining local changes confirmed by the other device."
+          : ({ confirmed: "Selected local changes confirmed by the other device.", pending: "Changes are waiting for confirmation.",
           waiting: "Last transfer was not confirmed. Reconnect and retry.", failed: "Local sync storage is unavailable. Free space or check storage, then retry.",
           paused: "Content transfer is paused.", no_scope: "No category is currently allowed by both devices.",
           conflict: "Changes from different devices need review. Both versions have been kept." } as Record<string, string>)[pair.sync.state] ?? "Checking sync status."}</p>
         {pair.sync.pending !== null ? <p>{pair.sync.pending} local changes waiting for confirmation.</p> : null}
         {pair.sync.last_success_at !== null ? <p>Last confirmation across selected categories: {new Date(pair.sync.last_success_at * 1000).toLocaleString()}.</p> : null}
         {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. <a href="#reading-sync-conflicts">Review reading choices below</a>; review conversation branches in <Link to="/ask">Ask Ryn</Link>.</p> : null}
-        {syncScopes.filter((scope) => rejected[scope]).map((scope) => <p key={scope}>{rejected[scope]} {scopeNames[scope]} records
-          could not be merged by {pair.device.name}. They will be sent again after they change on this device.</p>)}
+        {refused.map((scope) => <p key={scope}>{rejected[scope]} {rejected[scope] === 1 ? "record" : "records"} in {scopeNames[scope]} could
+          not be merged by {pair.device.name}. They will be sent again after they change on this device.</p>)}
       </div> : null}
       <p>Mutually allowed: {pair.effective_scopes.map((scope) => scopeNames[scope]).join(", ") || "None"}.</p>
       <ScopeChoice label="Your allowed scope" value={scopes} onChange={setScopes} disabled={busy} />
