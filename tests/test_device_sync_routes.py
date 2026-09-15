@@ -221,6 +221,54 @@ def test_installed_worker_moves_real_sources_through_encrypted_http_batches(tmp_
     assert b.client.post('/api/peer/device-sync/batch', json={}).status_code == 403
 
 
+def test_transfer_receive_returns_signed_receipts_with_rejections(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    from rynmesh.device_sync import records
+    nodes = {}
+
+    def post(endpoint, path, wire):
+        result = nodes[endpoint].client.post(path, json=wire)
+        assert result.status_code == 200, result.text
+        return result.json()
+
+    a = Node(tmp_path / 'A', 'http://127.0.0.1:18901', post, transfer=True)
+    b = Node(tmp_path / 'B', 'http://127.0.0.1:18902', post, transfer=True)
+    nodes.update({a.endpoint: a, b.endpoint: b})
+    scopes = ['reading']
+    uri = a.request('POST', '/invites', json={'scopes': scopes})['uri']
+    pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': scopes})['id']
+    b.tick()
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes})
+    b.tick()
+
+    def position(progress):
+        return {'item': ITEM, 'progress': progress, 'completed': False, 'content_version': ''}
+
+    # A restored backup reissues one actor counter with a different value. That
+    # row cannot merge on B; every other row in the scope must still arrive.
+    for node, progress in ((a, .9), (b, .2)):
+        actor = node.app.state.device_sync.transfer.replica.actor
+        node.reader.enable_sync(actor, scopes)
+        record = records.write('reading', ITEM['item_id'], records.empty(), 'c' * 64, position(progress))
+        node.reader.sync_receive([{'scope': 'reading', 'id': ITEM['item_id'], 'record': record}], scopes=scopes)
+    a.reader.record({**ITEM, 'item_id': 'other'}, 'progress', progress=.5)
+
+    sender, receiver = a.app.state.device_sync.transfer, b.app.state.device_sync.transfer
+    wire = sender.prepare(pair_id, 'reading')
+    sent = sender._outgoing(sender._pair(pair_id), wire)
+    assert {row['id'] for row in sent['records']} == {ITEM['item_id'], 'other'}
+    receipts = sender._open(receiver.receive(wire), reply=True)[1]['receipts']
+    marked = {receipt['id']: receipt for receipt in receipts}
+    assert marked[ITEM['item_id']]['rejected'] == 'sync_dot_conflict'
+    assert 'rejected' not in marked['other']
+    # Removing the marker leaves exactly the receipts the sender already checks.
+    assert [{key: value for key, value in receipt.items() if key != 'rejected'} for receipt in receipts] \
+        == sender._receipts(sent['records'], 'reading')
+    assert b.reader.sync_read('reading', 'other')['value']['progress'] == .5
+    assert b.reader.sync_read('reading', ITEM['item_id'])['value']['progress'] == .2
+
+
 def test_owner_reading_choice_uses_stored_candidate_and_rejects_stale_revision(tmp_path):
     from test_device_sync_reading import ITEM
 

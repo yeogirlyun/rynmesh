@@ -186,3 +186,47 @@ def test_conflict_count_keeps_identical_concurrent_values_together():
     identical = r.merge('bookmarks', 'article', first, r.write('bookmarks', 'article', r.empty(), B, bookmark()))
     different = r.merge('bookmarks', 'article', first, r.write('bookmarks', 'article', r.empty(), B, bookmark(False)))
     assert r.conflict_count([{'record': row} for row in (r.empty(), first, identical, different)]) == 1
+
+
+def test_receive_merges_good_rows_and_rejects_conflicting_row_in_receipt(tmp_path):
+    from test_device_sync_store import replica
+
+    store = replica(tmp_path / 'b')
+    first = r.write('bookmarks', 'article', r.empty(), A, bookmark())
+    store.receive([{'scope': 'bookmarks', 'id': 'article', 'record': first}], scopes=['bookmarks'])
+    forged = deepcopy(first)
+    forged['heads'][0]['value']['bookmarked'] = False  # The same dot, a different value.
+    good = r.write('bookmarks', 'other', r.empty(), B, {'item': {**ITEM, 'item_id': 'other'}, 'bookmarked': True})
+    receipts = store.receive([{'scope': 'bookmarks', 'id': 'other', 'record': good},
+                              {'scope': 'bookmarks', 'id': 'article', 'record': forged}], scopes=['bookmarks'])
+    # The unmergeable row is reported, never silently merged, and never stops
+    # the rows around it from landing in the same commit.
+    assert receipts == [{'scope': 'bookmarks', 'id': 'other', 'revision': r.fingerprint(good)},
+                        {'scope': 'bookmarks', 'id': 'article', 'revision': r.fingerprint(forged),
+                         'rejected': 'sync_dot_conflict'}]
+    assert store.read('bookmarks', 'other')['bookmarked'] is True
+    assert store.read('bookmarks', 'article')['revision'] == r.fingerprint(first)
+
+
+def test_source_reconcile_quarantines_conflicting_row_and_keeps_other_rows(tmp_path):
+    from test_device_sync_store import replica
+
+    store = replica(tmp_path / 'b')
+    first = r.write('bookmarks', 'article', r.empty(), A, bookmark())
+    store.reconcile_source([{'scope': 'bookmarks', 'id': 'article', 'record': first}], scopes=['bookmarks'])
+    forged = deepcopy(first)
+    forged['heads'][0]['value']['bookmarked'] = False
+    good = r.write('bookmarks', 'other', r.empty(), B, {'item': {**ITEM, 'item_id': 'other'}, 'bookmarked': True})
+    rows = [{'scope': 'bookmarks', 'id': 'article', 'record': forged},
+            {'scope': 'bookmarks', 'id': 'other', 'record': good}]
+    store.reconcile_source(rows, scopes=['bookmarks'])
+    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    assert store.read('bookmarks', 'other')['bookmarked'] is True
+    assert store.read('bookmarks', 'article')['revision'] == r.fingerprint(first)
+    committed = store.path.read_bytes()
+    store.reconcile_source(rows, scopes=['bookmarks'])  # An unchanged import stays a no-op.
+    assert store.path.read_bytes() == committed
+    corrected = r.write('bookmarks', 'article', first, B, bookmark(False))
+    store.reconcile_source([{'scope': 'bookmarks', 'id': 'article', 'record': corrected}], scopes=['bookmarks'])
+    assert store.status() == {'quarantined': []}
+    assert store.read('bookmarks', 'article')['bookmarked'] is False
