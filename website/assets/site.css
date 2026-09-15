@@ -395,6 +395,35 @@ p { color: var(--body); line-height: 1.68; }
   .footer-links { gap: 12px; }
 }
 
+/* v0.7.0 landing additions: four-up cards, the milestone ledger, work-in-progress note, doc links */
+.card-grid.four { grid-template-columns: repeat(4, 1fr); }
+.card-grid.four .card-icon { width: auto; padding: 0 9px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+
+.wip-banner { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 14px 18px; color: var(--body); border: 1px dashed var(--line-strong); border-radius: 8px; background: rgba(194,139,50,.06); font-size: 13px; line-height: 1.6; }
+.wip-banner strong { color: var(--ink); font-family: var(--mono); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+
+.ledger { display: grid; gap: 10px; }
+.ledger-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 1fr); gap: 26px; align-items: start; padding: 20px 22px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.86); }
+.ledger-row:hover { border-color: var(--line-strong); }
+.ledger-row h3 { margin: 12px 0 0; font-size: 16px; }
+.ledger-col strong { display: block; margin-bottom: 7px; color: var(--muted); font: 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.ledger-col p { margin: 0; font-size: 13px; }
+
+.doc-links { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.doc-link { padding: 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); transition: border-color .18s; }
+.doc-link:hover { border-color: var(--green); }
+.doc-link strong { display: block; margin-bottom: 6px; font-size: 14px; }
+.doc-link span { display: block; color: var(--body); font-size: 12px; line-height: 1.55; }
+
+@media (max-width: 940px) {
+  .card-grid.four, .doc-links { grid-template-columns: repeat(2, 1fr); }
+  .ledger-row { grid-template-columns: 1fr; gap: 14px; }
+  .ledger-row h3 { margin-top: 8px; }
+}
+@media (max-width: 660px) {
+  .card-grid.four, .doc-links { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
