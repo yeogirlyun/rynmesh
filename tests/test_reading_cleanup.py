@@ -57,6 +57,22 @@ def test_clear_reviewed_sources_replica_backups_index_and_keep_new_work(tmp_path
     assert restarted.source.list()[0]['bookmarked']
 
 
+def test_orphaned_pairing_temp_file_is_swept_like_other_scopes(tmp_path):
+    cleanup = fixture(tmp_path)
+    baseline = cleanup.preview()['backup_files']
+    pairings = tmp_path / 'device-sync' / 'pairings.json'
+    pairings.parent.mkdir(parents=True, exist_ok=True)
+    pairings.write_bytes(b'sealed pairing state')
+    orphan = pairings.with_name('.pairings.json.' + 'b' * 32 + '.tmp')
+    orphan.write_bytes(b'orphaned pairing temp file')
+    preview = cleanup.preview()
+    assert preview['backup_files'] == baseline + 1
+    result = cleanup.begin(review_token=preview['review_token'])
+    assert result['done'] == list(STEPS)
+    assert not orphan.exists()
+    assert pairings.exists()  # The live pairing store itself is untouched.
+
+
 @pytest.mark.parametrize('change', ['source', 'replica', 'backup'])
 def test_stale_review_does_not_create_journal_or_clear_anything(tmp_path, change):
     cleanup = fixture(tmp_path)

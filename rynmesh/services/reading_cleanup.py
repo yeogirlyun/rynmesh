@@ -26,11 +26,13 @@ STEPS = ('source', 'replica', 'backups', 'search')
 
 class ReadingCleanup:
     def __init__(self, home, *, source, replica, pairing_lock, search):
-        self.path = Path(home).resolve() / 'privacy' / 'reading-cleanup.json'
+        home = Path(home).resolve()
+        self.path = home / 'privacy' / 'reading-cleanup.json'
         self.lock = self.path.parent / '.reading-cleanup.lock'
         self.source, self.replica, self.pairing_lock, self.search = source, replica, pairing_lock, search
         self.privacy = ReadingPrivacy(source, actor=replica.actor)
-        self.paths = {'source': source.path.resolve(), 'replica': replica.path.resolve(), 'search': search.path.resolve()}
+        self.paths = {'source': source.path.resolve(), 'replica': replica.path.resolve(), 'search': search.path.resolve(),
+                      'pairing': (home / 'device-sync' / 'pairings.json').resolve()}
 
     def _read(self):
         if not self.path.exists():

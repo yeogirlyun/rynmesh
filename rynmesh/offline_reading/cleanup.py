@@ -105,7 +105,8 @@ class OfflineCleanup:
                 self.store.ensure_supported(jobs)
                 for row in data['records'].values():
                     if item_id is None or row['item_id'] == item_id:
-                        row.update(current=None, job=None, state='cleared', error_code='', verified_bytes=0)
+                        row.update(current=None, job=None, state='cleared', error_code='', verified_bytes=0,
+                                   reference={'item_id': row['reference']['item_id']})
                 # The worker fence and retry receipt commit in the same file.
                 data['cleanup'] = plan
                 return plan

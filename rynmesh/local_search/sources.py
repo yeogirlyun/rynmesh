@@ -22,8 +22,24 @@ def _stamp(value) -> float:
     return max(0, float(value or 0))
 
 
+MAX_TEXT = 1024 * 1024
+
+
 def _clip(value, size=2048) -> str:
     return str(value or "").encode()[:size].decode(errors="ignore")
+
+
+def _clip_text(value) -> tuple[str, bool]:
+    """Clip a body to MAX_TEXT bytes without splitting a multi-byte character.
+
+    One outsize row (an oversize saved copy, chat message or Ask reply) must
+    never take the whole index down; the row is kept, just shortened.
+    """
+    text = str(value or "")
+    raw = text.encode()
+    if len(raw) <= MAX_TEXT:
+        return text, False
+    return raw[:MAX_TEXT].decode(errors="ignore"), True
 
 
 def _saved_documents(imports, unavailable):
@@ -69,9 +85,10 @@ class LocalSearchSources:
         aliases = {}
 
         def content(identifier, title, text, source, stamp, kinds, record=None, body_state="available"):
-            return {"id": identifier, "title": _clip(title), "text": text, "source": _clip(source),
+            clipped, truncated = _clip_text(text)
+            return {"id": identifier, "title": _clip(title), "text": clipped, "source": _clip(source),
                     "timestamp": stamp, "kinds": kinds, "friend_ids": [], "body_state": body_state,
-                    "reading_record": record,
+                    "reading_record": record, "truncated": truncated,
                     "targets": [{"label": "Read local content", "href": "/search?" + urlencode({"open": identifier})}]}
 
         history = {record["item_id"]: record for record in self.consumption().list()}
@@ -186,9 +203,11 @@ class LocalSearchSources:
             peer_id = relation["peer_id"]
             for message in friends.history(peer_id):
                 query = urlencode({"peer": peer_id, "message": message["msg_id"]})
+                text, truncated = _clip_text(message.get("text", "") +
+                    ("\n" + message["attachment"]["filename"] if message.get("attachment") else ""))
                 rows["message:" + peer_id + ":" + message["msg_id"]] = {
                     "id": "message:" + peer_id + ":" + message["msg_id"], "title": _clip(relation.get("node_name") or peer_id),
-                    "text": message.get("text", "") + ("\n" + message["attachment"]["filename"] if message.get("attachment") else ""),
+                    "text": text, "truncated": truncated,
                     "source": _clip(relation.get("node_name") or peer_id), "timestamp": _stamp(message.get("ts")),
                     "kinds": ["chat", "share"] if message.get("dir") == "in" else ["chat"], "friend_ids": [peer_id],
                     "targets": [{"label": "Open message", "href": "/friends?" + query}]}
@@ -197,7 +216,8 @@ class LocalSearchSources:
             messages = conversation["messages"] or [{"id": "empty", "content": "", "createdAt": conversation["updatedAt"]}]
             for message in messages:
                 identifier = "ask:" + conversation["id"] + ":" + message["id"]
-                rows[identifier] = {"id": identifier, "title": _clip(conversation["title"]), "text": message["content"],
+                text, truncated = _clip_text(message["content"])
+                rows[identifier] = {"id": identifier, "title": _clip(conversation["title"]), "text": text, "truncated": truncated,
                     "source": _clip(conversation["serviceName"]), "timestamp": _stamp(message["createdAt"]),
                     "kinds": ["chat"], "friend_ids": [conversation["providerPeerId"]],
                     "targets": [{"label": "Open Ask Ryn message", "href": "/ask?" + urlencode({"conversation": conversation["id"],

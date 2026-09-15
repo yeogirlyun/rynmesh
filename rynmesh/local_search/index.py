@@ -94,43 +94,59 @@ def _snippet(text: str, terms: list[str]) -> dict:
             "offset_unit": "unicode_codepoints", "prefix_omitted": left > 0, "suffix_omitted": right < len(text)}
 
 
-def _documents(rows: Iterable[dict]) -> dict[str, dict]:
+def _validate_document(row: dict) -> None:
+    """Raise for a single malformed row; the caller decides whether that skips it."""
+    for key, limit in (("id", 512), ("title", 2048), ("text", 8 * 1024 * 1024), ("source", 2048)):
+        if not isinstance(row.get(key), str) or len(row[key].encode()) > limit:
+            raise SearchError("search_source_invalid")
+    if not row["id"]:
+        raise SearchError("search_source_invalid")
+    if (not isinstance(row.get("kinds"), list) or not row["kinds"]
+            or any(kind not in KINDS for kind in row["kinds"])):
+        raise SearchError("search_source_invalid")
+    if (not isinstance(row.get("friend_ids", []), list)
+            or any(not isinstance(peer, str) or len(peer) > 256 for peer in row.get("friend_ids", []))):
+        raise SearchError("search_source_invalid")
+    stamp = row.get("timestamp")
+    if type(stamp) not in {int, float} or not math.isfinite(stamp) or stamp < 0:
+        raise SearchError("search_source_invalid")
+    # Targets are internal app routes, never URLs supplied by remote content.
+    targets = row.get("targets")
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 8:
+        raise SearchError("search_source_invalid")
+    for target in targets:
+        if (not isinstance(target, dict) or not isinstance(target.get("label"), str)
+                or len(target["label"]) > 128 or not isinstance(target.get("href"), str)
+                or not target["href"].startswith("/") or target["href"].startswith("//")
+                or "\\" in target["href"] or len(target["href"]) > 4096
+                or any(ord(char) < 32 for char in target["href"])):
+            raise SearchError("search_source_invalid")
+
+
+def _documents(rows: Iterable[dict]) -> tuple[dict[str, dict], int]:
+    """A single malformed or oversize row is skipped and counted, never disabling the rest.
+
+    A row that isn't even a dict breaks the batch's own shape and still raises.
+    """
     result = {}
     total = 0
+    skipped = 0
     for value in rows:
         if not isinstance(value, dict):
             raise SearchError("search_source_invalid")
         row = deepcopy(value)
-        for key, limit in (("id", 512), ("title", 2048), ("text", 8 * 1024 * 1024), ("source", 2048)):
-            if not isinstance(row.get(key), str) or len(row[key].encode()) > limit:
+        try:
+            _validate_document(row)
+            if row["id"] in result:
                 raise SearchError("search_source_invalid")
-        if not row["id"] or row["id"] in result:
-            raise SearchError("search_source_invalid")
-        if (not isinstance(row.get("kinds"), list) or not row["kinds"]
-                or any(kind not in KINDS for kind in row["kinds"])):
-            raise SearchError("search_source_invalid")
-        if (not isinstance(row.get("friend_ids", []), list)
-                or any(not isinstance(peer, str) or len(peer) > 256 for peer in row.get("friend_ids", []))):
-            raise SearchError("search_source_invalid")
-        stamp = row.get("timestamp")
-        if type(stamp) not in {int, float} or not math.isfinite(stamp) or stamp < 0:
-            raise SearchError("search_source_invalid")
-        # Targets are internal app routes, never URLs supplied by remote content.
-        targets = row.get("targets")
-        if not isinstance(targets, list) or not 1 <= len(targets) <= 8:
-            raise SearchError("search_source_invalid")
-        for target in targets:
-            if (not isinstance(target, dict) or not isinstance(target.get("label"), str)
-                    or len(target["label"]) > 128 or not isinstance(target.get("href"), str)
-                    or not target["href"].startswith("/") or target["href"].startswith("//")
-                    or "\\" in target["href"] or len(target["href"]) > 4096
-                    or any(ord(char) < 32 for char in target["href"])):
-                raise SearchError("search_source_invalid")
+        except SearchError:
+            skipped += 1
+            continue
         total += len(_json(row))
         if total > MAX_PLAINTEXT - 4096 or len(result) >= MAX_DOCUMENTS:
             raise SearchError("search_index_limit")
         result[row["id"]] = row
-    return result
+    return result, skipped
 
 
 class LocalSearchIndex:
@@ -150,10 +166,13 @@ class LocalSearchIndex:
         self.error = ""
         self.updated_at = None
         self.unavailable_sources = []
+        self.skipped_rows = 0
         try:
             _, data = self._read()
             if data:
-                self._activate(_documents(data["documents"]), data["generation"], data["updated_at"])
+                rows, skipped = _documents(data["documents"])
+                self.skipped_rows = skipped
+                self._activate(rows, data["generation"], data["updated_at"])
         except SearchError as exc:
             self.error = str(exc)
             if self.error == "search_index_version_unsupported":
@@ -215,18 +234,20 @@ class LocalSearchIndex:
         with self.lock:
             return {"version": VERSION, "state": self.state, "error_code": self.error,
                     "indexed_count": len(self.rows), "updated_at": self.updated_at,
-                    "unavailable_sources": list(self.unavailable_sources)}
+                    "unavailable_sources": list(self.unavailable_sources),
+                    "skipped_rows": self.skipped_rows}
 
     def _source(self):
         values = self.source()
         issues = getattr(values, 'unavailable_sources', [])
         if not isinstance(issues, list) or any(not isinstance(value, str) or value not in SOURCE_SCOPES for value in issues):
             raise SearchError('search_source_invalid')
-        return _documents(values), sorted(set(issues))
+        rows, skipped = _documents(values)
+        return rows, skipped, sorted(set(issues))
 
     def resolve(self, identifier: str) -> dict:
         try:
-            current, _ = self._source()
+            current, _, _ = self._source()
         except Exception:
             raise SearchError("search_source_unavailable") from None
         if identifier not in current:
@@ -247,11 +268,12 @@ class LocalSearchIndex:
                     if str(exc) == "search_index_version_unsupported":
                         raise
                     envelope, data = {}, {}  # Cache only; source files are untouched.
-                rows, issues = self._source()
+                rows, skipped, issues = self._source()
                 fingerprints = {key: _hash(row) for key, row in rows.items()}
                 with self.lock:
                     unchanged = fingerprints == self.fingerprints and bool(self.generation)
                     self.unavailable_sources = issues
+                    self.skipped_rows = skipped
                 if not force and unchanged and data and data["generation"] == self.generation:
                     with self.lock:
                         self.state, self.error = "ready", ""
@@ -297,7 +319,7 @@ class LocalSearchIndex:
         # Fail closed even when rebuilding has failed. Never fall back to old
         # snippets if the authoritative source cannot be read now.
         try:
-            current, issues = self._source()
+            current, _, issues = self._source()
         except Exception:
             raise SearchError("search_source_unavailable") from None
         current_hashes = {key: _hash(row) for key, row in current.items()}
