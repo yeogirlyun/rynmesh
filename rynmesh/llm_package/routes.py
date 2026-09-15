@@ -1603,7 +1603,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         stored encrypted_response immediately, EXCEPT a succeeded order the
         ask worker has not yet archived (no acknowledged_at) — that response
         is kept so a paid answer is never silently downgraded to a failure,
-        up to a hard 7-day ceiling from completion (see _awaiting_archive)."""
+        up to a hard 7-day ceiling from the original success — a later
+        body-free checkpoint (e.g. settlement dispatch) never resets this
+        clock (see _awaiting_archive)."""
         value = int(dict(await request.json()).get("result_retention_seconds") or 0)
         if value not in {0, 3600, 86400, 604800}:
             raise HTTPException(status_code=400, detail="unsupported result retention period")

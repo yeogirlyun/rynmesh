@@ -1888,6 +1888,49 @@ def test_background_prune_keeps_unacknowledged_ephemeral_success():
     assert _background_order_expired(dropped_failure, now + 901) is True
 
 
+def test_settlement_checkpoint_after_success_does_not_reset_the_seven_day_purge_bound(tmp_path):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    with TestClient(app) as client:
+        orders = TaskOrderStore(home / "llm" / "consumer-orders")
+
+        def _make_stale_succeeded_order_with_fresh_checkpoint(task_id: str) -> None:
+            orders.claim(task_id=task_id, bindings={"request": "test"})
+            orders.transition(task_id=task_id, state="accepted")
+            orders.transition(task_id=task_id, state="running")
+            orders.transition(
+                task_id=task_id, state="succeeded",
+                metadata={"response_expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+                encrypted_response={"ciphertext": "encrypted-only"},
+            )
+            path = orders.root / f"{task_id}.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            for event in record["history"]:
+                if event.get("state") == "succeeded" and not event.get("checkpoint"):
+                    event["at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+            path.write_text(json.dumps(record), encoding="utf-8")
+            # A body-free settlement-dispatch checkpoint (as written by
+            # _recover_consumer_orders on every node restart, or right after
+            # settlement in the normal request path) arrives today, long
+            # after the real success — it must not reset the purge clock.
+            orders.checkpoint(task_id=task_id, metadata={"settlement_dispatched": True})
+
+        _make_stale_succeeded_order_with_fresh_checkpoint("stale_expiry_sweep")
+        assert orders.purge_expired_responses() == 1
+        assert "encrypted_response" not in orders.get("stale_expiry_sweep")
+
+        _make_stale_succeeded_order_with_fresh_checkpoint("stale_retention_zero")
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" not in orders.get("stale_retention_zero")
+
+
 class _PacketConnection:
     def __init__(self, packets):
         self.packets = iter(packets)
