@@ -356,3 +356,48 @@ def test_owner_reading_choice_uses_stored_candidate_and_rejects_stale_revision(t
     response = node.client.post(PREFIX + '/reading/resolve', headers=OWNER, json=payload)
     assert response.status_code == 409 and response.json()['detail'] == 'sync_revision_conflict'
     assert node.request('GET', '/reading/conflicts')['conflicts'] == []
+
+
+def test_rejected_row_is_acknowledged_and_other_rows_keep_flowing(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    from rynmesh.device_sync import records
+    scopes = ['reading']
+    a, b, pair_id = paired(tmp_path, scopes)
+
+    def position(progress):
+        return {'item': ITEM, 'progress': progress, 'completed': False, 'content_version': ''}
+
+    # A restored backup reissues one actor counter with a different value. That
+    # row can never merge on the peer; every other row must still keep flowing.
+    for node, progress in ((a, .9), (b, .2)):
+        actor = node.app.state.device_sync.transfer.replica.actor
+        node.reader.enable_sync(actor, scopes)
+        record = records.write('reading', ITEM['item_id'], records.empty(), 'c' * 64, position(progress))
+        node.reader.sync_receive([{'scope': 'reading', 'id': ITEM['item_id'], 'record': record}], scopes=scopes)
+    a.reader.record({**ITEM, 'item_id': 'other'}, 'progress', progress=.5)
+
+    sender = a.app.state.device_sync.transfer
+
+    def batch():
+        wire = sender.prepare(pair_id, 'reading')
+        return [row['id'] for row in sender._outgoing(sender._pair(pair_id), wire)['records']]
+
+    a.tick()
+    sync = a.request('GET')['devices'][0]['sync']
+    assert b.reader.sync_read('reading', 'other')['value']['progress'] == .5
+    assert b.reader.sync_read('reading', ITEM['item_id'])['value']['progress'] == .2
+    assert sync['rejected_by_peer'] == {'reading': 1}
+    assert sync['pending'] == 0 and sync['error_code'] == '' and sync['state'] == 'confirmed'
+    # The peer answered for the exact revision it refused, so the identical
+    # batch is not rebuilt tick after tick.
+    assert batch() == []
+    a.tick()
+    assert a.request('GET')['devices'][0]['sync']['rejected_by_peer'] == {'reading': 1}
+    # The same row is unmergeable in the other direction, so both owners see it.
+    b.tick()
+    assert b.request('GET')['devices'][0]['sync']['rejected_by_peer'] == {'reading': 1}
+    # Changing the record locally sends it again; nothing else is resent.
+    a.reader.record(ITEM, 'progress', progress=.95)
+    assert a.request('GET')['devices'][0]['sync']['pending'] == 1
+    assert batch() == [ITEM['item_id']]

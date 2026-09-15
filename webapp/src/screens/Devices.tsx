@@ -26,6 +26,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
   const [scopes, setScopes] = useState<SyncScope[]>(pair.status === "awaiting_owner" ? [] : pair.scopes);
   const [checked, setChecked] = useState(false);
   const active = pair.status === "active";
+  const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
   return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
     {pair.status !== "revoked" ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
@@ -45,6 +46,8 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
         {pair.sync.pending !== null ? <p>{pair.sync.pending} local changes waiting for confirmation.</p> : null}
         {pair.sync.last_success_at !== null ? <p>Last confirmation across selected categories: {new Date(pair.sync.last_success_at * 1000).toLocaleString()}.</p> : null}
         {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. <a href="#reading-sync-conflicts">Review reading choices below</a>; review conversation branches in <Link to="/ask">Ask Ryn</Link>.</p> : null}
+        {syncScopes.filter((scope) => rejected[scope]).map((scope) => <p key={scope}>{rejected[scope]} {scopeNames[scope]} records
+          could not be merged by {pair.device.name}. They will be sent again after they change on this device.</p>)}
       </div> : null}
       <p>Mutually allowed: {pair.effective_scopes.map((scope) => scopeNames[scope]).join(", ") || "None"}.</p>
       <ScopeChoice label="Your allowed scope" value={scopes} onChange={setScopes} disabled={busy} />

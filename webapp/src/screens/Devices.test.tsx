@@ -132,7 +132,7 @@ it("uses the reviewed policy revision and preserves saved scope when pausing", a
 it("shows pending source changes and a lost acknowledgement without claiming success", async () => {
   state.data_transfer_available = true;
   state.devices = [{ ...pair, status: "active", revision: 1,
-    sync: { state: "waiting", pending: 3, last_success_at: null, error_code: "sync_transfer_unconfirmed", conflicts: 0 } }];
+    sync: { state: "waiting", pending: 3, last_success_at: null, error_code: "sync_transfer_unconfirmed", conflicts: 0, rejected_by_peer: {} } }];
   show();
   expect(await screen.findByText("3 local changes waiting for confirmation.")).toBeInTheDocument();
   expect(screen.getByText("Last transfer was not confirmed. Reconnect and retry.")).toBeInTheDocument();
@@ -143,13 +143,28 @@ it("shows pending source changes and a lost acknowledgement without claiming suc
 it("shows source-confirmed status and preserves the distinction between conflicts and pending transfers", async () => {
   state.data_transfer_available = true;
   state.devices = [{ ...pair, status: "active", revision: 1,
-    sync: { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0 } }];
+    sync: { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: {} } }];
   const user = userEvent.setup();
   show();
   expect(await screen.findByText("Selected local changes confirmed by the other device.")).toBeInTheDocument();
   expect(screen.getByText(/Last confirmation across selected categories/)).toBeInTheDocument();
-  state.devices[0].sync = { state: "conflict", pending: 0, last_success_at: 1000, error_code: "", conflicts: 2 };
+  state.devices[0].sync = { state: "conflict", pending: 0, last_success_at: 1000, error_code: "", conflicts: 2, rejected_by_peer: {} };
   await user.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText(/2 unresolved conflicts/)).toBeInTheDocument();
   expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
+});
+
+it("names the records the other device could not merge and drops them once it accepts them", async () => {
+  state.data_transfer_available = true;
+  state.devices = [{ ...pair, status: "active", revision: 1,
+    sync: { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: { reading: 1 } } }];
+  const user = userEvent.setup();
+  show();
+  const card = await screen.findByRole("article", { name: "Device My laptop" });
+  expect(within(card).getByRole("status")).toHaveTextContent(
+    "1 Reading progress records could not be merged by My laptop. They will be sent again after they change on this device.");
+  expect(screen.queryByText(/Ask Ryn history records could not be merged/)).not.toBeInTheDocument();
+  state.devices[0].sync = { state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: {} };
+  await user.click(screen.getByRole("button", { name: "Refresh devices" }));
+  await waitFor(() => expect(screen.queryByText(/could not be merged/)).not.toBeInTheDocument());
 });

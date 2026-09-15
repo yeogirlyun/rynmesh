@@ -304,7 +304,13 @@ class ReplicaStore:
         saved = data['receipts'].setdefault(device, {})
         confirmed, seen = 0, set()
         for receipt in receipts:
-            if not isinstance(receipt, dict) or set(receipt) != {'scope', 'id', 'revision'} or records.scope_id(receipt['scope']) not in selected:
+            # A row the peer answered but could not merge carries the code that
+            # refused it. It is stored exactly like an accepted row, so the same
+            # bytes are not sent again until the local record changes; the sender
+            # keeps the code for the owner (transfer._record).
+            if not isinstance(receipt, dict) or set(receipt) - {'rejected'} != {'scope', 'id', 'revision'} \
+                    or records.scope_id(receipt['scope']) not in selected \
+                    or 'rejected' in receipt and not (isinstance(receipt['rejected'], str) and receipt['rejected'] in PER_ROW):
                 raise SyncError('sync_scope_denied')
             key = self._key(receipt['scope'], receipt['id'])
             if key in seen:
