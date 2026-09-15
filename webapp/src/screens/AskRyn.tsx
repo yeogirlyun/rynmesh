@@ -117,7 +117,7 @@ function AskRynHome() {
       const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
       try {
         const anchor = document.createElement("a"); anchor.href = url; anchor.download = "ryn-conversations.json"; anchor.click();
-      } finally { URL.revokeObjectURL(url); }
+      } finally { window.setTimeout(() => URL.revokeObjectURL(url), 10_000); }
       setExportResult({ failed: false, text: "Export prepared and download requested. Check your downloads to confirm the file was saved." });
     } catch {
       setExportResult({ failed: true, text: "Export was not completed. Your draft remains here. Check the node connection and draft save status, then retry export." });
