@@ -1,0 +1,143 @@
+Browser tab: 48282165, Title: "Ryn Webapp", URL: "http://127.0.0.1:19041/friends?share=local-small#share-ai".
+1 AXWebArea Ryn Webapp, URL: 127.0.0.1:19041/friends?share=local-small#share-ai
+	2 container root
+		3 container
+			4 image Ryn mark
+			5 text Ryn WEBAPP local console -  ryn-node 0.6.2 daemon registry 0  peers live
+			6 button Open getting started guide
+			7 button Toggle Ask Ryn panel
+		8 container
+			9 text CONSOLE
+			10 link Description: Home, Value: 127.0.0.1:19041/
+			11 link Description: For You, Value: 127.0.0.1:19041/digest
+			12 link Description: My reading, Value: 127.0.0.1:19041/reading
+			13 link Description: Explore, Value: 127.0.0.1:19041/explore
+			14 link Description: Search, Value: 127.0.0.1:19041/search
+			15 link Description: Ask Ryn, Value: 127.0.0.1:19041/ask
+			16 link Description: Publish, Value: 127.0.0.1:19041/publish
+			17 link Description: Peers, Value: 127.0.0.1:19041/peers
+			18 link Description: Friends, Value: 127.0.0.1:19041/friends
+			19 link Description: Friend updates, Value: 127.0.0.1:19041/friend-updates
+			20 link Description: Offline reading, Value: 127.0.0.1:19041/offline
+			21 link Description: Services, Value: 127.0.0.1:19041/services
+			22 link Description: Chat, Value: 127.0.0.1:19041/chat
+			23 link Description: Settings, Value: 127.0.0.1:19041/settings
+			24 text THIS NODE
+			25 image Ryn mark
+			26 text Ryn 67 FAI-A
+			27 button Copy udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=
+			28 text 0 local 0 fetched
+		29 container
+			30 text PRIVATE SHARING
+			31 heading Friends, Value: 1
+				32 text Friends
+			33 text Invite someone you know, review their identity, then share your first message.
+			34 heading Invite a friend, Value: 2
+				35 text Invite a friend
+			36 text One use, valid for 15 minutes. Allows messages, small attachments and content cards. AI access stays off.
+			37 button Create invite
+			38 heading Use an invite, Value: 2
+				39 text Use an invite
+			40 text entry area (settable) Friend invite
+			41 button (disabled) Review invite
+			42 heading Your friends, Value: 2
+				43 text Your friends
+			44 button Refresh friends
+			125 heading 子陵台式, Value: 3
+				126 text 子陵台式
+			127 text http://10.10.10.187:19600
+			128 button Message 子陵台式
+				129 text Message
+				130 text 子陵台式
+			131 button Remove
+			62 heading FAI-New-B, Value: 3
+				63 text FAI-New-B
+			64 text http://127.0.0.1:19044
+			65 button Message FAI-New-B
+				66 text Message
+				67 text FAI-New-B
+			68 button Remove
+			69 heading FAI-B, Value: 3
+				70 text FAI-B
+			71 text http://127.0.0.1:19042
+			72 button Message FAI-B
+				73 text Message
+				74 text FAI-B
+			75 button Remove
+			46 heading Shared content, Value: 2
+				47 text Shared content
+			48 text Cards show metadata first. Choose Download and read to save a private copy. Removing a friend cannot recall copies already saved.
+			49 button Refresh shared content
+			50 text No shared content yet. Open an article and choose Share with a friend.
+			51 container Card history maintenance
+				52 heading Clear card history, Value: 3
+					53 text Clear card history
+				54 text This clears reviewed sharing-card metadata and matching entries in known legacy files. Saved documents, reading records, messages, friendships and AI permissions remain. Use their own data controls to manage them. Deliveries already in flight or already received by someone else cannot be recalled.
+				55 text Only card identifiers and bounded cleanup receipts are retained to prevent old deliveries or retries from restoring cleared cards. Up to 10,000 deletion identifiers are retained; they are excluded from ordinary exports.
+				56 button Review card history cleanup
+			57 heading AI with friends, Value: 2, ID: share-ai
+				58 text AI with friends
+			59 text Being friends does not grant AI access. Choose who can use each service; your friend's device sees the questions sent to their model.
+			60 text Share my AI: select an existing friend below. Their questions are processed on your device. Keep Ryn online with the model ready.
+			145 text Access revoked for FAI-B. New requests are blocked. Running computation may continue while cancellation is checked.
+			61 button Refresh AI permissions
+			76 heading Your AI: rynmesh-qwen2.5-0.5b-q4, Value: 3
+				77 text Your AI:  rynmesh-qwen2.5-0.5b-q4
+			78 container
+				79 text Model ready  ·  Friend sharing enabled
+			80 text Development Task Balance: 0 input / 0 output per 1k tokens; minimum 0, task maximum 1. This is not RMB billing.
+			81 link Description: Manage local model, Value: 127.0.0.1:19041/services/manage
+			82 container Invite someone to this AI
+				83 heading Invite a new friend to this AI, Value: 3
+					84 text Invite a new friend to this AI
+				85 text A single person can accept within 15 minutes. The first person who accepts gets permission for this service. Send privately; do not post the link publicly.
+				86 button Invite someone to this AI
+				87 button Refresh AI invitations
+				122 container
+					123 text rynmesh-qwen2.5-0.5b-q4  ·  AI authorization confirmed  · expires  2026/9/15 01:16:33
+				124 button Cancel AI invitation
+				88 container
+					89 text rynmesh-qwen2.5-0.5b-q4  ·  AI access revoked  · expires  2026/9/15 00:59:20
+				90 button Cancel AI invitation
+			91 button Pause sharing with all friends
+			132 container AI with 子陵台式
+				133 heading 子陵台式, Value: 3
+					134 text 子陵台式
+				135 container
+					136 text Your  rynmesh-qwen2.5-0.5b-q4 :  Allowed
+				137 button Revoke AI access
+				138 button Check 子陵台式's AI
+					139 text Check
+					140 text 子陵台式
+					141 text 's AI
+				142 container
+					143 text Last checked  2026/9/15 01:16:23
+				144 text Your friend's model is unavailable. Ask them to check its setup.
+			92 container AI with FAI-New-B
+				93 heading FAI-New-B, Value: 3
+					94 text FAI-New-B
+				95 container
+					96 text Your  rynmesh-qwen2.5-0.5b-q4 :  Not allowed
+				97 button Allow AI access
+				98 button Check FAI-New-B's AI
+					99 text Check
+					100 text FAI-New-B
+					101 text 's AI
+				102 container
+					103 text Last checked  2026/9/15 01:16:03
+				104 text Your friend's model is unavailable. Ask them to check its setup.
+			105 container AI with FAI-B
+				106 heading FAI-B, Value: 3
+					107 text FAI-B
+				108 container
+					109 text Your  rynmesh-qwen2.5-0.5b-q4 :  Not allowed
+				110 button Allow AI access
+				111 button Check FAI-B's AI
+					112 text Check
+					113 text FAI-B
+					114 text 's AI
+				115 container
+					116 text Last checked  2026/9/15 01:16:13
+				117 text Your friend's model is unavailable. Ask them to check its setup.
+
+The focused UI element is 110 button Allow AI access
