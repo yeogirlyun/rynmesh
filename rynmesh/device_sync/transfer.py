@@ -17,7 +17,7 @@ from .conversation_bridge import ConversationBridge
 from .pairing import policy
 from .reading_bridge import ReadingBridge
 from .records import SyncError, fingerprint
-from .store import MAX_BATCH, MAX_BATCH_BYTES
+from .store import MAX_BATCH, MAX_BATCH_BYTES, PER_ROW
 
 PATH = '/api/peer/device-sync/batch'
 MAX_WIRE_BYTES = 18 * 1024 * 1024
@@ -79,8 +79,33 @@ class DeviceTransfer:
         return bridge.pending(pair_id) if scope == 'conversations' else bridge.pending(pair_id, [scope])
 
     @staticmethod
-    def _receive(bridge, rows, scope):
+    def _deliver(bridge, rows, scope):
         return bridge.receive(rows) if scope == 'conversations' else bridge.receive(rows, scopes=[scope])
+
+    @classmethod
+    def _receive(cls, bridge, rows, scope):
+        """One unmergeable row must not stall every other row in its scope.
+
+        The batch is delivered as a whole; only a per-row merge failure falls
+        back to a commit per row, so the rows that do merge still land and the
+        row that cannot is named in the signed receipt instead of retried
+        forever. A batch-level error still fails the whole batch.
+        """
+        try:
+            return cls._deliver(bridge, rows, scope)
+        except SyncError as exc:
+            if str(exc) not in PER_ROW:
+                raise
+        receipts = []
+        for row in rows:
+            try:
+                receipts.extend(cls._deliver(bridge, [row], scope))
+            except SyncError as exc:
+                if str(exc) not in PER_ROW:
+                    raise
+                receipts.append({'scope': row['scope'], 'id': row['id'],
+                                 'revision': fingerprint(row['record']), 'rejected': str(exc)})
+        return receipts
 
     @staticmethod
     def _acknowledge(bridge, pair_id, receipts, scope):
@@ -118,11 +143,20 @@ class DeviceTransfer:
         for row in rows:
             if not isinstance(row, dict) or set(row) != {'scope', 'id', 'record'} or row['scope'] != scope:
                 raise SyncError('sync_scope_denied')
-            records.validate(scope, row['id'], row['record'])
+            try:
+                records.validate(scope, row['id'], row['record'])
+                rejected = ''
+            except SyncError as exc:
+                # A row this device cannot accept is reported as rejected, not
+                # merged; only a batch-level error still fails the batch.
+                if str(exc) not in PER_ROW:
+                    raise
+                rejected = str(exc)
             if row['id'] in seen:
                 raise SyncError('sync_batch_invalid')
             seen.add(row['id'])
-            receipts.append({'scope': scope, 'id': row['id'], 'revision': fingerprint(row['record'])})
+            receipt = {'scope': scope, 'id': row['id'], 'revision': fingerprint(row['record'])}
+            receipts.append({**receipt, 'rejected': rejected} if rejected else receipt)
         return receipts
 
     def prepare(self, pair_id, scope):
@@ -141,12 +175,19 @@ class DeviceTransfer:
         if set(value) != {'kind', 'sender', 'receiver', 'pair_id', 'scope', 'sender_revision', 'receiver_revision', 'records'} or value['kind'] != DATA:
             raise SyncError('sync_batch_invalid')
         scope = records.scope_id(value['scope'])
-        self._receipts(value['records'], scope)
+        expected = self._receipts(value['records'], scope)
+        accepted = [entry for entry, receipt in zip(value['records'], expected, strict=True) if 'rejected' not in receipt]
         node = self.pairing()
         with node.authorized(row['id'], remote_actor=row['remote']['actor'], scopes=[scope],
                              sender_revision=value['sender_revision'], receiver_revision=value['receiver_revision']) as current:
             bridge = self._initialize(current, scope)
-            receipts = self._receive(bridge, value['records'], scope)
+            merged = self._receive(bridge, accepted, scope)
+            # Never report a row as merged when it was not: the source must
+            # answer for exactly the rows it was given, in the same order.
+            if [receipt['id'] for receipt in merged] != [entry['id'] for entry in accepted]:
+                raise SyncError('sync_receipt_invalid')
+            delivered = iter(merged)
+            receipts = [receipt if 'rejected' in receipt else next(delivered) for receipt in expected]
             self._record(current, scope, received=True)
             return self._seal(current, {'kind': ACK, 'sender': current['local'], 'receiver': current['remote']['peer_id'],
                 'pair_id': row['id'], 'scope': scope, 'sender_revision': current['local_policy']['revision'],

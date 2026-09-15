@@ -124,6 +124,23 @@ def test_future_and_corrupt_envelopes_are_preserved(tmp_path):
     assert a.path.read_bytes() == before
 
 
+def test_quarantine_section_survives_restart_and_a_malformed_one_is_rejected(tmp_path):
+    a = replica(tmp_path / 'a')
+    put(a, 'reading', reading(0.3))
+    key = a._key('reading', 'article')
+    a._mutate(lambda data: data.update(quarantine={key: {'code': 'sync_dot_conflict', 'revision': 'b' * 64}}))
+    assert replica(tmp_path / 'a').status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    malformed = ({key: {'code': 'sync_version_unsupported', 'revision': 'b' * 64}},  # Not a per-row code.
+                 {key: {'code': 'sync_dot_conflict'}}, {key: 'sync_dot_conflict'},
+                 {key: {'code': 'sync_dot_conflict', 'revision': 'not-a-revision'}}, [])
+    for index, section in enumerate(malformed):
+        broken = replica(tmp_path / f'broken-{index}')
+        put(broken, 'reading', reading(0.3))
+        broken._mutate(lambda data, section=section: data.update(quarantine=section))
+        with pytest.raises(SyncError):
+            replica(tmp_path / f'broken-{index}').read('reading', 'article')
+
+
 def test_unknown_local_fields_survive_mutation_but_unknown_wire_fields_are_denied(tmp_path):
     a, b = replica(tmp_path / 'a'), replica(tmp_path / 'b')
     put(a, 'bookmarks', bookmark())
@@ -143,8 +160,8 @@ def test_unknown_local_fields_survive_mutation_but_unknown_wire_fields_are_denie
     assert a._read()[1]['records'][entity_key]['future_entity_metadata'] == 'private local extension'
     forged = deepcopy(batch)
     forged[0]['record']['heads'][0]['value']['private_key'] = 'Do not propagate'
-    with pytest.raises(SyncError, match='sync_value_invalid'):
-        b.receive(forged, scopes=['bookmarks'])
+    assert b.receive(forged, scopes=['bookmarks']) == [{'scope': 'bookmarks', 'id': 'article',
+        'revision': records.fingerprint(forged[0]['record']), 'rejected': 'sync_value_invalid'}]
     assert not b.path.exists()
 
 
@@ -182,14 +199,17 @@ def test_reconcile_does_not_treat_python_numeric_equality_as_identical_operation
     put(a, 'reading', reading(0))
     batch = a.pending(b.actor, ['reading'])['records']
     b.reconcile_source(batch, scopes=['reading'])
-    before = b.path.read_bytes()
-    # The same operation dot cannot acquire a differently encoded value.
+    # The same operation dot cannot acquire a differently encoded value. The row
+    # is quarantined rather than merged, and the stored record is left alone.
     changed = deepcopy(batch)
     old = changed[0]['record']['heads'][0]['value']['progress']
     changed[0]['record']['heads'][0]['value']['progress'] = float(old) if type(old) is int else int(old)
-    with pytest.raises(SyncError, match='sync_dot_conflict'):
-        b.reconcile_source(changed, scopes=['reading'])
-    assert b.path.read_bytes() == before
+    b.reconcile_source(changed, scopes=['reading'])
+    assert b.read('reading', 'article')['revision'] == records.fingerprint(batch[0]['record'])
+    assert b.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]}
+    quarantined = b.path.read_bytes()
+    b.reconcile_source(changed, scopes=['reading'])
+    assert b.path.read_bytes() == quarantined
 
 
 def test_parallel_instances_cannot_both_write_the_same_revision(tmp_path):

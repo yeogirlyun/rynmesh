@@ -26,6 +26,11 @@ MAX_FILE = 176 * 1024 * 1024
 MAX_ENTITIES = 30000
 MAX_BATCH = 100
 MAX_BATCH_BYTES = 12 * 1024 * 1024
+# Errors that describe one row rather than the batch carrying it. A row raising
+# one of these is skipped and reported; every other code stays a batch error, so
+# a protocol violation can never be downgraded to a per-row note.
+PER_ROW = frozenset({'sync_dot_conflict', 'sync_device_limit', 'sync_value_invalid',
+                     'sync_item_invalid', 'sync_item_link_invalid'})
 
 
 class ReplicaStore:
@@ -69,11 +74,24 @@ class ReplicaStore:
                 if key != self._key(row['scope'], row['id']):
                     raise ValueError
                 records.validate_cached(row['scope'], row['id'], row['record'], self._validation_cache, max_entries=MAX_ENTITIES)
+            self._quarantine(data)
             return envelope, data
         except SyncError:
             raise
         except (OSError, ValueError, KeyError, TypeError, InvalidTag):
             raise SyncError('sync_store_unavailable') from None
+
+    @staticmethod
+    def _quarantine(data):
+        """Validate the optional section naming rows this replica could not merge."""
+        section = data.get('quarantine', {})
+        if not isinstance(section, dict) or len(section) > MAX_ENTITIES:
+            raise ValueError
+        for key, entry in section.items():
+            records.actor_id(key)
+            if not isinstance(entry, dict) or set(entry) != {'code', 'revision'} or entry['code'] not in PER_ROW:
+                raise ValueError
+            records.actor_id(entry['revision'])
 
     @staticmethod
     def _key(scope, identifier):
@@ -84,7 +102,7 @@ class ReplicaStore:
             envelope, data = self._read()
             before = canonical_json(data)
             result = operation(data)
-            if len(data['records']) > MAX_ENTITIES:
+            if len(data['records']) > MAX_ENTITIES or len(data.get('quarantine', {})) > MAX_ENTITIES:
                 raise SyncError('sync_capacity_exhausted')
             plain = canonical_json(data)
             if len(plain) > MAX_PLAINTEXT:
@@ -170,7 +188,10 @@ class ReplicaStore:
         Only the source adapters may call this; network input uses receive().
         """
         selected = self._source_scope(rows, scopes)
-        return self._receive(rows, selected)
+        # A local source cannot be answered with a receipt, so a row it cannot
+        # merge is quarantined instead: the import stays a no-op until the row
+        # changes, and status() names it for the owner.
+        return self._mutate(lambda data: self._merge_rows(data, rows, selected, collect_receipts=False))
 
     def _source_scope(self, rows, scopes):
         selected = self.scopes(scopes)
@@ -215,11 +236,40 @@ class ReplicaStore:
             previous = data['records'].get(key, {}).get('record', records.empty())
             # _read validated the previous record. Identical canonical bytes
             # need no merge; changed input retains full validation.
-            merged = previous if canonical_json(previous) == canonical_json(row['record']) else records.merge(row['scope'], row['id'], previous, row['record'])
+            same = canonical_json(previous) == canonical_json(row['record'])
+            try:
+                merged = previous if same else records.merge(row['scope'], row['id'], previous, row['record'])
+            except SyncError as exc:
+                # One unmergeable row is skipped and reported, never merged and
+                # never counted as merged. The rest of the batch still commits,
+                # so a single bad row cannot stall its scope forever.
+                if str(exc) not in PER_ROW:
+                    raise
+                if collect_receipts:
+                    receipts.append({'scope': row['scope'], 'id': row['id'],
+                                     'revision': records.fingerprint(row['record']), 'rejected': str(exc)})
+                else:
+                    data.setdefault('quarantine', {})[key] = {'code': str(exc), 'revision': records.fingerprint(row['record'])}
+                continue
             data['records'][key] = {**data['records'].get(key, {}), **row, 'record': merged}
+            if data.get('quarantine', {}).pop(key, None) and not data['quarantine']:
+                data.pop('quarantine')
             if collect_receipts:
                 receipts.append({'scope': row['scope'], 'id': row['id'], 'revision': records.fingerprint(row['record'])})
         return receipts
+
+    def status(self):
+        """Bounded projection of the rows this replica could not merge locally."""
+        with file_transaction(self.lock):
+            _, data = self._read()
+            rows = []
+            for key, entry in sorted(data.get('quarantine', {}).items()):
+                row = data['records'].get(key)
+                if row is not None:
+                    rows.append({'scope': row['scope'], 'id': row['id'], 'code': entry['code']})
+                if len(rows) >= MAX_BATCH:
+                    break
+            return {'quarantined': rows}
 
     def acknowledge(self, device, receipts, *, scopes):
         records.actor_id(device)
