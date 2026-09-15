@@ -28,5 +28,5 @@ export const aiAccess = {
   set: (service: string, relationship: string, allowed: boolean, revision: number) =>
     request<{ grant: AIGrant; cancellation: string }>(`/${encodeURIComponent(service)}/${encodeURIComponent(relationship)}`, "PUT", { allowed, expected_revision: revision }),
   friends: () => request<{ friends: FriendAISnapshot[] }>("/friend-services"),
-  refresh: (peer: string) => request<FriendAISnapshot>(`/friend-services?${new URLSearchParams({ peer_id: peer })}`, "POST"),
+  refresh: (peer: string) => request<FriendAISnapshot>("/friend-services", "POST", { peer_id: peer }),
 };

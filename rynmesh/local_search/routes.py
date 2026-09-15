@@ -1,4 +1,4 @@
-"""Owner-only search; keywords travel in POST bodies, never access-log URLs."""
+"""Owner-only search; keywords and identifiers travel in POST bodies, never access-log URLs."""
 from __future__ import annotations
 
 import asyncio
@@ -70,11 +70,23 @@ def install_local_search(app, *, store, home, workers, messaging_key, local_cont
         await call("rebuild", force=True)
         return app.state.local_search.index.status()
 
-    @app.get("/api/local/search/open")
-    async def open_result(request: Request, identifier: str):
+    @app.post("/api/local/search/open")
+    async def open_result(request: Request):
         app.state.local_search.local_control(request)
-        if len(identifier) > 512:
-            raise HTTPException(400, detail="search_request_invalid")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 8192:
+                raise HTTPException(413, detail="search_request_too_large")
+        try:
+            body = json.loads(raw)
+            if not isinstance(body, dict) or "identifier" not in body or set(body) - {"identifier"}:
+                raise ValueError
+            identifier = body["identifier"]
+            if not isinstance(identifier, str) or not identifier or len(identifier) > 512:
+                raise ValueError
+        except (ValueError, UnicodeDecodeError):
+            raise HTTPException(400, detail="search_request_invalid") from None
         return await call("resolve", identifier)
 
     return app.state.local_search.index

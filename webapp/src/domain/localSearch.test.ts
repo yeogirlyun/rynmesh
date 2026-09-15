@@ -20,3 +20,16 @@ it("rechecks private opened content without reading or writing the HTTP cache", 
   await localSearch.open("content:private-id");
   expect(fetch.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
 });
+
+it("sends the content identifier in a POST body and excludes it from the URL", async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ text: "current content" }) });
+  vi.stubGlobal("fetch", fetch);
+  const identifier = "content:private-id";
+  await localSearch.open(identifier);
+  const [url, options] = fetch.mock.calls[0];
+  expect(url).toMatch(/\/api\/local\/search\/open$/);
+  expect(url).not.toContain("identifier=");
+  expect(url).not.toContain(identifier);
+  expect(options.method).toBe("POST");
+  expect(JSON.parse(options.body)).toEqual({ identifier });
+});

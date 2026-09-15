@@ -31,5 +31,5 @@ export const localSearch = {
   query: (body: SearchRequest, signal?: AbortSignal) => request<SearchPage>("/query", body, signal),
   status: () => request<SearchStatus>("/status"),
   rebuild: () => request<SearchStatus>("/rebuild", {}),
-  open: (identifier: string) => request<SearchDocument>(`/open?${new URLSearchParams({ identifier })}`),
+  open: (identifier: string) => request<SearchDocument>("/open", { identifier }),
 };
