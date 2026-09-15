@@ -40,7 +40,10 @@ exist yet — it is applied by the maintainer once this branch merges, per
   active.
 - A succeeded, paid Ask Ryn answer is kept until it is safely archived,
   instead of being lost and reported as "interrupted" if it vanishes before
-  the next check.
+  the next check. This applies to orders whose results are persisted: an
+  unacknowledged success is kept for up to 7 days. With result retention set
+  to 0 the answer lives only in memory, for up to one day, and is lost on
+  restart.
 - A succeeded answer awaiting archive is now purged no later than 7 days
   after its original success; a later settlement checkpoint (written, for
   example, on every node restart) no longer resets that 7-day clock and
@@ -60,9 +63,11 @@ exist yet — it is applied by the maintainer once this branch merges, per
 - Device pairing storage no longer fills up with finished invites and pairs;
   the peer connection rate limiter now expires old entries instead of
   permanently locking out new devices.
-- Approving a new device pairing now requires typing the verification code
-  shown on the joining device, closing a race where another device could be
-  approved under an attacker-chosen name.
+- Approving a new device pairing now requires typing the verification code, and
+  the approving device no longer displays it: you read the code from the joining
+  device's own screen and type it in, and the node rejects a mismatch. This
+  closes a race where another device could be approved under an
+  attacker-chosen name.
 
 ### Friends and privacy
 
