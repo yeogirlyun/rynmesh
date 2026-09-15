@@ -25,7 +25,7 @@ def test_python_web_and_desktop_versions_match():
         tauri["version"],
         cargo["package"]["version"],
     }
-    assert versions == {"0.6.2"}
+    assert versions == {"0.7.0"}
 
 
 def test_intel_macos_uses_last_supported_cryptography_wheel_line():
