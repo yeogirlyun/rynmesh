@@ -58,6 +58,7 @@ export default function Search() {
   const request = useCallback((cursor = "") => ({ query: form.query, kind: form.kind, source: form.source, friend_id: form.friend,
     sort: form.sort, cursor, ...(form.after ? { after: new Date(`${form.after}T00:00:00`).getTime() / 1000 } : {}),
     ...(form.before ? { before: new Date(`${form.before}T23:59:59.999`).getTime() / 1000 } : {}) }), [form]);
+  const resetRequeries = useCallback(() => { autoRequeries.current = 0; setRequeriesExhausted(false); }, []);
   useEffect(() => {
     void friendsApi.list().then((value) => setFriends(value.friends.filter((row) => row.status === "active"))).catch(() => undefined);
     const read = () => { void localSearch.status().then(setStatus).catch(() => setStatus(null)); };
@@ -69,8 +70,8 @@ export default function Search() {
     if (status?.updated_at) indexStamp.current = status.updated_at;
   }, [status?.updated_at, identifier]);
   useEffect(() => {
-    autoRequeries.current = 0; setRequeriesExhausted(false);
-  }, [form.query]);
+    resetRequeries();
+  }, [request, resetRequeries]);
   useEffect(() => {
     const generation = ++sequence.current;
     const abort = new AbortController();
@@ -166,7 +167,7 @@ export default function Search() {
       <label>Through<input aria-label="Search through" type="date" value={form.before} onChange={(e) => change("before", e.target.value)} /></label>
       <label>Sort<select aria-label="Search sort" value={form.sort} onChange={(e) => change("sort", e.target.value)}><option value="relevance">Relevance</option><option value="recent">Most recent</option></select></label>
       <Button onClick={() => { setForm(empty); navigate("/search", { replace: true, state: { searchForm: empty } }); }}>Clear filters and keywords</Button>
-      <Button disabled={busy} onClick={() => { autoRequeries.current = 0; setRequeriesExhausted(false); setRevision((value) => value + 1); }}>Refresh results</Button>
+      <Button disabled={busy} onClick={() => { resetRequeries(); setRevision((value) => value + 1); }}>Refresh results</Button>
       {requeriesExhausted && (page?.indexing_pending ?? page?.partial) ? <p role="status">The index is still being built. Refresh to check again.</p> : null}
       <Button disabled={status?.state === "building"} onClick={() => {
         setError(""); setStatus((value) => value ? { ...value, state: "building" } : null);

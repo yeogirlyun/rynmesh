@@ -197,9 +197,42 @@ it("resets the automatic re-query counter when the query changes", async () => {
       await advance(3250);
     }
     expect(screen.getByText(/The index is still being built/)).toBeInTheDocument();
+    expect(localSearch.query).toHaveBeenCalledTimes(11);
     fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "pending again" } });
     await advance(250);
     expect(screen.queryByText(/The index is still being built/)).not.toBeInTheDocument();
+    expect(localSearch.query).toHaveBeenCalledTimes(12);
+    for (let round = 0; round < 10; round++) {
+      await advance(3250);
+    }
+    expect(localSearch.query).toHaveBeenCalledTimes(22);
+    expect(screen.getByText(/The index is still being built/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("gives a filter change (not the keyword) its own fresh re-query budget", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  try {
+    vi.mocked(localSearch.query).mockResolvedValue({ ...page("Pending result"), partial: true, indexing_pending: true });
+    mount();
+    fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "pending" } });
+    await advance(250);
+    for (let round = 0; round < 10; round++) {
+      await advance(3250);
+    }
+    expect(screen.getByText(/The index is still being built/)).toBeInTheDocument();
+    expect(localSearch.query).toHaveBeenCalledTimes(11);
+    fireEvent.change(screen.getByLabelText("Search type"), { target: { value: "saved" } });
+    await advance(250);
+    expect(screen.queryByText(/The index is still being built/)).not.toBeInTheDocument();
+    expect(localSearch.query).toHaveBeenCalledTimes(12);
+    for (let round = 0; round < 10; round++) {
+      await advance(3250);
+    }
+    expect(localSearch.query).toHaveBeenCalledTimes(22);
+    expect(screen.getByText(/The index is still being built/)).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
