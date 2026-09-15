@@ -57,6 +57,21 @@ it("opens a checked friend's model and keeps its snapshot visible after a failed
   expect(screen.getByText(/Last checked/).textContent).toBe(checkedText);
 });
 
+it("enables friend AI sharing for a service after confirmation and reflects it once reloaded", async () => {
+  mocks.client.getLLMServiceStatus
+    .mockResolvedValueOnce({ online: true, ready: true, publication_enabled: false, service, network_id: "rynmesh-main" })
+    .mockResolvedValue({ online: true, ready: true, publication_enabled: true, service, network_id: "rynmesh-main" });
+  const publish = mocks.client.publishLLMService.mockResolvedValue({});
+  open(); const user = userEvent.setup();
+  expect(await screen.findByText("Model ready · Friend sharing paused")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Enable friend AI sharing" }));
+  expect(publish).not.toHaveBeenCalled();
+  await act(async () => { await mocks.confirm.mock.calls[0][0].onConfirm(); });
+  expect(publish).toHaveBeenCalledWith({ network_id: "rynmesh-main", benchmark: false });
+  expect(await screen.findByText("Model ready · Friend sharing enabled")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Enable friend AI sharing" })).not.toBeInTheDocument();
+});
+
 it("shows revocation as saved without claiming running computation stopped", async () => {
   const grant = { service_id: "model-x", relationship_id: friend.relationship_id, peer_id: friend.peer_id,
     allowed: true, effective: true, revision: 4 };

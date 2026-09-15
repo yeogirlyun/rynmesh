@@ -42,7 +42,8 @@ export default function PrivateCopiesPanel() {
   const accept = async (result: LibraryCleanupJob) => {
     if (!mounted.current) return;
     setJob(result); setAttempt(null);
-    setNotice(result.local_copies_complete ? result.removed + " reviewed document copies cleared on this node. Other copies are unconfirmed." : "Document cleanup is unfinished. Continue remaining files.");
+    setNotice(result.local_copies_complete ? result.removed + " reviewed document copies cleared on this node. "
+      + (result.remote_confirmed ? "Remote devices confirmed." : "Other copies are unconfirmed.") : "Document cleanup is unfinished. Continue remaining files.");
     await refresh();
   };
   const remove = async (document?: Document) => {

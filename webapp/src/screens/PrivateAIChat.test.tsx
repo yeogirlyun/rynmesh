@@ -195,6 +195,33 @@ describe("Private AI chat", () => {
     expect(save).toHaveBeenCalled();
   });
 
+  it("frees the composer once a confirmed cancellation is reflected in refreshed history", async () => {
+    const { save, user } = await setupResumedRunningTask("task_running");
+    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
+    const running = save.mock.calls[1][0] as LLMConversation;
+    const cancelRun = vi.spyOn(askHistory, "cancelRun").mockImplementation(async (taskId) => {
+      await save({ ...running, messages: [{ ...running.messages[0], status: "cancelled",
+        content: "Cancellation was recorded. The provider may still be finishing computation." }] });
+      return { task_id: taskId, conversation_id: running.id, state: "cancelled", cancel_requested: true };
+    });
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(cancelRun).toHaveBeenCalledWith("task_running");
+    expect(await screen.findByText("Cancellation was recorded. The provider may still be finishing computation.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows the cancellation as unconfirmed and leaves Stop generating in place when cancelRun fails for a reason other than a missing task", async () => {
+    const { user } = await setupResumedRunningTask("task_running");
+    const cancelRun = vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(500, "The node is unreachable"));
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(cancelRun).toHaveBeenCalledWith("task_running");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cancellation has not been confirmed. The task may still be running; check it again.");
+    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+    expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
+  });
+
   it("recovers a stale running task after one revision conflict, by retrying against the refreshed revision", async () => {
     const { save, user } = await setupResumedRunningTask();
     await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");

@@ -131,6 +131,33 @@ it("recovers an initial local loading failure and offers pairing for a clean nod
   expect(screen.getByText("No publications or saved drafts.")).toBeInTheDocument();
 });
 
+it("stops sharing a publication after confirmation and shows the honest notice", async () => {
+  const published: FeedPublication = { ...draft, stopped: false, published: { id: draft.id, revision: 3, published_at: 1, updated_at: 1, card, audience: { mode: "all_friends", relationship_ids: [] } } };
+  vi.mocked(feedApi.publications).mockResolvedValue({ publications: [published] });
+  const stop = vi.spyOn(feedApi, "stop").mockResolvedValue({ ...published, stopped: true });
+  const user = mount();
+  await user.click(await screen.findByRole("button", { name: "Stop sharing" }));
+  expect(stop).not.toHaveBeenCalled();
+  const request = mocks.confirm.mock.calls[0][0] as ConfirmRequest;
+  expect(request.body).toContain("Copies already saved cannot be recalled");
+  await request.onConfirm();
+  expect(stop).toHaveBeenCalledWith(published.id, expect.objectContaining({ expected_revision: published.revision }));
+  expect(await screen.findByText("Sharing stopped. Previously saved copies remain with their owners.")).toBeInTheDocument();
+});
+
+it("shows an honest error and keeps the publication live when stopping sharing fails", async () => {
+  const published: FeedPublication = { ...draft, stopped: false, published: { id: draft.id, revision: 3, published_at: 1, updated_at: 1, card, audience: { mode: "all_friends", relationship_ids: [] } } };
+  vi.mocked(feedApi.publications).mockResolvedValue({ publications: [published] });
+  const stop = vi.spyOn(feedApi, "stop").mockRejectedValue(new Error("Sharing stop could not be confirmed"));
+  const user = mount();
+  await user.click(await screen.findByRole("button", { name: "Stop sharing" }));
+  await mocks.confirm.mock.calls[0][0].onConfirm();
+  expect(stop).toHaveBeenCalledWith(published.id, expect.objectContaining({ expected_revision: published.revision }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Sharing stop could not be confirmed");
+  expect(screen.getByRole("button", { name: "Stop sharing" })).toBeEnabled();
+  expect(screen.queryByText("Sharing stopped. Previously saved copies remain with their owners.")).not.toBeInTheDocument();
+});
+
 it("clears a stale connection error after the automatic poll reconnects", async () => {
   let poll: (() => Promise<void>) | undefined;
   const nativeTimer = window.setInterval.bind(window);
