@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from copy import deepcopy
 
 from fastapi.testclient import TestClient
 
@@ -180,11 +181,17 @@ def test_peer_request_rejects_header_relationship_bound_to_a_different_body_rela
     apps, clients, relationships, auth = _paired_three_nodes(tmp_path, monkeypatch, base_port=18981)
     alice_app, bob_app = apps["Alice"], apps["Bob"]
     alice = clients[alice_app.state.friends.service.endpoint]
-    alice_peer_id = alice_app.state.friends.service.peer_id
+    alice_service = alice_app.state.friends.service
+    alice_peer_id = alice_service.peer_id
     bob_peer_id = bob_app.state.friends.service.peer_id
+    carol_peer_id = apps["Carol"].state.friends.service.peer_id
     bob_relationship_id = relationships["Bob"]
     carol_relationship_id = relationships["Carol"]
     bob_secret = bob_app.state.friends.service._relationship(alice_peer_id)[1]
+    # The side effect to rule out is on Alice, the node under attack: Bob is the
+    # attacker and his own stores are never written by Alice's handlers at all.
+    history_before = {peer: deepcopy(alice_service.history(peer)) for peer in (bob_peer_id, carol_peer_id)}
+    cards_before = deepcopy(alice_service.store.list_cards())
 
     def send(path, body):
         payload_bytes = canonical_json(body)
@@ -201,7 +208,7 @@ def test_peer_request_rejects_header_relationship_bound_to_a_different_body_rela
     rejected_message = send("/api/peer/friends/message", message_wire)
     assert rejected_message.status_code == 403
     assert rejected_message.json() == {"detail": "friend_request_rejected"}
-    assert bob_app.state.friends.service.history(alice_peer_id) == []
+    assert {peer: alice_service.history(peer) for peer in history_before} == history_before
 
     # content-card: same shape of attack against the notification wire.
     card_wire = {"v": 1, "relationship_id": carol_relationship_id, "from": bob_peer_id, "to": alice_peer_id,
@@ -209,6 +216,8 @@ def test_peer_request_rejects_header_relationship_bound_to_a_different_body_rela
     rejected_card = send("/api/peer/friends/content-card", card_wire)
     assert rejected_card.status_code == 403
     assert rejected_card.json() == {"detail": "friend_request_rejected"}
+    assert alice_service.store.list_cards() == cards_before
+    assert {peer: alice_service.history(peer) for peer in history_before} == history_before
 
     # content-card/fetch ("receipt" path): use a real card Alice actually
     # shared with Bob, over Bob's real relationship, so the mismatch being

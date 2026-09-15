@@ -250,6 +250,29 @@ def test_cancel_rejection_never_blocks_result_archiving(tmp_path):
     assert runs.get(request["task_id"])["cancel_error_code"] == "cancel_rejected"
 
 
+def test_a_delivered_cancel_clears_the_code_left_by_an_earlier_rejection(tmp_path):
+    """A rejection code is about one attempt, not about the run forever."""
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()                      # dispatch
+    runs.cancel(request["task_id"])
+    delivered = orders.cancel
+
+    def failing_cancel(task_id):
+        raise HTTPException(409, detail="ledger locked")
+    orders.cancel = failing_cancel
+    runs.run_once()
+    refused = runs.get(request["task_id"])
+    assert refused["cancel_error_code"] == "cancel_rejected"
+    assert "cancel_delivered" not in refused
+
+    orders.cancel = delivered
+    runs.run_once()
+    accepted = runs.get(request["task_id"])
+    assert accepted["cancel_delivered"] is True
+    assert "cancel_error_code" not in accepted
+
+
 def test_cancel_is_sent_once_and_recorded_when_rejected(tmp_path):
     history, runs, orders, request = setup(tmp_path)
     runs.begin(request); runs.run_once(); runs.cancel(request["task_id"])

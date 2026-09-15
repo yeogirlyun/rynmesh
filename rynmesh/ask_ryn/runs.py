@@ -139,7 +139,12 @@ class AskRunService:
             run = run_records(data).get(task_id)
             if run is None or run["state"] in TERMINAL:
                 return  # A terminal row is already archived; never reopen it.
-            run.update(fields)
+            # A None clears the field rather than storing a null: a stale code
+            # from an earlier attempt must not outlive the attempt that succeeded.
+            run.update({key: value for key, value in fields.items() if value is not None})
+            for key, value in fields.items():
+                if value is None:
+                    run.pop(key, None)
             self.history._write(envelope, data)
 
     def _finish(self, task_id: str, result: dict) -> None:
@@ -219,7 +224,8 @@ class AskRunService:
             if run["cancel_requested"] and not run.get("cancel_delivered"):
                 try:
                     commands.cancel(task_id)
-                    self._mark(task_id, cancel_delivered=True)
+                    # A delivered cancel retires the code left by a failed one.
+                    self._mark(task_id, cancel_delivered=True, cancel_error_code=None)
                 except HTTPException as exc:
                     # A rejected cancel (e.g. balance release conflict) must
                     # never stop the status check from reaching a real result.
