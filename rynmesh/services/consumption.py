@@ -165,7 +165,16 @@ class ConsumptionStore:
             position = sync.value['entities'].get(sync.key('reading', item_id))
             existing_position = position is not None and any(head['value'] is not None for head in position['record']['heads'])
             if action != "opened" or not existing_position:
-                sync.capture(record, scope, expected_revision=expected_sync_revision)
+                try:
+                    sync.capture(record, scope, expected_revision=expected_sync_revision)
+                except SyncError as exc:
+                    # An ordinary local write (no explicit conflict review) must
+                    # never fail because sync capture could not queue it; the
+                    # local record still saves below, and the failure is kept
+                    # in the same document save for the Devices screen to show.
+                    if expected_sync_revision is not None:
+                        raise
+                    sync.record_capture_failure(scope, item_id, str(exc), stamp)
         elif expected_sync_revision is not None:
             raise SyncError("sync_not_enabled")
         records[item_id] = record
@@ -331,6 +340,11 @@ class ConsumptionStore:
         with file_transaction(self.lock_path):
             _, _, sync = self._document()
             return sync.issues() if sync else []
+
+    def sync_capture_failures(self):
+        with file_transaction(self.lock_path):
+            _, _, sync = self._document()
+            return sync.capture_failures_status() if sync else {"count": 0, "codes": {}}
 
     def sync_resolve(self, scope, identifier, *, choice_id, expected_revision):
         with file_transaction(self.lock_path):

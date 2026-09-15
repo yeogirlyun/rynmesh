@@ -129,11 +129,16 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
         control(request)
         devices = await call('list')
         transfer = app.state.device_sync.transfer
+        capture_failures = {'count': 0, 'codes': {}}
         if transfer is not None:
             for device in devices:
                 device['sync'] = await asyncio.to_thread(transfer.status, device['id'])
+            # Capture failures are per node (local reading writes that could
+            # not be queued for sync), not per pair, so they sit alongside
+            # `devices` rather than inside any one device's `sync` object.
+            capture_failures = await asyncio.to_thread(transfer.reading().sync_capture_failures)
         return {**current().readiness(), 'devices': devices, 'invites': await call('list_invites'),
-                'data_transfer_available': transfer is not None}
+                'data_transfer_available': transfer is not None, 'capture_failures': capture_failures}
 
     @app.post('/api/local/device-sync/invites')
     async def invite(request: Request):

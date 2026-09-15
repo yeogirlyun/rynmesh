@@ -358,6 +358,18 @@ def test_owner_reading_choice_uses_stored_candidate_and_rejects_stale_revision(t
     assert node.request('GET', '/reading/conflicts')['conflicts'] == []
 
 
+def test_capture_failures_appear_in_status_while_local_write_still_succeeds(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    node = Node(tmp_path / 'A', transfer=True)
+    node.reader.enable_sync(node.service.store.actor, ['reading'])
+    assert node.request('GET')['capture_failures'] == {'count': 0, 'codes': {}}
+    item = {**ITEM, 'item_id': 'no-host', 'link': 'https:///no-host'}
+    node.reader.record(item, 'progress', progress=.5)
+    assert next(row for row in node.reader.list() if row['item_id'] == 'no-host')['progress'] == .5
+    assert node.request('GET')['capture_failures'] == {'count': 1, 'codes': {'sync_item_link_invalid': 1}}
+
+
 def test_rejected_row_is_acknowledged_and_other_rows_keep_flowing(tmp_path):
     from test_device_sync_reading import ITEM
 

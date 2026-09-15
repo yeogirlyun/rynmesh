@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
-import { deviceSyncApi, pairLabels, scopeNames, syncScopes } from "../domain/deviceSync";
+import { captureFailureReason, deviceSyncApi, pairLabels, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
 
@@ -115,6 +115,8 @@ export default function Devices() {
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
     <Button disabled={busy} onClick={() => void act(async () => undefined)}>Refresh devices</Button>
     {status && !status.pairing_available ? <p role="status">A reachable address is needed for new invitations. Check <Link to="/settings">Network settings</Link>. Existing devices can still be removed.</p> : null}
+    {status && status.capture_failures.count > 0 ? <p role="status">{status.capture_failures.count} local {status.capture_failures.count === 1 ? "change" : "changes"} could
+      not be queued for sync ({captureFailureReason(status.capture_failures.codes)}). They stay on this device.</p> : null}
     <div className={styles.grid}>
       <Panel><h2>Invite your other computer</h2><p>One use, valid for 15 minutes. Choose the categories you want to allow in both directions; nothing is selected automatically.</p>
         <ScopeChoice label="Offer to sync" value={offered} onChange={setOffered} disabled={busy || Boolean(invite)} />
