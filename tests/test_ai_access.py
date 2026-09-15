@@ -128,4 +128,8 @@ def test_refresh_friend_reads_peer_id_from_body_and_ignores_the_query_string(tmp
     malformed = client.post(path, headers=owner, content=b"not json")
     assert malformed.status_code == 400 and malformed.json()["detail"] == "ai_request_invalid"
 
+    # A request body over the 4096-byte read cap is rejected before it is parsed.
+    too_large = client.post(path, headers=owner, content=b"x" * 4097)
+    assert too_large.status_code == 413 and too_large.json()["detail"] == "ai_request_too_large"
+
     assert catalog.calls == ["from-body"]

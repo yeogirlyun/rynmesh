@@ -95,8 +95,7 @@ def _authorize_consumer(provider_id: str, service_id: str) -> dict[str, Any]:
                   and row["relationship_id"] == relationship_id), {})
     _json(PROVIDER + "/api/local/ai-access/" + quote(service_id, safe="") + "/" + relationship_id,
           {"allowed": True, "expected_revision": prior.get("revision", 0)}, method="PUT")
-    catalog = _json(CONSUMER + "/api/local/ai-access/friend-services?peer_id="
-                    + quote(provider_id, safe=""), {})
+    catalog = _json(CONSUMER + "/api/local/ai-access/friend-services", {"peer_id": provider_id})
     if catalog.get("status") != "authorized":
         raise RuntimeError("E2E consumer did not receive explicit AI authorization")
     selected = next((row for row in catalog.get("services", [])

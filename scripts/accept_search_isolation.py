@@ -47,7 +47,7 @@ def main():
             path.write_bytes(b'invalid synthetic metadata')
             result = client.post('/api/local/search/query', json={'query': 'isolation'}).json()
             assert result['total'] == 2 and result['unavailable_sources'] == ['saved_documents']
-            denied = client.get('/api/local/search/open', params={'identifier': 'content:import:' + case['target']})
+            denied = client.post('/api/local/search/open', json={'identifier': 'content:import:' + case['target']})
             assert denied.status_code == 409
             case['damaged_http_verified'] = True
             case_path.write_text(json.dumps(case), encoding='utf-8')

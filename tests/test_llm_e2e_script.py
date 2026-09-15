@@ -83,3 +83,38 @@ def test_the_mailbox_mode_forces_the_consumer_onto_store_and_forward(
     seen.clear()
     e2e.up("test")
     assert seen == {}
+
+
+def test_authorize_consumer_posts_peer_id_in_the_body_not_the_query_string(
+    e2e, monkeypatch
+) -> None:
+    """Privacy hardening: `friend-services` must not carry `?peer_id=...` in the URL."""
+
+    calls: list[tuple[str, object, str | None]] = []
+
+    def fake_json(url, body=None, timeout=20, *, method=None):
+        calls.append((url, body, method))
+        if url == e2e.CONSUMER + "/api/local/friends":
+            return {"friends": [{"peer_id": "provider-peer",
+                                  "relationship_id": "rel-1", "status": "active"}]}
+        if url == e2e.PROVIDER + "/api/local/ai-access":
+            return {"grants": [{"service_id": "svc", "relationship_id": "rel-1", "revision": 3}]}
+        if url == e2e.PROVIDER + "/api/local/ai-access/svc/rel-1":
+            assert method == "PUT"
+            return {"grant": {"allowed": True}}
+        if url == e2e.CONSUMER + "/api/local/ai-access/friend-services":
+            return {"status": "authorized", "services": [{
+                "service": {"package_id": "svc"}, "online": True,
+                "ai_permission": {"relationship_id": "rel-1", "revision": 4}}]}
+        raise AssertionError(f"unexpected _json call: {url}")
+
+    monkeypatch.setattr(e2e, "_json", fake_json)
+    permission = e2e._authorize_consumer("provider-peer", "svc")
+    assert permission == {"relationship_id": "rel-1", "revision": 4}
+
+    friend_calls = [call for call in calls if "friend-services" in call[0]]
+    assert len(friend_calls) == 1
+    url, body, method = friend_calls[0]
+    assert url == e2e.CONSUMER + "/api/local/ai-access/friend-services"
+    assert "?" not in url and "peer_id=" not in url
+    assert body == {"peer_id": "provider-peer"}

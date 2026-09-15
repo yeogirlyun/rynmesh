@@ -67,17 +67,18 @@ def main():
             result = check('query', client.post('search/query', json={'query': marker}), 200)
             assert result.json()['total'] == 1
             identifier = result.json()['results'][0]['id']
-            body = check('open', client.get('search/open', params={'identifier': identifier}), 200)
+            body = check('open', client.post('search/open', json={'identifier': identifier}), 200)
             assert body.json()['text'] == marker
             check('status', client.get('search/status'), 200)
-            check('owner_denied', client.get('search/open', params={'identifier': identifier},
+            check('owner_denied', client.post('search/open', json={'identifier': identifier},
                 headers={'X-Forwarded-For': '198.51.100.88'}), 401)
             check('bad_query', client.post('search/query', json={}), 400)
-            check('missing_identifier', client.get('search/open'), 422)
+            check('missing_identifier', client.post('search/open', json={}), 400)
+            check('open_method_not_allowed', client.get('search/open'), 405)
             deleted = client.request('DELETE', 'ask/conversations/' + conversation['id'],
                 json={'expected_revision': saved.json()['revision']})
             deleted.raise_for_status()
-            check('open_after_delete', client.get('search/open', params={'identifier': identifier}), 409)
+            check('open_after_delete', client.post('search/open', json={'identifier': identifier}), 409)
             empty = check('query_after_delete', client.post('search/query', json={'query': marker}), 200)
             assert empty.json()['total'] == 0
             assert client.get('ask/conversations').json()['conversations'] == []
