@@ -17,7 +17,29 @@ currently short of the claims on this page.
 ## Current release: P1 Ryn Companion
 
 The personal-assistant milestone is implemented and available in the public
-`v0.6.2` release for macOS on Apple Silicon and Intel.
+`v0.7.0` release for macOS on Apple Silicon and Intel. This release adds eight
+user-facing features covering first-run reading, friend pairing and sharing,
+and self device sync, plus the release-hardening fixes recorded in
+[`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md).
+
+### v0.7.0 features
+
+1. **First reading experience** — see, read, and bookmark real content right
+   after install.
+2. **Pairing and sharing** — invite a friend to join and complete the first
+   content share.
+3. **Unified Ask Ryn** — ask questions, review history, and switch models from
+   one entry point.
+4. **AI setup and friend permissions** — enable local AI with one click and
+   decide who can use it.
+5. **Search and retrieve** — one search recovers content, shares, and chat
+   history.
+6. **Follow friends' content updates** — keep seeing new content friends
+   choose to share.
+7. **Offline reading** — read downloaded content without a network
+   connection.
+8. **Multi-device sync** — switch to another computer and keep reading and
+   chatting.
 
 ### Implemented
 

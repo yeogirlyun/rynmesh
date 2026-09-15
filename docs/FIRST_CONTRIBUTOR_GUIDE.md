@@ -14,7 +14,7 @@ identity and preferences, discovers and ranks content, mediates peer and model
 access, verifies signed evidence, and serves both the desktop webapp and MCP
 tools.
 
-The current `v0.6.2` release implements the first product milestone, **P1 Ryn
+The current `v0.7.0` release implements the first product milestone, **P1 Ryn
 Companion**:
 
 - zero-configuration recommendations from a built-in public catalog
