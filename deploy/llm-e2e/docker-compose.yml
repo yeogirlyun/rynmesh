@@ -47,6 +47,8 @@ services:
       RYNMESH_HOME: /data/provider
       RYNMESH_NODE_NAME: llm-provider
       RYNMESH_PEER_ENDPOINT: http://provider:8791
+      # Friend invitations deliberately require literal IP endpoints.
+      RYNMESH_FRIEND_ENDPOINT: http://172.30.48.11:8791
       RYNMESH_LLM_SERVICE_MANIFEST: ${RYNMESH_LLM_MANIFEST:-/config/test-manifest.json}
     ports: ["127.0.0.1:18891:8791"]
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -54,7 +56,10 @@ services:
       - provider-data:/data
       - ./config:/config:ro
       - ./config/demo-control-token:/data/provider/control_token:ro
-    networks: [control, provider-runtime]
+    networks:
+      control:
+        ipv4_address: 172.30.48.11
+      provider-runtime: {}
     depends_on: [registry]
 
   consumer:
@@ -65,6 +70,7 @@ services:
       RYNMESH_HOME: /data/consumer
       RYNMESH_NODE_NAME: llm-consumer
       RYNMESH_PEER_ENDPOINT: http://consumer:8791
+      RYNMESH_FRIEND_ENDPOINT: http://172.30.48.12:8791
       RYNMESH_LLM_FORCE_RELAY: ${RYNMESH_LLM_FORCE_RELAY:-0}
       # Empty by default; the mailbox E2E sets it to "1" so the consumer's direct
       # peer-message transport reports failure and store-and-forward takes over.
@@ -74,6 +80,10 @@ services:
       - consumer-data:/data
       - ./config/demo-control-token:/data/consumer/control_token:ro
     depends_on: [registry]
+
+    networks:
+      control:
+        ipv4_address: 172.30.48.12
 
   test-llm:
     <<: *node
@@ -93,7 +103,10 @@ services:
     networks: [provider-runtime]
 
 networks:
-  control: {}
+  control:
+    ipam:
+      config:
+        - subnet: 172.30.48.0/24
   provider-runtime:
     internal: true
 

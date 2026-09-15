@@ -20,6 +20,7 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 from fastapi import HTTPException, Request
 
+from rynmesh.ai_access.store import AIAccessError, AIAccessStore
 from rynmesh.atomic_io import atomic_write_json
 from rynmesh.background_workers import (
     BackgroundWorkerRegistry,
@@ -30,7 +31,9 @@ from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
 
 from . import runtime_native
-from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
+from .adapters import RUNTIME_ERROR_CODES, AdapterError, LLMAdapter, adapter_from_manifest
+from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
+from .consumer_commands import ConsumerCommands
 from .lifecycle import (
     LifecycleError,
     connect_local_api,
@@ -60,11 +63,18 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PCapacityError, P2PError, consumer_exchange, provider_exchange
+from .setup_recovery import (
+    RECOVERY_FAILED,
+    SetupRecovery,
+    SetupRecoveryError,
+    managed_resume_configuration,
+)
 from .task_balance import TaskBalanceError, TaskBalanceLedger
 from .task_protocol import (
     TERMINAL_STATES,
     TaskOrderStore,
     TaskProtocolError,
+    _awaiting_archive,
     open_task,
     seal_task,
 )
@@ -102,6 +112,8 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
+    if message in RUNTIME_ERROR_CODES or message == "service_unhealthy":
+        return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
     if "capacity_exhausted" in message or "provider is busy" in message:
@@ -115,6 +127,26 @@ def _submission_error_code(detail: str) -> str:
 
 def _expires(seconds: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+# An unacknowledged retention-0 success lives only in the ephemeral
+# background_orders map (its encrypted_response is never persisted), so it
+# gets a longer cutoff to survive an ask-worker error-backoff delay; every
+# other entry (failures, cancellations, and any success already popped by
+# acknowledge_result) keeps the ordinary short cutoff.
+_BACKGROUND_ORDER_CUTOFF_SECONDS = 900
+_BACKGROUND_UNACKNOWLEDGED_SUCCESS_CUTOFF_SECONDS = 86400
+
+
+def _background_order_expired(entry: dict[str, Any], now: float) -> bool:
+    if "_recorded_at" not in entry:
+        return False
+    cutoff = (
+        _BACKGROUND_UNACKNOWLEDGED_SUCCESS_CUTOFF_SECONDS
+        if entry.get("ephemeral") and entry.get("state") == "succeeded"
+        else _BACKGROUND_ORDER_CUTOFF_SECONDS
+    )
+    return float(entry.get("_recorded_at") or 0) < now - cutoff
 
 
 def _price(manifest: LLMPackageManifest, input_tokens: int, output_tokens: int) -> float:
@@ -159,6 +191,8 @@ def _open_provider_response(
     )
     if outer.get("from_peer_id") != provider_peer_id:
         raise TaskProtocolError("LLM response signer is not the selected provider")
+    if outer.get("task_id") != task_id:
+        raise TaskProtocolError("LLM response task mismatch")
     if result.get("service_id") != service_id:
         raise TaskProtocolError("LLM response service mismatch")
     state = str(result.get("state") or "")
@@ -173,16 +207,23 @@ def _open_provider_response(
 class ProviderService:
     def __init__(self, *, manifest: LLMPackageManifest, adapter: LLMAdapter,
                  store: RynmeshStore, task_store: TaskOrderStore,
-                 balance: TaskBalanceLedger, messaging_key: Any) -> None:
+                 balance: TaskBalanceLedger, messaging_key: Any,
+                 access_check: Callable | None = None) -> None:
         self.manifest = manifest
         self.adapter = adapter
         self.store = store
         self.task_store = task_store
         self.balance = balance
         self.messaging_key = messaging_key
+        from rynmesh.friends.store import FriendStore
+
+        relationships = FriendStore(store.home)
+        permissions = AIAccessStore(store.home, relationship=relationships.relationship)
+        self.access_check = access_check or permissions.authorize
         self._slots = threading.BoundedSemaphore(manifest.max_concurrent)
         self._lock = threading.Lock()
         self._running = 0
+        self._active_permissions: dict[str, tuple[str, dict | None]] = {}
         self._pending_cancellations: dict[str, tuple[str, str]] = {}
         self._admission_lock = threading.Lock()
         self._request_times: dict[str, deque[float]] = {}
@@ -262,9 +303,11 @@ class ProviderService:
         health = self.adapter.health()
         result: dict[str, Any] = {
             "configured": True,
+            "ready": bool(health.get("ok")),
             "service": self.manifest.public_dict(),
             "online": bool(health.get("ok")) and self.accepting_orders,
             "accepting_orders": self.accepting_orders,
+            "access_policy": "explicit_friends",
             "health": {k: v for k, v in health.items() if k not in {"base_url", "path"}},
             "capacity": {"max_concurrent": self.manifest.max_concurrent,
                          "running": self._running, "available": max(0, self.manifest.max_concurrent - self._running),
@@ -272,6 +315,8 @@ class ProviderService:
         }
         from rynmesh.services import peer_box
 
+        if getattr(self.adapter, "supports_chat_messages", False):
+            result["service"]["capabilities"] = list(dict.fromkeys([*result["service"].get("capabilities", []), CHAT_FORMAT]))
         result["node_messaging_pub"] = peer_box.public_key_b64(self.messaging_key)
         if benchmark and health.get("ok"):
             measured = self.adapter.infer(
@@ -309,13 +354,27 @@ class ProviderService:
         prompt = str(body.get("prompt") or "")
         if not prompt:
             raise TaskProtocolError("prompt is required")
+        try:
+            messages = decode_chat_prompt(prompt, body.get("prompt_format", "text"))
+        except ValueError as exc:
+            raise TaskProtocolError(str(exc)) from None
+        if messages is not None and not getattr(self.adapter, "supports_chat_messages", False):
+            raise TaskProtocolError("requested prompt format is not supported by this adapter")
         max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
         max_amount = float(body.get("max_amount") or 0)
-        if max_amount <= 0:
+        own_request = outer["from_peer_id"] == self.store.peer_id
+        if not own_request:
+            try:
+                self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
+            except (AIAccessError, OSError, ValueError):
+                return self._sealed_failure(
+                    task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
+                )
+        if max_amount < 0 or (max_amount == 0 and not own_request):
             # Reject before inference: without a positive hold every completed
             # generation would fail the price check after burning compute.
             raise TaskProtocolError("max_amount must be a positive hold")
@@ -333,7 +392,7 @@ class ProviderService:
         if existing is not None:
             existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
         else:
-            if not self.accepting_orders:
+            if not self.accepting_orders and not own_request:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused",
                 )
@@ -351,7 +410,7 @@ class ProviderService:
                 # cleanup). Answer immediately instead of spinning until the
                 # timeout and then claiming the task was "still in progress".
                 return self._sealed_failure(
-                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                    task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                 )
             deadline = time.monotonic() + self.manifest.timeout_seconds + 30
             while time.monotonic() < deadline:
@@ -364,7 +423,7 @@ class ProviderService:
                     if isinstance(encrypted, dict):
                         return dict(encrypted)
                     return self._sealed_failure(
-                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", "result_expired",
+                        task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
                     )
             raise TaskProtocolError("duplicate task is still in progress")
         with self._lock:
@@ -383,13 +442,19 @@ class ProviderService:
             return self._failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "capacity_exhausted")
         with self._lock:
             self._running += 1
+            if not own_request:
+                self._active_permissions[task_id] = (outer["from_peer_id"], body.get("ai_permission"))
         try:
             self.task_store.transition(task_id=task_id, state="accepted", metadata=metadata)
             self.task_store.transition(task_id=task_id, state="running", metadata=metadata)
+            self.recheck_permissions()
+            if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
+                return self._failure(task_id, reply_pub, outer["from_peer_id"], "cancelled", "ai_permission_revoked")
             started = time.monotonic()
             result = self.adapter.infer(
                 prompt=prompt, max_tokens=max_tokens, task_id=task_id,
                 timeout_s=self.manifest.timeout_seconds,
+                **({"messages": messages} if messages is not None else {}),
             )
             if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 return self._failure(
@@ -402,7 +467,7 @@ class ProviderService:
             # prompts routinely tokenize 3-4x denser than the chars/4 guess.
             # The hold is a price ceiling the consumer consented to: bill at
             # most that ceiling instead of failing after inference already ran.
-            amount = min(
+            amount = 0.0 if own_request else min(
                 _price(self.manifest, int(result["input_tokens"]), int(result["output_tokens"])),
                 max_amount,
             )
@@ -427,18 +492,32 @@ class ProviderService:
             return encrypted
         except Exception as exc:
             message = str(exc).lower()
+            code = exc.code if isinstance(exc, AdapterError) else "inference_failed"
             state = "cancelled" if "task_cancelled" in message else (
-                "timed_out" if "timed out" in message else "failed"
+                "timed_out" if code == "inference_timeout" or "timed out" in message else "failed"
             )
             return self._failure(task_id, reply_pub, outer["from_peer_id"], state,
                                  "consumer_cancelled" if state == "cancelled" else (
-                                     "inference_timeout" if state == "timed_out" else "inference_failed"
+                                     "inference_timeout" if state == "timed_out" else code
                                  ))
         finally:
             prompt = ""  # best-effort reference cleanup; see privacy documentation
             with self._lock:
                 self._running -= 1
+                self._active_permissions.pop(task_id, None)
             self._slots.release()
+
+    def recheck_permissions(self) -> bool:
+        with self._lock:
+            active = list(self._active_permissions.items())
+        cancelled = False
+        for task_id, (peer_id, permission) in active:
+            try:
+                self.access_check(peer_id, self.manifest.package_id, permission)
+            except (AIAccessError, OSError, ValueError):
+                self.cancel(task_id)
+                cancelled = True
+        return cancelled
 
     def _failure(self, task_id: str, reply_pub: str, consumer_peer_id: str,
                  state: str, code: str) -> dict[str, Any]:
@@ -602,6 +681,8 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
     One implementation for the live order path and crash recovery — the two
     used to hand-build the same envelope separately and had already diverged.
     """
+    if provider_peer_id == store.peer_id and amount == 0:
+        return True  # Local computation has no transfer to another provider.
     settlement = sign_payload({
         "kind": "llm_settlement", "task_id": task_id, "from_peer_id": store.peer_id,
         "to_peer_id": provider_peer_id, "amount": amount, "service_id": service_id,
@@ -697,9 +778,25 @@ def _recover_consumer_orders(
                 raise
 
 
+def _missing_provider_response_code(record: dict[str, Any]) -> str:
+    if any(event.get("error_code") == "provider_restarted_before_completion" for event in record.get("history", [])):
+        return "provider_restarted_before_completion"
+    return "result_expired"
+
+
+def _recover_provider_orders(provider_orders: TaskOrderStore) -> None:
+    # Called once when the node installs its routes, before accepting requests.
+    # Old workers cannot resume; the external runtime may still be computing.
+    for record in provider_orders.list():
+        if record.get("state") not in TERMINAL_STATES:
+            provider_orders.transition(task_id=record["task_id"], state="failed",
+                metadata={"error_code": "provider_restarted_before_completion"})
+
+
 def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_key: Any,
-                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> None:
+                       resolve_endpoint: Callable[[str], str], resolve_pubkey: Callable[[str], str]) -> ConsumerCommands:
     provider_orders = TaskOrderStore(home / "llm" / "provider-orders")
+    _recover_provider_orders(provider_orders)
     consumer_orders = TaskOrderStore(home / "llm" / "consumer-orders")
     # Ledger-backed: every hold/settle/release/earning is a signed event in
     # the node's credit ledger (category dev:task_balance, invisible to
@@ -721,6 +818,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     consumer_settings_path = home / "llm" / "consumer-settings.json"
     setup_job_path = home / "llm" / "setup-job.json"
     setup_job_lock = threading.Lock()
+    setup_operation_lock = threading.Lock()
     setup_cancel_events: dict[str, threading.Event] = {}
     manager_path = ""
 
@@ -740,14 +838,24 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return value
 
     previous_setup_job = read_setup_job()
-    if previous_setup_job.get("state") in {"queued", "running", "cancelling"}:
+    setup_recovery = SetupRecovery(home)
+    try:
+        recovered_setup = setup_recovery.restore()
+    except SetupRecoveryError:
+        recovered_setup = "failed"
+    if previous_setup_job.get("state") in {"queued", "running", "cancelling"} or recovered_setup != "absent":
         previous_setup_job.update({
             "state": "failed",
             "stage": "recovery",
             "error_code": "setup_interrupted",
             "message": "Setup was interrupted when the node stopped. Review the model service and retry.",
             "retryable": True,
+            "recovery_state": "restored_unchecked" if recovered_setup == "restored" else recovered_setup,
         })
+        if recovered_setup == "restored":
+            previous_setup_job["message"] = "Previous configuration restored after interrupted setup. Check model status or retry configuration."
+        elif recovered_setup == "failed":
+            previous_setup_job.update({"error_code": "setup_recovery_failed", "message": RECOVERY_FAILED})
         write_setup_job(previous_setup_job)
 
     def read_consumer_settings() -> dict[str, Any]:
@@ -792,16 +900,18 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         atomic_write_json(settings_path, value, indent=2, sort_keys=True)
         return value
 
-    def active_manager(path: str = "") -> ProviderService | None:
+    def active_manager(path: str = "", *, refresh: bool = False) -> ProviderService | None:
         nonlocal manager, manager_path
         # Serialized: this is reached concurrently from async routes, threadpool
         # sync routes, and both background loops. Without the lock two callers
         # can build two ProviderServices (doubling max_concurrent against one
         # runtime) or shut an adapter down while another thread is mid-handle.
         with manager_lock:
+            if (setup_recovery.pending or setup_operation_lock.locked()) and not path:
+                return None  # An incomplete or unrecovered configuration is not a service.
             settings = read_provider_settings()
             configured = str(path or settings.get("manifest") or "")
-            if manager is not None and configured and configured != manager_path:
+            if manager is not None and (refresh or (configured and configured != manager_path)):
                 manager.adapter.shutdown()
                 manager = None
             if manager is None and configured:
@@ -809,6 +919,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 manager = ProviderService(
                     manifest=manifest, adapter=adapter_from_manifest(manifest), store=store,
                     task_store=provider_orders, balance=balance, messaging_key=messaging_key,
+                    access_check=(lambda peer, service_id, permission: app.state.ai_access.store.authorize(peer, service_id, permission))
+                    if getattr(app.state, "ai_access", None) else None,
                 )
                 manager.accepting_orders = bool(settings.get("publication_enabled"))
                 manager_path = configured
@@ -857,7 +969,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         settings = read_provider_settings()
         settings.update({"manifest": configured, "publication_enabled": False})
         write_provider_settings(settings)
-        current = active_manager(configured)
+        current = active_manager(configured, refresh=True)
         if current is not None:
             current.accepting_orders = False
         public_result = json.loads(json.dumps(result))
@@ -870,16 +982,49 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "status": current.public_status() if current else {},
         }
 
+    def resolve_provider_endpoint(peer_id: str, *, cancellation: bool = False) -> str:
+        friends_state = getattr(app.state, "friends", None)
+        if friends_state:
+            friends = friends_state.service
+            relation = friends.store.relationship_for_peer(peer_id)
+            if relation is None and cancellation:
+                # A removed friendship may still have an already-issued task.
+                # Its signed cancellation contains no new prompt or credentials.
+                relation = next((row for row in friends.store.list_relationships() if row.get("peer_id") == peer_id), None)
+            if relation:
+                from rynmesh.friends.crypto import validate_endpoint
+
+                return validate_endpoint(relation["endpoint"], allow_loopback=friends.allow_loopback)
+        return resolve_endpoint(peer_id)
+
     def discover(network_id: str) -> list[dict[str, Any]]:
-        values = store.list_job_capacities(
-            network_id=network_id, capability=CAPABILITY, max_age_hours=1,
-        ).get("capacities", [])
         services = []
+        current = active_manager()
+        if current is not None:
+            local = current.public_status()
+            local["service"] = {**local["service"], "pricing": {**local["service"]["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}}
+            services.append({**local, "online": local["ready"], "peer_id": store.peer_id,
+                             "node_name": "This device", "access": "self", "updated_at": datetime.now(timezone.utc).isoformat()})
+        access_state = getattr(app.state, "ai_access", None)
+        if access_state and access_state.catalog:
+            services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
+        try:
+            values = store.list_job_capacities(
+                network_id=network_id, capability=CAPABILITY, max_age_hours=1,
+            ).get("capacities", [])
+        except Exception:
+            if services:
+                return services  # This device does not require a registry connection.
+            raise
         for value in values:
+            if value.get("peer_id") == store.peer_id:
+                continue  # A stale published self-record cannot replace local health.
             public = dict(value.get("metadata") or {}).get("llm_service")
             if isinstance(public, dict):
-                services.append({"peer_id": value.get("peer_id"), "node_name": value.get("node_name"),
-                                 "updated_at": value.get("updated_at"), **public})
+                if public.get("access_policy") == "explicit_friends" or any(row["peer_id"] == value.get("peer_id") for row in services):
+                    continue  # An invitation to discover metadata is not a grant.
+                services.append({**public, "peer_id": value.get("peer_id"), "node_name": value.get("node_name"),
+                                 "updated_at": value.get("updated_at")})
         return services
 
     def publish_once() -> dict[str, Any]:
@@ -1081,6 +1226,22 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         ),
         error_sink=lambda value: setattr(app.state, "llm_relay_error", value),
     ))
+    def recheck_permissions_once():
+        current = active_manager()
+        return bool(current and current.recheck_permissions())
+
+    if getattr(app.state, "ai_access", None):
+        app.state.ai_access.recheck = recheck_permissions_once
+        def own_service_status():
+            current = active_manager()
+            return {**current.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main")} if current else None
+        app.state.ai_access.provider = own_service_status
+    registry.register(BackgroundWorkerSpec(
+        name="llm.friend-permissions", run_once=recheck_permissions_once,
+        initial_delay_s=1.0,
+        policy=BackoffPolicy(busy_delay_s=1, idle_initial_s=1, idle_multiplier=1, idle_max_s=1,
+                             error_multiplier=2, error_max_s=10),
+    ))
     registry.register(BackgroundWorkerSpec(
         name="llm.publish-refresh",
         run_once=publish_once,
@@ -1120,7 +1281,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
         from .hardware import detect_hardware, recommend
-        report = detect_hardware(home)
+        report = detect_hardware(home, runtime_root=home / "llm")
         return {"hardware": report.to_dict(), "recommendations": recommend(report)}
 
     @app.get("/api/local/llm/services")
@@ -1174,11 +1335,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.post("/api/local/llm/setup")
     async def local_llm_setup(request: Request) -> dict[str, Any]:
+        if not setup_operation_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="another local model setup is already running")
         try:
+            if setup_recovery.pending:
+                raise HTTPException(status_code=409, detail=RECOVERY_FAILED)
             result = await asyncio.to_thread(configure_llm, dict(await request.json()))
             return activate_configuration(result)
         except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            setup_operation_lock.release()
 
     @app.get("/api/local/llm/setup/status")
     def local_llm_setup_status() -> dict[str, Any]:
@@ -1188,9 +1355,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     @app.post("/api/local/llm/setup/async")
     async def local_llm_setup_async(request: Request) -> dict[str, Any]:
         body = dict(await request.json())
+        resume_configuration = managed_resume_configuration(body)
         with setup_job_lock:
             current_job = read_setup_job()
             if current_job.get("state") in {"queued", "running", "cancelling"}:
+                raise HTTPException(status_code=409, detail="another local model setup is already running")
+            if not setup_operation_lock.acquire(blocking=False):
                 raise HTTPException(status_code=409, detail="another local model setup is already running")
             job_id = "setup_" + uuid.uuid4().hex
             cancel_event = threading.Event()
@@ -1203,8 +1373,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "progress": 0,
                 "message": "Local model setup is queued",
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "resume_configuration": resume_configuration,
             }
-            write_setup_job(job)
+            try:
+                write_setup_job(job)
+            except BaseException:
+                setup_operation_lock.release()
+                raise
 
         def report(stage: str, percent: int, message: str) -> None:
             with setup_job_lock:
@@ -1212,29 +1387,30 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if latest.get("job_id") != job_id:
                     return
                 latest.update({
-                    "state": "running",
-                    "stage": stage,
+                    "state": "cancelling" if cancel_event.is_set() else "running",
+                    "stage": "cancelling" if cancel_event.is_set() else stage,
                     "progress": percent,
-                    "message": message,
+                    "message": "Cancelling setup; waiting for the current step to stop" if cancel_event.is_set() else message,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 })
                 write_setup_job(latest)
 
         def run_setup() -> None:
-            previous_settings = read_provider_settings()
-            previous_manifest = Path(str(previous_settings.get("manifest") or ""))
-            previous_manifest_bytes = None
-            if previous_manifest.is_file():
-                try:
-                    previous_manifest_bytes = previous_manifest.read_bytes()
-                except OSError:
-                    previous_manifest_bytes = None
+            captured = False
+            previous_manifest = ""
             try:
                 report("starting", 1, "Starting local model setup")
+                # A retry first finishes the original recovery. Never capture
+                # a partially replaced manifest as the new rollback baseline.
+                setup_recovery.restore()
+                previous_manifest = str(read_provider_settings().get("manifest") or "")
+                setup_recovery.capture(previous_manifest)
+                captured = True
                 result = configure_llm(
                     body, progress=report, cancel_check=cancel_event.is_set,
                 )
                 activation = activate_configuration(result)
+                setup_recovery.commit()
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,
@@ -1242,28 +1418,48 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         "stage": "completed",
                         "progress": 100,
                         "message": "Local model configured and self-tested; publishing remains off",
+                        "resume_configuration": resume_configuration,
                         "configured": activation["configured"],
                         "publication_enabled": False,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
             except (LifecycleError, AdapterError, ManifestError, OSError, ValueError) as exc:
                 cancelled = cancel_event.is_set() or "cancelled" in str(exc).lower()
-                if previous_manifest_bytes is not None:
+                recovery_state = "failed" if isinstance(exc, SetupRecoveryError) else "not_started"
+                if captured:
                     try:
-                        previous_manifest.parent.mkdir(parents=True, exist_ok=True)
-                        previous_manifest.write_bytes(previous_manifest_bytes)
-                        start_runtime(previous_manifest)
-                    except (LifecycleError, AdapterError, ManifestError, OSError, ValueError):
-                        pass
+                        recovery_state = setup_recovery.restore()
+                    except SetupRecoveryError:
+                        recovery_state = "failed"
+                    if recovery_state == "restored":
+                        try:
+                            resumed = start_runtime(previous_manifest)
+                            active_manager(previous_manifest, refresh=True)
+                            if not resumed.get("health", {}).get("ok"):
+                                recovery_state = "unavailable"
+                        except (LifecycleError, AdapterError, ManifestError, OSError, ValueError):
+                            recovery_state = "unavailable"
+                message = "Setup cancelled." if cancelled else (str(exc).strip() or "Local model setup failed")
+                if recovery_state == "failed":
+                    message = RECOVERY_FAILED
+                elif recovery_state in {"unavailable", "missing"}:
+                    message += " Previous configuration is unavailable. Check the local model service and retry configuration."
+                elif recovery_state == "restored":
+                    message += " Previous configuration restored and its health check passed."
+                elif recovery_state == "not_needed":
+                    message += " No previous model configuration required restoration."
+                recovery_error = recovery_state in {"failed", "unavailable", "missing"}
                 with setup_job_lock:
                     write_setup_job({
                         "job_id": job_id,
-                        "state": "cancelled" if cancelled else "failed",
-                        "stage": "cancelled" if cancelled else "failed",
+                        "state": "cancelled" if cancelled and not recovery_error else "failed",
+                        "stage": "recovery" if recovery_error else "cancelled" if cancelled else "failed",
                         "progress": 0,
-                        "error_code": "setup_cancelled" if cancelled else "setup_failed",
-                        "message": "Setup cancelled; the previous private configuration was restored."
-                        if cancelled else (str(exc).strip() or "Local model setup failed"),
+                        "error_code": "setup_recovery_failed" if recovery_state == "failed" else
+                            "setup_previous_unavailable" if recovery_error else "setup_cancelled" if cancelled else "setup_failed",
+                        "message": message,
+                        "recovery_state": recovery_state,
+                        "resume_configuration": resume_configuration,
                         "retryable": True,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     })
@@ -1271,6 +1467,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 body.clear()
                 with setup_job_lock:
                     setup_cancel_events.pop(job_id, None)
+                setup_operation_lock.release()
 
         threading.Thread(
             target=run_setup, name=f"rynmesh-llm-setup-{job_id[-8:]}", daemon=True,
@@ -1292,7 +1489,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             current_job.update({
                 "state": "cancelling",
                 "stage": "cancelling",
-                "message": "Cancelling setup safely; existing configuration will be preserved",
+                "message": "Cancelling setup; waiting for the current step to stop",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
             return write_setup_job(current_job)
@@ -1381,7 +1578,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         consumer_orders.purge_expired_responses()
         summaries = []
         for record in consumer_orders.list():
-            final = dict((record.get("history") or [{}])[-1])
+            final = order_state_metadata(record)
             summaries.append({
                 "task_id": record.get("task_id"), "state": record.get("state"),
                 "created_at": record.get("created_at"), "updated_at": record.get("updated_at"),
@@ -1402,13 +1599,25 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.put("/api/local/llm/privacy")
     async def local_llm_privacy_update(request: Request) -> dict[str, Any]:
+        """Set retained-result lifetime; a retention of 0 purges every order's
+        stored encrypted_response immediately, EXCEPT a succeeded order the
+        ask worker has not yet archived (no acknowledged_at) — that response
+        is kept so a paid answer is never silently downgraded to a failure,
+        up to a hard 7-day ceiling from the original success — a later
+        body-free checkpoint (e.g. settlement dispatch) never resets this
+        clock (see _awaiting_archive)."""
         value = int(dict(await request.json()).get("result_retention_seconds") or 0)
         if value not in {0, 3600, 86400, 604800}:
             raise HTTPException(status_code=400, detail="unsupported result retention period")
         write_consumer_settings({"result_retention_seconds": value})
         if value == 0:
+            now = datetime.now(timezone.utc)
             for order in consumer_orders.list():
-                consumer_orders.purge_encrypted_response(str(order["task_id"]))
+                task_id = str(order["task_id"])
+                record = consumer_orders.get(task_id) or order
+                if _awaiting_archive(record, now):
+                    continue
+                consumer_orders.purge_encrypted_response(task_id)
         return local_llm_privacy()
 
     @app.delete("/api/local/llm/orders")
@@ -1432,6 +1641,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         provider_peer_id = str(body.get("provider_peer_id") or "")
         service_id = str(body.get("service_id") or "")
         prompt = str(body.get("prompt") or "")
+        prompt_format = body.get("prompt_format", "text")
+        try:
+            decode_chat_prompt(prompt, prompt_format)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         try:
             max_tokens = int(body.get("max_tokens") or 64)
         except (TypeError, ValueError) as exc:
@@ -1444,6 +1658,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         selected = next((item for item in records
                          if item.get("peer_id") == provider_peer_id
                          and dict(item.get("service") or {}).get("package_id") == service_id), None)
+        if selected and (selected.get("ready") is False or dict(selected.get("health") or {}).get("ok") is False):
+            health_code = dict(selected.get("health") or {}).get("error_code")
+            code = health_code if isinstance(health_code, str) and health_code in RUNTIME_ERROR_CODES else "service_unhealthy"
+            raise HTTPException(status_code=409, detail=code)
         if not selected or not selected.get("online"):
             raise HTTPException(status_code=409, detail="service is absent, stale, offline, or unhealthy")
         if _record_is_stale(selected.get("updated_at")):
@@ -1455,6 +1673,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
+        if prompt_format == CHAT_FORMAT and CHAT_FORMAT not in public_manifest.get("capabilities", []):
+            raise HTTPException(status_code=409, detail="provider no longer supports the reviewed prompt format")
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are
@@ -1504,12 +1724,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if requested_transport not in {"auto", "direct", "p2p", "relay"}:
             raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
         transport_mode = requested_transport
+        failure_transport = transport_mode
         request_fingerprint = _request_fingerprint({
             "task_id": task_id,
             "idempotency_key": idempotency_key,
             "provider_peer_id": provider_peer_id,
             "service_id": service_id,
             "prompt": prompt,
+            **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
+            **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
@@ -1527,7 +1750,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not claimed:
             encrypted = existing.get("encrypted_response")
             if isinstance(encrypted, dict):
-                final = dict((existing.get("history") or [{}])[-1])
+                final = order_state_metadata(existing)
                 try:
                     _, prior_result = _open_provider_response(
                         encrypted, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
@@ -1574,13 +1797,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             signed = seal_task(
                 body={"task_id": task_id, "idempotency_key": idempotency_key,
                       "service_id": service_id, "prompt": prompt, "max_tokens": max_tokens,
+                      **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
+                      **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
                       "max_amount": maximum, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,
                 recipient_messaging_pub=recipient_pub,
                 expires_at=_expires(max(60, manifest.timeout_seconds + 30)),
             )
-            endpoint = resolve_endpoint(provider_peer_id)
+            own_request = provider_peer_id == store.peer_id
+            endpoint = "" if own_request else resolve_provider_endpoint(provider_peer_id)
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -1593,6 +1819,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             }
             if force_relay:
                 transport_mode = "relay"
+            if own_request:
+                transport_mode = "local"
+            failure_transport = transport_mode
             consumer_orders.transition(
                 task_id=task_id,
                 state="running",
@@ -1603,7 +1832,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "transport": transport_mode,
                 },
             )
-            if transport_mode == "p2p":
+            if own_request:
+                current = active_manager()
+                if current is None or current.manifest.package_id != service_id:
+                    raise TaskProtocolError("local service is no longer configured")
+                encrypted_response = await asyncio.to_thread(current.handle, signed.to_dict())
+                transport_evidence = {"transport": "local_runtime", "relay_used": False}
+            elif transport_mode == "p2p":
                 p2p_work_order_id = ""
 
                 async def publish_offer(offer: IceSignal) -> IceSignal:
@@ -1657,6 +1892,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     timeout_s=manifest.timeout_seconds + 30,
                 )
             elif endpoint and transport_mode in {"auto", "direct"}:
+                failure_transport = "direct"
                 try:
                     # Blocking I/O for the full inference duration — run it in
                     # a worker thread so the node's event loop stays live.
@@ -1678,6 +1914,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     raise TaskProtocolError("strict P2P path failed; relay fallback is disabled")
                 if not relay_url:
                     raise TaskProtocolError("direct provider path failed and no dedicated LLM relay is configured") from direct_error
+                failure_transport = "relay"
                 def _relay_exchange() -> dict[str, Any]:
                     reference = _upload_relay_ciphertext(
                         store, signed.to_dict(), relay_url=relay_url,
@@ -1768,7 +2005,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
             return result
         except Exception as exc:
-            error_code = _delivery_error_code(exc, transport=transport_mode)
+            error_code = _delivery_error_code(exc, transport=failure_transport)
             try:
                 balance.release(task_id=task_id, reason=error_code)
                 consumer_orders.transition(task_id=task_id, state="failed",
@@ -1819,16 +2056,20 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     def _prune_background_orders() -> None:
         """Drop stale terminal entries; without this, rejected submissions and
         retention=0 results (each keyed by a fresh task uuid) accumulate for
-        the process lifetime. Caller holds background_orders_lock."""
-        cutoff = time.time() - 900
+        the process lifetime. An unacknowledged retention-0 success gets a
+        longer cutoff (see _background_order_expired) so it survives until
+        the ask worker archives it. Caller holds background_orders_lock."""
+        now = time.time()
         for key in [k for k, v in background_orders.items()
-                    if isinstance(v, dict) and float(v.get("_recorded_at") or 0) < cutoff
-                    and "_recorded_at" in v]:
+                    if isinstance(v, dict) and _background_order_expired(v, now)]:
             background_orders.pop(key, None)
 
     @app.post("/api/local/llm/orders/async")
     async def local_llm_order_async(request: Request) -> dict[str, Any]:
-        body = dict(await request.json())
+        return submit_order(dict(await request.json()))
+
+    def submit_order(value: dict[str, Any]) -> dict[str, Any]:
+        body = dict(value)
         if not str(body.get("provider_peer_id") or "") \
                 or not str(body.get("service_id") or "") \
                 or not str(body.get("prompt") or ""):
@@ -1865,6 +2106,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.get("/api/local/llm/orders/{task_id}")
     def local_llm_order_status(task_id: str) -> dict[str, Any]:
+        return order_status(task_id, consume_ephemeral=True)
+
+    def order_state_metadata(record: dict[str, Any]) -> dict[str, Any]:
+        # Later settlement checkpoints supplement the current state's usage
+        # and transport; metadata from earlier states must not leak through.
+        return {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
+                for key, value in event.items() if key not in {"at", "checkpoint"}}
+
+    def order_status(task_id: str, *, consume_ephemeral: bool = False) -> dict[str, Any]:
         try:
             record = consumer_orders.get(task_id)
         except TaskProtocolError as exc:
@@ -1875,7 +2125,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if pending is None:
                 raise HTTPException(status_code=404, detail="task not found")
             return _public_background(pending)
-        final = dict((record.get("history") or [{}])[-1])
+        # A settlement acknowledgement is a later checkpoint, not a replacement
+        # for the terminal usage/transport metadata needed after restarting UI.
+        final = order_state_metadata(record)
         result: dict[str, Any] = {
             "task_id": task_id,
             "state": str(record.get("state") or "unknown"),
@@ -1883,12 +2135,16 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         }
         with background_orders_lock:
             ephemeral = background_orders.get(task_id)
-            if ephemeral and ephemeral.get("ephemeral"):
+            if consume_ephemeral and ephemeral and ephemeral.get("ephemeral"):
                 background_orders.pop(task_id, None)
         if ephemeral and ephemeral.get("ephemeral"):
             return {key: value for key, value in _public_background(ephemeral).items()
                     if key != "ephemeral"}
         encrypted = record.get("encrypted_response")
+        if not consume_ephemeral and ephemeral is not None and ephemeral.get("state") == "queued":
+            # A terminal ledger entry can precede the background thread's
+            # transient result. Archive only after that result becomes visible.
+            result["result_pending"] = True
         bindings = dict(record.get("bindings") or {})
         if isinstance(encrypted, dict):
             try:
@@ -1934,7 +2190,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "cancel_id": "cancel:" + task_id,
             }, private_key_bytes=store.private_key_bytes)
             delivered = False
-            endpoint = resolve_endpoint(provider_peer_id)
+            if provider_peer_id == store.peer_id:
+                current = active_manager()
+                if current is not None and current.manifest.package_id == service_id:
+                    current.cancel_signed(signed_cancel.to_dict())
+                return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
+            endpoint = resolve_provider_endpoint(provider_peer_id, cancellation=True)
             if endpoint:
                 try:
                     _peer_post_json(
@@ -1990,3 +2251,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     app.state.llm_provider = active_manager()
+
+    def acknowledge_result(task_id: str) -> None:
+        with background_orders_lock:
+            prior = background_orders.get(task_id)
+            if prior and prior.get("ephemeral"):
+                background_orders.pop(task_id, None)
+        consumer_orders.mark_acknowledged(task_id)
+
+    def erase_results(task_ids):
+        from .privacy import erase_consumer_results
+
+        return erase_consumer_results(consumer_orders, background_orders, background_orders_lock, task_ids)
+
+    return ConsumerCommands(submit_order, order_status, local_llm_cancel, acknowledge_result, discover, erase_results)

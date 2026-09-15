@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -70,10 +70,133 @@ function renderServices(options: {
       </Routes>
     </MemoryRouter>,
   );
-  return { ...result, client, discover, submit, user: userEvent.setup() };
+  return { ...result, client, discover, submit, confirm: context.confirm, notify: context.notify, user: userEvent.setup() };
 }
 
 describe("Services local LLM flow", () => {
+  it.each([
+    ["local inference runtime dependency is missing; use Update runtime to repair it", /A local runtime dependency is missing.*Update runtime/],
+    ["configured model file is missing", /The selected model file is missing/],
+    ["the local inference runtime is not installed", /The local runtime is missing/],
+  ])("keeps an actionable lifecycle error until retry: %s", async (message, expected) => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    const { client, user } = renderServices({ providerStatus: { configured: true, online: false, service,
+      lifecycle: { mode: "managed", runtime: { managed: true, running: false } } } });
+    const action = vi.spyOn(client, "runLLMServiceAction").mockRejectedValueOnce(new Error(String(message)));
+    await user.click(await screen.findByRole("button", { name: "Start runtime" }));
+    const error = await screen.findByRole("alert");
+    expect(error).toHaveTextContent(expected);
+    expect(error).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start runtime" })).toBeEnabled());
+    action.mockResolvedValue({ ok: true });
+    await user.click(screen.getByRole("button", { name: "Start runtime" }));
+    await waitFor(() => expect(screen.queryByText(expected)).not.toBeInTheDocument());
+    expect(action).toHaveBeenCalledTimes(2);
+  });
+
+  it("updates model storage after confirmed deletion and reports preserved shared runtime files", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    const providerStatus: LLMProviderStatus = { configured: true, online: false, service,
+      lifecycle: { mode: "managed", runtime: { managed: true, running: false },
+        storage: { model_owned: true, model_present: true, model_bytes: 1048576 } } };
+    const { client, user, confirm, notify } = renderServices({ providerStatus });
+    const action = vi.spyOn(client, "runLLMServiceAction").mockResolvedValue({ result: { removed: ["runtime_process", "managed_model"], model_preserved: false } });
+    expect(await screen.findByText(/Model file: 1.0 MiB/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete managed model" }));
+    const review = vi.mocked(confirm).mock.calls[0][0];
+    expect(review.body).toContain("Shared native runtime files, private configuration and conversations are preserved");
+    expect(action).not.toHaveBeenCalled();
+    vi.mocked(client.getLLMServiceStatus).mockResolvedValue({ ...providerStatus, lifecycle: { ...providerStatus.lifecycle,
+      storage: { model_owned: true, model_present: false, model_bytes: 0 } } });
+    await act(async () => { await review.onConfirm(); });
+    expect(await screen.findByText(/Model file: missing · 0 MiB/)).toBeInTheDocument();
+    expect(action).toHaveBeenCalledWith("uninstall", { delete_environment: true, delete_model: true, confirm_model_delete: true });
+    expect(notify).toHaveBeenCalledWith("ok", expect.stringContaining("shared runtime files remain installed"));
+  });
+
+  it("restores the managed model choices after restart and requires a fresh confirmation", async () => {
+    const { client, user } = renderServices({ setupStatuses: [{
+      job_id: "setup_managed_resume", state: "cancelled", stage: "cancelled", progress: 0, retryable: true,
+      resume_configuration: { mode: "managed", profile: "light", package_id: "previous-model", port: 18925 },
+    }] });
+    expect(await screen.findByLabelText("Setup mode")).toHaveValue("managed");
+    expect(screen.getByLabelText("Model profile")).toHaveValue("light");
+    expect(screen.getByLabelText("Package ID")).toHaveValue("previous-model");
+    expect(screen.getByLabelText("Local runtime port")).toHaveValue("18925");
+    const confirm = screen.getByRole("checkbox", { name: /I understand this prepares a local runtime/ });
+    expect(confirm).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    const start = vi.spyOn(client, "startLLMSetup");
+    expect(start).not.toHaveBeenCalled();
+    await user.click(confirm);
+    await user.click(screen.getByRole("button", { name: "Retry configuration" }));
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "managed", profile: "light", package_id: "previous-model", port: 18925, accept_risk: true,
+    }));
+  });
+
+  it("requires choosing a setup mode when an old failed job has no saved choices", async () => {
+    renderServices({ setupStatuses: [{ job_id: "legacy", state: "failed", stage: "recovery", progress: 0, retryable: true }] });
+    expect(await screen.findByLabelText("Setup mode")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    expect(screen.getByText(/Previous setup choices are unavailable/)).toBeInTheDocument();
+  });
+
+  it("waits for recovery after cancellation and offers retry when restoration fails", async () => {
+    const { client, user, notify } = renderServices({ setupStatuses: [
+      { job_id: "setup_restore", state: "running", stage: "download_model", progress: 40 },
+    ] });
+    let failed = false;
+    let cancelled = false;
+    client.getLLMSetupStatus = vi.fn(async (): Promise<LLMSetupJob> => failed ? {
+      job_id: "setup_restore", state: "failed", stage: "recovery", progress: 0, retryable: true,
+      message: "Previous configuration could not be restored. Check local storage and retry configuration.",
+    } : { job_id: "setup_restore", state: cancelled ? "cancelling" : "running", stage: "download_model", progress: 40 });
+    client.cancelLLMSetup = vi.fn(async (): Promise<LLMSetupJob> => {
+      cancelled = true;
+      return { job_id: "setup_restore", state: "cancelling", stage: "cancelling", progress: 40 };
+    });
+    await user.click(await screen.findByRole("button", { name: "Cancel setup" }));
+    expect(client.cancelLLMSetup).toHaveBeenCalledWith("setup_restore");
+    expect(notify).toHaveBeenCalledWith("warn", "Setup cancellation requested. Wait for the final recovery status.");
+    expect(await screen.findByRole("button", { name: "Cancelling…" })).toBeDisabled();
+    failed = true;
+    expect(await screen.findByText(/Previous configuration could not be restored/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "openai-compatible");
+    expect(screen.getByRole("button", { name: "Retry configuration" })).toBeEnabled();
+    const retry = vi.spyOn(client, "startLLMSetup");
+    await user.click(screen.getByRole("button", { name: "Retry configuration" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a ready unpublished model directly in Ask Ryn", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0].service;
+    renderServices({ providerStatus: { configured: true, ready: true, online: false, publication_enabled: false, service, capacity: { available: 1, max_concurrent: 1 } } });
+    const link = await screen.findByRole("link", { name: "Ask using this device" });
+    expect(link).toHaveAttribute("href", expect.stringContaining("peer=peer%3Atest"));
+    expect(link).toHaveAttribute("href", expect.stringContaining(encodeURIComponent(service.package_id)));
+    expect(screen.getByText("ready on this device")).toBeInTheDocument();
+    expect(screen.getByText(/Remote sharing is off/)).toBeInTheDocument();
+  });
+
+  it("reviews the model source and license and pins the automatic choice before installation", async () => {
+    const { user, client } = renderServices({ hardware: { hardware: { native_runtime_available: true }, recommendations: [
+      { profile: "light", can_run: true, recommended: true, display_name: "Reviewed model", download_bytes: 512 * 1024 * 1024, estimated_disk_mb: 1200, estimated_memory_mb: 900, source_url: "https://example.test/pinned-model.gguf", license_id: "Apache-2.0", license_url: "https://www.apache.org/licenses/LICENSE-2.0", license_notice: "Review the license before use." },
+    ] } });
+    const setup = vi.spyOn(client, "startLLMSetup");
+    await screen.findByRole("heading", { name: "Ryn job capacity" });
+    await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
+    expect(await screen.findByRole("link", { name: "Pinned model source" })).toHaveAttribute("href", "https://example.test/pinned-model.gguf");
+    expect(screen.getByRole("link", { name: "License: Apache-2.0" })).toBeInTheDocument();
+    expect(screen.getByText(/Model download: 512 MiB; required disk: 1200 MiB/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Configure and run self-test" })).toBeDisabled();
+    expect(setup).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: /prepares a local runtime/i }));
+    await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
+    await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({ mode: "managed", profile: "light" })));
+  });
+
   it("uses the production network default and submits the selected transport policy", async () => {
     const { user, submit } = renderServices();
 
@@ -249,7 +372,7 @@ describe("Services local LLM flow", () => {
     const { client, user } = renderServices({
       providerStatus,
       setupStatuses: [
-        { job_id: "setup_resume", state: "running", stage: "download_model", progress: 55, message: "Downloading verified model data" },
+        { job_id: "setup_resume", state: "running", stage: "download_model", progress: 55, message: "Downloading model data; verification pending" },
         { job_id: "setup_resume", state: "succeeded", stage: "completed", progress: 100, message: "Local model is ready" },
       ],
     });
@@ -265,8 +388,24 @@ describe("Services local LLM flow", () => {
     const service = (await makeFixtureNodeClient().listLLMServices())[0];
     const { submit } = renderServices({ services: [{ ...service, online: false }] });
 
-    expect(await screen.findByText("Provider offline")).toBeInTheDocument();
+    expect((await screen.findAllByText("Availability unknown — refresh services")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a stopped local model distinct from an offline node and offers runtime recovery", async () => {
+    const service = (await makeFixtureNodeClient().listLLMServices())[0];
+    const { user, client, submit } = renderServices({
+      services: [{ ...service, access: "self", ready: false, online: false }],
+      providerStatus: { configured: true, ready: false, online: false, service: service.service,
+        lifecycle: { runtime: { installed: true, running: false, status: "stopped" } } },
+    });
+    expect((await screen.findAllByText("Local model not ready — start it or check model settings")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Provider offline")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Place encrypted order" })).toBeDisabled();
+    const start = vi.spyOn(client, "runLLMServiceAction");
+    await user.click(screen.getByRole("button", { name: "Start runtime" }));
+    expect(start).toHaveBeenCalledWith("start");
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -351,6 +490,14 @@ describe("Services local LLM flow", () => {
   });
 
   it.each([
+    {
+      raw: "download incomplete; retry to resume",
+      mapped: "The download was interrupted. Downloaded data is kept; retry to continue. The model still needs verification.",
+    },
+    {
+      raw: "download response has invalid byte range or encoding; retry to resume",
+      mapped: "The source returned an invalid download response. Your previous progress is kept; retry when the source is available.",
+    },
     {
       raw: "no local inference runtime is available: nothing resolvable",
       mapped: "No local inference runtime is available on this device yet. Retry to download the bundled runtime, or connect an existing local model API.",

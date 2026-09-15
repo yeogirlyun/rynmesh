@@ -1,9 +1,50 @@
 # Route packages
 
+Search responses distinguish `indexing_pending` from `unavailable_sources`.
+Only bounded `saved_documents` / `offline_downloads` scope codes can be exposed;
+no exception message, document title or path is used as a diagnostic. Query/open
+still revalidate current sources; isolated source failures never fall back to
+old indexed bodies. Search status reports issues from the latest rebuild.
+
+`services/library_cleanup_routes.py` installs Owner-only
+`/api/local/privacy/documents` review/job/resume and remaining-file approval
+routes. It resolves the current `app.state.friends.content.imports` and guard
+on every request, bounds bodies at 8192 bytes and owns no worker. Source fencing
+and the file manifest commit together under the shared imports lock. Legacy
+friend-document DELETE/clear endpoints also require a reviewed token. Errors
+never include private paths. See the document-cleanup acceptance record.
+
+`friend_feed/routes.py` also owns the Owner-only
+`/api/local/privacy/friend-feed` preview, job/resume and backup review/approval
+routes. Requests resolve the current feed store and Owner guard, cap bodies at
+8192 bytes and run storage work off the event loop. Reinstallation adds no
+duplicate routes. Cleanup owns no timer: the existing `friend-feed.refresh`
+worker uses the same subscription revision barriers. Source cleanup and its
+encrypted receipt commit together; local completion does not confirm remote
+or browser erasure.
+
+`services/reading_cleanup_routes.py` owns `app.state.reading_cleanup` and the
+Owner-only `/api/local/privacy/reading` routes. Current source/replica/index and
+Owner guard are resolved per request; reinstallation adds no duplicate routes.
+Review-token bodies are capped at 8192 bytes. Cleanup runs off the event loop,
+stores encrypted progress under `privacy/reading-cleanup.json`, and resumes the
+same reviewed source/replica/backups/search steps after failure. It owns no timer.
+Completion is limited to reviewed local reading copies, with no remote or browser
+erasure claim. See the reading-cleanup acceptance record for the v4 source format.
+
+`privacy_export/routes.py` owns `app.state.privacy_export`. Its current Owner
+guard protects scope discovery and bounded POST archive generation. Exports run
+off the event loop, make no network calls and create no permanent archive job.
+The response closes its private temporary file and releases the per-node busy
+lock on completion or disconnect; cancellation while building arranges cleanup
+when the worker finishes. Reinstallation keeps that busy lock and replaces the
+current source adapters/guard without registering duplicate routes. The ZIP
+manifest states selected scopes, integrity hashes, read intervals and exclusions;
+raw credentials and storage files are not used as an export interface.
+
 A route package is a self-contained module that wires one feature's state,
-background work, and HTTP surface into the node app, without adding to
-`rynmesh/peer_http.py`. Two exist today and this document describes what
-they actually do — it must never say something either one doesn't:
+background work, and HTTP surface into the node app, without adding handlers to
+`rynmesh/peer_http.py`. The original packages that established these conventions are:
 
 - `rynmesh/mailbox_routes.py::install_mailbox` — the newer package. Its own
   docstrings already explain several of the conventions below; where this
@@ -13,8 +54,69 @@ they actually do — it must never say something either one doesn't:
   package. It predates a couple of conventions below (see the callouts) and
   is described as it is, not as it "should" be.
 
+Product packages on the development branch also include `friends/routes.py`,
+`ask_ryn/routes.py`, and `ai_access/routes.py`. AI access owns one
+`app.state.ai_access` object and `home / "ai-access" / "permissions.json"`.
+Its list/update routes call the current Owner guard, and route reinstallation
+replaces state without duplicating handlers. Running inference access checks
+belong to the existing LLM package: `llm.friend-permissions` runs every second
+with error backoff capped at ten seconds. Permission revocation is durable
+before a cancellation attempt; the update response distinguishes `requested`
+from `pending` and never confirms that computation stopped.
+
+`local_search/routes.py` owns `app.state.local_search` and an encrypted,
+rebuildable `home / "local-search" / "index.json"`. Its Owner query endpoint
+uses POST bodies so private keywords do not enter access-log URLs. The shared
+`local-search.index` worker first runs after one second and checks every
+second. Status includes the worker's bounded error metadata. Current local
+source records gate both results and result opening; cached index records are
+never authority to disclose deleted or inaccessible content.
+
+`offline_reading/routes.py` owns `app.state.offline_reading`, encrypted
+`home / "offline-reading" / "state.json"`, and encrypted download bundles.
+The shared `offline-reading.download` worker runs after one second and checks
+every second. Each run claims one job; failed jobs require explicit retry.
+The Owner API distinguishes a durable body checkpoint from a committed readable
+copy and requires a current review token for cleanup. DNS and HTTP fetching run
+in a bounded, cancellable child; the shared worker waits for it and reaps it.
+Restart recovery fences previous execution tokens. Route installation replaces
+state and worker callbacks without duplicating handlers.
+
 `scripts/new_route_package.py` generates a new package that follows every
 convention here. Read this document before hand-editing what it produces.
+
+`device_sync/routes.py` owns `app.state.device_sync` and the encrypted private
+`home / "device-sync" / "pairings.json"` container. Owner endpoints review
+invitations, approve identities, configure bilateral scope and remove devices.
+Owner-only `/api/local/device-sync/reading/conflicts` and `/reading/resolve`
+(under the same device-sync prefix) expose stored reading/bookmark candidates
+and commit an explicit choice against its reviewed revision. Duplicate successful
+choices are idempotent only while the resolved revision remains current.
+Peer pairing/control endpoints accept at most 64 KiB, verify signed encrypted
+messages with separate channels, and limit request frequency. The encrypted
+`/api/peer/device-sync/batch` endpoint additionally requires an active pairing,
+the capability for that pairing and matching bilateral policy revisions. Its
+18 MiB wire limit accommodates one scoped batch of at most 100 records / 12 MiB
+plaintext. It commits the actual source and replica before returning receipts.
+The `device-sync.pairing` worker
+rotates join confirmations, policy updates, scoped data batches and durable removal notices; it
+starts after three seconds and backs off to thirty seconds on failure.
+Reinstallation replaces state, guard and worker without duplicating handlers.
+All network and storage work runs off the HTTP event loop. Missing endpoint
+configuration prevents new invitations but leaves local device removal usable.
+
+`ask_ryn/cleanup_routes.py` installs `app.state.conversation_cleanup` and the
+Owner-only `/api/local/privacy/conversations` endpoints. Dependencies are resolved
+from current app state per call. Reinstallation replaces the guard/factory without
+duplicating routes. Cleanup runs off the HTTP event loop and stores encrypted,
+body-free progress in `home / "privacy" / "conversation-cleanup.json"`; it owns no
+private timer or thread. A client resumes an existing job after interruption.
+The review covers the source, replica, their known atomic orphan files, the source
+migration backup, and search-index atomic orphan files. Lock order is index writer
+and index file, then pairing, source, replica, matching an index rebuild's source
+reads. Rebuilding the index happens after these locks are released. Active orders
+block result cleanup; completed order identity and settlement metadata survive.
+Node-copy completion never implies browser-copy or remote-device completion.
 
 ## Why not add it to `peer_http.py`
 

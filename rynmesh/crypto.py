@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SIGNATURE_ALG = "ed25519"
+_CANONICAL_ENCODER = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 class SignatureError(ValueError):
@@ -24,12 +25,9 @@ class SignatureError(ValueError):
 def canonical_json(payload: dict[str, Any]) -> bytes:
     """Return deterministic UTF-8 JSON bytes for signing and hashing."""
 
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    # JSONEncoder keeps recursion/circular-reference state inside each encode
+    # call. Reuse the immutable options, not a payload or its encoded bytes.
+    return _CANONICAL_ENCODER.encode(payload).encode("utf-8")
 
 
 def sha256_bytes(data: bytes) -> str:

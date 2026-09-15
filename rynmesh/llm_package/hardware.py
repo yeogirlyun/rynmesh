@@ -134,7 +134,7 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
         return [], f"NVIDIA probe failed: {exc}"
 
 
-def _native_runtime_available() -> bool:
+def _native_runtime_available(root: str | Path | None = None) -> bool:
     """Whether a native llama-server is resolvable or downloadable here.
 
     Imported lazily: `runtime_native` reaches back into `lifecycle`, which
@@ -143,12 +143,12 @@ def _native_runtime_available() -> bool:
     try:
         from . import runtime_native
 
-        return bool(runtime_native.available()[0])
+        return bool(runtime_native.available(root=root)[0])
     except (ImportError, OSError, RuntimeError, ValueError):
         return False
 
 
-def _native_runtime_present() -> bool:
+def _native_runtime_present(root: str | Path | None = None) -> bool:
     """Whether a llama-server resolves *right now* — bundled, managed, or on PATH.
 
     `native_runtime_available` is true wherever the pinned release could be
@@ -162,12 +162,12 @@ def _native_runtime_present() -> bool:
     try:
         from . import runtime_native
 
-        return runtime_native.resolve_server() is not None
+        return runtime_native.resolve_server(root=root) is not None
     except (ImportError, OSError, RuntimeError, ValueError):
         return False
 
 
-def detect_hardware(path: str | Path | None = None) -> HardwareReport:
+def detect_hardware(path: str | Path | None = None, *, runtime_root: str | Path | None = None) -> HardwareReport:
     ram_total, ram_available = _memory()
     disk_target = Path(path or Path.cwd()).expanduser().resolve()
     while not disk_target.exists() and disk_target.parent != disk_target:
@@ -198,8 +198,8 @@ def detect_hardware(path: str | Path | None = None) -> HardwareReport:
         logical_cpus=os.cpu_count() or 1, ram_total_mb=ram_total, ram_available_mb=ram_available,
         disk_free_mb=disk_free, nvidia_gpus=gpus, nvidia_probe=gpu_status,
         container_runtime="docker" if docker else "", container_available=container_ok,
-        native_runtime_available=_native_runtime_available(),
-        native_runtime_present=_native_runtime_present(), warnings=warnings,
+        native_runtime_available=_native_runtime_available(runtime_root),
+        native_runtime_present=_native_runtime_present(runtime_root), warnings=warnings,
     )
 
 
@@ -232,6 +232,11 @@ def recommend(report: HardwareReport) -> list[dict[str, Any]]:
                 "quantization": profile.quantization,
                 "estimated_memory_mb": profile.estimated_memory_mb,
                 "estimated_disk_mb": disk_need,
+                "download_bytes": profile.size_bytes,
+                "source_url": profile.url,
+                "license_id": profile.license_id,
+                "license_notice": profile.license_notice,
+                "license_url": "https://www.apache.org/licenses/LICENSE-2.0" if profile.license_id == "Apache-2.0" else "",
                 "context_window": profile.context_window,
                 "max_concurrent": profile.max_concurrent,
                 # The managed llama.cpp image is the portable CPU build. GPU

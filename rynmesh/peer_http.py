@@ -26,7 +26,7 @@ from . import transport_plugins as _transport_plugins  # noqa: F401 — register
 from .background_workers import BackgroundWorkerRegistry, BackgroundWorkerSpec, BackoffPolicy
 from .credits import CreditEvent, CreditLedgerError
 from .crypto import SignedPayload
-from .recommendation_profile import RecommendationProfileStore, starter_items
+from .recommendation_profile import RecommendationProfileStore
 from .registry import RegistryError
 from .store import RynmeshStore, StoreError
 from .transport import Transport, TransportError, get_transport
@@ -264,6 +264,7 @@ class HttpPeerClient:
 
     def post_json(
         self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST one JSON object through the configured bounded Transport."""
         post = getattr(self.transport, "post_bytes", None)
@@ -278,7 +279,7 @@ class HttpPeerClient:
                 body,
                 timeout_s=self.timeout_s,
                 max_bytes=max_bytes,
-                headers={"Content-Type": "application/json"},
+                headers={**(headers or {}), "Content-Type": "application/json"},
             )
         except TransportError as exc:
             if exc.reason == "too_large":
@@ -1438,6 +1439,8 @@ def create_app(store: RynmeshStore | None = None):
             return events
         return []
 
+    from .device_sync.records import SyncError
+    from .first_run_routes import install_first_run
     from .services import ask as ask_service
     from .services import model_provider as model_provider_module
     from .services import recap as recap_service
@@ -1470,6 +1473,14 @@ def create_app(store: RynmeshStore | None = None):
 
     def _audit() -> AssistantAuditStore:
         return app.state.assistant_audit
+
+    install_first_run(
+        app, store=active_store, home=active_store.home,
+        workers=app.state.background_workers, local_control=local_control,
+        discovery=lambda: app.state.digest_service,
+        consumption=lambda: app.state.consumption_store,
+        profile=lambda: _recommendation_profile, audit=lambda: app.state.assistant_audit,
+    )
 
     def _preferred_model() -> str:
         """The owner's explicit choice, if they've made one."""
@@ -1759,34 +1770,55 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/consumption")
     def local_consumption(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        return app.state.consumption_store.list()
+        try:
+            return app.state.consumption_store.list()
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
 
     @app.post("/api/local/consumption")
     async def local_consumption_record(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="consumption_not_object")
         try:
-            record = app.state.consumption_store.record(
+            record = await _asyncio.to_thread(
+                app.state.consumption_store.record,
                 body.get("item", {}),
                 str(body.get("action", "")),
                 progress=body.get("progress"),
+                content_version=body.get("content_version"),
+                expected_sync_revision=body.get("expected_sync_revision"),
             )
             action = str(body.get("action", ""))
+            if action == "opened":
+                app.state.first_run.record("first_item_opened")
+            elif action == "bookmark":
+                app.state.first_run.record("first_signal_recorded")
             if action in {"opened", "bookmark", "completed"}:
                 _audit().append(
                     "fetch" if action == "opened" else "rec",
-                    f"Content {action}: {record['item'].get('title', record['item_id'])}",
+                    f"Content {action}",
                     details={"action": action, "stored_locally": True},
                     item_id=record["item_id"],
                 )
             return record
         except ConsumptionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SyncError as exc:
+            if str(exc) == "sync_revision_conflict":
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
+        except OSError:
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
 
     @app.delete("/api/local/consumption")
     def local_consumption_clear(request: FastAPIRequest) -> dict[str, bool]:
         local_control(request)
-        app.state.consumption_store.clear()
+        try:
+            app.state.consumption_store.clear()
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="reading_history_unavailable") from None
         _audit().append("verify", "Reading history cleared", details={"scope": "history"})
         return {"ok": True}
 
@@ -1804,7 +1836,7 @@ def create_app(store: RynmeshStore | None = None):
         _audit().append(
             "rec",
             "Recommendation direction updated",
-            details={"interests": result["interests"], "avoids": result["avoids"]},
+            details={"interest_count": len(result["interests"]), "avoid_count": len(result["avoids"])},
         )
         return result
 
@@ -1812,6 +1844,8 @@ def create_app(store: RynmeshStore | None = None):
     async def local_digest_feedback(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="feedback_not_object")
         try:
             result = _digest_service().feedback(
                 str(body.get("item_id", "")), str(body.get("action", ""))
@@ -1826,6 +1860,8 @@ def create_app(store: RynmeshStore | None = None):
             return result
         except DigestError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="recommendation_feedback_unavailable") from None
 
     @app.post("/api/local/recommendations")
     async def local_recommendations(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1837,40 +1873,11 @@ def create_app(store: RynmeshStore | None = None):
         now_unix = time.time()
         items = network_content(control_network_id())
         items.extend(_digest_service().recommendation_items())
-        has_starters = False
-        if not any(
-            str(item.get("fetch_status", "")) not in {"local", "fetched_full"}
-            and str(item.get("safety_outcome", "")) != "blocked"
-            for item in items
-        ):
-            items.extend(
-                starter_items(
-                    _recommendation_profile.get(),
-                    seed_key=active_store.peer_id,
-                    now_unix=now_unix,
-                )
-            )
-            has_starters = True
         profile_signals = _recommendation_profile.signals()
-        recommendations = recommendation_service.recommend_from_items(
-            items,
-            now_unix=now_unix,
-            query=str(body.get("query", "") or ""),
-            limit=int(body.get("limit", 6) or 6),
-            profile=profile_signals,
-        )
-        if recommendations or body.get("query") or has_starters:
-            return recommendations
-        items.extend(
-            starter_items(
-                _recommendation_profile.get(),
-                seed_key=active_store.peer_id,
-                now_unix=now_unix,
-            )
-        )
         return recommendation_service.recommend_from_items(
             items,
             now_unix=now_unix,
+            query=str(body.get("query", "") or ""),
             limit=int(body.get("limit", 6) or 6),
             profile=profile_signals,
         )
@@ -1894,8 +1901,8 @@ def create_app(store: RynmeshStore | None = None):
             "rec",
             "Recommendation profile updated",
             details={
-                "topics": profile["topics"],
-                "platforms": profile["platforms"],
+                "topic_count": len(profile["topics"]),
+                "platform_count": len(profile["platforms"]),
                 "has_direction": bool(profile["direction"]),
             },
         )
@@ -1908,13 +1915,6 @@ def create_app(store: RynmeshStore | None = None):
         content_id = str(body.get("contentId", "") or "")
         candidates = network_content(control_network_id())
         candidates.extend(_digest_service().recommendation_items())
-        candidates.extend(
-            starter_items(
-                _recommendation_profile.get(),
-                seed_key=active_store.peer_id,
-                now_unix=time.time(),
-            )
-        )
         item = next(
             (candidate for candidate in candidates if candidate.get("content_id") == content_id),
             None,
@@ -1923,6 +1923,8 @@ def create_app(store: RynmeshStore | None = None):
             raise HTTPException(status_code=404, detail="recommendation_content_not_found")
         try:
             profile = _recommendation_profile.feedback(item, str(body.get("action", "")))
+            if str(body.get("action", "")) != "neutral":
+                app.state.first_run.record("first_signal_recorded")
             _digest_service().build(now_unix=time.time())
             _audit().append(
                 "rec",
@@ -2121,6 +2123,7 @@ def create_app(store: RynmeshStore | None = None):
             "reading_history": app.state.consumption_store.list(),
             "sources": _digest_service().list_sources(),
             "assistant_audit": _audit().list(),
+            "first_success": app.state.first_run.export(),
             "privacy_settings": {
                 "ai_provider": stored["ai_provider"],
                 "ai_model": stored["ai_model"],
@@ -2135,7 +2138,7 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         requested = body.get("scopes", []) if isinstance(body, dict) else []
         scopes = {str(scope) for scope in requested if str(scope)}
-        allowed = {"history", "profile", "cache", "audit"}
+        allowed = {"history", "profile", "cache", "audit", "onboarding"}
         if not scopes or not scopes.issubset(allowed):
             raise HTTPException(status_code=400, detail="privacy_erase_scopes_invalid")
         if "history" in scopes:
@@ -2148,7 +2151,9 @@ def create_app(store: RynmeshStore | None = None):
             app.state.reader_cache.clear()
         if "audit" in scopes:
             _audit().clear()
-        else:
+        if "onboarding" in scopes:
+            app.state.first_run.store.reset()
+        if "audit" not in scopes:
             _audit().append(
                 "verify",
                 "Personal assistant data erased",
@@ -2362,6 +2367,69 @@ def create_app(store: RynmeshStore | None = None):
         _mailbox, _messenger, _publish, pubkey_cache=_pubkey_cache
     )
 
+    from .friends.routes import install_friends
+
+    install_friends(
+        app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+    )
+
+    from .device_sync.routes import install_device_sync
+
+    install_device_sync(app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+        reading=lambda: app.state.consumption_store, conversations=lambda: app.state.ask_ryn.conversations)
+
+    from .friend_feed.routes import install_friend_feed
+
+    install_friend_feed(app, home=active_store.home, messaging_key=_msg_priv,
+        friends=lambda: app.state.friends.service, content=lambda: app.state.friends.content,
+        local_control=local_control, workers=app.state.background_workers)
+
+    from .offline_reading.routes import install_offline_reading
+
+    install_offline_reading(app, home=active_store.home, messaging_key=_msg_priv,
+        consumption=lambda: app.state.consumption_store, imports=lambda: app.state.friends.content.imports,
+        native=lambda: active_store, local_control=local_control, workers=app.state.background_workers)
+
+    from .ai_access.routes import install_ai_access
+    from .ask_ryn.routes import install_ask_ryn
+
+    install_ai_access(
+        app, home=active_store.home, local_control=local_control,
+        relationship=lambda rid: app.state.friends.service.store.relationship(rid),
+        friends=lambda: app.state.friends.service, workers=app.state.background_workers,
+    )
+
+    install_ask_ryn(
+        app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+    )
+
+    from .local_search.routes import install_local_search
+    from .local_search.sources import LocalSearchSources
+
+    install_local_search(app, store=active_store, home=_home, workers=app.state.background_workers,
+        local_control=local_control, messaging_key=_msg_priv,
+        source=lambda: LocalSearchSources(consumption=lambda: app.state.consumption_store,
+            imports=lambda: app.state.friends.content.imports, reader=lambda: app.state.reader_cache,
+            friends=lambda: app.state.friends.service, conversations=lambda: app.state.ask_ryn.conversations,
+            store=lambda: active_store, offline=lambda: app.state.offline_reading.service).snapshot())
+
+    from .ask_ryn.cleanup_routes import install_conversation_cleanup
+
+    install_conversation_cleanup(app, store=active_store, home=_home,
+        workers=app.state.background_workers, local_control=local_control)
+
+    from .services.reading_cleanup_routes import install_reading_cleanup
+
+    install_reading_cleanup(app, store=active_store, home=_home,
+        workers=app.state.background_workers, local_control=local_control)
+
+    from .privacy_export.routes import install_privacy_export
+
+    install_privacy_export(app, local_control=local_control)
+
     @app.get("/api/peer/pubkey")
     def peer_pubkey() -> dict:
         return {"peer_id": active_store.peer_id, "x25519_pub": _peer_box.public_key_b64(_msg_priv)}
@@ -2438,7 +2506,7 @@ def create_app(store: RynmeshStore | None = None):
     # The model runtime is never exposed as a peer endpoint.
     from .llm_package.routes import install_llm_routes as _install_llm_routes
 
-    _install_llm_routes(
+    app.state.ask_ryn.orders = _install_llm_routes(
         app,
         store=active_store,
         home=active_store.home,

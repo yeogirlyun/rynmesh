@@ -146,7 +146,7 @@ def _provider(tmp_path, adapter):
         manifest=manifest, adapter=adapter, store=provider,
         task_store=TaskOrderStore(tmp_path / "orders"),
         balance=TaskBalanceLedger(tmp_path / "balance.json"),
-        messaging_key=provider_msg,
+        messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     return service, provider, consumer, provider_msg, consumer_msg
 

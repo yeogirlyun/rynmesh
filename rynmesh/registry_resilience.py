@@ -120,7 +120,7 @@ class FallbackRegistryChain:
             try:
                 return fn(*args, **kwargs)
             except RegistryError as exc:
-                log.warning("registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc)
+                log.warning("registry %s.%s failed: %s; trying next", type(reg).__name__, method, type(exc).__name__)
                 last = exc
         raise last
 
@@ -153,7 +153,7 @@ class FallbackRegistryChain:
                 if getattr(exc, "status", None) in MAILBOX_VERDICT_STATUSES:
                     raise
                 log.warning(
-                    "registry %s.%s failed: %s; trying next", type(reg).__name__, method, exc
+                    "registry %s.%s failed: %s; trying next", type(reg).__name__, method, type(exc).__name__
                 )
                 last = exc
         raise last
@@ -206,7 +206,7 @@ def bootstrap_peers_from_path(path: str | Path) -> list[SignedPayload]:
           "payload": {"peer_id": "…", "endpoints": ["https://…"], …}}]
     """
     raw = Path(path).read_text(encoding="utf-8")
-    return _parse_peer_list(json.loads(raw), source=str(path))
+    return _parse_peer_list(json.loads(raw), source="file")
 
 
 def bootstrap_peers_from_url(url: str, *, timeout_s: float = 15.0) -> list[SignedPayload]:
@@ -226,10 +226,11 @@ def bootstrap_peers_from_url(url: str, *, timeout_s: float = 15.0) -> list[Signe
     )
     with urllib.request.urlopen(req, timeout=timeout_s, context=ctx) as resp:
         raw = resp.read(4 * 1024 * 1024).decode("utf-8")  # 4 MB cap
-    return _parse_peer_list(json.loads(raw), source=url)
+    return _parse_peer_list(json.loads(raw), source="url")
 
 
 def _parse_peer_list(data: Any, *, source: str) -> list[SignedPayload]:
+    source = source if source in {"file", "url"} else "provided"
     if not isinstance(data, list):
         raise RegistryError(f"bootstrap: expected a JSON array, got {type(data).__name__}")
     records: list[SignedPayload] = []
@@ -240,7 +241,7 @@ def _parse_peer_list(data: Any, *, source: str) -> list[SignedPayload]:
             signed = SignedPayload.from_dict(item)
             verify_peer_record(signed)  # Ed25519 gate
         except (KeyError, ValueError, TypeError, RegistryError) as exc:
-            log.warning("bootstrap %s: skipping invalid record: %s", source, exc)
+            log.warning("bootstrap %s: skipping invalid record: %s", source, type(exc).__name__)
             continue
         records.append(signed)
     log.info("bootstrap %s: loaded %d valid peer records", source, len(records))

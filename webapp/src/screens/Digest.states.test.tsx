@@ -10,6 +10,19 @@ import {
 } from "../test/fixtures";
 
 describe("For You states", () => {
+  it.each([false, true])("shows all-source failure truthfully with cached content=%s", async (cached) => {
+    renderDigest({
+      digest: makeDigest(cached ? [makeDigestItem()] : []),
+      discovery: makeDiscoveryStatus({ item_count: cached ? 1 : 0, source_count: 14,
+        healthy_sources: 0, failed_sources: 14, cached_sources: cached ? 14 : 0, degraded: true }),
+    });
+    expect(await screen.findByText(cached ? "using cached content" : "waiting for connection")).toBeInTheDocument();
+    expect(screen.queryByText("using healthy sources")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    if (!cached) expect(screen.getByRole("heading", { name: "No content available yet" })).toBeInTheDocument();
+    else expect(screen.getByRole("button", { name: "A local-first assistant worth reading" })).toBeEnabled();
+  });
+
   it("shows a ready first load with ranked recommendations", async () => {
     renderDigest();
 

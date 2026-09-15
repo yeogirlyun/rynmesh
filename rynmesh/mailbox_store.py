@@ -33,6 +33,7 @@ from .mailbox import (
     verify_mailbox_envelope,
     verify_poll_request,
 )
+from .private_permissions import restrict_windows_acl
 
 MAX_REPLAY_ENTRIES = 4096
 #: Ack tombstones kept per recipient box. They are tiny (one `expires_at`) and
@@ -197,6 +198,8 @@ class FileMailboxStore:
         path.mkdir(parents=True, exist_ok=True)
         cursor = path
         while True:
+            if os.name == "nt":
+                restrict_windows_acl(cursor, directory=True)
             try:
                 os.chmod(cursor, _DIR_MODE)
             except OSError:

@@ -815,7 +815,8 @@ def test_local_mailbox_status_route(tmp_path, monkeypatch) -> None:
             "worker",
         }
         # `create_app` also registers the peer-message relay handler.
-        assert body["handlers"] == sorted([KIND, "peer.message.v1"])
+        from rynmesh.friends.mailbox import OPERATION_KIND, RECEIPT_KIND
+        assert body["handlers"] == sorted([KIND, "peer.message.v1", OPERATION_KIND, RECEIPT_KIND])
         assert body["worker"]["name"] == "mailbox.poll"
         assert body["worker"]["running"] is True
 
