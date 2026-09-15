@@ -60,6 +60,23 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
   return { ...result, client, confirm, submit, user: userEvent.setup() };
 }
 
+// A running task resumed from history (as opposed to one just submitted in
+// this session): save a "running" conversation directly, then unmount and
+// remount so the fresh render's initial load picks it up, matching how a
+// reopened tab would observe it.
+async function setupResumedRunningTask(taskId = "task_original") {
+  const save = liveHistory();
+  const first = renderChat("live");
+  await screen.findByRole("heading", { name: "Ask Ryn" });
+  const prior = save.mock.calls[0][0];
+  const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId, createdAt: prior.createdAt }] };
+  await save(running);
+  first.unmount();
+  const rendered = renderChat("live");
+  expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
+  return { save, ...rendered };
+}
+
 describe("Private AI chat", () => {
   it("restores a node-owned running task and reads its archived answer after reopening", async () => {
     const save = liveHistory();
@@ -162,15 +179,7 @@ describe("Private AI chat", () => {
   });
 
   it("recovers the composer when the node has no record of the task being cancelled", async () => {
-    const save = liveHistory();
-    const first = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    const prior = save.mock.calls[0][0];
-    const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId: "task_original", createdAt: prior.createdAt }] };
-    await save(running);
-    first.unmount();
-    const { user } = renderChat("live");
-    expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
+    const { save, user } = await setupResumedRunningTask();
     await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
     vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.", "ask_run_not_found"));
     await user.click(screen.getByRole("button", { name: "Stop generating" }));
@@ -181,6 +190,41 @@ describe("Private AI chat", () => {
     expect(await screen.findByText("The node has no record of this task; nothing is running there.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+    // The rewrite went through the normal save path (revision-checked),
+    // not a purely local patch.
+    expect(save).toHaveBeenCalled();
+  });
+
+  it("recovers a stale running task after one revision conflict, by retrying against the refreshed revision", async () => {
+    const { save, user } = await setupResumedRunningTask();
+    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
+    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
+    save.mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"));
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
+    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  });
+
+  it("shows an explicit error and leaves Stop generating in place when recovery fails twice", async () => {
+    const { save, user } = await setupResumedRunningTask();
+    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
+    save
+      .mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"))
+      .mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"));
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The node could not confirm clearing this task. Reload history and try again.");
+    // Honest state: recovery never confirmed, so the task is still shown running.
+    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+  });
+
+  it("does not throw out of the click handler when the recovery refresh fails, and keeps the prior view", async () => {
+    const { user } = await setupResumedRunningTask();
+    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
+    vi.mocked(askHistory.list).mockRejectedValueOnce(new Error("The node could not be reached"));
+    await user.click(screen.getByRole("button", { name: "Stop generating" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The node could not confirm clearing this task. Reload history and try again.");
+    expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
   });
 
   it("clears the poll-unreachable error once the node responds again, without touching other errors", async () => {
