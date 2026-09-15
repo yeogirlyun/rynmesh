@@ -419,6 +419,18 @@ export default function PrivateAIChat() {
             setError("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
             setSending(false);
             setActiveTaskId("");
+            // A resumed-from-history running message keeps `isSending` true
+            // (nodeTask derives from message status) even after sending is
+            // cleared above, so the stale message itself must be marked
+            // interrupted — through the normal save path, so a reload does
+            // not resurrect it as still running.
+            if (selectedConversation && !deletedIdsRef.current.has(selectedConversation.id)) {
+              const messages = selectedConversation.messages.map((message) => message.taskId === taskId
+                ? { ...message, status: "interrupted" as const, content: "The node has no record of this task; nothing is running there." }
+                : message);
+              try { await replaceConversation({ ...selectedConversation, messages }, false); } catch { /* local recovery is best-effort */ }
+            }
+            await refreshNodeHistory();
           } else {
             setError("Cancellation has not been confirmed. The task may still be running; check it again.");
           }

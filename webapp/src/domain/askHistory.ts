@@ -71,25 +71,29 @@ export async function recoveryConversationId(issue: AskSyncConflict, choice: Ask
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+// The export payload can carry a full conversation history and takes far
+// longer than a single conversational round trip to assemble and encrypt.
+const EXPORT_TIMEOUT_MS = 120_000;
 
-async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, method = "GET", body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   // Built manually rather than via AbortSignal.timeout: that native timer is
-  // not driven by a runtime's faked setTimeout, so a caller-supplied signal
-  // (or a test controlling time) stays deterministic either way.
-  const controller = signal ? undefined : new AbortController();
-  const timer = controller ? setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS) : undefined;
+  // not driven by a runtime's faked setTimeout, so a test controlling time
+  // stays deterministic. request() always owns this controller — there is no
+  // caller-supplied signal to fight over.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(nodeControlUrl(`/ask${path}`), { method, credentials: "include", headers: { "Content-Type": "application/json" },
-      signal: signal ?? controller!.signal,
+      signal: controller.signal,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  } catch (cause) {
-    if (controller?.signal.aborted) {
-      throw new AskRequestError(0, "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.", "ask_request_timeout");
+  } catch {
+    if (controller.signal.aborted) {
+      throw new AskRequestError(0, `The node did not confirm this request within ${Math.round(timeoutMs / 1000)} seconds. Check the original task before retrying the same reviewed request.`, "ask_request_timeout");
     }
     throw new Error("The node did not confirm saving this conversation. Reconnect and retry; keep this page open to retain your input.");
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    clearTimeout(timer);
   }
   if (!response.ok) {
     const value = await response.json().catch(() => ({})) as { detail?: string };
@@ -116,7 +120,7 @@ export const askHistory = {
   get: (id: string) => request<LLMConversation>(`/conversations/${encodeURIComponent(id)}`),
   save: (conversation: LLMConversation) => request<LLMConversation>(`/conversations/${encodeURIComponent(conversation.id)}`, "PUT", { conversation, expected_revision: conversation.revision ?? 0 }),
   remove: (conversation: LLMConversation) => request<{ removed: number }>(`/conversations/${encodeURIComponent(conversation.id)}`, "DELETE", { expected_revision: conversation.revision }),
-  export: () => request<{ version: string; conversations: LLMConversation[] }>("/export"),
+  export: () => request<{ version: string; conversations: LLMConversation[] }>("/export", "GET", undefined, EXPORT_TIMEOUT_MS),
   async importLegacy() {
     const source = await legacy.readLegacyConversations();
     const result: LegacyMigrationResult = { imported: 0, alreadyPresent: 0, skippedDeleted: 0, retained: source.unreadable };

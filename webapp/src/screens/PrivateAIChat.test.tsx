@@ -171,9 +171,16 @@ describe("Private AI chat", () => {
     first.unmount();
     const { user } = renderChat("live");
     expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
     vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.", "ask_run_not_found"));
     await user.click(screen.getByRole("button", { name: "Stop generating" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
+    // A resumed-from-history running task keeps `isSending` true via the
+    // stale message status alone; recovery must clear that too, or the
+    // composer stays stuck on "Stop generating" forever.
+    expect(await screen.findByText("The node has no record of this task; nothing is running there.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
   it("clears the poll-unreachable error once the node responds again, without touching other errors", async () => {
