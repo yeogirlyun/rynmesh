@@ -188,6 +188,20 @@ it("names the records the other device could not merge and drops them once it ac
   expect(screen.getByText("Selected local changes confirmed by the other device.")).toBeInTheDocument();
 });
 
+it("shows a reload notice and no error when a confirmed operation's status refresh fails", async () => {
+  state.devices = [{ ...pair, status: "active", revision: 2, scopes: ["bookmarks"], effective_scopes: ["bookmarks"] }];
+  const configure = vi.spyOn(deviceSyncApi, "configure").mockImplementation(async () => state.devices[0]);
+  const user = userEvent.setup();
+  show();
+  await screen.findByText("Pairing confirmed");
+  vi.spyOn(deviceSyncApi, "status").mockRejectedValueOnce(new Error("status down"));
+  await user.click(screen.getByRole("button", { name: "Pause" }));
+  expect(configure).toHaveBeenCalled();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Done on the node. The latest status could not be loaded; refresh to see it.");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("reports local writes that could not be queued for sync without claiming success", async () => {
   show();
   await screen.findByText("No paired devices yet.");

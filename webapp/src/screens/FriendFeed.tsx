@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import ContentViewer from "../components/ContentViewer";
 import { Button, PageHeader, Panel } from "../components/ui";
+import { runThenReload } from "../domain/actThenReload";
 import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
 import { feedApi, type FeedAudience, type FeedEntry, type FeedPublication, type FeedSnapshot } from "../domain/friendFeed";
 import { friendsApi } from "../domain/friendsClient";
@@ -59,12 +60,14 @@ export default function FriendFeed() {
   }, [load]);
   const act = async (operation: () => Promise<void>) => {
     setBusy(true); setError(""); setNotice(""); sequence.current += 1;
-    try { await operation(); await load(); }
-    catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry.");
-      await load().catch(() => undefined); // A durable subscription may precede a failed remote refresh.
-    }
-    finally { if (mounted.current) setBusy(false); }
+    await runThenReload(operation, load, {
+      onError: async (cause) => {
+        setError(cause instanceof Error ? cause.message : "Could not confirm this operation. Retry.");
+        await load().catch(() => undefined); // A durable subscription may precede a failed remote refresh.
+      },
+      onNotice: (message) => setNotice(message),
+    });
+    if (mounted.current) setBusy(false);
   };
   const edit = (row: FeedPublication) => {
     setEditing(row); draftId.current = row.id;

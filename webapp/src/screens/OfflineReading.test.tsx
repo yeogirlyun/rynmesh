@@ -76,6 +76,18 @@ it("reviews counts and space before clearing, and reports a stale review without
   expect(screen.queryByText(/freed\./)).not.toBeInTheDocument();
 });
 
+it("shows a reload notice and no error when a confirmed clear's status refresh fails", async () => {
+  snapshot.records = [record];
+  const { user } = mount();
+  await user.click(await screen.findByRole("button", { name: "Clear this download" }));
+  await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+  vi.spyOn(offlineApi, "status").mockRejectedValueOnce(new Error("status down"));
+  await act(async () => { await confirm.mock.calls[0][0].onConfirm(); });
+  expect(offlineApi.clear).toHaveBeenCalledWith("r".repeat(64), "article");
+  expect(await screen.findByText("Done on the node. The latest status could not be loaded; refresh to see it.")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("reads local text and partial images, restores progress and visits the source only on click", async () => {
   snapshot.records = [{ ...record, state: "partial" }];
   vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1500);
