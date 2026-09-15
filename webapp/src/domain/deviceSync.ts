@@ -14,10 +14,21 @@ export type DevicePair = { id: string; role: "inviter" | "joiner"; status: strin
   sync?: { state: string; pending: number | null; last_success_at: number | null; error_code: string; conflicts: number;
     rejected_by_peer: Partial<Record<SyncScope, number>> } };
 export type DeviceStatus = { pairing_available: boolean; reason: string | null; data_transfer_available: boolean;
-  devices: DevicePair[]; invites: (Omit<DeviceInvite, "device"> & { status: string; pair_id: string | null })[] };
+  devices: DevicePair[]; invites: (Omit<DeviceInvite, "device"> & { status: string; pair_id: string | null })[];
+  capture_failures: { count: number; codes: Partial<Record<string, number>> } };
 export const pairLabels: Record<string, string> = { awaiting_owner: "Review on this device", awaiting_inviter: "Waiting for the other device to approve",
   awaiting_peer: "Waiting for the other device to confirm", awaiting_ack: "Waiting for confirmation receipt",
   active: "Pairing confirmed", expired: "Invitation expired", rejected: "Pairing not accepted", revoked: "Device removed" };
+const captureFailureReasons: Record<string, string> = {
+  sync_capacity_exhausted: "sync storage is full",
+  sync_item_link_invalid: "the item link is not shareable",
+};
+export function captureFailureReason(codes: Partial<Record<string, number>>): string {
+  // Several codes can be present at once; name the most common one so the
+  // single-line status message stays readable rather than listing every code.
+  const [code] = Object.entries(codes).sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))[0] ?? [];
+  return (code && captureFailureReasons[code]) || "an unexpected sync error";
+}
 const errors: Record<string, string> = {
   sync_endpoint_unavailable: "This device needs a reachable network address before you can create or accept a new invitation. Check Network settings.",
   sync_invite_expired: "This invitation expired. Create a new invitation on the other device.",

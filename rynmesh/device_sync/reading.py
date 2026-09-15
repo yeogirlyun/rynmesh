@@ -16,6 +16,7 @@ from .records import SyncError
 VERSION = 'ryn.reading-sync.v1'
 SCOPES = frozenset({'bookmarks', 'reading'})
 MAX_ENTITIES = 20000
+MAX_FAILURES = 1000
 
 
 def scopes(value):
@@ -45,6 +46,14 @@ class ReadingState:
         scopes(value.get('scopes'))
         if not isinstance(value.get('entities'), dict) or len(value['entities']) > MAX_ENTITIES:
             raise SyncError('sync_capacity_exhausted')
+        failures = value.get('failures', {})
+        if not isinstance(failures, dict) or len(failures) > MAX_FAILURES:
+            raise SyncError('sync_record_invalid')
+        for entry in failures.values():
+            if (not isinstance(entry, dict) or set(entry) != {'code', 'at'} or not isinstance(entry['code'], str)
+                    or type(entry['at']) not in (int, float)):
+                raise SyncError('sync_record_invalid')
+        value.setdefault('failures', failures)
         self.value = value
         for key, entity in value['entities'].items():
             if not isinstance(entity, dict) or not isinstance(entity.get('scope'), str) or entity['scope'] not in SCOPES or not {'id', 'record', 'projected'} <= entity.keys() or key != self.key(entity['scope'], entity['id']):
@@ -92,7 +101,7 @@ class ReadingState:
     @classmethod
     def create(cls, actor):
         records.actor_id(actor)
-        return cls({'version': VERSION, 'actor': actor, 'scopes': [], 'entities': {}})
+        return cls({'version': VERSION, 'actor': actor, 'scopes': [], 'entities': {}, 'failures': {}})
 
     @staticmethod
     def key(scope, identifier):
@@ -122,6 +131,24 @@ class ReadingState:
         else:
             value.update(progress=row['progress'], completed=bool(row['completed']), content_version=row.get('content_version', ''))
         self._write(scope, identifier, value, expected_revision=expected_revision)
+        # A successful capture resolves any earlier capture failure for this
+        # exact entity; nothing else in `failures` is touched.
+        self.value['failures'].pop(self.key(scope, identifier), None)
+
+    def record_capture_failure(self, scope, identifier, code, at):
+        """Bookkeeping only: never blocks or reorders an ordinary local write."""
+        key = self.key(scope, identifier)
+        failures = self.value['failures']
+        failures.pop(key, None)
+        failures[key] = {'code': str(code), 'at': at}
+        while len(failures) > MAX_FAILURES:
+            failures.pop(next(iter(failures)))
+
+    def capture_failures_status(self):
+        codes = {}
+        for entry in self.value['failures'].values():
+            codes[entry['code']] = codes.get(entry['code'], 0) + 1
+        return {'count': len(self.value['failures']), 'codes': codes}
 
     def _write(self, scope, identifier, value, *, expected_revision=None):
         key = self.key(scope, identifier)

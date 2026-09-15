@@ -17,7 +17,8 @@ let state: DeviceStatus;
 const show = () => render(<MemoryRouter><Devices /></MemoryRouter>);
 
 beforeEach(() => {
-  state = { pairing_available: true, reason: null, data_transfer_available: false, devices: [], invites: [] };
+  state = { pairing_available: true, reason: null, data_transfer_available: false, devices: [], invites: [],
+    capture_failures: { count: 0, codes: {} } };
   vi.spyOn(deviceSyncApi, "status").mockImplementation(async () => structuredClone(state));
   vi.spyOn(deviceSyncApi, "readingConflicts").mockResolvedValue({ conflicts: [], local_actor: "local" });
   confirm.mockReset();
@@ -175,4 +176,18 @@ it("names the records the other device could not merge and drops them once it ac
   await user.click(screen.getByRole("button", { name: "Refresh devices" }));
   await waitFor(() => expect(screen.queryByText(/could not be merged/)).not.toBeInTheDocument());
   expect(screen.getByText("Selected local changes confirmed by the other device.")).toBeInTheDocument();
+});
+
+it("reports local writes that could not be queued for sync without claiming success", async () => {
+  show();
+  await screen.findByText("No paired devices yet.");
+  expect(screen.queryByRole("status", { name: /could not be queued for sync/ })).not.toBeInTheDocument();
+  state.capture_failures = { count: 1, codes: { sync_capacity_exhausted: 1 } };
+  await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText("1 local change could not be queued for sync (sync storage is full). They stay on this device."))
+    .toBeInTheDocument();
+  state.capture_failures = { count: 3, codes: { sync_item_link_invalid: 3 } };
+  await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText("3 local changes could not be queued for sync (the item link is not shareable). They stay on this device."))
+    .toBeInTheDocument();
 });

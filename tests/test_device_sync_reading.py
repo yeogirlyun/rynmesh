@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from rynmesh.atomic_io import atomic_write_json, read_json
-from rynmesh.device_sync import records
+from rynmesh.device_sync import reading, records
 from rynmesh.device_sync.records import SyncError
 from rynmesh.services import consumption
 from rynmesh.services.consumption import ConsumptionStore
@@ -507,3 +507,38 @@ def test_approved_scope_enable_and_receive_preserve_original_v2_backup(tmp_path)
     assert a.path.with_name(a.path.name + '.v2.migrated').read_bytes() == original
     assert a.list()[0]['progress'] == .7 and a.list()[0]['bookmarked']
     assert len(a.sync_export(SCOPES)) == 2
+
+
+def test_bookmark_persists_locally_when_sync_capacity_is_exhausted(tmp_path, monkeypatch):
+    monkeypatch.setattr(reading, 'MAX_ENTITIES', 1)
+    source = store(tmp_path)
+    source.record(ITEM, 'bookmark')
+    source.record({**ITEM, 'item_id': 'second'}, 'bookmark')
+    assert {row['item_id'] for row in source.list()} == {'article', 'second'}
+    failures = source.sync_capture_failures()
+    assert failures == {'count': 1, 'codes': {'sync_capacity_exhausted': 1}}
+
+
+def test_progress_persists_locally_for_non_public_link(tmp_path):
+    source = store(tmp_path, selected=['reading'])
+    item = {**ITEM, 'item_id': 'no-host', 'link': 'https:///no-host'}
+    source.record(item, 'progress', progress=.5)
+    row = next(row for row in source.list() if row['item_id'] == 'no-host')
+    assert row['progress'] == .5
+    failures = source.sync_capture_failures()
+    assert failures == {'count': 1, 'codes': {'sync_item_link_invalid': 1}}
+    # A later successful capture for the same key removes its failure entry.
+    source.record(item, 'progress', progress=.6)
+    assert source.sync_capture_failures() == {'count': 1, 'codes': {'sync_item_link_invalid': 1}}
+    fixed = {**item, 'link': 'https://example.com/no-host'}
+    source.record(fixed, 'progress', progress=.7)
+    assert next(row for row in source.list() if row['item_id'] == 'no-host')['progress'] == .7
+    assert source.sync_capture_failures() == {'count': 0, 'codes': {}}
+
+
+def test_explicit_review_still_fails_honestly(tmp_path):
+    source = store(tmp_path)
+    with pytest.raises(SyncError, match='sync_revision_conflict'):
+        source.record(ITEM, 'bookmark', expected_sync_revision='wrong')
+    assert source.list() == []
+    assert source.sync_capture_failures() == {'count': 0, 'codes': {}}
