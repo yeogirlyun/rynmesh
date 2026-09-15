@@ -35,7 +35,7 @@ SAFE_ERRORS = frozenset({
     'sync_device_not_active', 'sync_revision_conflict', 'sync_policy_invalid', 'sync_policy_revision_conflict',
     'sync_pairing_capacity_exhausted', 'sync_version_unsupported', 'sync_endpoint_unavailable',
     'sync_pairing_invalid', 'sync_pairing_response_invalid', 'sync_pairing_identity_invalid',
-    'sync_pairing_store_unavailable',
+    'sync_pairing_store_unavailable', 'sync_verification_code_mismatch',
     'sync_reading_not_found', 'sync_reading_not_conflicted', 'sync_reading_choice_invalid', 'sync_not_enabled',
 })
 
@@ -192,7 +192,8 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
     async def approve(pair_id: str, request: Request):
         control(request)
         value = await body(request)
-        return await call('approve', pair_id, review_token=value.get('review_token'), scopes=value.get('scopes'))
+        return await call('approve', pair_id, review_token=value.get('review_token'), scopes=value.get('scopes'),
+                          verification_code=value.get('verification_code'))
 
     @app.put('/api/local/device-sync/devices/{pair_id}/policy')
     async def configure(pair_id: str, request: Request):

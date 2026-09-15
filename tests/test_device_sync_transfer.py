@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 from test_ask_history import sample
-from test_device_sync_pairing import Devices
+from test_device_sync_pairing import Devices, code_for
 from test_device_sync_reading import ITEM
 
 from rynmesh.ask_ryn.store import ConversationStore
@@ -151,7 +151,7 @@ def test_remove_during_network_wait_prevents_ack_and_new_pair_resends(tmp_path):
         mesh.left.send(old, 'bookmarks')
     mesh.a.retry_removal(old)
     new = mesh.b.join(mesh.a.create_invite(['bookmarks'])['uri'], ['bookmarks'])['id']
-    mesh.a.approve(new, review_token=new, scopes=['bookmarks'])
+    mesh.a.approve(new, review_token=new, scopes=['bookmarks'], verification_code=code_for(new))
     mesh.b.retry(new)
     mesh.after_receive = None
     assert mesh.left.status(new)['pending'] == 1
