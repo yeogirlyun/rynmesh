@@ -193,8 +193,10 @@ def test_source_bounds_and_pathological_postings_fallback(tmp_path, monkeypatch)
     assert engine.path.read_bytes() == before
     rows.pop()
     rows[0]["targets"][0]["href"] = "//untrusted.example"
-    with pytest.raises(SearchError, match="source_invalid"):
-        engine.rebuild()
+    # A single malformed row is skipped and counted, never disabling the index.
+    assert engine.rebuild() is True
+    assert engine.status()["skipped_rows"] == 1
+    assert engine.query("Python")["total"] == 0
 
 
 def test_ten_thousand_record_query_measurement(tmp_path, record_property):

@@ -141,6 +141,18 @@ def test_reviewed_cleanup_leaves_unreviewed_orphan_and_preserves_unknown_metadat
     assert f.service.store.read()['extension'] == {'keep': True}
 
 
+def test_clear_forgets_title_url_and_source_but_keeps_item_id(tmp_path):
+    f = fixture(tmp_path, images=False)
+    download(f)
+    before = row(f)['reference']
+    assert before['title'] and before['url'] and before['source']
+    preview = f.service.clear_preview()
+    f.service.clear(review_token=preview['review_token'])
+    after = row(f)['reference']
+    assert after == {'item_id': f.item['item_id']}
+    assert 'title' not in after and 'url' not in after and 'source' not in after
+
+
 def test_receipt_binding_generation_and_future_format_fail_closed(tmp_path):
     f = fixture(tmp_path, images=False)
     download(f)

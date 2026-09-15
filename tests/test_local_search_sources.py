@@ -209,7 +209,8 @@ def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_pat
     result = client.post("/api/local/search/query", headers=owner, json={"query": marker})
     assert result.status_code == 200 and result.json()["total"] == 1
     status = client.get("/api/local/search/status", headers=owner).json()
-    assert set(status) == {"version", "state", "error_code", "indexed_count", "updated_at", "unavailable_sources", "worker"}
+    assert set(status) == {"version", "state", "error_code", "indexed_count", "updated_at", "unavailable_sources",
+                           "skipped_rows", "worker"}
     assert marker not in caplog.text and marker not in str(status)
     replacement = install(tmp_path / "replacement")
     assert replacement.path != engine.path and replacement.status()["state"] == "needs_rebuild"
@@ -269,3 +270,42 @@ def test_search_private_responses_never_cache_and_recheck_deleted_content(tmp_pa
     responses.extend([denied, refreshed])
     for response in responses:
         assert response.headers.get("cache-control") == "no-store"
+
+
+def test_oversize_ask_message_is_clipped_not_dropped_and_search_keeps_working(tmp_path):
+    adapter, _, _, _, _, alice, _, _ = sources(tmp_path)
+    huge = "UNIQUE-MARKER-FOR-SEARCH " + "x" * (9 * 1024 * 1024)
+    conversation = {"id": "huge-conversation", "title": "Huge", "serviceKey": "provider::model",
+        "serviceName": "Model", "providerPeerId": "provider", "networkId": "network",
+        "createdAt": "2026-09-11T00:00:00Z", "updatedAt": "2026-09-11T00:00:00Z",
+        "messages": [{"id": "message-1", "role": "user", "content": huge,
+                      "createdAt": "2026-09-11T00:00:00Z", "status": "complete"}]}
+
+    class FakeConversations:
+        def list(self):
+            return [conversation]
+
+    adapter.conversations = lambda: FakeConversations()
+    row = next(candidate for candidate in adapter.snapshot() if candidate["id"].startswith("ask:"))
+    assert len(row["text"].encode()) <= 1024 * 1024
+    assert row["truncated"] is True
+    engine = LocalSearchIndex(alice.home / "local-search", messaging_key=alice.messaging_private, source=adapter.snapshot)
+    assert engine.rebuild() is True
+    assert engine.status()["skipped_rows"] == 0
+    result = engine.query("UNIQUE-MARKER-FOR-SEARCH")
+    assert result["total"] == 1 and not result["partial"]
+
+
+def test_index_skips_single_oversize_row_and_keeps_serving_other_results(tmp_path):
+    good = {"id": "good", "title": "Good row", "text": "Python guide here",
+            "source": "Local", "timestamp": 1, "kinds": ["saved"], "friend_ids": [],
+            "targets": [{"label": "Open", "href": "/item/good"}]}
+    bad = {"id": "bad", "title": "Bad row", "text": "x" * (9 * 1024 * 1024),
+           "source": "Local", "timestamp": 1, "kinds": ["saved"], "friend_ids": [],
+           "targets": [{"label": "Open", "href": "/item/bad"}]}
+    key = peer_box.load_or_create_messaging_key(tmp_path / "messaging.x25519")
+    engine = LocalSearchIndex(tmp_path / "local-search", messaging_key=key, source=lambda: [bad, good])
+    assert engine.rebuild() is True
+    status = engine.status()
+    assert status["skipped_rows"] == 1 and status["indexed_count"] == 1
+    assert engine.query("Python")["total"] == 1
