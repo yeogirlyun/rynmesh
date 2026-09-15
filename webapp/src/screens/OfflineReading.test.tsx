@@ -132,6 +132,14 @@ it("restores unfinished file cleanup after remount and retries its original iden
   expect(screen.getByText(/freed across this cleanup/)).toHaveFocus();
 });
 
+it("renders a cleared row's forgotten reference as 'Cleared download' with no source line", async () => {
+  snapshot.records = [{ ...record, state: "cleared", current: null, verified_bytes: 0, reference: { item_id: "article" } }];
+  mount();
+  const section = await screen.findByRole("region", { name: "Cleared download" });
+  expect(within(section).getByRole("heading", { name: "Cleared download" })).toBeInTheDocument();
+  expect(within(section).queryByText("Journal")).not.toBeInTheDocument();
+});
+
 it("requires a fresh confirmation to clear changed remaining files", async () => {
   snapshot.cleanup = { review_token: 'c'.repeat(64), item_id: null, sequence: 7, done: false, copies: 1, bytes: 200 };
   vi.spyOn(offlineApi, 'reviewRemaining').mockResolvedValue({ review_token: 'new-review', files: 1, bytes: 350 });

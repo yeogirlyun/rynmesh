@@ -163,6 +163,7 @@ export default function Search() {
           .catch((cause) => { setError(cause.message); void localSearch.status().then(setStatus).catch(() => setStatus(null)); });
       }}>Rebuild search index</Button>
       <p role="status">{status ? `Index: ${status.state} · ${status.indexed_count} records` : "Index status unavailable"}{busy ? " · Searching…" : ""}</p>
+      {status && (status.skipped_rows ?? 0) > 0 ? <p role="status">{status.skipped_rows} {status.skipped_rows === 1 ? "item" : "items"} could not be indexed and will not appear in results.</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {!form.query.trim() ? <p>Enter keywords to search local data. Undownloaded bodies and remote devices are not searched.</p> : page ? <>
         {page.indexing_pending ?? page.partial ? <p>Showing partial results while the index catches up. Some local records are not indexed yet.</p> : null}

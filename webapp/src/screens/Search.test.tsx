@@ -174,6 +174,18 @@ it("explains unavailable downloaded content without claiming a complete empty se
   expect(screen.queryByText(/while the index catches up/)).not.toBeInTheDocument();
 });
 
+it("warns when the index has skipped rows and stays silent when there are none", async () => {
+  vi.mocked(localSearch.status).mockResolvedValue({ ...status, skipped_rows: 1 });
+  mount();
+  expect(await screen.findByText("1 item could not be indexed and will not appear in results.")).toBeInTheDocument();
+});
+
+it("does not warn about skipped rows when the count is zero or absent", async () => {
+  mount();
+  await screen.findByText(/Index: ready/);
+  expect(screen.queryByText(/could not be indexed/)).not.toBeInTheDocument();
+});
+
 it("rechecks an opened result and shows revoked or deleted content as unavailable", async () => {
   vi.spyOn(localSearch, "open").mockRejectedValue(new Error("This result was removed or access changed."));
   mount("/search?open=card%3Aone");

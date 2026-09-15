@@ -1,6 +1,6 @@
 import { nodeControlUrl } from "./nodeUrl";
 
-export type OfflineRecord = { key: string; item_id: string; reference: { item_id: string; title: string; source: string; url: string };
+export type OfflineRecord = { key: string; item_id: string; reference: { item_id: string; title?: string; source?: string; url?: string };
   state: string; error_code: string; verified_bytes: number;
   current: { job_id: string; downloaded_at: number; partial: boolean; size_bytes: number } | null };
 export type OfflineStatus = { records: OfflineRecord[]; used_bytes: number; download_bytes: number;

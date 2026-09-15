@@ -92,8 +92,8 @@ export default function OfflineReading() {
   const rows = (status?.records ?? []).filter((row) => filter === "all" || (filter === "downloaded" ? !!row.current : filter === "active" ? offlineActive(row.state) : row.state === "failed"));
   const readingRecord = reading ? saved.find((row) => row.item_id === reading.item_id) ?? {
     item_id: reading.item_id, progress: 0, bookmarked: false, open_count: 0,
-    item: { item_id: reading.item_id, title: reading.reference.title, source_title: reading.reference.source,
-      link: reading.reference.url, content_kind: "document", summary: "", tags: [] },
+    item: { item_id: reading.item_id, title: reading.reference.title ?? "Cleared download", source_title: reading.reference.source ?? "",
+      link: reading.reference.url ?? "", content_kind: "document", summary: "", tags: [] },
   } : null;
   return <div className="screen-stack"><PageHeader eyebrow="Your device" title="Offline reading" context="Download articles before disconnecting. Bookmarks alone do not download the body. No model is required." />
     <Panel><h2>Download a saved or recently opened article</h2>
@@ -120,8 +120,12 @@ export default function OfflineReading() {
       <p>Updates keep the old copy until the new one is verified. Interrupted downloads reuse verified resources; unfinished resources start again.</p>
       <label>Show<select aria-label="Download filter" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">All</option><option value="downloaded">Available offline</option><option value="active">In progress</option><option value="failed">Failed</option></select></label>
       <Button disabled={busy || !!pendingCleanup || !!attempt && status.cleanup?.review_token !== attempt.review_token || !status.records.some((row) => row.state !== "cleared")} onClick={() => void clear()}>Clear all downloads</Button>
-      {!rows.length ? <p>No downloads in this view. Choose an article above to start.</p> : rows.map((row) => <section key={row.key} aria-label={row.reference.title}>
-        <h3>{row.reference.title}</h3><p>{row.reference.source}</p><p>{row.state === "cleared" && pendingCleanup && (!pendingCleanup.item_id || pendingCleanup.item_id === row.item_id) ? "Removed from reader; file cleanup unfinished" : offlineLabels[row.state] ?? "Unknown download state"} · {bytesLabel(row.verified_bytes)} verified</p>
+      {!rows.length ? <p>No downloads in this view. Choose an article above to start.</p> : rows.map((row) => {
+        // A cleared row's reference keeps only item_id (title/source/url are forgotten on clear).
+        const cleared = row.state === "cleared" || !row.reference.title;
+        const title = cleared ? "Cleared download" : row.reference.title as string;
+        return <section key={row.key} aria-label={title}>
+        <h3>{title}</h3>{cleared ? null : <p>{row.reference.source}</p>}<p>{row.state === "cleared" && pendingCleanup && (!pendingCleanup.item_id || pendingCleanup.item_id === row.item_id) ? "Removed from reader; file cleanup unfinished" : offlineLabels[row.state] ?? "Unknown download state"} · {bytesLabel(row.verified_bytes)} verified</p>
         {row.current ? <p>Saved {new Date(row.current.downloaded_at * 1000).toLocaleString()} · {bytesLabel(row.current.size_bytes)}{offlineActive(row.state) || row.state === "failed" ? " · Previous copy is still available" : ""}</p> : null}
         {row.error_code ? <p>{offlineError(row.error_code)}</p> : null}
         {row.current ? <><Button onClick={() => setReading(row)}>Read offline copy</Button><Button disabled={busy || offlineActive(row.state)} onClick={() => void act(() => offlineApi.download(row.item_id, true))}>{row.item_id.startsWith("import:") ? "Refresh from saved document" : "Download latest from source"}</Button></> : null}
@@ -129,7 +133,8 @@ export default function OfflineReading() {
         {["failed", "cancelled"].includes(row.state) ? <Button disabled={busy} onClick={() => void act(() => offlineApi.retry(row.item_id))}>Retry download</Button> : null}
         {offlineActive(row.state) ? <Button disabled={busy || row.state === "cancel_requested"} onClick={() => void act(() => offlineApi.cancel(row.item_id))}>Cancel download</Button> : null}
         {row.state !== "cleared" ? <Button disabled={busy || !!pendingCleanup || !!attempt && status.cleanup?.review_token !== attempt.review_token} onClick={() => void clear(row)}>Clear this download</Button> : null}
-      </section>)}
+      </section>;
+      })}
     </Panel>}
     {reading && readingRecord ? <ContentViewer item={contentFromHistory(readingRecord)} client={client} offlineKey={reading.key}
       onRead={() => client.recordContentConsumption(contentFromHistory(readingRecord), "opened")} onClose={() => setReading(null)} /> : null}
