@@ -222,8 +222,13 @@ class FriendStore:
             if retain_secret and value:
                 secrets[f"revocation:{relationship_id}"] = value
             if notice:
-                record["revocation_wire"] = deepcopy(notice)
-                record["revocation_delivery"] = "pending"
+                if retain_secret and value:
+                    record["revocation_wire"] = deepcopy(notice)
+                    record["revocation_delivery"] = "pending"
+                else:
+                    # No secret survived to sign a durable retry with: the removal
+                    # notice can never be delivered, so this is terminal, not pending.
+                    record["revocation_delivery"] = "undeliverable"
             self._write(self.state_path, state)
             return deepcopy(record)
 

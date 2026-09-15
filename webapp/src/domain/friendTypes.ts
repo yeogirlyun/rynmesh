@@ -7,7 +7,7 @@ export interface FriendRecord {
   status: "active" | "revoked";
   created_at: string;
   revoked_at?: string;
-  revocation_delivery?: "pending" | "delivered";
+  revocation_delivery?: "pending" | "delivered" | "undeliverable";
 }
 
 export interface FriendInvitePreview {
