@@ -9,6 +9,13 @@ CARD = ('version', 'library_id', 'content_id', 'title', 'summary', 'kind', 'sour
         'publisher_peer_id', 'manifest_ref', 'filename', 'mime', 'size_bytes', 'sha256',
         'fetch_available', 'content_truncated')
 
+FIRST_RUN_FIELDS = ('version', 'dismissed', 'dismissed_at_unix', 'replay_started_at_unix')
+FIRST_RUN_MILESTONES = ('node_ready', 'content_ready', 'first_item_opened', 'first_signal_recorded', 'completed')
+
+OFFLINE_BODY_FIELDS = ('item_id', 'title', 'source', 'url', 'text', 'truncated', 'images_omitted',
+                        'source_mode', 'downloaded_at', 'job_id', 'partial')
+OFFLINE_IMAGE_FIELDS = ('index', 'alt', 'state', 'error_code', 'mime', 'file')
+
 
 def pick(row, fields):
     """Only named scalar fields and scalar lists; never arbitrary nested objects."""
@@ -18,6 +25,13 @@ def pick(row, fields):
         return value is None or type(value) in {str, bool, int, float}
     return {key: row[key] for key in fields if key in row and
             (scalar(row[key]) or isinstance(row[key], list) and all(scalar(value) for value in row[key]))}
+
+
+def pick_nested(row, spec):
+    """Allowlist top-level list-of-dict values: spec maps key -> per-item field list."""
+    if not isinstance(row, dict):
+        raise ValueError('invalid record')
+    return {key: [pick(item, fields) for item in row.get(key) or []] for key, fields in spec.items()}
 
 
 def publication(row):
@@ -38,7 +52,10 @@ class ProductDataSources:
         data = self.app.state.first_run.export()
         if data.get('safe_error'):
             raise ExportError('privacy_export_source_unavailable', 'first_reading')
-        yield 'progress.json', data
+        milestones = data.get('milestones') or {}
+        clean = pick(data, FIRST_RUN_FIELDS) | {
+            'milestones': {key: milestones[key] for key in FIRST_RUN_MILESTONES if key in milestones}}
+        yield 'progress.json', clean
 
     def reading(self):
         store = self.app.state.consumption_store
@@ -142,7 +159,8 @@ class ProductDataSources:
                         image.clear()
                         image.update(metadata)
                 clean['article'] = f'{number}/article.json'
-                yield clean['article'], body
+                clean_body = pick(body, OFFLINE_BODY_FIELDS) | pick_nested(body, {'images': OFFLINE_IMAGE_FIELDS})
+                yield clean['article'], clean_body
                 yield from images
             index.append(clean)
         yield 'index.json', {'records': index, 'unfinished_checkpoints_included': False}

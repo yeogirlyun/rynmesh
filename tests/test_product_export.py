@@ -120,6 +120,44 @@ def test_verified_offline_body_images_and_metadata_export_without_refetch(tmp_pa
     assert not json.loads(files['offline_reading/index.json'])['unfinished_checkpoints_included']
 
 
+def test_first_reading_export_allowlists_upstream_payload(tmp_path, monkeypatch):
+    upstream = {'version': 3, 'dismissed': True, 'dismissed_at_unix': 111.0, 'replay_started_at_unix': 0.0,
+                'milestones': {'node_ready': 1.0, 'content_ready': 2.0, 'first_item_opened': 0.0,
+                                'first_signal_recorded': 0.0, 'completed': 0.0, 'token': 'x'},
+                'token': 'x'}
+    app = SimpleNamespace(state=SimpleNamespace(first_run=SimpleNamespace(export=lambda: upstream)))
+    files = unpack(ExportBuilder(ProductDataSources(app)).build(['first_reading']))
+    verify_manifest(files)
+    data = json.loads(files['first_reading/progress.json'])
+    assert b'token' not in files['first_reading/progress.json']
+    assert data['version'] == 3 and data['dismissed'] is True
+    assert data['milestones']['node_ready'] == 1.0 and data['milestones']['content_ready'] == 2.0
+    assert 'token' not in data['milestones']
+
+
+def test_offline_article_body_allowlists_upstream_read_payload(tmp_path, monkeypatch):
+    f = fixture(tmp_path)
+    download(f)
+    original_read = f.service.read
+
+    def leaky_read(item_id):
+        body = original_read(item_id)
+        body['token'] = 'x'
+        if body['images']:
+            body['images'][0]['token'] = 'x'
+        return body
+
+    monkeypatch.setattr(f.service, 'read', leaky_read)
+    app = SimpleNamespace(state=SimpleNamespace(offline_reading=SimpleNamespace(service=f.service),
+                                                consumption_store=f.consumption))
+    files = unpack(ExportBuilder(ProductDataSources(app)).build(['reading', 'offline_reading']))
+    verify_manifest(files)
+    assert b'token' not in files['offline_reading/0/article.json']
+    body = json.loads(files['offline_reading/0/article.json'])
+    assert body['text'] == BODY
+    assert files['offline_reading/0/image-0.png'] == png()
+
+
 def test_corrupt_verified_image_fails_export_and_releases_temporary_storage(tmp_path, monkeypatch):
     f = fixture(tmp_path)
     download(f)
