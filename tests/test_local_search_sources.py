@@ -182,6 +182,57 @@ def test_same_verified_article_merges_sources_but_a_different_revision_does_not(
     assert set(engine.query("Same verified article")["results"][0]["kinds"]) == {"saved", "history"}
 
 
+def test_unfetched_card_claiming_my_own_document_is_not_attributed_until_verified(tmp_path):
+    adapter, _, imports, _, _, alice, bob, _ = sources(tmp_path)
+    url = "https://example.test/own-article"
+    saved = imports.save(b"Alice already saved this exact article body", filename="article.txt",
+                          mime="text/plain", source={"source_url": url})
+    # Bob merely claims this url/sha256 in his card metadata; he has not delivered
+    # anything and his claim has not been fetched or hash-verified.
+    bob.send_content_card(alice.peer_id, {"title": "Bob's claim", "source_url": url, "sha256": saved["sha256"]},
+                           card_id="b" * 32)
+    engine = LocalSearchIndex(alice.home / "local-search", messaging_key=alice.messaging_private, source=adapter.snapshot)
+    engine.rebuild()
+    own = engine.query("Alice already saved this exact article body")
+    assert own["total"] == 1
+    assert "share" not in own["results"][0]["kinds"]
+    assert engine.query("Alice already saved this exact article body", friend_id=bob.peer_id)["total"] == 0
+    # Once Bob's card is actually fetched and its bytes hash-verified against the
+    # claimed sha256, attribution is allowed.
+    alice.store.patch_card("b" * 32, {"fetch_state": "fetched", "fetched_library_id": "import:never-locally-seen",
+                                       "sha256_verified": True})
+    engine.rebuild()
+    attributed = engine.query("Alice already saved this exact article body", friend_id=bob.peer_id)
+    assert attributed["total"] == 1
+    assert "share" in attributed["results"][0]["kinds"]
+
+
+def test_unfetched_card_cannot_claim_a_document_another_friend_actually_delivered(tmp_path):
+    from test_friends import _node
+    adapter, _, imports, _, _, alice, bob, mesh = sources(tmp_path)
+    carol = _node(tmp_path, "Carol", 18083, mesh)
+    carol_invite = alice.create_invite()
+    carol.join(carol_invite["invite_uri"])
+    url = "https://example.test/friend-b-article"
+    saved = imports.save(b"Carol really shared this article body", filename="article.txt",
+                          mime="text/plain", source={"source_url": url, "peer_id": carol.peer_id})
+    carol.send_content_card(alice.peer_id, {"title": "Carol's card", "source_url": url, "sha256": saved["sha256"]},
+                             card_id="c" * 32)
+    alice.store.patch_card("c" * 32, {"fetch_state": "fetched", "fetched_library_id": "import:" + saved["import_id"],
+                                       "sha256_verified": True})
+    # Bob claims the same url/sha256 that Carol actually delivered, but his card
+    # was never fetched or verified for his relationship.
+    bob.send_content_card(alice.peer_id, {"title": "Bob's claim", "source_url": url, "sha256": saved["sha256"]},
+                           card_id="b" * 32)
+    engine = LocalSearchIndex(alice.home / "local-search", messaging_key=alice.messaging_private, source=adapter.snapshot)
+    engine.rebuild()
+    result = engine.query("Carol really shared this article body")
+    assert result["total"] == 1
+    assert "share" in result["results"][0]["kinds"]
+    assert engine.query("Carol really shared this article body", friend_id=carol.peer_id)["total"] == 1
+    assert engine.query("Carol really shared this article body", friend_id=bob.peer_id)["total"] == 0
+
+
 def test_routes_auth_reinstallation_current_source_and_safe_post_logging(tmp_path, caplog):
     adapter, _, _, _, conversations, alice, _, _ = sources(tmp_path)
     conversations.save(sample(), expected_revision=0)
