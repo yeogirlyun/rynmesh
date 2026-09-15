@@ -18,7 +18,7 @@ const show = () => render(<MemoryRouter><Devices /></MemoryRouter>);
 
 beforeEach(() => {
   state = { pairing_available: true, reason: null, data_transfer_available: false, devices: [], invites: [],
-    capture_failures: { count: 0, codes: {} } };
+    capture_failures: { count: 0, codes: {} }, quarantined: [], quarantined_count: 0 };
   vi.spyOn(deviceSyncApi, "status").mockImplementation(async () => structuredClone(state));
   vi.spyOn(deviceSyncApi, "readingConflicts").mockResolvedValue({ conflicts: [], local_actor: "local" });
   confirm.mockReset();
@@ -69,27 +69,39 @@ it("discards a stale invitation preview and never silently pairs", async () => {
   expect(await screen.findByRole("status")).toHaveTextContent("Request saved");
 });
 
-it("requires the verification code shown on the joining device and leaves a failed approval pending", async () => {
+it("never shows the code on the approving device and lets the node reject a wrong one", async () => {
   state.devices = [pair];
-  const approve = vi.spyOn(deviceSyncApi, "approve").mockRejectedValue(new Error("Connection lost; refresh to confirm."));
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "sync_verification_code_mismatch" }), { status: 409 }));
+  vi.stubGlobal("fetch", fetch);
   const user = userEvent.setup();
   show();
   const card = await screen.findByRole("article", { name: "Device My laptop" });
+  // The owner must read the code off the joining device, so this screen cannot
+  // show it -- otherwise the check is a copy from the very screen being fooled.
+  expect(within(card).queryByText(pair.verification_code)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Compare this code on both computers/)).not.toBeInTheDocument();
   expect(within(card).getByRole("button", { name: "Approve this device" })).toBeDisabled();
-  expect(within(card).getByText(pair.verification_code)).toBeInTheDocument();
   const scopes = within(card).getByRole("group", { name: "Allow on this device" });
   within(scopes).getAllByRole("checkbox").forEach((input) => expect(input).not.toBeChecked());
   await user.click(within(scopes).getByRole("checkbox", { name: "Reading progress" }));
-  const codeInput = within(card).getByLabelText("Enter the code shown on the other device");
-  await user.type(codeInput, "wrong-code");
-  expect(within(card).getByRole("button", { name: "Approve this device" })).toBeDisabled();
-  await user.clear(codeInput);
-  await user.type(codeInput, "AAAA BBBB cccc-dddd-EEEE-ffff");
-  expect(within(card).getByRole("button", { name: "Approve this device" })).not.toBeDisabled();
+  await user.type(within(card).getByLabelText("Enter the code shown on the other device"), "wrong-code");
+  // The browser cannot judge a code it does not hold; only the node can.
+  expect(within(card).getByRole("button", { name: "Approve this device" })).toBeEnabled();
   await user.click(within(card).getByRole("button", { name: "Approve this device" }));
-  expect(approve).toHaveBeenCalledWith(pair, ["reading"], "AAAA BBBB cccc-dddd-EEEE-ffff");
-  expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+  const sent = JSON.parse(fetch.mock.calls.at(-1)![1].body);
+  expect(sent).toMatchObject({ scopes: ["reading"], verification_code: "wrong-code", review_token: pair.review_token });
+  expect(await screen.findByRole("alert")).toHaveTextContent("does not match the code shown for this device");
   expect(within(card).getByText("Review on this device")).toBeInTheDocument();
+  expect(screen.queryByText("Pairing confirmed")).not.toBeInTheDocument();
+});
+
+it("shows the verification code on the joining device, which has nothing to type", async () => {
+  state.devices = [{ ...pair, role: "joiner", status: "awaiting_inviter" }];
+  show();
+  const card = await screen.findByRole("article", { name: "Device My laptop" });
+  expect(within(card).getByText(pair.verification_code)).toBeInTheDocument();
+  expect(within(card).queryByLabelText("Enter the code shown on the other device")).not.toBeInTheDocument();
+  expect(within(card).queryByRole("button", { name: "Approve this device" })).not.toBeInTheDocument();
 });
 
 it("shows pairing as distinct from synced data and requires review before removal", async () => {
@@ -210,7 +222,7 @@ it("shows a reload notice and no error when a confirmed operation's status refre
 it("reports local writes that could not be queued for sync without claiming success", async () => {
   show();
   await screen.findByText("No paired devices yet.");
-  expect(screen.queryByRole("status", { name: /could not be queued for sync/ })).not.toBeInTheDocument();
+  expect(screen.queryByText(/could not be queued for sync/)).not.toBeInTheDocument();
   state.capture_failures = { count: 1, codes: { sync_capacity_exhausted: 1 } };
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText("1 local change could not be queued for sync (sync storage is full). They stay on this device."))
@@ -219,4 +231,32 @@ it("reports local writes that could not be queued for sync without claiming succ
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText("3 local changes could not be queued for sync (the item link is not shareable). They stay on this device."))
     .toBeInTheDocument();
+});
+
+it("reports rows the node could not merge into this device's replica", async () => {
+  show();
+  await screen.findByText("No paired devices yet.");
+  expect(screen.queryByText(/could not be merged into the sync replica/)).not.toBeInTheDocument();
+  state.quarantined = [{ scope: "reading", id: "article", code: "sync_dot_conflict" }];
+  state.quarantined_count = 1;
+  await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText(
+    "1 local record could not be merged into the sync replica on this device (conflicting history from a restored backup). They stay in your reading history."))
+    .toBeInTheDocument();
+  state.quarantined = [{ scope: "reading", id: "article", code: "sync_value_invalid" },
+                       { scope: "bookmarks", id: "saved", code: "sync_value_invalid" }];
+  state.quarantined_count = 2;
+  await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByText(
+    "2 local records could not be merged into the sync replica on this device (an unexpected sync error). They stay in your reading history."))
+    .toBeInTheDocument();
+});
+
+it("reports a failed refresh as an error and never as work done on the node", async () => {
+  show();
+  await screen.findByText("No paired devices yet.");
+  vi.spyOn(deviceSyncApi, "status").mockRejectedValueOnce(new Error("status down"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh device status.");
+  expect(screen.queryByText(/Done on the node/)).not.toBeInTheDocument();
 });

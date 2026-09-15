@@ -4,7 +4,7 @@ import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
 import { runThenReload } from "../domain/actThenReload";
-import { captureFailureReason, deviceSyncApi, pairLabels, scopeNames, syncScopes } from "../domain/deviceSync";
+import { captureFailureReason, deviceSyncApi, pairLabels, quarantineReason, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
 
@@ -22,25 +22,27 @@ function Identity({ device }: { device: DeviceIdentity }) {
     <dt>Address</dt><dd>{device.endpoint}</dd></dl>;
 }
 
-const normalizeVerificationCode = (value: string) => value.replace(/[\s-]/g, "").toLowerCase();
-
 function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void> }) {
   const { confirm } = useAppContext();
   const [scopes, setScopes] = useState<SyncScope[]>(pair.status === "awaiting_owner" ? [] : pair.scopes);
   const [enteredCode, setEnteredCode] = useState("");
-  const codeMatches = enteredCode.trim() !== "" && normalizeVerificationCode(enteredCode) === normalizeVerificationCode(pair.verification_code);
+  // The approving device must never display the code it is asking for: showing
+  // it here would turn the check into a copy from this same screen. The owner
+  // reads it off the joining device, and the node decides whether it matches.
+  const approving = pair.status === "awaiting_owner";
   const active = pair.status === "active";
   const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
   const refused = syncScopes.filter((scope) => rejected[scope]);
   return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
-    {pair.status !== "revoked" ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
-    {pair.status === "awaiting_owner" ? <>
+    {pair.status !== "revoked" && !approving ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
+    {approving ? <>
       <p>Only approve a computer you own. Review its identity and choose what may sync in both directions.</p>
+      <p>Read the code from the other computer's My devices screen and type it here. It is not shown on this screen.</p>
       <ScopeChoice label="Allow on this device" value={scopes} onChange={setScopes} allowed={pair.scopes} disabled={busy} />
       <label>Enter the code shown on the other device<input type="text" value={enteredCode} disabled={busy}
         onChange={(event) => setEnteredCode(event.target.value)} /></label>
-      <Button disabled={busy || !codeMatches} onClick={() => void act(() => deviceSyncApi.approve(pair, scopes, enteredCode))}>Approve this device</Button>
+      <Button disabled={busy || enteredCode.trim() === ""} onClick={() => void act(() => deviceSyncApi.approve(pair, scopes, enteredCode))}>Approve this device</Button>
     </> : null}
     {active ? <>
       <p>{pair.paused ? "Paused on this device." : pair.remote_paused ? "Paused on the other device." : "Both devices have confirmed the pairing."}</p>
@@ -101,6 +103,14 @@ export default function Devices() {
     });
     if (mounted.current) setBusy(false);
   };
+  // Refreshing performs no operation on the node, so it must not borrow act()'s
+  // "Done on the node" notice: a failed reload here is simply a failed reload.
+  const refresh = async () => {
+    setBusy(true); setError(""); setNotice("");
+    try { await load(); }
+    catch { if (mounted.current) setError("Could not refresh device status. Check your connection and refresh."); }
+    if (mounted.current) setBusy(false);
+  };
   useEffect(() => {
     mounted.current = true;
     let polling = false;
@@ -120,10 +130,12 @@ export default function Devices() {
     <p>Device pairing is separate from <Link to="/friends">Friends</Link>. It does not grant AI access or copy models, downloaded articles, credentials or friend permissions.</p>
     {status && !status.data_transfer_available ? <Panel><p>Device pairing is available in this development build. Personal data transfer is still being connected; a confirmed pairing does not mean your content has synced.</p></Panel> : null}
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
-    <Button disabled={busy} onClick={() => void act(async () => undefined)}>Refresh devices</Button>
+    <Button disabled={busy} onClick={() => void refresh()}>Refresh devices</Button>
     {status && !status.pairing_available ? <p role="status">A reachable address is needed for new invitations. Check <Link to="/settings">Network settings</Link>. Existing devices can still be removed.</p> : null}
     {status && status.capture_failures.count > 0 ? <p role="status">{status.capture_failures.count} local {status.capture_failures.count === 1 ? "change" : "changes"} could
       not be queued for sync ({captureFailureReason(status.capture_failures.codes)}). They stay on this device.</p> : null}
+    {status && status.quarantined_count > 0 ? <p role="status">{status.quarantined_count} local {status.quarantined_count === 1 ? "record" : "records"} could
+      not be merged into the sync replica on this device ({quarantineReason(status.quarantined)}). They stay in your reading history.</p> : null}
     <div className={styles.grid}>
       <Panel><h2>Invite your other computer</h2><p>One use, valid for 15 minutes. Choose the categories you want to allow in both directions; nothing is selected automatically.</p>
         <ScopeChoice label="Offer to sync" value={offered} onChange={setOffered} disabled={busy || Boolean(invite)} />

@@ -13,9 +13,13 @@ export type DevicePair = { id: string; role: "inviter" | "joiner"; status: strin
   paused: boolean; remote_paused: boolean; revision: number; effective_scopes: SyncScope[]; removal_pending: boolean;
   sync?: { state: string; pending: number | null; last_success_at: number | null; error_code: string; conflicts: number;
     rejected_by_peer: Partial<Record<SyncScope, number>> } };
+export type QuarantinedRow = { scope: string; id: string; code: string };
 export type DeviceStatus = { pairing_available: boolean; reason: string | null; data_transfer_available: boolean;
   devices: DevicePair[]; invites: (Omit<DeviceInvite, "device"> & { status: string; pair_id: string | null })[];
-  capture_failures: { count: number; codes: Partial<Record<string, number>> } };
+  capture_failures: { count: number; codes: Partial<Record<string, number>> };
+  // Rows the node could not merge into this device's own sync replica. The
+  // listing is capped by the node; the count is the true total.
+  quarantined: QuarantinedRow[]; quarantined_count: number };
 export const pairLabels: Record<string, string> = { awaiting_owner: "Review on this device", awaiting_inviter: "Waiting for the other device to approve",
   awaiting_peer: "Waiting for the other device to confirm", awaiting_ack: "Waiting for confirmation receipt",
   active: "Pairing confirmed", expired: "Invitation expired", rejected: "Pairing not accepted", revoked: "Device removed" };
@@ -28,6 +32,17 @@ export function captureFailureReason(codes: Partial<Record<string, number>>): st
   // single-line status message stays readable rather than listing every code.
   const [code] = Object.entries(codes).sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))[0] ?? [];
   return (code && captureFailureReasons[code]) || "an unexpected sync error";
+}
+const quarantineReasons: Record<string, string> = {
+  sync_dot_conflict: "conflicting history from a restored backup",
+};
+export function quarantineReason(rows: QuarantinedRow[]): string {
+  // The node caps the listing, so the reason names the most common code among
+  // the rows it did send rather than claiming to describe every held-back row.
+  const counts: Partial<Record<string, number>> = {};
+  for (const row of rows) counts[row.code] = (counts[row.code] ?? 0) + 1;
+  const [code] = Object.entries(counts).sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))[0] ?? [];
+  return (code && quarantineReasons[code]) || "an unexpected sync error";
 }
 const errors: Record<string, string> = {
   sync_endpoint_unavailable: "This device needs a reachable network address before you can create or accept a new invitation. Check Network settings.",
