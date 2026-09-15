@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import base64
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from rynmesh.crypto import canonical_json
-from rynmesh.friends.crypto import FriendCryptoError, auth_headers, parse_invite, validate_endpoint
+from rynmesh.crypto import canonical_json, sign_payload
+from rynmesh.friends.crypto import (
+    PERMISSIONS,
+    FriendCryptoError,
+    auth_headers,
+    invite_uri,
+    parse_invite,
+    validate_endpoint,
+)
 from rynmesh.friends.service import FriendError, FriendService
 from rynmesh.friends.store import FriendStore
 from rynmesh.services import peer_box
@@ -351,3 +360,111 @@ def test_offline_revoke_is_local_first_and_retries_after_restart(tmp_path) -> No
     assert restarted.retry_revocation(relationship_id) == {"delivered": True}
     assert restarted.store.pending_revocation_secret(relationship_id) is None
     assert alice.store.relationship_for_peer(bob.peer_id) is None
+
+
+def _capture_accept_body(joiner: FriendService, mesh: Mesh, *, block: bool = False) -> dict:
+    """Swap in a post_json that records the join body the joiner puts on the wire."""
+
+    captured: dict = {}
+
+    def capture(endpoint, path, payload, headers, **kwargs):
+        if path == "/api/peer/friends/accept":
+            captured.update(payload)
+            if block:
+                raise OSError("on-path attacker drops the join")
+        return mesh.post(endpoint, path, payload, headers, **kwargs)
+
+    joiner.post_json = capture
+    return captured
+
+
+def test_join_body_never_carries_plaintext_invite_secret(tmp_path) -> None:
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    uri = alice.create_invite()["invite_uri"]
+    _, secret = parse_invite(uri, allow_loopback=True)
+    body = _capture_accept_body(bob, mesh)
+    bob.join(uri)
+
+    assert "invite_secret" not in body
+    assert body["kind"] == "ryn.friend-join.v2"
+    box = body["invite_secret_box"]
+    assert set(box) == {"nonce", "ciphertext"}
+    assert secret not in canonical_json(body)
+    # Only the inviter's messaging key opens the box, and only under its own label.
+    assert peer_box.open_sealed(
+        alice.messaging_private,
+        body["messaging_pub"],
+        box["nonce"],
+        box["ciphertext"],
+        info=b"rynmesh-friend-invite-secret-v1",
+    ) == secret
+
+
+def test_invite_with_an_unusable_messaging_key_fails_the_join_cleanly(tmp_path) -> None:
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    signed, secret = parse_invite(alice.create_invite()["invite_uri"], allow_loopback=True)
+    forged = sign_payload(
+        {**signed.payload, "messaging_pub": base64.b64encode(b"too short").decode("ascii")},
+        private_key_bytes=alice.identity_private,
+    )
+
+    with pytest.raises(FriendError, match="could_not_join_friend"):
+        bob.join(invite_uri(forged, secret))
+    assert bob.list_friends() == []
+
+
+def test_captured_join_cannot_be_replayed_by_another_identity(tmp_path) -> None:
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    carol = _node(tmp_path, "Carol", 18083, mesh)
+    uri = alice.create_invite()["invite_uri"]
+
+    stolen = _capture_accept_body(bob, mesh, block=True)
+    with pytest.raises(FriendError, match="could_not_join_friend"):
+        bob.join(uri)
+    bob.post_json = mesh.post
+    assert stolen and "invite_secret" not in stolen
+
+    forged = {key: value for key, value in stolen.items() if key != "proof"}
+    forged["peer_id"] = carol.peer_id
+    forged["node_name"] = "Carol"
+    forged["endpoint"] = carol.endpoint
+    forged["messaging_pub"] = peer_box.public_key_b64(carol.messaging_private)
+    forged["proof"] = sign_payload(forged, private_key_bytes=carol.identity_private).to_dict()
+    with pytest.raises(FriendError, match="invalid_join"):
+        alice.accept(forged)
+    assert alice.list_friends() == []
+
+    accepted = alice.accept(stolen)
+    assert accepted["receiver"] == bob.peer_id
+    assert [row["peer_id"] for row in alice.list_friends()] == [bob.peer_id]
+
+
+def test_plaintext_invite_secret_is_rejected(tmp_path) -> None:
+    mesh = Mesh()
+    alice = _node(tmp_path, "Alice", 18081, mesh)
+    bob = _node(tmp_path, "Bob", 18082, mesh)
+    signed, secret = parse_invite(alice.create_invite()["invite_uri"], allow_loopback=True)
+
+    legacy = {
+        "kind": "ryn.friend-join.v1",
+        "invite": signed.to_dict(),
+        "invite_secret": base64.urlsafe_b64encode(secret).decode("ascii").rstrip("="),
+        "peer_id": bob.peer_id,
+        "node_name": "Bob",
+        "endpoint": bob.endpoint,
+        "messaging_pub": peer_box.public_key_b64(bob.messaging_private),
+        "created_at": datetime.now(UTC).isoformat(),
+        "timestamp": int(datetime.now(UTC).timestamp()),
+        "nonce": uuid.uuid4().hex,
+        "permissions": list(PERMISSIONS),
+    }
+    legacy["proof"] = sign_payload(legacy, private_key_bytes=bob.identity_private).to_dict()
+    with pytest.raises(FriendError, match="invalid_join"):
+        alice.accept(legacy)
+    assert alice.list_friends() == []

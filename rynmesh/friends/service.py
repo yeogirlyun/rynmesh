@@ -31,6 +31,10 @@ MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 MAX_SHARED_CONTENT_BYTES = 5 * 1024 * 1024
 # The document is base64 inside JSON, then that encrypted JSON is base64 again.
 MAX_SHARED_RESPONSE_BYTES = ((((MAX_SHARED_CONTENT_BYTES + 2) // 3) * 4 + 65536 + 2) // 3) * 4 + 65536
+# The join carries the invite secret sealed to the inviter's messaging key under
+# its own HKDF label, so an on-path attacker who blocks the real join cannot lift
+# the secret out of the body and submit a join of their own.
+INVITE_SECRET_INFO = b"rynmesh-friend-invite-secret-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CARD_ID = re.compile(r"^[0-9a-f]{32}$")
 
@@ -144,10 +148,21 @@ class FriendService:
                     raise FriendError("friend_revoked")
                 return self.public_relationship(prior)
         endpoint = validate_endpoint(str(signed.payload["endpoint"]), allow_loopback=self.allow_loopback)
+        try:
+            secret_nonce, secret_ciphertext = peer_box.seal(
+                self.messaging_private,
+                str(signed.payload["messaging_pub"]),
+                secret,
+                info=INVITE_SECRET_INFO,
+            )
+        except Exception as exc:
+            # A hand-crafted invite can carry an unusable messaging key. That is
+            # a join we cannot make, not a crash for the caller to decode.
+            raise FriendError("could_not_join_friend") from exc
         join_payload = {
-            "kind": "ryn.friend-join.v1",
+            "kind": "ryn.friend-join.v2",
             "invite": signed.to_dict(),
-            "invite_secret": base64.urlsafe_b64encode(secret).decode("ascii").rstrip("="),
+            "invite_secret_box": {"nonce": secret_nonce, "ciphertext": secret_ciphertext},
             "peer_id": self.peer_id,
             "node_name": self.node_name,
             "endpoint": validate_endpoint(self.endpoint, allow_loopback=self.allow_loopback),
@@ -205,7 +220,18 @@ class FriendService:
         try:
             signed_invite = SignedPayload.from_dict(body["invite"])
             verify_signed_payload(signed_invite)
-            secret = base64.urlsafe_b64decode(str(body["invite_secret"]) + "=" * (-len(str(body["invite_secret"])) % 4))
+            if body.get("kind") != "ryn.friend-join.v2" or "invite_secret" in body:
+                raise FriendError("invalid_join")
+            box = body["invite_secret_box"]
+            # Bound to the joiner's messaging key, which the signed proof covers:
+            # a body rewritten under another identity no longer opens.
+            secret = peer_box.open_sealed(
+                self.messaging_private,
+                str(body["messaging_pub"]),
+                str(box["nonce"]),
+                str(box["ciphertext"]),
+                info=INVITE_SECRET_INFO,
+            )
             proof = SignedPayload.from_dict(body["proof"])
             unsigned = {key: value for key, value in body.items() if key != "proof"}
             verify_signed_payload(proof)
