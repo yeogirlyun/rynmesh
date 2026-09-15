@@ -261,7 +261,7 @@ describe("Friend attachments", () => {
   it("downloads and saves an attachment, keeping its object URL alive until the deferred revoke", async () => {
     vi.mocked(friendsApi.history).mockResolvedValue({ messages: [{ msg_id: "m1", dir: "in", from: "alice", to: "me",
       text: "here", attachment: { filename: "photo.png", mime: "image/png", size: 42 } }] });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(["data"]), { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response("data", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const create = vi.fn(() => "blob:friend-attachment");
     vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: create, revokeObjectURL: vi.fn() }));
