@@ -113,6 +113,20 @@ class FriendAISharing:
         except Exception as exc:
             raise FriendError('could_not_join_friend') from exc
 
+    def reconnect(self, uri: str) -> dict:
+        signed, _ = parse_invite(uri, now=self.friends.clock(), allow_loopback=self.friends.allow_loopback)
+        relation, _ = self.friends._relationship(signed.payload['peer_id'])
+        if relation['messaging_pub'] != signed.payload['messaging_pub']:
+            raise FriendError('friend_acceptance_invalid')
+        try:
+            self.catalog().refresh(relation['peer_id'], verified_endpoint=signed.payload['endpoint'])
+        except Exception:
+            raise FriendError('could_not_join_friend') from None
+        current = self.friends.store.relationship(relation['relationship_id'])
+        if not current:
+            raise FriendError('friend_revoked')
+        return self.friends.public_relationship(current)
+
     def before_accept(self, payload: dict, body: dict):
         if payload.get('purpose') != 'ai':
             return

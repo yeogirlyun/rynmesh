@@ -204,6 +204,18 @@ class FriendStore:
                 return deepcopy(record)
         return None
 
+    def update_endpoint(self, reviewed: dict, endpoint: str) -> None:
+        """Commit only a live authenticated peer's address; never replace grants/secrets."""
+        with self._guard():
+            state = self._read(self.state_path, self._empty())
+            current = state['relationships'].get(reviewed['relationship_id'])
+            if (not current or current.get('status') != 'active' or
+                    any(current.get(key) != reviewed.get(key) for key in ('peer_id', 'messaging_pub')) or
+                    current.get('endpoint') not in {reviewed['endpoint'], endpoint}):
+                raise ValueError('friend_revoked')
+            current['endpoint'] = endpoint
+            self._write(self.state_path, state)
+
     def list_relationships(self) -> list[dict[str, Any]]:
         rows = [deepcopy(row) for row in self.state()["relationships"].values() if isinstance(row, dict)]
         return sorted(rows, key=lambda row: str(row.get("created_at", "")), reverse=True)

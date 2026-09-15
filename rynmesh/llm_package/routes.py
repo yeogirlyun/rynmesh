@@ -63,6 +63,7 @@ from .lifecycle import (
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
 from .p2p import IceSignal, P2PCapacityError, P2PError, consumer_exchange, provider_exchange
+from .review import service_review
 from .setup_recovery import (
     RECOVERY_FAILED,
     SetupRecovery,
@@ -111,7 +112,7 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
-    if message in RUNTIME_ERROR_CODES or message == "service_unhealthy":
+    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed"}:
         return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
@@ -353,6 +354,8 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
                 )
+        if "service_review_token" in body and body["service_review_token"] != service_review(self.manifest.public_dict(), own_request=own_request)["token"]:
+            return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_review_changed")
         pricing = self.manifest.pricing
         zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
         if max_amount < 0 or (max_amount == 0 and not own_request and not zero_price):
@@ -1644,6 +1647,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if capacity.get("available") is not None and int(capacity["available"]) < 1:
             raise HTTPException(status_code=409, detail="capacity_exhausted: Provider is busy")
         public_manifest = dict(selected["service"])
+        if "service_review_token" in body and body["service_review_token"] != service_review(public_manifest)["token"]:
+            raise HTTPException(status_code=409, detail="service_review_changed")
         if prompt_format == CHAT_FORMAT and CHAT_FORMAT not in public_manifest.get("capabilities", []):
             raise HTTPException(status_code=409, detail="provider no longer supports the reviewed prompt format")
         try:
@@ -1704,6 +1709,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "prompt": prompt,
             **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
             **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
+            **({"service_review_token": body["service_review_token"]} if "service_review_token" in body else {}),
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
@@ -1770,6 +1776,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                       "service_id": service_id, "prompt": prompt, "max_tokens": max_tokens,
                       **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
                       **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
+                      **({"service_review_token": body["service_review_token"]} if "service_review_token" in body else {}),
                       "max_amount": maximum, "reply_messaging_pub": peer_box.public_key_b64(messaging_key)},
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,

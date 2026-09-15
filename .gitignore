@@ -20,6 +20,7 @@ deploy/llm-e2e/windows-consumer/frpc.toml
 deploy/llm-e2e/windows-consumer/dist/
 deploy/llm-e2e/windows-consumer/build/
 .rynmesh/
+.rynmesh-*.log
 node_modules/
 webapp/node_modules/
 webapp/.vite/

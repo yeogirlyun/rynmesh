@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { friendsApi, invitationText, extractInvite } from "../domain/friendsClient";
+import { friendsApi, invitationText, extractInvite, installationLink } from "../domain/friendsClient";
 import type { FriendInvitePreview, FriendRecord } from "../domain/friendTypes";
 import Friends from "./Friends";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -14,6 +14,9 @@ const friend: FriendRecord = { peer_id: "alice", relationship_id: "r1", node_nam
 const preview: FriendInvitePreview = { ...friend, invite_id: "i1", expires_at: "2026-09-10T00:15:00Z" };
 
 beforeEach(() => {
+  vi.spyOn(friendsApi, "continuation").mockResolvedValue({});
+  vi.spyOn(friendsApi, "saveContinuation").mockResolvedValue({ id: "saved-invitation" });
+  vi.spyOn(friendsApi, "clearContinuation").mockResolvedValue({ cleared: true });
   vi.spyOn(friendsApi, "aiJoins").mockResolvedValue({ operations: [] });
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
   vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
@@ -21,6 +24,48 @@ beforeEach(() => {
   vi.spyOn(friendsApi, "history").mockResolvedValue({ messages: [] });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it("uses a reviewed invitation to repair an existing friend's address without joining or granting", async () => {
+  vi.mocked(friendsApi.list).mockResolvedValue({ friends: [friend] });
+  vi.spyOn(friendsApi, "inspect").mockResolvedValue({ ...preview, endpoint: "http://192.168.1.9:8791" });
+  const reconnect = vi.spyOn(friendsApi, "reconnect").mockResolvedValue({ ...friend, endpoint: "http://192.168.1.9:8791" });
+  const join = vi.spyOn(friendsApi, "join");
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /></MemoryRouter>);
+  await user.type(screen.getByLabelText("Friend invite"), "rynmesh://join/new-address");
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  expect(await screen.findByText(/Keep the original relationship, AI permissions and history/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Update this friend's address" }));
+  await screen.findByText(/Friend address verified and updated/);
+  expect(reconnect).toHaveBeenCalledWith("rynmesh://join/new-address");
+  expect(join).not.toHaveBeenCalled();
+});
+
+it("restores an installed-app invitation for review without accepting it", async () => {
+  vi.mocked(friendsApi.continuation).mockResolvedValue({ id: "restored-id", invite_uri: "rynmesh://join/restored" });
+  const inspect = vi.spyOn(friendsApi, "inspect").mockResolvedValue(preview);
+  const join = vi.spyOn(friendsApi, "join");
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/friends"]}><Friends /></MemoryRouter>);
+  await waitFor(() => expect(screen.getByLabelText("Friend invite")).toHaveValue("rynmesh://join/restored"));
+  expect(screen.getByLabelText("Friend invite")).toHaveFocus();
+  expect(inspect).not.toHaveBeenCalled();
+  expect(join).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Review invite" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel review" }));
+  expect(friendsApi.clearContinuation).toHaveBeenCalledWith("saved-invitation");
+  expect(screen.getByLabelText("Friend invite")).toHaveValue("");
+  expect(join).not.toHaveBeenCalled();
+});
+
+it("keeps invitation capability in a URL fragment and supports paste-link fallback", () => {
+  const result = { invite: preview, invite_uri: "rynmesh://join/signed-data" };
+  const link = installationLink(result);
+  expect(new URL(link).search).toBe("");
+  expect(new URL(link).pathname).toBe("/invite");
+  expect(extractInvite(link)).toBe(result.invite_uri);
+  expect(extractInvite(invitationText(result))).toBe(result.invite_uri);
+});
 
 function LocationProbe() { const location = useLocation(); return <output aria-label="Current route">{location.pathname}{location.search}</output>; }
 const aiPreview: FriendInvitePreview = { ...preview, purpose: "ai", review_token: "review-1", ai: {

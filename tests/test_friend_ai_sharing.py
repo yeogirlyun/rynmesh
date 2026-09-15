@@ -59,6 +59,56 @@ def test_ordinary_invite_never_grants_ai_and_ai_requires_explicit_review(tmp_pat
     assert a.ai_sharing.grants().list() == []
 
 
+@pytest.mark.parametrize('revoked', [False, True])
+def test_reviewed_address_recovery_keeps_relationship_and_permission_revision(tmp_path, revoked):
+    a, b, _, mesh, _ = setup(tmp_path)
+    uri, token, op = invite(a, b)
+    b.ai_sharing.begin(uri, token)
+    rid = b.list_friends()[0]['relationship_id']
+    if revoked:
+        a.ai_sharing.grants().set('model-x', rid, allowed=False, expected_revision=1)
+    grants_before = a.ai_sharing.grants().list()
+    relation_before = b.store.relationship(rid)
+    old_address = a.endpoint
+    a.endpoint = 'http://127.0.0.1:19222'
+    mesh.nodes[a.endpoint] = a
+    mesh.online.add(a.endpoint)
+    mesh.online.remove(old_address)
+    address_invite = a.create_invite()
+    restored = b.ai_sharing.reconnect(address_invite['invite_uri'])
+    assert restored['relationship_id'] == rid and restored['endpoint'] == a.endpoint
+    assert b.store.relationship(rid) == {**relation_before, 'endpoint': a.endpoint}
+    assert a.ai_sharing.grants().list() == grants_before
+    assert len(a.list_friends()) == len(b.list_friends()) == 1
+    assert a.store.state()['invites'][address_invite['invite']['invite_id']]['status'] == 'active'
+    result = b.ai_sharing.resume(op)
+    assert result['error'] == 'ai_invite_revoked' if revoked else result['stage'] == 'complete'
+
+
+def test_address_recovery_rejects_unreachable_or_removed_peer_without_changing_address(tmp_path, monkeypatch):
+    a, b, _, mesh, _ = setup(tmp_path)
+    uri, token, _ = invite(a, b)
+    b.ai_sharing.begin(uri, token)
+    original = b.list_friends()[0]
+    a.endpoint = 'http://127.0.0.1:19222'
+    invitation = a.create_invite()['invite_uri']
+    with pytest.raises(FriendError, match='could_not_join_friend'):
+        b.ai_sharing.reconnect(invitation)
+    assert b.list_friends()[0] == original
+    mesh.nodes[a.endpoint] = a
+    mesh.online.add(a.endpoint)
+    post = b.post_json
+    def revoke_during_response(*args, **kwargs):
+        response = post(*args, **kwargs)
+        b.store.revoke(original['relationship_id'], b.clock().isoformat())
+        return response
+    monkeypatch.setattr(b, 'post_json', revoke_during_response)
+    with pytest.raises(FriendError, match='could_not_join_friend'):
+        b.ai_sharing.reconnect(invitation)
+    saved = b.store.relationship(original['relationship_id'], active_only=False)
+    assert saved['status'] == 'revoked' and saved['endpoint'] == original['endpoint']
+
+
 def test_signed_single_use_operation_survives_response_loss_and_restart(tmp_path, monkeypatch):
     a, b, c, mesh, _ = setup(tmp_path)
     uri, token, op = invite(a, b)

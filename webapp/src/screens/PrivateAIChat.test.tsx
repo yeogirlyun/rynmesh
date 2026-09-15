@@ -12,6 +12,7 @@ beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
 });
 afterEach(() => vi.restoreAllMocks());
+const reviewedService = { token: "reviewed-service", model_alias: "Reviewed model", pricing: { input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 1, currency: "DEV_TASK_BALANCE" } };
 
 function liveHistory() {
   const rows = new Map<string, LLMConversation>();
@@ -27,6 +28,7 @@ function liveHistory() {
   });
   vi.spyOn(askHistory, "preview").mockImplementation(async (row, question) => ({ conversation_id: row.id, revision: row.revision ?? 1,
     provider_peer_id: row.providerPeerId, service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: question, prompt_sha256: "fixture",
+    service_review: reviewedService,
     context_window: 4096, input_token_upper_estimate: question.length, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 0, sources: [] }));
   return vi.spyOn(askHistory, "save").mockImplementation(async (row) => {
     const saved = { ...row, revision: (row.revision ?? 0) + 1 }; rows.set(row.id, saved); return saved;
@@ -61,6 +63,26 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
 }
 
 describe("Private AI chat", () => {
+  it.each(["Provider is offline", "Model is not ready", "Provider is busy"])("preserves the question, focuses %s, and recovers the same service", async (message) => {
+    liveHistory();
+    const { user, confirm, submit } = renderChat("live");
+    await screen.findByRole("heading", { name: "Ask Ryn" });
+    vi.mocked(askHistory.preview).mockRejectedValueOnce(new AskRequestError(409, message));
+    await user.type(screen.getByLabelText("Message Private AI"), "Retain this question");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("alert")).toHaveFocus();
+    expect(screen.getByLabelText("Message Private AI")).toHaveValue("Retain this question");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(askHistory.beginRun).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    await act(() => confirm.mock.calls[0][0].onConfirm());
+    expect(vi.mocked(askHistory.preview).mock.calls.map(([row]) => row.serviceKey)).toEqual([
+      "peer:fixture-llm-provider::fixture-local-llm", "peer:fixture-llm-provider::fixture-local-llm"]);
+    expect(askHistory.beginRun).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled();
+  });
   it("restores a node-owned running task and reads its archived answer after reopening", async () => {
     const save = liveHistory();
     const first = renderChat("live");
@@ -88,18 +110,21 @@ describe("Private AI chat", () => {
       service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: "A verified prompt with bounded untrusted article material", prompt_sha256: "a".repeat(64),
       context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
       ai_permission: { relationship_id: "d".repeat(32), revision: 7 },
+      service_review: reviewedService,
       sources: [{ library_id: "import:imp_" + "b".repeat(64), title: "Article", source_url: "https://example.test/article", sha256: "c".repeat(64), extraction_truncated: false,
         text_bytes: 10000, source_number: 1, included_bytes: 1000, budget_truncated: true }] }));
     await user.type(screen.getByLabelText("Message Private AI"), "Summarize this article");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     const review = confirm.mock.calls[0][0];
-    expect(review.details[0]).toEqual({ label: "Question", value: "Summarize this article" });
-    expect(review.details[1].value).toContain("TRUNCATED");
+    expect(review.title).toBe("Send to Reviewed model?");
+    expect(review.details[0].value).toContain("0 input / 0 output");
+    expect(review.details[1]).toEqual({ label: "Question", value: "Summarize this article" });
+    expect(review.details[2].value).toContain("TRUNCATED");
     expect(review.body).toContain("3 older history messages omitted");
     expect(submit).not.toHaveBeenCalled();
     await act(() => review.onConfirm());
-    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ prompt_sha256: "a".repeat(64), question: "Summarize this article", ai_permission: { relationship_id: "d".repeat(32), revision: 7 } }));
+    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ service_review_token: reviewedService.token, prompt_sha256: "a".repeat(64), question: "Summarize this article", ai_permission: { relationship_id: "d".repeat(32), revision: 7 } }));
     expect(submit).not.toHaveBeenCalled();
     expect(await screen.findByText("An answer with [1].")).toBeInTheDocument();
     expect(screen.getByText("Sources supplied for this answer")).toBeInTheDocument();

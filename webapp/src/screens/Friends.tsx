@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import type { AIJoinOperation, FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
-import { aiJoinExplanation, extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
+import { aiJoinExplanation, extractInvite, friendsApi, installationLink, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
 import FriendCards from "./components/FriendCards";
 import FriendAI from "./components/FriendAI";
@@ -23,12 +23,15 @@ export default function Friends() {
   const [operations, setOperations] = useState<AIJoinOperation[]>([]);
   const errorFocus = useRef<HTMLDivElement>(null);
   const reviewFocus = useRef<HTMLHeadingElement>(null);
+  const continuationId = useRef("");
+  const pasteFocus = useRef<HTMLTextAreaElement>(null);
   const revision = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const reconnecting = review?.preview.purpose !== "ai" && friends.some((friend) => friend.status === "active" && friend.peer_id === review?.preview.peer_id);
   const load = useCallback(async () => {
     const [result, invitations, joins] = await Promise.all([friendsApi.list(), friendsApi.invites(), friendsApi.aiJoins()]);
     setOperations(joins.operations);
@@ -40,12 +43,28 @@ export default function Friends() {
   }, []);
   useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
   useEffect(() => { if (review) reviewFocus.current?.focus(); }, [review]);
+  useEffect(() => {
+    let active = true;
+    const version = revision.current;
+    void friendsApi.continuation().then((saved) => {
+      if (active && saved.invite_uri && version === revision.current) {
+        continuationId.current = saved.id ?? "";
+        setPaste(saved.invite_uri); setNotice("Your saved invitation is ready. Review it before accepting.");
+        pasteFocus.current?.focus();
+      }
+    }).catch(() => { if (active) setNotice("Saved invitation could not be loaded. Paste your original invitation to continue."); });
+    return () => { active = false; };
+  }, []);
+  const clearContinuation = async () => {
+    if (continuationId.current) await friendsApi.clearContinuation(continuationId.current);
+    continuationId.current = "";
+  };
   const finishAI = async (operation: AIJoinOperation) => {
     await load();
     if (operation.stage !== "complete" || operation.error) {
       throw new Error(`${aiJoinExplanation(operation.error ?? "ai_grant_pending")} Operation ${operation.operation_id} is saved.`);
     }
-    setPaste(""); setReview(null);
+    await clearContinuation(); setPaste(""); setReview(null);
     navigate(`/ask?${new URLSearchParams({ peer: operation.peer_id, service: operation.service_id, network: operation.network_id })}`);
   };
   const act = async (operation: () => Promise<void>) => {
@@ -71,7 +90,7 @@ export default function Friends() {
   useEffect(() => {
     let active = true;
     setQr("");
-    if (invite) void QRCode.toDataURL(invite.invite_uri, { width: 512, margin: 4 })
+    if (invite) void QRCode.toDataURL(installationLink(invite), { width: 512, margin: 4 })
       .then((value) => { if (active) setQr(value); })
       .catch(() => { if (active) setNotice("QR code unavailable. Copy the invitation instead."); });
     return () => { active = false; };
@@ -99,15 +118,16 @@ export default function Friends() {
       </Panel>
       <Panel className={styles.actionCard}>
         <h2>Use an invite</h2>
-        <textarea className={styles.paste} aria-label="Friend invite" value={paste} onChange={(event) => { revision.current += 1; setPaste(event.target.value); setReview(null); }} placeholder="Paste the invitation here" />
+        <textarea ref={pasteFocus} className={styles.paste} aria-label="Friend invite" value={paste} onChange={(event) => { revision.current += 1; setPaste(event.target.value); setReview(null); }} placeholder="Paste the invitation or installation link here" />
         {!review ? <Button disabled={busy || !paste.trim()} onClick={() => void act(async () => {
           const version = revision.current; const uri = extractInvite(paste);
+          continuationId.current = (await friendsApi.saveContinuation(uri)).id;
           const preview = await friendsApi.inspect(uri);
           if (version === revision.current) setReview({ uri, preview });
         })}>Review invite</Button> : <div className={styles.review}>
           <h3 ref={reviewFocus} tabIndex={-1}>{review.preview.purpose === "ai" ? "Review this friend's AI" : "Review friend invitation"}</h3>
           <strong>{review.preview.purpose === "ai" ? "Provider signature checked. Current AI details confirmed with their device." : "Signature checked locally. Your friend has not been contacted."}</strong>
-          <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards{review.preview.purpose === "ai" ? ", and this AI service only" : ""}</dd><dt>Stays off</dt><dd>{review.preview.purpose === "ai" ? "Other AI services, VPN, access to your files and credits" : "AI, VPN, access to your files and credits"}</dd></dl>
+          <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd>{reconnecting ? <><dt>Existing friend</dt><dd>Verify this device at its new address. Keep the original relationship, AI permissions and history. This does not accept a new invitation or restore revoked access.</dd></> : <><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards{review.preview.purpose === "ai" ? ", and this AI service only" : ""}</dd><dt>Stays off</dt><dd>{review.preview.purpose === "ai" ? "Other AI services, VPN, access to your files and credits" : "AI, VPN, access to your files and credits"}</dd></>}</dl>
           {review.preview.ai ? <div><p>Model: {review.preview.ai.service.model_alias} · {review.preview.ai.ready ? review.preview.ai.busy ? "Busy" : "Model ready" : "Model not ready"} · {review.preview.ai.sharing ? "Sharing enabled" : "Sharing paused"}</p>
             <p>Your questions go to {review.preview.node_name}'s device. No model download or API key is needed here.</p>
             <p>{review.preview.ai.service.pricing ? `Development Task Balance: input ${review.preview.ai.service.pricing.input_per_1k}/1k tokens, output ${review.preview.ai.service.pricing.output_per_1k}/1k, minimum ${review.preview.ai.service.pricing.minimum}, maximum per task ${review.preview.ai.service.pricing.maximum_per_task}. This is not RMB billing.` : "Price unknown. Do not send a question until the actual price is confirmed."}</p>
@@ -119,11 +139,12 @@ export default function Friends() {
               return;
             }
             const version = revision.current;
-            const friend = await friendsApi.join(review.uri);
+            const friend = await (reconnecting ? friendsApi.reconnect(review.uri) : friendsApi.join(review.uri));
+            await clearContinuation();
             if (version === revision.current) { setPaste(""); setReview(null); }
-            setSelected(friend.peer_id); setNotice("Friend added. Send your first message below."); await load();
-          })}>{review.preview.purpose === "ai" ? "Accept and start chatting" : "Add this friend"}</Button>
-          <Button disabled={busy} onClick={() => { setReview(null); setPaste(""); setNotice("Review cancelled. No acceptance was submitted."); }}>Cancel review</Button>
+            setSelected(friend.peer_id); setNotice(reconnecting ? "Friend address verified and updated. Original permissions and history kept. Open their AI below to continue." : "Friend added. Send your first message below."); await load();
+          })}>{review.preview.purpose === "ai" ? "Accept and start chatting" : reconnecting ? "Update this friend's address" : "Add this friend"}</Button>
+          <Button disabled={busy} onClick={() => void act(async () => { await clearContinuation(); setReview(null); setPaste(""); setNotice("Review cancelled. No acceptance was submitted."); })}>Cancel review</Button>
         </div>}
       </Panel>
     </div>

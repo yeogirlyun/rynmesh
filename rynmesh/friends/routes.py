@@ -166,6 +166,54 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         control(request)
         return {'operations': await call(current().ai_sharing.operations)}
 
+    def continuation():
+        from .continuation import InvitationContinuation
+        return InvitationContinuation(current().home, allow_loopback=current().allow_loopback)
+
+    @app.get('/api/local/friends/continuation')
+    async def get_continuation(request: Request):
+        control(request)
+        return await call(continuation().get)
+
+    @app.put('/api/local/friends/continuation')
+    async def save_continuation(request: Request):
+        control(request)
+        body = await _body(request, 24576)
+        return await call(continuation().save, str(body.get('invite_uri', '')))
+
+    @app.delete('/api/local/friends/continuation')
+    async def clear_continuation(request: Request):
+        control(request)
+        body = await _body(request, 4096)
+        return {'cleared': await call(continuation().clear, str(body.get('id', '')))}
+
+    def installer_path():
+        import sys
+        configured = os.environ.get('RYNMESH_WINDOWS_INSTALLER', '')
+        return Path(configured) if configured else Path(sys.executable).parent / 'Ryn-Setup.exe'
+
+    @app.get('/downloads/availability')
+    def installer_available():
+        return {'windows': installer_path().is_file()}
+
+    @app.get('/downloads/Ryn-Setup.exe')
+    def windows_installer():
+        from fastapi.responses import FileResponse
+        path = installer_path()
+        if not path.is_file():
+            raise HTTPException(404, detail='Windows installer is not available from this provider.')
+        return FileResponse(path, filename='Ryn-Setup.exe', media_type='application/octet-stream', headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+    @app.get('/invite')
+    @app.get('/invite.js')
+    def invitation_landing(request: Request):
+        from fastapi.responses import FileResponse
+        script = request.url.path.endswith('.js')
+        return FileResponse(Path(__file__).with_name('invitation.js' if script else 'invitation.html'),
+            media_type='text/javascript' if script else 'text/html', headers={
+                'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"})
+
     @app.post('/api/local/friends/ai-joins')
     async def begin_ai_join(request: Request):
         control(request)
@@ -203,6 +251,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def cancel(invite_id: str, request: Request):
         control(request)
         return await call(current().cancel_invite, invite_id)
+
+    @app.post('/api/local/friends/reconnect')
+    async def reconnect(request: Request):
+        control(request)
+        body = await _body(request, 24576)
+        return await call(current().ai_sharing.reconnect, str(body.get('invite_uri', '')))
 
     @app.post("/api/local/friends/join")
     async def join(request: Request):

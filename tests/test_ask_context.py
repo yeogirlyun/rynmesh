@@ -20,6 +20,18 @@ def setup(tmp_path, text="A verified article body.", window=4096):
     return service, conversation, imports
 
 
+@pytest.mark.parametrize("state,code", [({"online": False}, "ask_provider_unavailable"), ({"ready": False}, "ask_provider_not_ready"), ({"capacity": {"available": 0}}, "ask_provider_busy")])
+def test_unavailable_original_service_can_recover_without_switching(tmp_path, state, code):
+    service, conversation, _ = setup(tmp_path)
+    records = service.catalog("network")
+    service.catalog = lambda _: [{**records[0], **state}]
+    with pytest.raises(ConversationError, match=code):
+        service.preview(conversation, "Keep this question")
+    service.catalog = lambda _: records
+    restored = service.preview(conversation, "Keep this question")
+    assert restored["provider_peer_id"] == "provider" and restored["service_id"] == "model"
+
+
 def test_prepared_material_is_local_verified_and_budgeted(tmp_path):
     service, conversation, _ = setup(tmp_path)
     source = service.prepare("already-read-item")

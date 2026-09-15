@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from ..friends.service import FriendError
 from ..llm_package.chat_prompt import CHAT_FORMAT
+from ..llm_package.review import service_review
 from .store import ConversationError
 
 SYSTEM_RESERVE = 1024
@@ -64,6 +65,12 @@ class AskContextService:
         selected = next((row for row in records if row.get("peer_id") == conversation["providerPeerId"] and (row.get("service") or {}).get("package_id") == service_id), None)
         if not selected:
             raise ConversationError("ask_provider_unavailable")
+        if selected.get("ready") is False or (selected.get("health") or {}).get("ok") is False:
+            raise ConversationError("ask_provider_not_ready")
+        if selected.get("online") is False:
+            raise ConversationError("ask_provider_unavailable")
+        if (selected.get("capacity") or {}).get("available") is not None and int(selected["capacity"]["available"]) < 1:
+            raise ConversationError("ask_provider_busy")
         manifest = selected.get("service") or {}
         structured = CHAT_FORMAT in manifest.get("capabilities", [])
         context_window, maximum_output = manifest.get("context_window"), manifest.get("max_output_tokens")
@@ -125,6 +132,7 @@ class AskContextService:
                 "provider_peer_id": conversation["providerPeerId"], "service_id": service_id,
                 "prompt": prepared_prompt, "prompt_sha256": hashlib.sha256(prepared_prompt.encode()).hexdigest(),
                 "prompt_format": CHAT_FORMAT if structured else "text",
+                "service_review": service_review(manifest),
                 **({"ai_permission": selected["ai_permission"]} if selected.get("ai_permission") else {}),
                 "context_window": context_window, "input_token_upper_estimate": len(prepared_prompt.encode()),
                 "framing_reserve": SYSTEM_RESERVE, "max_output_tokens": output_tokens,

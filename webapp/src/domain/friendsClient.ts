@@ -60,6 +60,9 @@ export const friendsApi = {
   list: () => request<{ friends: FriendRecord[] }>(""),
   invites: () => request<{ invites: (FriendInvitePreview & { status: string })[] }>("/invites"),
   createInvite: () => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15 }),
+  continuation: () => request<{ id?: string; invite_uri?: string }>("/continuation"),
+  saveContinuation: (invite_uri: string) => request<{ id: string }>("/continuation", "PUT", { invite_uri }),
+  clearContinuation: (id: string) => request<{ cleared: boolean }>("/continuation", "DELETE", { id }),
   createAIInvite: (service_id: string) => request<FriendInviteResult>("/invites", "POST", { purpose: "ai", service_id }),
   aiJoins: () => request<{ operations: AIJoinOperation[] }>("/ai-joins"),
   beginAIJoin: (invite_uri: string, review_token: string) => request<AIJoinOperation>("/ai-joins", "POST", { invite_uri, review_token }),
@@ -68,6 +71,7 @@ export const friendsApi = {
   abandonAIJoin: (id: string) => request<AIJoinOperation>(`/ai-joins/${encodeURIComponent(id)}`, "DELETE"),
   inspect: (invite_uri: string) => request<FriendInvitePreview>("/invites/inspect", "POST", { invite_uri }),
   join: (invite_uri: string) => request<FriendRecord>("/join", "POST", { invite_uri }),
+  reconnect: (invite_uri: string) => request<FriendRecord>("/reconnect", "POST", { invite_uri }),
   cancel: (id: string) => request(`/invites/${encodeURIComponent(id)}`, "DELETE"),
   revoke: (id: string) => request(`/${encodeURIComponent(id)}`, "DELETE"),
   retryRevocation: (id: string) => request(`/${encodeURIComponent(id)}/retry-revocation`, "POST"),
@@ -86,12 +90,18 @@ export const friendsApi = {
   attachmentUrl: (peer: string, message: string) => nodeControlUrl(`/friends/${encodeURIComponent(peer)}/attachments/${encodeURIComponent(message)}`),
 };
 
+export function installationLink(invite: FriendInviteResult): string {
+  return `${invite.invite.endpoint}/invite#${encodeURIComponent(invite.invite_uri)}`;
+}
+
 export function invitationText(invite: FriendInviteResult): string {
-  if (invite.invite.purpose === "ai") return `${invite.invite.node_name} invites you to use ${invite.invite.ai?.service.model_alias} on their device. No model download or API key is needed on your device. Keep this invitation private: the first person who accepts gets this AI's permission.\nOpen Ryn → Friends, paste this invitation, review the provider and actual price, then choose Accept and start chatting.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only.\n\n${invite.invite_uri}`;
-  return `Join me on Ryn.\nInstall or open Ryn: https://github.com/yeogirlyun/rynmesh/releases/latest\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;
+  if (invite.invite.purpose === "ai") return `${invite.invite.node_name} invites you to use ${invite.invite.ai?.service.model_alias} on their device. No model download or API key is needed on your device. Keep this invitation private: the first person who accepts gets this AI's permission.\nInstall or open Ryn for Windows: ${installationLink(invite)}\nOpen Ryn → Friends, paste this invitation, review the provider and actual price, then choose Accept and start chatting.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask for a new invitation.\n\n${invite.invite_uri}`;
+  return `Join me on Ryn.\nInstall or open Ryn for Windows: ${installationLink(invite)}\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;
 }
 
 export function extractInvite(text: string): string {
+  const link = text.trim().match(/^https?:\/\/[^\s]+\/invite#([^\s]+)$/);
+  if (link) return decodeURIComponent(link[1]);
   return text.match(/rynmesh:\/\/[^\s]+/)?.[0] ?? text.trim();
 }
 

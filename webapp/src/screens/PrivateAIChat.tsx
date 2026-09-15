@@ -94,6 +94,8 @@ export default function PrivateAIChat() {
   const [activeTaskId, setActiveTaskId] = useState("");
   const [unconfirmed, setUnconfirmed] = useState<AskRunRequest | null>(null);
   const [error, setError] = useState("");
+  const errorFocus = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
   const [storageMode, setStorageMode] = useState<"node-encrypted" | "encrypted" | "session-only">("node-encrypted");
   const [migrationNotice, setMigrationNotice] = useState("");
   const [helpfulMessages, setHelpfulMessages] = useState<Set<string>>(new Set());
@@ -313,6 +315,7 @@ export default function PrivateAIChat() {
       cancelRequestedRef.current = false;
       return submitReviewed({ task_id: "task_" + crypto.randomUUID().replaceAll("-", ""), conversation_id: preview.conversation_id,
         expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256,
+        service_review_token: preview.service_review.token,
         ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}) });
     }
     if (!conversation) {
@@ -441,9 +444,10 @@ export default function PrivateAIChat() {
     setReviewing(true); setError("");
     try {
       const preview = await askHistory.preview(selectedConversation, question);
-      confirm({ title: `Send to ${selectedService.service.model_alias}?`, risk: "medium", confirmLabel: "Send reviewed question",
+      const price = preview.service_review.pricing;
+      confirm({ title: `Send to ${preview.service_review.model_alias}?`, risk: "medium", confirmLabel: "Send reviewed question",
         body: `Recipient: ${preview.provider_peer_id}. Conservative input estimate ${preview.input_token_upper_estimate}, framing reserve ${preview.framing_reserve}, output reserve ${preview.max_output_tokens}, context window ${preview.context_window}. ${preview.history_messages_omitted} older history messages omitted.${preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."}`,
-        details: [{ label: "Question", value: question }, ...preview.sources.map((source) => ({ label: `Source ${source.source_number}: ${source.title}`, value: `${source.source_url || "Private local document"} · ${source.included_bytes}/${source.text_bytes} bytes${source.budget_truncated || source.extraction_truncated ? " · TRUNCATED" : ""}` }))],
+        details: [{ label: "Price", value: `${price.input_per_1k} input / ${price.output_per_1k} output per 1,000 tokens; minimum ${price.minimum}; task limit ${price.maximum_per_task} Development Task Balance (${price.currency}).` }, { label: "Question", value: question }, ...preview.sources.map((source) => ({ label: `Source ${source.source_number}: ${source.title}`, value: `${source.source_url || "Private local document"} · ${source.included_bytes}/${source.text_bytes} bytes${source.budget_truncated || source.extraction_truncated ? " · TRUNCATED" : ""}` }))],
         onConfirm: () => runPrompt(question, preview),
       });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not prepare the send review."); }
@@ -458,9 +462,11 @@ export default function PrivateAIChat() {
         <Bot size={28} />
         <h3>The selected provider is unavailable</h3>
         <p>Your conversation remains bound to its original provider. Choose another service to start a separate conversation.</p>
+        <p>If your friend's address changed, ask for a new ordinary friend invitation and review it in Friends to update their address. Your original permissions and history stay in place.</p>
+        <Link to="/friends">Review an updated friend address</Link>
         <Link to={searchParams.get("conversation") ? `/ask?conversation=${encodeURIComponent(searchParams.get("conversation")!)}&network=${encodeURIComponent(networkId)}` : "/ask"}>View history and choose a service</Link>
         <Link to="/services/manage">Set up a local model</Link>
-        {error ? <p role="alert">{error}</p> : null}
+        {error ? <div ref={errorFocus} tabIndex={-1} role="alert">{error}</div> : null}
       </div>
     );
   }
@@ -580,7 +586,7 @@ export default function PrivateAIChat() {
 
         <div className={styles.composerWrap}>
           {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async (id) => { await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter((value) => value !== id) }, false); }} /> : null}
-          {error ? <div className={styles.error} role="alert">{error}</div> : null}
+          {error ? <div ref={errorFocus} tabIndex={-1} className={styles.error} role="alert">{error}</div> : null}
           {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
           {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.
             <button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button>

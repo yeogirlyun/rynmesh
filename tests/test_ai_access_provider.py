@@ -66,11 +66,13 @@ def fixture(tmp_path):
     app.state.ai_access.recheck = service.recheck_permissions
     client = TestClient(app)
 
-    def request(task_id, *, revision=None, sender=friend, service_id="model-x", max_amount=1):
+    def request(task_id, *, revision=None, sender=friend, service_id="model-x", max_amount=1, review_token=None):
         body = {"task_id": task_id, "service_id": service_id, "prompt": "question", "max_tokens": 8, "max_amount": max_amount,
                 "reply_messaging_pub": peer_box.public_key_b64(fkey)}
         if revision is not None:
             body["ai_permission"] = {"relationship_id": RID, "revision": revision}
+        if review_token is not None:
+            body["service_review_token"] = review_token
         return seal_task(body=body, task_id=task_id, kind="llm_request", sender_peer_id=sender.peer_id,
             recipient_peer_id=provider.peer_id, sender_signing_key=sender.private_key_bytes,
             recipient_messaging_pub=peer_box.public_key_b64(pkey),
@@ -81,6 +83,23 @@ def fixture(tmp_path):
                          recipient_messaging_key=fkey, expected_kind="llm_response")[1]
 
     return service, manager, model, client, grants, relationships, friend, stranger, request, result
+
+
+def test_provider_rechecks_review_after_discovery_before_compute(tmp_path):
+    from dataclasses import replace
+
+    from rynmesh.llm_package.review import service_review
+
+    service, _, model, _, grants, _, _, _, request, result = fixture(tmp_path)
+    grants.set("model-x", RID, allowed=True, expected_revision=0)
+    model.supports_chat_messages = True
+    token = service_review(service.public_status()["service"])["token"]
+    service.manifest = replace(service.manifest, model_fingerprint="changed-model")
+    rejected = result(request("changed-model", revision=1, review_token=token))
+    assert rejected["error_code"] == "service_review_changed" and model.calls == 0
+    token = service_review(service.public_status()["service"])["token"]
+    assert result(request("reviewed-model", revision=1, review_token=token))["state"] == "succeeded"
+    assert model.calls == 1
 
 
 def test_authorized_zero_price_friend_needs_no_hold_but_paid_work_does(tmp_path):
