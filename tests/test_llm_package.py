@@ -47,6 +47,7 @@ from rynmesh.llm_package.p2p import (
 )
 from rynmesh.llm_package.routes import (
     ProviderService,
+    _background_order_expired,
     _delivery_error_code,
     _open_provider_response,
     _recover_consumer_orders,
@@ -915,6 +916,10 @@ def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, ope
             task_id="history_cleanup", state="succeeded",
             encrypted_response={"ciphertext": "encrypted-only"},
         )
+        # A succeeded, unacknowledged answer survives a retention-0 purge
+        # until the ask worker archives it (see _awaiting_archive); simulate
+        # that archival so this purge test still exercises the purge path.
+        history_store.mark_acknowledged("history_cleanup")
         privacy = client.put("/api/local/llm/privacy", json={
             "result_retention_seconds": 0,
         })
@@ -1811,6 +1816,76 @@ def test_task_store_prunes_expired_terminal_records(tmp_path):
     assert removed == 1
     assert store.get("old") is None
     assert store.get("new") is not None
+
+
+def test_retention_zero_keeps_unacknowledged_success_until_ack(tmp_path):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    with TestClient(app) as client:
+        orders = TaskOrderStore(home / "llm" / "consumer-orders")
+        orders.claim(task_id="paid_answer", bindings={"request": "test"})
+        orders.transition(task_id="paid_answer", state="accepted")
+        orders.transition(task_id="paid_answer", state="running")
+        orders.transition(
+            task_id="paid_answer", state="succeeded",
+            encrypted_response={"ciphertext": "encrypted-only"},
+        )
+
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" in orders.get("paid_answer")
+
+        orders.mark_acknowledged("paid_answer")
+        assert orders.get("paid_answer")["acknowledged_at"]
+
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" not in orders.get("paid_answer")
+
+
+def test_expiry_sweep_skips_unacknowledged_success_within_bound(tmp_path):
+    store = TaskOrderStore(tmp_path / "orders")
+    store.claim(task_id="paid_answer", bindings={"request": "test"})
+    store.transition(task_id="paid_answer", state="accepted")
+    store.transition(task_id="paid_answer", state="running")
+    store.transition(
+        task_id="paid_answer", state="succeeded",
+        metadata={"response_expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+        encrypted_response={"ciphertext": "encrypted-only"},
+    )
+
+    assert store.purge_expired_responses() == 0
+    assert "encrypted_response" in store.get("paid_answer")
+
+    path = tmp_path / "orders" / "paid_answer.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    for event in record["history"]:
+        if event.get("state") == "succeeded":
+            event["at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert store.purge_expired_responses() == 1
+    assert "encrypted_response" not in store.get("paid_answer")
+
+
+def test_background_prune_keeps_unacknowledged_ephemeral_success():
+    # _prune_background_orders is a private closure over routes.py's
+    # in-memory dict; its cutoff decision is a pure predicate so it can be
+    # exercised directly without reaching into that closure's state.
+    now = time.time()
+    surviving_success = {"ephemeral": True, "state": "succeeded", "_recorded_at": now - 1000}
+    dropped_failure = {"ephemeral": True, "state": "failed", "_recorded_at": now - 1000}
+    assert _background_order_expired(surviving_success, now) is False
+    assert _background_order_expired(dropped_failure, now) is True
+    # Both cutoffs still apply eventually.
+    assert _background_order_expired(surviving_success, now + 86401) is True
+    assert _background_order_expired(dropped_failure, now + 901) is True
 
 
 class _PacketConnection:

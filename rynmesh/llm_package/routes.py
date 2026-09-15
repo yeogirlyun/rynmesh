@@ -74,6 +74,7 @@ from .task_protocol import (
     TERMINAL_STATES,
     TaskOrderStore,
     TaskProtocolError,
+    _awaiting_archive,
     open_task,
     seal_task,
 )
@@ -126,6 +127,26 @@ def _submission_error_code(detail: str) -> str:
 
 def _expires(seconds: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+# An unacknowledged retention-0 success lives only in the ephemeral
+# background_orders map (its encrypted_response is never persisted), so it
+# gets a longer cutoff to survive an ask-worker error-backoff delay; every
+# other entry (failures, cancellations, and any success already popped by
+# acknowledge_result) keeps the ordinary short cutoff.
+_BACKGROUND_ORDER_CUTOFF_SECONDS = 900
+_BACKGROUND_UNACKNOWLEDGED_SUCCESS_CUTOFF_SECONDS = 86400
+
+
+def _background_order_expired(entry: dict[str, Any], now: float) -> bool:
+    if "_recorded_at" not in entry:
+        return False
+    cutoff = (
+        _BACKGROUND_UNACKNOWLEDGED_SUCCESS_CUTOFF_SECONDS
+        if entry.get("ephemeral") and entry.get("state") == "succeeded"
+        else _BACKGROUND_ORDER_CUTOFF_SECONDS
+    )
+    return float(entry.get("_recorded_at") or 0) < now - cutoff
 
 
 def _price(manifest: LLMPackageManifest, input_tokens: int, output_tokens: int) -> float:
@@ -1578,13 +1599,23 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     @app.put("/api/local/llm/privacy")
     async def local_llm_privacy_update(request: Request) -> dict[str, Any]:
+        """Set retained-result lifetime; a retention of 0 purges every order's
+        stored encrypted_response immediately, EXCEPT a succeeded order the
+        ask worker has not yet archived (no acknowledged_at) — that response
+        is kept so a paid answer is never silently downgraded to a failure,
+        up to a hard 7-day ceiling from completion (see _awaiting_archive)."""
         value = int(dict(await request.json()).get("result_retention_seconds") or 0)
         if value not in {0, 3600, 86400, 604800}:
             raise HTTPException(status_code=400, detail="unsupported result retention period")
         write_consumer_settings({"result_retention_seconds": value})
         if value == 0:
+            now = datetime.now(timezone.utc)
             for order in consumer_orders.list():
-                consumer_orders.purge_encrypted_response(str(order["task_id"]))
+                task_id = str(order["task_id"])
+                record = consumer_orders.get(task_id) or order
+                if _awaiting_archive(record, now):
+                    continue
+                consumer_orders.purge_encrypted_response(task_id)
         return local_llm_privacy()
 
     @app.delete("/api/local/llm/orders")
@@ -2023,11 +2054,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     def _prune_background_orders() -> None:
         """Drop stale terminal entries; without this, rejected submissions and
         retention=0 results (each keyed by a fresh task uuid) accumulate for
-        the process lifetime. Caller holds background_orders_lock."""
-        cutoff = time.time() - 900
+        the process lifetime. An unacknowledged retention-0 success gets a
+        longer cutoff (see _background_order_expired) so it survives until
+        the ask worker archives it. Caller holds background_orders_lock."""
+        now = time.time()
         for key in [k for k, v in background_orders.items()
-                    if isinstance(v, dict) and float(v.get("_recorded_at") or 0) < cutoff
-                    and "_recorded_at" in v]:
+                    if isinstance(v, dict) and _background_order_expired(v, now)]:
             background_orders.pop(key, None)
 
     @app.post("/api/local/llm/orders/async")
@@ -2223,6 +2255,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             prior = background_orders.get(task_id)
             if prior and prior.get("ephemeral"):
                 background_orders.pop(task_id, None)
+        consumer_orders.mark_acknowledged(task_id)
 
     def erase_results(task_ids):
         from .privacy import erase_consumer_results
