@@ -83,13 +83,18 @@ class ReplicaStore:
 
     @staticmethod
     def _quarantine(data):
-        """Validate the optional section naming rows this replica could not merge."""
+        """Validate the optional section naming rows this replica could not merge.
+
+        Each entry carries its own scope and ID so a row rejected on its first
+        import - one this replica holds no record for - stays projectable.
+        """
         section = data.get('quarantine', {})
         if not isinstance(section, dict) or len(section) > MAX_ENTITIES:
             raise ValueError
         for key, entry in section.items():
-            records.actor_id(key)
-            if not isinstance(entry, dict) or set(entry) != {'code', 'revision'} or entry['code'] not in PER_ROW:
+            if not isinstance(entry, dict) or set(entry) != {'scope', 'id', 'code', 'revision'} or entry['code'] not in PER_ROW:
+                raise ValueError
+            if key != records.entity_key(entry['scope'], entry['id']):
                 raise ValueError
             records.actor_id(entry['revision'])
 
@@ -246,30 +251,44 @@ class ReplicaStore:
                 if str(exc) not in PER_ROW:
                     raise
                 if collect_receipts:
+                    # The receipt branch serves ReplicaStore.receive, the
+                    # replica-only import; production wire batches answer
+                    # through transfer._receive against the source bridges.
                     receipts.append({'scope': row['scope'], 'id': row['id'],
                                      'revision': records.fingerprint(row['record']), 'rejected': str(exc)})
                 else:
-                    data.setdefault('quarantine', {})[key] = {'code': str(exc), 'revision': records.fingerprint(row['record'])}
+                    data.setdefault('quarantine', {})[key] = {'scope': row['scope'], 'id': row['id'],
+                                                              'code': str(exc), 'revision': records.fingerprint(row['record'])}
                 continue
             data['records'][key] = {**data['records'].get(key, {}), **row, 'record': merged}
-            if data.get('quarantine', {}).pop(key, None) and not data['quarantine']:
-                data.pop('quarantine')
+            data.get('quarantine', {}).pop(key, None)
             if collect_receipts:
                 receipts.append({'scope': row['scope'], 'id': row['id'], 'revision': records.fingerprint(row['record'])})
+        if not collect_receipts:
+            self._evict(data, selected, seen)
+        if 'quarantine' in data and not data['quarantine']:
+            data.pop('quarantine')
         return receipts
+
+    @staticmethod
+    def _evict(data, selected, seen):
+        """Drop quarantined rows the source no longer holds.
+
+        A collect_receipts=False import is the whole source snapshot for the
+        selected scopes, so a quarantined key missing from it was deleted
+        locally and must not be reported or retained forever.
+        """
+        section = data.get('quarantine', {})
+        for key in [key for key, entry in section.items() if entry['scope'] in selected and key not in seen]:
+            del section[key]
 
     def status(self):
         """Bounded projection of the rows this replica could not merge locally."""
         with file_transaction(self.lock):
             _, data = self._read()
-            rows = []
-            for key, entry in sorted(data.get('quarantine', {}).items()):
-                row = data['records'].get(key)
-                if row is not None:
-                    rows.append({'scope': row['scope'], 'id': row['id'], 'code': entry['code']})
-                if len(rows) >= MAX_BATCH:
-                    break
-            return {'quarantined': rows}
+            rows = [{'scope': entry['scope'], 'id': entry['id'], 'code': entry['code']}
+                    for _, entry in sorted(data.get('quarantine', {}).items())]
+            return {'quarantined': rows[:MAX_BATCH]}
 
     def acknowledge(self, device, receipts, *, scopes):
         records.actor_id(device)

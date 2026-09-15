@@ -128,11 +128,14 @@ def test_quarantine_section_survives_restart_and_a_malformed_one_is_rejected(tmp
     a = replica(tmp_path / 'a')
     put(a, 'reading', reading(0.3))
     key = a._key('reading', 'article')
-    a._mutate(lambda data: data.update(quarantine={key: {'code': 'sync_dot_conflict', 'revision': 'b' * 64}}))
+    entry = {'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict', 'revision': 'b' * 64}
+    a._mutate(lambda data: data.update(quarantine={key: entry}))
     assert replica(tmp_path / 'a').status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]}
-    malformed = ({key: {'code': 'sync_version_unsupported', 'revision': 'b' * 64}},  # Not a per-row code.
-                 {key: {'code': 'sync_dot_conflict'}}, {key: 'sync_dot_conflict'},
-                 {key: {'code': 'sync_dot_conflict', 'revision': 'not-a-revision'}}, [])
+    malformed = ({key: entry | {'code': 'sync_version_unsupported'}},  # Not a per-row code.
+                 {key: {name: value for name, value in entry.items() if name != 'revision'}},
+                 {key: 'sync_dot_conflict'}, {key: entry | {'revision': 'not-a-revision'}},
+                 {key: entry | {'id': 'other'}},  # The key must bind the scope and ID.
+                 {a._key('reading', 'other'): entry}, [])
     for index, section in enumerate(malformed):
         broken = replica(tmp_path / f'broken-{index}')
         put(broken, 'reading', reading(0.3))

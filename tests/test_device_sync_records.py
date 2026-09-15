@@ -230,3 +230,31 @@ def test_source_reconcile_quarantines_conflicting_row_and_keeps_other_rows(tmp_p
     store.reconcile_source([{'scope': 'bookmarks', 'id': 'article', 'record': corrected}], scopes=['bookmarks'])
     assert store.status() == {'quarantined': []}
     assert store.read('bookmarks', 'article')['bookmarked'] is False
+
+
+def test_row_rejected_on_first_import_is_listed_and_evicted_once_the_source_drops_it(tmp_path):
+    from test_device_sync_store import replica
+
+    store = replica(tmp_path / 'b')
+    # A row this replica holds no record for is still named by status().
+    unusable = r.write('bookmarks', 'article', r.empty(), A, bookmark())
+    unusable['heads'][0]['value']['item']['link'] = 'file:///private'
+    good = r.write('bookmarks', 'other', r.empty(), B, {'item': {**ITEM, 'item_id': 'other'}, 'bookmarked': True})
+    rows = [{'scope': 'bookmarks', 'id': 'article', 'record': unusable},
+            {'scope': 'bookmarks', 'id': 'other', 'record': good}]
+    store.reconcile_source(rows, scopes=['bookmarks'])
+    assert store.status() == {'quarantined': [{'scope': 'bookmarks', 'id': 'article', 'code': 'sync_item_link_invalid'}]}
+    assert store.read('bookmarks', 'article')['candidates'] == []
+    assert store.read('bookmarks', 'other')['bookmarked'] is True
+    position = r.write('reading', 'article', r.empty(), A, reading(0.5))
+    position['heads'][0]['value']['item']['link'] = 'file:///private'
+    store.reconcile_source([{'scope': 'reading', 'id': 'article', 'record': position}], scopes=['reading'])
+    assert sorted(store.status()['quarantined'], key=lambda row: row['scope']) == [
+        {'scope': 'bookmarks', 'id': 'article', 'code': 'sync_item_link_invalid'},
+        {'scope': 'reading', 'id': 'article', 'code': 'sync_item_link_invalid'}]
+    # The source no longer holds the bookmark: its entry goes with it, and a
+    # scope the import did not cover keeps its own.
+    store.reconcile_source([rows[1]], scopes=['bookmarks'])
+    assert store.status() == {'quarantined': [{'scope': 'reading', 'id': 'article', 'code': 'sync_item_link_invalid'}]}
+    store.reconcile_source([], scopes=['reading'])
+    assert store.status() == {'quarantined': []}

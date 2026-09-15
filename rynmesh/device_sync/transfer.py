@@ -86,11 +86,20 @@ class DeviceTransfer:
     def _receive(cls, bridge, rows, scope):
         """One unmergeable row must not stall every other row in its scope.
 
+        This fallback is the production mechanism for that guarantee: a wire
+        batch is merged by the source stores through their bridges, and those
+        stores still raise per-row (records.merge inside reading.SyncState.merge
+        and ConversationState.merge), so the only way to keep the rest of the
+        batch moving is to retry it a row at a time. ReplicaStore._merge_rows
+        has its own row-level skip for the replica-only import path.
+
         The batch is delivered as a whole; only a per-row merge failure falls
         back to a commit per row, so the rows that do merge still land and the
         row that cannot is named in the signed receipt instead of retried
         forever. A batch-level error still fails the whole batch.
         """
+        if not rows:
+            return []  # An all-rejected batch must not write to the source.
         try:
             return cls._deliver(bridge, rows, scope)
         except SyncError as exc:
