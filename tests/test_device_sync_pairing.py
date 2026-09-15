@@ -229,6 +229,64 @@ def test_invite_cannot_admit_second_device_or_changed_intent(devices):
     assert len(a.list()) == 1
 
 
+def test_two_joiners_racing_receive_join_serialize_to_exactly_one_winner(devices):
+    """Concurrent variant of the sequential B-then-C race above.
+
+    B and C each independently start a join against the same single-use
+    invite, then both deliver their join to A at the same instant (a
+    threading.Barrier forces the two threads into PairingStore.mutate's
+    file_transaction lock together). The lock must still serialize the two:
+    whichever join wins the lock first claims the invite and creates A's
+    'awaiting_owner' pair; the other must observe the claim and be rejected
+    with 'sync_invite_used', never both winning and never neither.
+    """
+    import threading
+
+    a, b, c = devices.node('A'), devices.node('B'), devices.node('C')
+    invite = a.create_invite(['bookmarks'])
+    pair_id_b = b.start_join(invite['uri'], ['bookmarks'])['id']
+    pair_id_c = c.start_join(invite['uri'], ['bookmarks'])['id']
+    assert pair_id_b != pair_id_c
+
+    barrier = threading.Barrier(2)
+    results, errors = {}, []
+
+    def run(name, node, pair_id):
+        barrier.wait(timeout=5)
+        try:
+            results[name] = node.retry(pair_id)
+        except Exception as exc:  # pragma: no cover - surfaced via errors, not silently swallowed
+            errors.append((name, exc))
+
+    threads = [threading.Thread(target=run, args=('b', b, pair_id_b)),
+               threading.Thread(target=run, args=('c', c, pair_id_c))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+
+    # Exactly one side stays 'awaiting_inviter' (its join is still pending
+    # approval); the other is rejected. This is the exact outcome set --
+    # never both pending, never both rejected -- regardless of which thread
+    # actually won the race.
+    statuses = {results['b']['status'], results['c']['status']}
+    assert statuses == {'awaiting_inviter', 'rejected'}
+
+    winner = 'b' if results['b']['status'] == 'awaiting_inviter' else 'c'
+    loser = 'c' if winner == 'b' else 'b'
+    loser_node, loser_pair_id = (b, pair_id_b) if loser == 'b' else (c, pair_id_c)
+    assert loser_node.store.snapshot()['pairs'][loser_pair_id]['reason'] == 'sync_invite_used'
+
+    winner_pair_id = pair_id_b if winner == 'b' else pair_id_c
+    loser_pair_id_on_inviter = pair_id_c if winner == 'b' else pair_id_b
+    inviter_pairs = a.store.snapshot()['pairs']
+    assert inviter_pairs[winner_pair_id]['status'] == 'awaiting_owner'
+    assert loser_pair_id_on_inviter not in inviter_pairs
+    assert len(inviter_pairs) == 1
+
+
 def test_invitation_signature_secret_domain_and_self_pairing(devices):
     a, b = devices.node('A'), devices.node('B')
     uri = a.create_invite(['bookmarks'])['uri']
