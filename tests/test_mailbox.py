@@ -35,7 +35,22 @@ from rynmesh.mailbox import (
     verify_poll_request,
 )
 from rynmesh.mailbox_store import FileMailboxStore
+from rynmesh.private_permissions import current_user_sid, read_windows_dacl
 from rynmesh.registry import FilePeerRegistry, HttpPeerRegistry, RegistryError
+
+
+def _assert_private(path: Path, *, directory: bool = False) -> None:
+    if os.name == "nt":
+        import re
+
+        dacl = read_windows_dacl(path)
+        assert dacl.startswith("D:P"), "ACL must not inherit broader parent access"
+        entries = re.findall(r"\(([^)]+)\)", dacl)
+        assert len(entries) == 3
+        assert {entry.split(";")[-1] for entry in entries} == {"SY", "BA", current_user_sid()}
+        assert all(entry.split(";")[0] == "A" and entry.split(";")[2] == "FA" for entry in entries)
+    else:
+        assert path.stat().st_mode & 0o777 == (0o700 if directory else 0o600)
 
 T0 = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -412,10 +427,10 @@ def test_file_mailbox_store_deposit_poll_ack_and_caps(tmp_path) -> None:
     box_dir = tmp_path / "registry" / "mailbox" / digest[:2] / digest
     stored = box_dir / f"{message_id}.json"
     assert stored.exists()
-    assert stored.stat().st_mode & 0o777 == 0o600
-    assert box_dir.stat().st_mode & 0o777 == 0o700
-    assert box_dir.parent.stat().st_mode & 0o777 == 0o700
-    assert (tmp_path / "registry" / "mailbox").stat().st_mode & 0o777 == 0o700
+    _assert_private(stored)
+    _assert_private(box_dir, directory=True)
+    _assert_private(box_dir.parent, directory=True)
+    _assert_private(tmp_path / "registry" / "mailbox", directory=True)
 
     with pytest.raises(MailboxError, match="duplicate"):
         store.deposit(signed)
@@ -556,7 +571,7 @@ def test_acked_message_leaves_a_tombstone_until_it_expires(tmp_path) -> None:
     assert not (box / f"{message_id}.json").exists()
     assert tombstone.exists()
     assert json.loads(tombstone.read_text()) == {"expires_at": signed.payload["expires_at"]}
-    assert tombstone.stat().st_mode & 0o777 == 0o600
+    _assert_private(tombstone)
 
     # Re-depositing the very same signed envelope is refused for its whole TTL.
     with pytest.raises(MailboxError, match="duplicate"):

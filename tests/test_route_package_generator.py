@@ -123,7 +123,7 @@ def test_generated_test_file_passes_in_a_subprocess(generator, tmp_path: Path) -
     """Prove the generated skeleton works, not just that it parses.
 
     A self-contained "rynmesh" is built next to the generated file: this
-    repo's `atomic_io.py` and `background_workers.py` (both dependency-free
+    repo's `atomic_io.py`, its Windows ACL helper and `background_workers.py` (dependency-free
     beyond the stdlib) plus an empty `__init__.py`. That lets the subprocess
     resolve `rynmesh.<name>_routes` on its own terms. Simply pointing
     PYTHONPATH at `tmp_path` is not enough: the subprocess's own working
@@ -132,7 +132,7 @@ def test_generated_test_file_passes_in_a_subprocess(generator, tmp_path: Path) -
     `sys.path`) wins the name over a same-named namespace directory
     regardless of PYTHONPATH order, since it is a full regular package and
     a bare namespace portion never displaces one. Giving the generated
-    package its own `__init__.py` and copies of the two modules it needs
+    package its own `__init__.py` and copies of the support modules it needs
     sidesteps the conflict entirely instead of fighting import precedence.
     """
 
@@ -140,6 +140,7 @@ def test_generated_test_file_passes_in_a_subprocess(generator, tmp_path: Path) -
     package_dir = routes_path.parent
     (package_dir / "__init__.py").write_text("", encoding="utf-8")
     shutil.copy2(REPO_ROOT / "rynmesh" / "atomic_io.py", package_dir / "atomic_io.py")
+    shutil.copy2(REPO_ROOT / "rynmesh" / "private_permissions.py", package_dir / "private_permissions.py")
     shutil.copy2(
         REPO_ROOT / "rynmesh" / "background_workers.py", package_dir / "background_workers.py",
     )

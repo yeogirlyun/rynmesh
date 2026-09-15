@@ -47,6 +47,7 @@ from rynmesh.llm_package.p2p import (
 )
 from rynmesh.llm_package.routes import (
     ProviderService,
+    _background_order_expired,
     _delivery_error_code,
     _open_provider_response,
     _recover_consumer_orders,
@@ -69,6 +70,7 @@ def _expires() -> str:
 
 class _OpenAIHandler(BaseHTTPRequestHandler):
     calls = 0
+    last_messages = []
 
     def do_GET(self):
         if self.path == "/v1/models":
@@ -83,6 +85,7 @@ class _OpenAIHandler(BaseHTTPRequestHandler):
         size = int(self.headers.get("content-length", "0"))
         body = json.loads(self.rfile.read(size))
         type(self).calls += 1
+        type(self).last_messages = body.get("messages", [])
         if body["stream"] is True:
             self._send({"choices": [{"delta": {"content": "stream supported"}}]})
             return
@@ -520,7 +523,7 @@ def test_install_managed_with_an_explicit_profile_uses_the_catalog_entry(tmp_pat
 
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
 
     def fake_download(_url, destination, expected_sha256, **_kwargs):
@@ -565,7 +568,7 @@ def test_install_managed_reuses_a_verified_legacy_model_gguf_without_downloading
     """A pre-profiles `model.gguf` that still matches is reused, not re-fetched."""
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
 
@@ -601,7 +604,7 @@ def test_install_managed_with_auto_profile_picks_the_recommended_catalog_entry(t
 
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
 
     def fake_download(_url, destination, expected_sha256, **_kwargs):
@@ -724,7 +727,7 @@ def test_install_managed_custom_override_on_a_no_fit_hardware_report_raises_with
 def test_install_managed_custom_override_with_accept_risk_proceeds_on_no_fit_hardware(tmp_path, monkeypatch):
     root = tmp_path / "llm"
     server = _write_fake_llama_server(tmp_path / "llama-server")
-    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda _root=None: server)
+    monkeypatch.setattr(llm_runtime_native, "resolve_server", lambda root=None: server)
     payload = b"GGUF" + bytes(96)
     digest = hashlib.sha256(payload).hexdigest()
 
@@ -913,6 +916,10 @@ def test_local_setup_publish_pause_flow_is_explicit_and_persistent(tmp_path, ope
             task_id="history_cleanup", state="succeeded",
             encrypted_response={"ciphertext": "encrypted-only"},
         )
+        # A succeeded, unacknowledged answer survives a retention-0 purge
+        # until the ask worker archives it (see _awaiting_archive); simulate
+        # that archival so this purge test still exercises the purge path.
+        history_store.mark_acknowledged("history_cleanup")
         privacy = client.put("/api/local/llm/privacy", json={
             "result_retention_seconds": 0,
         })
@@ -1540,6 +1547,151 @@ class _BlockingAdapter(_FakeAdapter):
                 "output_tokens": 2, "duration_ms": 7}
 
 
+def test_local_model_works_unpublished_without_registry_or_peer_transport(tmp_path, monkeypatch, openai_server):
+    from rynmesh.ask_ryn.context import AskContextService
+    from rynmesh.ask_ryn.runs import AskRunService
+    from rynmesh.ask_ryn.store import ConversationStore
+
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
+    app = FastAPI()
+    def no_peer(*args, **kwargs):
+        raise AssertionError("local inference must not contact peer transport")
+    monkeypatch.setattr(llm_routes, "_peer_post_json", no_peer)
+    # A server's P2P policy must not send same-device computation out to ICE.
+    monkeypatch.setenv("RYNMESH_LLM_TRANSPORT", "p2p")
+    commands = install_llm_routes(app, store=store, home=store.home, messaging_key=key, resolve_endpoint=no_peer, resolve_pubkey=no_peer)
+    client = TestClient(app)
+    setup = client.post("/api/local/llm/setup", json={"mode": "openai-compatible", "package_id": "own-model", "alias": "Only my device", "base_url": openai_server, "model": "test-real-api"})
+    assert setup.status_code == 200, setup.text
+    assert setup.json()["status"]["ready"] and not setup.json()["publication_enabled"]
+    assert store.list_job_capacities(network_id="network", capability=llm_routes.CAPABILITY)["capacities"] == []
+    def offline_registry(**kwargs):
+        raise OSError("registry unavailable")
+    monkeypatch.setattr(store, "list_job_capacities", offline_registry)
+    services = client.get("/api/local/llm/services?network_id=network").json()["services"]
+    assert len(services) == 1 and services[0]["peer_id"] == store.peer_id
+    assert services[0]["online"] and services[0]["service"]["pricing"]["minimum"] == 0
+    history = ConversationStore(store.home / "ask-ryn", key)
+    row = history.save({"id": "own-conversation", "title": "Own model", "serviceKey": store.peer_id + "::own-model", "serviceName": "Only my device", "providerPeerId": store.peer_id, "networkId": "network", "createdAt": "2026-09-11T00:00:00Z", "updatedAt": "2026-09-11T00:00:00Z", "messages": []}, expected_revision=0)
+    context = AskContextService(lambda: None, commands.discover)
+    preview = context.preview(row, "A local question")
+    runs = AskRunService(history, lambda: context, lambda: commands)
+    task_id = "task_" + "d" * 32
+    request = {"task_id": task_id, "conversation_id": row["id"], "expected_revision": 1, "question": "A local question", "prompt_sha256": preview["prompt_sha256"]}
+    calls_before = _OpenAIHandler.calls
+    runs.begin(request)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and runs.get(task_id)["state"] not in {"succeeded", "failed", "interrupted"}:
+        runs.run_once()
+        time.sleep(0.02)
+    assert runs.get(task_id)["state"] == "succeeded", runs.get(task_id)
+    assert history.get(row["id"])["messages"][-1]["content"] == "test adapter completion"
+    assert history.get(row["id"])["messages"][-1]["cost"] == 0
+    assert commands.status(task_id)["transport"] == "local_runtime"
+    assert preview["prompt_format"] == "chat_messages_v1"
+    assert _OpenAIHandler.last_messages == json.loads(preview["prompt"])
+    assert _OpenAIHandler.last_messages[-1] == {"role": "user", "content": "A local question"}
+    changed_format = client.post("/api/local/llm/orders", json={
+        "task_id": task_id, "idempotency_key": task_id, "provider_peer_id": store.peer_id,
+        "service_id": "own-model", "network_id": "network", "prompt": preview["prompt"],
+        "max_tokens": preview["max_output_tokens"], "transport": "auto", "prompt_format": "text",
+    })
+    assert changed_format.status_code == 409
+    listed = next(order for order in client.get("/api/local/llm/orders").json()["orders"] if order["task_id"] == task_id)
+    assert listed["transport"] == "local_runtime"
+    assert listed["state"] == "succeeded"
+    assert _OpenAIHandler.calls == calls_before + 1
+    assert client.get("/api/local/task-balance").json()["available"] == 100
+    assert not client.get("/api/local/llm/service/status").json()["publication_enabled"]
+    assert runs.begin(request)["state"] == "succeeded"
+    assert _OpenAIHandler.calls == calls_before + 1
+    # A healthy own model does not admit another signed peer while unpublished.
+    other = RynmeshStore(home=tmp_path / "other", network_dir=tmp_path / "network")
+    foreign = seal_task(body={"task_id": "foreign", "service_id": "own-model", "prompt": "Foreign question", "max_amount": 1, "reply_messaging_pub": peer_box.public_key_b64(key)}, task_id="foreign", kind="llm_request", sender_peer_id=other.peer_id, recipient_peer_id=store.peer_id, sender_signing_key=other.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires()).to_dict()
+    denied = client.post("/api/peer/llm/tasks", json=foreign).json()
+    _, rejection = open_task(denied, recipient_peer_id=other.peer_id, recipient_messaging_key=key, expected_kind="llm_response")
+    assert rejection["error_code"] == "ai_permission_denied"
+    assert _OpenAIHandler.calls == calls_before + 1
+    monkeypatch.setattr(OpenAICompatibleAdapter, "health", lambda _: {"ok": False, "error": "model missing"})
+    assert client.get("/api/local/llm/services?network_id=network").json()["services"][0]["online"] is False
+
+
+def test_local_cancellation_uses_the_same_provider_without_peer_delivery(tmp_path, monkeypatch):
+    store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
+    key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
+    adapter = _BlockingAdapter()
+    manifest = LLMPackageManifest(package_id="own-model", mode="openai_compatible", public_model_alias="Own model", base_url="http://127.0.0.1")
+    monkeypatch.delenv("RYNMESH_LLM_SERVICE_MANIFEST", raising=False)
+    llm_routes.atomic_write_json(store.home / "llm" / "provider-settings.json", {"manifest": "synthetic-manifest", "publication_enabled": False})
+    monkeypatch.setattr(llm_routes, "load_manifest", lambda _: manifest)
+    monkeypatch.setattr(llm_routes, "adapter_from_manifest", lambda _: adapter)
+    def no_remote(*args, **kwargs):
+        raise AssertionError("local cancellation must not use peer delivery")
+    monkeypatch.setattr(llm_routes, "_peer_post_json", no_remote)
+    app = FastAPI()
+    commands = install_llm_routes(app, store=store, home=store.home, messaging_key=key, resolve_endpoint=no_remote, resolve_pubkey=no_remote)
+    request = {"task_id": "local_cancel", "provider_peer_id": store.peer_id, "service_id": "own-model", "prompt": "Local cancellable question", "max_tokens": 8}
+    commands.submit(request)
+    assert adapter.started.wait(timeout=3)
+    try:
+        commands.cancel(request["task_id"])
+        assert adapter.cancelled == [request["task_id"]]
+        assert commands.status(request["task_id"])["result_pending"] is True
+    finally:
+        adapter.release.set()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        result = commands.status(request["task_id"])
+        if not result.get("result_pending"):
+            break
+        time.sleep(0.01)
+    assert result["state"] == "cancelled"
+    assert adapter.calls == 1
+    assert TestClient(app).get("/api/local/task-balance").json()["held"] == 0
+
+
+@pytest.mark.parametrize('old_state', ['created', 'accepted', 'running'])
+def test_provider_restart_fails_unfinished_orders_without_replaying_or_touching_completed(tmp_path, old_state):
+    provider = RynmeshStore(home=tmp_path / 'provider', network_dir=tmp_path / 'network')
+    key = peer_box.load_or_create_messaging_key(provider.home / 'messaging.x25519')
+    orders = TaskOrderStore(provider.home / 'llm/provider-orders')
+    body = {'task_id': 'interrupted', 'service_id': 'svc', 'prompt': 'Synthetic recovery request',
+            'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key)}
+    orders.claim(task_id='interrupted', bindings={'consumer_peer_id': provider.peer_id, 'service_id': 'svc',
+        'idempotency_key': 'interrupted', 'request_fingerprint': llm_routes._request_fingerprint(body, provider.private_key_bytes)})
+    if old_state in {'accepted', 'running'}:
+        orders.transition(task_id='interrupted', state='accepted')
+    if old_state == 'running':
+        orders.transition(task_id='interrupted', state='running')
+    orders.claim(task_id='finished', bindings={'service_id': 'svc'})
+    for state in ['accepted', 'running', 'succeeded']:
+        orders.transition(task_id='finished', state=state)
+    completed = orders.get('finished')
+    for _ in range(2):
+        install_llm_routes(FastAPI(), store=provider, home=provider.home, messaging_key=key,
+            resolve_endpoint=lambda _: '', resolve_pubkey=lambda _: '')
+    recovered = orders.get('interrupted')
+    assert recovered['state'] == 'failed'
+    assert sum(e['state'] == 'failed' for e in recovered['history']) == 1
+    assert recovered['history'][-1]['error_code'] == 'provider_restarted_before_completion'
+    assert orders.get('finished') == completed
+    adapter = _FakeAdapter()
+    service = ProviderService(manifest=LLMPackageManifest(package_id='svc', mode='openai_compatible',
+        public_model_alias='Synthetic recovery', base_url='http://127.0.0.1:1'), adapter=adapter,
+        store=provider, task_store=orders, balance=TaskBalanceLedger(tmp_path / 'balance.json'), messaging_key=key)
+    request = seal_task(body=body, task_id='interrupted', kind='llm_request', sender_peer_id=provider.peer_id,
+        recipient_peer_id=provider.peer_id, sender_signing_key=provider.private_key_bytes,
+        recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires()).to_dict()
+    for _ in range(2):
+        _, reply = open_task(service.handle(request), recipient_peer_id=provider.peer_id,
+            recipient_messaging_key=key, expected_kind='llm_response')
+        assert reply['error_code'] == 'provider_restarted_before_completion'
+        assert reply['state'] == 'failed'
+    assert adapter.calls == 0
+    assert orders.get('interrupted') == recovered
+
+
 def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     net = tmp_path / "net"
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=net)
@@ -1554,7 +1706,7 @@ def test_provider_executes_and_settles_once_without_persisting_bodies(tmp_path):
     orders = TaskOrderStore(tmp_path / "orders")
     balance = TaskBalanceLedger(tmp_path / "provider-balance.json")
     service = ProviderService(manifest=manifest, adapter=adapter, store=provider,
-                              task_store=orders, balance=balance, messaging_key=provider_msg)
+                              task_store=orders, balance=balance, messaging_key=provider_msg, access_check=lambda *_: {})
     request = seal_task(
         body={"task_id": "task_same", "service_id": "svc", "prompt": "TOP SECRET PROMPT",
               "max_tokens": 8, "max_amount": 1, "reply_messaging_pub": peer_box.public_key_b64(consumer_msg)},
@@ -1616,7 +1768,7 @@ def test_provider_bounds_retained_records_and_skips_paused_requests(monkeypatch,
             base_url="http://127.0.0.1:1",
         ),
         adapter=_FakeAdapter(), store=provider, task_store=orders,
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
 
     def request(task_id: str, prompt: str, reply_key: str | None = None) -> dict:
@@ -1664,6 +1816,119 @@ def test_task_store_prunes_expired_terminal_records(tmp_path):
     assert removed == 1
     assert store.get("old") is None
     assert store.get("new") is not None
+
+
+def test_retention_zero_keeps_unacknowledged_success_until_ack(tmp_path):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    with TestClient(app) as client:
+        orders = TaskOrderStore(home / "llm" / "consumer-orders")
+        orders.claim(task_id="paid_answer", bindings={"request": "test"})
+        orders.transition(task_id="paid_answer", state="accepted")
+        orders.transition(task_id="paid_answer", state="running")
+        orders.transition(
+            task_id="paid_answer", state="succeeded",
+            encrypted_response={"ciphertext": "encrypted-only"},
+        )
+
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" in orders.get("paid_answer")
+
+        orders.mark_acknowledged("paid_answer")
+        assert orders.get("paid_answer")["acknowledged_at"]
+
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" not in orders.get("paid_answer")
+
+
+def test_expiry_sweep_skips_unacknowledged_success_within_bound(tmp_path):
+    store = TaskOrderStore(tmp_path / "orders")
+    store.claim(task_id="paid_answer", bindings={"request": "test"})
+    store.transition(task_id="paid_answer", state="accepted")
+    store.transition(task_id="paid_answer", state="running")
+    store.transition(
+        task_id="paid_answer", state="succeeded",
+        metadata={"response_expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+        encrypted_response={"ciphertext": "encrypted-only"},
+    )
+
+    assert store.purge_expired_responses() == 0
+    assert "encrypted_response" in store.get("paid_answer")
+
+    path = tmp_path / "orders" / "paid_answer.json"
+    record = json.loads(path.read_text(encoding="utf-8"))
+    for event in record["history"]:
+        if event.get("state") == "succeeded":
+            event["at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    assert store.purge_expired_responses() == 1
+    assert "encrypted_response" not in store.get("paid_answer")
+
+
+def test_background_prune_keeps_unacknowledged_ephemeral_success():
+    # _prune_background_orders is a private closure over routes.py's
+    # in-memory dict; its cutoff decision is a pure predicate so it can be
+    # exercised directly without reaching into that closure's state.
+    now = time.time()
+    surviving_success = {"ephemeral": True, "state": "succeeded", "_recorded_at": now - 1000}
+    dropped_failure = {"ephemeral": True, "state": "failed", "_recorded_at": now - 1000}
+    assert _background_order_expired(surviving_success, now) is False
+    assert _background_order_expired(dropped_failure, now) is True
+    # Both cutoffs still apply eventually.
+    assert _background_order_expired(surviving_success, now + 86401) is True
+    assert _background_order_expired(dropped_failure, now + 901) is True
+
+
+def test_settlement_checkpoint_after_success_does_not_reset_the_seven_day_purge_bound(tmp_path):
+    home = tmp_path / "node"
+    store = RynmeshStore(home=home, network_dir=tmp_path / "network")
+    messaging_key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    app = FastAPI()
+    install_llm_routes(
+        app, store=store, home=home, messaging_key=messaging_key,
+        resolve_endpoint=lambda _peer_id: "", resolve_pubkey=lambda _peer_id: "",
+    )
+    with TestClient(app) as client:
+        orders = TaskOrderStore(home / "llm" / "consumer-orders")
+
+        def _make_stale_succeeded_order_with_fresh_checkpoint(task_id: str) -> None:
+            orders.claim(task_id=task_id, bindings={"request": "test"})
+            orders.transition(task_id=task_id, state="accepted")
+            orders.transition(task_id=task_id, state="running")
+            orders.transition(
+                task_id=task_id, state="succeeded",
+                metadata={"response_expires_at": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
+                encrypted_response={"ciphertext": "encrypted-only"},
+            )
+            path = orders.root / f"{task_id}.json"
+            record = json.loads(path.read_text(encoding="utf-8"))
+            for event in record["history"]:
+                if event.get("state") == "succeeded" and not event.get("checkpoint"):
+                    event["at"] = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+            path.write_text(json.dumps(record), encoding="utf-8")
+            # A body-free settlement-dispatch checkpoint (as written by
+            # _recover_consumer_orders on every node restart, or right after
+            # settlement in the normal request path) arrives today, long
+            # after the real success — it must not reset the purge clock.
+            orders.checkpoint(task_id=task_id, metadata={"settlement_dispatched": True})
+
+        _make_stale_succeeded_order_with_fresh_checkpoint("stale_expiry_sweep")
+        assert orders.purge_expired_responses() == 1
+        assert "encrypted_response" not in orders.get("stale_expiry_sweep")
+
+        _make_stale_succeeded_order_with_fresh_checkpoint("stale_retention_zero")
+        privacy = client.put("/api/local/llm/privacy", json={"result_retention_seconds": 0})
+        assert privacy.status_code == 200
+        assert "encrypted_response" not in orders.get("stale_retention_zero")
 
 
 class _PacketConnection:
@@ -1746,7 +2011,7 @@ def test_provider_concurrent_duplicate_executes_once(tmp_path):
             base_url="http://127.0.0.1:1", timeout_seconds=2,
         ),
         adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "task_concurrent", "idempotency_key": "same-request",
@@ -1784,7 +2049,7 @@ def test_signed_cancel_reaches_running_provider_and_rejects_other_identity(tmp_p
             base_url="http://127.0.0.1:1", timeout_seconds=2,
         ),
         adapter=adapter, store=provider, task_store=TaskOrderStore(tmp_path / "orders"),
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "task_cancel_running", "idempotency_key": "cancel-running",
@@ -1841,6 +2106,11 @@ def test_consumer_rejects_response_signed_by_another_provider(tmp_path):
             response, recipient_peer_id=consumer.peer_id, messaging_key=consumer_msg,
             task_id="task_response", provider_peer_id=expected.peer_id, service_id="svc",
         )
+    with pytest.raises(TaskProtocolError, match="response task mismatch"):
+        _open_provider_response(
+            response, recipient_peer_id=consumer.peer_id, messaging_key=consumer_msg,
+            task_id="different_original_task", provider_peer_id=rogue.peer_id, service_id="svc",
+        )
 
 
 def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):
@@ -1857,7 +2127,7 @@ def test_provider_explicitly_rejects_capacity_and_cancel_is_terminal(tmp_path):
     orders = TaskOrderStore(tmp_path / "orders")
     service = ProviderService(
         manifest=manifest, adapter=adapter, store=provider, task_store=orders,
-        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg,
+        balance=TaskBalanceLedger(tmp_path / "balance.json"), messaging_key=provider_msg, access_check=lambda *_: {},  # Admission is isolated from these protocol tests.
     )
     request = seal_task(
         body={"task_id": "busy_task", "service_id": "svc", "prompt": "body",

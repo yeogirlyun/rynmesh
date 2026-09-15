@@ -1,8 +1,10 @@
+import type { ConsumptionRecord } from "./digestClient";
 import type {
   ContentFilters,
   ContentBody,
   ContentItem,
   EgressStatus,
+  FirstSuccessStatus,
   JobCapacity,
   NodeSettings,
   NodeStatus,
@@ -26,9 +28,12 @@ import type {
 } from "./types";
 
 export interface LLMServiceRecord {
+  network_id?: string;
   peer_id: string;
   node_name?: string;
   online: boolean;
+  ready?: boolean;
+  access?: "self" | "friend";
   capacity?: { available?: number; max_concurrent?: number; running?: number };
   benchmark?: { latency_ms?: number; tokens_per_second?: number };
   service: {
@@ -61,7 +66,7 @@ export interface LLMOrderResult {
   error_code?: string;
   created_at?: string;
   updated_at?: string;
-  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
@@ -86,6 +91,7 @@ export interface TaskBalanceSummary {
 
 export interface LLMProviderStatus {
   configured?: boolean;
+  ready?: boolean;
   online: boolean;
   service?: LLMServiceRecord["service"];
   capacity?: { available?: number; max_concurrent?: number; running?: number; queue_limit?: number };
@@ -98,6 +104,7 @@ export interface LLMProviderStatus {
     mode?: string;
     runtime?: { managed?: boolean; installed?: boolean; running?: boolean; status?: string };
     health?: Record<string, unknown>;
+    storage?: { model_owned: boolean; model_present: boolean | null; model_bytes: number | null };
     error?: string;
   };
 }
@@ -112,6 +119,12 @@ export interface LLMSetupJob {
   retryable?: boolean;
   configured?: boolean;
   publication_enabled?: boolean;
+  resume_configuration?: {
+    mode: "managed";
+    profile: "light" | "balanced" | "quality";
+    package_id: string;
+    port: number;
+  } | null;
 }
 
 export interface LLMSetupRequest {
@@ -139,6 +152,11 @@ export interface LLMProfileRecommendation {
   quantization?: string;
   estimated_memory_mb?: number;
   estimated_disk_mb?: number;
+  download_bytes?: number;
+  source_url?: string;
+  license_id?: string;
+  license_notice?: string;
+  license_url?: string;
   context_window?: number;
   max_concurrent?: number;
   recommended?: boolean;
@@ -182,6 +200,8 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    task_id?: string;
+    idempotency_key?: string;
     network_id?: string;
     provider_peer_id: string;
     service_id: string;
@@ -204,6 +224,15 @@ export interface NodeClient {
   fetchPreview(contentId: string, providerPeerId: string): Promise<{ ok: boolean; size: string }>;
   fetchFullContent(contentId: string, providerPeerId: string): Promise<{ ok: boolean; size: string }>;
   requestRecommendations(req?: { query?: string; limit?: number }): Promise<Recommendation[]>;
+  getFirstSuccess(): Promise<FirstSuccessStatus>;
+  dismissFirstSuccess(): Promise<FirstSuccessStatus>;
+  resetFirstSuccess(): Promise<FirstSuccessStatus>;
+  recordContentConsumption(
+    item: ContentItem,
+    action: "opened" | "bookmark" | "unbookmark" | "completed" | "progress",
+    progress?: number,
+    reading?: { content_version: string; expected_sync_revision: string },
+  ): Promise<ConsumptionRecord | void>;
   getRecommendationProfile(): Promise<RecommendationProfile>;
   updateRecommendationProfile(
     patch: Partial<Pick<RecommendationProfile, "direction" | "topics" | "platforms">>,

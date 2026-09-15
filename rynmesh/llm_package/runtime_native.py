@@ -88,8 +88,10 @@ def _marker_server(base: Path) -> Path | None:
         marker = json.loads((base / MARKER_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    relative = str(marker.get("server") or "") if isinstance(marker, dict) else ""
-    if not relative:
+    if not isinstance(marker, dict) or marker.get("release") != RUNTIME_RELEASE:
+        return None
+    relative = marker.get("server")
+    if not isinstance(relative, str) or not relative or "\\" in relative or ":" in relative:
         return None
     parts = PurePosixPath(relative)
     if parts.is_absolute() or ".." in parts.parts:
@@ -114,7 +116,9 @@ def resolve_server(root: Path | str | None = None) -> Path | None:
         if found is not None:
             return found
     base = managed_root(root if root is not None else _default_root())
-    found = _marker_server(base) or find_server(base)
+    # Managed extraction may leave an executable before its libraries finish.
+    # Only the completion record makes that directory eligible for reuse.
+    found = _marker_server(base)
     if found is not None:
         return found
     on_path = shutil.which(server_filename())
@@ -300,14 +304,16 @@ def _spawn(server: Path, command: list[str], root: Path, package_id: str,
         detach = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     log = _runtime_dir(root) / f"{package_id}.log"
     try:
-        # Truncated on every start (so it stays bounded) and owner-only, since
-        # a runtime log is node-private operational data.
+        # Keep only node-generated lifecycle metadata. Even error-level child
+        # output may echo a request or credential; it is not safe to copy.
         descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             if os.name != "nt":
                 os.chmod(log, 0o600)
+            handle.write(b"runtime_process_starting\n")
+            handle.flush()
             process = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT,
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 cwd=str(server.parent), env=_child_env(), **detach,
             )
     except OSError as exc:
@@ -315,6 +321,13 @@ def _spawn(server: Path, command: list[str], root: Path, package_id: str,
     deadline = time.monotonic() + STARTUP_GRACE_SECONDS
     while time.monotonic() < deadline:
         if process.poll() is not None:
+            try:
+                with log.open("ab") as handle:
+                    handle.write(f"runtime_process_exited code={process.returncode}\n".encode("ascii"))
+            except OSError:
+                pass  # Reporting the original startup failure must not depend on logging.
+            if os.name == "nt" and process.returncode & 0xFFFFFFFF == 0xC0000135:
+                raise LifecycleError("local inference runtime dependency is missing; use Update runtime to repair it")
             raise LifecycleError("llama-server exited during startup (see the runtime log)")
         if _port_open(port):
             break
@@ -460,13 +473,19 @@ def remove(manifest: LLMPackageManifest) -> None:
 
 
 def update(manifest: LLMPackageManifest) -> None:
-    """Ensure a server still resolves, downloading the pinned release if not.
-
-    The release is pinned, so there is no newer build to fetch. This does not
-    re-verify the digest of an already-installed runtime: `prepare` returns
-    early as soon as any usable server resolves.
-    """
-    prepare(root=_runtime_root(manifest))
+    """Repair managed runtime files from the verified pinned release."""
+    root = _runtime_root(manifest)
+    server = resolve_server(root)
+    if server is not None and not server.resolve().is_relative_to(managed_root(root).resolve()):
+        # Explicit or bundled installations are outside this package's ownership.
+        prepare(root=root)
+        return
+    stop(manifest)
+    for path in (root / "runtime").glob("*.pid"):
+        record = _read_record(path)
+        if record and record["pid"] > 0 and _alive(record["pid"], record["server"]):
+            raise LifecycleError("stop other local model runtimes before repairing shared runtime files")
+    download(root)
 
 
 def state(manifest: LLMPackageManifest) -> dict[str, Any]:

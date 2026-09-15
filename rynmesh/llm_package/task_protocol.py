@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,46 @@ class TaskProtocolError(RuntimeError):
 def _parse_time(value: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+# A paid, succeeded answer must survive until the ask worker archives it and
+# calls mark_acknowledged, even across retention purges and expiry sweeps.
+# This is a hard ceiling, not a promise of indefinite retention: a record
+# stuck unacknowledged (e.g. a permanently offline consumer) still loses its
+# encrypted response after this bound.
+UNACKNOWLEDGED_SUCCESS_GRACE = timedelta(days=7)
+
+
+def _awaiting_archive(record: dict[str, Any], now: datetime) -> bool:
+    """True while a succeeded record's encrypted response must be kept for
+    the ask worker to archive, overriding retention-zero and expiry purges.
+
+    The 7-day grace is measured from the original success, never from a
+    later body-free checkpoint (e.g. a `settlement_dispatched` note written
+    on every node restart by `_recover_consumer_orders`, or right after
+    settlement in the normal request path) — `TaskOrderStore.checkpoint`
+    re-appends the record's current state with a fresh timestamp, so those
+    entries are excluded here to keep the 7-day clock from being reset by
+    unrelated bookkeeping.
+    """
+    if record.get("state") != "succeeded":
+        return False
+    if record.get("acknowledged_at"):
+        return False
+    if not record.get("encrypted_response"):
+        return False
+    completed_at = next(
+        (item.get("at") for item in reversed(record.get("history") or [])
+         if item.get("state") == "succeeded" and item.get("at") and not item.get("checkpoint")),
+        "",
+    )
+    if not completed_at:
+        return False
+    try:
+        completed = _parse_time(str(completed_at))
+    except (TypeError, ValueError):
+        return False
+    return now - completed < UNACKNOWLEDGED_SUCCESS_GRACE
 
 
 def seal_task(*, body: dict[str, Any], task_id: str, kind: str, sender_peer_id: str,
@@ -89,14 +129,17 @@ class TaskOrderStore:
         self._lock = threading.RLock()
 
     def get(self, task_id: str) -> dict[str, Any] | None:
-        path = self._path(task_id)
-        if not path.exists():
-            return None
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise TaskProtocolError(f"cannot read task record: {exc}") from exc
-        return value if isinstance(value, dict) else None
+        # Readers share the writer lock: on Windows the atomic replacement and
+        # private ACL update can otherwise transiently deny a concurrent read.
+        with self._lock:
+            path = self._path(task_id)
+            if not path.exists():
+                return None
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise TaskProtocolError(f"cannot read task record: {exc}") from exc
+            return value if isinstance(value, dict) else None
 
     def claim(self, *, task_id: str, bindings: dict[str, str]) -> tuple[dict[str, Any], bool]:
         """Atomically create a task or validate an exact idempotent duplicate."""
@@ -201,6 +244,17 @@ class TaskOrderStore:
             self._write(record)
             return True
 
+    def mark_acknowledged(self, task_id: str) -> bool:
+        """Record that a consumer has archived this succeeded result, so
+        retention/expiry purges are free to reclaim its encrypted response."""
+        with self._lock:
+            record = self.get(task_id)
+            if record is None:
+                return False
+            record["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
+            self._write(record)
+            return True
+
     def delete(self, task_id: str) -> bool:
         with self._lock:
             path = self._path(task_id)
@@ -212,7 +266,10 @@ class TaskOrderStore:
     def purge_expired_responses(self) -> int:
         purged = 0
         now = datetime.now(timezone.utc)
-        for record in self.list():
+        for path in sorted(self.root.glob("*.json")):
+            record = self.get(path.stem)
+            if not record or _awaiting_archive(record, now):
+                continue
             expires_at = next(
                 (item.get("response_expires_at") for item in reversed(record.get("history") or [])
                  if item.get("response_expires_at")),

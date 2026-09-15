@@ -16,14 +16,23 @@ from urllib.parse import urlparse
 
 
 class AdapterError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "inference_failed") -> None:
+        super().__init__(message)
+        self.code = code if code in RUNTIME_ERROR_CODES else "inference_failed"
+
+
+RUNTIME_ERROR_CODES = frozenset({
+    "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
+    "runtime_connection_failed", "inference_timeout", "inference_failed",
+})
 
 
 class LLMAdapter(Protocol):
     def health(self) -> dict[str, Any]: ...
     def models(self) -> list[dict[str, Any]]: ...
     def capabilities(self) -> dict[str, Any]: ...
-    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float) -> dict[str, Any]: ...
+    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+              messages: list[dict[str, str]] | None = None) -> dict[str, Any]: ...
     def cancel(self, task_id: str) -> bool: ...
     def metrics(self) -> dict[str, Any]: ...
     def shutdown(self) -> None: ...
@@ -60,6 +69,8 @@ class AdapterMetrics:
 
 
 class OpenAICompatibleAdapter:
+    supports_chat_messages = True
+
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
                  api_key: str = "", allow_non_loopback: bool = False,
                  timeout_s: float = 120.0) -> None:
@@ -104,8 +115,25 @@ class OpenAICompatibleAdapter:
                     if task_id:
                         with self._lock:
                             self._active_responses.pop(task_id, None)
-        except (OSError, urllib.error.HTTPError) as exc:
-            raise AdapterError(f"local API request failed ({path}): {exc}") from exc
+        except urllib.error.HTTPError as exc:
+            code = "inference_failed"
+            # Read only a bounded error envelope. Never expose runtime body text,
+            # which can contain prompts, paths, or credentials.
+            try:
+                raw_error = exc.read(16 * 1024 + 1)
+                value = json.loads(raw_error) if len(raw_error) <= 16 * 1024 else None
+                detail = value.get("detail") if isinstance(value, dict) else None
+                if isinstance(detail, str) and detail in RUNTIME_ERROR_CODES:
+                    code = detail
+            except (OSError, ValueError):
+                pass
+            finally:
+                exc.close()
+            raise AdapterError(f"local API request failed: {code}", code=code) from None
+        except OSError as exc:
+            timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+            code = "inference_timeout" if timed_out else "runtime_connection_failed"
+            raise AdapterError(f"local API request failed: {code}", code=code) from None
         if len(raw) > 4 * 1024 * 1024:
             raise AdapterError("local API response exceeded 4 MiB")
         try:
@@ -128,13 +156,13 @@ class OpenAICompatibleAdapter:
             names = [str(item.get("id") or item.get("name") or item.get("model") or "") for item in models]
             selected = self.model or next((name for name in names if name), "")
             if self.model and self.model not in names:
-                return {"ok": False, "error": "configured model not reported", "model_count": len(models)}
+                return {"ok": False, "error": "configured model not reported", "error_code": "model_not_found", "model_count": len(models)}
             if not self.model:
                 self.model = selected
-            return {"ok": bool(selected), "model_count": len(models), "model": selected,
+            return {"ok": bool(selected), **({"error_code": "model_not_ready"} if not selected else {}), "model_count": len(models), "model": selected,
                     "latency_ms": int((time.monotonic() - started) * 1000)}
         except AdapterError as exc:
-            return {"ok": False, "error": str(exc), "latency_ms": int((time.monotonic() - started) * 1000)}
+            return {"ok": False, "error": str(exc), "error_code": exc.code, "latency_ms": int((time.monotonic() - started) * 1000)}
 
     def capabilities(self) -> dict[str, Any]:
         if not self.model and not self.health().get("ok"):
@@ -155,7 +183,8 @@ class OpenAICompatibleAdapter:
             streaming = False
         return {"chat_completions": True, "streaming": streaming, "cancel": "best_effort"}
 
-    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float) -> dict[str, Any]:
+    def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+              messages: list[dict[str, str]] | None = None) -> dict[str, Any]:
         if not prompt:
             raise AdapterError("prompt is required")
         if task_id in self._cancelled:
@@ -165,7 +194,7 @@ class OpenAICompatibleAdapter:
         started = time.monotonic()
         try:
             result = self._json("/v1/chat/completions", {
-                "model": self.model, "messages": [{"role": "user", "content": prompt}],
+                "model": self.model, "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
                 "max_tokens": int(max_tokens), "stream": False,
             }, min(float(timeout_s), self.timeout_s), task_id=task_id)
             if task_id in self._cancelled:

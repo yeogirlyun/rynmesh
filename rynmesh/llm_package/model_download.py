@@ -16,6 +16,7 @@ path-free strings and (for genuine I/O failures) the exception's type name.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import re
 import urllib.error
 import urllib.request
@@ -30,7 +31,7 @@ ProgressCallback = Callable[[str, int, str], None]
 CancelCheck = Callable[[], bool]
 
 CHUNK_BYTES = 1024 * 1024
-_CONTENT_RANGE_START = re.compile(r"bytes\s+(\d+)-")
+_CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+|\*)", re.I)
 
 
 def _urlopen(request: urllib.request.Request, timeout: float = 300) -> Any:
@@ -46,7 +47,7 @@ def _header(headers: object, name: str) -> str | None:
     getter = getattr(headers, "get", None)
     if getter is None:
         return None
-    return getter(name) or getter(name.lower())
+    return getter(name) or getter(name.lower()) or getter(name.title())
 
 
 def _report(progress: ProgressCallback | None, cancel_check: CancelCheck | None,
@@ -66,6 +67,38 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _response_plan(response: Any, resume_from: int, size_bytes: int | None) -> tuple[int, int | None, int | None]:
+    """Validate byte offsets before opening the partial file for writing."""
+    try:
+        status = int(getattr(response, "status", 200) or 200)
+        raw_length = _header(response.headers, "content-length")
+        if raw_length is not None and not re.fullmatch(r"[0-9]+", raw_length):
+            raise ValueError
+        length = int(raw_length) if raw_length is not None else None
+        encoding = _header(response.headers, "content-encoding")
+        if encoding and encoding.strip().lower() != "identity":
+            raise ValueError
+        if status == 200:
+            return 0, length, size_bytes if size_bytes is not None else length
+        if status != 206:
+            raise ValueError
+        match = _CONTENT_RANGE.fullmatch((_header(response.headers, "content-range") or "").strip())
+        if match is None:
+            raise ValueError
+        start, end = int(match[1]), int(match[2])
+        total = None if match[3] == "*" else int(match[3])
+        if start not in {0, resume_from} or end < start or (total is not None and end >= total):
+            raise ValueError
+        if size_bytes is not None and total is not None and total != size_bytes:
+            raise ValueError
+        count = end - start + 1
+        if length is not None and length != count:
+            raise ValueError
+        return start, count, size_bytes if size_bytes is not None else total
+    except (TypeError, ValueError) as exc:
+        raise LifecycleError("download response has invalid byte range or encoding; retry to resume") from exc
+
+
 def download(
     url: str,
     destination: Path,
@@ -81,14 +114,12 @@ def download(
     connection, a cancelled setup, or the app quitting) is resumed with a
     `Range` request rather than restarted from zero:
 
-    - `206` appends to the existing part.
+    - A valid `206` at the requested offset appends to the existing part.
     - `200` (the server ignored `Range`) truncates and restarts.
-    - A `206` whose `Content-Range` start does not match what was asked for
-      is treated the same as an ignored `Range`: truncate and restart —
-      trusting the byte offset the server actually used, not just its
-      status code.
-    - `416` means the part already holds the whole file; it is verified as
-      complete without any further network read.
+    - A valid `206` starting at zero restarts. Other mismatched or missing
+      range information is rejected before altering the saved prefix.
+    - `416` permits complete-file verification only when the part is not
+      shorter than the pinned size; a short part remains resumable.
 
     The part is deleted only for a size-guard violation (untrustworthy
     data) or replaced with `.corrupt` on a checksum mismatch. Every other
@@ -101,10 +132,14 @@ def download(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".part")
     resume_from = temporary.stat().st_size if temporary.exists() else 0
-    headers = {"User-Agent": "Rynmesh/0.6"}
+    _report(progress, cancel_check, "download_model", 15, "Preparing model download; verification pending")
+    if size_bytes is not None and resume_from > size_bytes:
+        temporary.unlink(missing_ok=True)
+        raise LifecycleError("download exceeded the pinned size")
+    headers = {"User-Agent": "Rynmesh/0.6", "Accept-Encoding": "identity"}
     if resume_from:
         headers["Range"] = f"bytes={resume_from}-"
-        _report(progress, cancel_check, "download_model", 15, "Resuming verified model download")
+        _report(progress, cancel_check, "download_model", 15, "Resuming model download; verification pending")
 
     request = urllib.request.Request(url, headers=headers)
     already_complete = False
@@ -112,41 +147,25 @@ def download(
         connection = _urlopen(request, timeout=300)
     except urllib.error.HTTPError as exc:
         if resume_from and exc.code == 416:
-            # The server confirms there is nothing left to fetch: the part on
-            # disk already holds the whole file (only its checksum is unverified).
+            exc.close()
+            if size_bytes is not None and resume_from < size_bytes:
+                raise LifecycleError("download incomplete; retry to resume") from exc
+            # A range refusal is not proof of integrity. Only the complete
+            # checksum below can authorize publishing the existing part.
             already_complete = True
             connection = None
-            exc.close()
         else:
             raise LifecycleError("download failed: " + type(exc).__name__) from exc
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise LifecycleError("download failed: " + type(exc).__name__) from exc
 
     if not already_complete:
         overflow = False
         try:
             with connection as response:
-                status = int(getattr(response, "status", 200) or 200)
-                content_range = _header(response.headers, "Content-Range")
-                range_start = None
-                if content_range:
-                    match = _CONTENT_RANGE_START.match(content_range.strip())
-                    if match:
-                        range_start = int(match.group(1))
-                # A 206 that starts somewhere other than where we asked is not
-                # a resume at all (some servers/proxies re-serve from byte 0
-                # while still labeling the response 206); treat it as a restart.
-                range_mismatch = status == 206 and range_start is not None and range_start != resume_from
-                restart = (bool(resume_from) and status != 206) or range_mismatch
-                downloaded = 0 if restart else resume_from
-                total = int(_header(response.headers, "content-length") or 0)
-                if size_bytes:
-                    full_size = size_bytes
-                elif not restart and status == 206 and total:
-                    full_size = total + resume_from
-                else:
-                    full_size = total or None
-                mode = "wb" if restart or not resume_from else "ab"
+                offset, response_size, full_size = _response_plan(response, resume_from, size_bytes)
+                downloaded = offset
+                mode = "ab" if offset else "wb"
                 with temporary.open(mode) as handle:
                     while chunk := response.read(CHUNK_BYTES):
                         if cancel_check and cancel_check():
@@ -161,10 +180,15 @@ def download(
                         handle.write(chunk)
                         percent = 15 + int(downloaded / full_size * 45) if full_size else 35
                         if progress:
-                            progress("download_model", min(60, percent), "Downloading verified model data")
+                            progress("download_model", min(60, percent), "Downloading model data; verification pending")
+                if not overflow:
+                    if response_size is not None and downloaded - offset != response_size:
+                        raise LifecycleError("download incomplete; retry to resume")
+                    if full_size is not None and downloaded < full_size:
+                        raise LifecycleError("download incomplete; retry to resume")
         except LifecycleError:
             raise
-        except OSError as exc:
+        except (OSError, http.client.HTTPException) as exc:
             raise LifecycleError("download failed: " + type(exc).__name__) from exc
         if overflow:
             temporary.unlink(missing_ok=True)
@@ -172,7 +196,9 @@ def download(
 
     # Hash the complete file fresh (not a running digest), so a resumed part
     # verifies against the bytes actually on disk rather than just this session.
+    _report(progress, cancel_check, "checksum", 60, "Verifying complete model download")
     actual = file_sha256(temporary)
+    _report(None, cancel_check, "checksum", 60, "Verifying complete model download")
     if actual != expected_sha256.lower():
         corrupt = destination.with_suffix(destination.suffix + ".corrupt")
         corrupt.unlink(missing_ok=True)

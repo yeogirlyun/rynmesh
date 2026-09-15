@@ -1,5 +1,40 @@
 # Versioned records
 
+Local AI setup uses a private integer-v1 `llm/setup-recovery.json` journal.
+It snapshots exact manifest/settings bytes and SHA-256 digests before async
+configuration, bounds each source to 2 MiB and the journal to 6 MiB, and refuses
+unknown versions, fields or corrupt snapshots before restoring files. A durable
+`committed` receipt discards private snapshots before best-effort unlink, so a
+leftover receipt cannot roll back later configuration. See
+[setup rollback acceptance](acceptance/local-ai-development/setup-rollback.md).
+
+Managed-document `library-imports/control.json` supports integer version 2 with
+a validated `ryn.library-cleanup.v1` receipt. Explicit cleanup backs up original
+v1 bytes before upgrade and preserves unknown control extensions. The receipt
+holds store-generated names, hashes and progress, never document bodies. Its
+source fence hides selected copies until file cleanup finishes; the completed
+receipt drops the manifest while retaining the result and monotonic generation.
+See [document cleanup](acceptance/friends-development/document-cleanup.md).
+
+Friend-feed state supports `ryn.friend-feed.v2`, with bounded erased publication
+IDs and a validated `ryn.friend-feed-cleanup.v1` receipt. Existing v1 ordinary
+reads/writes retain v1; explicit reviewed cleanup saves exact encrypted
+`.v1.migrated` bytes before upgrading atomically. Fresh stores use v2. Unknown
+top-level extensions survive, unsupported versions fail closed, and capacity
+exhaustion never drops old replay barriers. See [feed cleanup acceptance](acceptance/friend-feed-development/cleanup.md).
+
+Reviewed reading cleanup introduces `ryn.consumption.v4` only when the owner
+commits that cleanup. It retains the v3 compact projection encoding, permits
+`sync: null`, and requires a validated `ryn.reading-source-erasure.v1` receipt.
+Original legacy/v2/v3 bytes are backed up before the upgrade; the coordinated
+cleanup review includes that impending backup. Reading records remain writable
+without enabling sync. On later explicit opt-in, known causal deletion clocks
+are seeded before post-cleanup local edits. Future receipt formats are refused.
+The separate encrypted `ryn.reading-cleanup.v1` journal persists one current or
+latest operation and a monotonic sequence. See
+[`reading-cleanup.md`](acceptance/device-sync-development/reading-cleanup.md)
+for bounds, recovery tests and the exact erasure scope.
+
 Every on-disk record a route package owns follows the convention
 `rynmesh/llm_package/task_balance.py` established: a version tag, a
 forward-only migration at load time, a durable backup before a migration

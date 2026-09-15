@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import time
 from pathlib import Path
 from typing import Any
@@ -441,7 +442,23 @@ def status(path: str | Path) -> dict[str, Any]:
     runtime_state = {"managed": False} if manifest.runtime == RUNTIME_EXTERNAL else _backend(manifest).state(manifest)
     return {"package_id": manifest.package_id, "mode": manifest.mode,
             "runtime": runtime_state,
-            "health": adapter_from_manifest(manifest).health(), "public": manifest.public_dict()}
+            "health": adapter_from_manifest(manifest).health(), "public": manifest.public_dict(),
+            "storage": model_storage(manifest)}
+
+
+def model_storage(manifest: LLMPackageManifest) -> dict[str, Any]:
+    """Inspect the selected model without exposing paths or guessing on I/O failure."""
+    result = {"model_owned": manifest.model_owned, "model_present": None, "model_bytes": None}
+    if not manifest.model_path:
+        return result
+    try:
+        info = Path(manifest.model_path).expanduser().stat()
+    except FileNotFoundError:
+        return {**result, "model_present": False, "model_bytes": 0}
+    except OSError:
+        return result
+    present = stat.S_ISREG(info.st_mode)
+    return {**result, "model_present": present, "model_bytes": info.st_size if present else 0}
 
 
 def uninstall(path: str | Path, *, delete_environment: bool = True,

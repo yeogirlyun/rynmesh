@@ -3,6 +3,7 @@ import type {
   ActivityEvent,
   ContentFilters,
   ContentItem,
+  FirstSuccessStatus,
   NodeSettings,
   Peer,
   PeerFilters,
@@ -969,6 +970,25 @@ export function makeFixtureNodeClient(): NodeClient {
     connectedAt: null, uptimeSeconds: null,
   };
   let _autoUpdate = true;
+  let firstSuccess: FirstSuccessStatus = {
+    version: "ryn.first-success.v1",
+    phase: "ready",
+    completed: false,
+    dismissed: false,
+    node_ready: true,
+    content_ready: true,
+    item_count: RECOMMENDATIONS.length,
+    healthy_sources: 4,
+    source_count: 4,
+    failed_sources: 0,
+    degraded: false,
+    using_cache: false,
+    first_item_opened: false,
+    first_signal_recorded: false,
+    milestones: { node_ready: Date.now() / 1000, content_ready: Date.now() / 1000 },
+    safe_error: null,
+    recoverable_actions: [],
+  };
 
   return {
     mode: "fixture",
@@ -1221,6 +1241,53 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       const limit = req?.limit ?? RECOMMENDATIONS.length;
       return RECOMMENDATIONS.slice(0, limit);
+    },
+    async getFirstSuccess() {
+      await delay();
+      return { ...firstSuccess, milestones: { ...firstSuccess.milestones } };
+    },
+    async dismissFirstSuccess() {
+      await delay();
+      firstSuccess = { ...firstSuccess, dismissed: true };
+      return firstSuccess;
+    },
+    async resetFirstSuccess() {
+      await delay();
+      firstSuccess = {
+        ...firstSuccess,
+        phase: "ready",
+        completed: false,
+        dismissed: false,
+        first_item_opened: false,
+        first_signal_recorded: false,
+        milestones: { node_ready: Date.now() / 1000, content_ready: Date.now() / 1000 },
+      };
+      return firstSuccess;
+    },
+    async recordContentConsumption(_item, action) {
+      await delay();
+      const now = Date.now() / 1000;
+      if (action === "opened") {
+        firstSuccess = {
+          ...firstSuccess,
+          phase: firstSuccess.first_signal_recorded ? "completed" : "awaiting_signal",
+          first_item_opened: true,
+          completed: firstSuccess.first_signal_recorded,
+          milestones: { ...firstSuccess.milestones, first_item_opened: now },
+        };
+      } else if (action === "bookmark" || action === "completed") {
+        firstSuccess = {
+          ...firstSuccess,
+          phase: firstSuccess.first_item_opened ? "completed" : firstSuccess.phase,
+          first_signal_recorded: true,
+          completed: firstSuccess.first_item_opened,
+          milestones: {
+            ...firstSuccess.milestones,
+            first_signal_recorded: now,
+            ...(firstSuccess.first_item_opened ? { completed: now } : {}),
+          },
+        };
+      }
     },
     async getRecommendationProfile() {
       await delay();

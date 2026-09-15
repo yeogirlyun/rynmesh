@@ -9,6 +9,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ..atomic_io import atomic_write_bytes
+from ..file_transactions import file_transaction
+
+MAX_CONVERSATION_BYTES = 64 * 1024 * 1024
+
 log = logging.getLogger("rynmesh.messaging_store")
 
 
@@ -33,9 +38,21 @@ class MessagingStore:
 
     def append(self, peer_id: str, record: dict[str, Any]) -> None:
         path = self._conv_path(peer_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        with file_transaction(path.with_suffix(".lock")):
+            if path.exists() and path.stat().st_size > MAX_CONVERSATION_BYTES:
+                raise OSError("conversation_storage_full")
+            raw = path.read_bytes() if path.exists() else b""
+            if raw and not raw.endswith(b"\n"):
+                raw += b"\n"  # Keep a damaged final line separate from the next valid message.
+            raw += (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+            atomic_write_bytes(path, raw, max_bytes=MAX_CONVERSATION_BYTES)
+
+    def append_unique(self, peer_id: str, record: dict[str, Any]) -> bool:
+        with file_transaction(self._conv_path(peer_id).with_suffix(".lock")):
+            if any(row.get("msg_id") == record.get("msg_id") for row in self.history(peer_id)):
+                return False
+            self.append(peer_id, record)
+            return True
 
     def history(self, peer_id: str) -> list[dict[str, Any]]:
         """Every stored record for one conversation; unparseable lines are skipped.
@@ -50,6 +67,8 @@ class MessagingStore:
         path = self._conv_path(peer_id)
         if not path.exists():
             return []
+        if path.stat().st_size > MAX_CONVERSATION_BYTES:
+            raise OSError("conversation_storage_full")
         records: list[dict[str, Any]] = []
         skipped = 0
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -77,7 +96,7 @@ class MessagingStore:
         d = self.root / "attachments"
         d.mkdir(parents=True, exist_ok=True)
         path = d / _safe(msg_id)
-        path.write_bytes(data)
+        atomic_write_bytes(path, data)
         return str(path)
 
     def load_attachment(self, msg_id: str) -> bytes:

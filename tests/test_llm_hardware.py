@@ -135,6 +135,24 @@ def test_native_runtime_present_needs_a_resolvable_server(monkeypatch, tmp_path)
     assert bundled_report.to_dict()["native_runtime_present"] is True
 
 
+def test_runtime_presence_uses_explicit_node_root_not_disk_probe(monkeypatch, tmp_path):
+    monkeypatch.setenv("RYNMESH_LLM_HOME", str(tmp_path / "default-llm"))
+    monkeypatch.delenv("RYNMESH_LLAMA_SERVER", raising=False)
+    monkeypatch.delenv("RYNMESH_LLAMA_DIR", raising=False)
+    monkeypatch.setattr(llm_runtime_native.shutil, "which", lambda _name: None)
+    node_root = tmp_path / "separate-node" / "llm"
+    managed = llm_runtime_native.managed_root(node_root)
+    managed.mkdir(parents=True)
+    server = managed / llm_runtime_install.server_filename()
+    server.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    server.chmod(0o755)
+    assert not llm_hardware.detect_hardware(tmp_path).native_runtime_present
+    assert not llm_hardware.detect_hardware(tmp_path, runtime_root=node_root).native_runtime_present
+    llm_runtime_install._write_marker(managed, server, "0" * 64)
+    assert llm_hardware.detect_hardware(tmp_path, runtime_root=node_root).native_runtime_present
+    assert not llm_hardware.detect_hardware(node_root).native_runtime_present
+
+
 def _report(*, ram_available_mb: int, disk_free_mb: int) -> HardwareReport:
     return HardwareReport(
         os="Linux", architecture="x86_64", cpu="test-cpu", logical_cpus=8,
