@@ -34,13 +34,13 @@ def observe(label):
                 'index': {key: value['index'].get(key) for key in ('state', 'indexed_count', 'error_code')},
                 'results': [{key: result.get(key) for key in ('id', 'kinds', 'body_state')} for result in value['results']]}
             for result in value['results']:
-                opened = client.get('search/open', params={'identifier': result['id']})
+                opened = client.post('search/open', json={'identifier': result['id']})
                 row['opens'][result['id']] = {'status': opened.status_code,
                     'body_sha256': hashlib.sha256(opened.json().get('text', '').encode()).hexdigest()}
         prior = next((point for point in data['checkpoints'] if point['label'] == 'before-revoke'), None)
         if prior:
             for identifier in prior['opens']:
-                opened = client.get('search/open', params={'identifier': identifier})
+                opened = client.post('search/open', json={'identifier': identifier})
                 row['opens'][identifier] = {'status': opened.status_code,
                     'body_sha256': hashlib.sha256(opened.json().get('text', '').encode()).hexdigest()}
         row['cards'] = [{key: card.get(key) for key in ('card_id', 'dir', 'fetch_state', 'fetched_library_id', 'sha256_verified')}

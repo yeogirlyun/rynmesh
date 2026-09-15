@@ -67,7 +67,7 @@ def measure(client):
         response.raise_for_status()
         revision = None
         deleted_hidden = query(second)['total'] == 0
-        opened = client.get('/api/local/search/open', params={'identifier': f'ask:{cid}:flow-message'})
+        opened = client.post('/api/local/search/open', json={'identifier': f'ask:{cid}:flow-message'})
         assert old_hidden and deleted_hidden and opened.status_code == 409
         assert opened.json()['detail'] == 'search_result_unavailable'
         return {'recorded_at': datetime.now(timezone.utc).isoformat(),

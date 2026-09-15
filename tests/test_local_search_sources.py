@@ -256,6 +256,9 @@ def test_search_private_responses_never_cache_and_recheck_deleted_content(tmp_pa
     # The 512-char body limit still applies.
     oversized = client.post("/api/local/search/open", headers=owner, json={"identifier": "x" * 513})
     assert oversized.status_code == 400
+    # A request body over the 8192-byte read cap is rejected before it is parsed.
+    too_large = client.post("/api/local/search/open", headers=owner, content=b"x" * 8193)
+    assert too_large.status_code == 413
     assert client.get("/api/local/search/open", headers=owner).status_code == 405
     # Delete the original while its old index entry still exists.
     conversations.remove(conversation["id"], expected_revision=1)
