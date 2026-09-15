@@ -112,6 +112,16 @@ telemetry to work.
 Goal: make a group of two to five trusted nodes more useful than one node while
 preserving local control.
 
+### Shipped in v0.7.0
+
+The "Current release" section above already ships several of this
+milestone's building blocks: friend invite/QR pairing with explicit
+endpoint review, content sharing between friends, reliable friend and
+device revocation, self multi-device sync, and a Follow Friends feed of
+friend-shared content. See [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md)
+for the full list. The planned-work items below are marked against what
+those features do, and do not, already cover.
+
 Implemented foundations:
 
 - signed peer identity and registry-assisted discovery
@@ -124,11 +134,19 @@ Implemented foundations:
 
 Planned product work:
 
-1. One-click invite links and QR joining with explicit network and endpoint
-   review before acceptance.
+1. ~~One-click invite links and QR joining with explicit network and endpoint
+   review before acceptance.~~ **Shipped in v0.7.0** — see
+   [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md).
 2. Friend-attributed content ranked inside For You, with an inspectable record
-   of the publisher and serving node.
+   of the publisher and serving node. **Not in this release.** v0.7.0 ships a
+   separate Follow Friends feed instead of ranking friend-shared content
+   inside the main For You feed; this item is unchanged.
 3. Reliable small-mesh setup, connection diagnosis, revocation, and recovery.
+   **Partially shipped in v0.7.0**: friend invite/join, friend revocation,
+   and device-pairing setup, approval, and revocation are now reliable (see
+   [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md)). Diagnosing
+   connectivity across a live multi-node mesh of 3-5 simultaneous friends is
+   not in this release.
 4. Safe multi-user egress sharing with per-user, short-lived credentials.
 5. A visible contribution history explaining how non-transferable reputation
    was earned. Credits remain reputation, not money.
