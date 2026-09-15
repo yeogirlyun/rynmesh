@@ -203,13 +203,35 @@ class DeviceTransfer:
                 'receiver_revision': current['remote_policy']['revision'], 'request_hash': fingerprint(wire),
                 'receipts': receipts}, reply=True)
 
-    def _record(self, row, scope, *, received=False, error=''):
+    @staticmethod
+    def _rejected(state, scope, answers):
+        """Keep the rows this peer refused and drop the ones it has now merged.
+
+        Bounded by one batch per scope: this is a status note for the owner, and
+        the pairing file holds every pairing on the device.
+        """
+        rejected = state.setdefault('rejected', {})
+        rows = rejected.get(scope, {})
+        for identifier, code in answers.items():
+            if not code:
+                rows.pop(identifier, None)
+            elif identifier in rows or len(rows) < MAX_BATCH:
+                rows[identifier] = code
+        rejected[scope] = rows
+        if not rows:
+            rejected.pop(scope)
+        if not rejected:
+            state.pop('rejected')
+
+    def _record(self, row, scope, *, received=False, error='', answers=None):
         node = self.pairing()
         def update(data):
             current = node._pair(data, row['id'])
             if current['status'] != 'active' or self._epoch(current) != self._epoch(row):
                 return
             state = current.setdefault('transfer', {'epoch': self._epoch(row), 'confirmed': {}, 'received': {}, 'errors': {}})
+            if answers is not None:
+                self._rejected(state, scope, answers)
             if error:
                 state.setdefault('errors', {})[scope] = error
             elif not received:
@@ -238,20 +260,45 @@ class DeviceTransfer:
             raise SyncError('sync_batch_invalid')
         return sent
 
+    @staticmethod
+    def _answers(receipts, expected):
+        """Check the peer's receipts and name the rows it could not merge.
+
+        A rejected row is answered for the exact revision that was sent, so the
+        only difference from an accepted receipt is that one marker: every other
+        field must still equal what this device signed and sent. Removing the
+        marker therefore leaves the comparison this sender has always made.
+        """
+        if not isinstance(receipts, list):
+            raise SyncError('sync_receipt_invalid')
+        codes = []
+        for receipt in receipts:
+            if not isinstance(receipt, dict):
+                raise SyncError('sync_receipt_invalid')
+            code = receipt.get('rejected', '')
+            if 'rejected' in receipt and not (isinstance(code, str) and code in PER_ROW):
+                raise SyncError('sync_receipt_invalid')
+            codes.append(code)
+        plain = [{key: item for key, item in receipt.items() if key != 'rejected'} for receipt in receipts]
+        if canonical_json(plain) != canonical_json([{key: item for key, item in receipt.items() if key != 'rejected'}
+                                                    for receipt in expected]):
+            raise SyncError('sync_receipt_invalid')
+        return {receipt['id']: code for receipt, code in zip(plain, codes, strict=True)}
+
     def _accept_receipt(self, row, value, sent):
         if set(value) != {'kind', 'sender', 'receiver', 'pair_id', 'scope', 'sender_revision', 'receiver_revision', 'request_hash', 'receipts'} or value['kind'] != ACK:
             raise SyncError('sync_receipt_invalid')
         scope = records.scope_id(value['scope'])
         if (scope != sent['scope'] or value['sender_revision'] != sent['receiver_revision']
-                or value['receiver_revision'] != sent['sender_revision']
-                or canonical_json(value['receipts']) != canonical_json(self._receipts(sent['records'], scope))):
+                or value['receiver_revision'] != sent['sender_revision']):
             raise SyncError('sync_receipt_invalid')
+        answers = self._answers(value['receipts'], self._receipts(sent['records'], scope))
         node = self.pairing()
         with node.authorized(row['id'], remote_actor=row['remote']['actor'], scopes=[scope],
                              sender_revision=value['sender_revision'], receiver_revision=value['receiver_revision']) as current:
             bridge = self._initialize(current, scope)
             result = self._acknowledge(bridge, row['id'], value['receipts'], scope)
-            self._record(current, scope)
+            self._record(current, scope, answers=answers)
             return result
 
     def send(self, pair_id, scope):
@@ -283,7 +330,7 @@ class DeviceTransfer:
     def status(self, pair_id):
         row = self._pair(pair_id)
         public = self.pairing().public(row)
-        base = {'pending': None, 'last_success_at': None, 'error_code': '', 'conflicts': 0}
+        base = {'pending': None, 'last_success_at': None, 'error_code': '', 'conflicts': 0, 'rejected_by_peer': {}}
         if public['status'] != 'active':
             return {**base, 'state': 'unpaired'}
         if public['paused'] or public['remote_paused']:
@@ -304,7 +351,12 @@ class DeviceTransfer:
                 stamps = saved.get('confirmed', {})
                 last = min(stamps[scope] for scope in scopes) if all(scope in stamps for scope in scopes) else None
                 error = next((saved.get('errors', {}).get(scope) for scope in scopes if saved.get('errors', {}).get(scope)), '')
+                # Rows the peer answered but refused. They are settled, never
+                # confirmed: the owner is told instead of being shown a clean
+                # scope, and they go only when they change on this device.
+                refused = {scope: len(saved.get('rejected', {}).get(scope, {})) for scope in scopes}
                 state = 'conflict' if conflicts else 'waiting' if error else 'pending' if pending or last is None else 'confirmed'
-                return {'state': state, 'pending': pending, 'last_success_at': last, 'error_code': error, 'conflicts': conflicts}
+                return {'state': state, 'pending': pending, 'last_success_at': last, 'error_code': error, 'conflicts': conflicts,
+                        'rejected_by_peer': {scope: count for scope, count in refused.items() if count}}
         except Exception:
             return {**base, 'state': 'failed', 'error_code': 'sync_storage_unavailable'}
