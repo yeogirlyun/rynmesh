@@ -28,6 +28,16 @@ it("reviews by keyboard, cancels without writing, and confirms only the reviewed
   expect(changed).toHaveBeenCalledOnce();
 });
 
+it("shows remote confirmation when the node confirms other devices are cleared", async () => {
+  vi.spyOn(friendsApi, "reviewCardCleanup").mockResolvedValue(reviewed);
+  vi.spyOn(friendsApi, "clearCards").mockResolvedValue({ cards: 2, complete: true, remote_confirmed: true });
+  render(<FriendCardCleanupPanel onChanged={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review card history cleanup" }));
+  await user.click(await screen.findByRole("button", { name: "Clear reviewed card history" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("Remote devices confirmed.");
+});
+
 it("retains the operation after an unconfirmed response and retries the same identity", async () => {
   vi.spyOn(friendsApi, "reviewCardCleanup").mockResolvedValue(reviewed);
   const clear = vi.spyOn(friendsApi, "clearCards").mockRejectedValueOnce(new Error("Response lost; retry"))

@@ -25,7 +25,7 @@ export default function FriendCardCleanupPanel({ onChanged }: { onChanged: () =>
       const result = await friendsApi.clearCards(review.review_token);
       if (!result.complete) throw new Error("Card cleanup is unfinished. Retry the reviewed operation.");
       setReview(null);
-      setNotice(`${result.cards} reviewed card entries cleared locally. Other devices are not confirmed cleared.`);
+      setNotice(`${result.cards} reviewed card entries cleared locally. ${result.remote_confirmed ? "Remote devices confirmed." : "Other devices are not confirmed cleared."}`);
       onChanged();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Card cleanup was not confirmed. Retry the same operation.");

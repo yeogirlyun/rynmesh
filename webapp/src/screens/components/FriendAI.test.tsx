@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -44,15 +44,17 @@ it("keeps a failed authorization visibly unconfirmed", async () => {
   expect(screen.getByText("Your Local model: Not allowed")).toBeInTheDocument();
 });
 
-it("opens only a checked friend's model and clears it after a failed refresh", async () => {
+it("opens a checked friend's model and keeps its snapshot visible after a failed refresh", async () => {
   vi.mocked(aiAccess.friends).mockResolvedValue({ friends: [snapshot()] });
   vi.spyOn(aiAccess, "refresh").mockRejectedValue(new Error("Friend unreachable"));
   open(); const user = userEvent.setup();
   const link = await screen.findByRole("link", { name: "Ask Alice's AI" });
   expect(link).toHaveAttribute("href", "/ask?peer=alice&service=model-x&network=rynmesh-main");
+  const checkedText = screen.getByText(/Last checked/).textContent;
   await user.click(screen.getByRole("button", { name: "Check Alice's AI" }));
-  await waitFor(() => expect(screen.queryByRole("link", { name: "Ask Alice's AI" })).not.toBeInTheDocument());
-  expect(screen.getByRole("alert")).toHaveTextContent("unreachable");
+  expect(await screen.findByRole("alert")).toHaveTextContent("unreachable");
+  expect(screen.getByRole("link", { name: "Ask Alice's AI" })).toBeInTheDocument();
+  expect(screen.getByText(/Last checked/).textContent).toBe(checkedText);
 });
 
 it("shows revocation as saved without claiming running computation stopped", async () => {

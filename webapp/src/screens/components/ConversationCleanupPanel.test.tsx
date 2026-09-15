@@ -35,6 +35,20 @@ it("reviews scope and only clears after explicit confirmation", async () => {
   expect(screen.getByRole("status")).toHaveFocus();
 });
 
+it("shows remote confirmation in the notice and the standing job record", async () => {
+  empty();
+  vi.spyOn(conversationCleanup, "begin").mockResolvedValue({ ...finished, remote_confirmed: true });
+  const user = userEvent.setup();
+  render(<ConversationCleanupPanel />);
+  await screen.findByText("No previous conversation cleanup.");
+  await user.click(screen.getByRole("button", { name: "Review conversation data" }));
+  await user.click(await screen.findByRole("button", { name: "Clear reviewed node copies" }));
+  await act(() => confirm.mock.calls[0][0].onConfirm());
+  expect(screen.getByRole("status")).toHaveTextContent("Remote devices confirmed.");
+  const entry = screen.getByRole("heading", { name: "Cleanup 1" }).closest("li")!;
+  expect(entry).toHaveTextContent("Remote devices confirmed.");
+});
+
 it("keeps a stable request identity when the response is lost", async () => {
   empty();
   const begin = vi.spyOn(conversationCleanup, "begin").mockRejectedValueOnce(new CleanupError("unconfirmed", "The node did not confirm this operation."))

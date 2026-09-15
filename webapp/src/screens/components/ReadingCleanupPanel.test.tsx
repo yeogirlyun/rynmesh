@@ -34,6 +34,18 @@ it("reviews explicit scope and confirms before clearing", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("Other devices and saved or downloaded content remain outside");
 });
 
+it("shows remote confirmation when the node confirms other devices are cleared", async () => {
+  empty();
+  vi.spyOn(readingCleanup, "begin").mockResolvedValue({ ...finished, remote_confirmed: true });
+  const user = userEvent.setup();
+  render(<ReadingCleanupPanel />);
+  await screen.findByText("No previous reading cleanup.");
+  await user.click(screen.getByRole("button", { name: "Review reading data" }));
+  await user.click(await screen.findByRole("button", { name: "Clear reviewed reading copies" }));
+  await act(() => confirm.mock.calls[0][0].onConfirm());
+  expect(screen.getByRole("status")).toHaveTextContent("Remote devices confirmed.");
+});
+
 it("preserves original request identity when the node does not confirm it", async () => {
   empty();
   const begin = vi.spyOn(readingCleanup, "begin").mockRejectedValueOnce(new ReadingCleanupError("unconfirmed", "No confirmation"))

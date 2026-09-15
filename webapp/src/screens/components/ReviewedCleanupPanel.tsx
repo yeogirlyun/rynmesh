@@ -14,7 +14,7 @@ export interface CleanupApi<R extends CleanupReview> {
   approveBackups: (id: string, token: string) => Promise<CleanupJob>;
 }
 export interface CleanupConfig<R extends CleanupReview> {
-  noun: string; title: string; scope: string; result: string; backupScope: string;
+  noun: string; title: string; scope: string; result: string; resultConfirmed: string; backupScope: string;
   labels: Record<string, string>; counts: (review: R) => string; invalidReview: (cause: unknown) => boolean;
 }
 
@@ -71,7 +71,7 @@ export default function ReviewedCleanupPanel<R extends CleanupReview>({ api, con
     setJob(value); setAttempt(null); setReview(null);
     if (value.done.includes('source')) onChange?.();
     setNotice(value.cancelled ? `Uncommitted ${noun} cleanup cancelled.`
-      : value.local_copies_complete ? config.result
+      : value.local_copies_complete ? (value.remote_confirmed ? config.resultConfirmed : config.result)
         : `${caption} cleanup is unfinished. Continue the remaining steps.`);
   };
   const begin = (value: R) => confirm({
