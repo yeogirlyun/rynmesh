@@ -39,6 +39,7 @@ const errors: Record<string, string> = {
   sync_pairing_review_changed: "The pairing request changed. Refresh and review the identity and scope again.",
   sync_pairing_not_pending: "This request is no longer waiting for approval. Refresh its status.",
   sync_device_not_active: "This device is not paired or its access was removed. Review its status below.",
+  sync_pairing_not_found: "This device pairing no longer exists on the node. Pair the device again if you still want to sync with it.",
   sync_scope_denied: "The selected scope is not allowed by both devices. Review their choices.",
   sync_version_unsupported: "This device data needs a newer app version. Existing records have been kept.",
   sync_pairing_capacity_exhausted: "The device invitation storage limit was reached. Existing records have been kept.",

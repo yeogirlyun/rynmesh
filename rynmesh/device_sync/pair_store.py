@@ -117,31 +117,47 @@ class PairingStore:
         """Bound revoked pairs to MAX_RECORDS, dropping the oldest first (insertion order).
 
         Revoked is a terminal state nothing retries against for a graceful reply (unlike a
-        cancelled invite or a just-rejected pair; see _compact), so trimming it needs no delay
-        and runs again after the operation to catch a revoke() it just performed.
+        cancelled invite or a just-rejected pair; see _compact), so the trim itself is
+        immediate, with no one-cycle delay. Its dropped ids still go through the very same
+        dangling-invite reference-clearing pass as a rejected-pair drop -- the caller is
+        responsible for that (see _compact and mutate), since a still-linked invite must never
+        survive _validate with a pair_id pointing at a row no longer in the store. Returns the
+        dropped ids for that purpose.
         """
         pairs = data['pairs']
         revoked = [identifier for identifier, pair in pairs.items() if pair['status'] == 'revoked']
-        for identifier in revoked[:max(0, len(revoked) - MAX_RECORDS)]:
+        trimmed = revoked[:max(0, len(revoked) - MAX_RECORDS)]
+        for identifier in trimmed:
             pairs.pop(identifier)
+        return trimmed
+
+    @staticmethod
+    def _clear_dangling_invite_links(data, dropped_pair_ids):
+        """A dropped pair must not leave a dangling reference on a surviving invite."""
+        if not dropped_pair_ids:
+            return
+        for invite in data['invites'].values():
+            if invite.get('pair_id') in dropped_pair_ids:
+                invite['pair_id'] = None
 
     def _compact(self, data, now):
         """Drop finished rows before the cap check so churn never starves new invites or pairs.
 
         Active/awaiting rows are never touched.
 
-        A claimed invite whose pair is dropped in *this same pass* is kept one extra mutate
-        cycle (its dangling pair_id is cleared instead): receive_join's crossed-request/retry
-        handling reads the invite's own status to reply gracefully (e.g. still-cancelled), and
-        dropping both rows in the same instant would turn that graceful reply into a raw
-        not-found. The invite is reclaimed on the next cycle once its pair link is gone.
+        A claimed invite whose pair is dropped in *this same pass* (rejected, or trimmed for
+        being the oldest revoked pair over the cap) is kept one extra mutate cycle (its
+        dangling pair_id is cleared instead): receive_join's crossed-request/retry handling
+        reads the invite's own status to reply gracefully (e.g. still-cancelled), and dropping
+        both rows in the same instant would turn that graceful reply into a raw not-found. The
+        invite is reclaimed on the next cycle once its pair link is gone.
         """
         pairs = data['pairs']
         linked = set(pairs)  # pair ids present before this pass's own drops
         dropped = {identifier for identifier, pair in pairs.items() if pair['status'] == 'rejected'}
         for identifier in dropped:
             pairs.pop(identifier)
-        self._trim_revoked(data)
+        dropped |= set(self._trim_revoked(data))
 
         invites = data['invites']
         finished = [identifier for identifier, invite in invites.items()
@@ -150,11 +166,7 @@ class PairingStore:
         for identifier in finished:
             invites.pop(identifier)
 
-        if dropped:
-            # A dropped pair must not leave a dangling reference on a surviving invite.
-            for invite in invites.values():
-                if invite.get('pair_id') in dropped:
-                    invite['pair_id'] = None
+        self._clear_dangling_invite_links(data, dropped)
 
     def mutate(self, operation):
         with file_transaction(self.lock):
@@ -162,7 +174,8 @@ class PairingStore:
             before = canonical_json(data)
             self._compact(data, self.clock())
             result = operation(data)
-            self._trim_revoked(data)  # catch a revoke() the operation just performed
+            # Catch a revoke() the operation just performed pushing the count over the cap.
+            self._clear_dangling_invite_links(data, self._trim_revoked(data))
             self._validate(data)
             plaintext = canonical_json(data)
             if len(plaintext) > MAX_PLAINTEXT:
