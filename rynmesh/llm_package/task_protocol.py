@@ -44,6 +44,14 @@ UNACKNOWLEDGED_SUCCESS_GRACE = timedelta(days=7)
 def _awaiting_archive(record: dict[str, Any], now: datetime) -> bool:
     """True while a succeeded record's encrypted response must be kept for
     the ask worker to archive, overriding retention-zero and expiry purges.
+
+    The 7-day grace is measured from the original success, never from a
+    later body-free checkpoint (e.g. a `settlement_dispatched` note written
+    on every node restart by `_recover_consumer_orders`, or right after
+    settlement in the normal request path) — `TaskOrderStore.checkpoint`
+    re-appends the record's current state with a fresh timestamp, so those
+    entries are excluded here to keep the 7-day clock from being reset by
+    unrelated bookkeeping.
     """
     if record.get("state") != "succeeded":
         return False
@@ -53,7 +61,7 @@ def _awaiting_archive(record: dict[str, Any], now: datetime) -> bool:
         return False
     completed_at = next(
         (item.get("at") for item in reversed(record.get("history") or [])
-         if item.get("state") == "succeeded" and item.get("at")),
+         if item.get("state") == "succeeded" and item.get("at") and not item.get("checkpoint")),
         "",
     )
     if not completed_at:
