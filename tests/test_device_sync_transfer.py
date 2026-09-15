@@ -8,8 +8,8 @@ from test_device_sync_reading import ITEM
 
 from rynmesh.ask_ryn.store import ConversationStore
 from rynmesh.device_sync.records import SyncError
-from rynmesh.device_sync.store import ReplicaStore
-from rynmesh.device_sync.transfer import DeviceTransfer
+from rynmesh.device_sync.store import MAX_BATCH, ReplicaStore
+from rynmesh.device_sync.transfer import OVERFLOW_LIMIT, DeviceTransfer
 from rynmesh.services.consumption import ConsumptionStore
 
 
@@ -261,3 +261,37 @@ def test_conflicts_remain_visible_in_sources_and_transfer_summary(tmp_path):
     mesh.right.send(mesh.pair_id, 'conversations')
     assert len(mesh.history(mesh.a).sync_conflicts()) == 1
     assert mesh.left.status(mesh.pair_id)['state'] == 'conflict'
+
+
+def test_unnamed_rejected_rows_are_counted_once_per_identifier():
+    """The id map is capped per scope, so a refusal past the cap stays unnamed.
+
+    An unnamed refusal must still be counted exactly once however many cycles
+    re-report it, and an acceptance must settle exactly the one row it names.
+    """
+    state = {}
+    named = {f'row-{index}': 'sync_dot_conflict' for index in range(MAX_BATCH)}
+    DeviceTransfer._rejected(state, 'reading', named)
+    entry = state['rejected']['reading']
+    assert entry['count'] == MAX_BATCH and len(entry['rows']) == MAX_BATCH
+
+    for _ in range(3):
+        DeviceTransfer._rejected(state, 'reading', {'unnamed': 'sync_dot_conflict'})
+    entry = state['rejected']['reading']
+    assert entry['count'] == MAX_BATCH + 1
+    assert entry['count'] == len(entry['rows']) + len(entry.get('overflow', []))
+
+    DeviceTransfer._rejected(state, 'reading', {'unnamed': ''})
+    assert state['rejected']['reading']['count'] == MAX_BATCH
+    DeviceTransfer._rejected(state, 'reading', dict.fromkeys(named, ''))
+    assert 'rejected' not in state
+
+
+def test_unnamed_rejected_rows_stop_being_counted_past_the_overflow_cap():
+    state = {}
+    DeviceTransfer._rejected(state, 'reading', {f'row-{index}': 'sync_value_invalid'
+                                                for index in range(MAX_BATCH + OVERFLOW_LIMIT + 5)})
+    entry = state['rejected']['reading']
+    assert entry['count'] == MAX_BATCH + OVERFLOW_LIMIT
+    assert entry['overflow_truncated'] is True
+    assert entry['count'] == len(entry['rows']) + len(entry['overflow'])

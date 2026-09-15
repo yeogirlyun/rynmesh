@@ -130,6 +130,7 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
         devices = await call('list')
         transfer = app.state.device_sync.transfer
         capture_failures = {'count': 0, 'codes': {}}
+        quarantine = {'quarantined': [], 'quarantined_count': 0}
         if transfer is not None:
             for device in devices:
                 device['sync'] = await asyncio.to_thread(transfer.status, device['id'])
@@ -137,8 +138,12 @@ def install_device_sync(app, *, store, home, workers, local_control, messaging_k
             # not be queued for sync), not per pair, so they sit alongside
             # `devices` rather than inside any one device's `sync` object.
             capture_failures = await asyncio.to_thread(transfer.reading().sync_capture_failures)
+            # Quarantined rows are per node for the same reason: the local merge
+            # into this device's replica failed, independently of any pairing.
+            quarantine = await asyncio.to_thread(transfer.replica.status)
         return {**current().readiness(), 'devices': devices, 'invites': await call('list_invites'),
-                'data_transfer_available': transfer is not None, 'capture_failures': capture_failures}
+                'data_transfer_available': transfer is not None, 'capture_failures': capture_failures,
+                'quarantined': quarantine['quarantined'], 'quarantined_count': quarantine['quarantined_count']}
 
     @app.post('/api/local/device-sync/invites')
     async def invite(request: Request):

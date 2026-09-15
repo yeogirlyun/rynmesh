@@ -283,12 +283,17 @@ class ReplicaStore:
             del section[key]
 
     def status(self):
-        """Bounded projection of the rows this replica could not merge locally."""
+        """Bounded projection of the rows this replica could not merge locally.
+
+        The listing is capped so one status response cannot carry the whole
+        section, but the count is the true total: the owner must be told how
+        many rows are held back, not only how many fit in the projection.
+        """
         with file_transaction(self.lock):
             _, data = self._read()
             rows = [{'scope': entry['scope'], 'id': entry['id'], 'code': entry['code']}
                     for _, entry in sorted(data.get('quarantine', {}).items())]
-            return {'quarantined': rows[:MAX_BATCH]}
+            return {'quarantined': rows[:MAX_BATCH], 'quarantined_count': len(rows)}
 
     def acknowledge(self, device, receipts, *, scopes):
         records.actor_id(device)

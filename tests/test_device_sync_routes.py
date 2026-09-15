@@ -422,6 +422,35 @@ def test_capture_failures_appear_in_status_while_local_write_still_succeeds(tmp_
     assert node.request('GET')['capture_failures'] == {'count': 1, 'codes': {'sync_item_link_invalid': 1}}
 
 
+def test_quarantined_replica_rows_appear_in_status_with_their_reason(tmp_path):
+    """A local row the replica could not merge is reported, not silently dropped.
+
+    `reconcile_source` quarantines such a row instead of raising, so the owner
+    only learns about it through the status projection.
+    """
+    from copy import deepcopy
+
+    from test_device_sync_records import reading
+
+    node = Node(tmp_path / 'A', transfer=True)
+    replica = node.app.state.device_sync.transfer.replica
+    status = node.request('GET')
+    assert status['quarantined'] == [] and status['quarantined_count'] == 0
+
+    replica.write('reading', 'article', reading(0), expected_revision=replica.read('reading', 'article')['revision'])
+    batch = replica.pending('b' * 64, ['reading'])['records']
+    # The same operation dot cannot acquire a differently encoded value, so the
+    # re-import of this row is refused by the merge and quarantined.
+    changed = deepcopy(batch)
+    old = changed[0]['record']['heads'][0]['value']['progress']
+    changed[0]['record']['heads'][0]['value']['progress'] = float(old) if type(old) is int else int(old)
+    replica.reconcile_source(changed, scopes=['reading'])
+
+    status = node.request('GET')
+    assert status['quarantined'] == [{'scope': 'reading', 'id': 'article', 'code': 'sync_dot_conflict'}]
+    assert status['quarantined_count'] == 1
+
+
 def test_rejected_row_is_acknowledged_and_other_rows_keep_flowing(tmp_path):
     from test_device_sync_reading import ITEM
 
