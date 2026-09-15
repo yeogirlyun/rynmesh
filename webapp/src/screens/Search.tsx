@@ -36,8 +36,11 @@ export default function Search() {
   const [status, setStatus] = useState<SearchStatus | null>(null);
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [requeriesExhausted, setRequeriesExhausted] = useState(false);
+  const autoRequeries = useRef(0);
   const [document, setDocument] = useState<SearchDocument | null>(null);
   const [onlineReading, setOnlineReading] = useState(false);
   const sequence = useRef(0);
@@ -66,9 +69,12 @@ export default function Search() {
     if (status?.updated_at) indexStamp.current = status.updated_at;
   }, [status?.updated_at, identifier]);
   useEffect(() => {
+    autoRequeries.current = 0; setRequeriesExhausted(false);
+  }, [form.query]);
+  useEffect(() => {
     const generation = ++sequence.current;
     const abort = new AbortController();
-    setPage(null); setError("");
+    setPage(null); setError(""); setMoreError("");
     if (identifier || !form.query.trim()) { setBusy(false); return; }
     setBusy(true);
     const timer = window.setTimeout(() => {
@@ -97,7 +103,11 @@ export default function Search() {
   }, [form.query, request, identifier, revision]);
   useEffect(() => {
     if (!(page?.indexing_pending ?? page?.partial) || busy || identifier) return;
-    const timer = window.setTimeout(() => setRevision((value) => value + 1), 3000);
+    if (autoRequeries.current >= 10) { setRequeriesExhausted(true); return; }
+    const timer = window.setTimeout(() => {
+      autoRequeries.current += 1;
+      setRevision((value) => value + 1);
+    }, 3000);
     return () => window.clearTimeout(timer);
   }, [page, busy, identifier]);
   useEffect(() => {
@@ -119,7 +129,7 @@ export default function Search() {
   const more = async () => {
     if (!page?.next_cursor) return;
     const trigger = window.document.activeElement;
-    const generation = ++sequence.current; setBusy(true); setError("");
+    const generation = ++sequence.current; setBusy(true); setMoreError("");
     try {
       const next = await localSearch.query(request(page.next_cursor));
       if (generation === sequence.current) {
@@ -128,7 +138,7 @@ export default function Search() {
         }
         setPage({ ...next, results: [...page.results, ...next.results] });
       }
-    } catch (cause) { if (generation === sequence.current) { setPage(null); setError((cause as Error).message); } }
+    } catch (cause) { if (generation === sequence.current) setMoreError((cause as Error).message); }
     finally { if (generation === sequence.current) setBusy(false); }
   };
   const loadLocal = useCallback(async () => {
@@ -156,7 +166,8 @@ export default function Search() {
       <label>Through<input aria-label="Search through" type="date" value={form.before} onChange={(e) => change("before", e.target.value)} /></label>
       <label>Sort<select aria-label="Search sort" value={form.sort} onChange={(e) => change("sort", e.target.value)}><option value="relevance">Relevance</option><option value="recent">Most recent</option></select></label>
       <Button onClick={() => { setForm(empty); navigate("/search", { replace: true, state: { searchForm: empty } }); }}>Clear filters and keywords</Button>
-      <Button disabled={busy} onClick={() => setRevision((value) => value + 1)}>Refresh results</Button>
+      <Button disabled={busy} onClick={() => { autoRequeries.current = 0; setRequeriesExhausted(false); setRevision((value) => value + 1); }}>Refresh results</Button>
+      {requeriesExhausted && (page?.indexing_pending ?? page?.partial) ? <p role="status">The index is still being built. Refresh to check again.</p> : null}
       <Button disabled={status?.state === "building"} onClick={() => {
         setError(""); setStatus((value) => value ? { ...value, state: "building" } : null);
         void localSearch.rebuild().then((value) => { setStatus(value); setRevision((prior) => prior + 1); })
@@ -176,7 +187,8 @@ export default function Search() {
           {result.text_truncated ? <p>The saved extraction is truncated. Only the extracted text was searched.</p> : null}
           {result.targets.map((target) => <Link key={target.href} to={target.href} onClick={remember} style={{ marginRight: "1rem" }}>{target.label}</Link>)}
         </li>)}</ol>
-        {page.next_cursor ? <Button disabled={busy} onClick={() => void more()}>Load more results</Button> : null}
+        {page.next_cursor ? <><Button disabled={busy} onClick={() => void more()}>Load more results</Button>
+          {moreError ? <p role="alert">{moreError}</p> : null}</> : null}
       </> : null}
     </Panel></div>;
 }

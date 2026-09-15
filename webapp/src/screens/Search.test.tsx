@@ -21,12 +21,21 @@ beforeEach(() => {
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 function Target() {
   const navigate = useNavigate();
   return <><h1>Opened result</h1><button onClick={() => navigate(-1)}>Return to search</button></>;
 }
+// Fake timers here must be advanced in small steps: a single large jump can leave a
+// timer that a microtask schedules mid-tick unfired until a later tick, under this
+// environment's fake-timer/microtask interleaving.
+async function advance(totalMs: number) {
+  for (let elapsed = 0; elapsed < totalMs; elapsed += 250) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+  }
+}
+
 function mount(initial = "/search") {
   const context = { client: makeFixtureNodeClient(), confirm: vi.fn(), notify: vi.fn() } as unknown as AppOutletContext;
   render(<MemoryRouter initialEntries={[initial]}><Routes><Route element={<main className="app-main"><Outlet context={context} /></main>}>
@@ -121,17 +130,79 @@ it("reloads every previously loaded page before restoring the app content scroll
   expect(window.scrollTo).not.toHaveBeenCalled();
 });
 
-it("discards old snippets when pagination reports a changed result set", async () => {
+it("keeps the previously loaded page and shows an inline error when pagination reports a changed result set", async () => {
   vi.mocked(localSearch.query).mockResolvedValueOnce({ ...page("Old result"), next_cursor: "next" })
     .mockRejectedValueOnce(new Error("Results changed. Refresh to start from the first page."))
     .mockResolvedValue(page("Updated result"));
   const user = mount();
   fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "record" } });
-  await user.click(await screen.findByRole("button", { name: "Load more results" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Results changed");
-  expect(screen.queryByRole("heading", { name: "Old result" })).not.toBeInTheDocument();
+  const loadMore = await screen.findByRole("button", { name: "Load more results" });
+  await user.click(loadMore);
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Results changed");
+  expect(loadMore.nextElementSibling).toBe(alert);
+  expect(screen.getByRole("heading", { name: "Old result" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Refresh results" }));
   expect(await screen.findByRole("heading", { name: "Updated result" })).toBeInTheDocument();
+});
+
+it("keeps loaded results and an adjacent inline error when loading more results fails outright", async () => {
+  const first = { ...page("First result"), total: 2, next_cursor: "second" };
+  vi.mocked(localSearch.query).mockImplementation(async (request) =>
+    request.cursor === "second" ? Promise.reject(new Error("Load more failed")) : first);
+  const user = mount();
+  fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "result" } });
+  const loadMore = await screen.findByRole("button", { name: "Load more results" });
+  await user.click(loadMore);
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Load more failed");
+  expect(loadMore.nextElementSibling).toBe(alert);
+  expect(screen.getByRole("heading", { name: "First result" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Load more results" })).toBeInTheDocument();
+});
+
+it("stops automatic re-queries after 10 rounds against a stuck index and lets Refresh try again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  try {
+    vi.mocked(localSearch.query).mockResolvedValue({ ...page("Pending result"), partial: true, indexing_pending: true });
+    mount();
+    fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "pending" } });
+    await advance(250);
+    expect(localSearch.query).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/The index is still being built/)).not.toBeInTheDocument();
+    for (let round = 0; round < 10; round++) {
+      await advance(3250);
+    }
+    expect(localSearch.query).toHaveBeenCalledTimes(11);
+    expect(screen.getByText("The index is still being built. Refresh to check again.")).toBeInTheDocument();
+    await advance(10000);
+    expect(localSearch.query).toHaveBeenCalledTimes(11);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
+    await advance(250);
+    expect(localSearch.query).toHaveBeenCalledTimes(12);
+    expect(screen.queryByText(/The index is still being built/)).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("resets the automatic re-query counter when the query changes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  try {
+    vi.mocked(localSearch.query).mockResolvedValue({ ...page("Pending result"), partial: true, indexing_pending: true });
+    mount();
+    fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "pending" } });
+    await advance(250);
+    for (let round = 0; round < 10; round++) {
+      await advance(3250);
+    }
+    expect(screen.getByText(/The index is still being built/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search keywords"), { target: { value: "pending again" } });
+    await advance(250);
+    expect(screen.queryByText(/The index is still being built/)).not.toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("distinguishes partial indexing from no matches and recovers from a failed rebuild", async () => {
