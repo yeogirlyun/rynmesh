@@ -31,6 +31,17 @@ it("reviews publication/follow counts and exclusions before confirming", async (
   expect(screen.getByRole('status')).toHaveTextContent('remote copies are unconfirmed');
 });
 
+it("shows remote confirmation when the node confirms other devices are cleared", async () => {
+  empty();
+  vi.spyOn(feedCleanup, "begin").mockResolvedValue({ ...finished, remote_confirmed: true });
+  const user = userEvent.setup(); render(<FeedCleanupPanel />);
+  await screen.findByText('No previous friend update cleanup.');
+  await user.click(screen.getByRole('button', { name: 'Review friend update data' }));
+  await user.click(await screen.findByRole('button', { name: 'Clear reviewed friend update copies' }));
+  await act(() => confirm.mock.calls[0][0].onConfirm());
+  expect(screen.getByRole('status')).toHaveTextContent('Remote devices confirmed.');
+});
+
 it("retains the original request after an unconfirmed response", async () => {
   empty();
   const begin = vi.spyOn(feedCleanup, 'begin').mockRejectedValueOnce(new FeedCleanupError('unconfirmed', 'Not confirmed')).mockResolvedValueOnce(finished);

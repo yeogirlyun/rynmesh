@@ -88,6 +88,16 @@ it("keeps a rejected stale save visible and reloads current source state on requ
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("closes without saving a rejected stale position instead of blocking on the retry", async () => {
+  const result = await setup();
+  await waitFor(() => expect(result.stage.scrollTop).toBe(400));
+  result.write.mockRejectedValue(new Error("sync_revision_conflict"));
+  result.stage.scrollTop = 700; fireEvent.scroll(result.stage);
+  expect(await screen.findByRole("alert")).toHaveTextContent("another device changed it");
+  await result.user.click(screen.getByRole("button", { name: "Close without saving" }));
+  expect(result.close).toHaveBeenCalledOnce();
+});
+
 it("reloads after queued source writes settle instead of reusing their old revision", async () => {
   const result = await setup();
   await waitFor(() => expect(result.stage.scrollTop).toBe(400));

@@ -49,7 +49,7 @@ export default function FriendAI({ friends }: { friends: FriendRecord[] }) {
       epoch.current += 1;
       setRemote((rows) => [...rows.filter((row) => row.peer_id !== friend.peer_id), snapshot]);
     } catch (reason) {
-      setRemote((rows) => rows.filter((row) => row.peer_id !== friend.peer_id));
+      // Keep the friend's last confirmed snapshot and timestamp; only the error is new.
       setError(reason instanceof Error ? reason.message : "This friend could not be reached.");
     } finally { working.current = false; setBusy(false); }
   };

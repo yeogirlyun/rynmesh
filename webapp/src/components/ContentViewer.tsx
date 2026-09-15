@@ -314,7 +314,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
         <footer className="content-viewer-footer">
           {bookmarkError ? <p role="alert">{bookmarkError}</p> : null}
           {progressError ? <p role="alert">{progressError} <Button onClick={() => void saveProgress(true).catch(() => undefined)}>Retry saving position</Button>
-            <Button onClick={() => setRetry((value) => value + 1)}>Reload saved position</Button></p> : null}
+            <Button onClick={() => setRetry((value) => value + 1)}>Reload saved position</Button>
+            <Button onClick={onClose}>Close without saving</Button></p> : null}
           <p>{item.description}</p>
           {client?.mode === "live" && textContent && bodyState === "ready" ? (
             <Button icon={Bookmark} variant={bookmarked ? "primary" : "standard"}

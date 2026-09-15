@@ -49,7 +49,8 @@ export default function ConversationCleanupPanel() {
       .sort((a, b) => (b.sequence ?? 0) - (a.sequence ?? 0)).slice(0, 32));
     setAttempt(null); setReview(null);
     setNotice(job.cancelled ? "Uncommitted cleanup cancelled. Your conversations were not cleared by this operation."
-      : job.local_copies_complete ? "Reviewed node copies cleared. Browser cleanup is tracked separately below; remote devices remain unconfirmed."
+      : job.local_copies_complete ? (job.remote_confirmed ? "Reviewed node copies cleared. Browser cleanup is tracked separately below. Remote devices confirmed."
+        : "Reviewed node copies cleared. Browser cleanup is tracked separately below; remote devices remain unconfirmed.")
         : "Cleanup is unfinished. Continue its remaining steps.");
   };
   const begin = (value: CleanupReview) => confirm({
@@ -93,7 +94,7 @@ export default function ConversationCleanupPanel() {
       <p>{job.cancelled ? "Cancelled before erasure" : job.local_copies_complete ? "Reviewed node copies cleared" : "Unfinished"}</p>
       {job.done.length ? <p>Completed: {job.done.map((step) => labels[step]).join(", ")}</p> : null}
       {job.pending.length ? <p>Remaining: {job.pending.map((step) => labels[step]).join(", ")}</p> : null}
-      {!job.cancelled ? <p>Browser cleanup is tracked separately below. Remote devices remain unconfirmed.</p> : null}
+      {!job.cancelled ? <p>Browser cleanup is tracked separately below. {job.remote_confirmed ? "Remote devices confirmed." : "Remote devices remain unconfirmed."}</p> : null}
       {job.pending.length ? <div className="button-row">
         <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.resume(job.id)); })}>Continue cleanup {job.sequence ?? jobs.length - index}</Button>
         {!job.done.length ? <Button disabled={busy} onClick={() => void run(async () => { await accept(await conversationCleanup.cancel(job.id)); })}>Cancel uncommitted cleanup {job.sequence ?? jobs.length - index}</Button> : null}
