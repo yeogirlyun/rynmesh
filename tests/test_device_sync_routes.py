@@ -221,10 +221,8 @@ def test_installed_worker_moves_real_sources_through_encrypted_http_batches(tmp_
     assert b.client.post('/api/peer/device-sync/batch', json={}).status_code == 403
 
 
-def test_transfer_receive_returns_signed_receipts_with_rejections(tmp_path):
-    from test_device_sync_reading import ITEM
-
-    from rynmesh.device_sync import records
+def paired(tmp_path, scopes):
+    """Two installed nodes with an approved pair, ready to exchange data batches."""
     nodes = {}
 
     def post(endpoint, path, wire):
@@ -235,12 +233,20 @@ def test_transfer_receive_returns_signed_receipts_with_rejections(tmp_path):
     a = Node(tmp_path / 'A', 'http://127.0.0.1:18901', post, transfer=True)
     b = Node(tmp_path / 'B', 'http://127.0.0.1:18902', post, transfer=True)
     nodes.update({a.endpoint: a, b.endpoint: b})
-    scopes = ['reading']
     uri = a.request('POST', '/invites', json={'scopes': scopes})['uri']
     pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': scopes})['id']
     b.tick()
     a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes})
     b.tick()
+    return a, b, pair_id
+
+
+def test_transfer_receive_returns_signed_receipts_with_rejections(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    from rynmesh.device_sync import records
+    scopes = ['reading']
+    a, b, pair_id = paired(tmp_path, scopes)
 
     def position(progress):
         return {'item': ITEM, 'progress': progress, 'completed': False, 'content_version': ''}
@@ -267,6 +273,65 @@ def test_transfer_receive_returns_signed_receipts_with_rejections(tmp_path):
         == sender._receipts(sent['records'], 'reading')
     assert b.reader.sync_read('reading', 'other')['value']['progress'] == .5
     assert b.reader.sync_read('reading', ITEM['item_id'])['value']['progress'] == .2
+
+
+def test_conversation_batch_merges_the_good_row_and_rejects_the_unmergeable_one(tmp_path):
+    from test_ask_history import sample
+
+    from rynmesh.device_sync import records
+    a, b, pair_id = paired(tmp_path, ['conversations'])
+
+    def reissued(text):
+        conversation = sample() | {'title': text}
+        conversation['messages'] = [{**conversation['messages'][0], 'content': text}]
+        return records.write('conversations', conversation['id'], records.empty(), 'c' * 64, conversation)
+
+    # The same reissued counter carries a different conversation on each device,
+    # so the ask-history store cannot merge that row.
+    for node, text in ((a, 'From the restored backup'), (b, 'Written on this device')):
+        node.history.enable_sync()
+        node.history.sync_receive([{'scope': 'conversations', 'id': sample()['id'], 'record': reissued(text)}])
+    a.history.save(sample() | {'id': 'conversation-2'}, expected_revision=0)
+
+    sender, receiver = a.app.state.device_sync.transfer, b.app.state.device_sync.transfer
+    wire = sender.prepare(pair_id, 'conversations')
+    receipts = sender._open(receiver.receive(wire), reply=True)[1]['receipts']
+    marked = {receipt['id']: receipt for receipt in receipts}
+    assert marked[sample()['id']]['rejected'] == 'sync_dot_conflict'
+    assert 'rejected' not in marked['conversation-2']
+    assert [{key: value for key, value in receipt.items() if key != 'rejected'} for receipt in receipts] \
+        == sender._receipts(sender._outgoing(sender._pair(pair_id), wire)['records'], 'conversations')
+    assert b.history.get('conversation-2')['messages'][0]['content'] == sample()['messages'][0]['content']
+    assert b.history.get(sample()['id'])['messages'][0]['content'] == 'Written on this device'
+
+
+def test_receiver_refuses_a_source_answer_that_does_not_match_the_rows_it_was_given(tmp_path):
+    from test_device_sync_reading import ITEM
+
+    from rynmesh.device_sync.records import SyncError
+    a, b, pair_id = paired(tmp_path, ['reading'])
+    a.reader.enable_sync(a.app.state.device_sync.transfer.replica.actor, ['reading'])
+    for identifier in (ITEM['item_id'], 'other'):
+        a.reader.record({**ITEM, 'item_id': identifier}, 'progress', progress=.5)
+    sender, receiver = a.app.state.device_sync.transfer, b.app.state.device_sync.transfer
+    wire = sender.prepare(pair_id, 'reading')
+    honest = sender._receipts(sender._outgoing(sender._pair(pair_id), wire)['records'], 'reading')
+    assert len(honest) == 2
+
+    class Bridge:
+        def __init__(self, receipts):
+            self.receipts = receipts
+
+        def receive(self, rows, *, scopes):
+            return self.receipts
+
+    # A source that answers for other rows, in another order, or for fewer rows
+    # than it was given can never have its answer signed as a receipt.
+    for receipts in ([honest[1], honest[0]], [honest[0] | {'id': 'ghost'}, honest[1]], honest[:1]):
+        receiver._initialize = lambda current, scope, answer=receipts: Bridge(answer)
+        with pytest.raises(SyncError, match='sync_receipt_invalid'):
+            receiver.receive(wire)
+    assert not b.reader.path.exists()
 
 
 def test_owner_reading_choice_uses_stored_candidate_and_rejects_stale_revision(tmp_path):
