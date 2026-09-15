@@ -11,6 +11,10 @@ from rynmesh.device_sync.pairing import POLICY, POLICY_CHANNEL, PairingService
 from rynmesh.device_sync.records import SyncError, fingerprint
 
 
+def code_for(pair_id):
+    return '-'.join(pair_id[index:index + 4] for index in range(0, 24, 4))
+
+
 class Devices:
     def __init__(self, home):
         self.home, self.now, self.nodes, self.keys = home, 1000, {}, {}
@@ -40,7 +44,7 @@ class Devices:
         a, b = self.node('A'), self.node('B')
         invite = a.create_invite(scopes)
         pair = b.join(invite['uri'], scopes)
-        a.approve(pair['id'], review_token=pair['review_token'], scopes=scopes)
+        a.approve(pair['id'], review_token=pair['review_token'], scopes=scopes, verification_code=code_for(pair['id']))
         b.retry(pair['id'])
         return a, b, pair['id']
 
@@ -67,8 +71,8 @@ def test_both_owners_must_confirm_and_only_agreed_scopes_activate(devices):
         with pytest.raises(SyncError, match='sync_device_not_active'):
             authorized(node, remote, pair_id)
     with pytest.raises(SyncError, match='sync_pairing_review_changed'):
-        a.approve(pair_id, review_token='stale-screen', scopes=['bookmarks'])
-    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+        a.approve(pair_id, review_token='stale-screen', scopes=['bookmarks'], verification_code=code_for(pair_id))
+    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     assert a.get(pair_id)['effective_scopes'] == []
     assert b.retry(pair_id)['status'] == 'active'
     assert a.get(pair_id)['effective_scopes'] == ['bookmarks']
@@ -79,6 +83,27 @@ def test_both_owners_must_confirm_and_only_agreed_scopes_activate(devices):
     # Pairing cannot create or read either personal source store.
     assert not (devices.home / 'A' / 'ask-ryn').exists()
     assert not (devices.home / 'B' / 'content').exists()
+
+
+def test_approval_requires_the_verification_code_shown_on_the_joining_device(devices):
+    a, b = devices.node('A'), devices.node('B')
+    invite = a.create_invite(['bookmarks'])
+    pair = b.join(invite['uri'], ['bookmarks'])
+    pair_id = pair['id']
+    code = code_for(pair_id)
+    with pytest.raises(SyncError, match='sync_verification_code_mismatch'):
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code='0000-0000-0000-0000-0000-0000')
+    with pytest.raises(SyncError, match='sync_verification_code_mismatch'):
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code='')
+    with pytest.raises(SyncError, match='sync_verification_code_mismatch'):
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=None)
+    # Case-insensitive, and dashes/whitespace are optional.
+    approved = a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code.upper().replace('-', ' '))
+    assert approved['status'] == 'awaiting_peer'
+    again = a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code.replace('-', ''))
+    assert again['status'] == 'awaiting_peer'
+    with pytest.raises(SyncError, match='sync_verification_code_mismatch'):
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code='ffff-ffff-ffff-ffff-ffff-ffff')
 
 
 def test_empty_scope_choice_is_explicit_and_valid(devices):
@@ -97,13 +122,13 @@ def test_response_loss_and_restart_reuses_committed_intent(devices, action):
     pair_id = b.start_join(invite['uri'], ['bookmarks'])['id']
     if action == 'confirm':
         b.retry(pair_id)
-        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     devices.drop = action
     with pytest.raises(TimeoutError):
         b.retry(pair_id)
     a, b = devices.node('A', label='Renamed A'), devices.node('B', label='Renamed B')
     if action == 'join':
-        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+        a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     else:
         assert a.get(pair_id)['status'] == 'active'
         assert b.get(pair_id)['status'] == 'awaiting_ack'
@@ -119,7 +144,7 @@ def test_expired_or_cancelled_pending_invite_never_activates(devices, cancel):
     a, b = devices.node('A'), devices.node('B')
     invite = a.create_invite(['bookmarks'], ttl_seconds=60)
     pair_id = b.join(invite['uri'], ['bookmarks'])['id']
-    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     if cancel:
         a.cancel_invite(invite['invite']['id'])
     else:
@@ -224,7 +249,7 @@ def test_invite_cannot_admit_second_device_or_changed_intent(devices):
     assert c.join(invite['uri'], ['reading'])['status'] == 'rejected'
     with pytest.raises(SyncError, match='sync_pairing_intent_conflict'):
         b.start_join(invite['uri'], ['reading'])
-    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     assert b.retry(pair_id)['status'] == 'active'
     assert len(a.list()) == 1
 
@@ -383,7 +408,7 @@ def test_revocation_stops_local_access_and_retries_notice_after_restart(devices)
     assert b._response(old_confirm, a.receive_confirm(old_confirm), a.identity)['state'] == 'rejected'
     new_pair = b.join(a.create_invite(['bookmarks'])['uri'], ['bookmarks'])
     assert new_pair['id'] != pair_id
-    a.approve(new_pair['id'], review_token=new_pair['id'], scopes=['bookmarks'])
+    a.approve(new_pair['id'], review_token=new_pair['id'], scopes=['bookmarks'], verification_code=code_for(new_pair['id']))
     b.retry(new_pair['id'])
     old_notice = [wire for _, path, wire in devices.wires if path.endswith('/revoke')][0]
     b.receive_revoke(old_notice)
@@ -395,7 +420,7 @@ def test_revocation_stops_local_access_and_retries_notice_after_restart(devices)
 def test_failed_source_commit_cannot_emit_activation_ack(devices, monkeypatch):
     a, b = devices.node('A'), devices.node('B')
     pair_id = b.join(a.create_invite(['bookmarks'])['uri'], ['bookmarks'])['id']
-    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'])
+    a.approve(pair_id, review_token=pair_id, scopes=['bookmarks'], verification_code=code_for(pair_id))
     import rynmesh.device_sync.pair_store as persistence
     original = persistence.atomic_write_json
 

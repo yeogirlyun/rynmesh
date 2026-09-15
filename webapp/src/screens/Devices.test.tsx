@@ -69,7 +69,7 @@ it("discards a stale invitation preview and never silently pairs", async () => {
   expect(await screen.findByRole("status")).toHaveTextContent("Request saved");
 });
 
-it("requires inviter identity confirmation and leaves a failed approval pending", async () => {
+it("requires the verification code shown on the joining device and leaves a failed approval pending", async () => {
   state.devices = [pair];
   const approve = vi.spyOn(deviceSyncApi, "approve").mockRejectedValue(new Error("Connection lost; refresh to confirm."));
   const user = userEvent.setup();
@@ -80,9 +80,14 @@ it("requires inviter identity confirmation and leaves a failed approval pending"
   const scopes = within(card).getByRole("group", { name: "Allow on this device" });
   within(scopes).getAllByRole("checkbox").forEach((input) => expect(input).not.toBeChecked());
   await user.click(within(scopes).getByRole("checkbox", { name: "Reading progress" }));
-  await user.click(within(card).getByRole("checkbox", { name: "I checked this is my other computer" }));
+  const codeInput = within(card).getByLabelText("Enter the code shown on the other device");
+  await user.type(codeInput, "wrong-code");
+  expect(within(card).getByRole("button", { name: "Approve this device" })).toBeDisabled();
+  await user.clear(codeInput);
+  await user.type(codeInput, "AAAA BBBB cccc-dddd-EEEE-ffff");
+  expect(within(card).getByRole("button", { name: "Approve this device" })).not.toBeDisabled();
   await user.click(within(card).getByRole("button", { name: "Approve this device" }));
-  expect(approve).toHaveBeenCalledWith(pair, ["reading"]);
+  expect(approve).toHaveBeenCalledWith(pair, ["reading"], "AAAA BBBB cccc-dddd-EEEE-ffff");
   expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
   expect(within(card).getByText("Review on this device")).toBeInTheDocument();
 });

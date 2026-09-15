@@ -22,10 +22,13 @@ function Identity({ device }: { device: DeviceIdentity }) {
     <dt>Address</dt><dd>{device.endpoint}</dd></dl>;
 }
 
+const normalizeVerificationCode = (value: string) => value.replace(/[\s-]/g, "").toLowerCase();
+
 function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (operation: () => Promise<unknown>) => Promise<void> }) {
   const { confirm } = useAppContext();
   const [scopes, setScopes] = useState<SyncScope[]>(pair.status === "awaiting_owner" ? [] : pair.scopes);
-  const [checked, setChecked] = useState(false);
+  const [enteredCode, setEnteredCode] = useState("");
+  const codeMatches = enteredCode.trim() !== "" && normalizeVerificationCode(enteredCode) === normalizeVerificationCode(pair.verification_code);
   const active = pair.status === "active";
   const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
   const refused = syncScopes.filter((scope) => rejected[scope]);
@@ -35,8 +38,9 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
     {pair.status === "awaiting_owner" ? <>
       <p>Only approve a computer you own. Review its identity and choose what may sync in both directions.</p>
       <ScopeChoice label="Allow on this device" value={scopes} onChange={setScopes} allowed={pair.scopes} disabled={busy} />
-      <label><input type="checkbox" checked={checked} disabled={busy} onChange={(event) => setChecked(event.target.checked)} />I checked this is my other computer</label>
-      <Button disabled={busy || !checked} onClick={() => void act(() => deviceSyncApi.approve(pair, scopes))}>Approve this device</Button>
+      <label>Enter the code shown on the other device<input type="text" value={enteredCode} disabled={busy}
+        onChange={(event) => setEnteredCode(event.target.value)} /></label>
+      <Button disabled={busy || !codeMatches} onClick={() => void act(() => deviceSyncApi.approve(pair, scopes, enteredCode))}>Approve this device</Button>
     </> : null}
     {active ? <>
       <p>{pair.paused ? "Paused on this device." : pair.remote_paused ? "Paused on the other device." : "Both devices have confirmed the pairing."}</p>

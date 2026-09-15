@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from test_device_sync_pairing import code_for
 
 from rynmesh.background_workers import BackgroundWorkerRegistry
 from rynmesh.device_sync.routes import install_device_sync
@@ -77,7 +78,7 @@ def test_owner_handlers_and_worker_complete_pair_pause_remove(tmp_path):
     b.tick()
     pending = a.request('GET')['devices'][0]
     assert pending['status'] == 'awaiting_owner'
-    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': ['bookmarks']})
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': ['bookmarks'], 'verification_code': code_for(pair_id)})
     b.tick()
     assert a.request('GET')['devices'][0]['status'] == b.request('GET')['devices'][0]['status'] == 'active'
     assert a.request('GET')['data_transfer_available'] is False  # Pairing never implies data convergence.
@@ -90,6 +91,33 @@ def test_owner_handlers_and_worker_complete_pair_pause_remove(tmp_path):
     assert b.request('GET')['devices'][0]['status'] == 'revoked'
     assert not a.request('GET')['devices'][0]['removal_pending']
     assert not (a.store.home / 'wrong-home').exists()
+
+
+def test_approve_route_rejects_a_mismatched_or_missing_verification_code(tmp_path):
+    nodes = {}
+
+    def post(endpoint, path, wire):
+        response = nodes[endpoint].client.post(path, json=wire)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    a = Node(tmp_path / 'A', 'http://127.0.0.1:18905', post)
+    b = Node(tmp_path / 'B', 'http://127.0.0.1:18906', post)
+    nodes.update({a.endpoint: a, b.endpoint: b})
+    uri = a.request('POST', '/invites', json={'scopes': ['bookmarks']})['uri']
+    pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': ['bookmarks']})['id']
+    b.tick()
+    mismatched = a.client.post(PREFIX + f'/devices/{pair_id}/approve', headers=OWNER,
+                               json={'review_token': pair_id, 'scopes': ['bookmarks'], 'verification_code': 'wrong-code'})
+    assert mismatched.status_code == 409
+    assert mismatched.json()['detail'] == 'sync_verification_code_mismatch'
+    missing = a.client.post(PREFIX + f'/devices/{pair_id}/approve', headers=OWNER,
+                            json={'review_token': pair_id, 'scopes': ['bookmarks']})
+    assert missing.status_code == 409
+    assert missing.json()['detail'] == 'sync_verification_code_mismatch'
+    assert a.request('GET')['devices'][0]['status'] == 'awaiting_owner'
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': ['bookmarks'], 'verification_code': code_for(pair_id)})
+    assert a.request('GET')['devices'][0]['status'] == 'awaiting_peer'
 
 
 def test_reinstallation_replaces_guard_service_and_worker_without_duplicate_routes(tmp_path):
@@ -230,7 +258,7 @@ def test_installed_worker_moves_real_sources_through_encrypted_http_batches(tmp_
     pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': scopes})['id']
     b.tick()
     assert not b.reader.path.exists() and not b.history.path.exists()
-    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes})
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes, 'verification_code': code_for(pair_id)})
     b.tick()
     for _ in range(3):
         a.tick()
@@ -260,7 +288,7 @@ def paired(tmp_path, scopes):
     uri = a.request('POST', '/invites', json={'scopes': scopes})['uri']
     pair_id = b.request('POST', '/join', json={'uri': uri, 'scopes': scopes})['id']
     b.tick()
-    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes})
+    a.request('POST', f'/devices/{pair_id}/approve', json={'review_token': pair_id, 'scopes': scopes, 'verification_code': code_for(pair_id)})
     b.tick()
     return a, b, pair_id
 

@@ -226,13 +226,16 @@ class PairingService:
                     **({'offer': row['offer']} if row.get('offer') else {})}
         return self._reply(wire, sender, **self.store.mutate(receive))
 
-    def approve(self, pair_id, *, review_token, scopes):
+    def approve(self, pair_id, *, review_token, scopes, verification_code):
         scopes = crypto.selected(scopes)
+        normalized = ''.join(verification_code.split()).replace('-', '').lower() if isinstance(verification_code, str) else ''
 
         def approve(data):
             row = self._pair(data, pair_id)
             if row['role'] != 'inviter' or review_token != pair_id or not set(scopes) <= set(row['requested_scopes']):
                 raise SyncError('sync_pairing_review_changed')
+            if normalized != pair_id[:24]:
+                raise SyncError('sync_verification_code_mismatch')
             if row['status'] in {'awaiting_peer', 'active'}:
                 if row['offer']['scopes'] != scopes:
                     raise SyncError('sync_pairing_review_changed')
