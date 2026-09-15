@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -300,6 +301,69 @@ def test_preview_revision_budget_changes_and_future_run_format_fail_closed(tmp_p
     with pytest.raises(ConversationError, match="ask_history_version_unsupported"):
         runs.begin(request)
     assert history.path.read_bytes() == before
+
+
+def test_status_404_while_running_marks_run_interrupted(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()  # queued -> dispatching -> submit -> running
+    assert runs.get(request["task_id"])["state"] == "running"
+    del orders.results[request["task_id"]]  # the provider has no record of the task any more
+    runs.run_once()
+    assert runs.get(request["task_id"])["state"] == "interrupted"
+    content = history.get("conversation")["messages"][-1]["content"]
+    assert content == ("The node could not confirm dispatch of the original task after interruption. "
+                        "It has not been submitted again.")
+
+
+def test_corrupt_history_raises_and_a_later_good_file_resumes(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    good_bytes = history.path.read_bytes()
+    envelope = json.loads(good_bytes)
+    # Flip a character inside the ciphertext: still valid JSON/base64, but the
+    # AEAD tag no longer authenticates, so decryption fails.
+    ciphertext = envelope["ciphertext"]
+    flipped = ("A" if ciphertext[0] != "A" else "B") + ciphertext[1:]
+    envelope["ciphertext"] = flipped
+    history.path.write_text(json.dumps(envelope))
+    with pytest.raises(ConversationError, match="ask_history_unreadable"):
+        runs.run_once()
+    assert orders.sent == []
+    history.path.write_bytes(good_bytes)
+    runs.run_once()
+    assert len(orders.sent) == 1
+    assert orders.sent[0]["task_id"] == request["task_id"]
+
+
+def test_three_active_runs_are_each_ticked_exactly_once_in_last_checked_order(tmp_path):
+    history = ConversationStore(tmp_path, X25519PrivateKey.generate())
+    context = AskContextService(lambda: None, lambda _: [{"peer_id": "provider", "service": {"package_id": "model", "context_window": 4096, "max_output_tokens": 256}}])
+    orders = Orders()
+    runs = AskRunService(history, lambda: context, lambda: orders)
+    task_ids = []
+    for index in range(3):
+        conversation_id = f"conversation-{index}"
+        row = history.save({"id": conversation_id, "title": "New chat", "serviceKey": "provider::model", "serviceName": "Model",
+                             "providerPeerId": "provider", "networkId": "network", "createdAt": "2026-09-11T00:00:00Z",
+                             "updatedAt": "2026-09-11T00:00:00Z", "messages": []}, expected_revision=0)
+        preview = context.preview(row, f"question {index}")
+        task_id = "task_" + chr(ord("a") + index) * 32
+        runs.begin({"task_id": task_id, "conversation_id": conversation_id, "expected_revision": row["revision"],
+                    "question": f"question {index}", "prompt_sha256": preview["prompt_sha256"]})
+        task_ids.append(task_id)
+
+    runs.run_once()
+    runs.run_once()
+    runs.run_once()
+
+    # Each tick checked exactly one run (the one least recently checked), in
+    # the order the runs were created -- every run started tied at last_checked
+    # 0.0, so ties resolve to insertion order and each subsequent tick moves
+    # strictly ahead of the others.
+    assert [body["task_id"] for body in orders.sent] == task_ids
+    for task_id in task_ids:
+        assert runs.get(task_id)["state"] == "running"
 
 
 def test_owner_http_and_reinstalled_worker_use_current_node(tmp_path):

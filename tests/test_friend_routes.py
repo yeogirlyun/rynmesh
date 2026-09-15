@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import time
+import uuid
+
 from fastapi.testclient import TestClient
 
+from rynmesh.crypto import canonical_json
+from rynmesh.friends.crypto import auth_headers
 from rynmesh.peer_http import create_app
 from rynmesh.store import RynmeshStore
 
@@ -126,6 +131,107 @@ def test_private_card_fetch_returns_safe_denial_for_inactive_credentials(tmp_pat
         response = client.post("/api/peer/friends/content-card/fetch", json={"v": 1, "card_id": "a" * 32})
     assert response.status_code == 403
     assert response.json() == {"detail": "friend_request_rejected"}
+
+
+def _paired_three_nodes(tmp_path, monkeypatch, base_port):
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_DISABLE_DISCOVERY", "1")
+    monkeypatch.setenv("RYNMESH_MODEL_PROVIDER", "none")
+    monkeypatch.setenv("RYNMESH_LOCAL_TOKEN", "route-owner")
+    monkeypatch.setenv("RYNMESH_FRIEND_ALLOW_LOOPBACK", "1")
+    auth = {"x-ryn-local-token": "route-owner"}
+    clients, apps = {}, {}
+    for i, name in enumerate(("Alice", "Bob", "Carol")):
+        home = tmp_path / name
+        monkeypatch.setenv("RYNMESH_HOME", str(home))
+        endpoint = f"http://127.0.0.1:{base_port + i}"
+        monkeypatch.setenv("RYNMESH_FRIEND_ENDPOINT", endpoint)
+        app = create_app(RynmeshStore(home=home, node_name=name, network_dir=tmp_path / "network"))
+        clients[endpoint] = TestClient(app)
+        apps[name] = app
+
+    def post(endpoint, path, payload, headers, **kwargs):
+        response = clients[endpoint].post(path, json=payload, headers=headers or {})
+        response.raise_for_status()
+        return response.json()
+
+    for app in apps.values():
+        app.state.friends.service.post_json = post
+
+    alice = clients[apps["Alice"].state.friends.service.endpoint]
+    relationships = {}
+    for name in ("Bob", "Carol"):
+        invitation = alice.post("/api/local/friends/invites", json={}, headers=auth).json()
+        joined = clients[apps[name].state.friends.service.endpoint].post(
+            "/api/local/friends/join", json={"invite_uri": invitation["invite_uri"]}, headers=auth)
+        assert joined.status_code == 200, joined.text
+        relationships[name] = joined.json()["relationship_id"]
+    return apps, clients, relationships, auth
+
+
+def test_peer_request_rejects_header_relationship_bound_to_a_different_body_relationship(tmp_path, monkeypatch):
+    """The X-Ryn-Friend-* headers authenticate relationship A (Bob's real,
+    active relationship with Alice); the sealed wire inside the body claims a
+    different real relationship B (Carol's). Every peer path that carries its
+    own 'relationship_id' in the body must bind it to the header-authenticated
+    relationship and reject the mismatch, for message, content-card and the
+    content-card/fetch (delivery) path alike.
+    """
+    apps, clients, relationships, auth = _paired_three_nodes(tmp_path, monkeypatch, base_port=18981)
+    alice_app, bob_app = apps["Alice"], apps["Bob"]
+    alice = clients[alice_app.state.friends.service.endpoint]
+    alice_peer_id = alice_app.state.friends.service.peer_id
+    bob_peer_id = bob_app.state.friends.service.peer_id
+    bob_relationship_id = relationships["Bob"]
+    carol_relationship_id = relationships["Carol"]
+    bob_secret = bob_app.state.friends.service._relationship(alice_peer_id)[1]
+
+    def send(path, body):
+        payload_bytes = canonical_json(body)
+        headers = auth_headers(bob_secret, method="POST", path=path, body=payload_bytes, sender=bob_peer_id,
+                                receiver=alice_peer_id, relationship_id=bob_relationship_id,
+                                timestamp=int(time.time()), nonce=uuid.uuid4().hex)
+        return alice.post(path, content=payload_bytes, headers={**headers, "content-type": "application/json"})
+
+    # message: a syntactically well-formed wire, truthfully "from" Bob, but
+    # naming Carol's relationship. Sanity check first that Alice's own real
+    # relationship with Carol exists and is unrelated to Bob's.
+    message_wire = {"v": 1, "relationship_id": carol_relationship_id, "from": bob_peer_id, "to": alice_peer_id,
+                     "from_pub": "not-used-before-rejection", "nonce": "AA==", "ciphertext": "AA=="}
+    rejected_message = send("/api/peer/friends/message", message_wire)
+    assert rejected_message.status_code == 403
+    assert rejected_message.json() == {"detail": "friend_request_rejected"}
+    assert bob_app.state.friends.service.history(alice_peer_id) == []
+
+    # content-card: same shape of attack against the notification wire.
+    card_wire = {"v": 1, "relationship_id": carol_relationship_id, "from": bob_peer_id, "to": alice_peer_id,
+                 "nonce": "AA==", "ciphertext": "AA=="}
+    rejected_card = send("/api/peer/friends/content-card", card_wire)
+    assert rejected_card.status_code == 403
+    assert rejected_card.json() == {"detail": "friend_request_rejected"}
+
+    # content-card/fetch ("receipt" path): use a real card Alice actually
+    # shared with Bob, over Bob's real relationship, so the mismatch being
+    # tested is specifically the body's claimed relationship_id -- not a
+    # missing or misattributed card.
+    article_url = "https://example.test/receipt-path-article"
+    alice_app.state.reader_cache.put(article_url, {"title": "Receipt path article", "source_url": article_url,
+                                      "blocks": [{"tag": "p", "text": "Body."}]}, now=time.time())
+    alice_app.state.consumption_store.record({"item_id": "receipt-item", "title": "Receipt path article", "link": article_url}, "opened")
+    card_id = "e" * 32
+    shared = alice.post("/api/local/friends/share", json={"peer_id": bob_peer_id, "item_id": "receipt-item", "card_id": card_id}, headers=auth)
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["delivery_state"] == "delivered"
+
+    fetch_body = {"v": 1, "card_id": card_id, "from": bob_peer_id, "to": alice_peer_id, "relationship_id": carol_relationship_id}
+    rejected_fetch = send("/api/peer/friends/content-card/fetch", fetch_body)
+    assert rejected_fetch.status_code == 403
+    assert rejected_fetch.json() == {"detail": "friend_request_rejected"}
+
+    # Sanity: the identical request bound to Bob's own real relationship id succeeds,
+    # proving the rejection above was specifically about the mismatched relationship_id.
+    honest_fetch = send("/api/peer/friends/content-card/fetch", {**fetch_body, "relationship_id": bob_relationship_id})
+    assert honest_fetch.status_code == 200, honest_fetch.text
 
 
 def test_imports_belong_to_the_injected_node_home(tmp_path, monkeypatch):
