@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
+import DeviceErasurePanel from "../components/DeviceErasurePanel";
 import { runThenReload } from "../domain/actThenReload";
 import { captureFailureReason, deviceSyncApi, pairLabels, quarantineReason, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
@@ -179,5 +180,6 @@ export default function Devices() {
       </div>)}
     </Panel>
     {status?.data_transfer_available ? <ReadingSyncConflicts devices={status.devices} onResolved={load} /> : null}
+    {status ? <DeviceErasurePanel devices={status.devices} /> : null}
   </div>;
 }
