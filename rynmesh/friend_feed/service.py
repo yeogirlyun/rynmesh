@@ -387,6 +387,10 @@ class FriendFeed:
             return {'id': identifier, 'revision': expected_revision, 'read': True}
         return self.store.mutate(change)
 
+    def weekly(self):
+        from .weekly import weekly_recap
+        return weekly_recap(self.timeline(), now=self.clock())
+
     def fetch(self, relationship_id, identifier, *, expected_revision):
         friend = self.active(relationship_id)
         identity(identifier)

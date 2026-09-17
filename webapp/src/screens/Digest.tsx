@@ -1,3 +1,4 @@
+import FriendWeeklyRecap from "../components/FriendWeeklyRecap";
 import SourceHealthPanel from "../components/SourceHealthPanel";
 import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
 import ContentViewer from "../components/ContentViewer";
@@ -353,6 +354,8 @@ export default function Digest() {
           <p className="digest-brief-text">{digest.brief}</p>
         </Panel>
       ) : null}
+
+      {client.mode === "live" ? <FriendWeeklyRecap /> : null}
 
       <Panel className="recommendation-status-panel">
         <div className="recommendation-status-heading">
