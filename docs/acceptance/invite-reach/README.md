@@ -18,6 +18,9 @@ traversal, automatic port opening or additional friend permissions are introduce
 - Backend friend route, protocol and pairing-recovery tests: 28 passed.
 - Node 22.22.1 frontend: 326 passed in 52 files, including 20 Friends tests.
 - TypeScript/build, Ruff and diff whitespace checks passed.
+- CI exposed an existing Settings keyboard-recovery test race: the alert could
+  render before its effect assigned focus. That assertion now waits for focus;
+  the subsequent Tab/Enter retry checks remain unchanged.
 - Built a wheel with the compiled web UI and installed it into an isolated
   package directory. Both running nodes verified that they imported that package.
 - Opened Friends on an unseeded inviter. Before creation, its configured loopback
