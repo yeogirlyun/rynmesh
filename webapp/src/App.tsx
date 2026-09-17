@@ -31,6 +31,7 @@ import AskRyn, { AskRynQuickPanel } from "./screens/AskRyn";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
+import InviteDeepLinks from "./components/InviteDeepLinks";
 import Devices from "./screens/Devices";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
@@ -401,6 +402,7 @@ function OfflineShell({ onRetry }: { onRetry: () => Promise<void> }) {
 
 export function AppRoutes() {
   return (
+    <InviteDeepLinks>
     <UnlockGate>
       <Routes>
         <Route path="/" element={<App />}>
@@ -429,6 +431,7 @@ export function AppRoutes() {
         </Route>
       </Routes>
     </UnlockGate>
+    </InviteDeepLinks>
   );
 }
 
