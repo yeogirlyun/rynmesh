@@ -28,6 +28,8 @@ import {
 import { askHistory, AskRequestError, conversationRepository, legacyMigrationNotice, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
+import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
+import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
@@ -80,7 +82,16 @@ export default function PrivateAIChat() {
   const { client, confirm, notify } = useAppContext();
   const history = useMemo(() => conversationRepository(client.mode), [client.mode]);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [services, setServices] = useState<LLMServiceRecord[]>([]);
+  const configuredNetwork = useServiceOrder({ scope: client, key: "service-network", intervalMs: 15_000,
+    load: async () => (await client.getSettings().catch(() => null))?.network_id?.trim() || "rynmesh-main",
+    isTerminal: () => true,
+  });
+  const discoveryNetwork = searchParams.get("network") || configuredNetwork.data;
+  const discovery = useProviderDiscovery<LLMServiceRecord>({ scope: client, key: discoveryNetwork ?? "",
+    enabled: Boolean(discoveryNetwork), intervalMs: serviceDescriptors.privateAI.discoveryIntervalMs,
+    load: () => client.listLLMServices(discoveryNetwork!),
+    identity: (item) => providerIdentity(discoveryNetwork!, item.peer_id, item.service.package_id),
+  });
   const [selectedService, setSelectedService] = useState<LLMServiceRecord | null>(null);
   const selectedServiceKeyRef = useRef("");
   selectedServiceKeyRef.current = selectedService ? serviceKey(selectedService) : "";
@@ -119,6 +130,12 @@ export default function PrivateAIChat() {
   selectedConversationRef.current = selectedConversation?.id;
   const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
+  const fixtureOrder = useServiceOrder<LLMOrderResult>({ scope: client,
+    key: providerIdentity(networkId, selectedService?.peer_id ?? "", selectedService?.service.package_id ?? ""),
+    enabled: false, load: () => client.getLLMOrder(activeTaskId),
+    intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
+    isTerminal: (result) => TERMINAL_STATES.has(result.state),
+  });
 
   const refreshNodeHistory = async () => {
     const rows = await history.list(selectedServiceKeyRef.current);
@@ -127,24 +144,19 @@ export default function PrivateAIChat() {
     return filtered;
   };
 
-  useEffect(() => {
-    if (client.mode !== "live" || !historyReady) return;
-    let active = true;
-    let checking = false;
-    const timer = window.setInterval(() => {
-      if (checking) return;
-      checking = true;
-      void history.list(selectedServiceKeyRef.current).then((rows) => {
-        if (!active) return;
-        setConversations(rows.filter((row) => row.serviceKey === selectedServiceKeyRef.current && row.networkId === activeNetworkRef.current));
-        setError((current) => (current === NODE_UNREACHABLE_ERROR ? "" : current));
-      }).catch(() => { if (active) setError(NODE_UNREACHABLE_ERROR); })
-        .finally(() => { checking = false; });
-    }, 1500);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [client.mode, history, historyReady]);
+  useServiceOrder({ scope: client, key: providerIdentity(networkId, selectedService?.peer_id ?? "", selectedService?.service.package_id ?? ""),
+    enabled: client.mode === "live" && historyReady,
+    intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
+    load: async () => {
+      const key = selectedService ? serviceKey(selectedService) : "";
+      return (await history.list(key)).filter((row) => row.serviceKey === key && row.networkId === networkId);
+    },
+    onData: (rows) => { setConversations(rows); setError((value) => value === NODE_UNREACHABLE_ERROR ? "" : value); },
+    onError: () => setError(NODE_UNREACHABLE_ERROR),
+  });
 
   useEffect(() => {
+    if (!discoveryNetwork) return;
     let active = true;
     let redirecting = false;
     setLoading(true);
@@ -153,12 +165,10 @@ export default function PrivateAIChat() {
     setSelectedId("");
     void (async () => {
       try {
-      const settings = await client.getSettings().catch(() => null);
-      const network = searchParams.get("network") || settings?.network_id?.trim() || "rynmesh-main";
-      const discovered = await client.listLLMServices(network).catch(() => []);
+      const network = discoveryNetwork;
+      const discovered = await discovery.refresh() ?? [];
       if (!active) return;
       setNetworkId(network);
-      setServices(discovered);
       const requestedPeer = searchParams.get("peer");
       const requestedService = searchParams.get("service");
       const selected = requestedPeer && requestedService
@@ -194,7 +204,7 @@ export default function PrivateAIChat() {
       } finally { if (active && !redirecting) setLoading(false); }
     })();
     return () => { active = false; };
-  }, [client, history, searchParams, setSearchParams]);
+  }, [client, history, searchParams, setSearchParams, discoveryNetwork, discovery.refresh]);
 
   useEffect(() => {
     const element = messageScrollRef.current;
@@ -366,10 +376,8 @@ export default function PrivateAIChat() {
       }
       // Orders are asynchronous at the node boundary. Keep polling centralized
       // here so the UI never bypasses node transport, settlement, or cancellation.
-      while (mountedRef.current && !TERMINAL_STATES.has(result.state)) {
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
-        result = await client.getLLMOrder(result.task_id);
-      }
+      const originalTaskId = result.task_id;
+      result = await fixtureOrder.awaitTerminal(result, () => client.getLLMOrder(originalTaskId));
       if (!mountedRef.current) return;
       const success = result.state === "succeeded";
       const assistantMessage: LLMChatMessage = {
