@@ -351,6 +351,7 @@ _KNOWN_WORKER_NAMES = {
     "ask-ryn-runs",
     "local-search.index",
     "friend-feed.refresh",
+    "device-erasure.receipts",
     "offline-reading.download",
     "device-sync.pairing",
 }

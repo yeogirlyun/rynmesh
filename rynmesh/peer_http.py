@@ -2426,7 +2426,11 @@ def create_app(store: RynmeshStore | None = None):
     install_reading_cleanup(app, store=active_store, home=_home,
         workers=app.state.background_workers, local_control=local_control)
 
+    from .device_erasure.routes import install_device_erasure
     from .privacy_export.routes import install_privacy_export
+
+    install_device_erasure(app, home=active_store.home, messaging_key=_msg_priv,
+        local_control=local_control, workers=app.state.background_workers)
 
     install_privacy_export(app, local_control=local_control)
 
