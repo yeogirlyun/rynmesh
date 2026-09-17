@@ -1,7 +1,7 @@
+import FriendWeeklyRecap from "../components/FriendWeeklyRecap";
 import SourceHealthPanel from "../components/SourceHealthPanel";
 import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
 import ContentViewer from "../components/ContentViewer";
-import FriendWeeklyRecap from "../components/FriendWeeklyRecap";
 import { contentFromHistory } from "../domain/readingHistory";
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
