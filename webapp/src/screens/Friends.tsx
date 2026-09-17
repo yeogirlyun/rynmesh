@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
+import { useInviteDeepLink } from "../components/InviteDeepLinks";
 import { runThenReload } from "../domain/actThenReload";
 import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
 import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
@@ -12,6 +13,7 @@ import FriendAI from "./components/FriendAI";
 import styles from "./Friends.module.css";
 
 export default function Friends() {
+  const deepLink = useInviteDeepLink();
   const [params] = useSearchParams();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
@@ -90,6 +92,11 @@ export default function Friends() {
       </Panel>
       <Panel className={styles.actionCard}>
         <h2>Use an invite</h2>
+        {deepLink.pending ? <div role="status">
+          <p>An invitation was opened in Ryn. Load it below to review the sender. This replaces any pasted invitation; no friend is contacted.</p>
+          <Button disabled={busy} onClick={() => { revision.current += 1; setPaste(deepLink.pending); setReview(null); deepLink.clear(); }}>Load opened invitation</Button>
+          <Button onClick={deepLink.clear}>Dismiss invitation</Button>
+        </div> : null}
         <textarea className={styles.paste} aria-label="Friend invite" value={paste} onChange={(event) => { revision.current += 1; setPaste(event.target.value); setReview(null); }} placeholder="Paste the invitation here" />
         {!review ? <Button disabled={busy || !paste.trim()} onClick={() => void act(async () => {
           const version = revision.current; const uri = extractInvite(paste);

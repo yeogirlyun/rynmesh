@@ -7,6 +7,7 @@ import type { FriendInvitePreview, FriendRecord } from "../domain/friendTypes";
 import Friends from "./Friends";
 import { MemoryRouter } from "react-router-dom";
 import FriendConversation from "./components/FriendConversation";
+import * as deepLinks from "../components/InviteDeepLinks";
 
 const mocks = vi.hoisted(() => ({ confirm: vi.fn() }));
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm: mocks.confirm }) }));
@@ -291,3 +292,21 @@ describe("Friend attachments", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not download this attachment. Access may have been removed.");
   });
 });
+
+  it("loads an opened invitation only on request and still requires review before joining", async () => {
+    const clear = vi.fn();
+    vi.spyOn(deepLinks, "useInviteDeepLink").mockReturnValue({ pending: "rynmesh://join/OPENED_MARKER", clear });
+    const inspect = vi.spyOn(friendsApi, "inspect").mockResolvedValue(preview);
+    const join = vi.spyOn(friendsApi, "join").mockResolvedValue(friend);
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "previous paste" } });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(join).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Load opened invitation" }));
+    expect(screen.getByLabelText("Friend invite")).toHaveValue("rynmesh://join/OPENED_MARKER");
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(inspect).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Review invite" }));
+    expect(await screen.findByRole("button", { name: "Add this friend" })).toBeInTheDocument();
+    expect(join).not.toHaveBeenCalled();
+  });
