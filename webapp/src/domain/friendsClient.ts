@@ -2,6 +2,7 @@ import { nodeControlUrl } from "./nodeUrl";
 import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
+  invite_endpoint_changed: "Your sharing address changed. Refresh the address and review its reach before creating another invite.",
   friend_card_erased: "This card was cleared locally. It cannot be restored by retrying the old share.",
   friend_card_cleanup_review_changed: "Card history or a remaining legacy file changed. Review again before clearing it.",
   friend_card_cleanup_file_unavailable: "A legacy card file could not be safely read. Current data is kept; repair or restore that file before retrying.",
@@ -42,9 +43,10 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const friendsApi = {
+  invitationContext: () => request<{ endpoint: string; address_category: string }>("/invitation-context"),
   list: () => request<{ friends: FriendRecord[] }>(""),
   invites: () => request<{ invites: (FriendInvitePreview & { status: string })[] }>("/invites"),
-  createInvite: () => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15 }),
+  createInvite: (reviewed_endpoint?: string) => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15, reviewed_endpoint }),
   inspect: (invite_uri: string) => request<FriendInvitePreview>("/invites/inspect", "POST", { invite_uri }),
   join: (invite_uri: string) => request<FriendRecord>("/join", "POST", { invite_uri }),
   cancel: (id: string) => request(`/invites/${encodeURIComponent(id)}`, "DELETE"),
@@ -66,7 +68,13 @@ export const friendsApi = {
 };
 
 export function invitationText(invite: FriendInviteResult): string {
-  return `Join me on Ryn.\nInstall or open Ryn: https://github.com/yeogirlyun/rynmesh/releases/latest\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;
+  return `Join me on Ryn.\nInstall or open Ryn: https://github.com/yeogirlyun/rynmesh/releases/latest\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nUse the same local network or an address you can already reach. Ryn does not open router ports for this invite.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;
+}
+
+export function invitationReach(category?: string): string {
+  if (category === "loopback") return "This address works only on this computer. A friend on another device cannot use it.";
+  if (category === "LAN private" || category === "link-local") return "This is a local network address. Your friend needs the same local network or an existing route to it.";
+  return "Your friend must already be able to reach this address. A public address or hostname does not prove it is reachable.";
 }
 
 export function extractInvite(text: string): string {

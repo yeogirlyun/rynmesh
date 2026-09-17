@@ -42,8 +42,18 @@ def test_owner_pairing_message_receipt_and_signed_refusal(tmp_path, monkeypatch)
         app.state.friends.service.post_json = post
     alice, bob, carol = [client for _, client in apps]
     assert alice.get("/api/local/friends").status_code in {401, 403}
+    assert alice.get("/api/local/friends/invitation-context").status_code in {401, 403}
+    context = alice.get("/api/local/friends/invitation-context", headers=auth).json()
+    assert context == {"endpoint": "http://127.0.0.1:18901", "address_category": "loopback"}
+    assert alice.get("/api/local/friends/invites", headers=auth).json() == {"invites": []}
+    assert calls == []
+    changed = alice.post("/api/local/friends/invites", headers=auth,
+                         json={"reviewed_endpoint": "http://192.168.1.2:8791"})
+    assert changed.status_code == 409
+    assert changed.json()["detail"] == "invite_endpoint_changed"
+    assert alice.get("/api/local/friends/invites", headers=auth).json() == {"invites": []}
     assert alice.get("/api/local/friends/abc%2Fdef/messages", headers=auth).json() == {"messages": []}
-    invitation = alice.post("/api/local/friends/invites", json={}, headers=auth).json()
+    invitation = alice.post("/api/local/friends/invites", json={"reviewed_endpoint": context["endpoint"]}, headers=auth).json()
     uri = {"invite_uri": invitation["invite_uri"]}
     assert bob.post("/api/local/friends/invites/inspect", json=uri, headers=auth).status_code == 200
     assert calls == []
