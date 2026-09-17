@@ -18,6 +18,7 @@ import {
   type Watcher,
 } from "../domain/digestClient";
 import type { ContentItem, RecommendationProfile } from "../domain/types";
+import { feedApi } from "../domain/friendFeed";
 
 function timeAgo(unix: number): string {
   if (!unix) return "";
@@ -114,6 +115,24 @@ function DigestCard({
             </div>
           </div>
           {feedbackError ? <p role="alert">{feedbackError}</p> : null}
+          {item.friend_provenance ? <div>
+            <p>Shared by {item.friend_provenance.node_name} · served by this friend's node</p>
+            {item.friend_provenance.unreachable ? <p role="status">Latest access could not be checked. Your node will check again when you open this copy.</p> : null}
+            <details><summary>Sharing provenance</summary>
+              <dl style={{ overflowWrap: "anywhere" }}>
+                <dt>Sharing publisher</dt><dd>{item.friend_provenance.publisher_peer_id}</dd>
+                <dt>Serving node</dt><dd>{item.friend_provenance.serving_peer_id}</dd>
+                <dt>Checked publication</dt><dd>Version {item.friend_provenance.revision}</dd>
+                <dt>Last checked</dt><dd>{item.friend_provenance.checked_at ? new Date(item.friend_provenance.checked_at * 1000).toLocaleString() : "Unknown"}</dd>
+                <dt>Source supplied by friend</dt><dd>{item.friend_provenance.source || "Not supplied"}{item.friend_provenance.source_url ? ` · ${item.friend_provenance.source_url}` : ""}</dd>
+                <dt>Expected content hash</dt><dd>{item.friend_provenance.sha256}</dd>
+              </dl>
+              <p>The friendship authenticates who shared this. Original authorship and content safety have not been independently verified.</p>
+              {item.friend_provenance.content_truncated ? <p>This shared copy is shortened.</p> : null}
+            </details>
+            <Button disabled={pending} onClick={() => onOpen(item)}>Save copy and read</Button>
+            <p>Opening saves a private copy after checking access. Copies you save remain after unfollowing.</p>
+          </div> : null}
           <EvidenceDetails packet={item.evidence_packet} />
         </div>
       </div>
@@ -142,6 +161,7 @@ export default function Digest() {
   const [consumption, setConsumption] = useState<ConsumptionRecord[]>([]);
   const [profile, setProfile] = useState<RecommendationProfile | null>(null);
   const [direction, setDirection] = useState("");
+  const [openingFriend, setOpeningFriend] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -175,6 +195,41 @@ export default function Digest() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    let active = true, running = false;
+    const timer = window.setInterval(async () => {
+      if (running) return;
+      running = true;
+      try { const next = await digestApi.getDigest(); if (active) setDigest(next); }
+      catch { /* Keep the last visible slate; opening still rechecks access. */ }
+      finally { running = false; }
+    }, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+
+  const openItem = async (item: DigestItem) => {
+    const provenance = item.friend_provenance;
+    if (!provenance) {
+      const publicItems = (digest?.items ?? []).filter((row) => !row.friend_provenance);
+      setViewer({ items: publicItems, index: publicItems.findIndex((row) => row.item_id === item.item_id) });
+      return;
+    }
+    if (openingFriend) return;
+    setOpeningFriend(true); setError("");
+    try {
+      const copy = await feedApi.fetch(provenance.relationship_id, provenance.publication_id, provenance.revision);
+      const saved = await digestApi.listConsumption();
+      const record = saved.find((row) => row.item_id === copy.library_id);
+      if (!record) throw new Error("Your copy was saved. Open My reading to find it.");
+      setConsumption(saved); setMeshViewer(contentFromHistory(record));
+      await feedApi.read(provenance.relationship_id, provenance.publication_id, provenance.revision).catch(() => undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "This friend publication could not be opened. Refresh and retry.");
+      const next = await digestApi.getDigest().catch(() => null);
+      if (next) setDigest(next);
+    } finally { setOpeningFriend(false); }
+  };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -536,12 +591,12 @@ export default function Digest() {
 
       {items.length ? (
         <div className="digest-stack">
-          {items.map((item, position) => (
+          {items.map((item) => (
             <DigestCard
               key={item.item_id}
               item={item}
               onFeedback={onFeedback}
-              onOpen={() => setViewer({ items, index: position })}
+              onOpen={() => void openItem(item)}
             />
           ))}
         </div>
@@ -556,6 +611,8 @@ export default function Digest() {
           }
         />
       )}
+      {openingFriend ? <p role="status">Checking access and saving a private copy…</p> : null}
+      {digest?.friend_feed_unavailable ? <p role="status">Friend updates are temporarily unavailable. Public recommendations are still available.</p> : null}
       {consumption.length ? (
         <Panel title="Saved and recently opened">
           <div className="digest-stack">
