@@ -108,6 +108,10 @@ strategy. CI, maintainer review and real-machine acceptance remain separate gate
 
 ## Manual acceptance
 
+Additional real CPU-model browser observations, cancellation and retained failures
+are recorded in [native-model-20260917.md](native-model-20260917.md). This supplements
+the deterministic protocol evidence above and does not close the physical gates.
+
 1. Use two fresh nodes running this branch. Pair them and explicitly grant the
    consumer access to a streaming OpenAI-compatible model on the provider.
 2. Open Ask Ryn on the consumer and select that friend model. Ask for a long
