@@ -2,6 +2,8 @@ import { nodeControlUrl } from "./nodeUrl";
 import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendMessage, FriendRecord } from "./friendTypes";
 
 const explanations: Record<string, string> = {
+  friend_probe_busy: "A connection check is still running. Refresh check status before retrying.",
+  friend_probe_selection_invalid: "Select between one and five active friends to check.",
   friend_card_erased: "This card was cleared locally. It cannot be restored by retrying the old share.",
   friend_card_cleanup_review_changed: "Card history or a remaining legacy file changed. Review again before clearing it.",
   friend_card_cleanup_file_unavailable: "A legacy card file could not be safely read. Current data is kept; repair or restore that file before retrying.",
@@ -42,6 +44,8 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
 }
 
 export const friendsApi = {
+  diagnostics: () => request<FriendDiagnostics>("/diagnostics"),
+  diagnose: (relationship_ids: string[]) => request<FriendDiagnostics>("/diagnostics", "POST", { relationship_ids }),
   list: () => request<{ friends: FriendRecord[] }>(""),
   invites: () => request<{ invites: (FriendInvitePreview & { status: string })[] }>("/invites"),
   createInvite: () => request<FriendInviteResult>("/invites", "POST", { ttl_minutes: 15 }),
@@ -64,6 +68,14 @@ export const friendsApi = {
   documents: () => request<{ documents: { import_id: string; filename: string; state: string; size_bytes?: number; created_at_unix: number }[] }>("/documents"),
   attachmentUrl: (peer: string, message: string) => nodeControlUrl(`/friends/${encodeURIComponent(peer)}/attachments/${encodeURIComponent(message)}`),
 };
+
+export interface FriendDiagnostics {
+  from_peer_id: string;
+  scope: "outbound_direct";
+  running: boolean;
+  links: Array<{ relationship_id: string; peer_id: string; node_name: string;
+    state: string; checked_at: number | null; latency_ms: number | null; stale: boolean }>;
+}
 
 export function invitationText(invite: FriendInviteResult): string {
   return `Join me on Ryn.\nInstall or open Ryn: https://github.com/yeogirlyun/rynmesh/releases/latest\nOpen Friends, paste the invite below, review my identity and permissions, then choose Add this friend.\nValid until ${new Date(invite.invite.expires_at).toLocaleString()}; one use only. If it expires during installation, ask me for a new invite.\n\n${invite.invite_uri}`;

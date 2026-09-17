@@ -7,6 +7,7 @@ import { runThenReload } from "../domain/actThenReload";
 import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
 import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
+import FriendConnectionDiagnostics from "./components/FriendConnectionDiagnostics";
 import FriendCards from "./components/FriendCards";
 import FriendAI from "./components/FriendAI";
 import styles from "./Friends.module.css";
@@ -119,6 +120,7 @@ export default function Friends() {
     </Panel>
     {conversation ? <FriendConversation key={conversation.relationship_id} friend={conversation} focusMessage={params.get("message")} /> : params.get("peer") && loaded ? <p role="alert">This friend is unavailable or access was removed.</p> : null}
       <FriendCards friends={friends} focusCard={params.get("card")} />
+    <FriendConnectionDiagnostics friends={activeFriends} />
     <FriendAI friends={friends} />
   </div>;
 }
