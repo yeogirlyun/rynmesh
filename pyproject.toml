@@ -70,7 +70,7 @@ gpu-provider = [
     "protobuf>=6,<7",
     "safetensors>=0.6,<1",
     "sentencepiece>=0.2,<1",
-    "transformers>=4.57,<4.58",
+    "transformers>=4.57,<5.18",
 ]
 
 [project.scripts]
