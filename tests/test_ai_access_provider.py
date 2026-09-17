@@ -2,6 +2,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -34,12 +35,17 @@ class Model:
         assert self.release.wait(5)
         return {"text": "answer", "input_tokens": 1, "output_tokens": 1, "duration_ms": 1}
 
+    def infer_stream(self, *, on_delta, **kwargs):
+        result = self.infer(**kwargs)
+        on_delta(result["text"])
+        return result
+
     def cancel(self, task_id):
         self.cancelled.append(task_id)
         return False  # Simulate an engine that cannot immediately stop compute.
 
 
-def fixture(tmp_path):
+def fixture(tmp_path, *, streaming=False):
     provider = RynmeshStore(home=tmp_path / "provider", network_dir=tmp_path / "net")
     friend = RynmeshStore(home=tmp_path / "friend", network_dir=tmp_path / "net")
     stranger = RynmeshStore(home=tmp_path / "stranger", network_dir=tmp_path / "net")
@@ -69,6 +75,8 @@ def fixture(tmp_path):
     def request(task_id, *, revision=None, sender=friend, service_id="model-x"):
         body = {"task_id": task_id, "service_id": service_id, "prompt": "question", "max_tokens": 8, "max_amount": 1,
                 "reply_messaging_pub": peer_box.public_key_b64(fkey)}
+        if streaming:
+            body["response_mode"] = "stream-v1"
         if revision is not None:
             body["ai_permission"] = {"relationship_id": RID, "revision": revision}
         return seal_task(body=body, task_id=task_id, kind="llm_request", sender_peer_id=sender.peer_id,
@@ -77,14 +85,16 @@ def fixture(tmp_path):
             expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()).to_dict()
 
     def result(wire, current=service, sender=friend):
-        return open_task(current.handle(wire), recipient_peer_id=sender.peer_id,
+        response = list(current.handle_stream(wire))[-1] if streaming else current.handle(wire)
+        return open_task(response, recipient_peer_id=sender.peer_id,
                          recipient_messaging_key=fkey, expected_kind="llm_response")[1]
 
     return service, manager, model, client, grants, relationships, friend, stranger, request, result
 
 
-def test_owner_grants_gate_signed_provider_requests_and_replays(tmp_path):
-    service, manager, model, client, grants, relationships, friend, stranger, request, result = fixture(tmp_path)
+@pytest.mark.parametrize("streaming", [False, True])
+def test_owner_grants_gate_signed_provider_requests_and_replays(tmp_path, streaming):
+    service, manager, model, client, grants, relationships, friend, stranger, request, result = fixture(tmp_path, streaming=streaming)
     path = f"/api/local/ai-access/model-x/{RID}"
     body = {"allowed": True, "expected_revision": 0}
     assert client.put(path, json=body).status_code == 401
@@ -113,8 +123,9 @@ def test_owner_grants_gate_signed_provider_requests_and_replays(tmp_path):
     assert result(request("friend-revoked", revision=3), current=restarted)["error_code"] == "ai_permission_denied"
 
 
-def test_revoke_during_inference_does_not_claim_the_engine_stopped(tmp_path):
-    service, _, model, client, grants, _, _, _, request, result = fixture(tmp_path)
+@pytest.mark.parametrize("streaming", [False, True])
+def test_revoke_during_inference_does_not_claim_the_engine_stopped(tmp_path, streaming):
+    service, _, model, client, grants, _, _, _, request, result = fixture(tmp_path, streaming=streaming)
     grants.set("model-x", RID, allowed=True, expected_revision=0)
     model.release.clear()
     with ThreadPoolExecutor(max_workers=1) as pool:

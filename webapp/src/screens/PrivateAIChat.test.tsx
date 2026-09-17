@@ -78,6 +78,32 @@ async function setupResumedRunningTask(taskId = "task_original") {
 }
 
 describe("Private AI chat", () => {
+  it("shows a transient partial answer then replaces it with the node archive", async () => {
+    class Stream extends EventTarget {
+      static latest: Stream;
+      onerror: (() => void) | null = null;
+      close = vi.fn();
+      constructor() { super(); Stream.latest = this; }
+    }
+    vi.stubGlobal("EventSource", Stream);
+    try {
+      const { save, submit, unmount } = await setupResumedRunningTask("task_streaming");
+      const savesBefore = save.mock.calls.length;
+      act(() => Stream.latest.dispatchEvent(new MessageEvent("delta", { data: JSON.stringify({ sequence: 0, delta: "Partial visible now" }) })));
+      expect(await screen.findByText("Partial visible now")).toBeInTheDocument();
+      expect(screen.getByText("Generating · partial answer")).toBeInTheDocument();
+      expect(save.mock.calls).toHaveLength(savesBefore);
+      expect(submit).not.toHaveBeenCalled();
+      expect(askHistory.beginRun).not.toHaveBeenCalled();
+      const running = save.mock.calls[1][0];
+      await save({ ...running, messages: [{ ...running.messages[0], content: "Saved final answer", status: "complete" }] });
+      expect(await screen.findByText("Saved final answer", {}, { timeout: 3000 })).toBeInTheDocument();
+      expect(screen.queryByText("Partial visible now")).not.toBeInTheDocument();
+      expect(Stream.latest.close).toHaveBeenCalled();
+      unmount();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("restores a node-owned running task and reads its archived answer after reopening", async () => {
     const save = liveHistory();
     const first = renderChat("live");
