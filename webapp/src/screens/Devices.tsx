@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
+import DeviceSyncHealth from "../components/DeviceSyncHealth";
 import { runThenReload } from "../domain/actThenReload";
 import { captureFailureReason, deviceSyncApi, pairLabels, quarantineReason, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
@@ -33,7 +34,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
   const active = pair.status === "active";
   const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
   const refused = syncScopes.filter((scope) => rejected[scope]);
-  return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
+  return <article id={`device-${pair.id}`} className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
     {pair.status !== "revoked" && !approving ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
     {approving ? <>
@@ -76,6 +77,10 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
 
 export default function Devices() {
   const [status, setStatus] = useState<DeviceStatus | null>(null);
+  const [readAt, setReadAt] = useState<number | null>(null);
+  const [statusFailed, setStatusFailed] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+  const [now, setNow] = useState(Date.now);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -90,9 +95,17 @@ export default function Devices() {
   const loadVersion = useRef(0);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
-    const result = await deviceSyncApi.status();
+    let result: DeviceStatus;
+    try { result = await deviceSyncApi.status(); }
+    catch (cause) {
+      if (mounted.current && version === loadVersion.current) setStatusFailed(true);
+      throw cause;
+    }
     if (!mounted.current || version !== loadVersion.current) return;
     setStatus(result);
+    setReadAt(Date.now());
+    setStatusFailed(false);
+    setRefreshError("");
     setInvite((prior) => prior && result.invites.some((row) => row.id === prior.invite.id && row.status === "open") ? prior : null);
   }, []);
   const act = async (operation: () => Promise<unknown>) => {
@@ -108,7 +121,7 @@ export default function Devices() {
   const refresh = async () => {
     setBusy(true); setError(""); setNotice("");
     try { await load(); }
-    catch { if (mounted.current) setError("Could not refresh device status. Check your connection and refresh."); }
+    catch { if (mounted.current) setRefreshError("Could not refresh device status. Check your connection and refresh."); }
     if (mounted.current) setBusy(false);
   };
   useEffect(() => {
@@ -118,19 +131,20 @@ export default function Devices() {
       if (polling) return;
       polling = true;
       try { await load(); }
-      catch { if (mounted.current) setError("Could not refresh device status. Check your connection and refresh."); }
+      catch { if (mounted.current) setRefreshError("Could not refresh device status. Check your connection and refresh."); }
       finally { polling = false; }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 5000);
+    const timer = window.setInterval(() => { setNow(Date.now()); void poll(); }, 5000);
     return () => { mounted.current = false; window.clearInterval(timer); };
   }, [load]);
   return <div className="screen-stack">
     <PageHeader eyebrow="Your computers" title="My devices" context="Pair computers you own. Review both identities and choose each category before allowing sync." />
     <p>Device pairing is separate from <Link to="/friends">Friends</Link>. It does not grant AI access or copy models, downloaded articles, credentials or friend permissions.</p>
     {status && !status.data_transfer_available ? <Panel><p>Device pairing is available in this development build. Personal data transfer is still being connected; a confirmed pairing does not mean your content has synced.</p></Panel> : null}
-    {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
+    {error || refreshError ? <p role="alert">{error || refreshError}</p> : null}{notice ? <p role="status">{notice}</p> : null}
     <Button disabled={busy} onClick={() => void refresh()}>Refresh devices</Button>
+    <DeviceSyncHealth status={status} readAt={readAt} stale={statusFailed || (readAt !== null && now - readAt >= 15000)} />
     {status && !status.pairing_available ? <p role="status">A reachable address is needed for new invitations. Check <Link to="/settings">Network settings</Link>. Existing devices can still be removed.</p> : null}
     {status && status.capture_failures.count > 0 ? <p role="status">{status.capture_failures.count} local {status.capture_failures.count === 1 ? "change" : "changes"} could
       not be queued for sync ({captureFailureReason(status.capture_failures.codes)}). They stay on this device.</p> : null}
