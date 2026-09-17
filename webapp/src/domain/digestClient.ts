@@ -29,6 +29,12 @@ export interface DigestSourceHealth {
 }
 
 export interface DigestItem {
+  friend_provenance?: {
+    relationship_id: string; publication_id: string; revision: number;
+    publisher_peer_id: string; serving_peer_id: string; node_name: string;
+    checked_at: number | null; unreachable: boolean; source: string; source_url: string;
+    sha256: string; content_truncated: boolean;
+  };
   item_id: string;
   source_id: string;
   source_title: string;
@@ -73,6 +79,8 @@ export interface DiscoveryStatus {
 }
 
 export interface Digest {
+  friend_feed_unavailable?: boolean;
+  brief_scope?: "public_sources";
   generated_at_unix: number;
   brief: string;
   ai: {
