@@ -34,6 +34,7 @@ import Friends from "./screens/Friends";
 import Devices from "./screens/Devices";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
+import SharedReading from "./screens/SharedReading";
 import OfflineReading from "./screens/OfflineReading";
 import Reading from "./screens/Reading";
 import Services from "./screens/Services";
@@ -55,6 +56,7 @@ const navItems = [
   { path: "/peers", label: "Peers", icon: NavIcons.peers },
   { path: "/friends", label: "Friends", icon: Users },
   { path: "/friend-updates", label: "Friend updates", icon: Users },
+  { path: "/shared-reading", label: "Shared lists", icon: Users },
   { path: "/offline", label: "Offline reading", icon: NavIcons.publish },
   { path: "/services", label: "Services", icon: NavIcons.services },
   { path: "/chat", label: "Chat", icon: NavIcons.chat },
@@ -409,6 +411,7 @@ export function AppRoutes() {
           <Route path="explore" element={<Explore />} />
           <Route path="search" element={<Search />} />
           <Route path="friend-updates" element={<FriendFeed />} />
+          <Route path="shared-reading" element={<SharedReading />} />
           <Route path="offline" element={<OfflineReading />} />
           <Route path="reading" element={<Reading />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
