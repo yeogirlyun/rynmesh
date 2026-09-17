@@ -2,6 +2,14 @@ import { nodeControlUrl } from "./nodeUrl";
 
 export const erasureCategories = { conversations: "Ask Ryn history and retained results", reading: "Bookmarks and reading history", documents: "Private imported documents", friend_feed: "Friend publications and followed updates", friend_cards: "Friend sharing cards", offline: "Offline downloads" };
 export type ErasureCategory = keyof typeof erasureCategories;
+export const erasureCopies: Record<ErasureCategory, string> = {
+  conversations: "Reviewed conversation sources, sync replicas, known backups, search entries and retained task results.",
+  reading: "Reviewed bookmark and reading sources, sync replicas, known backups and search entries. Downloaded article bodies are a separate category.",
+  documents: "The private import catalogue and reviewed import files. Reading metadata, search snapshots and offline downloads are separate copies.",
+  friend_feed: "Publication and subscription metadata, received update entries and known backups. Separately saved article copies remain.",
+  friend_cards: "Sharing-card metadata and reviewed legacy files. Conversations and separately saved article copies remain.",
+  offline: "Download metadata, pending download jobs and reviewed offline files. Original imports and separately prepared Ask materials remain.",
+};
 export type ErasureStatus = { outgoing: { id: string; category: ErasureCategory; remote_confirmed: boolean;
   targets: { pair_id: string; name: string; state: string; completed_at?: number }[] }[];
   incoming: { id: string; name: string; category: ErasureCategory; state: string; available: boolean }[] };

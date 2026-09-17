@@ -3,11 +3,11 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
-import DeviceErasurePanel from "../components/DeviceErasurePanel";
 import { runThenReload } from "../domain/actThenReload";
 import { captureFailureReason, deviceSyncApi, pairLabels, quarantineReason, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
+import DeviceErasurePanel from "../components/DeviceErasurePanel";
 
 function ScopeChoice({ value, onChange, allowed = syncScopes, disabled = false, label }: {
   value: SyncScope[]; onChange: (value: SyncScope[]) => void; allowed?: SyncScope[]; disabled?: boolean; label: string;
