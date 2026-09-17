@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ it("recovers a failed initial settings request from the keyboard instead of load
   </Routes></MemoryRouter>);
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Settings could not be loaded");
-  expect(alert).toHaveFocus();
+  await waitFor(() => expect(alert).toHaveFocus());
   expect(screen.queryByText("private transport details")).not.toBeInTheDocument();
   const user = userEvent.setup();
   await user.tab();

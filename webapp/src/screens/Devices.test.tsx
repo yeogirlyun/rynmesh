@@ -8,6 +8,7 @@ import Devices from "./Devices";
 
 const confirm = vi.hoisted(() => vi.fn());
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm }) }));
+vi.mock("../components/DeviceErasurePanel", () => ({ default: () => null }));
 const identity = { name: "My laptop", peer_id: "public-key", actor: "a".repeat(64), endpoint: "http://192.168.1.2:8791" };
 const preview: DeviceInvite = { id: "invite", device: identity, scopes: ["bookmarks", "reading"], created: 1, expires: 4000000000 };
 const pair: DevicePair = { id: "pair", role: "inviter", status: "awaiting_owner", device: identity, review_token: "review",

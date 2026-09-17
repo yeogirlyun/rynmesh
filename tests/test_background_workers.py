@@ -353,6 +353,7 @@ _KNOWN_WORKER_NAMES = {
     "friend-feed.refresh",
     "offline-reading.download",
     "device-sync.pairing",
+    "device-erasure.receipts",
 }
 
 
