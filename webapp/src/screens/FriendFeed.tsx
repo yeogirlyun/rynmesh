@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import ContentViewer from "../components/ContentViewer";
+import FriendPublicationActions from "../components/FriendPublicationActions";
 import { Button, PageHeader, Panel } from "../components/ui";
 import { runThenReload } from "../domain/actThenReload";
 import { digestApi, type ConsumptionRecord } from "../domain/digestClient";
@@ -126,6 +127,7 @@ export default function FriendFeed() {
           {entry.card.content_truncated ? <p>This shared text is shortened; it does not include the full source.</p> : null}
           <p>{entry.read ? "Read" : "Unread"} · Version {entry.revision}{entry.updated_at > entry.published_at ? " · Updated" : ""}</p>
           <Button disabled={busy} onClick={() => void act(() => open(feed.relationship_id, entry))}>Save copy and read {entry.card.title}</Button>
+          <FriendPublicationActions key={`${feed.relationship_id}:${entry.id}:${entry.revision}`} publication={{ relationship_id: feed.relationship_id, publication_id: entry.id, revision: entry.revision }} />
         </article>)}
         {feed.next_cursor ? <Button disabled={busy} onClick={() => void act(async () => { await feedApi.refresh(feed.relationship_id, feed.next_cursor); })}>Load more from {feed.node_name}</Button> : null}
       </section>)}

@@ -1,6 +1,7 @@
 import SourceHealthPanel from "../components/SourceHealthPanel";
 import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
 import ContentViewer from "../components/ContentViewer";
+import { DigestFriendActions } from "../components/FriendPublicationActions";
 import { contentFromHistory } from "../domain/readingHistory";
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -134,6 +135,7 @@ function DigestCard({
             <p>Opening saves a private copy after checking access. Copies you save remain after unfollowing.</p>
           </div> : null}
           <EvidenceDetails packet={item.evidence_packet} />
+          <DigestFriendActions item={item} />
         </div>
       </div>
     </Panel>
