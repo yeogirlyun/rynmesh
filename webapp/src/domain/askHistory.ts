@@ -29,6 +29,7 @@ const errors: Record<string, string> = {
 };
 
 export interface AskSource {
+  shared_by_peer_id?: string; publisher_peer_id?: string;
   library_id: string; title: string; source_url: string; sha256: string; extraction_truncated: boolean; text_bytes: number;
   source_number?: number; included_bytes?: number; budget_truncated?: boolean; text?: string;
 }

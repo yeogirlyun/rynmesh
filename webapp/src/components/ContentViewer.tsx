@@ -277,6 +277,8 @@ export default function ContentViewer({ item, onClose, client, onRead, loadBody,
             <article className="content-document-stage" aria-live="polite">
               {bodyState === "loading" ? <p role="status">{offlineKey ? "Opening the saved offline copy…" : "Loading the article through your Ryn…"}</p> : null}
               {offlineBody ? <p>Offline copy · {offlineBody.source} · Saved {new Date(offlineBody.downloaded_at * 1000).toLocaleString()}{offlineBody.partial ? " · Some resources are missing or shortened" : ""}</p> : null}
+              {offlineBody?.shared_by_peer_id ? <p style={{ overflowWrap: "anywhere" }}>Saved from friend node: {offlineBody.shared_by_peer_id}. Saved copies remain after sharing stops.</p> : null}
+              {offlineBody?.publisher_peer_id ? <p style={{ overflowWrap: "anywhere" }}>Recorded publisher: {offlineBody.publisher_peer_id}. Original authorship is not independently verified.</p> : null}
               {body.map((paragraph, index) => <p key={index}>{paragraph}</p>)}
               {truncated ? <p>This is a shortened preview. The full content has not been loaded.</p> : null}
               {offlineBody && resolvedOfflineKey ? <OfflineImages body={offlineBody} itemKey={resolvedOfflineKey} onReady={setSettledImageJob} /> : null}
