@@ -34,6 +34,18 @@ confirmation and no verification code. [Screenshot](inviter-active.png) contains
 only synthetic device identities. The quarantine and truncated-count states are
 covered by component tests; they are not claimed as this browser run's state.
 
+A separate follow-up browser run on 2026-09-17 closed that UI evidence gap. Two
+fresh installed-wheel nodes paired for conversations. A synthetic conversation
+was saved through the source store and captured into the replica. Changing only
+the replica's value under the same operation dot produced a real sync_dot_conflict
+on ordinary status reconciliation; no status method or HTTP response was mocked.
+The page showed one quarantined record and correctly referred to original records,
+including conversations. A retained truncated-diagnostics flag was seeded in the
+encrypted pairing store to reproduce the bounded-storage state. The device card
+showed the minimum-count/incomplete-list notice and no inviter verification code.
+Both states were visually inspected in the browser. This verifies rendering of a
+persisted truncation flag; the 512-pair test above proves the actual budget trigger.
+
 ## Repeat
 
 1. Install the packaged build and pair two disposable test nodes for an explicitly
