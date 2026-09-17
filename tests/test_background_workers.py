@@ -354,6 +354,7 @@ _KNOWN_WORKER_NAMES = {
     "shared-reading.sync",
     "offline-reading.download",
     "device-sync.pairing",
+    "device-erasure.receipts",
 }
 
 

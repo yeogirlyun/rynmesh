@@ -1,0 +1,11 @@
+# Owned-device cleanup coordination (#68 / #69)
+
+Runtime now supports receiving-owner-reviewed cleanup for six existing categories: Ask Ryn history/results, bookmarks/reading, private imports, friend-feed metadata, friend sharing cards and offline downloads. The proposal selects entire categories on named owned devices. The receiving owner reviews that node's exact local cleanup plan; this is not cross-device selective-record matching. The implemented scope and exclusions are specified in DEVICE_ERASURE_CONFIRMATION_DESIGN.md.
+
+Validation: 117 backend tests passed across coordinator/adapter/HTTP tests, all six existing cleanup families and the worker registry. New tests include three owned nodes over real HTTP with one target unavailable then reconnected, independent local approval, no deletion on proposal/preview, immutable nonempty targets, changed review/epoch rejection, lost response, partial backup failure and restart, preservation of later records, encrypted journals, exact-phase completion and replayed signed-response rejection. Owner-only API and unsigned/oversized peer requests are checked. The actual HTTP test uses three servers on one Windows host, not distinct physical networks.
+
+Node 22.22.1: 327 frontend tests passed across 53 files; TypeScript and production build passed. Four new component tests cover nonempty target review, distinct receiving-device destructive confirmation, explicit whole-category scope/exclusions, an offline target preventing aggregate success and resuming only the approved plan. Ruff passed.
+
+The new journal alone supplies aggregate remote_confirmed after all originally selected devices return bound completion receipts. Existing source-only receipts retain false, preserving their semantics and schemas. Browser copies/exports, OS or user-managed backups, independent friend copies, new generations and shared-reading-list copies are excluded. A completed receipt records the approved historical plan, not a universal or permanent absence claim.
+
+No actual user content was erased during development: cleanup tests use disposable synthetic stores. Supported-desktop installer and cross-public-network physical acceptance remain external environment checks and are not claimed by this evidence.
