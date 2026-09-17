@@ -64,7 +64,10 @@ def test_three_devices_owner_review_offline_and_lost_response_never_false_confir
     network['drop'] = True
     assert not a.exchange(job, pairs[0])['remote_confirmed']
     result = a.exchange(job, pairs[0])
-    assert not result['remote_confirmed'] and result['targets'][0]['state'] == 'confirmed'
+    states = {target['pair_id']: target['state'] for target in result['targets']}
+    assert not result['remote_confirmed']
+    assert states[pairs[0]] == 'confirmed'
+    assert states[pairs[1]] == 'unconfirmed'
     network['offline'].clear()
     a.exchange(job, pairs[1])
     incoming_c = c.status()['incoming'][0]['id']
