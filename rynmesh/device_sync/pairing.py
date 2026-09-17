@@ -71,7 +71,7 @@ class PairingService:
             status = 'expired'
         effective = sorted(set(local['scopes']) & set(remote['scopes'])) if status == 'active' and not local['paused'] and not remote['paused'] else []
         return {'id': row['id'], 'role': row['role'], 'status': status, 'device': self.device(row['remote']),
-                'review_token': row['id'], 'verification_code': '-'.join(row['id'][index:index + 4] for index in range(0, 24, 4)),
+                'review_token': row['id'], 'verification_code': '-'.join(row['id'][index:index + 4] for index in range(0, 24, 4)) if row['role'] == 'joiner' else '',
                 'expires': row['expires'], 'scopes': local['scopes'], 'remote_scopes': remote['scopes'],
                 'paused': local['paused'], 'remote_paused': remote['paused'], 'revision': local['revision'], 'effective_scopes': effective,
                 'removal_pending': bool(row.get('revoke_wire'))}
