@@ -14,6 +14,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
+import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
@@ -28,8 +30,6 @@ import {
 import { askHistory, AskRequestError, conversationRepository, legacyMigrationNotice, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
-import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
-import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
@@ -120,6 +120,13 @@ export default function PrivateAIChat() {
   // Stop pressed before submitLLMOrder returned a task id.
   const cancelRequestedRef = useRef(false);
 
+  const fixtureOrder = useServiceOrder<LLMOrderResult>({ scope: client,
+    key: providerIdentity(networkId, selectedService?.peer_id ?? "", selectedService?.service.package_id ?? ""),
+    enabled: false, load: () => client.getLLMOrder(activeTaskId),
+    intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
+    isTerminal: (result) => TERMINAL_STATES.has(result.state),
+  });
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -130,12 +137,7 @@ export default function PrivateAIChat() {
   selectedConversationRef.current = selectedConversation?.id;
   const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
-  const fixtureOrder = useServiceOrder<LLMOrderResult>({ scope: client,
-    key: providerIdentity(networkId, selectedService?.peer_id ?? "", selectedService?.service.package_id ?? ""),
-    enabled: false, load: () => client.getLLMOrder(activeTaskId),
-    intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
-    isTerminal: (result) => TERMINAL_STATES.has(result.state),
-  });
+
 
   const refreshNodeHistory = async () => {
     const rows = await history.list(selectedServiceKeyRef.current);
