@@ -34,8 +34,17 @@ class OfflineSources:
         item = row['item']
         if item.get('content_kind') in {'video', 'audio', 'image'}:
             raise OfflineError('offline_media_unsupported')
-        return {'item_id': item_id, 'title': str(item.get('title', ''))[:300],
-                'source': str(item.get('source_title', ''))[:300], 'url': str(item.get('link', ''))[:4096]}
+        reference = {'item_id': item_id, 'title': str(item.get('title', ''))[:300],
+                     'source': str(item.get('source_title', ''))[:300], 'url': str(item.get('link', ''))[:4096]}
+        if item_id.startswith('import:'):
+            try:
+                origin = self.imports().get(item_id[7:]).get('source') or {}
+            except LibraryImportError:
+                raise OfflineError('offline_source_verification_failed') from None
+            reference.update(shared_by_peer_id=str(origin.get('peer_id', ''))[:2048],
+                             publisher_peer_id=str(origin.get('publisher_peer_id', ''))[:2048])
+            reference['url'] = str(origin.get('source_url', ''))[:4096]
+        return reference
 
     def prepare(self, reference, check):
         item_id = reference['item_id']
@@ -184,7 +193,7 @@ class OfflineReading:
         bundle = self.store.bundle(current['job_id'])
         if bundle.get('item_id') != item_id:
             raise OfflineError('offline_verification_failed')
-        return {key: bundle.get(key) for key in ('item_id', 'title', 'source', 'url', 'text', 'truncated', 'images_omitted', 'source_mode')} | {
+        return {key: bundle.get(key) for key in ('item_id', 'title', 'source', 'url', 'text', 'truncated', 'images_omitted', 'source_mode', 'shared_by_peer_id', 'publisher_peer_id')} | {
             'downloaded_at': current['downloaded_at'], 'job_id': current['job_id'], 'partial': current['partial'],
             'images': [{key: image.get(key) for key in ('index', 'alt', 'state', 'error_code', 'mime')} for image in bundle['images']]}
 

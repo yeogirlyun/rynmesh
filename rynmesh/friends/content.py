@@ -43,7 +43,9 @@ class FriendContent:
             if len(data) > MAX_SHARED_CONTENT_BYTES:
                 raise FriendError('friend_card_content_too_large')
             imported = self.imports.save(data, filename='article.txt', mime='text/plain',
-                source={'title': body['title'], 'source_url': body['url'], 'content_truncated': body['truncated']})
+                source={'title': body['title'], 'source_url': body['url'], 'content_truncated': body['truncated'],
+                        'peer_id': body.get('shared_by_peer_id') or '',
+                        'publisher_peer_id': body.get('publisher_peer_id') or ''})
             return {'library_id': 'import:' + imported['import_id'], 'title': body['title'], 'kind': 'document',
                     'source': body['source'], 'source_url': body['url'], 'summary': '',
                     'source_offline_job_id': body['job_id'], 'content_truncated': bool(body['truncated'])}

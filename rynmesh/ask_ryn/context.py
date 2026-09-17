@@ -50,6 +50,8 @@ class AskContextService:
             if urlparse(source_url).scheme not in {"https", "http"}:
                 source_url = ""
             return {"library_id": library_id, "title": str(origin.get("title") or record["filename"]),
+                    "shared_by_peer_id": str(origin.get("peer_id") or ""),
+                    "publisher_peer_id": str(origin.get("publisher_peer_id") or ""),
                     "source_url": source_url, "sha256": record["sha256"],
                     "extraction_truncated": bool(body["truncated"]), "text_bytes": len(body["text"].encode()),
                     **({"text": body["text"]} if include_text else {})}

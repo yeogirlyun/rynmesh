@@ -1,6 +1,7 @@
 import SourceHealthPanel from "../components/SourceHealthPanel";
 import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
 import ContentViewer from "../components/ContentViewer";
+import { DigestFriendActions } from "../components/FriendPublicationActions";
 import { contentFromHistory } from "../domain/readingHistory";
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -115,6 +116,7 @@ function DigestCard({
           </div>
           {feedbackError ? <p role="alert">{feedbackError}</p> : null}
           <EvidenceDetails packet={item.evidence_packet} />
+          <DigestFriendActions item={item} />
         </div>
       </div>
     </Panel>
