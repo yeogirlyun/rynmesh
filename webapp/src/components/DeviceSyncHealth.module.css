@@ -1,0 +1,6 @@
+.health { padding: 18px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.health h2 { margin-top: 0; }
+.scroll { overflow-x: auto; }
+.scroll:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.health table { border-collapse: collapse; width: 100%; text-align: left; }
+.health th, .health td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; min-width: 100px; overflow-wrap: anywhere; }
