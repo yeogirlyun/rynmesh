@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import type { DevicePair } from "../domain/deviceSync";
-import { deviceErasure, erasureCategories, type ErasureCategory, type ErasureReview, type ErasureStatus } from "../domain/deviceErasure";
+import { deviceErasure, erasureCategories, erasureCopies, type ErasureCategory, type ErasureReview, type ErasureStatus } from "../domain/deviceErasure";
 import { Button, Panel } from "./ui";
 
 const labels: Record<string, string> = { queued: "Waiting to contact device", awaiting_owner: "Waiting for owner review on that device", approved: "Owner approved; completion not confirmed", partial: "Local cleanup incomplete", confirmed: "Selected node-managed copies confirmed", rejected: "Owner declined; no completion confirmed", policy_changed: "Pairing or permissions changed", unconfirmed: "Device unavailable or receipt unconfirmed" };
@@ -57,6 +57,7 @@ export default function DeviceErasurePanel({ devices }: { devices: DevicePair[] 
     <label>Cleanup category<select value={category} disabled={busy} onChange={(event) => { setCategory(event.target.value as ErasureCategory); requestId.current = newId(); }}>
       {Object.entries(erasureCategories).map(([id, name]) => <option value={id} key={id}>{name}</option>)}
     </select></label>
+    <p>{erasureCopies[category]}</p>
     <fieldset disabled={busy}><legend>Request from these owned devices</legend>{devices.filter((device) => device.status === "active").map((device) => <label key={device.id}>
       <input type="checkbox" checked={targets.includes(device.id)} onChange={(event) => { setTargets((prior) => event.target.checked ? [...prior, device.id] : prior.filter((id) => id !== device.id)); requestId.current = newId(); }} />{device.device.name}
     </label>)}</fieldset>
@@ -83,6 +84,7 @@ export default function DeviceErasurePanel({ devices }: { devices: DevicePair[] 
       {row.available && !['confirmed', 'rejected'].includes(row.state) ? <Button disabled={busy} onClick={() => void run({ action: "reject", id: row.id })}>Decline request</Button> : null}
     </article>)}
     {review ? <section aria-label="Local cleanup review"><h3>Review all {erasureCategories[review.category]} on this computer</h3>
+      <p>{erasureCopies[review.category]}</p>
       <ul>{Object.entries(review.counts).map(([key, value]) => <li key={key}>{key.replaceAll("_", " ")}: {String(value)}</li>)}</ul>
       <p>This clears the reviewed local category, not just records copied from the requesting computer. {exclusions} Changes after review require a new plan; a partial cleanup cannot be reported as complete.</p>
       <Button disabled={busy || stale} onClick={() => {
