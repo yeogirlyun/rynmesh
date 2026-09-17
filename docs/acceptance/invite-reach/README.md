@@ -28,6 +28,8 @@ traversal, automatic port opening or additional friend permissions are introduce
   chose Review invite and observed local signature verification, permissions and
   loopback limitation before Add this friend. Confirmed joining and sent a synthetic
   first message through the page. Delivery reached “confirmed by your friend”.
+  Stopped and restarted the recipient process; the page retained the friendship
+  and confirmed message without pairing or sending again.
 - No invitation, message body or QR screenshot is included in this record.
 
 The browser run uses two real TCP nodes on one Windows host. It proves the
