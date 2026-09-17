@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy
 from ..crypto import canonical_json
@@ -114,6 +115,10 @@ def install_friend_feed(app, *, home, messaging_key, friends, content, local_con
     @app.get('/api/local/friend-feed')
     async def feed(request: Request):
         return {'subscriptions': await call(request, 'subscriptions'), 'timeline': await call(request, 'timeline')}
+
+    @app.get('/api/local/friend-feed/weekly')
+    async def weekly(request: Request):
+        return JSONResponse(await call(request, 'weekly'), headers={'Cache-Control': 'no-store'})
 
     @app.put('/api/local/friend-feed/subscriptions/{relationship_id}')
     async def subscribe(relationship_id: str, request: Request):
