@@ -117,6 +117,7 @@ def test_automatic_enrichment_and_public_consumers_never_receive_private_metadat
 
 def test_local_digest_route_projects_current_friend_state_only_for_owner(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
+
     from rynmesh.peer_http import create_app
     from rynmesh.store import RynmeshStore
 
