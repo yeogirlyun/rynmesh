@@ -15,9 +15,11 @@ import type {
 } from "../domain/nodeClient";
 import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { JobCapacity, WorkResult } from "../domain/types";
+import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
+import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 
-const VEO_CAPABILITY = "signal50.veo_motion.v1";
-const VEO_OPERATION = "signal50.remote_action.complete_flow_video_veo_motion_clips";
+const VEO_CAPABILITY = serviceDescriptors.video.capability;
+const VEO_OPERATION = serviceDescriptors.video.operation;
 const LLM_ERROR_MESSAGES: Record<string, string> = {
   p2p_distinct_public_egress_required: "This older strict-P2P package incorrectly requires different public exits. Update both nodes and retry on the current network.",
   p2p_public_mapping_unavailable: "A public UDP mapping could not be created. Check outbound UDP and the configured STUN server.",
@@ -71,7 +73,6 @@ function friendlyError(error: unknown, fallback: string): string {
 
 export default function Services() {
   const { client, node, peers, notify, confirm } = useAppContext();
-  const [capacities, setCapacities] = useState<JobCapacity[]>([]);
   const [selectedPeerId, setSelectedPeerId] = useState("");
   const [videoId, setVideoId] = useState("");
   const [maxScenes, setMaxScenes] = useState("0");
@@ -79,7 +80,6 @@ export default function Services() {
   const [lastOrderId, setLastOrderId] = useState("");
   const [results, setResults] = useState<WorkResult[]>([]);
   const [llmNetwork, setLlmNetwork] = useState("");
-  const [llmServices, setLlmServices] = useState<LLMServiceRecord[]>([]);
   const [selectedLlmServiceKey, setSelectedLlmServiceKey] = useState("");
   const [llmPrompt, setLlmPrompt] = useState("Explain in one sentence why this request travelled through Rynmesh.");
   const [llmMaxTokens, setLlmMaxTokens] = useState("64");
@@ -118,18 +118,43 @@ export default function Services() {
   useEffect(() => { if (llmLifecycleError) lifecycleErrorRef.current?.focus(); }, [llmLifecycleError]);
   const [llmHistoryQuery, setLlmHistoryQuery] = useState("");
   const [llmHistoryPage, setLlmHistoryPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const llmNetworkInitialized = useRef(false);
   const mountedRef = useRef(true);
   const trackedTaskRef = useRef("");
   const trackedSetupRef = useRef("");
 
+  const configuredNetwork = useServiceOrder({ scope: client, key: "service-network", intervalMs: 15_000,
+    load: async () => (await client.getSettings().catch(() => null))?.network_id?.trim() || "rynmesh-main",
+    isTerminal: () => true,
+  });
+  useEffect(() => {
+    if (!llmNetworkInitialized.current && configuredNetwork.data) {
+      llmNetworkInitialized.current = true;
+      setLlmNetwork(configuredNetwork.data);
+    }
+  }, [configuredNetwork.data]);
+  const capacityDiscovery = useProviderDiscovery<JobCapacity>({ scope: client, key: VEO_CAPABILITY,
+    intervalMs: serviceDescriptors.video.discoveryIntervalMs,
+    load: () => client.listJobCapacities({ capability: VEO_CAPABILITY }),
+    identity: (row) => providerIdentity(row.network_id, row.peer_id, VEO_CAPABILITY),
+    onData: (rows) => setSelectedPeerId((prior) => prior || rows[0]?.peer_id || ""),
+  });
+  const discoveryNetwork = llmNetwork.trim() || configuredNetwork.data || "";
+  const serviceDiscovery = useProviderDiscovery<LLMServiceRecord>({ scope: client, key: discoveryNetwork,
+    enabled: Boolean(discoveryNetwork), intervalMs: serviceDescriptors.privateAI.discoveryIntervalMs,
+    load: () => client.listLLMServices(discoveryNetwork),
+    identity: (row) => providerIdentity(discoveryNetwork, row.peer_id, row.service.package_id),
+    onData: (rows) => setSelectedLlmServiceKey((prior) => prior || (rows[0] ? llmServiceKey(rows[0]) : "")),
+    onError: (error) => setLlmProgress({ tone: "danger", text: `Service discovery failed: ${error.message}` }),
+  });
+  const capacities = capacityDiscovery.providers;
+  const llmServices = serviceDiscovery.providers;
   const veoServices = useMemo(
     () => capacities.filter((item) => item.capabilities.includes(VEO_CAPABILITY)),
     [capacities],
   );
   const selectedVeo = veoServices.find((item) => item.peer_id === selectedPeerId) ?? veoServices[0];
-  const selectedLlm = llmServices.find((item) => llmServiceKey(item) === selectedLlmServiceKey) ?? llmServices[0];
+  const selectedLlm = selectedLlmServiceKey ? llmServices.find((item) => llmServiceKey(item) === selectedLlmServiceKey) : llmServices[0];
   const peerById = new Map(peers.map((peer) => [peer.id, peer]));
 
   const parsedMaxTokens = Number(llmMaxTokens);
@@ -165,44 +190,13 @@ export default function Services() {
   const llmHistoryPages = Math.max(1, Math.ceil(filteredLlmOrders.length / 10));
   const visibleLlmOrders = filteredLlmOrders.slice((llmHistoryPage - 1) * 10, llmHistoryPage * 10);
 
-  const refresh = async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      let discoveryNetwork = llmNetwork.trim();
-      if (!llmNetworkInitialized.current) {
-        try {
-          const settings = await client.getSettings();
-          discoveryNetwork = settings.network_id?.trim() || "rynmesh-main";
-        } catch {
-          discoveryNetwork = "rynmesh-main";
-        }
-        llmNetworkInitialized.current = true;
-        setLlmNetwork(discoveryNetwork);
-      }
-      const [capacityResult, serviceResult, balanceResult, providerResult, ordersResult, privacyResult, setupResult, hardwareResult] = await Promise.allSettled([
-        client.listJobCapacities({ capability: VEO_CAPABILITY }),
-        client.listLLMServices(discoveryNetwork || "rynmesh-main"),
-        client.getTaskBalance(),
-        client.getLLMServiceStatus(),
-        client.listLLMOrders(),
-        client.getLLMPrivacy(),
-        client.getLLMSetupStatus(),
-        client.getLLMHardware(),
-      ]);
-      if (capacityResult.status === "fulfilled") {
-        setCapacities(capacityResult.value);
-        if (!selectedPeerId && capacityResult.value[0]) setSelectedPeerId(capacityResult.value[0].peer_id);
-      }
-      if (serviceResult.status === "fulfilled") {
-        setLlmServices(serviceResult.value);
-        setSelectedLlmServiceKey((current) => (
-          current && serviceResult.value.some((service) => llmServiceKey(service) === current)
-            ? current
-            : serviceResult.value[0] ? llmServiceKey(serviceResult.value[0]) : ""
-        ));
-      } else {
-        setLlmProgress({ tone: "danger", text: `Service discovery failed: ${serviceResult.reason instanceof Error ? serviceResult.reason.message : "unknown error"}` });
-      }
+  const serviceStatus = useServiceOrder({ scope: client, key: "service-management",
+    intervalMs: 15_000,
+    load: () => Promise.allSettled([
+      client.getTaskBalance(), client.getLLMServiceStatus(), client.listLLMOrders(),
+      client.getLLMPrivacy(), client.getLLMSetupStatus(), client.getLLMHardware(),
+    ] as const),
+    onData: ([balanceResult, providerResult, ordersResult, privacyResult, setupResult, hardwareResult]) => {
       if (balanceResult.status === "fulfilled") setLlmBalance(balanceResult.value);
       if (providerResult.status === "fulfilled") setLlmProvider(providerResult.value);
       if (ordersResult.status === "fulfilled") {
@@ -238,30 +232,22 @@ export default function Services() {
         }
       }
       if (hardwareResult.status === "fulfilled") setLlmHardware(hardwareResult.value);
-      if (lastOrderId) setResults(await client.listWorkResults({ work_order_id: lastOrderId }));
-    } finally {
-      if (!silent) setLoading(false);
-    }
+    },
+  });
+  const workResults = useServiceOrder({ scope: client, key: lastOrderId, enabled: Boolean(lastOrderId),
+    intervalMs: serviceDescriptors.video.orderIntervalMs,
+    load: () => client.listWorkResults({ work_order_id: lastOrderId }),
+    onData: setResults,
+    isTerminal: (rows) => Boolean(rows[0] && ["completed", "failed", "cancelled"].includes(rows[0].status)),
+  });
+  const loading = configuredNetwork.loading || capacityDiscovery.loading || serviceDiscovery.loading || serviceStatus.loading;
+  const refresh = async (_silent = false) => {
+    await Promise.all([capacityDiscovery.refresh(), serviceDiscovery.refresh(), serviceStatus.refresh(), workResults.refresh()]);
   };
-
-  // The interval must call the latest refresh closure: the mount-time one
-  // captures llmNetwork="" and selectedPeerId="" forever, so every silent
-  // tick would re-discover on the wrong network and flip the user's provider
-  // selection back to the first entry.
-  const refreshRef = useRef<(silent?: boolean) => Promise<void>>();
-  refreshRef.current = refresh;
 
   useEffect(() => {
     mountedRef.current = true;
-    void refresh();
-    const timer = window.setInterval(() => void refreshRef.current?.(true), 15_000);
-    return () => {
-      mountedRef.current = false;
-      window.clearInterval(timer);
-      trackedTaskRef.current = "";
-      trackedSetupRef.current = "";
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { mountedRef.current = false; trackedTaskRef.current = ""; trackedSetupRef.current = ""; };
   }, [client]);
 
   useEffect(() => {
@@ -339,43 +325,26 @@ export default function Services() {
     }
   }
 
+  useServiceOrder({ scope: client, key: llmActiveTaskId, enabled: Boolean(llmActiveTaskId),
+    intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
+    load: () => client.getLLMOrder(llmActiveTaskId),
+    isTerminal: (result) => LLM_TERMINAL_STATES.has(result.state),
+    onData: (result) => {
+      if (LLM_TERMINAL_STATES.has(result.state)) {
+        trackedTaskRef.current = "";
+        setLlmSubmitting(false);
+        setLlmActiveTaskId("");
+        void applyTerminalResult(result);
+      } else setLlmProgress({ tone: "info", text: `Order ${result.task_id} is ${result.state}; waiting for the Provider node…` });
+    },
+    onError: () => setLlmProgress({ tone: "info", text: "Task status is temporarily unavailable; reconnecting…" }),
+  });
+
   async function trackLlmOrder(taskId: string) {
-    if (!taskId || trackedTaskRef.current === taskId) return;
-    if (trackedTaskRef.current && trackedTaskRef.current !== taskId) return;
+    if (!taskId || trackedTaskRef.current) return;
     trackedTaskRef.current = taskId;
     setLlmActiveTaskId(taskId);
     setLlmSubmitting(true);
-    let retryCount = 0;
-    try {
-      while (mountedRef.current && trackedTaskRef.current === taskId) {
-        try {
-          const result = await client.getLLMOrder(taskId);
-          retryCount = 0;
-          if (LLM_TERMINAL_STATES.has(result.state)) {
-            await applyTerminalResult(result);
-            break;
-          }
-          setLlmProgress({
-            tone: "info",
-            text: `Order ${result.task_id} is ${result.state}; waiting for the Provider node…`,
-          });
-          await new Promise((resolve) => window.setTimeout(resolve, 500));
-        } catch (error) {
-          retryCount += 1;
-          setLlmProgress({
-            tone: "info",
-            text: `Task status is temporarily unavailable; reconnecting (${retryCount})…`,
-          });
-          await new Promise((resolve) => window.setTimeout(resolve, Math.min(5000, 750 * retryCount)));
-        }
-      }
-    } finally {
-      if (trackedTaskRef.current === taskId) trackedTaskRef.current = "";
-      if (mountedRef.current) {
-        setLlmSubmitting(false);
-        setLlmActiveTaskId("");
-      }
-    }
   }
 
   const publishLlm = async () => {
