@@ -2387,6 +2387,11 @@ def create_app(store: RynmeshStore | None = None):
         local_control=local_control, workers=app.state.background_workers)
 
     from .offline_reading.routes import install_offline_reading
+    from .shared_reading.routes import install_shared_reading
+
+    install_shared_reading(app, home=active_store.home, messaging_key=_msg_priv,
+        friends=lambda: app.state.friends.service, local_control=local_control,
+        workers=app.state.background_workers)
 
     install_offline_reading(app, home=active_store.home, messaging_key=_msg_priv,
         consumption=lambda: app.state.consumption_store, imports=lambda: app.state.friends.content.imports,
