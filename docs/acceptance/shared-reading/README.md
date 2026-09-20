@@ -1,0 +1,11 @@
+# Two-friend shared reading lists (#76)
+
+Both members can explicitly add HTTP(S) links, remove shared items and mark their own read status. Creating an invitation does not enroll the receiver: they discover invitations from a selected active friend, review the shared scope and accept. Neither discovery nor list synchronization reads private consumption history or downloads link targets.
+
+The creating node serializes edits. Other members save a bounded encrypted outbox and the shared worker retries one list at a time. Per-member monotonic sequences and request digests handle lost replies; local operation identities survive acknowledgement and restart. Deletions retain tombstones and win over queued reading updates. Either member can close collaboration. Current friendship and pairing relationship identity are checked at transport boundaries; revocation blocks future access but cannot recall saved copies.
+
+When the owner closes a list with member edits still queued, the member fetches the closed snapshot and retains unaccepted edits locally as cancelled, with a visible count. Rejoining or receiving a snapshot reconciles queued edits against sequence-and-digest receipts, including replies lost after commit, before assigning further sequences.
+
+Limits: 32 lists, 256 total item identities per list including removed entries, 128 queued edits, 4096 local operation identities per list, 4 MiB encrypted state and 1 MiB wire responses. Start another list when its retained history reaches capacity. The creating node must return online to acknowledge edits. This is a two-member list, not an arbitrary multi-master group or automatic replication of private history.
+
+Validation: 39 backend tests passed for the service and worker registry; 4 focused UI tests passed for explicit join/removal reviews, independent read status, retry identity and revoked/queued states. Complete frontend suite: 327 tests passed across 53 files on Node 22; TypeScript and production build passed; Ruff passed. Authenticated sealed transport tests include offline/restart, lost response after commit, duplicate retry, concurrent additions and deletion/read ordering, malformed links, snapshot identity checks, owner/peer HTTP guards and bounded requests. These use an in-process network fixture; physical cross-network acceptance is separate.
