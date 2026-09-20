@@ -62,3 +62,12 @@ it("requires review before removing an item for both members", async () => {
   expect(sharedReading.action).not.toHaveBeenCalled();
   expect(confirm.mock.calls[0][0].body).toContain("for both members");
 });
+
+it("explains unaccepted offline changes after closure and disables edits", async () => {
+  vi.mocked(sharedReading.status).mockResolvedValue({ lists: [{ ...row, status: "closed", cancelled_count: 3 }] });
+  show();
+  expect(await screen.findByText(/3 queued changes were not applied because this list closed/)).toHaveTextContent("remain saved on this node");
+  expect(screen.getByText(/0 changes awaiting/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Mark read" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Close list" })).toBeDisabled();
+});

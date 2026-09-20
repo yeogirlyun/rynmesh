@@ -92,6 +92,7 @@ class SharedReading:
         for row in self.store.read()['lists'].values():
             value = deepcopy(row)
             value['pending_count'] = len(value.pop('pending', []))
+            value['cancelled_count'] = len(value.pop('cancelled', []))
             value['local_peer'] = self.peer
             try:
                 friend = self.active(row['relationship_id'], row['friend'] if row['owner'] == self.peer else row['owner'])
@@ -317,12 +318,24 @@ class SharedReading:
             if prior and prior['revision'] > result['revision']:
                 return
             pending = deepcopy(prior['pending']) if prior else []
+            receipt = result['receipts'].get(self.peer, {})
             if acknowledged:
-                receipt = result.get('receipts', {}).get(self.peer, {})
                 if receipt.get('sequence') != acknowledged['sequence'] or receipt.get('digest') != digest(acknowledged):
                     raise ListError('shared_response_invalid')
-                pending = [op for op in pending if op['id'] != acknowledged['id']]
-            data['lists'][identifier] = {**self.snapshot(result), 'pending': pending, 'error': '',
+            # Accept/snapshot responses can confirm a write whose reply was lost.
+            # Match the receipt before advancing past any queued operations.
+            confirmed = [op for op in pending if op['sequence'] <= receipt.get('sequence', 0)]
+            if confirmed:
+                latest = confirmed[-1]
+                if latest['sequence'] != receipt['sequence'] or digest(latest) != receipt['digest']:
+                    raise ListError('shared_response_invalid')
+                pending = [op for op in pending if op['sequence'] > receipt['sequence']]
+            cancelled = deepcopy(prior.get('cancelled', [])) if prior else []
+            if result['status'] == 'closed':
+                # Preserve unaccepted edits locally, but never retry a closed list.
+                cancelled.extend(pending)
+                pending = []
+            data['lists'][identifier] = {**self.snapshot(result), 'pending': pending, 'cancelled': cancelled, 'error': '',
                                          'local_operations': deepcopy(prior.get('local_operations', {})) if prior else {}}
         self.active(rid, owner)
         self.store.mutate(change)
@@ -336,8 +349,16 @@ class SharedReading:
             return
         operation = next(iter(row['pending']), None)
         try:
-            result = self.request(row['owner'], 'edit' if operation else 'snapshot', id=identifier,
-                                  **({'operation': operation} if operation else {}))
+            try:
+                result = self.request(row['owner'], 'edit' if operation else 'snapshot', id=identifier,
+                                      **({'operation': operation} if operation else {}))
+            except ListError as exc:
+                if not operation or str(exc) != 'shared_list_inactive':
+                    raise
+                result = self.request(row['owner'], 'snapshot', id=identifier)
+                if not isinstance(result, dict) or result.get('status') != 'closed':
+                    raise ListError('shared_response_invalid') from None
+                operation = None
             self.receive(identifier, row['relationship_id'], row['owner'], result, acknowledged=operation)
         except Exception:
             def failed(data):
