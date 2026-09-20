@@ -2,7 +2,7 @@ import { nodeControlUrl } from "./nodeUrl";
 
 export type SharedItem = { id: string; title: string; url: string; added_by: string; read_by: Record<string, boolean>; removed: boolean };
 export type SharedList = { id: string; title: string; owner: string; friend: string; local_peer: string; friend_name: string;
-  status: string; revision: number; items: Record<string, SharedItem>; pending_count: number; error?: string; blocked?: boolean };
+  status: string; revision: number; items: Record<string, SharedItem>; pending_count: number; cancelled_count?: number; error?: string; blocked?: boolean };
 const messages: Record<string, string> = {
   shared_friend_inactive: "This friendship is no longer active. Saved list copies remain, but new transfers are blocked.",
   shared_list_inactive: "This list is not active. Refresh to review its status.",

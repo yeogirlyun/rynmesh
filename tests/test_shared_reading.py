@@ -137,6 +137,112 @@ def test_invalid_link_status_spoof_and_changed_operation_do_not_queue(tmp_path):
     assert b.listing()[0]['pending_count'] == 1
 
 
+def test_owner_closure_cancels_offline_edits_after_restart_without_losing_them(tmp_path):
+    mesh, a, b, list_id, _, network, _ = joined(tmp_path)
+    item = add(a, list_id)
+    b.sync(list_id)
+    mesh.online.remove(a.friends().endpoint)
+    b.edit(list_id, identifier(), 'read', {'id': item, 'read': True})
+    add(b, list_id, 'Queued offline')
+    b.edit(list_id, identifier(), 'close', {})
+    pending = b.store.read()['lists'][list_id]['pending']
+    a.edit(list_id, identifier(), 'close', {})
+    mesh.online.add(a.friends().endpoint)
+    restored = SharedReading(ListStore(b.friends().home, b.friends().messaging_private), b.friends)
+    network['drop_response'] = True
+    with pytest.raises(ListError, match='unconfirmed'):
+        restored.sync(list_id)
+    assert restored.store.read()['lists'][list_id]['pending'] == pending
+    restored.sync(list_id)
+    for _ in range(2):
+        row = restored.listing()[0]
+        assert row['status'] == 'closed'
+        assert row['pending_count'] == 0
+        assert row['cancelled_count'] == 3
+        assert row['items'] == a.listing()[0]['items']
+        assert restored.store.read()['lists'][list_id]['cancelled'] == pending
+        restored.sync(list_id)
+    with pytest.raises(ListError, match='inactive'):
+        add(restored, list_id)
+
+
+@pytest.mark.parametrize('refresh', ['accept', 'snapshot'])
+def test_new_receipt_reconciles_pending_edits_before_assigning_sequences(tmp_path, refresh):
+    _, a, b, list_id, rid, network, _ = joined(tmp_path)
+    first = add(b, list_id, 'First')
+    network['drop_response'] = True
+    with pytest.raises(ListError, match='unconfirmed'):
+        b.sync(list_id)
+    second = add(b, list_id, 'Second')
+    if refresh == 'accept':
+        b.accept(rid, list_id)
+    else:
+        b.receive(list_id, rid, a.peer, b.request(a.peer, 'snapshot', id=list_id))
+    assert b.listing()[0]['pending_count'] == 1
+    third = add(b, list_id, 'Third')
+    assert [op['sequence'] for op in b.store.read()['lists'][list_id]['pending']] == [2, 3]
+    b.sync(list_id)
+    b.sync(list_id)
+    assert b.listing()[0]['pending_count'] == 0
+    assert set(a.listing()[0]['items']) == {first, second, third}
+    assert a.listing()[0]['items'] == b.listing()[0]['items']
+    b.edit(list_id, first, 'add', {'id': first, 'title': 'First', 'url': 'https://example.test/article'})
+    assert b.listing()[0]['pending_count'] == 0
+
+
+def test_snapshot_receipt_must_match_pending_operation_before_reconciliation(tmp_path):
+    _, a, b, list_id, rid, network, _ = joined(tmp_path)
+    add(b, list_id)
+    network['drop_response'] = True
+    with pytest.raises(ListError):
+        b.sync(list_id)
+    before = b.store.read()
+    result = a.snapshot(a.store.read()['lists'][list_id])
+    result['receipts'][b.peer]['digest'] = '0' * 64
+    with pytest.raises(ListError, match='response_invalid'):
+        b.receive(list_id, rid, a.peer, result)
+    assert b.store.read() == before
+
+
+def test_closed_snapshot_distinguishes_committed_edits_from_cancelled_edits(tmp_path):
+    _, a, b, list_id, rid, network, _ = joined(tmp_path)
+    stale = a.snapshot(a.store.read()['lists'][list_id])
+    committed = add(b, list_id, 'Committed before closure')
+    network['drop_response'] = True
+    with pytest.raises(ListError):
+        b.sync(list_id)
+    cancelled = add(b, list_id, 'Not committed')
+    a.edit(list_id, identifier(), 'close', {})
+    b.sync(list_id)
+    b.receive(list_id, rid, a.peer, stale)
+    row = b.listing()[0]
+    assert row['status'] == 'closed'
+    assert row['pending_count'] == 0 and row['cancelled_count'] == 1
+    assert set(row['items']) == {committed}
+    assert [op['id'] for op in b.store.read()['lists'][list_id]['cancelled']] == [cancelled]
+
+
+def test_failed_closure_snapshot_preserves_pending_edits_until_retry(tmp_path, monkeypatch):
+    _, a, b, list_id, _, _, _ = joined(tmp_path)
+    add(b, list_id)
+    pending = b.store.read()['lists'][list_id]['pending']
+    a.edit(list_id, identifier(), 'close', {})
+    original = b.request
+    def request(peer, action, **args):
+        if action == 'snapshot':
+            raise ListError('shared_sync_unconfirmed')
+        return original(peer, action, **args)
+    with monkeypatch.context() as patch:
+        patch.setattr(b, 'request', request)
+        with pytest.raises(ListError, match='unconfirmed'):
+            b.sync(list_id)
+    assert b.listing()[0]['status'] == 'active'
+    assert b.store.read()['lists'][list_id]['pending'] == pending
+    b.sync(list_id)
+    assert b.listing()[0]['status'] == 'closed'
+    assert b.listing()[0]['pending_count'] == 0
+
+
 def test_snapshot_cannot_replace_list_identity_or_introduce_executable_links(tmp_path):
     _, a, b, list_id, rid, _, _ = joined(tmp_path)
     add(a, list_id)

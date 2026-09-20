@@ -23,6 +23,7 @@ function ListCard({ list, busy, run }: { list: SharedList; busy: boolean; run: (
   return <Panel><article aria-label={`Shared list ${list.title}`}>
     <h2>{list.title}</h2><p>With {list.friend_name} · {list.status === "invited" ? "Waiting for your friend to accept" : list.status === "closed" ? "List closed" : list.blocked ? "Friendship inactive" : "Shared list active"}</p>
     <p>{list.pending_count} changes awaiting the creating node's acknowledgement. Displayed items are the last acknowledged version.</p>
+    {list.cancelled_count ? <p role="status">{list.cancelled_count} queued changes were not applied because this list closed. These changes remain saved on this node.</p> : null}
     {list.error ? <p role="status">{list.error}</p> : null}
     <Button disabled={busy || list.blocked} onClick={() => void run({ action: "sync", id: list.id })}>Sync list</Button>
     <ul>{Object.values(list.items).filter((item) => !item.removed).map((item) => <li key={item.id}>
