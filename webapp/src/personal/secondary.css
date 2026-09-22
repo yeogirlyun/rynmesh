@@ -145,3 +145,31 @@
 .pf-dialog .pf-welcome-title { font-size:23px; font-weight:600; }
 .pf-text-button { border:0; background:transparent; color:var(--pf-muted); padding:8px 12px; border-radius:6px; }
 .pf-text-button:hover { background:var(--pf-subtle); color:var(--pf-blue); }
+
+.pf-workspace { width:100%; cursor:pointer; color:var(--pf-text); text-align:left; background:transparent; font:inherit; }
+.pf-workspace span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.pf-space-page { max-width:1120px; }
+.pf-space-content { display:grid; gap:22px; min-width:0; }
+.pf-space-section { padding:24px; min-width:0; }
+.pf-space-section h2 { font-size:17px; margin:0 0 8px; font-weight:600; }
+.pf-space-section p, .pf-space-summary p { color:var(--pf-muted); font-size:13px; line-height:1.6; margin:8px 0 18px; }
+.pf-space-heading, .pf-space-summary, .pf-space-notice { display:flex; gap:16px; align-items:center; }
+.pf-space-heading > svg { color:var(--pf-blue); flex-shrink:0; }
+.pf-space-summary h2 { margin:0; font-size:24px; }
+.pf-space-summary p { margin:6px 0 0; }
+.pf-space-emblem { width:58px; height:58px; border-radius:14px; display:grid; place-items:center; background:var(--pf-selection); color:var(--pf-blue); }
+.pf-space-notice { background:var(--pf-selection); border:1px solid var(--pf-line); border-radius:10px; padding:16px; font-size:13px; }
+.pf-space-notice p { color:var(--pf-muted); margin:5px 0 0; line-height:1.6; }
+.pf-space-section .pf-field { margin:16px 0; max-width:680px; }
+.pf-space-section .pf-note { margin:16px 0; }
+.pf-space-invitation { margin-top:20px; }
+.pf-space-invitation textarea { font-size:11px; word-break:break-all; }
+.pf-space-member { display:flex; gap:16px; align-items:center; padding:18px 0; border-bottom:1px solid var(--pf-line); }
+.pf-space-member:last-child { border-bottom:0; }
+.pf-space-member-name { flex:1; min-width:0; display:grid; gap:5px; }
+.pf-space-member-name strong { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+.pf-space-member-name small, .pf-space-member-name code { color:var(--pf-muted); font-size:11px; }
+.pf-space-member-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.pf-dialog .pf-space-section { padding:18px; }
+.pf-dialog .pf-space-summary h2 { font-size:20px; }
+@media(max-width:720px) { .pf-space-section { padding:18px; } .pf-space-member { flex-wrap:wrap; } .pf-space-member-actions { width:100%; padding-left:58px; } }

@@ -37,9 +37,9 @@ These are visible limitations, not completed backend features:
 
 | Design interaction | Current implementation |
 | --- | --- |
-| Pairing code | Dialog restored; live mode uses existing device discovery. Code pairing and mutual confirmation require a backend protocol. |
-| My remote devices | Only the local device has verified management authority in live mode. Discovery and trust do not confer ownership. |
-| Per-device service sharing / revocation | Selection UI restored. Live saving is unavailable until the node provides enforceable access APIs. Preview saving explicitly changes no real permissions. |
+| Device pairing | Create a personal space and redeem a signed, encrypted, single-use invitation. Coordinator must be online. No numeric code or cloud account required. |
+| My remote devices | Signed membership supplies device affiliation; discovery/trust alone does not confer ownership. Remote control is not granted by membership. |
+| Service sharing / revocation | Live local/space AI access is enforced by the provider. Managers can remove devices; offline membership expires within 24 hours. Per-service guest grants remain outside this pass. |
 | Document conversion / transcription | Sample capabilities in preview only. |
 | Startup / close preferences | Functional in the Windows client; browser controls explain their desktop-only availability. |
 | Generic task results | AI text results can be downloaded when returned; a general file-result and work cancellation API is not implemented here. |
@@ -49,11 +49,11 @@ Remote desktop, NAS and household LAN access remain deferred as requested.
 ## Verification
 
 - Production build: `npm run build` passed.
-- All 47 frontend tests across 11 files passed, including metadata/appearance/provider-selection coverage and preview feed isolation.
-- 78 focused Python checks passed: local authentication, desktop defaults, WebView2 CORS and frozen-runtime update protection.
+- Personal-space update: all 52 frontend tests across 12 files passed, including membership-derived ownership, management confirmations and preview isolation.
+- Personal-space update: 118 focused Python checks passed across space membership, node authorization, AI provider hardening and inference API coverage. Earlier desktop authentication/default checks also passed during the UI/package pass.
 - Browser checks: both themes, Home, Services, Devices, Tasks, Settings, AI chat, pairing/sharing/edit dialogs; device edits reflected on other pages; fixture chat response.
 - Responsive checks at 390px and 1280px widths; narrow navigation and dialog layout checked.
 
 - Windows x64 NSIS installer built successfully; bundled executable launched without an external Python runtime. Actual native checks covered Home, onboarding, both themes, startup registration/removal, background operation, and node shutdown when the app exits.
 
-Live multi-computer pairing and service permissions still require separate integration acceptance. The Windows package is an unsigned test build; clean-machine installation and signed public distribution remain release acceptance tasks. See `WINDOWS_BUILD.md`.
+Personal-space pairing and permissions are covered in `PERSONAL_SPACE.md`; physical cross-network acceptance remains separate. The Windows package is an unsigned test build; clean-machine installation and signed public distribution remain release acceptance tasks. See `WINDOWS_BUILD.md`.

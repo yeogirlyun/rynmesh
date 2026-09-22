@@ -1,15 +1,9 @@
 import { useState } from "react";
-import { Check, Copy, Hourglass, Monitor, Plus, Share2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Monitor, Share2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { SpaceControls } from "./Space";
 import { useAppContext } from "../appContext";
-import {
-  Connection,
-  DeviceArt,
-  Modal,
-  Note,
-  ServiceArt,
-  Tabs,
-} from "./components";
+import { DeviceArt, Modal, Note, ServiceArt } from "./components";
 import { usePersonal, validateDeviceDetails, type Device } from "./model";
 
 export function EditDevice({
@@ -27,7 +21,7 @@ export function EditDevice({
   const [error, setError] = useState("");
   return (
     <Modal
-      title={device.own ? "Edit device" : "Edit local details"}
+      title={device.self ? "Edit device" : "Edit local details"}
       onClose={onClose}
     >
       <div className="pf-dialog-context">
@@ -37,7 +31,11 @@ export function EditDevice({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
-          const message = validateDeviceDetails(device.own, name, note);
+          const message = validateDeviceDetails(
+            Boolean(device.self),
+            name,
+            note,
+          );
           if (message) {
             setError(message);
             return;
@@ -58,15 +56,15 @@ export function EditDevice({
         }}
       >
         <label className="pf-field">
-          <span>{device.own ? "Device name" : "Nickname"}</span>
+          <span>{device.self ? "Device name" : "Nickname"}</span>
           <input
             autoFocus
             value={name}
             onChange={(event) => setName(event.target.value)}
-            required={device.own}
+            required={device.self}
           />
           <small>
-            {device.own
+            {device.self
               ? "Visible to devices connected to yours."
               : "Only changes the name shown to you."}{" "}
             Up to 32 characters.
@@ -115,96 +113,103 @@ export function EditDevice({
   );
 }
 export function PairDevice({ onClose }: { onClose: () => void }) {
-  const { demo, devices } = usePersonal();
-  const { client, refreshShell, notify } = useAppContext();
-  const [tab, setTab] = useState("My device");
-  const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const navigate = useNavigate();
   return (
     <Modal title="Add device" onClose={onClose}>
-      <Tabs
-        options={["My device", "Someone else’s device"]}
-        value={tab}
-        onChange={setTab}
-      />
-      <Connection
-        current={devices.find((device) => device.self)}
-        device={devices.find((device) => !device.self) || devices[0]}
-      />
-      <p className="pf-center">Open Ryn on the other device to connect it.</p>
-      <div className="pf-pair-code">
-        <code>{demo ? "000 000" : "— — —"}</code>
-        <button
-          className="pf-button"
-          disabled={!demo}
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText("000000");
-              setCopied(true);
-            } catch {
-              notify("warn", "Could not copy the example code.");
-            }
-          }}
-        >
-          {copied ? <Check size={16} /> : <Copy size={16} />}Copy
-        </button>
-      </div>
-      <Note>
-        {demo
-          ? "Example only — this code does not work. Pairing will require confirmation on both devices."
-          : "Pairing codes are not available on this version of the node. You can discover devices on your configured network."}
-      </Note>
-      <div className="pf-pair-state">
-        <Hourglass size={22} />
-        <div>
-          <strong>
-            {demo ? "Confirm on both devices" : "Discover available devices"}
-          </strong>
-          <small>
-            {demo
-              ? "Preview of the pairing flow"
-              : "Discovery does not grant ownership or service access."}
-          </small>
-        </div>
-      </div>
-      <footer className="pf-dialog-actions">
-        <button className="pf-button" onClick={onClose}>
-          Cancel
-        </button>
-        <button
-          className="pf-button primary"
-          disabled={busy}
-          onClick={async () => {
-            if (demo) {
-              onClose();
-              navigate("/devices?client=fixture");
-              return;
-            }
-            setBusy(true);
-            try {
-              await client.discoverPeers();
-              await refreshShell();
-              onClose();
-              navigate("/devices");
-            } catch {
-              notify(
-                "danger",
-                "Could not discover devices. Check your connection and try again.",
-              );
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <Plus size={16} />
-          {busy ? "Discovering…" : demo ? "View devices" : "Discover devices"}
-        </button>
-      </footer>
+      <SpaceControls compact />
     </Modal>
   );
 }
 export function ShareServices({
+  device,
+  onClose,
+}: {
+  device: Device;
+  onClose: () => void;
+}) {
+  const { demo } = usePersonal();
+  return demo ? (
+    <PreviewShareServices device={device} onClose={onClose} />
+  ) : (
+    <LiveShareServices device={device} onClose={onClose} />
+  );
+}
+function LiveShareServices({
+  device,
+  onClose,
+}: {
+  device: Device;
+  onClose: () => void;
+}) {
+  const { space, spaceAction } = usePersonal();
+  const [access, setAccess] = useState(space?.ai_access || "local");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Modal title="Share AI service" onClose={onClose}>
+      <p className="pf-muted">{device.name}</p>
+      {device.self ? (
+        <>
+          <label className="pf-field">
+            <span>Allow access from</span>
+            <select
+              value={access}
+              onChange={(e) => setAccess(e.target.value as "local" | "space")}
+            >
+              <option value="local">This device only</option>
+              <option value="space" disabled={space?.membership !== "active"}>
+                My space devices
+              </option>
+            </select>
+          </label>
+          <Note>
+            Applies to AI tasks on this computer. Files, desktop access and
+            separately issued API keys are not changed.
+          </Note>
+          {space?.membership !== "active" && (
+            <Link className="pf-link" to="/settings/space">
+              Create or join a personal space first →
+            </Link>
+          )}
+          {error && (
+            <p role="alert" className="pf-error">
+              {error}
+            </p>
+          )}
+          <footer className="pf-dialog-actions">
+            <button className="pf-button" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="pf-button primary"
+              disabled={busy || !space}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await spaceAction("policy", { access });
+                  onClose();
+                } catch (e) {
+                  setError(
+                    e instanceof Error ? e.message : "Could not save access.",
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Save access
+            </button>
+          </footer>
+        </>
+      ) : (
+        <Note>
+          Open Ryn on this computer to change its service permissions.
+          Membership does not grant remote administration.
+        </Note>
+      )}
+    </Modal>
+  );
+}
+function PreviewShareServices({
   device,
   onClose,
 }: {

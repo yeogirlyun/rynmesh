@@ -43,6 +43,9 @@ function qs<T extends object>(value: T | undefined): string {
 
 export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
   return {
+    spaceStatus: () => requestJson(`${baseUrl}/space`),
+    spaceAction: (action, body = {}) => requestJson(`${baseUrl}/space/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(body) }),
+    spaceBackup: (password) => requestJson(`${baseUrl}/space/backup`, { method: "POST", body: JSON.stringify({ password }) }),
     mode: "live",
     getInferenceAccess: () => requestJson(`${baseUrl}/llm/api-access`),
     setInferenceModelAlias: (name, target) => requestJson(`${baseUrl}/llm/model-aliases/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ target }) }),

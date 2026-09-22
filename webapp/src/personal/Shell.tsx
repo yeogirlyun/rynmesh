@@ -19,7 +19,7 @@ import {
 import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
 export function PersonalShell({ children }: { children: ReactNode }) {
-  const { demo, appearance, setAppearance, devices, services } = usePersonal();
+  const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -44,8 +44,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       ? [["/services", "My services"], ["/services/catalog", "Browse services"], ["/services/manage", "Service setup"], ["/services/api", "API access"]]
       : location.pathname === "/peers"
         ? [["/devices", "My devices"], ["/peers", "Connection details"]]
-        : location.pathname === "/settings/advanced"
-          ? [["/settings", "Preferences"], ["/settings/advanced", "Advanced settings"]]
+        : location.pathname.startsWith("/settings/")
+          ? [["/settings", "Preferences"], ["/settings/space", "Personal space"], ["/settings/advanced", "Advanced settings"]]
           : [];
   const title =
     (inExplore ? "Explore" : location.pathname === "/peers" ? "Devices" : [...primary, ...more, { to: "/settings", label: "Settings" }].find(
@@ -93,11 +93,11 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           </svg>
           <span>Ryn</span>
         </NavLink>
-        <div className="pf-workspace">
+        <button className="pf-workspace" onClick={() => navigate(href("/settings/space"))} aria-label="Manage personal space">
           <UserRound size={20} />
-          <span>Personal</span>
+          <span>{space?.space?.name || "Personal"}</span>
           <ChevronDown size={15} />
-        </div>
+        </button>
         <nav aria-label="Primary">{primary.map(link)}</nav>
         <div className="pf-more-label">More</div>
         <nav aria-label="More">{more.map(link)}</nav>

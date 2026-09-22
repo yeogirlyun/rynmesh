@@ -1059,6 +1059,7 @@ export function PersonalSettings() {
         title="Settings"
         description="These preferences apply to this device."
       />
+      <section className="pf-setting-row"><div><h2>Personal space</h2><p>Add your computers, manage membership and share AI.</p></div><Link className="pf-button" to={personalHref("/settings/space", demo)}>Manage space <ChevronRight size={16} /></Link></section>
       <section>
         <h2>Appearance</h2>
         <p>Choose the app’s appearance.</p>

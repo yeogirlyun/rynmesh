@@ -174,6 +174,9 @@ class ProviderService:
         self.manifest = manifest
         self.adapter = adapter
         self.store = store
+        if not hasattr(store, "personal_space"):
+            from rynmesh.personal_space import PersonalSpace
+            store.personal_space = PersonalSpace(store)
         self.task_store = task_store
         self.balance = balance
         self.messaging_key = messaging_key
@@ -301,6 +304,9 @@ class ProviderService:
             signed_request, recipient_peer_id=self.store.peer_id,
             recipient_messaging_key=self.messaging_key, expected_kind="llm_request",
         )
+        space = getattr(self.store, "personal_space", None)
+        if space is not None and space.enforces_ai() and not space.allows_ai(str(outer["from_peer_id"])):
+            raise TaskProtocolError("This device is not allowed to use this personal-space AI service.")
         task_id = str(outer["task_id"])
         if str(body.get("service_id")) != self.manifest.package_id:
             raise TaskProtocolError("requested service is not available")

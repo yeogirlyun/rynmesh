@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { NodeClient, LLMServiceRecord } from "../domain/nodeClient";
 import type { NodeStatus, Peer } from "../domain/types";
+import type { SpaceStatus } from "../domain/space";
 
 export type Appearance = "light" | "dark" | "system";
 export type Device = {
@@ -37,6 +38,8 @@ type Metadata = Record<
   { name?: string; note?: string; kind?: Device["kind"] }
 >;
 type PersonalState = {
+  space: SpaceStatus | null;
+  spaceAction: (action: string, body?: Record<string, unknown>) => Promise<SpaceStatus>;
   devices: Device[];
   services: Service[];
   loading: boolean;
@@ -147,12 +150,16 @@ export function PersonalProvider({
   const [health, setHealth] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [space, setSpace] = useState<SpaceStatus | null>(null);
   const refresh = useCallback(async () => {
     const results = await Promise.allSettled([
       client.listLLMServices(),
       client.peersHealth(),
+      client.spaceStatus(),
     ]);
     if (results[0].status === "fulfilled") setRecords(results[0].value);
+    if (results[2].status === "fulfilled") setSpace(results[2].value);
+    else setSpace(null);
     if (results[1].status === "fulfilled")
       setHealth(
         Object.fromEntries(
@@ -166,6 +173,11 @@ export function PersonalProvider({
     );
     setLoading(false);
   }, [client]);
+  const spaceAction = async (action: string, body?: Record<string, unknown>) => {
+    const status = await client.spaceAction(action, body);
+    setSpace(status);
+    return status;
+  };
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15000);
@@ -248,8 +260,16 @@ export function PersonalProvider({
           own: false,
           online: record.online,
         });
+    // Only signed, current membership from the local node grants ownership.
+    for (const member of space?.members || []) {
+      if (member.removed || member.peer_id === node.peer_id) continue;
+      const existing = result.find((device) => device.id === member.peer_id);
+      if (existing) existing.own = space?.membership === "active";
+      else result.push({ id: member.peer_id, name: member.name, note: "", kind: "desktop",
+        own: space?.membership === "active", online: health[member.peer_id] ?? null });
+    }
     return result;
-  }, [demo, node, peers, health, records]);
+  }, [demo, node, peers, health, records, space]);
   const devices = baseDevices.map((device) => ({
     ...device,
     name: metadata[device.id]?.name || device.name,
@@ -292,11 +312,10 @@ export function PersonalProvider({
     note: string,
     kind: Device["kind"],
   ) => {
-    const error = validateDeviceDetails(device.own, name, note);
+    const error = validateDeviceDetails(Boolean(device.self), name, note);
     if (error) throw new Error(error);
     // Remote membership never conveys ownership. Only the local control API can rename a live device.
-    if (!demo && device.own && !device.self)
-      throw new Error("Manage this device on the computer that owns it.");
+    // Remote names here are private nicknames; membership is managed separately.
     const next = {
       ...metadata,
       [device.id]: { name: name.trim(), note, kind },
@@ -311,6 +330,8 @@ export function PersonalProvider({
     <PersonalContext.Provider
       value={{
         ...theme,
+        space,
+        spaceAction,
         devices,
         services,
         demo,

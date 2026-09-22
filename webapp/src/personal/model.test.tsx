@@ -56,9 +56,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function setup() {
+function setup(membership?: import("../domain/space").SpaceStatus) {
   const client = makeFixtureNodeClient();
   client.mode = "live";
+  if (membership) vi.spyOn(client, "spaceStatus").mockResolvedValue(membership);
   vi.spyOn(client, "listLLMServices").mockResolvedValue([]);
   vi.spyOn(client, "peersHealth").mockResolvedValue([
     { peerId: peer.id, online: true, checkedAt: "" },
@@ -79,6 +80,16 @@ function setup() {
 }
 
 describe("personal device details", () => {
+  it("recognizes a verified member without an endpoint and drops ownership after expiry", async () => {
+    const { fixtureSpace } = await import("../domain/space");
+    const status = fixtureSpace();
+    status.members = [{ peer_id: "remote", name: "Home", role: "device", removed: false }];
+    const { result } = setup(status);
+    await waitFor(() => expect(result.current.devices.find(d => d.id === "remote")?.own).toBe(true));
+    status.membership = "expired";
+    await act(() => result.current.refresh());
+    expect(result.current.devices.find(d => d.id === "remote")?.own).toBe(false);
+  });
   it("never infers ownership from trust or discovery and saves remote notes locally", async () => {
     const { result, update } = setup();
     await waitFor(() => expect(result.current.loading).toBe(false));

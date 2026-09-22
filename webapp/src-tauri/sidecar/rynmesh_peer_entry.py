@@ -8,5 +8,10 @@ import multiprocessing
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if len(sys.argv) > 1 and sys.argv[1] == "--restore-space":
+        sys.argv.pop(1)
+        from rynmesh.personal_space import main as restore_main
+        restore_main()
+        sys.exit(0)
     from rynmesh.peer_http import main
     sys.exit(main())

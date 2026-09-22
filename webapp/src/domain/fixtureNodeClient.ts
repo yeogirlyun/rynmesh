@@ -1,4 +1,5 @@
 import type { NodeClient } from "./nodeClient";
+import { fixtureSpace } from "./space";
 import type {
   ActivityEvent,
   ContentFilters,
@@ -972,6 +973,9 @@ export function makeFixtureNodeClient(): NodeClient {
 
   return {
     mode: "fixture",
+    async spaceStatus() { return fixtureSpace(); },
+    async spaceAction() { throw new Error("Design preview only. Connect to a live node to manage your space."); },
+    async spaceBackup() { throw new Error("Recovery is available on a live coordinator only."); },
     async getNodeStatus() {
       await delay();
       return {

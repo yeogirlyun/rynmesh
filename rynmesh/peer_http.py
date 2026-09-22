@@ -283,6 +283,9 @@ def create_app(store: RynmeshStore | None = None):
     globals()["FastAPIRequest"] = FastAPIRequest
 
     active_store = store or RynmeshStore()
+    from .personal_space import PersonalSpace
+    personal_space = PersonalSpace(active_store)
+    active_store.personal_space = personal_space
 
     import asyncio as _asyncio
     import hashlib as _hashlib
@@ -531,6 +534,12 @@ def create_app(store: RynmeshStore | None = None):
                 )
                 await _asyncio.sleep(delay)
 
+        async def _space_poll():
+            while True:
+                await _asyncio.to_thread(personal_space.tick)
+                await _asyncio.sleep(5)
+
+        space_task = _asyncio.create_task(_space_poll())
         confirm_task = _asyncio.create_task(_confirm_after_grace())
         poll_task = _asyncio.create_task(_poll())
         discovery_task = _asyncio.create_task(_discover())
@@ -544,6 +553,7 @@ def create_app(store: RynmeshStore | None = None):
         recap_task.cancel()
         llm_relay_task.cancel()
         llm_publish_task.cancel()
+        space_task.cancel()
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     started_at = time.monotonic()
@@ -2028,6 +2038,9 @@ def create_app(store: RynmeshStore | None = None):
         _apply_safety_policy(updated)
         _reset_model_provider()
         return local_settings(request)
+
+    from .personal_space_routes import install_space_routes
+    install_space_routes(app, space=personal_space, local_control=local_control)
 
     @app.get("/api/local/updates/status")
     def local_updates_status(request: FastAPIRequest) -> dict[str, Any]:

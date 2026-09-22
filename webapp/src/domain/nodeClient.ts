@@ -137,6 +137,9 @@ export interface LLMSetupRequest {
 }
 
 export interface NodeClient {
+  spaceStatus(): Promise<import("./space").SpaceStatus>;
+  spaceAction(action: string, body?: Record<string, unknown>): Promise<import("./space").SpaceStatus>;
+  spaceBackup(password: string): Promise<Record<string, unknown>>;
   mode: "live" | "fixture";
   getNodeStatus(): Promise<NodeStatus>;
   getRegistryStatus(): Promise<RegistryStatus>;

@@ -17,7 +17,9 @@ The script freezes the Python node with its package metadata, builds the React f
 
 `webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.6.2_x64-setup.exe`
 
-Delivered copy: `release/windows/Ryn-0.6.2-windows-x64-setup.exe`, with SHA256 alongside it.
+UI-only baseline: `release/windows/Ryn-0.6.2-windows-x64-setup.exe`.
+
+Personal-space build: `release/windows/Ryn-0.6.2-personal-space-windows-x64-setup.exe`, with its own SHA256 file alongside it. Both currently report app version 0.6.2; use the personal-space filename for the latest implementation.
 
 ## Package behavior
 
@@ -35,4 +37,4 @@ The generated native executable was tested with an isolated node home and port: 
 
 This is an unsigned development package. Windows can show an unknown-publisher warning. Public release still needs signing and clean-machine install/upgrade/uninstall verification. An existing Ryn installation was detected on the development machine, so the installer was not run over that installation during this task.
 
-Pairing-code negotiation and enforceable per-device service grants remain backend work; their live controls explain that boundary. Remote desktop, NAS and LAN resource sharing remain deferred. No multi-machine AI performance or connectivity acceptance is claimed by this UI/package pass.
+Personal-space invitations, signed membership, management roles, removal, AI local/space access and encrypted recovery are implemented. See `PERSONAL_SPACE.md` for usage, coordinator requirements and the 24-hour offline permission limit. Per-service guest grants, remote desktop, NAS and LAN resource sharing remain deferred. No physical cross-network AI performance or connectivity acceptance is claimed by this implementation pass.

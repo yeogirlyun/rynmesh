@@ -30,6 +30,7 @@ import {
   readAppearance,
 } from "./personal/model";
 import { PersonalShell } from "./personal/Shell";
+import { PersonalSpacePage } from "./personal/Space";
 import {
   PersonalHome,
   PersonalServices,
@@ -296,6 +297,7 @@ export function AppRoutes() {
           />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<PersonalSettings />} />
+          <Route path="settings/space" element={<PersonalSpacePage />} />
           <Route path="settings/advanced" element={<Settings />} />
         </Route>
       </Routes>
