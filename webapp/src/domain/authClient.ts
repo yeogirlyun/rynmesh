@@ -1,3 +1,4 @@
+import { nodeControlBaseUrl } from "./nodeUrl";
 // Control-surface auth. On the desktop the node trusts the loopback socket and
 // nothing here ever renders; over a tunnel the node returns 401 and the owner
 // pastes the device token once to get a session cookie.
@@ -8,12 +9,7 @@ export type AuthStatus = {
   remote: boolean;
 };
 
-function baseUrl(): string {
-  const explicit = import.meta.env.VITE_RYN_NODE_BASE_URL;
-  if (explicit) return explicit;
-  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-  return isTauri ? "http://127.0.0.1:8791/api/local" : "/api/local";
-}
+const baseUrl = nodeControlBaseUrl;
 
 export const authApi = {
   async status(): Promise<AuthStatus> {

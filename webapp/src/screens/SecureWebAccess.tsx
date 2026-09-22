@@ -1,3 +1,4 @@
+import { personalHref } from "../personal/model";
 import { ArrowLeft, ExternalLink, Globe2, ShieldCheck, Unplug } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -47,7 +48,7 @@ export default function SecureWebAccess() {
   const connected = Boolean(status?.connected);
   return (
     <div className={styles.page}>
-      <button type="button" className={styles.back} onClick={() => navigate("/services")}><ArrowLeft size={15} /> All services</button>
+      <button type="button" className={styles.back} onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={15} /> All services</button>
       <header className={styles.hero}>
         <div className={styles.heroTitle}><span className={styles.heroIcon}><ShieldCheck size={25} /></span><div><h1>Secure web access</h1><p>Browse through an encrypted route selected by Ryn.</p></div></div>
         <span className={styles.status}>{connected ? "Connected" : "Ready to connect"}</span>

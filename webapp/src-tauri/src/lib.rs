@@ -1,4 +1,5 @@
 mod node;
+mod preferences;
 
 use node::NodeState;
 use std::sync::atomic::AtomicBool;
@@ -29,12 +30,15 @@ pub fn run() {
             focus_main(app);
         }))
         .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![preferences::get_desktop_preferences, preferences::set_desktop_preferences, preferences::desktop_node_port])
+        .manage(preferences::DesktopState { background: AtomicBool::new(true) })
         .manage(NodeState {
             child: std::sync::Mutex::new(None),
             port,
             stopping: AtomicBool::new(false),
         })
         .setup(move |app| {
+            app.state::<preferences::DesktopState>().background.store(preferences::load_background(app.handle()), std::sync::atomic::Ordering::SeqCst);
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -57,7 +61,7 @@ pub fn run() {
             tray.on_menu_event(|app, event| match event.id().as_ref() {
                 "open" => focus_main(app),
                 "logs" => {
-                    let _ = std::process::Command::new("/usr/bin/open")
+                    let _ = std::process::Command::new(if cfg!(windows) { "explorer.exe" } else if cfg!(target_os = "macos") { "/usr/bin/open" } else { "xdg-open" })
                         .arg(node::log_dir())
                         .spawn();
                 }
@@ -120,8 +124,12 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Tray app: closing the window hides it; the node keeps running.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                if window.state::<preferences::DesktopState>().background.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    window.app_handle().exit(0);
+                }
             }
         })
         .build(tauri::generate_context!())

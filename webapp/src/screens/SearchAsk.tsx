@@ -2,7 +2,7 @@ import { Bot, CornerDownLeft, Server, User } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
-import { Button, Chip, PageHeader, Panel } from "../components/ui";
+import { Button, Chip, EmptyState, PageHeader, Panel } from "../components/ui";
 import type { ConversationMessage } from "../domain/types";
 
 const seed: ConversationMessage[] = [
@@ -32,14 +32,14 @@ const seed: ConversationMessage[] = [
 
 export default function SearchAsk() {
   const { client, notify } = useAppContext();
-  const [messages, setMessages] = useState<ConversationMessage[]>(seed);
+  const [messages, setMessages] = useState<ConversationMessage[]>(client.mode === "fixture" ? seed : []);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
 
   const send = async (event: FormEvent) => {
     event.preventDefault();
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || sending) return;
     setText("");
     setSending(true);
     const userMessage: ConversationMessage = { id: crypto.randomUUID(), role: "user", text: trimmed };
@@ -68,8 +68,8 @@ export default function SearchAsk() {
     <div className="searchask-layout">
       <PageHeader
         eyebrow="Search and Ask"
-        title="Steer the node"
-        context="Conversational review where routing is visible. The AI curator recommends; the local node acts."
+        title="Search & ask"
+        context="Find content across connected devices and ask questions about it."
         actions={
           <>
             <Chip tone="ok">via local node</Chip>
@@ -80,6 +80,7 @@ export default function SearchAsk() {
 
       <Panel className="conversation-panel">
         <div className="messages">
+          {!messages.length && <EmptyState title="Ask about your content" body="Search connected devices or ask for an explanation of a recommendation." />}
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} onSuggest={setText} />
           ))}
@@ -90,7 +91,7 @@ export default function SearchAsk() {
             onChange={(event) => setText(event.target.value)}
             placeholder="Ask the node to search, rank, fetch previews, or explain recommendations..."
           />
-          <Button type="submit" variant="primary" icon={CornerDownLeft} disabled={sending}>
+          <Button type="submit" variant="primary" icon={CornerDownLeft} disabled={sending || !text.trim()}>
             {sending ? "Routing" : "Send"}
           </Button>
         </form>
@@ -133,7 +134,7 @@ function MessageBubble({
       <div className="message message-system">
         <div className="message-title">
           <Server size={16} />
-          Local Ryn node routing
+          Search activity
         </div>
         <p>{message.text}</p>
         <div className="operation-list">
@@ -154,7 +155,7 @@ function MessageBubble({
     <div className={`message message-${message.role}`}>
       <div className="message-title">
         {message.role === "user" ? <User size={16} /> : <Bot size={16} />}
-        {message.role === "user" ? "You - sent to local node" : "AI curator"}
+        {message.role === "user" ? "You" : "Assistant"}
       </div>
       <p>{message.text}</p>
       {message.cites?.length ? (

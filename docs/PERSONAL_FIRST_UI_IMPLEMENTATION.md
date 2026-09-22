@@ -16,7 +16,8 @@ Date: 2026-09-22
 - Local device names save through the existing node API. Remote nicknames, private notes and icon preferences remain local and are scoped by node identity and client mode.
 - AI chat continues using the existing conversation storage and order APIs. Explicitly requested missing providers do not fall back to another provider. Device/model selection is visible and disabled during a request.
 - Tasks use consumer AI orders, provider AI orders and work results. Cancellation waits for the server response; unavailable provider information is not invented.
-- Existing service setup, API keys, content, messaging and advanced settings remain accessible.
+- Explore/library, content details, For you, Search & ask, Publish, Messages, connection details, service catalog/setup/API access, service experience pages, advanced settings, welcome and connection recovery now share the new visual system.
+- Windows desktop: bundled node, tray, single instance, background preference, launch at startup, dynamic node port, WebView2 local authentication, and installer-only updates for the frozen node.
 
 ## Preview
 
@@ -40,7 +41,7 @@ These are visible limitations, not completed backend features:
 | My remote devices | Only the local device has verified management authority in live mode. Discovery and trust do not confer ownership. |
 | Per-device service sharing / revocation | Selection UI restored. Live saving is unavailable until the node provides enforceable access APIs. Preview saving explicitly changes no real permissions. |
 | Document conversion / transcription | Sample capabilities in preview only. |
-| Startup / close preferences | Preview controls only; live controls show existing availability. Native startup configuration is not added. |
+| Startup / close preferences | Functional in the Windows client; browser controls explain their desktop-only availability. |
 | Generic task results | AI text results can be downloaded when returned; a general file-result and work cancellation API is not implemented here. |
 
 Remote desktop, NAS and household LAN access remain deferred as requested.
@@ -48,8 +49,11 @@ Remote desktop, NAS and household LAN access remain deferred as requested.
 ## Verification
 
 - Production build: `npm run build` passed.
-- All 46 frontend tests across 10 files passed, including new metadata/appearance/provider-selection coverage.
+- All 47 frontend tests across 11 files passed, including metadata/appearance/provider-selection coverage and preview feed isolation.
+- 78 focused Python checks passed: local authentication, desktop defaults, WebView2 CORS and frozen-runtime update protection.
 - Browser checks: both themes, Home, Services, Devices, Tasks, Settings, AI chat, pairing/sharing/edit dialogs; device edits reflected on other pages; fixture chat response.
 - Responsive checks at 390px and 1280px widths; narrow navigation and dialog layout checked.
 
-This is a frontend implementation pass. Live multi-computer pairing, service permissions and native desktop packaging still require separate integration acceptance.
+- Windows x64 NSIS installer built successfully; bundled executable launched without an external Python runtime. Actual native checks covered Home, onboarding, both themes, startup registration/removal, background operation, and node shutdown when the app exits.
+
+Live multi-computer pairing and service permissions still require separate integration acceptance. The Windows package is an unsigned test build; clean-machine installation and signed public distribution remain release acceptance tasks. See `WINDOWS_BUILD.md`.

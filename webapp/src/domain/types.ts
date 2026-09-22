@@ -362,6 +362,7 @@ export interface PeerHealth {
 }
 
 export interface UpdateStatus {
+  manualInstallRequired?: boolean;
   currentVersion: string;
   availableVersion: string | null;
   autoUpdate: boolean;

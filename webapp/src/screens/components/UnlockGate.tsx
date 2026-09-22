@@ -43,8 +43,8 @@ export default function UnlockGate({ children }: Props) {
       event.preventDefault();
       if (!token.trim() || busy) return;
       setBusy(true);
+      try {
       const message = await authApi.unlock(token);
-      setBusy(false);
       if (message) {
         setError(message);
         return;
@@ -52,6 +52,9 @@ export default function UnlockGate({ children }: Props) {
       setError("");
       setToken("");
       setAuthorized(true);
+      } catch {
+        setError("Could not reach this device. Please try again.");
+      } finally { setBusy(false); }
     },
     [token, busy],
   );
@@ -62,7 +65,7 @@ export default function UnlockGate({ children }: Props) {
   return (
     <div className="unlock-gate">
       <form className="unlock-card" onSubmit={submit}>
-        <h1>Unlock this node</h1>
+        <h1>Connect to your device</h1>
         <p>
           You're reaching this node remotely. Paste its device token to pair this
           browser — you'll only need to do it once.

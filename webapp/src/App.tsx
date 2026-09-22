@@ -50,6 +50,8 @@ import VideoRendering from "./screens/VideoRendering";
 import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
 import Settings from "./screens/Settings";
+import InferenceAccess from "./screens/InferenceAccess";
+import { PageHeading } from "./personal/components";
 import UnlockGate from "./screens/components/UnlockGate";
 
 // Resolve the local Ryn node control-API base.
@@ -236,7 +238,7 @@ function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
   return (
     <div className="offline-banner">
       <AlertTriangle size={16} />
-      Cannot reach local Ryn node daemon.
+      Cannot connect to this device.
       <button type="button" onClick={() => void onRetry()}>
         Retry
       </button>
@@ -250,10 +252,10 @@ function OfflineShell({ onRetry }: { onRetry: () => Promise<void> }) {
       <div className="offline-card">
         <RynLockup />
         <AlertTriangle size={28} />
-        <h1>Cannot reach local Ryn node daemon</h1>
+        <h1>Cannot connect to this device</h1>
         <p>
-          The webapp is only a control surface. Start the local Ryn node, then
-          retry.
+          Ryn could not connect to its local service. Wait a moment and retry,
+          or use Restart Node from the system tray.
         </p>
         <button type="button" onClick={() => void onRetry()}>
           <RotateCcw size={15} />
@@ -285,6 +287,7 @@ export function AppRoutes() {
           <Route path="devices" element={<PersonalDevices />} />
           <Route path="tasks" element={<PersonalTasks />} />
           <Route path="services/manage" element={<Services />} />
+          <Route path="services/api" element={<div className="screen-stack"><PageHeading title="API access" description="Connect your apps and projects to models on your devices." /><InferenceAccess /></div>} />
           <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route

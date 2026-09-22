@@ -4,7 +4,7 @@ import { useAppContext } from "../appContext";
 import { Button, Chip, EmptyState, EvidenceDetails, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
 import DigestViewer, { type ViewerAction } from "../components/DigestViewer";
 import {
-  digestApi,
+  digestApi as liveDigestApi,
   type AiStatus,
   type ConsumptionRecord,
   type DiscoveryStatus,
@@ -14,6 +14,7 @@ import {
   type Watcher,
 } from "../domain/digestClient";
 import type { RecommendationProfile } from "../domain/types";
+import { fixtureDigestApi } from "../domain/fixtureDigestClient";
 
 function timeAgo(unix: number): string {
   if (!unix) return "";
@@ -115,6 +116,7 @@ function DigestCard({
 
 export default function Digest() {
   const { client, notify } = useAppContext();
+  const digestApi = client.mode === "fixture" ? fixtureDigestApi : liveDigestApi;
   const [digest, setDigest] = useState<DigestPayload | null>(null);
   const [sources, setSources] = useState<DigestSource[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
@@ -309,7 +311,7 @@ export default function Digest() {
       <PageHeader
         eyebrow="Personal assistant"
         title="For You"
-        context="One local feed for public discovery, mesh recommendations, your interests, and every feedback signal."
+        context="Discover content selected around your interests."
         actions={
           <>
             {aiStatus?.provider ? (
@@ -339,11 +341,11 @@ export default function Digest() {
         <div className="recommendation-status-heading">
           <div>
             <span className="eyebrow">Discovery health</span>
-            <h2>{discovery?.item_count ? `${discovery.item_count} items are ready` : "Ryn is collecting your first items"}</h2>
+            <h2>{client.mode === "fixture" ? "Your personal feed" : discovery?.item_count ? `${discovery.item_count} items are ready` : "Ryn is collecting your first items"}</h2>
             <p>{discovery?.message || "The background agent is preparing its first zero-setup review."}</p>
           </div>
           <Chip tone={discovery?.phase === "error" ? "danger" : discovery?.degraded ? "warn" : discovery?.item_count ? "ok" : "info"}>
-            {discovery?.phase === "refreshing" ? "reviewing now" : discovery?.degraded ? "using healthy sources" : discovery?.item_count ? "ready" : "starting"}
+            {client.mode === "fixture" ? "Preview" : discovery?.phase === "refreshing" ? "reviewing now" : discovery?.degraded ? "using healthy sources" : discovery?.item_count ? "ready" : "starting"}
           </Chip>
         </div>
         <div className="recommendation-readiness-grid">

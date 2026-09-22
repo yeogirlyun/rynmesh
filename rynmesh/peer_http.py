@@ -345,7 +345,11 @@ def create_app(store: RynmeshStore | None = None):
     def _sha256_of(path: str) -> str:
         return _hashlib.sha256(_Path(path).read_bytes()).hexdigest()
 
+    _bundled_runtime = bool(getattr(_sys, "frozen", False))
+
     def _pip_install(wheel_path: str) -> None:
+        if _bundled_runtime:
+            raise RuntimeError("Update this desktop app using a newer Ryn installer.")
         _subprocess.run(
             [_sys.executable, "-m", "pip", "install", "--upgrade", wheel_path], check=True
         )
@@ -390,7 +394,7 @@ def create_app(store: RynmeshStore | None = None):
         snapshot_current_wheel=_snapshot_current_wheel,
         record_installed=_record_installed,
         pinned_pubkeys=_pinned,
-        auto_update=lambda: bool(_settings.get().get("auto_update", True)),
+        auto_update=lambda: not _bundled_runtime and bool(_settings.get().get("auto_update", True)),
         current_version=RYNMESH_VERSION,
         state=update_state,
         now=_iso_now,
@@ -399,7 +403,8 @@ def create_app(store: RynmeshStore | None = None):
 
     @asynccontextmanager
     async def lifespan(lifespan_app):
-        updater.on_startup()  # may os.execv away on crash-loop rollback
+        if not _bundled_runtime:
+            updater.on_startup()  # may os.execv away on crash-loop rollback
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
@@ -556,6 +561,7 @@ def create_app(store: RynmeshStore | None = None):
         ],
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=True,
     )
 
     _local_token = os.environ.get("RYNMESH_LOCAL_TOKEN", "").strip()
@@ -2026,17 +2032,19 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/updates/status")
     def local_updates_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        return updater.status()
+        return {**updater.status(), "manualInstallRequired": _bundled_runtime}
 
     @app.post("/api/local/updates/check")
     async def local_updates_check(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         await _asyncio.to_thread(updater.check)
-        return updater.status()
+        return local_updates_status(request)
 
     @app.post("/api/local/updates/apply")
     async def local_updates_apply(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
+        if _bundled_runtime:
+            raise HTTPException(status_code=409, detail="Update this desktop app using a newer Ryn installer.")
         await _asyncio.to_thread(updater.check)
         manifest = updater.check_manifest()
         return await _asyncio.to_thread(updater.apply, manifest)

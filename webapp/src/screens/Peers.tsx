@@ -59,8 +59,8 @@ export default function Peers() {
     <div className="screen-stack">
       <PageHeader
         eyebrow="Peers"
-        title="Discovered Ryn nodes"
-        context="Inspect identity tiers, credits, distribution weight, and local trust decisions."
+        title="Connection details"
+        context="Inspect device identities, connection status, and trust."
         actions={
           <Button
             icon={Radar}

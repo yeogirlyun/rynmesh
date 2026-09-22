@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ServiceArt } from "../personal/components";
+import { personalHref } from "../personal/model";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import type { JobCapacity } from "../domain/types";
@@ -109,8 +111,8 @@ export default function ServicesCatalog() {
     return [
       {
         id: "private-ai",
-        title: "Private AI",
-        description: "Have a private conversation with a language model.",
+        title: "AI chat",
+        description: "Talk to an AI model running on a connected device.",
         category: "ai",
         experience: "Chat",
         price: llm ? `From ${llmPrice} ${llmCurrency || "credits"}` : "No provider online",
@@ -162,7 +164,7 @@ export default function ServicesCatalog() {
     } catch {
       // Recent service shortcuts are optional and never contain private content.
     }
-    navigate(service.href);
+    navigate(personalHref(service.href, client.mode === "fixture"));
   };
 
   const recentServices = recent
@@ -175,9 +177,9 @@ export default function ServicesCatalog() {
     <div className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <span className="eyebrow">Ryn services</span>
-          <h1>Choose a service</h1>
-          <p>Each service opens the experience designed for it.</p>
+
+          <h1>Browse services</h1>
+          <p>Tools available across your connected devices.</p>
         </div>
         <div className={styles.heroTools}>
           <label className={styles.search}>
@@ -189,7 +191,7 @@ export default function ServicesCatalog() {
               placeholder="Search services"
             />
           </label>
-          <button className={styles.manageButton} type="button" onClick={() => navigate("/services/manage")}>
+          <button className={styles.manageButton} type="button" onClick={() => navigate(personalHref("/services/manage", client.mode === "fixture"))}>
             <Settings2 size={16} /> Manage
           </button>
         </div>
@@ -216,12 +218,11 @@ export default function ServicesCatalog() {
         </div>
         <div className={styles.grid}>
           {visible.map((service) => {
-            const Icon = service.icon;
-            const iconClass = service.category === "creative" ? styles.iconCreative : service.category === "network" ? styles.iconNetwork : "";
+
             return (
               <article className={styles.card} key={service.id}>
                 <div className={styles.cardTop}>
-                  <span className={`${styles.icon}${iconClass ? ` ${iconClass}` : ""}`}><Icon size={28} /></span>
+                  <ServiceArt kind={service.id === "private-ai" ? "ai" : service.id === "video-rendering" ? "video" : "network"} />
                   <div className={styles.cardTitle}>
                     <span className={styles.type}>{service.experience}</span>
                     <h3>{service.title}</h3>
@@ -229,10 +230,10 @@ export default function ServicesCatalog() {
                 </div>
                 <p className={styles.description}>{service.description}</p>
                 <div className={styles.meta}>
-                  <span className={styles.ready}>{service.available ? "Ready" : "Unavailable"}</span>
+                  <span className={service.available ? styles.ready : styles.unavailable}>{service.available ? "Ready" : "Unavailable"}</span>
                   <span>{service.price}</span>
                 </div>
-                <button className={styles.cardAction} type="button" onClick={() => openService(service)}>
+                <button className={styles.cardAction} disabled={!service.available && service.id !== "private-ai"} type="button" onClick={() => openService(service)}>
                   {service.action} <ArrowRight size={16} />
                 </button>
               </article>

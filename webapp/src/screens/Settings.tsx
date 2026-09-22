@@ -52,9 +52,9 @@ export default function Settings() {
     <div className="settings-layout">
       <PageHeader
         eyebrow="Settings"
-        title="Node policy"
-        context="Configuration and personal-assistant data belong to this local node."
-        actions={<Chip tone="info">local control API</Chip>}
+        title="Advanced settings"
+        context="Manage this device’s connection, privacy, and service preferences."
+
       />
       <aside className="settings-rail">
         {sections.map((section) => (
@@ -281,7 +281,7 @@ function IdentitySection({
 }) {
   return (
     <Section title="Identity & storage" icon={<HardDrive size={22} />}>
-      <SettingInput label="Node name" value={settings.node_name} onSave={(value) => onUpdate({ node_name: value })} />
+      <SettingInput label="Device name" value={settings.node_name} onSave={(value) => onUpdate({ node_name: value })} />
       <ReadOnly label="Storage" value={settings.node_storage} />
       <ReadOnly label="Trusted roots" value={settings.trusted_roots.join(", ")} />
     </Section>
@@ -479,7 +479,9 @@ function UpdatesSection({ client }: { client: NodeClient }) {
       <p className="muted">
         Current version: <span className="mono">{upd?.currentVersion ?? "…"}</span>
       </p>
-      <label className="toggle-row">
+      {upd?.manualInstallRequired ? (
+        <p className="muted">Install a newer Ryn desktop package to update this app.</p>
+      ) : <label className="toggle-row">
         <input
           type="checkbox"
           checked={upd?.autoUpdate ?? true}
@@ -489,8 +491,8 @@ function UpdatesSection({ client }: { client: NodeClient }) {
           }}
         />
         Automatically install updates
-      </label>
-      {upd?.availableVersion ? (
+      </label>}
+      {!upd?.manualInstallRequired && upd?.availableVersion ? (
         <div className="update-banner">
           <span>Version {upd.availableVersion} available.</span>
           <Button onClick={() => void client.updatesApply()}>Update now</Button>
@@ -521,7 +523,7 @@ function ReadOnly({ label, value, icon }: { label: string; value: string; icon?:
     <div className="setting-row">
       <span>
         <b>{label}</b>
-        <small>Read from local node</small>
+        <small>Read only</small>
       </span>
       <code>
         {icon}
@@ -545,7 +547,7 @@ function SettingInput({
     <div className="setting-row">
       <span>
         <b>{label}</b>
-        <small>Saved through local node settings</small>
+        <small>Saved on this device</small>
       </span>
       <div className="setting-edit">
         <input value={current} onChange={(event) => setCurrent(event.target.value)} />

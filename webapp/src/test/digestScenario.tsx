@@ -66,7 +66,8 @@ export function createDigestScenario(options: DigestScenarioOptions = {}) {
     NodeClient,
     "mode" | "getRecommendationProfile" | "updateRecommendationProfile"
   > = {
-    mode: "fixture",
+    // Exercise the HTTP-backed feed, with all requests intercepted by MSW.
+    mode: "live",
     getRecommendationProfile,
     updateRecommendationProfile,
   };

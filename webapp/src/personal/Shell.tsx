@@ -36,10 +36,21 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/explore", label: "Explore", icon: Compass },
     { to: "/chat", label: "Messages", icon: MessageCircle },
   ];
+  const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/"];
+  const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
+  const sublinks = inExplore
+    ? [["/explore", "Library"], ["/digest", "For you"], ["/search-ask", "Search & ask"], ["/publish", "Publish"]]
+    : location.pathname.startsWith("/services/") && !location.pathname.endsWith("/chat")
+      ? [["/services", "My services"], ["/services/catalog", "Browse services"], ["/services/manage", "Service setup"], ["/services/api", "API access"]]
+      : location.pathname === "/peers"
+        ? [["/devices", "My devices"], ["/peers", "Connection details"]]
+        : location.pathname === "/settings/advanced"
+          ? [["/settings", "Preferences"], ["/settings/advanced", "Advanced settings"]]
+          : [];
   const title =
-    [...primary, ...more, { to: "/settings", label: "Settings" }].find(
+    (inExplore ? "Explore" : location.pathname === "/peers" ? "Devices" : [...primary, ...more, { to: "/settings", label: "Settings" }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
-    )?.label || "Home";
+    )?.label) || "Home";
   const href = (path: string) => personalHref(path, demo);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -63,7 +74,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       end={item.to === "/"}
       key={item.to}
       to={href(item.to)}
-      className={({ isActive }) => (isActive ? "active" : "")}
+      className={({ isActive }) => (isActive || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
     >
       <item.icon size={21} strokeWidth={1.6} />
       <span>{item.label}</span>
@@ -160,6 +171,9 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="pf-main" id="main-content">
+          {sublinks.length > 0 && <nav className="pf-subnav" aria-label={`${title} pages`}>
+            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)}>{label}</NavLink>)}
+          </nav>}
           {children}
         </main>
       </div>

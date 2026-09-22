@@ -65,6 +65,7 @@ export default function Explore() {
   const [items, setItems] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     if (params.has("rank")) return;
@@ -115,7 +116,7 @@ export default function Explore() {
     setParams(next);
   };
 
-  const clearFilters = () => setParams(new URLSearchParams());
+  const clearFilters = () => setParams(client.mode === "fixture" ? new URLSearchParams("client=fixture") : new URLSearchParams());
   const publisherMap = new Map(peers.map((peer) => [peer.id, peer]));
   const local = items.filter((item) => item.fetch_status === "local").length;
   const fetched = items.filter((item) => ["fetched_full", "preview_only", "local"].includes(item.fetch_status)).length;
@@ -124,6 +125,20 @@ export default function Explore() {
 
   const refreshItems = async () => {
     setItems(await client.listContent(filters));
+  };
+  const fetchSelected = async (full: boolean) => {
+    if (fetching) return;
+    setFetching(true);
+    try {
+      const results = await Promise.allSettled(items.filter((item) => selected.has(item.content_id)).map((item) =>
+        full ? client.fetchFullContent(item.content_id, item.provider_peer_id) : client.fetchPreview(item.content_id, item.provider_peer_id)));
+      await refreshItems();
+      const failed = results.filter((result) => result.status === "rejected").length;
+      notify(failed ? "danger" : "ok", failed ? `${failed} downloads failed. Please retry.` : "Selected content downloaded");
+      if (!failed) setSelected(new Set());
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "Download failed");
+    } finally { setFetching(false); }
   };
 
   const fetchFullItem = (item: ContentItem) =>
@@ -149,8 +164,8 @@ export default function Explore() {
     <div className="screen-stack">
       <PageHeader
         eyebrow="Explore"
-        title="Available materials"
-        context="Browse local, fetched, and discovered content. Fetches and peer queries stay mediated by your node."
+        title="Explore"
+        context="Browse content from your devices and your network."
         actions={
           <>
             <Chip tone="info">{local} local</Chip>
@@ -214,19 +229,20 @@ export default function Explore() {
       {selected.size ? (
         <div className="selection-toolbar">
           <span className="mono">{selected.size} selected</span>
-          <Button icon={Eye} onClick={() => notify("info", "Bulk preview fetch queued through local node")}>
+          <Button icon={Eye} disabled={fetching} onClick={() => void fetchSelected(false)}>
             Fetch Preview
           </Button>
           <Button
             variant="primary"
             icon={Download}
+            disabled={fetching}
             onClick={() =>
               confirm({
                 title: "Fetch full content for selected items?",
                 body: "Full fetches may use bandwidth and storage. The local Ryn node will verify manifests, safety receipts, provenance, and hashes before storing bytes.",
                 risk: "high",
                 confirmLabel: "Fetch full",
-                onConfirm: () => notify("ok", "Full fetches requested through local node"),
+                onConfirm: () => fetchSelected(true),
               })
             }
           >

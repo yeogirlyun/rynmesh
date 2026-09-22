@@ -515,8 +515,8 @@ export default function Services() {
     <div className="screen-stack">
       <PageHeader
         eyebrow="Services"
-        title="Ryn job capacity"
-        context="Discover Provider nodes, submit signed work orders, and use a direct or end-to-end encrypted transport selected for each task."
+        title="Service setup"
+        context="Set up and manage the services running on this device."
         actions={<Button icon={RefreshCw} onClick={() => void refresh()}>Refresh</Button>}
       />
 

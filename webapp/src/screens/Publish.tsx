@@ -46,6 +46,7 @@ export default function Publish() {
   const next = async () => {
     if (step === 1 || step === 2 || step === 3 || step === 4) {
       setRunning(true);
+      try {
       const prepared = await client.preparePublish({
         ...draft,
         tags: tagText
@@ -54,10 +55,9 @@ export default function Publish() {
           .filter(Boolean),
       });
       setPrep(prepared);
-      window.setTimeout(() => {
-        setRunning(false);
-        setStep((current) => Math.min(current + 1, steps.length - 1));
-      }, 260);
+      setStep((current) => Math.min(current + 1, steps.length - 1));
+      } catch (error) { notify("danger", error instanceof Error ? error.message : "Could not prepare this file."); }
+      finally { setRunning(false); }
       return;
     }
     setStep((current) => Math.min(current + 1, steps.length - 1));
@@ -85,9 +85,9 @@ export default function Publish() {
     <div className="screen-stack">
       <PageHeader
         eyebrow="Publish"
-        title="Prepare content for Rynmesh"
-        context="The node hashes, scans, signs provenance, validates the manifest, and publishes only after confirmation."
-        actions={<Chip tone="warn">high-risk final action</Chip>}
+        title="Publish content"
+        context="Prepare a file, choose who can see it, and review before publishing."
+
       />
       <div className="stepper">
         {steps.map((label, index) => (
@@ -120,7 +120,7 @@ export default function Publish() {
           Back
         </Button>
         {step < steps.length - 1 ? (
-          <Button variant="primary" onClick={() => void next()} disabled={running}>
+          <Button variant="primary" onClick={() => void next()} disabled={running || (step === 0 && !draft.path.trim()) || (step === 1 && !draft.title.trim())}>
             {running ? "Running node work" : "Continue"}
           </Button>
         ) : (
@@ -148,7 +148,7 @@ function renderStep(
         <StepIntro icon={<FileText size={24} />} title="Select local content" body="Local files stay on this machine until you confirm publishing." />
         <label className="field">
           <span>Local path</span>
-          <input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.target.value })} placeholder="/Users/me/content/report.pdf" />
+          <input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.target.value })} placeholder="Full path to a file on this device" />
         </label>
       </div>
     );

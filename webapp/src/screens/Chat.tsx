@@ -1,8 +1,9 @@
 import { Paperclip, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
-import { Button, Hash, LoadingPanel, PageHeader, Panel, PeerPill } from "../components/ui";
+import { Button, Hash, LoadingPanel, PageHeader, Panel } from "../components/ui";
 import type { Peer } from "../domain/types";
+import { usePersonal } from "../personal/model";
 
 interface MessageRecord {
   msg_id: string;
@@ -39,7 +40,8 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function Chat() {
-  const { client, peers } = useAppContext();
+  const { client, peers, notify } = useAppContext();
+  const { resolveName } = usePersonal();
   const conversationPeers = useMemo(() => peers.filter((peer) => !peer.isSelf), [peers]);
   const [selected, setSelected] = useState<Peer | null>(null);
   const [messages, setMessages] = useState<MessageRecord[]>([]);
@@ -83,6 +85,7 @@ export default function Chat() {
 
   // Subscribe once to the SSE stream; append records for the open peer.
   useEffect(() => {
+    if (client.mode === "fixture") return;
     const source = new EventSource(client.messagesStreamUrl());
     source.onmessage = (event) => {
       let record: MessageRecord;
@@ -113,7 +116,7 @@ export default function Chat() {
   }, [messages]);
 
   const send = async () => {
-    if (!selected) return;
+    if (!selected || sending) return;
     const trimmed = text.trim();
     if (!trimmed && !attachment) return;
     setSending(true);
@@ -140,6 +143,8 @@ export default function Chat() {
       setText("");
       setAttachment(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (error) {
+      notify("danger", error instanceof Error ? error.message : "Message could not be sent");
     } finally {
       setSending(false);
     }
@@ -149,14 +154,14 @@ export default function Chat() {
     <div className="screen-stack">
       <PageHeader
         eyebrow="Chat"
-        title="Direct peer messaging"
-        context="End-to-end-encrypted 1:1 chat between Ryn nodes over the overlay. Each node stores only its own history."
+        title="Messages"
+        context="Talk directly with connected devices. Your history stays on this device."
       />
       <div className="chat-grid">
         <Panel className="chat-peer-list">
-          <span className="eyebrow">Peers</span>
+          <span className="eyebrow">Conversations</span>
           {conversationPeers.length === 0 ? (
-            <p className="muted">No peers discovered yet.</p>
+            <p className="muted">No devices discovered yet.</p>
           ) : (
             <ul className="chat-peer-items">
               {conversationPeers.map((peer) => (
@@ -166,8 +171,8 @@ export default function Chat() {
                     className={`chat-peer-item${selected?.id === peer.id ? " active" : ""}`}
                     onClick={() => setSelected(peer)}
                   >
-                    <PeerPill peer={peer} />
-                    <Hash value={peer.id} />
+                    <span className="pf-message-avatar">{resolveName(peer.id, peer.name).slice(0, 2).toUpperCase()}</span>
+                    <span className="pf-message-contact"><strong>{resolveName(peer.id, peer.name)}</strong><small>Connected device</small></span>
                   </button>
                 </li>
               ))}
@@ -178,13 +183,13 @@ export default function Chat() {
         <Panel className="chat-conversation">
           {!selected ? (
             <div className="empty-state">
-              <h3>Select a peer</h3>
-              <p>Pick a peer on the left to open a conversation.</p>
+              <h3>Select a conversation</h3>
+              <p>Pick a device on the left to open a conversation.</p>
             </div>
           ) : (
             <>
               <div className="chat-conversation-head">
-                <PeerPill peer={selected} />
+                <span className="pf-message-contact"><strong>{resolveName(selected.id, selected.name)}</strong><small>Encrypted conversation</small></span>
                 <Hash value={selected.id} />
               </div>
               <div className="chat-messages" ref={scrollRef}>
@@ -243,13 +248,13 @@ export default function Chat() {
                   placeholder="Type a message"
                   onChange={(event) => setText(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault();
                       void send();
                     }
                   }}
                 />
-                <Button variant="primary" icon={SendHorizontal} disabled={sending} onClick={() => void send()}>
+                <Button variant="primary" icon={SendHorizontal} disabled={sending || (!text.trim() && !attachment)} onClick={() => void send()}>
                   Send
                 </Button>
               </div>

@@ -1,9 +1,5 @@
-//! Ryn node lifecycle: spawn the local Rynmesh peer daemon as a managed child,
-//! replicate the env logic from scripts/launch_ryn_node_webapp.zsh, poll
-//! /health, and stop it gracefully (SIGTERM -> wait -> SIGKILL).
-//!
-//! Phase 3 runs against the system `rynmesh-peer` (or `python3 -c ...`).
-//! The PyInstaller-bundled sidecar (Phase 2) will only change `build_command`.
+//! Cross-platform lifecycle for the self-contained local Ryn node.
+//! Packaged builds use the bundled sidecar; development can use an override.
 
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::{Read, Write};
@@ -14,14 +10,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+fn hidden_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 pub struct NodeState {
     pub child: Mutex<Option<Child>>,
     pub port: u16,
     pub stopping: AtomicBool,
 }
 
+#[cfg(not(windows))]
 fn capture(program: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(program).args(args).output().ok()?;
+    let out = hidden_command(program).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -34,12 +41,25 @@ fn capture(program: &str, args: &[&str]) -> Option<String> {
 }
 
 fn machine_name() -> String {
+    #[cfg(windows)]
+    return std::env::var("COMPUTERNAME").unwrap_or_else(|_| "My PC".to_string());
+    #[cfg(not(windows))]
     capture("/usr/sbin/scutil", &["--get", "ComputerName"])
         .or_else(|| capture("/bin/hostname", &["-s"]))
         .unwrap_or_else(|| "ryn-node".to_string())
 }
 
 fn lan_ip() -> String {
+    // Connecting UDP chooses a local interface without sending any data.
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("1.1.1.1:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                return addr.ip().to_string();
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
     let iface = capture("/sbin/route", &["-n", "get", "default"]).and_then(|s| {
         s.lines().find_map(|l| {
             l.trim()
@@ -52,12 +72,18 @@ fn lan_ip() -> String {
             return ip;
         }
     }
+    }
     "127.0.0.1".to_string()
 }
 
 pub fn log_dir() -> PathBuf {
+    #[cfg(windows)]
+    let dir = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_else(|| std::env::temp_dir().into_os_string())).join("Ryn/logs");
+    #[cfg(not(windows))]
+    let dir = {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let dir = PathBuf::from(home).join("Library/Logs/Rynmesh");
+    PathBuf::from(home).join("Library/Logs/Rynmesh")
+    };
     let _ = create_dir_all(&dir);
     dir
 }
@@ -94,7 +120,7 @@ fn node_env(port: u16) -> Vec<(String, String)> {
 }
 
 fn which(bin: &str) -> bool {
-    Command::new("/usr/bin/which")
+    hidden_command(if cfg!(windows) { "where.exe" } else { "/usr/bin/which" })
         .arg(bin)
         .output()
         .map(|o| o.status.success())
@@ -115,35 +141,29 @@ fn open_log() -> std::io::Result<File> {
 fn sidecar_path() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p = dir.join("rynmesh-peer");
+            let p = dir.join(if cfg!(windows) { "rynmesh-peer.exe" } else { "rynmesh-peer" });
             if p.is_file() {
                 return Some(p);
             }
         }
     }
     let bin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
-    if let Ok(rd) = std::fs::read_dir(&bin_dir) {
-        for e in rd.flatten() {
-            if e.file_name().to_string_lossy().starts_with("rynmesh-peer") {
-                return Some(e.path());
-            }
-        }
-    }
-    None
+    let path = bin_dir.join(format!("rynmesh-peer-{}{}", env!("RYN_TARGET"), if cfg!(windows) { ".exe" } else { "" }));
+    path.is_file().then_some(path)
 }
 
 fn build_command(port: u16) -> Command {
     let mut cmd = if let Ok(custom) = std::env::var("RYNMESH_PEER_CMD") {
-        let mut c = Command::new("/bin/sh");
-        c.arg("-c").arg(custom);
+        let mut c = hidden_command(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
+        c.arg(if cfg!(windows) { "/C" } else { "-c" }).arg(custom);
         c
     } else if let Some(sidecar) = sidecar_path() {
-        Command::new(sidecar)
+        hidden_command(sidecar)
     } else if which("rynmesh-peer") {
-        Command::new("rynmesh-peer")
+        hidden_command("rynmesh-peer")
     } else {
-        let py = env_or("RYNMESH_PYTHON", || "python3".to_string());
-        let mut c = Command::new(py);
+        let py = env_or("RYNMESH_PYTHON", || if cfg!(windows) { "python" } else { "python3" }.to_string());
+        let mut c = hidden_command(py);
         c.arg("-c")
             .arg("from rynmesh.peer_http import main; raise SystemExit(main())");
         if let Ok(repo) = std::env::var("RYNMESH_REPO_DIR") {
@@ -191,6 +211,18 @@ pub fn start(state: &NodeState) -> std::io::Result<()> {
 fn stop_child(state: &NodeState) {
     let mut guard = state.child.lock().unwrap();
     if let Some(mut child) = guard.take() {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            // PyInstaller onefile owns a worker process: stop the owned tree.
+            let _ = hidden_command("taskkill.exe")
+                .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                .output();
+        }
+        #[cfg(unix)]
+        {
         let pid = child.id() as i32;
         unsafe {
             libc::kill(pid, libc::SIGTERM);
@@ -201,6 +233,7 @@ fn stop_child(state: &NodeState) {
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
                 Err(_) => break,
             }
+        }
         }
         let _ = child.kill();
         let _ = child.wait();
