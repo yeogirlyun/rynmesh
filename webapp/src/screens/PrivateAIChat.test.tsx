@@ -11,7 +11,7 @@ beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
 });
 
-function renderChat() {
+function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main") {
   const client = makeFixtureNodeClient();
   const submit = vi.spyOn(client, "submitLLMOrder");
   const confirm = vi.fn();
@@ -26,7 +26,7 @@ function renderChat() {
     peers: [], refreshShell: vi.fn(async () => undefined), confirm, notify: vi.fn(),
   };
   const result = render(
-    <MemoryRouter initialEntries={["/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main"]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<Outlet context={context} />}>
           <Route path="/services/private-ai/chat" element={<PrivateAIChat />} />
@@ -38,11 +38,17 @@ function renderChat() {
 }
 
 describe("Private AI chat", () => {
+  it("does not silently choose another provider when the requested device is missing", async () => {
+    const { submit } = renderChat('/services/private-ai/chat?peer=missing&service=missing');
+    expect(await screen.findByRole('heading', { name: 'The selected AI service is unavailable' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+  });
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Private AI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI chat" })).toBeInTheDocument();
 
-    const composer = screen.getByLabelText("Message Private AI");
+    const composer = screen.getByLabelText("Message AI chat");
     await user.type(composer, "Why is this request private?");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Why is this request private/)).toBeInTheDocument();
@@ -60,8 +66,8 @@ describe("Private AI chat", () => {
 
   it("includes prior messages in a follow-up and requests destructive confirmation before clearing", async () => {
     const { confirm, submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Private AI" })).toBeInTheDocument();
-    const composer = screen.getByLabelText("Message Private AI");
+    expect(await screen.findByRole("heading", { name: "AI chat" })).toBeInTheDocument();
+    const composer = screen.getByLabelText("Message AI chat");
     await user.type(composer, "First question");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText(/Fixture response for: First question/);

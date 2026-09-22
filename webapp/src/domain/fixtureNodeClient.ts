@@ -1136,6 +1136,7 @@ export function makeFixtureNodeClient(): NodeClient {
       await delay();
       return { task_id: taskId, state: "cancelled" };
     },
+    async listLLMProviderOrders() { return []; },
     async listLLMOrders() {
       await delay();
       return [];

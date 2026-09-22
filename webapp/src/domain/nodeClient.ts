@@ -60,6 +60,7 @@ export interface LLMServiceRecord {
 export interface LLMOrderResult {
   task_id: string;
   state: string;
+  provider_peer_id?: string;
   output?: string;
   model_alias?: string;
   input_tokens?: number;
@@ -177,6 +178,7 @@ export interface NodeClient {
   getLLMOrder(taskId: string): Promise<LLMOrderResult>;
   cancelLLMOrder(taskId: string): Promise<LLMOrderResult>;
   listLLMOrders(): Promise<LLMOrderResult[]>;
+  listLLMProviderOrders(): Promise<LLMOrderResult[]>;
   getLLMPrivacy(): Promise<LLMPrivacySettings>;
   updateLLMPrivacy(retentionSeconds: LLMPrivacySettings["result_retention_seconds"]): Promise<LLMPrivacySettings>;
   clearLLMOrders(): Promise<{ ok: boolean; removed: number }>;

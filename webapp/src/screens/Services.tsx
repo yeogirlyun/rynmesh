@@ -520,7 +520,7 @@ export default function Services() {
         actions={<Button icon={RefreshCw} onClick={() => void refresh()}>Refresh</Button>}
       />
 
-      <InferenceAccess />
+      <section id="inference-api"><InferenceAccess /></section>
 
       <Panel>
         <div className="panel-head">

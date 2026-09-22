@@ -95,6 +95,10 @@ export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
       const payload = await requestJson<{ orders: import("./nodeClient").LLMOrderResult[] }>(`${baseUrl}/llm/orders`);
       return payload.orders;
     },
+    listLLMProviderOrders: async () => {
+      const payload = await requestJson<{ orders: import("./nodeClient").LLMOrderResult[] }>(`${baseUrl}/llm/provider-orders`);
+      return payload.orders;
+    },
     getLLMPrivacy: () => requestJson(`${baseUrl}/llm/privacy`),
     updateLLMPrivacy: (resultRetentionSeconds) =>
       requestJson(`${baseUrl}/llm/privacy`, {
