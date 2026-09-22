@@ -922,7 +922,6 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if current is None:
             return {"configured": False, "online": False}
         settings = read_provider_settings()
-        current.accepting_orders = bool(settings.get("publication_enabled"))
         if not current.accepting_orders:
             return {**current.public_status(), "publication_enabled": False}
         return current.publish(
@@ -1097,6 +1096,45 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     app.state.llm_relay_once = relay_once
     app.state.llm_publish_once = publish_once
+
+    @app.get("/api/local/desktop/status")
+    def desktop_status() -> dict[str, Any]:
+        # No model health probes or Registry requests: the native watchdog must
+        # remain responsive even when an external model runtime is unavailable.
+        try:
+            current = active_manager()
+        except (OSError, ValueError, ManifestError, AdapterError):
+            current = None
+        with background_orders_lock:
+            consuming = sum(1 for order in background_orders.values()
+                            if order.get("state") in {"queued", "accepted", "running"})
+        running = current._running if current else 0
+        setup = read_setup_job().get("state") in {"queued", "running", "cancelling"}
+        return {
+            "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE") == "1",
+            "configured": current is not None,
+            "sharing": bool(current and current.accepting_orders),
+            "active_tasks": running + consuming,
+            "setup_active": setup,
+        }
+
+    @app.post("/api/local/desktop/sharing")
+    async def desktop_sharing(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        enabled = body.get("enabled") if isinstance(body, dict) else None
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=422, detail="enabled must be a boolean")
+        current = active_manager()
+        if current is None:
+            raise HTTPException(status_code=409, detail="Configure an AI service first.")
+        settings = read_provider_settings()
+        settings["publication_enabled"] = enabled
+        write_provider_settings(settings)
+        current.accepting_orders = enabled
+        # The existing periodic publisher refreshes discovery. Admission changes
+        # immediately, without interrupting requests already in progress or
+        # changing personal-space permissions.
+        return desktop_status()
 
     @app.get("/api/local/llm/hardware")
     def local_llm_hardware() -> dict[str, Any]:
@@ -1341,7 +1379,6 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             return {"configured": False, "online": False, "publication_enabled": False,
                     "background": background}
         settings = read_provider_settings()
-        current.accepting_orders = bool(settings.get("publication_enabled"))
         lifecycle = {}
         try:
             lifecycle = runtime_status(str(settings.get("manifest") or ""))

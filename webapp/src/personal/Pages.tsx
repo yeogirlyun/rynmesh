@@ -18,8 +18,6 @@ import {
 import { useAppContext } from "../appContext";
 import type { LLMOrderResult } from "../domain/nodeClient";
 import type { WorkResult } from "../domain/types";
-import { isTauriDesktop } from "../domain/nodeUrl";
-import { getDesktopPreferences, setDesktopPreferences, type DesktopPreferences } from "../domain/desktopClient";
 import {
   Arrow,
   Connection,
@@ -1034,25 +1032,6 @@ export function PersonalSettings() {
   const { node, registry, refreshShell, notify } = useAppContext();
   const href = useLinks();
   const [diagnostics, setDiagnostics] = useState(false);
-  const [startup, setStartup] = useState(false);
-  const [background, setBackground] = useState(true);
-  const [desktopPrefs, setDesktopPrefs] = useState<DesktopPreferences | null>(null);
-  const [savingPrefs, setSavingPrefs] = useState(false);
-  useEffect(() => {
-    if (demo || !isTauriDesktop()) return;
-    void getDesktopPreferences().then((prefs) => {
-      setDesktopPrefs(prefs); setStartup(prefs.startup); setBackground(prefs.background);
-    }).catch(() => notify("danger", "Desktop preferences could not be loaded."));
-  }, [demo, notify]);
-  async function updateDesktopPrefs(nextBackground: boolean, nextStartup: boolean) {
-    if (demo) { setBackground(nextBackground); setStartup(nextStartup); return; }
-    setSavingPrefs(true);
-    try {
-      const prefs = await setDesktopPreferences(nextBackground, nextStartup);
-      setDesktopPrefs(prefs); setStartup(prefs.startup); setBackground(prefs.background);
-    } catch (error) { notify("danger", error instanceof Error ? error.message : String(error)); }
-    finally { setSavingPrefs(false); }
-  }
   return (
     <div className="pf-page pf-settings">
       <PageHeading
@@ -1085,53 +1064,7 @@ export function PersonalSettings() {
           ))}
         </div>
       </section>
-      <section>
-        <h2>Startup &amp; background</h2>
-        <div className="pf-setting-row">
-          <div>
-            <h3>Launch at startup</h3>
-            <p>
-              {demo
-                ? "Start Ryn when you sign in. Preview preference."
-                : desktopPrefs?.startup_supported ? "Start Ryn when you sign in to Windows." : "Available in the Windows desktop app."}
-            </p>
-          </div>
-          <button
-            type="button"
-            className={`pf-switch${startup ? " on" : ""}`}
-            role="switch"
-            aria-checked={startup}
-            aria-label="Launch at startup"
-            disabled={savingPrefs || (!demo && !desktopPrefs?.startup_supported)}
-            onClick={() => void updateDesktopPrefs(background, !startup)}
-          >
-            <span />
-          </button>
-        </div>
-        <div className="pf-setting-row">
-          <div>
-            <h3>Keep running when the window closes</h3>
-            <p>
-              {demo
-                ? "Services stay available while this device is online. Preview preference."
-                : node.desktop_managed
-                  ? "Keep services available from the system tray."
-                  : "Background behavior is managed by the Ryn desktop app."}
-            </p>
-          </div>
-          <button
-            type="button"
-            className={`pf-switch${(demo || desktopPrefs ? background : node.desktop_managed) ? " on" : ""}`}
-            role="switch"
-            aria-checked={demo || desktopPrefs ? background : Boolean(node.desktop_managed)}
-            aria-label="Keep running when the window closes"
-            disabled={savingPrefs || (!demo && !desktopPrefs)}
-            onClick={() => void updateDesktopPrefs(!background, startup)}
-          >
-            <span />
-          </button>
-        </div>
-      </section>
+      <section className="pf-setting-row"><div><h2>Desktop</h2><p>Startup, system tray, availability and recovery.</p></div><Link className="pf-button" to={href("/settings/desktop")}>Desktop settings <ChevronRight size={16} /></Link></section>
       <section>
         <div className="pf-setting-row">
           <div>

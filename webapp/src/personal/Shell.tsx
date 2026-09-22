@@ -44,8 +44,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       ? [["/services", "My services"], ["/services/catalog", "Browse services"], ["/services/manage", "Service setup"], ["/services/api", "API access"]]
       : location.pathname === "/peers"
         ? [["/devices", "My devices"], ["/peers", "Connection details"]]
-        : location.pathname.startsWith("/settings/")
-          ? [["/settings", "Preferences"], ["/settings/space", "Personal space"], ["/settings/advanced", "Advanced settings"]]
+        : location.pathname.startsWith("/settings")
+          ? [["/settings", "Preferences"], ["/settings/desktop", "Desktop"], ["/settings/space", "Personal space"], ["/settings/advanced", "Advanced settings"]]
           : [];
   const title =
     (inExplore ? "Explore" : location.pathname === "/peers" ? "Devices" : [...primary, ...more, { to: "/settings", label: "Settings" }].find(

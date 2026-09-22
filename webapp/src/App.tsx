@@ -29,6 +29,8 @@ import {
   applyAppearance,
   readAppearance,
 } from "./personal/model";
+import { DesktopPage } from "./personal/Desktop";
+import { isTauriDesktop } from "./domain/nodeUrl";
 import { PersonalShell } from "./personal/Shell";
 import { PersonalSpacePage } from "./personal/Space";
 import {
@@ -263,6 +265,7 @@ function OfflineShell({ onRetry }: { onRetry: () => Promise<void> }) {
           Retry
         </button>
       </div>
+      {isTauriDesktop() && <div className="pf-shell" style={{ display: "block", width: "100%", padding: 28 }}><DesktopPage /></div>}
     </div>
   );
 }
@@ -297,6 +300,7 @@ export function AppRoutes() {
           />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<PersonalSettings />} />
+          <Route path="settings/desktop" element={<DesktopPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
           <Route path="settings/advanced" element={<Settings />} />
         </Route>

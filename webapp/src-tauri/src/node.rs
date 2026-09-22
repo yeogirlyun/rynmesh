@@ -24,6 +24,7 @@ pub struct NodeState {
     pub child: Mutex<Option<Child>>,
     pub port: u16,
     pub stopping: AtomicBool,
+    pub lifecycle: Mutex<()>,
 }
 
 #[cfg(not(windows))]
@@ -136,6 +137,12 @@ fn which(bin: &str) -> bool {
 }
 
 fn open_log() -> std::io::Result<File> {
+    let path = log_dir().join("ryn-node.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 5 * 1024 * 1024).unwrap_or(false) {
+        let previous = path.with_extension("previous.log");
+        let _ = std::fs::remove_file(&previous);
+        let _ = std::fs::rename(&path, previous);
+    }
     OpenOptions::new()
         .create(true)
         .append(true)
@@ -187,6 +194,11 @@ fn build_command(port: u16) -> Command {
 }
 
 pub fn start(state: &NodeState) -> std::io::Result<()> {
+    let _operation = state.lifecycle.lock().unwrap();
+    start_inner(state)
+}
+
+fn start_inner(state: &NodeState) -> std::io::Result<()> {
     if state.stopping.load(Ordering::SeqCst) {
         return Ok(());
     }
@@ -250,54 +262,46 @@ fn stop_child(state: &NodeState) {
 
 pub fn stop(state: &NodeState) {
     state.stopping.store(true, Ordering::SeqCst);
+    let _operation = state.lifecycle.lock().unwrap();
     stop_child(state);
 }
 
-pub fn restart(state: &NodeState) {
-    state.stopping.store(true, Ordering::SeqCst);
+pub fn restart(state: &NodeState) -> std::io::Result<()> {
+    let _operation = state.lifecycle.lock().unwrap();
+    if state.stopping.load(Ordering::SeqCst) { return Ok(()); }
+    if state.child.lock().unwrap().is_none() && health_ok(state.port) {
+        return Err(std::io::Error::other("This node is managed by another process."));
+    }
     stop_child(state);
-    state.stopping.store(false, Ordering::SeqCst);
-    let _ = start(state);
+    start_inner(state)
 }
 
+/// Control requests stay on loopback and honor an operator-provided local token.
+pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_json::Value, String> {
+    let addr = format!("127.0.0.1:{port}").parse().map_err(|_| "invalid_port")?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).map_err(|_| "node_unavailable")?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let token = std::env::var("RYNMESH_LOCAL_TOKEN").unwrap_or_default();
+    if token.contains(['\r', '\n']) { return Err("invalid_local_token".into()); }
+    let auth = if token.is_empty() { String::new() } else { format!("X-Ryn-Local-Token: {token}\r\n") };
+    let request = format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+    stream.write_all(request.as_bytes()).map_err(|_| "node_unavailable")?;
+    let mut buf = String::new();
+    stream.take(65536).read_to_string(&mut buf).map_err(|_| "node_unavailable")?;
+    let (header, payload) = buf.split_once("\r\n\r\n").ok_or("invalid_response")?;
+    if !header.lines().next().unwrap_or("").contains(" 200 ") { return Err("node_request_rejected".into()); }
+    serde_json::from_str(payload).map_err(|_| "invalid_response".into())
+}
 pub fn health_ok(port: u16) -> bool {
-    let addr = match format!("127.0.0.1:{port}").parse() {
-        Ok(a) => a,
-        Err(_) => return false,
-    };
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(600)) else {
-        return false;
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(600)));
-    if stream
-        .write_all(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        .is_err()
-    {
-        return false;
-    }
-    let mut buf = Vec::with_capacity(2048);
-    match stream.read_to_end(&mut buf) {
-        Ok(n) if n > 0 => {
-            let response = String::from_utf8_lossy(&buf);
-            response.contains(" 200") && response.contains("\"desktop_managed\":true")
-        }
-        _ => false,
-    }
+    request(port, "GET", "/api/local/desktop/status", "")
+        .map(|v| v["desktop_managed"] == true).unwrap_or(false)
 }
 
-pub fn recover_if_unhealthy(state: &NodeState) -> bool {
-    if state.stopping.load(Ordering::SeqCst) || health_ok(state.port) {
-        return false;
-    }
-    log::warn!("managed Ryn node is unhealthy; restarting it");
-    restart(state);
-    wait_healthy(state.port)
-}
-
-/// ~12s budget (80 x 150ms), matching the launch script's health wait.
+/// Bound boot waiting by wall time, including socket timeouts.
 pub fn wait_healthy(port: u16) -> bool {
-    for _ in 0..80 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
         if health_ok(port) {
             return true;
         }
