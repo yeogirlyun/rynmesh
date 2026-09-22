@@ -2,6 +2,9 @@
 
 Implemented on `development/personal-first-implementation`.
 
+For the newer Windows direct/ICE connection flow and three-computer acceptance,
+see [Personal-space connections](PERSONAL_SPACE_CONNECTIVITY.md).
+
 ## Use it
 
 1. On the home computer, open **Settings → Personal space → Create space**. This device becomes the coordinator and first management device.

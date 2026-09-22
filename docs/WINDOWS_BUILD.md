@@ -19,7 +19,13 @@ The script freezes the Python node with its package metadata, builds the React f
 
 UI-only baseline: `release/windows/Ryn-0.6.2-windows-x64-setup.exe`.
 
-Personal-space build: `release/windows/Ryn-0.6.2-personal-space-windows-x64-setup.exe`, with its own SHA256 file alongside it. Both currently report app version 0.6.2; use the personal-space filename for the latest implementation.
+Personal-space build: `release/windows/Ryn-0.6.2-personal-space-windows-x64-setup.exe`, with its own SHA256 file alongside it. The UI-only and personal-space baseline packages both report app version 0.6.2; the newer P2P package is listed below.
+
+Latest P2P test build: `release/windows/Ryn-0.6.2-personal-space-p2p-windows-x64-setup.exe`.
+It also reports version 0.6.2; use this filename for automatic direct/ICE connection
+selection and network-address refresh. See `PERSONAL_SPACE_CONNECTIVITY.md` for
+the three-computer acceptance steps and current limits. All three computers should
+use this build; no relay deployment is included.
 
 ## Package behavior
 

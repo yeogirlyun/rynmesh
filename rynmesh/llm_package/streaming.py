@@ -6,10 +6,9 @@ import concurrent.futures
 import json
 import threading
 import time
-import urllib.request
 from typing import Any
 
-from rynmesh.transport import network_key_header
+from .connectivity import peer_response
 
 
 async def events(run: Any, cancel: Any):
@@ -57,10 +56,8 @@ async def events(run: Any, cancel: Any):
 
 
 def peer_stream(url: str, body: dict[str, Any], *, timeout_s: float, on_event: Any) -> dict[str, Any]:
-    headers = {"Content-Type": "application/json", **network_key_header()}
-    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
     deadline = time.monotonic() + timeout_s
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+    with peer_response(url, body, timeout_s=timeout_s) as response:
         if "text/event-stream" not in response.headers.get("content-type", ""):
             raise ValueError("peer_streaming_not_supported")
         total = 0

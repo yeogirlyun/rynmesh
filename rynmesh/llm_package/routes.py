@@ -11,7 +11,6 @@ import os
 import tempfile
 import threading
 import time
-import urllib.request
 import uuid
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
@@ -23,10 +22,10 @@ from fastapi import HTTPException, Request
 
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.store import RynmeshStore
-from rynmesh.transport import network_key_header
 
 from .adapters import AdapterError, LLMAdapter, adapter_from_manifest
 from .chat import validate_chat
+from .connectivity import peer_response
 from .lifecycle import (
     LifecycleError,
     connect_local_api,
@@ -584,11 +583,7 @@ def _peer_post_json(url: str, payload: dict[str, Any], *, timeout_s: float) -> d
     Raw json.load over a peer socket would let a hostile provider stream an
     unbounded body into memory; every peer response in this module is small.
     """
-    request = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", **network_key_header()}, method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+    with peer_response(url, payload, timeout_s=timeout_s) as response:
         raw = response.read(_MAX_PEER_RESPONSE_BYTES + 1)
     if len(raw) > _MAX_PEER_RESPONSE_BYTES:
         raise TaskProtocolError("peer response exceeds size limit")
@@ -964,6 +959,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 handle_request=current.handle,
                 handle_stream_request=current.handle,
                 timeout_s=float(params.get("timeout_seconds") or current.manifest.timeout_seconds + 30),
+                connect_timeout_s=min(60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 20)),
             ))
             store.publish_work_result(
                 work_order_id=task_order_id,
@@ -1496,6 +1492,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if requested_transport not in {"auto", "direct", "p2p", "relay"}:
             raise HTTPException(status_code=400, detail="transport must be auto, direct, p2p, or relay")
         transport_mode = requested_transport
+        attempted_transport = requested_transport
+        attempts: list[dict[str, str]] = []
         request_fingerprint = _request_fingerprint({
             "task_id": task_id,
             "idempotency_key": idempotency_key,
@@ -1571,9 +1569,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 task_id=task_id, kind="llm_request", sender_peer_id=store.peer_id,
                 recipient_peer_id=provider_peer_id, sender_signing_key=store.private_key_bytes,
                 recipient_messaging_pub=recipient_pub,
-                expires_at=_expires(max(60, manifest.timeout_seconds + 30)),
+                # Keep the same signed task usable if the first path loses its
+                # reply and a second path retrieves the idempotent result.
+                expires_at=_expires(max(60, 2 * (manifest.timeout_seconds + 30) + 60)),
             )
-            endpoint = resolve_endpoint(provider_peer_id)
+            endpoint = await asyncio.to_thread(resolve_endpoint, provider_peer_id)
             encrypted_response = None
             direct_error: Exception | None = None
             transport_evidence: dict[str, Any] = {}
@@ -1615,7 +1615,48 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     "transport": transport_mode,
                 },
             )
-            if transport_mode == "p2p":
+            def progress(route: str, evidence: dict[str, Any] | None = None) -> None:
+                nonlocal attempted_transport
+                if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
+                    raise TaskProtocolError("task_cancelled")
+                attempted_transport = route
+                consumer_orders.checkpoint(task_id=task_id, metadata={
+                    "connection_phase": "connected" if evidence else "connecting_" + route,
+                    "connection_attempts": list(attempts),
+                    **({"transport": evidence.get("transport"), "transport_evidence": evidence} if evidence else {}),
+                })
+
+            if endpoint and transport_mode in {"auto", "direct"}:
+                progress("direct")
+                try:
+                    # Blocking I/O for the full inference duration — run it in
+                    # a worker thread so the node's event loop stays live.
+                    if chat and chat.get("stream"):
+                        encrypted_response = await asyncio.to_thread(
+                            peer_stream, endpoint + "/api/peer/llm/tasks/stream", signed.to_dict(),
+                            timeout_s=manifest.timeout_seconds + 30, on_event=receive_event,
+                        )
+                    else:
+                        encrypted_response = await asyncio.to_thread(
+                            _peer_post_json, endpoint + "/api/peer/llm/tasks",
+                            signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
+                        )
+                    _open_provider_response(
+                        encrypted_response, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
+                        task_id=task_id, provider_peer_id=provider_peer_id, service_id=service_id,
+                    )
+                    transport_evidence = {
+                        "transport": "peer_http_direct",
+                        "relay_used": False,
+                    }
+                except Exception as exc:
+                    encrypted_response = None
+                    direct_error = exc
+                    attempts.append({"transport": "direct", "error_code": "direct_transport_failed"})
+                    if sequence:
+                        raise TaskProtocolError("stream interrupted; automatic replay is disabled") from exc
+            if encrypted_response is None and transport_mode in {"auto", "p2p"}:
+                progress("p2p")
                 p2p_work_order_id = ""
 
                 async def publish_offer(offer: IceSignal) -> IceSignal:
@@ -1661,31 +1702,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                         await asyncio.sleep(0.25)
                     raise TaskProtocolError("timed out waiting for provider ICE answer")
 
-                encrypted_response, transport_evidence = await consumer_exchange(
-                    signed_request=signed.to_dict(),
-                    publish_offer=publish_offer,
-                    timeout_s=manifest.timeout_seconds + 30,
-                    **({"on_event": receive_event} if chat and chat.get("stream") else {}),
-                )
-            elif endpoint and transport_mode in {"auto", "direct"}:
                 try:
-                    # Blocking I/O for the full inference duration — run it in
-                    # a worker thread so the node's event loop stays live.
-                    if chat and chat.get("stream"):
-                        encrypted_response = await asyncio.to_thread(
-                            peer_stream, endpoint + "/api/peer/llm/tasks/stream", signed.to_dict(),
-                            timeout_s=manifest.timeout_seconds + 30, on_event=receive_event,
-                        )
-                    else:
-                        encrypted_response = await asyncio.to_thread(
-                            _peer_post_json, endpoint + "/api/peer/llm/tasks",
-                            signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
-                        )
-                    transport_evidence = {
-                        "transport": "peer_http_direct",
-                        "relay_used": False,
-                    }
+                    encrypted_response, transport_evidence = await consumer_exchange(
+                        signed_request=signed.to_dict(),
+                        publish_offer=publish_offer,
+                        timeout_s=manifest.timeout_seconds + 30,
+                        connect_timeout_s=min(60, _positive_env("RYNMESH_P2P_CONNECT_TIMEOUT_S", 20)),
+                        on_connected=lambda evidence: progress("p2p", evidence),
+                        **({"on_event": receive_event} if chat and chat.get("stream") else {}),
+                    )
                 except Exception as exc:
+                    attempts.append({"transport": "p2p", "error_code": _delivery_error_code(exc, transport="p2p")})
+                    if transport_mode == "p2p" or sequence or not os.environ.get("RYNMESH_LLM_RELAY_URL", "").strip():
+                        raise
                     direct_error = exc
             if encrypted_response is None and transport_mode == "direct":
                 raise TaskProtocolError("strict direct provider path failed") from direct_error
@@ -1697,6 +1726,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     raise TaskProtocolError("strict P2P path failed; relay fallback is disabled")
                 if not relay_url:
                     raise TaskProtocolError("direct provider path failed and no dedicated LLM relay is configured") from direct_error
+                progress("relay")
                 def _relay_exchange() -> dict[str, Any]:
                     reference = _upload_relay_ciphertext(
                         store, signed.to_dict(), relay_url=relay_url,
@@ -1737,6 +1767,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             state = str(result.get("state") or "failed")
             result["transport"] = str(transport_evidence.get("transport") or "unknown")
             result["transport_evidence"] = transport_evidence
+            result["connection_attempts"] = list(attempts)
             if state != "succeeded":
                 balance.release(task_id=task_id, reason=str(result.get("error_code") or state))
                 retention = response_retention()
@@ -1757,6 +1788,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 "amount": result["amount"], "transport": result["transport"],
                 "relay_used": transport_evidence.get("relay_used"),
                 "transport_evidence": transport_evidence,
+                "connection_phase": "connected", "connection_attempts": list(attempts),
                 "response_expires_at": _expires(retention) if retention else "",
             }
             consumer_orders.checkpoint(
@@ -1779,7 +1811,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 dispatch_settlement, store, task_id=task_id,
                 provider_peer_id=provider_peer_id, service_id=service_id,
                 amount=float(result["amount"]), network_id=network_id,
-                endpoint=endpoint if transport_mode in {"auto", "direct"} else "",
+                endpoint=endpoint if transport_evidence.get("transport") == "peer_http_direct" else "",
             )
             if settlement_delivered:
                 consumer_orders.checkpoint(
@@ -1787,13 +1819,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
             return result
         except Exception as exc:
-            error_code = _delivery_error_code(exc, transport=transport_mode)
+            error_code = _delivery_error_code(exc, transport=attempted_transport)
             try:
                 balance.release(task_id=task_id, reason=error_code)
                 consumer_orders.transition(task_id=task_id, state="failed",
                                            metadata={"provider_peer_id": provider_peer_id,
                                                      "service_id": service_id,
-                                                     "error_code": error_code})
+                                                     "error_code": error_code,
+                                                     "connection_phase": "failed",
+                                                     "connection_attempts": list(attempts)})
             except (TaskBalanceError, TaskProtocolError):
                 pass
             reason = str(exc).strip() or type(exc).__name__
@@ -1894,8 +1928,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if pending is None:
                 raise HTTPException(status_code=404, detail="task not found")
             return _public_background(pending)
+        connection = {}
+        for item in record.get("history") or []:
+            connection.update({key: item[key] for key in (
+                "connection_phase", "connection_attempts", "transport", "transport_evidence"
+            ) if key in item})
         final = dict((record.get("history") or [{}])[-1])
         result: dict[str, Any] = {
+            **connection,
             "task_id": task_id,
             "state": str(record.get("state") or "unknown"),
             **{key: value for key, value in final.items() if key != "at"},

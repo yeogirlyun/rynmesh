@@ -120,7 +120,7 @@ def _machine_name() -> str:
 def _local_ip_addresses() -> tuple[str, ...]:
     addresses: set[str] = set()
     configured = os.environ.get("RYNMESH_MACHINE_IP", "").strip()
-    if configured:
+    if configured and os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
         addresses.add(configured)
     try:
         for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
@@ -142,6 +142,18 @@ def _local_ip_addresses() -> tuple[str, ...]:
 
 
 def _primary_lan_ip() -> str:
+    if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
+        addresses = _local_ip_addresses()
+        return addresses[0] if addresses else ""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            # Route lookup only; connect sends no UDP packet.
+            probe.connect(("1.1.1.1", 80))
+            address = str(probe.getsockname()[0])
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
     addresses = _local_ip_addresses()
     return addresses[0] if addresses else ""
 
@@ -1570,6 +1582,10 @@ class RynmeshStore:
         return peer_info
 
     def _default_peer_endpoint(self) -> str:
+        if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() == "1":
+            port = os.environ.get("RYNMESH_PEER_PORT", "").strip()
+            if port:
+                return f"http://{_primary_lan_ip() or '127.0.0.1'}:{port}"
         configured = os.environ.get("RYNMESH_PEER_ENDPOINT", "").strip()
         if configured:
             return configured

@@ -19,6 +19,7 @@ export interface LLMChatMessage {
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
+  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
 }
 
 export interface LLMConversation {

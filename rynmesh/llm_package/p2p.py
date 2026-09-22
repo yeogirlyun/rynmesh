@@ -589,15 +589,23 @@ async def consumer_exchange(
     publish_offer: Callable[[IceSignal], Awaitable[IceSignal]],
     timeout_s: float,
     on_event: Any = None,
+    connect_timeout_s: float | None = None,
+    on_connected: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     connection = new_connection(controlling=True)
     try:
-        offer = await gather_signal(connection)
-        answer = await publish_offer(offer)
-        validate_distinct_public_egress(offer, answer)
-        await apply_remote_signal(connection, answer)
-        await asyncio.wait_for(connection.connect(), timeout=timeout_s)
+        # Bound discovery/signaling/ICE as one phase without shortening model
+        # inference. Each new request gathers current interfaces and mappings.
+        async def connect():
+            offer = await gather_signal(connection)
+            answer = await publish_offer(offer)
+            validate_distinct_public_egress(offer, answer)
+            await apply_remote_signal(connection, answer)
+            await connection.connect()
+        await asyncio.wait_for(connect(), timeout=connect_timeout_s or timeout_s)
         evidence = selected_pair(connection)
+        if on_connected is not None:
+            on_connected(evidence)
         pending: list[bytes] = []
         evidence["request_bytes"] = await send_json(
             connection, signed_request, timeout_s=timeout_s, pending_out=pending
@@ -653,14 +661,17 @@ async def provider_exchange(
     handle_request: Callable[[dict[str, Any]], dict[str, Any]],
     timeout_s: float,
     handle_stream_request: Any = None,
+    connect_timeout_s: float | None = None,
 ) -> dict[str, Any]:
     connection = new_connection(controlling=False)
     try:
-        answer = await gather_signal(connection)
-        await apply_remote_signal(connection, offer)
-        publish_answer(answer)
-        validate_distinct_public_egress(answer, offer)
-        await asyncio.wait_for(connection.connect(), timeout=timeout_s)
+        async def connect():
+            answer = await gather_signal(connection)
+            await apply_remote_signal(connection, offer)
+            publish_answer(answer)
+            validate_distinct_public_egress(answer, offer)
+            await connection.connect()
+        await asyncio.wait_for(connect(), timeout=connect_timeout_s or timeout_s)
         evidence = selected_pair(connection)
         request_id: list[bytes] = []
         request, request_bytes = await receive_json(

@@ -113,6 +113,14 @@ fn node_env(port: u16) -> Vec<(String, String)> {
         ("RYNMESH_PEER_PORT".into(), env_or("RYNMESH_PEER_PORT", || port.to_string())),
         ("RYNMESH_PEER_PUBLIC_HOST".into(), env_or("RYNMESH_PEER_PUBLIC_HOST", || ip.clone())),
         ("RYNMESH_PEER_ENDPOINT".into(), env_or("RYNMESH_PEER_ENDPOINT", || format!("http://{ip}:{port}"))),
+        // Recompute the advertised LAN address after a network change. Explicit
+        // operator endpoints remain fixed (public forwarding / overlay setups).
+        ("RYNMESH_AUTO_PEER_ENDPOINT".into(), env_or("RYNMESH_AUTO_PEER_ENDPOINT", || {
+            if std::env::var("RYNMESH_PEER_ENDPOINT").unwrap_or_default().is_empty()
+                && std::env::var("RYNMESH_PEER_PUBLIC_HOST").unwrap_or_default().is_empty() {
+                "1".to_string()
+            } else { "0".to_string() }
+        })),
         ("RYNMESH_AUTO_REGISTER".into(), env_or("RYNMESH_AUTO_REGISTER", || "1".to_string())),
         ("RYNMESH_REGISTRY_URL".into(), registry.clone()),
         ("RYNMESH_RELAY_URL".into(), env_or("RYNMESH_RELAY_URL", || registry.clone())),

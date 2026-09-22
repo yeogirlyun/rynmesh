@@ -82,7 +82,13 @@ function resultMessage(result: LLMOrderResult) {
   if (result.error_code === "insufficient_balance")
     return "There are not enough credits to run this request.";
   if (result.error_code === "p2p_distinct_public_egress_required")
-    return "The provider needs a different public network. Change networks and try again.";
+    return "Public-network test mode requires different internet connections. Turn off that test setting for normal use.";
+  if (result.error_code === "p2p_connection_timed_out")
+    return "Could not connect directly to this device. Keep Ryn open on both computers and check that the networks allow UDP. Relay is not enabled in this build's default configuration.";
+  if (result.error_code === "p2p_public_mapping_unavailable")
+    return "Could not obtain a public connection address. Check the STUN server and whether the network allows UDP.";
+  if (result.error_code === "p2p_transport_failed")
+    return "The peer connection failed. Check the other device and its network, then retry. Retrying discovers its current address.";
   return (
     result.output ||
     (result.error_code
@@ -108,6 +114,7 @@ export default function PrivateAIChat() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
+  const [connectionStatus, setConnectionStatus] = useState("");
   const [error, setError] = useState("");
   const [storageMode, setStorageMode] = useState<"encrypted" | "session-only">(
     "encrypted",
@@ -330,6 +337,7 @@ export default function PrivateAIChat() {
     setInput("");
     setError("");
     setSending(true);
+    setConnectionStatus("Finding device…");
     cancelRequestedRef.current = false;
     await replaceConversation(withUser);
 
@@ -357,6 +365,15 @@ export default function PrivateAIChat() {
       while (mountedRef.current && !TERMINAL_STATES.has(result.state)) {
         await new Promise((resolve) => window.setTimeout(resolve, 650));
         result = await client.getLLMOrder(result.task_id);
+        if (mountedRef.current) {
+          setConnectionStatus(
+            result.connection_phase === "connecting_p2p" ? "Establishing peer connection…"
+              : result.connection_phase === "connecting_direct" ? "Connecting directly / waiting for response…"
+              : result.connection_phase === "connecting_relay" ? "Connecting through configured relay…"
+              : result.transport === "ice_udp_direct" ? "Connected peer to peer · generating…"
+              : "Waiting for response…",
+          );
+        }
       }
       if (!mountedRef.current) return;
       const success = result.state === "succeeded";
@@ -374,6 +391,7 @@ export default function PrivateAIChat() {
         inputTokens: result.input_tokens,
         outputTokens: result.output_tokens,
         cost: result.amount,
+        transport: result.transport,
       };
       const completed = {
         ...withUser,
@@ -659,6 +677,9 @@ export default function PrivateAIChat() {
                   </div>
                   <span className={styles.messageMeta}>
                     {formatTime(message.createdAt)}
+                    {message.transport === "ice_udp_direct" ? " · Peer-to-peer connection"
+                      : message.transport === "peer_http_direct" ? " · Direct connection"
+                      : message.transport === "encrypted_relay" ? " · Encrypted relay" : ""}
                     {message.cost !== undefined
                       ? ` · ${message.cost} credits`
                       : ""}
@@ -711,6 +732,7 @@ export default function PrivateAIChat() {
                 <span />
                 <span />
               </div>
+              <small role="status" className={styles.connectionStatus}>{connectionStatus}</small>
             </div>
           ) : null}
         </div>

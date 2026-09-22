@@ -488,7 +488,19 @@ def create_app(store: RynmeshStore | None = None):
                 publisher = getattr(lifespan_app.state, "llm_publish_once", None)
                 if publisher is not None:
                     try:
-                        await _asyncio.to_thread(publisher)
+                        published = await _asyncio.to_thread(publisher)
+                        if (
+                            os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}
+                            and (published.get("configured") is False or published.get("publication_enabled") is False)
+                        ):
+                            # Consumers and paused providers also move between
+                            # networks. Retry registration after offline startup
+                            # and refresh their current endpoint without re-pairing.
+                            await _asyncio.to_thread(
+                                active_store.register_node,
+                                network_id=os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main"),
+                            )
+                            lifespan_app.state.registration_error = ""
                         lifespan_app.state.llm_publication_error = ""
                     except Exception as exc:
                         # A registry or runtime outage must not take down the node;

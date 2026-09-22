@@ -864,3 +864,5 @@
     padding: 20px 0;
   }
 }
+
+.connectionStatus { align-self: center; color: var(--text-muted, #7c8496); font-size: 12px; max-width: 32rem; }

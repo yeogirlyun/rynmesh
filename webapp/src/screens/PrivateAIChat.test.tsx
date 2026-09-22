@@ -38,6 +38,19 @@ function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-pr
 }
 
 describe("Private AI chat", () => {
+  it("shows peer connection progress and explains a UDP timeout", async () => {
+    const { client, submit, user } = renderChat();
+    submit.mockResolvedValue({ task_id: "connecting-test", state: "running" });
+    const poll = vi.spyOn(client, "getLLMOrder");
+    poll.mockResolvedValueOnce({ task_id: "connecting-test", state: "running", connection_phase: "connecting_p2p" });
+    poll.mockResolvedValue({ task_id: "connecting-test", state: "failed", error_code: "p2p_connection_timed_out" });
+    await screen.findByRole("heading", { name: "AI chat" });
+    await user.type(screen.getByLabelText("Message AI chat"), "Connect to my home PC");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("Establishing peer connection…")).toBeInTheDocument();
+    expect(await screen.findByText(/Could not connect directly to this device/)).toBeInTheDocument();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ transport: "auto" }));
+  });
   it("does not silently choose another provider when the requested device is missing", async () => {
     const { submit } = renderChat('/services/private-ai/chat?peer=missing&service=missing');
     expect(await screen.findByRole('heading', { name: 'The selected AI service is unavailable' })).toBeInTheDocument();
