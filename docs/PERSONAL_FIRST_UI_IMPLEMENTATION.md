@@ -1,5 +1,7 @@
 # Personal-first UI implementation
 
+> Historical September 22 implementation record. For the consolidated development branch, later NAS/AI/localization changes and current validation boundaries, see [the September 20–24 report](PERSONAL_AI_WORKSPACE_20260920_20260924.md).
+
 Branch: `development/personal-first-implementation`
 
 Design reference: `docs/design/personal-first-en-v1/`

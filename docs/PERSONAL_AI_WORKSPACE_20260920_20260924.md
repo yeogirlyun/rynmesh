@@ -114,7 +114,22 @@
 
 ### 4.2 本次整合复测
 
-待本次命令执行结束后填入实际结果。当前源码没有重新做付费云推理、真实 NAS 写入、跨机部署或安装包发布。
+本次在 Windows 当前工作区执行，生产代码对应 `48710c0`；之后只补充文档。结果如下：
+
+| 检查 | 本次实际结果 |
+| --- | --- |
+| 前端全部测试：`npm --prefix webapp test -- --reporter=dot` | **27 个文件、136 项通过**，75.67 秒 |
+| 相关后端回归（16 个测试文件，命令见下面） | **253 项通过**，109.66 秒；覆盖 API/CLI/隐私、来源、NAS、原生模型、LAN、个人空间、回答交付和节点健康 |
+| 真实 Codex 二进制隔离：启用 `RYNMESH_TEST_CODEX_BINARY=1`，运行 `tests/test_codex_isolation_live.py` | **2 项通过**，3.34 秒；使用本地假模型，无云推理 |
+| `npm --prefix webapp run build` | **通过**；包括 TypeScript 编译和 Vite 生产构建；保留主 bundle 超过 500 kB 的体积提示 |
+| 应用代码/测试/脚本/配置的 `git diff --check` | **通过**；全范围另有旧 Markdown 的双空格换行和文件末空行提示，保留原文档排版 |
+| 四个本轮源分支的祖先检查 | **全部包含**；详见第 7 节 |
+
+```powershell
+.venv/Scripts/python.exe -m pytest tests/test_inference_privacy.py tests/test_cli_agent.py tests/test_llm_package.py tests/test_llm_hardening.py tests/test_inference_api.py tests/test_llm_auto_connect.py tests/test_ai_sources.py tests/test_nas.py tests/test_native_model.py tests/test_lan_discovery.py tests/test_macos_addresses.py tests/test_personal_space.py tests/test_async_private_answer.py tests/test_peer_health.py tests/test_peer_health_responsiveness.py tests/test_frozen_cli_worker.py -q
+```
+
+本次后端共 255 项通过（253 + 2，不与历史数字累加）。结构化结果见 [整合验证记录](acceptance/personal-ai-workspace/verification-20260924.json)。没有重新做付费云推理、真实 NAS 写入、跨机部署、Rust 原生测试或安装包发布；不是全仓库所有后端测试的运行结果。
 
 ## 5. 文档索引与阅读顺序
 
@@ -137,6 +152,19 @@
 
 本次起点为 `codex/nas-plugin` / `development/personal-first-implementation` 的 `af2738f`。`development/personal-first-ui` 与 `codex/local-inference-api-p2p` 均已是其祖先，不需要重复 cherry-pick。
 
-旧 v0.7.0 整合分支的合并预检发现 36 个冲突文件。最终处理范围和验证结果在整合结束时更新；本报告不把预检当作已完成合并。
+| 来源分支 | 整合时提交 | 处理结果 |
+| --- | --- | --- |
+| `codex/nas-plugin` | `af2738f` | 已包含；其工作目录中的后续改版以 `48710c0` 保存 |
+| `development/personal-first-implementation` | `af2738f` | 已包含，与 NAS 原分支同一提交 |
+| `development/personal-first-ui` | `7009670` | 已包含，是本轮实现的祖先；设计资料同时归档 |
+| `codex/local-inference-api-p2p` | `7009670` | 已包含，是本轮实现的祖先 |
+| `feature/p2p-peer-transit` | `c6d15f9` | 作为已有基础历史继承 |
+| `codex/v070-followup-integration` | `397ad18` | **未并入**；属于 9 月 18 日的另一套内容产品架构，保留原开发分支 |
+
+源分支已经存在继承关系，因此通过从其最新提交创建 feature 分支并收录未提交改版来集中管理，无需制造重复 merge/cherry-pick 提交。`git merge-base --is-ancestor <源分支> HEAD` 已验证上述四个本轮源分支全部包含。
+
+旧 v0.7.0 整合线的预检发现 36 个冲突文件，试合并涉及约 600 个文件，包含内容阅读、好友、设备同步等另一条开发线。试合并已完整退出，没有用“全部选当前版本”伪造功能合入。这次范围限定为 9 月 20 日后的改版；该旧线和其独有提交需要独立适配验收，不能宣称本地全部 37 条历史分支均已合并。
+
+交付仅限开发分支提交。没有更新 `main`、没有合入上游、没有创建 Pull Request，也没有发布安装包。
 
 原分支与已有 worktree 保留。本机临时脚本/运行状态目录 `.codex-tmp/`、安装包/构建缓存与根目录演示文稿及其辅助输出不混入源码整合提交；文件仍在本地。

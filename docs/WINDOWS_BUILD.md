@@ -1,5 +1,7 @@
 # Windows desktop test build
 
+> This page records several historical test packages. Current source also includes later work that has not been packaged together; see [the September 20–24 development report](PERSONAL_AI_WORKSPACE_20260920_20260924.md) for the current scope and acceptance limits.
+
 Branch: `development/personal-first-implementation`.
 Version: 0.6.2; x64; English and Simplified Chinese installer; light, dark and system appearance.
 

@@ -1,5 +1,7 @@
 # Rynmesh
 
+> Development branch `feature/personal-ai-workspace`: the September 20–24 personal-device, AI workspace, local-model, NAS and desktop redesign is documented in the [requirements, implementation and acceptance report](docs/PERSONAL_AI_WORKSPACE_20260920_20260924.md). This is a development snapshot, not a new public release; older release notes below do not describe every feature in this branch.
+
 [![CI](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/yeogirlyun/rynmesh)](https://github.com/yeogirlyun/rynmesh/releases)
