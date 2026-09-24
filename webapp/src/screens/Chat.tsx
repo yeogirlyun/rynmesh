@@ -1,3 +1,5 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
+import { useTranslation } from "react-i18next";
 import { Paperclip, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
@@ -28,7 +30,7 @@ function formatTime(ts?: string): string {
   if (!ts) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -40,6 +42,8 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function Chat() {
+  useUILanguage();
+  const { t } = useTranslation();
   const { client, peers, notify } = useAppContext();
   const { resolveName } = usePersonal();
   const conversationPeers = useMemo(() => peers.filter((peer) => !peer.isSelf), [peers]);
@@ -144,7 +148,7 @@ export default function Chat() {
       setAttachment(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "Message could not be sent");
+      notify("danger", error instanceof Error ? error.message : t("personal.messagesMessageCouldNotBeSent"));
     } finally {
       setSending(false);
     }
@@ -153,15 +157,15 @@ export default function Chat() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Chat"
-        title="Messages"
-        context="Talk directly with connected devices. Your history stays on this device."
+        eyebrow={t("personal.messagesChat")}
+        title={t("personal.messagesMessages")}
+        context={t("personal.messagesTalkDirectlyWithConnectedDevicesYourHistoryStaysOnThisDevice")}
       />
       <div className="chat-grid">
         <Panel className="chat-peer-list">
-          <span className="eyebrow">Conversations</span>
+          <span className="eyebrow">{t("personal.messagesConversations")}</span>
           {conversationPeers.length === 0 ? (
-            <p className="muted">No devices discovered yet.</p>
+            <p className="muted">{t("personal.messagesNoDevicesDiscoveredYet")}</p>
           ) : (
             <ul className="chat-peer-items">
               {conversationPeers.map((peer) => (
@@ -172,7 +176,7 @@ export default function Chat() {
                     onClick={() => setSelected(peer)}
                   >
                     <span className="pf-message-avatar">{resolveName(peer.id, peer.name).slice(0, 2).toUpperCase()}</span>
-                    <span className="pf-message-contact"><strong>{resolveName(peer.id, peer.name)}</strong><small>Connected device</small></span>
+                    <span className="pf-message-contact"><strong>{resolveName(peer.id, peer.name)}</strong><small>{t("personal.messagesConnectedDevice")}</small></span>
                   </button>
                 </li>
               ))}
@@ -183,22 +187,22 @@ export default function Chat() {
         <Panel className="chat-conversation">
           {!selected ? (
             <div className="empty-state">
-              <h3>Select a conversation</h3>
-              <p>Pick a device on the left to open a conversation.</p>
+              <h3>{t("personal.messagesSelectAConversation")}</h3>
+              <p>{t("personal.messagesPickADeviceOnTheLeftToOpenAConversation")}</p>
             </div>
           ) : (
             <>
               <div className="chat-conversation-head">
-                <span className="pf-message-contact"><strong>{resolveName(selected.id, selected.name)}</strong><small>Encrypted conversation</small></span>
+                <span className="pf-message-contact"><strong>{resolveName(selected.id, selected.name)}</strong><small>{t("personal.messagesEncryptedConversation")}</small></span>
                 <Hash value={selected.id} />
               </div>
               <div className="chat-messages" ref={scrollRef}>
                 {loading ? (
-                  <LoadingPanel label="Loading conversation" />
+                  <LoadingPanel label={t("personal.messagesLoadingConversation")} />
                 ) : messages.length === 0 ? (
                   <div className="empty-state">
-                    <h3>No messages yet</h3>
-                    <p>Say hello — messages are sealed for this peer only.</p>
+                    <h3>{t("personal.messagesNoMessagesYet")}</h3>
+                    <p>{t("personal.messagesSayHelloMessagesAreSealedForThisPeerOnly")}</p>
                   </div>
                 ) : (
                   messages.map((record, index) => {
@@ -240,12 +244,12 @@ export default function Chat() {
                   onChange={(event) => setAttachment(event.target.files?.[0] ?? null)}
                 />
                 <Button icon={Paperclip} onClick={() => fileInputRef.current?.click()}>
-                  {attachment ? attachment.name : "Attach"}
+                  {attachment ? attachment.name : t("personal.messagesAttach")}
                 </Button>
                 <input
                   className="chat-input"
                   value={text}
-                  placeholder="Type a message"
+                  placeholder={t("personal.messagesTypeAMessage")}
                   onChange={(event) => setText(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -255,7 +259,7 @@ export default function Chat() {
                   }}
                 />
                 <Button variant="primary" icon={SendHorizontal} disabled={sending || (!text.trim() && !attachment)} onClick={() => void send()}>
-                  Send
+                  {t("personal.messagesSend")}
                 </Button>
               </div>
             </>

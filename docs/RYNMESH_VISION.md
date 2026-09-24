@@ -193,9 +193,9 @@ with **no platform rake** (subject to the *Honest scope* in §1).
 
 **Open — services execution model.** Where untrusted service code runs (provider
 node vs. sandboxed-at-requester vs. relayed job only), the invocation/metering
-contract, and result verification are **not** decided. This is the single
-biggest new protocol design and gets its own document (`RYNMESH_SERVICES.md`) at
-milestone M3. Do not generalize `Services.tsx` ad hoc before that design exists.
+contract, and result verification are **not** final. This is the single biggest
+new protocol design and has an M3 design draft in `RYNMESH_SERVICES.md`. Do not
+generalize `Services.tsx` ad hoc before that design is reviewed.
 
 ---
 
@@ -641,6 +641,6 @@ proceed on the home/private mesh. Do not ship publicly on M1–M3 strength alone
 - [`RYN_NODE_WEBAPP_SPEC.md`](RYN_NODE_WEBAPP_SPEC.md) — product surface of the
   webapp/node. The "AI Curator" there is this document's "Ryn Agent" before the
   autonomy elevation (M2).
-- `RYNMESH_SERVICES.md` — *to be written at M3.*
+- `RYNMESH_SERVICES.md` — *M3 design draft; protocol review required.*
 - Tauri desktop packaging plan — the M1 build (tracked in conversation/working
   notes; to be committed as `docs/RYN_DESKTOP_PLAN.md` when M1 starts).

@@ -1,9 +1,11 @@
 # Windows desktop test build
 
 Branch: `development/personal-first-implementation`.
-Version: 0.6.2; x64; English; light, dark and system appearance.
+Version: 0.6.2; x64; English and Simplified Chinese installer; light, dark and system appearance.
 
 ## Build
+
+Latest local LAN discovery build (2026-09-24): `release/windows/Ryn-0.6.2-lan-discovery-windows-x64-setup.exe`, with a `.sha256` file alongside it. The current Windows desktop executable has been rebuilt and restarted with this bundled node. The corresponding Apple Silicon package is `release/macos/Ryn-0.6.2-lan-discovery-macos-arm64.dmg`. Both desktops were started on the same LAN and exchanged signed discovery replies. See [LAN discovery](LAN_DISCOVERY.md) for connection order and validation. The previous privacy/tool-isolation build remains documented in [privacy acceptance](INFERENCE_PRIVACY_ORIGIN_TOOLS.md).
 
 Prerequisites: Windows x64, Python 3.12, Node/npm, Rust MSVC x64, Visual Studio C++ build tools and Windows SDK. The end user's machine does not need Python, Node or Rust.
 
@@ -30,6 +32,7 @@ use this build; no relay deployment is included.
 ## Package behavior
 
 - Installs for the current Windows user. WebView2 is required; the installer downloads the Microsoft bootstrapper if the runtime is missing, so that case requires internet access.
+- The NSIS installer follows Windows language for English or Simplified Chinese. The app language is selected separately in Settings and can follow the system or be chosen explicitly.
 - Starts its bundled node, hides its console, provides a tray menu and focuses the existing window on repeat launch.
 - Settings control launch at startup and whether closing the window keeps the node running. Quit stops the owned node process tree.
 - Local WebView2 requests are accepted only from exact desktop origins on unforwarded loopback connections. Existing remote authentication stays enforced.

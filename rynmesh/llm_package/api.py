@@ -23,6 +23,7 @@ from rynmesh.node_auth import is_browser_cross_site, is_forwarded, is_loopback_a
 
 from .api_formats import StreamFormat, convert_response, normalize, sse
 from .chat import completion
+from .safety import MAX_OUTPUT, install_body_limit
 from .streaming import events
 
 
@@ -99,7 +100,9 @@ class InferenceKeys:
 
 
 def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: Any,
-                          discover: Any, execute_order: Any, cancel_order: Any):
+                          local_manager_for: Any = None, local_service_ids: Any = None, discover: Any,
+                          execute_order: Any, cancel_order: Any):
+    install_body_limit(app)
     keys = InferenceKeys(home)
     network = os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
 
@@ -115,7 +118,20 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
         values = []
         manager = active_manager()
         if manager and manager.adapter.health().get("ok"):
-            values.append({"id": "local/" + manager.manifest.package_id, "object": "model", "created": 0, "owned_by": "local", "rynmesh": {"source": "local", "model_alias": manager.manifest.public_model_alias, "max_output_tokens": manager.manifest.max_output_tokens, "context_window": manager.manifest.context_window}})
+            values.append({"id": "local/" + manager.manifest.package_id, "object": "model", "created": 0, "owned_by": "local", "rynmesh": {"source": "local", "service_id": manager.manifest.package_id, "adapter": manager.manifest.adapter, "capabilities": manager.manifest.capabilities, "model_alias": manager.manifest.public_model_alias, "max_output_tokens": manager.manifest.max_output_tokens, "context_window": manager.manifest.context_window}})
+        if local_manager_for:
+            for service_id in ["codex-cli", "claude-cli", *(local_service_ids() if local_service_ids else [])]:
+                extra = local_manager_for(service_id)
+                if extra and extra.adapter.health().get("ok"):
+                    values.append({"id": "local/" + service_id, "object": "model", "created": 0,
+                                   "owned_by": "local", "rynmesh": {
+                                       "source": "local", "service_id": service_id,
+                                       "adapter": extra.manifest.adapter,
+                                       "capabilities": extra.manifest.capabilities,
+                                       "model_alias": extra.manifest.public_model_alias,
+                                       "max_output_tokens": extra.manifest.max_output_tokens,
+                                       "context_window": extra.manifest.context_window,
+                                   }})
         try:
             discovered = discover(network)
         except Exception:
@@ -126,7 +142,7 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             service = item["service"]
             # A full stable digest avoids ambiguity when models share aliases.
             digest = hashlib.sha256(item["peer_id"].encode()).hexdigest()
-            values.append({"id": "peer/" + digest + "/" + service["package_id"], "object": "model", "created": 0, "owned_by": "rynmesh", "rynmesh": {"source": "peer", "provider_peer_id": item["peer_id"], "service_id": service["package_id"], "model_alias": service["model_alias"], "max_output_tokens": service["max_output_tokens"], "context_window": service["context_window"]}})
+            values.append({"id": "peer/" + digest + "/" + service["package_id"], "object": "model", "created": 0, "owned_by": "rynmesh", "rynmesh": {"source": "peer", "provider_peer_id": item["peer_id"], "service_id": service["package_id"], "adapter": service.get("adapter", "openai_compatible"), "capabilities": service.get("capabilities", []), "model_alias": service["model_alias"], "max_output_tokens": service["max_output_tokens"], "context_window": service["context_window"]}})
         return values
 
     def public_models(catalog, aliases):
@@ -211,6 +227,14 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 raise HTTPException(404, "model_not_found; choose an id from /v1/models")
             model = {**model, "id": requested}
             target = model["rynmesh"]
+            if target.get("adapter") in {"codex_cli", "claude_cli"}:
+                if chat.get("stream") and target["adapter"] != "codex_cli":
+                    raise HTTPException(400, "CLI API mode does not support streaming yet")
+                if target["adapter"] != "codex_cli" and (chat.get("tools") or chat.get("tool_choice", "auto") not in ("auto", "none")):
+                    raise HTTPException(400, "CLI API mode does not support client tool calls")
+                unsupported = set(chat) & {"temperature", "top_p", "stop", "enable_thinking"}
+                if unsupported:
+                    raise HTTPException(400, "CLI API mode does not support " + ", ".join(sorted(unsupported)))
             # Client defaults often describe a larger model (e.g. 128k output).
             # A requested maximum is a ceiling, so fit it to the selected model
             # and estimated remaining context before reserving quota or routing.
@@ -220,7 +244,10 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 raise HTTPException(400, "estimated context window exceeded")
             chat["max_tokens"] = min(chat["max_tokens"], target["max_output_tokens"], available)
             task_id = "api_" + uuid.uuid4().hex
-            manager = active_manager() if target["source"] == "local" else None
+            manager = (local_manager_for(target["service_id"]) if local_manager_for
+                       else active_manager()) if target["source"] == "local" else None
+            if target["source"] == "local" and manager is None:
+                raise HTTPException(503, "local_model_unavailable")
             if manager and not manager._slots.acquire(blocking=False):
                 raise HTTPException(429, "local_model_busy")
             try:
@@ -247,10 +274,13 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 else:
                     result = await execute_order({"network_id": network, "provider_peer_id": target["provider_peer_id"],
                                                   "service_id": target["service_id"], "chat": chat,
+                                                  "_no_retention": True,
                                                   "transport": "p2p",
                                                   "max_tokens": chat["max_tokens"], "task_id": task_id}, emit)
                     if result.get("state") != "succeeded":
                         raise HTTPException(502, result.get("error_code", "inference_failed"))
+                if len(json.dumps(result).encode()) > MAX_OUTPUT:
+                    raise HTTPException(502, "provider_output_limit_exceeded")
                 used = result["output_tokens"]
                 return completion(result, model["id"], task_id)
             finally:

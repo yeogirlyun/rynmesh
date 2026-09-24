@@ -1,6 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { Monitor, Share2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { personalLabelKeys } from "./labels";
 import { SpaceControls } from "./Space";
 import { useAppContext } from "../appContext";
 import { DeviceArt, Modal, Note, ServiceArt } from "./components";
@@ -13,6 +15,7 @@ export function EditDevice({
   device: Device;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { saveDevice, demo } = usePersonal();
   const [name, setName] = useState(device.name);
   const [note, setNote] = useState(device.note);
@@ -21,12 +24,12 @@ export function EditDevice({
   const [error, setError] = useState("");
   return (
     <Modal
-      title={device.self ? "Edit device" : "Edit local details"}
+      title={device.self ? t("personal.editDevice") : t("personal.editLocalDetails")}
       onClose={onClose}
     >
       <div className="pf-dialog-context">
         <Monitor size={20} />
-        {device.own ? "Your device" : "Shared device"}
+        {device.own ? t("personal.yourDevice") : t("personal.sharedDevice")}
       </div>
       <form
         onSubmit={async (event) => {
@@ -48,7 +51,7 @@ export function EditDevice({
             setError(
               error instanceof Error
                 ? error.message
-                : "Could not save changes.",
+                : t("personal.couldNotSaveChanges"),
             );
           } finally {
             setBusy(false);
@@ -56,7 +59,7 @@ export function EditDevice({
         }}
       >
         <label className="pf-field">
-          <span>{device.self ? "Device name" : "Nickname"}</span>
+          <span>{device.self ? t("personal.deviceName") : t("personal.nickname")}</span>
           <input
             autoFocus
             value={name}
@@ -65,47 +68,47 @@ export function EditDevice({
           />
           <small>
             {device.self
-              ? "Visible to devices connected to yours."
-              : "Only changes the name shown to you."}{" "}
-            Up to 32 characters.
+              ? t("personal.visibleToDevicesConnectedToYours")
+              : t("personal.onlyChangesTheNameShownToYou")}{" "}
+            {t("personal.upTo32Characters")}
           </small>
         </label>
         <label className="pf-field">
-          <span>Private note</span>
+          <span>{t("personal.privateNoteLabel")}</span>
           <textarea
             rows={3}
             value={note}
             onChange={(event) => setNote(event.target.value)}
           />
-          <small>Only you can see this note. Up to 200 characters.</small>
+          <small>{t("personal.onlyYouCanSeeThisNoteUpTo200Characters")}</small>
         </label>
         <label className="pf-field">
-          <span>Device icon</span>
+          <span>{t("personal.deviceIcon")}</span>
           <select
             value={kind}
             onChange={(event) => setKind(event.target.value as Device["kind"])}
           >
-            <option value="desktop">Desktop</option>
-            <option value="laptop">Laptop</option>
+            <option value="desktop">{t("personal.desktop")}</option>
+            <option value="laptop">{t("personal.laptop")}</option>
           </select>
         </label>
         {error && (
           <p className="pf-error" role="alert">
-            {error}
+            {personalLabelKeys[error] ? t(`personal.${personalLabelKeys[error]}`) : error}
           </p>
         )}
         <Note>
           {device.own
-            ? "Renaming does not change the device ID."
-            : "The owner’s device name will not change."}
-          {demo ? " Changes apply to this preview." : ""}
+            ? t("personal.renamingDoesNotChangeTheDeviceID")
+            : t("personal.theOwnersDeviceNameWillNotChange")}
+          {demo ? t("personal.changesApplyToThisPreview") : ""}
         </Note>
         <footer className="pf-dialog-actions">
           <button type="button" className="pf-button" onClick={onClose}>
-            Cancel
+            {t("personal.cancel")}
           </button>
           <button className="pf-button primary" disabled={busy}>
-            {busy ? "Saving…" : "Save changes"}
+            {busy ? t("personal.saving") : t("personal.saveChanges")}
           </button>
         </footer>
       </form>
@@ -113,8 +116,9 @@ export function EditDevice({
   );
 }
 export function PairDevice({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
   return (
-    <Modal title="Add device" onClose={onClose}>
+    <Modal title={t("personal.addDevice")} onClose={onClose}>
       <SpaceControls compact />
     </Modal>
   );
@@ -140,44 +144,44 @@ function LiveShareServices({
   device: Device;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { space, spaceAction } = usePersonal();
   const [access, setAccess] = useState(space?.ai_access || "local");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <Modal title="Share AI service" onClose={onClose}>
+    <Modal title={t("personal.shareAIService")} onClose={onClose}>
       <p className="pf-muted">{device.name}</p>
       {device.self ? (
         <>
           <label className="pf-field">
-            <span>Allow access from</span>
+            <span>{t("personal.allowAccessFrom")}</span>
             <select
               value={access}
               onChange={(e) => setAccess(e.target.value as "local" | "space")}
             >
-              <option value="local">This device only</option>
+              <option value="local">{t("personal.thisDeviceOnly")}</option>
               <option value="space" disabled={space?.membership !== "active"}>
-                My space devices
+                {t("personal.mySpaceDevices")}
               </option>
             </select>
           </label>
           <Note>
-            Applies to AI tasks on this computer. Files, desktop access and
-            separately issued API keys are not changed.
+            {t("personal.appliesToAITasksOnThisComputerFilesDesktopAccessAndSeparatelyIssuedAPIKeysAreNotChanged")}
           </Note>
           {space?.membership !== "active" && (
             <Link className="pf-link" to="/settings/space">
-              Create or join a personal space first →
+              {t("personal.createOrJoinAPersonalSpaceFirst")}
             </Link>
           )}
           {error && (
             <p role="alert" className="pf-error">
-              {error}
+              {personalLabelKeys[error] ? t(`personal.${personalLabelKeys[error]}`) : error}
             </p>
           )}
           <footer className="pf-dialog-actions">
             <button className="pf-button" onClick={onClose}>
-              Cancel
+              {t("personal.cancel")}
             </button>
             <button
               className="pf-button primary"
@@ -189,21 +193,20 @@ function LiveShareServices({
                   onClose();
                 } catch (e) {
                   setError(
-                    e instanceof Error ? e.message : "Could not save access.",
+                    e instanceof Error ? e.message : t("personal.couldNotSaveAccess"),
                   );
                 } finally {
                   setBusy(false);
                 }
               }}
             >
-              Save access
+              {t("personal.saveAccess")}
             </button>
           </footer>
         </>
       ) : (
         <Note>
-          Open Ryn on this computer to change its service permissions.
-          Membership does not grant remote administration.
+          {t("personal.openRynOnThisComputerToChangeItsServicePermissionsMembershipDoesNotGrantRemoteAdministration")}
         </Note>
       )}
     </Modal>
@@ -216,6 +219,7 @@ function PreviewShareServices({
   device: Device;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { services, devices, demo } = usePersonal();
   const { notify } = useAppContext();
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
@@ -234,9 +238,9 @@ function PreviewShareServices({
     (service) => service.deviceId === device.id,
   );
   return (
-    <Modal title="Share services" onClose={onClose}>
-      <p className="pf-muted">{device.name} · Owner only</p>
-      <h3>Choose services</h3>
+    <Modal title={t("personal.shareServices")} onClose={onClose}>
+      <p className="pf-muted">{device.name} {t("personal.ownerOnly")}</p>
+      <h3>{t("personal.chooseServices")}</h3>
       <div className="pf-choice-grid">
         {available.map((service) => (
           <label
@@ -255,8 +259,8 @@ function PreviewShareServices({
           </label>
         ))}
       </div>
-      {!available.length && <Note>No services on this device yet.</Note>}
-      <h3>Allow these devices</h3>
+      {!available.length && <Note>{t("personal.noServicesOnThisDeviceYet")}</Note>}
+      <h3>{t("personal.allowTheseDevices")}</h3>
       <div className="pf-choice-grid">
         {devices
           .filter((item) => !item.own)
@@ -279,17 +283,16 @@ function PreviewShareServices({
       </div>
       <Note>
         {demo
-          ? "Preview only. Saving here does not grant real access."
-          : "Per-device service access is not supported by this node version. No access will be changed."}
+          ? t("personal.previewOnlySavingHereDoesNotGrantRealAccess")
+          : t("personal.perdeviceServiceAccessIsNotSupportedByThisNodeVersionNoAccessWillBeChanged")}
       </Note>
       <div className="pf-callout">
         <Share2 size={18} />
-        Only selected services will be shared. This does not grant desktop or
-        full computer control.
+        {t("personal.onlySelectedServicesWillBeSharedThisDoesNotGrantDesktopOrFullComputerControl")}
       </div>
       <footer className="pf-dialog-actions">
         <button className="pf-button" onClick={onClose}>
-          Cancel
+          {t("personal.cancel")}
         </button>
         <button
           className="pf-button primary"
@@ -299,12 +302,12 @@ function PreviewShareServices({
           onClick={() => {
             notify(
               "info",
-              "Preview reviewed. No real service permissions were changed.",
+              t("personal.previewReviewedNoRealServicePermissionsWereChanged"),
             );
             onClose();
           }}
         >
-          Save access
+          {t("personal.saveAccess")}
         </button>
       </footer>
     </Modal>

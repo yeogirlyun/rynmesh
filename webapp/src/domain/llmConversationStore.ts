@@ -19,10 +19,11 @@ export interface LLMChatMessage {
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
-  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_process" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
 }
 
 export interface LLMConversation {
+  cliModel?: string;
   id: string;
   title: string;
   serviceKey: string;
@@ -57,7 +58,9 @@ let databasePromise: Promise<IDBDatabase> | null = null;
 let keyPromise: Promise<CryptoKey> | null = null;
 
 function cloneConversation(conversation: LLMConversation): LLMConversation {
-  return JSON.parse(JSON.stringify(conversation)) as LLMConversation;
+  const copy = JSON.parse(JSON.stringify(conversation));
+  delete copy.codexThreadId;
+  return copy as LLMConversation;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -151,7 +154,7 @@ async function decryptConversation(record: EncryptedConversationRecord): Promise
     key,
     base64ToBytes(record.ciphertext),
   );
-  return JSON.parse(new TextDecoder().decode(plaintext)) as LLMConversation;
+  return cloneConversation(JSON.parse(new TextDecoder().decode(plaintext)) as LLMConversation);
 }
 
 export function createConversation(input: {

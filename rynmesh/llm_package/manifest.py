@@ -12,7 +12,7 @@ from rynmesh.crypto import sha256_file
 
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
 PACKAGE_VERSION = "0.1.0"
-MODES = {"managed", "import_gguf", "openai_compatible", "ollama"}
+MODES = {"managed", "import_gguf", "openai_compatible", "ollama", "codex_cli", "claude_cli"}
 
 
 class ManifestError(ValueError):
@@ -101,6 +101,8 @@ class LLMPackageManifest:
             raise ManifestError("minimum price exceeds maximum_per_task")
         if self.privacy.retention_seconds < 0:
             raise ManifestError("privacy retention_seconds must be non-negative")
+        if self.debug_log_bodies or self.privacy.log_bodies:
+            raise ManifestError("inference body logging is disabled for privacy")
         if self.mode == "import_gguf" and not self.model_path:
             raise ManifestError("GGUF import requires model_path")
         if self.mode in {"openai_compatible", "ollama"} and not self.base_url:

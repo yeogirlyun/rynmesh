@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { tr } from "../uiI18n";
 import {
   Box,
   CheckSquare,
   ChevronDown,
   Compass,
   Home,
+  HardDrive,
   Menu,
   MessageCircle,
   Moon,
@@ -18,8 +21,11 @@ import {
 } from "lucide-react";
 import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
+import { useNasStatus } from "../domain/nas";
 export function PersonalShell({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
+  const { status: nas } = useNasStatus(demo);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -27,30 +33,41 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const input = useRef<HTMLInputElement>(null);
   const primary = [
-    { to: "/", label: "Home", icon: Home },
-    { to: "/services", label: "Services", icon: Box },
-    { to: "/devices", label: "Devices", icon: Network },
-    { to: "/tasks", label: "Tasks", icon: CheckSquare },
+    { to: "/", label: t("nav.home"), icon: Home },
+    { to: "/services", label: t("nav.services"), icon: Box },
+    { to: "/devices", label: t("nav.devices"), icon: Network },
+    { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
+    ...(nas?.enabled ? [{ to: "/nas", label: t("nav.nas"), icon: HardDrive }] : []),
   ];
   const more = [
-    { to: "/explore", label: "Explore", icon: Compass },
-    { to: "/chat", label: "Messages", icon: MessageCircle },
+    { to: "/explore", label: t("nav.explore"), icon: Compass },
+    { to: "/chat", label: t("nav.messages"), icon: MessageCircle },
   ];
   const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
+  const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
+  // Keep every service entry available before configuration and across AI pages.
+  const serviceLinks = [
+    ["/services", t("nav.myServices")],
+    ["/services/catalog", t("nav.browseServices")],
+    ["/services/private-ai/chat", t("personal.aiWorkspace")],
+    ["/services/sources", t("personal.aiSources")],
+    ["/services/api", t("nav.apiAccess")],
+    ["/services/manage", t("nav.serviceSetup")],
+  ];
   const sublinks = inExplore
-    ? [["/explore", "Library"], ["/digest", "For you"], ["/search-ask", "Search & ask"], ["/publish", "Publish"]]
-    : location.pathname.startsWith("/services/") && !location.pathname.endsWith("/chat")
-      ? [["/services", "My services"], ["/services/catalog", "Browse services"], ["/services/manage", "Service setup"], ["/services/api", "API access"]]
+    ? [["/explore", t("nav.library")], ["/digest", t("nav.forYou")], ["/search-ask", t("nav.searchAsk")], ["/publish", t("nav.publish")]]
+    : inServices
+      ? serviceLinks
       : location.pathname === "/peers"
-        ? [["/devices", "My devices"], ["/peers", "Connection details"]]
+        ? [["/devices", t("nav.myDevices")], ["/peers", t("nav.connectionDetails")]]
         : location.pathname.startsWith("/settings")
-          ? [["/settings", "Preferences"], ["/settings/desktop", "Desktop"], ["/settings/space", "Personal space"], ["/settings/advanced", "Advanced settings"]]
+          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
-    (inExplore ? "Explore" : location.pathname === "/peers" ? "Devices" : [...primary, ...more, { to: "/settings", label: "Settings" }].find(
+    (inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
-    )?.label) || "Home";
+    )?.label) || t("nav.home");
   const href = (path: string) => personalHref(path, demo);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -82,8 +99,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   );
   return (
     <div className={`pf-shell${menuOpen ? " menu-open" : ""}`}>
-      <aside className="pf-sidebar" aria-label="Main navigation">
-        <NavLink className="pf-brand" to={href("/")} aria-label="Ryn home">
+      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")}>
+        <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
               d="M2 3h15c15 0 16 18 3 21l9 10H18L8 22v12H2V15h14c5 0 5-5 0-5H2V3Z"
@@ -93,29 +110,29 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           </svg>
           <span>Ryn</span>
         </NavLink>
-        <button className="pf-workspace" onClick={() => navigate(href("/settings/space"))} aria-label="Manage personal space">
+        <button className="pf-workspace" onClick={() => navigate(href("/settings/space"))} aria-label={t("shell.manageSpace")}>
           <UserRound size={20} />
-          <span>{space?.space?.name || "Personal"}</span>
+          <span>{space?.space?.name || t("shell.personal")}</span>
           <ChevronDown size={15} />
         </button>
-        <nav aria-label="Primary">{primary.map(link)}</nav>
-        <div className="pf-more-label">More</div>
-        <nav aria-label="More">{more.map(link)}</nav>
+        <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
+        <div className="pf-more-label">{t("nav.more")}</div>
+        <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
         <div className="pf-sidebar-bottom">
           {demo && (
             <span className="pf-preview-label">
-              Design preview · Sample data
+              {t("shell.preview")}
             </span>
           )}
           <nav>
-            {link({ to: "/settings", label: "Settings", icon: Settings })}
+            {link({ to: "/settings", label: t("nav.settings"), icon: Settings })}
           </nav>
         </div>
       </aside>
       {menuOpen && (
         <button
           className="pf-menu-backdrop"
-          aria-label="Close navigation"
+          aria-label={t("shell.closeNavigation")}
           onClick={() => setMenuOpen(false)}
         />
       )}
@@ -123,7 +140,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         <header className="pf-topbar">
           <button
             className="pf-icon-button pf-menu-toggle"
-            aria-label="Toggle navigation"
+            aria-label={t("shell.toggleNavigation")}
             onClick={() => setMenuOpen(!menuOpen)}
           >
             {menuOpen ? <X size={21} /> : <Menu size={21} />}
@@ -132,26 +149,31 @@ export function PersonalShell({ children }: { children: ReactNode }) {
             <Home size={17} />
             <span>/</span>
             <span>{title}</span>
-            {location.pathname.includes("/chat") && title === "Services" && (
+            {inServices && location.pathname !== "/services" && (
               <>
                 <span>/</span>
-                <span>AI chat</span>
+                <span>{serviceLinks.find(([path]) => path === location.pathname)?.[1]
+                  || (location.pathname === "/services/model-mapping" ? tr("模型映射")
+                    : location.pathname === "/services/agent-sharing" ? tr("管理共享")
+                    : location.pathname === "/services/video-rendering" ? tr("Video rendering")
+                    : location.pathname === "/services/secure-web-access" ? tr("Secure web access")
+                    : t("nav.myServices"))}</span>
               </>
             )}
           </div>
           <div className="pf-top-tools">
             <button
               className="pf-search-trigger"
-              aria-label="Search devices or services"
+              aria-label={t("shell.search")}
               onClick={() => setSearchOpen(true)}
             >
               <Search size={18} />
-              <span>Search devices or services</span>
+              <span>{t("shell.search")}</span>
               <kbd>{/Mac/i.test(navigator.platform) ? "⌘ K" : "Ctrl + K"}</kbd>
             </button>
             <button
               className="pf-icon-button"
-              aria-label="Toggle light and dark appearance"
+              aria-label={t("shell.toggleAppearance")}
               onClick={() =>
                 setAppearance(
                   document.documentElement.dataset.theme === "dark"
@@ -171,20 +193,22 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="pf-main" id="main-content">
-          {sublinks.length > 0 && <nav className="pf-subnav" aria-label={`${title} pages`}>
-            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)}>{label}</NavLink>)}
+          {sublinks.length > 0 && <nav className={`pf-subnav${inServices ? " pf-service-nav" : ""}`} aria-label={title}>
+            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : undefined}>
+              {inServices && path === "/services/manage" && <Settings size={17} aria-hidden="true" />}{label}
+            </NavLink>)}
           </nav>}
           {children}
         </main>
       </div>
       {searchOpen && (
-        <Modal title="Search your space" onClose={() => setSearchOpen(false)}>
+        <Modal title={t("shell.searchSpace")} onClose={() => setSearchOpen(false)}>
           <label className="pf-search">
             <Search size={18} />
             <input
               ref={input}
-              aria-label="Search devices and services"
-              placeholder="Find a device or service…"
+              aria-label={t("shell.searchInput")}
+              placeholder={t("shell.searchPlaceholder")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -207,7 +231,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
                   <DeviceArt kind={device.kind} small />
                   <div>
                     <strong>{device.name}</strong>
-                    <small>Device</small>
+                    <small>{t("shell.device")}</small>
                   </div>
                 </button>
               ))}
@@ -245,8 +269,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
               !services.some((service) =>
                 service.title.toLowerCase().includes(query.toLowerCase()),
               ) && (
-                <Empty title="No matches">
-                  Try another device or service name.
+                <Empty title={t("shell.noMatches")}>
+                  {t("shell.noResults")}
                 </Empty>
               )}
           </div>

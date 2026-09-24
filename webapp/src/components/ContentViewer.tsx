@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import { ExternalLink, FileText, Headphones, Image as ImageIcon, Play, X } from "lucide-react";
 import type { ContentItem } from "../domain/types";
 import { Button, Chip } from "./ui";
@@ -16,13 +17,14 @@ function youtubeEmbed(url: string | undefined): string {
 }
 
 function actionLabel(item: ContentItem) {
-  if (item.content_kind === "video") return "Watch original";
-  if (item.content_kind === "audio") return "Open audio source";
-  if (item.content_kind === "image") return "View original";
-  return "Read original";
+  if (item.content_kind === "video") return tr("Watch original");
+  if (item.content_kind === "audio") return tr("Open audio source");
+  if (item.content_kind === "image") return tr("View original");
+  return tr("Read original");
 }
 
 export default function ContentViewer({ item, onClose }: { item: ContentItem; onClose: () => void }) {
+  useUILanguage();
   const embed = item.source_platform === "youtube" ? youtubeEmbed(item.external_url) : "";
   const image = item.media_url || item.thumbnail_url || "";
   const directAudio = item.content_kind === "audio" && item.media_url;
@@ -36,13 +38,13 @@ export default function ContentViewer({ item, onClose }: { item: ContentItem; on
         <header className="content-viewer-header">
           <div>
             <div className="content-viewer-kicker">
-              <Chip tone="info">{item.source_platform || "public web"}</Chip>
-              <Chip tone="muted">{item.content_kind}</Chip>
+              <Chip tone="info">{item.source_platform || tr("public web")}</Chip>
+              <Chip tone="muted">{tr(item.content_kind)}</Chip>
               <span>{item.source_peer_name}</span>
             </div>
             <h1>{item.title}</h1>
           </div>
-          <button type="button" className="content-viewer-close" onClick={onClose} aria-label="Close content viewer">
+          <button type="button" className="content-viewer-close" onClick={onClose} aria-label={tr("Close content viewer")}>
             <X size={20} />
           </button>
         </header>
@@ -68,7 +70,7 @@ export default function ContentViewer({ item, onClose }: { item: ContentItem; on
             <div className="content-document-stage">
               {item.content_kind === "video" ? <Play size={48} /> : item.content_kind === "audio" ? <Headphones size={48} /> : item.content_kind === "image" ? <ImageIcon size={48} /> : <FileText size={48} />}
               <h2>{item.title}</h2>
-              <p>{item.description || "Open the original source to view the full item."}</p>
+              <p>{item.description || tr("Open the original source to view the full item.")}</p>
             </div>
           )}
         </div>

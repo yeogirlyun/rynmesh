@@ -27,6 +27,7 @@ export interface Peer {
   slug: string;
   name: string;
   endpoint: string;
+  lanEndpoints?: string[];
   network: string;
   tier: IdentityTier;
   credits: number;
@@ -308,6 +309,7 @@ export interface ContentFilters {
 }
 
 export interface PeerFilters {
+  quick?: boolean;
   tier?: IdentityTier | "all";
   quarantined?: boolean;
   search?: string;
@@ -357,8 +359,12 @@ export interface EgressStatus {
 
 export interface PeerHealth {
   peerId: string;
-  online: boolean;
+  online: boolean | null;
   checkedAt: string;
+  httpReachable?: boolean;
+  lanReachable?: boolean;
+  presenceSource?: "self" | "http" | "heartbeat" | "heartbeat_expired" | "unknown";
+  lastSeen?: string;
 }
 
 export interface UpdateStatus {

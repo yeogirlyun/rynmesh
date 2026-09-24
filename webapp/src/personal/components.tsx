@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import {
   AudioLines,
@@ -9,6 +10,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { personalLabelKeys } from "./labels";
 import type { Device, Service } from "./model";
 
 // Shared vector artwork stays crisp at every density and in both appearances.
@@ -123,10 +125,17 @@ export function DeviceArt({
 export function ServiceArt({
   kind,
   small = false,
+  brand,
 }: {
   kind: Service["kind"];
   small?: boolean;
+  brand?: string;
 }) {
+  if (kind === "ai" && brand) return (
+    <span className={`pf-service-art branded${small ? " small" : ""}`} aria-hidden="true">
+      <span className={`pf-provider-logo ${brand}`} />
+    </span>
+  );
   const Icon = {
     ai: Sparkles,
     document: FileText,
@@ -167,19 +176,20 @@ export function Status({
   self?: boolean;
   label?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <span
       className={`pf-status ${label === "Failed" ? "error" : label === "Processing" ? "processing" : self ? "local" : online === true ? "online" : "offline"}`}
     >
       <i />
-      {label ||
+      {(label && (personalLabelKeys[label] ? t(`personal.${personalLabelKeys[label]}`) : label)) ||
         (self
-          ? "This device"
+          ? t("personal.thisDevice")
           : online === true
-            ? "Online"
+            ? t("personal.online")
             : online === false
-              ? "Offline"
-              : "Unknown")}
+              ? t("personal.offline")
+              : t("personal.unknown"))}
     </span>
   );
 }
@@ -234,17 +244,18 @@ export function Tabs<T extends string>({
   value: T;
   onChange: (value: T) => void;
 }) {
+  const { t } = useTranslation();
   return (
-    <div className="pf-tabs" aria-label="Filter">
+    <div className="pf-tabs" aria-label={t("personal.filter")}>
       {options.map((option) => (
         <button
-          key={option}
+          key={personalLabelKeys[option] ? t(`personal.${personalLabelKeys[option]}`) : option}
           type="button"
           aria-pressed={value === option}
           className={value === option ? "selected" : ""}
           onClick={() => onChange(option)}
         >
-          {option}
+          {personalLabelKeys[option] ? t(`personal.${personalLabelKeys[option]}`) : option}
         </button>
       ))}
     </div>
@@ -257,12 +268,13 @@ export function Connection({
   device: Device;
   current?: Device;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="pf-connection">
       <div>
         <DeviceArt kind={current?.kind || "laptop"} />
-        <span>This device</span>
-        <small>{current?.name || "Laptop"}</small>
+        <span>{t("personal.thisDevice")}</span>
+        <small>{current?.name || t("personal.laptop")}</small>
       </div>
       <span className="pf-connection-line">
         <i className={device.online ? "connected" : ""} />
@@ -283,6 +295,7 @@ export function Modal({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -321,7 +334,7 @@ export function Modal({
         <button
           className="pf-icon-button"
           onClick={onClose}
-          aria-label="Close dialog"
+          aria-label={t("personal.closeDialog")}
         >
           <X size={20} />
         </button>

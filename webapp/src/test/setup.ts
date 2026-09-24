@@ -1,10 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import "fake-indexeddb/auto";
 import { cleanup } from "@testing-library/react";
-import { afterAll, afterEach, beforeAll } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach } from "vitest";
+import i18n from "../i18n";
 import { server } from "./server";
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeEach(() => { void i18n.changeLanguage("en"); });
 
 afterEach(() => {
   cleanup();

@@ -40,6 +40,17 @@ class HardwareReport:
 
 
 def _memory() -> tuple[int, int]:
+    if platform.system() == "Darwin":
+        try:
+            total = int(subprocess.check_output(["/usr/sbin/sysctl", "-n", "hw.memsize"], timeout=5))
+            vm = subprocess.check_output(["/usr/bin/vm_stat"], text=True, timeout=5)
+            import re
+            page = int(re.search(r"page size of (\d+) bytes", vm).group(1))
+            counters = dict(re.findall(r"([^\n:]+):\s+(\d+)\.", vm))
+            available = sum(int(counters.get(name, 0)) for name in ("Pages free", "Pages inactive", "Pages speculative")) * page
+            return total // 2**20, available // 2**20
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+            return 0, 0
     if os.name == "nt":
         import ctypes
 
@@ -74,6 +85,7 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
         result = subprocess.run(
             [executable, "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"],
             check=True, capture_output=True, text=True, timeout=8,
+            creationflags=0x08000000 if os.name == "nt" else 0,
         )
         gpus = []
         for line in result.stdout.splitlines():

@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../../uiI18n";
 import { useCallback, useEffect, useState } from "react";
 import { authApi } from "../../domain/authClient";
 
@@ -11,6 +12,7 @@ type Props = { children: React.ReactNode };
  * device token, then a session cookie carries the access.
  */
 export default function UnlockGate({ children }: Props) {
+  useUILanguage();
   const [checked, setChecked] = useState(false);
   const [authorized, setAuthorized] = useState(true);
   const [token, setToken] = useState("");
@@ -53,7 +55,7 @@ export default function UnlockGate({ children }: Props) {
       setToken("");
       setAuthorized(true);
       } catch {
-        setError("Could not reach this device. Please try again.");
+        setError(tr("Could not reach this device. Please try again."));
       } finally { setBusy(false); }
     },
     [token, busy],
@@ -65,12 +67,11 @@ export default function UnlockGate({ children }: Props) {
   return (
     <div className="unlock-gate">
       <form className="unlock-card" onSubmit={submit}>
-        <h1>Connect to your device</h1>
+        <h1>{tr("Connect to your device")}</h1>
         <p>
-          You're reaching this node remotely. Paste its device token to pair this
-          browser — you'll only need to do it once.
+          {tr("You're reaching this node remotely. Paste its device token to pair this browser — you'll only need to do it once.")}
         </p>
-        <label htmlFor="ryn-device-token">Device token</label>
+        <label htmlFor="ryn-device-token">{tr("Device token")}</label>
         <input
           id="ryn-device-token"
           type="password"
@@ -81,7 +82,7 @@ export default function UnlockGate({ children }: Props) {
             setToken(event.target.value);
             setError("");
           }}
-          placeholder="paste token"
+          placeholder={tr("paste token")}
         />
         {error ? (
           <p className="unlock-error" role="alert">
@@ -89,11 +90,10 @@ export default function UnlockGate({ children }: Props) {
           </p>
         ) : null}
         <button type="submit" disabled={busy || !token.trim()}>
-          {busy ? "Checking…" : "Unlock"}
+          {busy ? tr("Checking…") : tr("Unlock")}
         </button>
         <p className="unlock-hint">
-          Find it on the node machine at <code>~/.rynmesh/control_token</code>, or
-          in Settings → Access while you're sitting at it.
+          {tr("Find it on the node machine at")} <code>~/.rynmesh/control_token</code>{tr(", or in Settings → Access while you're sitting at it.")}
         </p>
       </form>
     </div>

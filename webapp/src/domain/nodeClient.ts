@@ -28,12 +28,30 @@ import type {
 export interface InferenceAccess {
   base_url: string;
   keys: { id: string; name: string; revoked: number; output_token_limit: number; used_output_tokens: number }[];
-  models: { id: string; rynmesh: { source: string; model_alias: string; max_output_tokens: number } }[];
+  models: { id: string; rynmesh: { source: string; model_alias: string; max_output_tokens: number; service_id?: string; provider_peer_id?: string; adapter?: string; capabilities?: string[] } }[];
   targets: InferenceAccess["models"];
   aliases: Record<string, string>;
 }
 
+export interface CLIServiceStatus {
+  kind: "codex_cli" | "claude_cli";
+  title: string;
+  installed: boolean;
+  configured: boolean;
+  publication_enabled: boolean;
+  online: boolean;
+  api_text_only: boolean;
+  service_id: string;
+}
+
+export interface CLIServicesStatus {
+  services: CLIServiceStatus[];
+  personal_space_required: boolean;
+  personal_space_ready: boolean;
+}
+
 export interface LLMServiceRecord {
+  local_only?: boolean;
   peer_id: string;
   node_name?: string;
   online: boolean;
@@ -42,6 +60,8 @@ export interface LLMServiceRecord {
   service: {
     package_id: string;
     model_alias: string;
+    runtime?: string;
+    adapter?: "codex_cli" | "claude_cli" | string;
     capabilities: string[];
     context_window: number;
     max_output_tokens: number;
@@ -72,7 +92,7 @@ export interface LLMOrderResult {
   updated_at?: string;
   connection_phase?: "connecting_direct" | "connecting_p2p" | "connecting_relay" | "connected" | "failed";
   connection_attempts?: { transport: string; error_code: string }[];
-  transport?: "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  transport?: "local_process" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
@@ -157,6 +177,10 @@ export interface NodeClient {
   listWorkResults(filters?: { work_order_id?: string; status?: string; network_id?: string }): Promise<WorkResult[]>;
   listLLMServices(networkId?: string): Promise<LLMServiceRecord[]>;
   getInferenceAccess(): Promise<InferenceAccess>;
+  getCLIServices(): Promise<CLIServicesStatus>;
+  getCLIModels(kind: "codex_cli"): Promise<{ models: { id: string; name: string; default: boolean }[] }>;
+  setupCLIService(kind: CLIServiceStatus["kind"]): Promise<{ configured: boolean }>;
+  setCLISharing(kind: CLIServiceStatus["kind"], enabled: boolean): Promise<{ publication_enabled: boolean }>;
   setInferenceModelAlias(name: string, target: string): Promise<{ name: string; target: string }>;
   createInferenceKey(name: string, outputTokenLimit: number): Promise<{ id: string; key: string }>;
   revokeInferenceKey(id: string): Promise<{ revoked: boolean }>;
@@ -173,6 +197,7 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    cli_model?: string;
     network_id?: string;
     provider_peer_id: string;
     service_id: string;

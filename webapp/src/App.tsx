@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { tr, useUILanguage } from "./uiI18n";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { ConfirmDialog, LoadingPanel, Toast } from "./components/ui";
@@ -53,9 +54,11 @@ import VideoRendering from "./screens/VideoRendering";
 import SecureWebAccess from "./screens/SecureWebAccess";
 import Chat from "./screens/Chat";
 import Settings from "./screens/Settings";
-import InferenceAccess from "./screens/InferenceAccess";
-import { PageHeading } from "./personal/components";
+import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIWorkspacePages";
+import AISources from "./screens/AISources";
 import UnlockGate from "./screens/components/UnlockGate";
+const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
+const PluginsPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.PluginsPage })));
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -72,6 +75,7 @@ function makeClient(): NodeClient {
 }
 
 export default function App() {
+  const uiLanguage = useUILanguage();
   const navigate = useNavigate();
   const client = useMemo(makeClient, []);
   const [node, setNode] = useState<NodeStatus | null>(null);
@@ -98,16 +102,18 @@ export default function App() {
 
   const refreshShell = useCallback(async () => {
     try {
-      const [nodeStatus, registryStatus, peerList, nodeSettings] =
+      const quickPeers = client.listPeers({ quick: true }).catch(() => null);
+      const [nodeStatus, nodeSettings] =
         await Promise.all([
           client.getNodeStatus(),
-          client.getRegistryStatus(),
-          client.listPeers(),
           client.getSettings(),
         ]);
       setNode(nodeStatus);
-      setRegistry(registryStatus);
-      setPeers(peerList);
+      setRegistry({ status: nodeStatus.registry === "connected" ? "connected" : "disconnected",
+        url: nodeSettings.registry_url });
+      void client.getRegistryStatus().then(setRegistry).catch(() => undefined);
+      const peerList = await quickPeers;
+      if (peerList) setPeers(peerList);
       setSettings(nodeSettings);
       if (!tourEvaluated.current) {
         tourEvaluated.current = true;
@@ -123,13 +129,42 @@ export default function App() {
   }, [client]);
 
   useEffect(() => {
+    if (!node) return;
+    let cancelled = false;
+    let fullTimer: number | undefined;
+    const started = Date.now();
+    const setIfChanged = (incoming: Peer[], merge: boolean) => {
+      if (cancelled) return;
+      setPeers(current => {
+        const next = merge
+          ? Array.from(new Map([...current, ...incoming].map(peer => [peer.id, peer])).values())
+          : incoming;
+        return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+      });
+    };
+    const quick = () => {
+      void client.listPeers({ quick: true }).then(items => setIfChanged(items, true)).catch(() => undefined);
+    };
+    const full = async () => {
+      try { setIfChanged(await client.listPeers(), false); }
+      catch { /* Keep the latest local or cached discovery. */ }
+      if (!cancelled) fullTimer = window.setTimeout(full, Date.now() - started < 30000 ? 3000 : 15000);
+    };
+    quick();
+    void full();
+    const quickTimer = window.setInterval(quick, 2000);
+    return () => { cancelled = true; window.clearInterval(quickTimer); window.clearTimeout(fullTimer); };
+  }, [client, node?.peer_id]);
+
+  useEffect(() => {
     applyAppearance(readAppearance());
     let cancelled = false;
     void (async () => {
       // The packaged desktop app launches the Ryn node as a sidecar; it can
-      // take ~1-2s to accept connections. Poll briefly so the app shows the
-      // loading state instead of flashing the offline shell on first paint.
-      const maxAttempts = 12;
+      // take several seconds to unpack and accept connections on a cold start.
+      // Keep the loading state until the node is ready instead of flashing an
+      // offline shell just before its first successful response.
+      const maxAttempts = 60;
       for (let attempt = 0; attempt < maxAttempts && !cancelled; attempt += 1) {
         try {
           await client.getNodeStatus();
@@ -177,14 +212,16 @@ export default function App() {
   }, [client, navigate, settings]);
 
   useEffect(() => {
+    let disposed = false;
     let remove: () => void = () => {};
     void installNotificationNavigation(() => navigate("/digest"))
       .then((unregister) => {
-        remove = unregister;
+        if (disposed) unregister();
+        else remove = unregister;
       })
       .catch(() => undefined);
-    return () => remove();
-  }, [navigate]);
+    return () => { disposed = true; remove(); };
+  }, [navigate, uiLanguage]);
 
   if (!node || !registry || !settings) {
     if (booting) return <LoadingPanel />;
@@ -238,31 +275,32 @@ export default function App() {
 }
 
 function OfflineBanner({ onRetry }: { onRetry: () => Promise<void> }) {
+  useUILanguage();
   return (
     <div className="offline-banner">
       <AlertTriangle size={16} />
-      Cannot connect to this device.
+      {tr("Cannot connect to this device.")}
       <button type="button" onClick={() => void onRetry()}>
-        Retry
+        {tr("Retry")}
       </button>
     </div>
   );
 }
 
 function OfflineShell({ onRetry }: { onRetry: () => Promise<void> }) {
+  useUILanguage();
   return (
     <div className="offline-shell">
       <div className="offline-card">
         <RynLockup />
         <AlertTriangle size={28} />
-        <h1>Cannot connect to this device</h1>
+        <h1>{tr("Cannot connect to this device")}</h1>
         <p>
-          Ryn could not connect to its local service. Wait a moment and retry,
-          or use Restart Node from the system tray.
+          {tr("Ryn could not connect to its local service. Wait a moment and retry, or use Restart Node from the system tray.")}
         </p>
         <button type="button" onClick={() => void onRetry()}>
           <RotateCcw size={15} />
-          Retry
+          {tr("Retry")}
         </button>
       </div>
       {isTauriDesktop() && <div className="pf-shell" style={{ display: "block", width: "100%", padding: 28 }}><DesktopPage /></div>}
@@ -271,6 +309,7 @@ function OfflineShell({ onRetry }: { onRetry: () => Promise<void> }) {
 }
 
 export function AppRoutes() {
+  useUILanguage();
   return (
     <UnlockGate>
       <Routes>
@@ -291,7 +330,10 @@ export function AppRoutes() {
           <Route path="devices" element={<PersonalDevices />} />
           <Route path="tasks" element={<PersonalTasks />} />
           <Route path="services/manage" element={<Services />} />
-          <Route path="services/api" element={<div className="screen-stack"><PageHeading title="API access" description="Connect your apps and projects to models on your devices." /><InferenceAccess /></div>} />
+          <Route path="services/sources" element={<AISources />} />
+          <Route path="services/api" element={<APIAccessPage />} />
+          <Route path="services/model-mapping" element={<ModelMappingPage />} />
+          <Route path="services/agent-sharing" element={<AgentSharingPage />} />
           <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route
@@ -300,6 +342,8 @@ export function AppRoutes() {
           />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<PersonalSettings />} />
+          <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
+          <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
           <Route path="settings/desktop" element={<DesktopPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
           <Route path="settings/advanced" element={<Settings />} />

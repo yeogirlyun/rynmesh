@@ -190,6 +190,59 @@ def test_three_devices_direct_then_real_ice_and_address_change(mesh):
     assert mesh.adapter.calls == 3
 
 
+def test_lan_is_used_before_stale_registry_endpoint(mesh, monkeypatch):
+    local_endpoint = mesh.endpoint[0]
+    mesh.endpoint[0] = "http://127.0.0.1:1"
+    monkeypatch.setattr(mesh.nodes[1], "lan_peer_endpoints", lambda *_, **__: [local_endpoint])
+    calls = []
+    real_post = routes._peer_post_json
+
+    def post(url, *args, **kwargs):
+        calls.append(url)
+        return real_post(url, *args, **kwargs)
+
+    monkeypatch.setattr(routes, "_peer_post_json", post)
+    response = order(mesh)
+    assert response.status_code == 200, response.text
+    assert response.json()["transport_evidence"]["route"] == "lan"
+    assert response.json()["connection_attempts"] == []
+    assert calls == [local_endpoint + "/api/peer/llm/tasks",
+                     local_endpoint + "/api/peer/llm/settlements"]
+    assert mesh.adapter.calls == 1
+
+
+def test_failed_lan_tries_registry_http_before_p2p(mesh, monkeypatch):
+    monkeypatch.setattr(mesh.nodes[1], "lan_peer_endpoints",
+                        lambda *_, **__: ["http://127.0.0.1:1", "http://127.0.0.1:1"])
+
+    async def unexpected(**kwargs):
+        pytest.fail("reachable registry HTTP endpoint must precede P2P")
+
+    monkeypatch.setattr(routes, "consumer_exchange", unexpected)
+    response = order(mesh)
+    assert response.status_code == 200, response.text
+    assert response.json()["transport"] == "peer_http_direct"
+    assert len(response.json()["connection_attempts"]) == 1  # duplicated addresses are skipped
+    assert mesh.adapter.calls == 1
+
+
+def test_strict_p2p_does_not_scan_or_attempt_lan_http(mesh, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("explicit P2P must not use LAN HTTP discovery")
+
+    monkeypatch.setattr(mesh.nodes[1], "lan_peer_endpoints", unexpected)
+    response = order(mesh, transport="p2p")
+    assert response.status_code == 200, response.text
+    assert response.json()["transport"] == "ice_udp_direct"
+
+
+def test_lan_discovery_does_not_bypass_space_permissions(mesh, monkeypatch):
+    mesh.spaces[0].act("remove", {"peer_id": mesh.nodes[2].peer_id})
+    monkeypatch.setattr(mesh.nodes[2], "lan_peer_endpoints", lambda *_, **__: [mesh.endpoint[0]])
+    assert order(mesh, 2, transport="direct").status_code == 502
+    assert mesh.adapter.calls == 0
+
+
 def test_lost_http_reply_falls_back_without_duplicate_inference(mesh, monkeypatch):
     real_post = routes._peer_post_json
 
@@ -206,6 +259,37 @@ def test_lost_http_reply_falls_back_without_duplicate_inference(mesh, monkeypatc
     assert mesh.adapter.calls == 1
     ledger = TaskBalanceLedger(mesh.nodes[1].home / "llm" / "task-balance.json")
     assert len([event for event in ledger.events() if event["kind"] == "settle"]) == 1
+
+
+def test_cli_only_provider_routes_encrypted_p2p_request_without_registry_service_id(mesh):
+    provider = mesh.nodes[0]
+    path = save_manifest(
+        LLMPackageManifest(package_id="codex-cli", mode="codex_cli", adapter="codex_cli",
+                           runtime="external", public_model_alias="ChatGPT", timeout_seconds=10),
+        provider.home / "llm" / "codex-cli" / "manifest.json",
+    )
+    (provider.home / "llm" / "cli-services.json").write_text(json.dumps({
+        "codex_cli": {"manifest": str(path), "publication_enabled": True},
+    }))
+    # Remove the generic provider from a fresh app so routing cannot fall back
+    # to the default model and accidentally pass this regression test.
+    (provider.home / "llm" / "provider-settings.json").write_text(json.dumps({"network_id": "test-space"}))
+    app = FastAPI()
+    routes.install_llm_routes(
+        app, store=provider, home=provider.home,
+        messaging_key=peer_box.load_or_create_messaging_key(provider.home / "msg.key"),
+        resolve_endpoint=lambda _: "", resolve_pubkey=lambda _: "",
+    )
+    mesh.apps[0] = app
+    app.state.llm_publish_once()
+    mesh.endpoint[0] = ""
+    response = order(mesh, service_id="codex-cli", transport="p2p")
+    assert response.status_code == 200, response.text
+    assert response.json()["transport"] == "ice_udp_direct"
+    assert mesh.adapter.calls == 1
+    offers = provider.registry.list_work_orders(network_id="test-space", status="")
+    offer = next(item.payload for item in offers if item.payload["operation"].endswith(".p2p_offer"))
+    assert set(offer["params"]) == {"session_id", "ice_signal", "timeout_seconds"}
 
 
 def test_udp_unavailable_reports_timeout_and_does_not_relay(mesh, monkeypatch):
@@ -289,12 +373,51 @@ def test_setup_timeout_closes_ice_without_sending_request(monkeypatch):
         await asyncio.sleep(10)
 
     monkeypatch.setattr(p2p, "gather_signal", gather)
-    with pytest.raises(asyncio.TimeoutError):
+    with pytest.raises(p2p.P2PTimeoutError) as caught:
         asyncio.run(
             p2p.consumer_exchange(
                 signed_request={}, publish_offer=None, timeout_s=100, connect_timeout_s=0.02
             )
         )
+    assert connection.closed
+    assert caught.value.stage == "gathering"
+
+
+def test_signaling_does_not_consume_ice_check_budget(monkeypatch):
+    class Connection:
+        closed = False
+
+        async def connect(self):
+            await asyncio.sleep(0.08)
+
+        async def close(self):
+            self.closed = True
+
+    connection = Connection()
+    monkeypatch.setattr(p2p, "new_connection", lambda **_: connection)
+
+    async def gather(_):
+        await asyncio.sleep(0.08)
+        return object()
+
+    async def signal(_):
+        await asyncio.sleep(0.08)
+        return object()
+
+    async def apply(*_):
+        pass
+
+    async def transfer(*_, **__):
+        raise RuntimeError("reached encrypted transfer")
+
+    monkeypatch.setattr(p2p, "gather_signal", gather)
+    monkeypatch.setattr(p2p, "apply_remote_signal", apply)
+    monkeypatch.setattr(p2p, "validate_distinct_public_egress", lambda *_: None)
+    monkeypatch.setattr(p2p, "selected_pair", lambda _: {})
+    monkeypatch.setattr(p2p, "send_json", transfer)
+    with pytest.raises(RuntimeError, match="reached encrypted transfer"):
+        asyncio.run(p2p.consumer_exchange(signed_request={}, publish_offer=signal,
+                                         timeout_s=10, connect_timeout_s=0.2))
     assert connection.closed
 
 

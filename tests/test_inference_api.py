@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import threading
 from types import SimpleNamespace
@@ -32,7 +33,7 @@ class ChatAdapter:
 
     def chat(self, body, *, task_id, timeout_s, on_event=None):
         self.calls += 1
-        self.last_body = body
+        self.last_body = copy.deepcopy(body)
         message = {"role": "assistant", "content": "Hello world"}
         finish = "stop"
         deltas = [{"content": "Hello "}, {"content": "world"}]

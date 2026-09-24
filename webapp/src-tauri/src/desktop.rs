@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use tauri::Manager;
+use crate::localization::tr;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -84,10 +85,10 @@ pub fn open_logs() -> Result<(), String> {
 }
 pub fn run_action(app: &tauri::AppHandle, action: &str) -> Result<String, String> {
     let runtime = app.state::<RuntimeState>();
-    if runtime.action_busy.swap(true, Ordering::SeqCst) { return Err("Another desktop action is in progress.".into()); }
+    if runtime.action_busy.swap(true, Ordering::SeqCst) { return Err(tr("Another desktop action is in progress.")); }
     let result = action_inner(app, action);
     runtime.action_busy.store(false, Ordering::SeqCst);
-    result
+    result.map(|value| tr(&value)).map_err(|error| tr(&error))
 }
 fn action_inner(app: &tauri::AppHandle, action: &str) -> Result<String, String> {
     let state = app.state::<node::NodeState>();
@@ -115,11 +116,12 @@ fn action_inner(app: &tauri::AppHandle, action: &str) -> Result<String, String> 
         "restart" | "quit" => {
             let current = read_status(state.port);
             let warning = match &current {
-                Ok(s) if s.active_tasks > 0 || s.setup_active => format!("{} active AI tasks. Model setup {}.\n\nThis will interrupt work on this node.", s.active_tasks, if s.setup_active { "is in progress" } else { "is idle" }),
-                Ok(_) => "This will disconnect services on this computer. Other service requests may also be interrupted.".into(),
-                Err(_) => "Task status is unavailable. Running work may be interrupted.".into(),
+                Ok(s) if s.active_tasks > 0 || s.setup_active => tr("{{count}} active AI tasks. Model setup: {{state}}.\n\nThis will interrupt work on this node.")
+                    .replace("{{count}}", &s.active_tasks.to_string()).replace("{{state}}", &tr(if s.setup_active { "in progress" } else { "idle" })),
+                Ok(_) => tr("This will disconnect services on this computer. Other service requests may also be interrupted."),
+                Err(_) => tr("Task status is unavailable. Running work may be interrupted."),
             };
-            if !message(&format!("{} Ryn?\n\n{warning}", if action == "quit" { "Quit" } else { "Restart the node in" }), true) {
+            if !message(&format!("{}\n\n{warning}", tr(if action == "quit" { "Quit Ryn?" } else { "Restart the node in Ryn?" })), true) {
                 return Ok("Cancelled.".into());
             }
             if action == "quit" { app.exit(0); return Ok("Quitting Ryn.".into()); }
@@ -133,13 +135,16 @@ fn action_inner(app: &tauri::AppHandle, action: &str) -> Result<String, String> 
 }
 #[tauri::command]
 pub async fn desktop_action(app: tauri::AppHandle, action: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || run_action(&app, &action)).await.map_err(|_| "Desktop action failed.")?
+    tauri::async_runtime::spawn_blocking(move || run_action(&app, &action)).await.map_err(|_| tr("Desktop action failed."))?
+}
+pub fn tray_status_key(status: &RuntimeStatus) -> &'static str {
+    if !status.node_online { "Ryn - Node unavailable" } else if !status.configured { "Ryn - Node running" } else if status.sharing { "Ryn - AI sharing enabled" } else { "Ryn - AI sharing paused" }
 }
 pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri::Wry>, share_item: tauri::menu::MenuItem<tauri::Wry>) {
     std::thread::spawn(move || {
         let mut recovery = Recovery::default();
         // Allow the one-file sidecar to extract and start before counting failures.
-        let boot_deadline = Instant::now() + Duration::from_secs(15);
+        let boot_deadline = Instant::now() + Duration::from_secs(45);
         loop {
             let node = app.state::<node::NodeState>();
             if node.stopping.load(Ordering::SeqCst) { break; }
@@ -154,11 +159,11 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             let should_restart = Instant::now() >= boot_deadline && recovery.check(status.node_online, prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now());
             status.recovery_attempts = recovery.attempts;
             status.recovery = if status.node_online { "healthy" } else if Instant::now() < boot_deadline { "starting" } else if !prefs.auto_recover { "disabled" } else if should_restart { "restarting" } else if recovery.attempts >= 3 { "needs_attention" } else { "waiting" }.into();
-            let text = if !status.node_online { "Ryn - Node unavailable" } else if !status.configured { "Ryn - Node running" } else if status.sharing { "Ryn - AI sharing enabled" } else { "Ryn - AI sharing paused" };
-            let _ = status_item.set_text(text);
-            let _ = share_item.set_text(if status.sharing { "Pause AI Sharing" } else { "Resume AI Sharing" });
+            let text = tr(tray_status_key(&status));
+            let _ = status_item.set_text(&text);
+            let _ = share_item.set_text(tr(if status.sharing { "Pause AI Sharing" } else { "Resume AI Sharing" }));
             let _ = share_item.set_enabled(status.node_online && status.configured);
-            if let Some(tray) = app.tray_by_id("main") { let _ = tray.set_tooltip(Some(text)); }
+            if let Some(tray) = app.tray_by_id("main") { let _ = tray.set_tooltip(Some(&text)); }
             *runtime.status.lock().unwrap() = status;
             if should_restart && !runtime.action_busy.swap(true, Ordering::SeqCst) {
                 if let Err(error) = node::restart(node.inner()) { log::error!("node recovery failed: {error}"); }

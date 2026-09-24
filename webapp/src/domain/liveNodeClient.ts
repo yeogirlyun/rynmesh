@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import type { NodeClient } from "./nodeClient";
 import { NodeClientError } from "./nodeClient";
 import type {
@@ -8,7 +9,7 @@ import type {
   PrivacyEraseScope,
 } from "./types";
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, init?: RequestInit, localizeDetail = false): Promise<T> {
   const response = await fetch(path, {
     // Carry the session cookie when the node is reached through a tunnel.
     credentials: "include",
@@ -19,12 +20,15 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = "";
     try {
       const payload = (await response.json()) as { detail?: unknown };
-      if (typeof payload.detail === "string") detail = payload.detail.trim();
+      if (typeof payload.detail === "string") {
+        detail = payload.detail.trim();
+        if (localizeDetail) detail = tr(detail);
+      }
     } catch {
       // The status code remains useful when the response body is not JSON.
     }
     throw new NodeClientError(
-      `Local Ryn node returned ${response.status}${detail ? `: ${detail}` : ""}`,
+      tr("Local Ryn node returned {{v0}}{{v1}}", { v0: response.status, v1: detail ? `: ${detail}` : "" }),
       response.status,
     );
   }
@@ -44,10 +48,14 @@ function qs<T extends object>(value: T | undefined): string {
 export function makeLiveNodeClient(baseUrl = "/api/local"): NodeClient {
   return {
     spaceStatus: () => requestJson(`${baseUrl}/space`),
-    spaceAction: (action, body = {}) => requestJson(`${baseUrl}/space/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(body) }),
-    spaceBackup: (password) => requestJson(`${baseUrl}/space/backup`, { method: "POST", body: JSON.stringify({ password }) }),
+    spaceAction: (action, body = {}) => requestJson(`${baseUrl}/space/${encodeURIComponent(action)}`, { method: "POST", body: JSON.stringify(body) }, true),
+    spaceBackup: (password) => requestJson(`${baseUrl}/space/backup`, { method: "POST", body: JSON.stringify({ password }) }, true),
     mode: "live",
     getInferenceAccess: () => requestJson(`${baseUrl}/llm/api-access`),
+    getCLIServices: () => requestJson(`${baseUrl}/llm/cli-services`),
+    getCLIModels: (kind) => requestJson(`${baseUrl}/llm/cli-services/${kind}/models`),
+    setupCLIService: (kind) => requestJson(`${baseUrl}/llm/cli-services/${kind}/setup`, { method: "POST" }),
+    setCLISharing: (kind, enabled) => requestJson(`${baseUrl}/llm/cli-services/${kind}/sharing`, { method: "PUT", body: JSON.stringify({ enabled }) }),
     setInferenceModelAlias: (name, target) => requestJson(`${baseUrl}/llm/model-aliases/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ target }) }),
     createInferenceKey: (name, outputTokenLimit) => requestJson(`${baseUrl}/llm/api-keys`, { method: "POST", body: JSON.stringify({ name, output_token_limit: outputTokenLimit }) }),
     revokeInferenceKey: (id) => requestJson(`${baseUrl}/llm/api-keys/${encodeURIComponent(id)}`, { method: "DELETE" }),

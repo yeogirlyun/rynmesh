@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import { nodeControlBaseUrl } from "./nodeUrl";
 import type { RecommendationEvidencePacket, ReviewBasis } from "./types";
 
@@ -174,7 +175,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    let detail = `Local Ryn node returned ${response.status}`;
+    let detail = tr("Local Ryn node returned {{v0}}", { v0: response.status });
     try {
       const body = (await response.json()) as { detail?: string };
       if (body.detail) detail = body.detail;

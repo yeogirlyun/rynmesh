@@ -11,10 +11,12 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
 import uuid
+import urllib.request
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -23,8 +25,10 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from .crypto import SignedPayload, b64, sign_payload, verify_signed_payload
 from .jobs import (
     WorkOrder,
+    WorkResult,
     default_expires_at,
     sign_work_order,
+    sign_work_result,
     verify_work_order,
     verify_work_result,
 )
@@ -387,7 +391,7 @@ class PersonalSpace:
             raise SpaceError("An outdated or conflicting membership record was rejected.")
         self.data["snapshot"] = raw
 
-    def _process(self, signed):
+    def _process(self, signed, *, publish=True):
         order = verify_work_order(signed)
         with self.lock:
             p = self._snapshot()
@@ -450,13 +454,51 @@ class PersonalSpace:
                     k: v for k, v in replies.items() if v["expires"] > self.clock()
                 }
                 self._save()
-        self.store.publish_work_result(
+        if publish:
+            self.store.publish_work_result(
+                work_order_id=order.work_order_id,
+                requester_peer_id=order.requester_peer_id,
+                status="completed",
+                result_refs={"envelope": response},
+                network_id=order.network_id,
+            )
+            return None
+        return sign_work_result(WorkResult(
             work_order_id=order.work_order_id,
+            provider_peer_id=self.store.peer_id,
             requester_peer_id=order.requester_peer_id,
             status="completed",
             result_refs={"envelope": response},
             network_id=order.network_id,
-        )
+        ), private_key_bytes=self.store.private_key_bytes)
+
+    def _direct_exchange(self, order, authority):
+        endpoints = self.store.lan_peer_endpoints(authority)
+        key = os.environ.get("RYNMESH_NETWORK_KEY", "").strip()
+        headers = {"content-type": "application/json"}
+        if key:
+            headers["x-ryn-auth"] = hashlib.sha256(("rynmesh-net-key:" + key).encode()).hexdigest()
+        body = json.dumps(order.to_dict(), separators=(",", ":")).encode()
+        for endpoint in endpoints:
+            try:
+                request = urllib.request.Request(
+                    endpoint.rstrip("/") + "/api/peer/space/exchange",
+                    data=body, headers=headers, method="POST",
+                )
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with opener.open(request, timeout=1.5) as response:
+                    raw = response.read(100001)
+                if len(raw) <= 100000:
+                    signed = SignedPayload.from_dict(json.loads(raw))
+                    result = verify_work_result(signed)
+                    if (result.provider_peer_id == authority
+                            and result.requester_peer_id == self.store.peer_id
+                            and result.work_order_id == order.payload["work_order_id"]
+                            and result.network_id == order.payload["network_id"]):
+                        return signed
+            except Exception:
+                continue
+        return None
 
     def tick(self):
         if not self.tick_lock.acquire(blocking=False):
@@ -501,13 +543,17 @@ class PersonalSpace:
                         self._save()
                     continue
                 order = SignedPayload.from_dict(request["order"])
-                self.store.registry.submit_work_order(order)
-                results = self.store.registry.list_work_results(
-                    work_order_id=request_id,
-                    network_id=order.payload["network_id"],
-                    requester_peer_id=self.store.peer_id,
-                    provider_peer_id=request["target"]["authority"],
-                )
+                direct = self._direct_exchange(order, request["target"]["authority"])
+                if direct is not None:
+                    results = [direct]
+                else:
+                    self.store.registry.submit_work_order(order)
+                    results = self.store.registry.list_work_results(
+                        work_order_id=request_id,
+                        network_id=order.payload["network_id"],
+                        requester_peer_id=self.store.peer_id,
+                        provider_peer_id=request["target"]["authority"],
+                    )
                 for signed in results:
                     try:
                         result = verify_work_result(signed)

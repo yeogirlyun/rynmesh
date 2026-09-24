@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import type { ComponentType, ReactNode } from "react";
 import {
   Activity,
@@ -74,14 +75,15 @@ import type {
 type IconComponent = ComponentType<LucideProps>;
 
 export function EvidenceDetails({ packet }: { packet: RecommendationEvidencePacket }) {
+  useUILanguage();
   const reviewed = packet.observations.map((observation) => observation.label).join(", ");
   return (
     <details className="evidence-details">
       <summary>
-        Evidence reviewed · {packet.review_basis === "metadata" ? "metadata only" : packet.review_basis}
+        {tr("Evidence reviewed ·")} {packet.review_basis === "metadata" ? tr("metadata only") : tr(packet.review_basis)}
       </summary>
       <div className="evidence-details-body">
-        <p><strong>Reviewed:</strong> {reviewed || "No fields were available."}</p>
+        <p><strong>{tr("Reviewed:")}</strong> {reviewed || tr("No fields were available.")}</p>
         {packet.limitations.map((limitation) => (
           <p className="evidence-limitation" key={limitation}>
             <AlertTriangle size={13} /> {limitation}
@@ -131,27 +133,27 @@ const eventIcons: Record<ProvenanceEvent["kind"], IconComponent> = {
 };
 
 const safetyMeta: Record<SafetyOutcome, { tone: Tone; icon: IconComponent; label: string }> = {
-  passed: { tone: "ok", icon: ShieldCheck, label: "Passed" },
-  pending: { tone: "warn", icon: Shield, label: "Pending" },
-  flagged: { tone: "warn", icon: ShieldAlert, label: "Flagged" },
-  blocked: { tone: "danger", icon: ShieldX, label: "Blocked" },
-  unscanned: { tone: "muted", icon: ShieldOff, label: "Unscanned" },
+  passed: { tone: "ok", icon: ShieldCheck, get label() { return tr("Passed"); } },
+  pending: { tone: "warn", icon: Shield, get label() { return tr("Pending"); } },
+  flagged: { tone: "warn", icon: ShieldAlert, get label() { return tr("Flagged"); } },
+  blocked: { tone: "danger", icon: ShieldX, get label() { return tr("Blocked"); } },
+  unscanned: { tone: "muted", icon: ShieldOff, get label() { return tr("Unscanned"); } },
 };
 
 const provenanceMeta: Record<ProvenanceStatus, { tone: Tone; icon: IconComponent; label: string }> = {
-  signed: { tone: "ok", icon: BadgeCheck, label: "Signed" },
-  partial: { tone: "warn", icon: Link2, label: "Partial" },
-  unsigned: { tone: "muted", icon: CircleDashed, label: "Unsigned" },
-  broken: { tone: "danger", icon: Unlink, label: "Broken" },
+  signed: { tone: "ok", icon: BadgeCheck, get label() { return tr("Signed"); } },
+  partial: { tone: "warn", icon: Link2, get label() { return tr("Partial"); } },
+  unsigned: { tone: "muted", icon: CircleDashed, get label() { return tr("Unsigned"); } },
+  broken: { tone: "danger", icon: Unlink, get label() { return tr("Broken"); } },
 };
 
 const fetchMeta: Record<FetchStatus, { tone: Tone; icon: IconComponent; label: string }> = {
-  local: { tone: "info", icon: HardDrive, label: "Local" },
-  local_draft: { tone: "muted", icon: FileEdit, label: "Draft" },
-  fetched_full: { tone: "ok", icon: CheckCircle, label: "Fetched" },
-  preview_only: { tone: "neutral", icon: Eye, label: "Preview" },
-  discovered: { tone: "muted", icon: Globe, label: "Discovered" },
-  fetching: { tone: "info", icon: Loader2, label: "Fetching" },
+  local: { tone: "info", icon: HardDrive, get label() { return tr("Local"); } },
+  local_draft: { tone: "muted", icon: FileEdit, get label() { return tr("Draft"); } },
+  fetched_full: { tone: "ok", icon: CheckCircle, get label() { return tr("Fetched"); } },
+  preview_only: { tone: "neutral", icon: Eye, get label() { return tr("Preview"); } },
+  discovered: { tone: "muted", icon: Globe, get label() { return tr("Discovered"); } },
+  fetching: { tone: "info", icon: Loader2, get label() { return tr("Fetching"); } },
 };
 
 const tierIndex: Record<IdentityTier, number> = {
@@ -162,10 +164,10 @@ const tierIndex: Record<IdentityTier, number> = {
 };
 
 const tierLabel: Record<IdentityTier, string> = {
-  unverified: "Unverified",
-  attested: "Attested",
-  staked: "Staked",
-  proven: "Proven",
+  get unverified() { return tr("Unverified"); },
+  get attested() { return tr("Attested"); },
+  get staked() { return tr("Staked"); },
+  get proven() { return tr("Proven"); },
 };
 
 const tierClass: Record<IdentityTier, string> = {
@@ -176,15 +178,15 @@ const tierClass: Record<IdentityTier, string> = {
 };
 
 const evidenceLabel: Record<RecommendationEvidence, string> = {
-  content_match: "Content overlap",
-  publisher_match: "Trusted publisher",
-  peer_trust: "Peer trust",
-  peer_reputation: "Peer reputation",
-  query_match: "Query match",
-  tag_match: "Tag match",
-  diversity: "Diversity",
-  safety_passed: "Safety passed",
-  provenance_signed: "Provenance signed",
+  get content_match() { return tr("Content overlap"); },
+  get publisher_match() { return tr("Trusted publisher"); },
+  get peer_trust() { return tr("Peer trust"); },
+  get peer_reputation() { return tr("Peer reputation"); },
+  get query_match() { return tr("Query match"); },
+  get tag_match() { return tr("Tag match"); },
+  get diversity() { return tr("Diversity"); },
+  get safety_passed() { return tr("Safety passed"); },
+  get provenance_signed() { return tr("Provenance signed"); },
 };
 
 export const NavIcons = {
@@ -216,6 +218,7 @@ export function Chip({
   icon?: IconComponent;
   mono?: boolean;
 }) {
+  useUILanguage();
   return (
     <span className={`chip chip-${tone}${mono ? " mono" : ""}`}>
       {Icon ? <Icon size={12} /> : null}
@@ -225,6 +228,7 @@ export function Chip({
 }
 
 export function TierBadge({ tier, compact = false }: { tier: IdentityTier; compact?: boolean }) {
+  useUILanguage();
   const index = tierIndex[tier];
   return (
     <span className={`tier-badge ${tierClass[tier]}`}>
@@ -239,6 +243,7 @@ export function TierBadge({ tier, compact = false }: { tier: IdentityTier; compa
 }
 
 export function SafetyBadge({ outcome }: { outcome: SafetyOutcome }) {
+  useUILanguage();
   const meta = safetyMeta[outcome];
   return (
     <Chip tone={meta.tone} icon={meta.icon}>
@@ -248,6 +253,7 @@ export function SafetyBadge({ outcome }: { outcome: SafetyOutcome }) {
 }
 
 export function ProvBadge({ status }: { status: ProvenanceStatus }) {
+  useUILanguage();
   const meta = provenanceMeta[status];
   return (
     <Chip tone={meta.tone} icon={meta.icon}>
@@ -257,6 +263,7 @@ export function ProvBadge({ status }: { status: ProvenanceStatus }) {
 }
 
 export function FetchChip({ status }: { status: FetchStatus }) {
+  useUILanguage();
   const meta = fetchMeta[status];
   return (
     <Chip tone={meta.tone} icon={meta.icon}>
@@ -266,28 +273,32 @@ export function FetchChip({ status }: { status: FetchStatus }) {
 }
 
 export function KindIcon({ kind, size = 16 }: { kind: ContentKind; size?: number }) {
+  useUILanguage();
   const Icon = kindIcons[kind];
   return <Icon size={size} />;
 }
 
 export function ActivityIcon({ kind }: { kind: ActivityEvent["kind"] }) {
+  useUILanguage();
   const Icon = activityIcons[kind];
   return <Icon size={16} />;
 }
 
 export function EventIcon({ kind }: { kind: ProvenanceEvent["kind"] }) {
+  useUILanguage();
   const Icon = eventIcons[kind];
   return <Icon size={13} />;
 }
 
 export function Hash({ value }: { value: string | null | undefined }) {
+  useUILanguage();
   const text = value ?? "none";
   const short = text.length > 16 ? `${text.slice(0, 8)}...${text.slice(-6)}` : text;
   const copy = async () => {
     if (value && navigator.clipboard) await navigator.clipboard.writeText(value);
   };
   return (
-    <button className="hash-button mono" type="button" onClick={copy} aria-label={`Copy ${text}`}>
+    <button className="hash-button mono" type="button" onClick={copy} aria-label={tr("Copy {{v0}}", { v0: text })}>
       <HashIcon size={12} />
       {short}
     </button>
@@ -309,6 +320,7 @@ export function Button({
   type?: "button" | "submit";
   disabled?: boolean;
 }) {
+  useUILanguage();
   return (
     <button className={`btn btn-${variant}`} type={type} onClick={onClick} disabled={disabled}>
       {Icon ? <Icon size={15} /> : null}
@@ -330,6 +342,7 @@ export function IconButton({
   active?: boolean;
   disabled?: boolean;
 }) {
+  useUILanguage();
   return (
     <button
       className={`icon-button${active ? " is-active" : ""}`}
@@ -354,6 +367,7 @@ export function Panel({
   action?: ReactNode;
   className?: string;
 }) {
+  useUILanguage();
   return (
     <section className={`panel ${className}`}>
       {title || action ? (
@@ -378,6 +392,7 @@ export function PageHeader({
   context: string;
   actions?: ReactNode;
 }) {
+  useUILanguage();
   return (
     <header className="page-header">
       <div>
@@ -391,6 +406,7 @@ export function PageHeader({
 }
 
 export function KV({ rows }: { rows: Array<{ label: string; value: ReactNode }> }) {
+  useUILanguage();
   return (
     <dl className="kv">
       {rows.map((row) => (
@@ -404,6 +420,7 @@ export function KV({ rows }: { rows: Array<{ label: string; value: ReactNode }> 
 }
 
 export function WeightBar({ value }: { value: number }) {
+  useUILanguage();
   const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
   return (
     <span className="weight-bar">
@@ -416,7 +433,8 @@ export function WeightBar({ value }: { value: number }) {
 }
 
 export function PeerPill({ peer }: { peer: Peer | undefined }) {
-  if (!peer) return <span className="muted">unknown peer</span>;
+  useUILanguage();
+  if (!peer) return <span className="muted">{tr("unknown peer")}</span>;
   return (
     <span className="peer-pill">
       <span className="peer-avatar" style={{ background: peer.color ?? "var(--accent-blue)" }}>
@@ -429,6 +447,7 @@ export function PeerPill({ peer }: { peer: Peer | undefined }) {
 }
 
 export function ReviewBasisBadge({ basis }: { basis: ReviewBasis }) {
+  useUILanguage();
   const active = basis === "full" ? 3 : basis === "preview" ? 2 : 1;
   return (
     <span className="review-basis">
@@ -437,7 +456,7 @@ export function ReviewBasisBadge({ basis }: { basis: ReviewBasis }) {
           <span key={dot} className={dot <= active ? "basis-on" : ""} />
         ))}
       </span>
-      {basis}
+      {tr(basis)}
     </span>
   );
 }
@@ -453,6 +472,7 @@ export function EmptyState({
   icon?: IconComponent;
   action?: ReactNode;
 }) {
+  useUILanguage();
   return (
     <div className="empty-state">
       <Icon size={24} />
@@ -478,10 +498,11 @@ export function ContentRow({
   onSelect: () => void;
   onOpen: () => void;
 }) {
+  useUILanguage();
   return (
     <tr className={item.fetch_status === "discovered" ? "ghost-row" : ""} onClick={onOpen}>
       <td onClick={(event) => event.stopPropagation()}>
-        <input aria-label={`Select ${item.title}`} type="checkbox" checked={selected} onChange={onSelect} />
+        <input aria-label={tr("Select {{v0}}", { v0: item.title })} type="checkbox" checked={selected} onChange={onSelect} />
       </td>
       <td className="content-title-cell">
         <span className="kind-box">
@@ -492,10 +513,10 @@ export function ContentRow({
           <small>{item.description}</small>
         </div>
       </td>
-      <td className="mono kind-text">{item.content_kind}</td>
+      <td className="mono kind-text">{tr(item.content_kind)}</td>
       <td>
-        <span>{publisher?.name ?? "unknown"}</span>
-        {provider && provider.id !== publisher?.id ? <small>via {provider.name}</small> : null}
+        <span>{publisher?.name ?? tr("unknown")}</span>
+        {provider && provider.id !== publisher?.id ? <small>{tr("via")} {provider.name}</small> : null}
       </td>
       <td>{publisher ? <TierBadge tier={publisher.tier} compact /> : null}</td>
       <td>
@@ -533,26 +554,27 @@ export function RecommendationCard({
   onFeedback?: (action: "more" | "less" | "hide") => void;
   onOpen?: () => void;
 }) {
+  useUILanguage();
   const openLabel = item.content_kind === "video"
-    ? "Watch"
+    ? tr("Watch")
     : item.content_kind === "audio"
-      ? "Listen"
+      ? tr("Listen")
       : item.content_kind === "image"
-        ? "View"
-        : "Read";
+        ? tr("View")
+        : tr("Read");
   return (
     <article className="recommendation-card">
       <div className="recommendation-main">
         {item.thumbnail_url ? <img className="recommendation-thumbnail" src={item.thumbnail_url} alt="" loading="lazy" /> : null}
         <div className="content-kicker">
           <KindIcon kind={item.content_kind} />
-          <span>{item.content_kind}</span>
+          <span>{tr(item.content_kind)}</span>
           <ReviewBasisBadge basis={rec.review_basis} />
         </div>
         <h2>{item.title}</h2>
         <p>{item.description}</p>
         <div className="why-box">
-          <strong>Why</strong>
+          <strong>{tr("Why")}</strong>
           <span>{rec.reason}</span>
         </div>
         {rec.uncertainty ? (
@@ -572,13 +594,13 @@ export function RecommendationCard({
         {item.starter ? (
           <div className="button-row recommendation-feedback">
             <Button variant="primary" icon={ThumbsUp} onClick={() => onFeedback?.("more")}>
-              More like this
+              {tr("More like this")}
             </Button>
             <Button icon={ThumbsDown} onClick={() => onFeedback?.("less")}>
-              Less like this
+              {tr("Less like this")}
             </Button>
             <Button variant="ghost" onClick={() => onFeedback?.("hide")}>
-              Hide
+              {tr("Hide")}
             </Button>
           </div>
         ) : item.external ? (
@@ -589,20 +611,20 @@ export function RecommendationCard({
               </Button>
               {item.external_url ? (
                 <Button onClick={() => window.open(item.external_url, "_blank", "noopener,noreferrer")}>
-                  Open original
+                  {tr("Open original")}
                 </Button>
               ) : null}
             </div>
             {onFeedback ? (
               <div className="button-row recommendation-feedback">
                 <Button variant="ghost" icon={ThumbsUp} onClick={() => onFeedback("more")}>
-                  More like this
+                  {tr("More like this")}
                 </Button>
                 <Button variant="ghost" icon={ThumbsDown} onClick={() => onFeedback("less")}>
-                  Less
+                  {tr("Less")}
                 </Button>
                 <Button variant="ghost" onClick={() => onFeedback("hide")}>
-                  Hide
+                  {tr("Hide")}
                 </Button>
               </div>
             ) : null}
@@ -611,25 +633,25 @@ export function RecommendationCard({
           <>
             <div className="button-row">
               <Button icon={Eye} onClick={onInspect}>
-                Inspect
+                {tr("Inspect")}
               </Button>
               <Button icon={Download} onClick={onFetchPreview}>
-                Fetch Preview
+                {tr("Fetch Preview")}
               </Button>
               <Button variant="primary" icon={Download} onClick={onFetchFull}>
-                Fetch Full
+                {tr("Fetch Full")}
               </Button>
             </div>
             {onFeedback ? (
               <div className="button-row recommendation-feedback">
                 <Button variant="ghost" icon={ThumbsUp} onClick={() => onFeedback("more")}>
-                  More like this
+                  {tr("More like this")}
                 </Button>
                 <Button variant="ghost" icon={ThumbsDown} onClick={() => onFeedback("less")}>
-                  Less
+                  {tr("Less")}
                 </Button>
                 <Button variant="ghost" onClick={() => onFeedback("hide")}>
-                  Hide
+                  {tr("Hide")}
                 </Button>
               </div>
             ) : null}
@@ -637,17 +659,17 @@ export function RecommendationCard({
         )}
       </div>
       <aside className="receipt-mini">
-        <span className="eyebrow">Receipts</span>
+        <span className="eyebrow">{tr("Receipts")}</span>
         <KV
           rows={[
             {
-              label: item.starter ? "Source choice" : item.external ? "Source" : "Publisher",
+              label: item.starter ? tr("Source choice") : item.external ? tr("Source") : tr("Publisher"),
               value: item.starter || item.external ? item.source_peer_name ?? item.source_platform ?? "starter" : <PeerPill peer={publisher} />,
             },
-            { label: "Safety", value: <SafetyBadge outcome={item.safety_outcome} /> },
-            { label: "Provenance", value: <ProvBadge status={item.provenance_status} /> },
-            { label: "Weight", value: <WeightBar value={item.distribution_weight} /> },
-            { label: "Priority", value: <span className="mono">{Math.round(rec.priority * 100)}%</span> },
+            { label: tr("Safety"), value: <SafetyBadge outcome={item.safety_outcome} /> },
+            { label: tr("Provenance"), value: <ProvBadge status={item.provenance_status} /> },
+            { label: tr("Weight"), value: <WeightBar value={item.distribution_weight} /> },
+            { label: tr("Priority"), value: <span className="mono">{Math.round(rec.priority * 100)}%</span> },
           ]}
         />
       </aside>
@@ -662,12 +684,13 @@ export function ProvenanceTimeline({
   events: ProvenanceEvent[];
   peersById: Map<string, Peer>;
 }) {
+  useUILanguage();
   if (!events.length) {
     return (
       <EmptyState
         icon={Link2}
-        title="No provenance chain"
-        body="This item has no signed history attached to its manifest."
+        title={tr("No provenance chain")}
+        body={tr("This item has no signed history attached to its manifest.")}
       />
     );
   }
@@ -685,12 +708,12 @@ export function ProvenanceTimeline({
                 <strong>{event.label}</strong>
                 {event.flagged ? (
                   <Chip tone="warn" icon={AlertTriangle}>
-                    Flagged
+                    {tr("Flagged")}
                   </Chip>
                 ) : null}
               </div>
               <div className="timeline-meta">
-                <span className="mono">{new Date(event.t).toLocaleString()}</span>
+                <span className="mono">{new Date(event.t).toLocaleString(uiLocale())}</span>
                 <span>{peer?.name ?? event.actor}</span>
                 <Hash value={event.hash} />
               </div>
@@ -710,6 +733,7 @@ export function ConfirmDialog({
   request: import("../domain/types").ConfirmRequest | null;
   onCancel: () => void;
 }) {
+  useUILanguage();
   if (!request) return null;
   const run = async () => {
     await request.onConfirm();
@@ -720,18 +744,17 @@ export function ConfirmDialog({
       <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <div className="dialog-risk">
           <Chip tone={request.risk === "high" ? "danger" : request.risk === "medium" ? "warn" : "info"}>
-            {request.risk} risk
-          </Chip>
+            {tr("{{risk}} risk", { risk: tr(request.risk) })} </Chip>
         </div>
         <h2 id="confirm-title">{request.title}</h2>
         <p>{request.body}</p>
         {request.details?.length ? <KV rows={request.details} /> : null}
         <div className="dialog-actions">
           <Button variant="ghost" onClick={onCancel}>
-            Cancel
+            {tr("Cancel")}
           </Button>
           <Button variant={request.risk === "high" ? "danger" : "primary"} onClick={run}>
-            {request.confirmLabel ?? "Confirm"}
+            {request.confirmLabel ?? tr("Confirm")}
           </Button>
         </div>
       </div>
@@ -746,6 +769,7 @@ export function Toast({
   toast: import("../domain/types").ToastMessage | null;
   onDismiss: () => void;
 }) {
+  useUILanguage();
   if (!toast) return null;
   return (
     <button className={`toast toast-${toast.tone}`} type="button" onClick={onDismiss}>
@@ -755,7 +779,8 @@ export function Toast({
   );
 }
 
-export function LoadingPanel({ label = "Loading from local Ryn node" }: { label?: string }) {
+export function LoadingPanel({ label = tr("Loading from local Ryn node") }: { label?: string }) {
+  useUILanguage();
   return (
     <div className="loading-panel">
       <Loader2 size={18} className="spin" />

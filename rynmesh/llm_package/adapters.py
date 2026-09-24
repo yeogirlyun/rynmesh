@@ -64,9 +64,13 @@ class AdapterMetrics:
 
 class OpenAICompatibleAdapter:
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
-                 allow_non_loopback: bool = False, timeout_s: float = 120.0) -> None:
+                 allow_non_loopback: bool = False, timeout_s: float = 120.0,
+                 api_prefix: str = "/v1", api_key: str = "", request_defaults: dict | None = None) -> None:
         self.base_url = validate_local_url(base_url, allow_non_loopback=allow_non_loopback)
         self.model = model
+        self.api_prefix = api_prefix
+        self.api_key = api_key
+        self.request_defaults = dict(request_defaults or {})
         self.api_key_env = api_key_env
         self.timeout_s = timeout_s
         self._cancelled: set[str] = set()
@@ -76,17 +80,24 @@ class OpenAICompatibleAdapter:
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.api_key_env:
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
+        elif self.api_key_env:
             secret = os.environ.get(self.api_key_env, "")
             if not secret:
                 raise AdapterError(f"API key environment variable {self.api_key_env!r} is not set")
             headers["Authorization"] = "Bearer " + secret
         return headers
 
+    def _endpoint(self, path: str) -> str:
+        return self.base_url + (self.api_prefix + path[3:] if path.startswith("/v1/") else path)
+
     def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float,
               *, task_id: str = "") -> dict[str, Any]:
+        if payload is not None:
+            payload = {**self.request_defaults, **payload}
         request = urllib.request.Request(
-            self.base_url + path,
+            self._endpoint(path),
             data=json.dumps(payload).encode("utf-8") if payload is not None else None,
             headers=self._headers(), method="POST" if payload is not None else "GET",
         )
@@ -137,7 +148,7 @@ class OpenAICompatibleAdapter:
         if not self.model and not self.health().get("ok"):
             return {"chat_completions": False, "streaming": False, "cancel": "best_effort"}
         request = urllib.request.Request(
-            self.base_url + "/v1/chat/completions",
+            self._endpoint("/v1/chat/completions"),
             data=json.dumps({
                 "model": self.model, "messages": [{"role": "user", "content": "Reply: ok"}],
                 "max_tokens": 2, "stream": True,
@@ -199,7 +210,7 @@ class OpenAICompatibleAdapter:
 
     def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
              on_event: Any = None) -> dict[str, Any]:
-        body = validate_chat(body)
+        body = {**self.request_defaults, **validate_chat(body)}
         if task_id in self._cancelled:
             raise AdapterError("task_cancelled")
         if not self.model and not self.health().get("ok"):
@@ -218,7 +229,7 @@ class OpenAICompatibleAdapter:
                 usage = raw.get("usage") or {}
                 finish = choice.get("finish_reason") or "stop"
             else:
-                request = urllib.request.Request(self.base_url + "/v1/chat/completions",
+                request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
                                                  data=json.dumps(body).encode(), headers=self._headers())
                 accumulator = ChatAccumulator()
                 with urllib.request.urlopen(request, timeout=timeout_s) as response:
@@ -227,7 +238,12 @@ class OpenAICompatibleAdapter:
                     with self._lock:
                         self._active_responses[task_id] = response
                     total = 0
-                    for line in response:
+                    while True:
+                        line = response.readline(1024 * 1024 + 1)
+                        if not line:
+                            break
+                        if len(line) > 1024 * 1024:
+                            raise AdapterError("stream line exceeds 1 MiB")
                         total += len(line)
                         if total > 32 * 1024 * 1024:
                             raise AdapterError("stream exceeds 32 MiB")
@@ -299,6 +315,9 @@ class OllamaAdapter(OpenAICompatibleAdapter):
 
 
 def adapter_from_manifest(manifest: Any) -> LLMAdapter:
+    if manifest.adapter in {"codex_cli", "claude_cli"}:
+        from .cli_adapter import CLIAgentAdapter
+        return CLIAgentAdapter(manifest.adapter)
     kwargs = {
         "base_url": manifest.base_url, "model": manifest.model,
         "api_key_env": manifest.api_key_env, "allow_non_loopback": manifest.allow_non_loopback,

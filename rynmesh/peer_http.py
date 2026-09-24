@@ -80,6 +80,10 @@ def _desktop_lan_ip() -> str:
                     return ip
         except (OSError, subprocess.SubprocessError):
             pass
+        # Do not fall back to hostname/mDNS resolution on macOS: it can block
+        # startup for minutes when the local hostname has no usable DNS record.
+        from .store import _primary_lan_ip
+        return _primary_lan_ip() or "127.0.0.1"
     try:
         for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
             if family == socket.AF_INET and not sockaddr[0].startswith("127."):
@@ -408,6 +412,12 @@ def create_app(store: RynmeshStore | None = None):
     async def lifespan(lifespan_app):
         if not _bundled_runtime:
             updater.on_startup()  # may os.execv away on crash-loop rollback
+        from .lan_discovery import LanDiscovery
+
+        lan_discovery = LanDiscovery.from_environment(active_store)
+        active_store.lan_discovery = lan_discovery
+        if lan_discovery:
+            lan_discovery.start()
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
@@ -549,8 +559,11 @@ def create_app(store: RynmeshStore | None = None):
         async def _space_poll():
             while True:
                 await _asyncio.to_thread(personal_space.tick)
-                await _asyncio.sleep(5)
+                await _asyncio.sleep(2)
 
+        native_model = getattr(lifespan_app.state, "native_model", None)
+        if native_model is not None:
+            native_model.on_startup()
         space_task = _asyncio.create_task(_space_poll())
         confirm_task = _asyncio.create_task(_confirm_after_grace())
         poll_task = _asyncio.create_task(_poll())
@@ -558,14 +571,21 @@ def create_app(store: RynmeshStore | None = None):
         recap_task = _asyncio.create_task(_recap_daily())
         llm_relay_task = _asyncio.create_task(_llm_relay_poll())
         llm_publish_task = _asyncio.create_task(_llm_publish_refresh())
-        yield
-        confirm_task.cancel()
-        poll_task.cancel()
-        discovery_task.cancel()
-        recap_task.cancel()
-        llm_relay_task.cancel()
-        llm_publish_task.cancel()
-        space_task.cancel()
+        try:
+            yield
+        finally:
+            if native_model is not None:
+                await _asyncio.to_thread(native_model.close)
+            confirm_task.cancel()
+            poll_task.cancel()
+            discovery_task.cancel()
+            recap_task.cancel()
+            llm_relay_task.cancel()
+            llm_publish_task.cancel()
+            space_task.cancel()
+            if lan_discovery:
+                await _asyncio.to_thread(lan_discovery.close)
+            active_store.lan_discovery = None
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
     started_at = time.monotonic()
@@ -584,6 +604,7 @@ def create_app(store: RynmeshStore | None = None):
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
+        expose_headers=["X-Image-Width", "X-Image-Height"],
     )
 
     _local_token = os.environ.get("RYNMESH_LOCAL_TOKEN", "").strip()
@@ -701,6 +722,9 @@ def create_app(store: RynmeshStore | None = None):
         if not decision.allowed:
             raise HTTPException(status_code=401, detail="local_control_unauthorized")
 
+    from .nas import mount_nas
+    mount_nas(app, active_store.home, local_control)
+
     def first_http_endpoint(endpoints: Any) -> str:
         for endpoint in endpoints or []:
             value = str(endpoint)
@@ -749,23 +773,29 @@ def create_app(store: RynmeshStore | None = None):
                 record.get("node_name") or metadata.get("machine_name") or peer_slug(peer_id)
             ),
             "endpoint": endpoint,
+            # Fresh signed multicast discovery is physical-LAN evidence. The
+            # registry endpoint may be a VPN or another advertised address.
+            "lanEndpoints": list(record.get("lan_endpoints") or []),
             "network": str(record.get("network_id", "")),
             "tier": peer_tier(peer_id),
             "credits": float(account["score"]),
             "weight": float(account["distribution_weight"]),
             "lastSeen": str(record.get("updated_at", "") or "local"),
+            "discoverySource": str(record.get("discovery_source") or ""),
             "served": 0,
             "fetched": 0,
             "trustedRoot": peer_id in active_store._trusted_root_ids(),
             "isSelf": is_self,
         }
 
-    def discover_peer_items(network_id: str, *, include_self: bool = True) -> list[dict[str, Any]]:
+    def discover_peer_items(network_id: str, *, include_self: bool = True,
+                            cache_only: bool = False) -> list[dict[str, Any]]:
         discovered = active_store.discover_peers(
             network_id=network_id,
             include_self=include_self,
             max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
             use_cache_on_error=True,
+            cache_only=cache_only,
         )
         records = list(discovered.get("peers", []))
         if include_self and not any(
@@ -1053,6 +1083,27 @@ def create_app(store: RynmeshStore | None = None):
             "network_id": control_network_id(),
         }
 
+    @app.get("/api/peer/lan-record")
+    def lan_record(nonce: str, request: FastAPIRequest) -> dict[str, Any]:
+        """Return a nonce-bound signed record for same-subnet HTTP discovery."""
+        import ipaddress
+        from .crypto import sign_payload
+        from .registry import PeerRecord
+        from .lan_discovery import PROTOCOL, local_interfaces
+
+        host = request.url.hostname or ""
+        if (len(nonce) != 32 or not all(c in "0123456789abcdef" for c in nonce)
+                or host not in {str(item.ip) for item in local_interfaces()}):
+            raise HTTPException(status_code=400, detail="Invalid LAN discovery request")
+        ipaddress.IPv4Address(host)
+        record = PeerRecord(
+            peer_id=active_store.peer_id, node_name=active_store.node_name,
+            endpoints=(f"http://{host}:{request.url.port or 80}",),
+            capabilities=(), safety_packs=(), network_id=control_network_id(),
+        ).to_dict()
+        record.update(lan_protocol=PROTOCOL, lan_nonce=nonce)
+        return sign_payload(record, private_key_bytes=active_store.private_key_bytes).to_dict()
+
     @app.get("/api/local/auth/status")
     def local_auth_status(request: FastAPIRequest) -> dict[str, Any]:
         """Whether this caller is already authorized, and how.
@@ -1136,8 +1187,11 @@ def create_app(store: RynmeshStore | None = None):
             "daemon_running": True,
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
-            "registry": registry_status(network_id)["status"],
-            "peer_count": max(0, len(discover_peer_items(network_id, include_self=True)) - 1),
+            # Status is a local read: the desktop must not wait on registry I/O
+            # before it can display cached and LAN-discovered peers.
+            "registry": "disconnected" if app.state.registration_error else "connected",
+            "peer_count": max(0, len(discover_peer_items(network_id, include_self=True,
+                                                        cache_only=True)) - 1),
             "local_items": sum(
                 1 for item in local_items if item.get("publisher_peer_id") == active_store.peer_id
             ),
@@ -1267,16 +1321,21 @@ def create_app(store: RynmeshStore | None = None):
     @app.post("/api/local/peers/health")
     async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        items = discover_peer_items(control_network_id(), include_self=True)
+        # Registry I/O and unreachable peers must not block the event loop that
+        # polls ICE signaling and serves the desktop's status requests.
+        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
         peers = [
             {
                 "id": it["id"],
                 "endpoint": it.get("endpoint", ""),
+                "lanEndpoints": it.get("lanEndpoints", []),
                 "isSelf": bool(it.get("isSelf", False)),
+                "lastSeen": it.get("lastSeen", ""),
+                "discoverySource": it.get("discoverySource", ""),
             }
             for it in items
         ]
-        return peer_health_probe.check(peers)
+        return await _asyncio.to_thread(peer_health_probe.check, peers)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1292,7 +1351,9 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/peers")
     def local_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        return filtered_peers(discover_peer_items(control_network_id(), include_self=True), request)
+        quick = request.query_params.get("quick", "").lower() in {"1", "true"}
+        return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
+                                                 cache_only=quick), request)
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2018,6 +2079,17 @@ def create_app(store: RynmeshStore | None = None):
             "peer_http_host": os.environ.get("RYNMESH_PEER_HOST", "127.0.0.1"),
             "peer_http_port": int(os.environ.get("RYNMESH_PEER_PORT", "8791") or 8791),
             "public_endpoint": str(info.get("peer_endpoint", "")),
+            "lan_discovery": {
+                "enabled": active_store.lan_discovery is not None,
+                "running": bool(
+                    active_store.lan_discovery
+                    and active_store.lan_discovery._thread
+                    and active_store.lan_discovery._thread.is_alive()
+                ),
+                "error": str(active_store.lan_discovery.error) if active_store.lan_discovery else "",
+                "peer_count": len(active_store.lan_discovery.records(control_network_id()))
+                if active_store.lan_discovery else 0,
+            },
             "registry_url": str(registry.get("url") or registry.get("path") or ""),
             "trusted_roots": list(active_store.trusted_root_peer_ids),
             "safety_policy": stored["safety_policy"],

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { tr, uiLocale } from "../uiI18n";
+import { useTranslation } from "react-i18next";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Check,
@@ -16,13 +18,15 @@ import { personalHref, usePersonal } from "./model";
 import type { SpaceStatus } from "../domain/space";
 
 export function SpaceControls({ compact = false }: { compact?: boolean }) {
+  const { t } = useTranslation();
   const { space, spaceAction, demo, refresh, devices } = usePersonal();
   const { node, client } = useAppContext();
-  const [name, setName] = useState("My space");
-  const [deviceName, setDeviceName] = useState(node.node_name);
+  const [name, setName] = useState("");
+  const deviceName = node.node_name.trim().slice(0, 32) || t("personal.myDevice");
   const [invitation, setInvitation] = useState("");
   const [hours, setHours] = useState(24);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [password, setPassword] = useState("");
@@ -35,6 +39,8 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
   const pending = Boolean(space?.pending.length);
   const disabled = busy || pending || demo;
   async function run(action: string, body: Record<string, unknown> = {}) {
+    if (submitting.current || demo || (pending && (action === "create" || action === "join"))) return;
+    submitting.current = true;
     setBusy(true);
     setError("");
     setCopied(false);
@@ -43,17 +49,18 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
       if (action === "join") setInvitation("");
       return status;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update your space.");
+      setError(e instanceof Error ? e.message : t("personal.couldNotUpdateYourSpace"));
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
   if (!space)
     return (
       <Note>
-        Personal space is unavailable. Start the updated node, then{" "}
+        {t("personal.personalSpaceIsUnavailableStartTheUpdatedNodeThen")}{" "}
         <button className="pf-link" onClick={() => void refresh()}>
-          try again
+          {t("personal.tryAgain")}
         </button>
         .
       </Note>
@@ -63,60 +70,57 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
     <div className="pf-space-content">
       {demo && (
         <Note>
-          Design preview. Invitations, permissions and recovery require a live
-          node.
+          {t("personal.designPreviewInvitationsPermissionsAndRecoveryRequireALiveNode")}
         </Note>
       )}
       {(error || space.last_error) && (
         <p className="pf-error" role="alert">
-          {error || space.last_error}
+          {error || tr(space.last_error)}
         </p>
       )}
       {pending && (
         <div className="pf-space-notice" role="status">
           <RefreshCw size={18} />
           <div>
-            <strong>Waiting for the coordinator</strong>
+            <strong>{t("personal.waitingForTheCoordinator")}</strong>
             <p>
-              Keep Ryn running on the computer that created your space. Your
-              request retries automatically.
+              {t("personal.keepRynRunningOnTheComputerThatCreatedYourSpaceYourRequestRetriesAutomatically")}
             </p>
           </div>
         </div>
       )}
       {!space.space ? (
         <>
+          {!pending && <>
           <section className="pf-panel pf-space-section">
             <div className="pf-space-heading">
               <Users size={22} />
               <div>
-                <h2>Create your personal space</h2>
-                <p>Bring your computers together. No account required.</p>
+                <h2>{t("personal.createYourPersonalSpace")}</h2>
+                <p>{t("personal.bringYourComputersTogetherNoAccountRequired")}</p>
               </div>
             </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void run("create", { name });
+                void run("create", { name: name.trim() || t("personal.mySpace") });
               }}
             >
               <label className="pf-field">
-                <span>Space name</span>
+                <span>{t("personal.spaceName")}</span>
                 <input
                   value={name}
+                  placeholder={t("personal.mySpace")}
                   maxLength={32}
-                  required
                   onChange={(e) => setName(e.target.value)}
                 />
               </label>
               <Note>
-                This computer becomes the coordinator. It approves invitations
-                automatically when online. AI access starts with this device
-                only.
+                {t("personal.thisComputerBecomesTheCoordinatorItApprovesInvitationsAutomaticallyWhenOnlineAIAccessStartsWithThisDeviceOnly")}
               </Note>
               <button className="pf-button primary" disabled={disabled}>
                 <Plus size={16} />
-                Create space
+                {t("personal.createSpace")}
               </button>
             </form>
           </section>
@@ -124,9 +128,9 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
             <div className="pf-space-heading">
               <KeyRound size={22} />
               <div>
-                <h2>Join an existing space</h2>
+                <h2>{t("personal.joinAnExistingSpace")}</h2>
                 <p>
-                  Paste the invitation you brought from your other computer.
+                  {t("personal.pasteTheInvitationYouBroughtFromYourOtherComputer")}
                 </p>
               </div>
             </div>
@@ -140,16 +144,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
               }}
             >
               <label className="pf-field">
-                <span>Device name</span>
-                <input
-                  value={deviceName}
-                  maxLength={32}
-                  required
-                  onChange={(e) => setDeviceName(e.target.value)}
-                />
-              </label>
-              <label className="pf-field">
-                <span>Invitation</span>
+                <span>{t("personal.invitation")}</span>
                 <textarea
                   rows={3}
                   autoComplete="off"
@@ -161,34 +156,34 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                   onChange={(e) => setInvitation(e.target.value)}
                 />
               </label>
+              <small>{t("personal.joinUsingThisDeviceName", { name: deviceName })}</small>
               <Note>
-                An invitation preauthorizes one device. Check who sent it before
-                joining. The coordinator must be online; no second confirmation
-                is needed there.
+                {t("personal.anInvitationPreauthorizesOneDeviceCheckWhoSentItBeforeJoiningTheCoordinatorMustBeOnlineNoSecondConfirmationIsNeededThere")}
               </Note>
               <button
                 className="pf-button primary"
                 disabled={disabled || !invitation.trim()}
               >
-                Join space
+                {t("personal.joinSpace")}
               </button>
             </form>
           </section>
+          </>}
           {pending && (
             <button
               className="pf-button"
               disabled={busy || demo}
               onClick={() =>
                 setConfirmation({
-                  title: "Cancel this request?",
+                  title: t("personal.cancelThisRequest"),
                   detail:
-                    "A join already accepted by the coordinator may still appear in its device list. A manager can remove that device.",
+                    t("personal.aJoinAlreadyAcceptedByTheCoordinatorMayStillAppearInItsDeviceListAManagerCanRemoveThatDevice"),
                   action: "leave",
                   body: {},
                 })
               }
             >
-              Cancel waiting
+              {t("personal.cancelWaiting")}
             </button>
           )}
         </>
@@ -202,39 +197,39 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
               <h2>{space.space.name}</h2>
               <p>
                 {space.coordinator
-                  ? "Coordinator · Management device"
+                  ? t("personal.coordinatorManagementDevice")
                   : space.can_manage
-                    ? "Management device"
-                    : "Member device"}{" "}
+                    ? t("personal.managementDevice")
+                    : t("personal.memberDevice")}{" "}
                 ·{" "}
                 {space.membership === "active"
-                  ? "Membership verified"
+                  ? t("personal.membershipVerified")
                   : space.membership === "removed"
-                    ? "Device removed"
-                    : "Refresh required"}
+                    ? t("personal.deviceRemoved")
+                    : t("personal.refreshRequired")}
               </p>
             </div>
           </div>
           {!active && (
             <Note>
               {space.membership === "removed"
-                ? "This device was removed. Space AI access is blocked. Leave this space before joining again."
-                : "Membership verification has expired. Start the coordinator and refresh to restore access. Device identities are preserved."}
+                ? t("personal.thisDeviceWasRemovedSpaceAIAccessIsBlockedLeaveThisSpaceBeforeJoiningAgain")
+                : t("personal.membershipVerificationHasExpiredStartTheCoordinatorAndRefreshToRestoreAccessDeviceIdentitiesArePreserved")}
             </Note>
           )}
           {space.can_manage ? (
             <section className="pf-panel pf-space-section">
-              <h2>Add another computer</h2>
-              <p>Create a single-use invitation before you leave home.</p>
+              <h2>{t("personal.addAnotherComputer")}</h2>
+              <p>{t("personal.createASingleuseInvitationBeforeYouLeaveHome")}</p>
               <label className="pf-field">
-                <span>Invitation expires after</span>
+                <span>{t("personal.invitationExpiresAfter")}</span>
                 <select
                   value={hours}
                   onChange={(e) => setHours(Number(e.target.value))}
                 >
-                  <option value={1}>1 hour</option>
-                  <option value={24}>24 hours</option>
-                  <option value={72}>3 days</option>
+                  <option value={1}>{t("personal.1Hour")}</option>
+                  <option value={24}>{t("personal.24Hours")}</option>
+                  <option value={72}>{t("personal.3Days")}</option>
                 </select>
               </label>
               <button
@@ -243,12 +238,12 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                 onClick={() => void run("invite", { hours })}
               >
                 <Plus size={16} />
-                Create invitation
+                {t("personal.createInvitation")}
               </button>
               {space.invitation && (
                 <div className="pf-space-invitation">
                   <label className="pf-field">
-                    <span>One-device invitation</span>
+                    <span>{t("personal.onedeviceInvitation")}</span>
                     <textarea
                       rows={3}
                       readOnly
@@ -264,36 +259,33 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                         setCopied(true);
                       } catch {
                         setError(
-                          "Could not copy. Select the invitation and copy it manually.",
+                          t("personal.couldNotCopySelectTheInvitationAndCopyItManually"),
                         );
                       }
                     }}
                   >
                     {copied ? <Check size={16} /> : <Copy size={16} />}
-                    {copied ? "Copied" : "Copy invitation"}
+                    {copied ? t("personal.copied") : t("personal.copyInvitation")}
                   </button>
                 </div>
               )}
               <Note>
-                Anyone holding this invitation can add one ordinary device
-                before it expires. Keep it private. The coordinator must be
-                online when it is redeemed.
+                {t("personal.anyoneHoldingThisInvitationCanAddOneOrdinaryDeviceBeforeItExpiresKeepItPrivateTheCoordinatorMustBeOnlineWhenItIsRedeemed")}
               </Note>
             </section>
           ) : (
             active && (
               <Note>
-                A management device can create an invitation for your next
-                computer.
+                {t("personal.aManagementDeviceCanCreateAnInvitationForYourNextComputer")}
               </Note>
             )
           )}
           {!compact && (
             <>
               <section className="pf-panel pf-space-section">
-                <h2>Devices in this space</h2>
+                <h2>{t("personal.devicesInThisSpace")}</h2>
                 <p>
-                  Devices keep their identity when their IP address changes.
+                  {t("personal.devicesKeepTheirIdentityWhenTheirIPAddressChanges")}
                 </p>
                 <div className="pf-space-members">
                   {space.members.map((member) => (
@@ -309,17 +301,17 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                         <strong>
                           {member.name}
                           {member.peer_id === space.self_id
-                            ? " · This device"
+                            ? t("personal.thisDeviceSuffix")
                             : ""}
                         </strong>
                         <small>
                           {member.removed
-                            ? "Removed"
+                            ? t("personal.removed")
                             : member.peer_id === space.space?.authority
-                              ? "Coordinator"
+                              ? t("personal.coordinator")
                               : member.role === "manager"
-                                ? "Management device"
-                                : "Member device"}
+                                ? t("personal.managementDevice")
+                                : t("personal.memberDevice")}
                         </small>
                         <code title={member.peer_id}>
                           {member.peer_id.slice(0, 12)}…
@@ -336,12 +328,12 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                                 setConfirmation({
                                   title:
                                     member.role === "manager"
-                                      ? "Remove management permission?"
-                                      : "Allow device management?",
+                                      ? t("personal.removeManagementPermission")
+                                      : t("personal.allowDeviceManagement"),
                                   detail:
                                     member.role === "manager"
-                                      ? `${member.name} will still be able to use shared services, but cannot add or remove devices.`
-                                      : `${member.name} will be able to invite devices, change management permissions and remove other devices. Only enable this on computers you control.`,
+                                      ? t("personal.nameWillStillBeAbleToUseSharedServicesButCannotAddOrRemoveDevices", { name: member.name })
+                                      : t("personal.nameWillBeAbleToInviteDevicesChangeManagementPermissionsAndRemoveOtherDevicesOnlyEnableThisOnComputersYouControl", { name: member.name }),
                                   action: "role",
                                   body: {
                                     peer_id: member.peer_id,
@@ -354,23 +346,23 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                               }
                             >
                               {member.role === "manager"
-                                ? "Make member"
-                                : "Make manager"}
+                                ? t("personal.makeMember")
+                                : t("personal.makeManager")}
                             </button>
                             <button
                               className="pf-button"
                               disabled={disabled}
                               onClick={() =>
                                 setConfirmation({
-                                  title: `Remove ${member.name}?`,
+                                  title: t("personal.removeName", { name: member.name }),
                                   detail:
-                                    "Its space access will be revoked as providers refresh membership. Offline providers may retain permission for up to 24 hours. This does not delete files or revoke separately issued API keys.",
+                                    t("personal.itsSpaceAccessWillBeRevokedAsProvidersRefreshMembershipOfflineProvidersMayRetainPermissionForUpTo24HoursThisDoesNotDeleteFilesOrRevokeSeparatelyIssuedAPIKeys"),
                                   action: "remove",
                                   body: { peer_id: member.peer_id },
                                 })
                               }
                             >
-                              Remove
+                              {t("personal.remove")}
                             </button>
                           </div>
                         )}
@@ -378,9 +370,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                   ))}
                 </div>
                 <Note>
-                  Membership changes are coordinated by the computer that
-                  created the space. Other management devices can request
-                  changes while it is online.
+                  {t("personal.membershipChangesAreCoordinatedByTheComputerThatCreatedTheSpaceOtherManagementDevicesCanRequestChangesWhileItIsOnline")}
                 </Note>
               </section>
               <SpaceAccess
@@ -390,23 +380,23 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
               />
               {space.coordinator && (
                 <section className="pf-panel pf-space-section">
-                  <h2>Invitations</h2>
-                  {!space.invites.length && <p>No invitations yet.</p>}
+                  <h2>{t("personal.invitations")}</h2>
+                  {!space.invites.length && <p>{t("personal.noInvitationsYet")}</p>}
                   {space.invites.map((invite) => (
                     <div className="pf-setting-row" key={invite.id}>
                       <div>
                         <h3>
                           {invite.revoked
-                            ? "Cancelled"
+                            ? t("personal.cancelled")
                             : invite.used
-                              ? "Used"
+                              ? t("personal.used")
                               : invite.expires_at * 1000 < Date.now()
-                                ? "Expired"
-                                : "Available"}
+                                ? t("personal.expired")
+                                : t("personal.available")}
                         </h3>
                         <p>
-                          Expires{" "}
-                          {new Date(invite.expires_at * 1000).toLocaleString()}
+                          {t("personal.expires")}{" "}
+                          {new Date(invite.expires_at * 1000).toLocaleString(uiLocale())}
                         </p>
                       </div>
                       <button
@@ -416,7 +406,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                           void run("cancel_invite", { id: invite.id })
                         }
                       >
-                        Cancel invitation
+                        {t("personal.cancelInvitation")}
                       </button>
                     </div>
                   ))}
@@ -424,13 +414,12 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
               )}
               {space.coordinator && (
                 <section className="pf-panel pf-space-section">
-                  <h2>Recovery backup</h2>
+                  <h2>{t("personal.recoveryBackup")}</h2>
                   <p>
-                    Save an encrypted copy of the coordinator identity and
-                    current members.
+                    {t("personal.saveAnEncryptedCopyOfTheCoordinatorIdentityAndCurrentMembers")}
                   </p>
                   <label className="pf-field">
-                    <span>Recovery password</span>
+                    <span>{t("personal.recoveryPassword")}</span>
                     <input
                       type="password"
                       autoComplete="new-password"
@@ -438,7 +427,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                       maxLength={256}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="At least 12 characters"
+                      placeholder={t("personal.atLeast12Characters")}
                     />
                   </label>
                   <button
@@ -464,7 +453,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                         setError(
                           e instanceof Error
                             ? e.message
-                            : "Could not export recovery.",
+                            : t("personal.couldNotExportRecovery"),
                         );
                       } finally {
                         setBusy(false);
@@ -472,13 +461,10 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                     }}
                   >
                     <Download size={16} />
-                    Download encrypted backup
+                    {t("personal.downloadEncryptedBackup")}
                   </button>
                   <Note>
-                    Keep the file and password safe. Restore using the
-                    documented offline recovery tool into a fresh node folder,
-                    with the old coordinator stopped. It restores the saved
-                    member list; review permissions before sharing again.
+                    {t("personal.keepTheFileAndPasswordSafeRestoreUsingTheDocumentedOfflineRecoveryToolIntoAFreshNodeFolderWithTheOldCoordinatorStoppedItRestoresTheSavedMemberListReviewPermissionsBeforeSharingAgain")}
                   </Note>
                 </section>
               )}
@@ -488,15 +474,15 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                   disabled={busy || demo}
                   onClick={() =>
                     setConfirmation({
-                      title: "Leave this space?",
+                      title: t("personal.leaveThisSpace"),
                       detail:
-                        "This computer will forget its space membership and stop serving space AI requests. A manager should also remove it from the space. Your local files are kept.",
+                        t("personal.thisComputerWillForgetItsSpaceMembershipAndStopServingSpaceAIRequestsAManagerShouldAlsoRemoveItFromTheSpaceYourLocalFilesAreKept"),
                       action: "leave",
                       body: {},
                     })
                   }
                 >
-                  Leave space
+                  {t("personal.leaveSpace")}
                 </button>
               )}
             </>
@@ -510,11 +496,11 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
           onClick={() => void run("sync")}
         >
           <RefreshCw size={16} />
-          Refresh
+          {t("personal.refresh")}
         </button>
         {compact && (
           <Link className="pf-link" to={personalHref("/settings/space", demo)}>
-            Manage personal space →
+            {t("personal.managePersonalSpace")}
           </Link>
         )}
       </div>
@@ -523,7 +509,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
           <p>{confirmation.detail}</p>
           <footer className="pf-dialog-actions">
             <button className="pf-button" onClick={() => setConfirmation(null)}>
-              Cancel
+              {t("personal.cancel")}
             </button>
             <button
               className="pf-button primary"
@@ -536,7 +522,7 @@ export function SpaceControls({ compact = false }: { compact?: boolean }) {
                 if (result) setConfirmation(null);
               }}
             >
-              Confirm
+              {t("personal.confirm")}
             </button>
           </footer>
         </Modal>
@@ -554,39 +540,39 @@ function SpaceAccess({
   disabled: boolean;
   onChange: (access: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <section className="pf-panel pf-space-section">
-      <h2>AI access on this computer</h2>
+      <h2>{t("personal.aiAccessOnThisComputer")}</h2>
       <p>
-        Choose who can send AI tasks to this node. The model must also be
-        configured and running.
+        {t("personal.chooseWhoCanSendAITasksToThisNodeTheModelMustAlsoBeConfiguredAndRunning")}
       </p>
       <label className="pf-field">
-        <span>Allow access from</span>
+        <span>{t("personal.allowAccessFrom")}</span>
         <select
-          aria-label="AI access"
+          aria-label={t("personal.aiAccess")}
           value={status.ai_access}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
         >
-          <option value="local">This device only</option>
-          <option value="space">My space devices</option>
+          <option value="local">{t("personal.thisDeviceOnly")}</option>
+          <option value="space">{t("personal.mySpaceDevices")}</option>
         </select>
       </label>
       <Note>
-        Only AI tasks are covered. Files and remote desktop are not enabled. API
-        keys are separate credentials managed under API access.
+        {t("personal.onlyAITasksAreCoveredFilesAndRemoteDesktopAreNotEnabledAPIKeysAreSeparateCredentialsManagedUnderAPIAccess")}
       </Note>
     </section>
   );
 }
 
 export function PersonalSpacePage() {
+  const { t } = useTranslation();
   return (
     <div className="pf-page pf-space-page">
       <PageHeading
-        title="Personal space"
-        description="Your computers, connected by identity."
+        title={t("personal.personalSpace")}
+        description={t("personal.yourComputersConnectedByIdentity")}
       />
       <SpaceControls />
     </div>

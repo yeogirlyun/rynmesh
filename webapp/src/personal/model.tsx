@@ -7,9 +7,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
+import { personalLabelKeys } from "./labels";
 import type { NodeClient, LLMServiceRecord } from "../domain/nodeClient";
 import type { NodeStatus, Peer } from "../domain/types";
 import type { SpaceStatus } from "../domain/space";
+import { networkFromPeer, type DeviceNetwork } from "./deviceNetwork";
 
 export type Appearance = "light" | "dark" | "system";
 export type Device = {
@@ -21,11 +24,14 @@ export type Device = {
   self?: boolean;
   online: boolean | null;
   hardware?: string;
+  network?: DeviceNetwork;
 };
 export type Service = {
   id: string;
   title: string;
   description: string;
+  brand?: string;
+  accessLabel?: string;
   deviceId: string;
   kind: "ai" | "document" | "audio" | "network" | "video";
   online: boolean;
@@ -142,12 +148,14 @@ export function PersonalProvider({
   refreshShell: () => Promise<void>;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const theme = useAppearance();
   const demo = client.mode === "fixture";
   const key = metadataKey(client.mode, node.peer_id);
   const [metadata, setMetadata] = useState<Metadata>(() => loadMetadata(key));
   const [records, setRecords] = useState<LLMServiceRecord[]>([]);
-  const [health, setHealth] = useState<Record<string, boolean>>({});
+  const [health, setHealth] = useState<Record<string, boolean | null>>({});
+  const [lanReachable, setLanReachable] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [space, setSpace] = useState<SpaceStatus | null>(null);
@@ -161,11 +169,11 @@ export function PersonalProvider({
     if (results[2].status === "fulfilled") setSpace(results[2].value);
     else setSpace(null);
     if (results[1].status === "fulfilled")
-      setHealth(
-        Object.fromEntries(
-          results[1].value.map((item) => [item.peerId, item.online]),
-        ),
-      );
+      {
+        setHealth(Object.fromEntries(results[1].value.map((item) => [item.peerId, item.online])));
+        setLanReachable(Object.fromEntries(results[1].value.map((item) => [item.peerId, Boolean(item.lanReachable)])));
+      }
+    else { setHealth({}); setLanReachable({}); }
     setError(
       results.some((result) => result.status === "rejected")
         ? "Some device or service information could not be refreshed."
@@ -174,15 +182,31 @@ export function PersonalProvider({
     setLoading(false);
   }, [client]);
   const spaceAction = async (action: string, body?: Record<string, unknown>) => {
-    const status = await client.spaceAction(action, body);
-    setSpace(status);
-    return status;
+    try {
+      const status = await client.spaceAction(action, body);
+      setSpace(status);
+      return status;
+    } catch (error) {
+      // A prior request may have succeeded while this window held stale state.
+      try { setSpace(await client.spaceStatus()); } catch { /* Keep the last known state. */ }
+      throw error;
+    }
   };
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(() => {
+    if (!space?.pending.length) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void client.spaceStatus().then(status => {
+        if (!cancelled) setSpace(status);
+      }).catch(() => { /* The background retry will continue. */ });
+    }, 1500);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [client, space?.pending.length]);
   const baseDevices = useMemo<Device[]>(() => {
     if (demo)
       return [
@@ -194,6 +218,7 @@ export function PersonalProvider({
           own: true,
           online: true,
           hardware: "RTX 5090",
+          network: { id: "local", label: "Home network", scope: "local", route: "lan", address: "192.168.31.23" },
         },
         {
           id: node.peer_id,
@@ -203,6 +228,7 @@ export function PersonalProvider({
           own: true,
           self: true,
           online: true,
+          network: { id: "local", label: "Home network", scope: "local", route: "local", address: "192.168.31.10" },
         },
         {
           id: "preview-work",
@@ -211,6 +237,7 @@ export function PersonalProvider({
           kind: "desktop",
           own: true,
           online: false,
+          network: { id: "office", label: "Office network", scope: "remote", route: "public", address: "192.168.32.20" },
         },
         {
           id: "preview-alex",
@@ -228,6 +255,10 @@ export function PersonalProvider({
           own: false,
           online: false,
         },
+        {
+          id: "preview-cloud", name: "Cloud server", note: "", kind: "desktop", own: true, online: true,
+          network: { id: "public", label: "Public endpoints", scope: "public", route: "public", address: "203.0.113.24" },
+        },
       ];
     const result: Device[] = [
       {
@@ -238,6 +269,7 @@ export function PersonalProvider({
         own: true,
         self: true,
         online: node.daemon_running,
+        network: { id: "local", label: "Current network", scope: "local", route: "local" },
       },
     ];
     for (const peer of peers)
@@ -249,6 +281,7 @@ export function PersonalProvider({
           kind: "desktop",
           own: false,
           online: health[peer.id] ?? null,
+          network: networkFromPeer(peer.endpoint, peer.lanEndpoints, lanReachable[peer.id]),
         });
     for (const record of records)
       if (!result.some((device) => device.id === record.peer_id))
@@ -269,28 +302,44 @@ export function PersonalProvider({
         own: space?.membership === "active", online: health[member.peer_id] ?? null });
     }
     return result;
-  }, [demo, node, peers, health, records, space]);
+  }, [demo, node, peers, health, lanReachable, records, space]);
   const devices = baseDevices.map((device) => ({
     ...device,
     name: metadata[device.id]?.name || device.name,
     note: metadata[device.id]?.note ?? device.note,
     kind: metadata[device.id]?.kind ?? device.kind,
   }));
-  const services: Service[] = records.map((record) => ({
-    id: `${record.peer_id}/${record.service.package_id}`,
-    title: "AI chat",
-    description: "Chat with a model on this device",
-    kind: "ai",
-    deviceId: record.peer_id,
-    online: record.online,
-    record,
-  }));
+  const services: Service[] = records.map((record) => {
+    const { adapter, model_alias, package_id } = record.service;
+    const codex = adapter === "codex_cli";
+    const claude = adapter === "claude_cli";
+    const parts = model_alias.split(" · ");
+    const configuredSource = package_id.startsWith("src-") && parts.length > 1;
+    const model = configuredSource ? parts.pop() : undefined;
+    const title = codex ? "ChatGPT" : claude ? "Claude" : configuredSource ? parts.join(" · ") : model_alias;
+    const brand = codex ? "openai" : claude ? "claude" :
+      /z\.ai|\bglm\b/i.test(model_alias) ? "zai" :
+      /deepseek/i.test(model_alias) ? "deepseek" : /qwen/i.test(model_alias) ? "qwen" :
+      /openai|chatgpt/i.test(model_alias) ? "openai" : /ollama/i.test(model_alias) ? "ollama" :
+      /lm studio/i.test(model_alias) ? "lmstudio" : /openrouter/i.test(model_alias) ? "openrouter" : undefined;
+    return {
+      id: `${record.peer_id}/${record.service.package_id}`,
+      title: title || t("personal.aiService"),
+      description: codex ? t("personal.codexCLIChooseAModelInChat") : claude ? t("personal.claudeCodeUsesTheAccountSignedInOnTheDevice") : model ? t("personal.modelModel", { model }) : model_alias,
+      brand,
+      accessLabel: codex || claude ? t("personal.localCLI") : adapter === "ollama" || adapter === "llama_cpp" || record.service.runtime === "native_llama_cpp" ? t("personal.localModel") : "API",
+      kind: "ai",
+      deviceId: record.peer_id,
+      online: record.online,
+      record,
+    };
+  });
   if (demo)
     services.push(
       {
         id: "preview-converter",
-        title: "Document converter",
-        description: "Convert documents",
+        title: t("personal.documentConverter"),
+        description: t("personal.convertDocuments"),
         kind: "document",
         deviceId: "peer:fixture-llm-provider",
         online: true,
@@ -298,8 +347,8 @@ export function PersonalProvider({
       },
       {
         id: "preview-transcription",
-        title: "Transcription",
-        description: "Turn audio into text",
+        title: t("personal.transcription"),
+        description: t("personal.turnAudioIntoText"),
         kind: "audio",
         deviceId: "preview-alex",
         online: true,
@@ -336,7 +385,7 @@ export function PersonalProvider({
         services,
         demo,
         loading,
-        error,
+        error: personalLabelKeys[error] ? t(`personal.${personalLabelKeys[error]}`) : error,
         refresh,
         saveDevice,
         resolveName: (id, fallback) =>

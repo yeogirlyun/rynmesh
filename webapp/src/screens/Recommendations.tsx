@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import { Clock3, Network, Newspaper, RefreshCcw, Save, SlidersHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -8,6 +9,7 @@ import { digestApi, type DiscoveryStatus } from "../domain/digestClient";
 import type { ContentItem, NodeSettings, Recommendation, RecommendationProfile } from "../domain/types";
 
 export default function Recommendations() {
+  useUILanguage();
   const { client, peers, confirm, notify } = useAppContext();
   const navigate = useNavigate();
   const [items, setItems] = useState<ContentItem[]>([]);
@@ -73,7 +75,7 @@ export default function Recommendations() {
     setProfile(next);
     setDirection(next.direction);
     setRecommendations(await client.requestRecommendations({ limit: 6 }));
-    notify("ok", "Recommendation direction saved locally");
+    notify("ok", tr("Recommendation direction saved locally"));
   };
 
   const toggleChoice = (field: "topics" | "platforms", id: string) => {
@@ -92,17 +94,17 @@ export default function Recommendations() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Personal assistant"
-        title="Recommendations"
-        context="See exactly what is ready now, what Ryn is waiting for, and how your local feedback changes future ranking."
+        eyebrow={tr("Personal assistant")}
+        title={tr("Recommendations")}
+        context={tr("See exactly what is ready now, what Ryn is waiting for, and how your local feedback changes future ranking.")}
         actions={
           <>
             <Chip tone={settings?.ai_provider === "local" ? "ok" : "info"}>
-              {settings?.ai_model || "ranking engine"}
+              {settings?.ai_model || tr("ranking engine")}
             </Chip>
-            {lastRefreshed ? <Chip tone="muted">checked {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Chip> : null}
+            {lastRefreshed ? <Chip tone="muted">{tr("checked")} {lastRefreshed.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" })}</Chip> : null}
             <Button icon={RefreshCcw} onClick={() => void refreshNow()}>
-              Refresh
+              {tr("Refresh")}
             </Button>
           </>
         }
@@ -110,68 +112,68 @@ export default function Recommendations() {
       <Panel className="recommendation-status-panel">
         <div className="recommendation-status-heading">
           <div>
-            <span className="eyebrow">Recommendation status</span>
-            <h2>{showingStarters ? "Ryn is collecting your first real recommendations" : "Ryn has content ready for you"}</h2>
+            <span className="eyebrow">{tr("Recommendation status")}</span>
+            <h2>{showingStarters ? tr("Ryn is collecting your first real recommendations") : tr("Ryn has content ready for you")}</h2>
             <p>
               {showingStarters
-                ? "The background agent is reviewing the built-in public source catalog now. This screen updates automatically when the first real items are ranked."
-                : `${discoveryCount} public-content pick${discoveryCount === 1 ? " is" : "s are"} ready${meshCount ? `, plus ${meshCount} mesh item${meshCount === 1 ? "" : "s"}` : ""}.`}
+                ? tr("The background agent is reviewing the built-in public source catalog now. This screen updates automatically when the first real items are ranked.")
+                : `${tr("{{count}} public-content picks ready.", { count: discoveryCount })}${meshCount ? ` ${tr("Plus {{count}} mesh items.", { count: meshCount })}` : ""}`}
             </p>
           </div>
-          <Chip tone={showingStarters ? "warn" : "ok"}>{showingStarters ? discovery?.phase === "refreshing" ? "discovering now" : "starting agent" : "content ready"}</Chip>
+          <Chip tone={showingStarters ? "warn" : "ok"}>{showingStarters ? discovery?.phase === "refreshing" ? tr("discovering now") : tr("starting agent") : tr("content ready")}</Chip>
         </div>
         <div className="recommendation-readiness-grid">
           <div>
             <Sparkles size={18} />
-            <span>Proactive discovery</span>
-            <strong>{discovery?.phase === "refreshing" ? "Reviewing now" : `${discovery?.item_count ?? discoveryCount} items ready`}</strong>
-            <p>Ryn reviews built-in YouTube, Reddit, research, news, podcast, audiobook, and visual sources without requiring setup.</p>
+            <span>{tr("Proactive discovery")}</span>
+            <strong>{discovery?.phase === "refreshing" ? tr("Reviewing now") : tr("{{v0}} items ready", { v0: discovery?.item_count ?? discoveryCount })}</strong>
+            <p>{tr("Ryn reviews built-in YouTube, Reddit, research, news, podcast, audiobook, and visual sources without requiring setup.")}</p>
           </div>
           <div>
             <Newspaper size={18} />
-            <span>Personalization</span>
-            <strong>Optional</strong>
-            <p>Use feedback and written direction immediately. Adding a channel, community, or feed only expands what the agent watches.</p>
-            <Button onClick={() => navigate("/digest")}>Open content feed</Button>
+            <span>{tr("Personalization")}</span>
+            <strong>{tr("Optional")}</strong>
+            <p>{tr("Use feedback and written direction immediately. Adding a channel, community, or feed only expands what the agent watches.")}</p>
+            <Button onClick={() => navigate("/digest")}>{tr("Open content feed")}</Button>
           </div>
           <div>
             <Network size={18} />
-            <span>Mesh recommendations</span>
-            <strong>{meshCount ? `${meshCount} ready` : "Waiting for published peer content"}</strong>
-            <p>{otherPeerCount ? `${otherPeerCount} other node${otherPeerCount === 1 ? " is" : "s are"} visible; content appears after one publishes.` : "No fixed delay: another node must connect and publish first."}</p>
-            <Button onClick={() => navigate("/peers")}>Inspect peers</Button>
+            <span>{tr("Mesh recommendations")}</span>
+            <strong>{meshCount ? tr("{{count}} ready", { count: meshCount }) : tr("Waiting for published peer content")}</strong>
+            <p>{otherPeerCount ? tr("{{count}} other nodes visible; content appears after one publishes.", { count: otherPeerCount }) : tr("No fixed delay: another node must connect and publish first.")}</p>
+            <Button onClick={() => navigate("/peers")}>{tr("Inspect peers")}</Button>
           </div>
         </div>
         <div className="recommendation-runtime-note">
           <Clock3 size={15} />
-          The daemon now refreshes the public catalog automatically about every 30 minutes. Refresh requests an immediate review; feedback reshapes the next ranking locally.
+          {tr("The daemon now refreshes the public catalog automatically about every 30 minutes. Refresh requests an immediate review; feedback reshapes the next ranking locally.")}
         </div>
       </Panel>
       {profile ? (
         <Panel className="recommendation-profile-panel">
           <div className="recommendation-profile-heading">
             <div>
-              <span className="eyebrow">Personal recommendation agent</span>
-              <h2>Tell Ryn what deserves your attention</h2>
+              <span className="eyebrow">{tr("Personal recommendation agent")}</span>
+              <h2>{tr("Tell Ryn what deserves your attention")}</h2>
               <p>
-                Everything is stored on this node. With no choices, Ryn explores broadly; your direction and feedback gradually reshape the ranking.
+                {tr("Everything is stored on this node. With no choices, Ryn explores broadly; your direction and feedback gradually reshape the ranking.")}
               </p>
             </div>
             <Chip tone={profile.feedback_count ? "ok" : "muted"} icon={SlidersHorizontal}>
-              {profile.feedback_count} feedback {profile.feedback_count === 1 ? "signal" : "signals"}
+              {tr("{{count}} feedback signals", { count: profile.feedback_count })}
             </Chip>
           </div>
           <label className="recommendation-direction">
-            <span>Direction</span>
+            <span>{tr("Direction")}</span>
             <textarea
               value={direction}
               onChange={(event) => setDirection(event.target.value)}
-              placeholder="For example: Focus on local AI agents, open-source tools, and serious research. Avoid repetitive trend coverage."
+              placeholder={tr("For example: Focus on local AI agents, open-source tools, and serious research. Avoid repetitive trend coverage.")}
               rows={3}
             />
           </label>
           <div className="recommendation-choice-group">
-            <span>Topics</span>
+            <span>{tr("Topics")}</span>
             <div className="choice-chip-row">
               {profile.topic_choices.map((choice) => (
                 <button
@@ -180,13 +182,13 @@ export default function Recommendations() {
                   className={profile.topics.includes(choice.id) ? "choice-chip active" : "choice-chip"}
                   onClick={() => toggleChoice("topics", choice.id)}
                 >
-                  {choice.label}
+                  {tr(choice.label)}
                 </button>
               ))}
             </div>
           </div>
           <div className="recommendation-choice-group">
-            <span>Platforms and sources</span>
+            <span>{tr("Platforms and sources")}</span>
             <div className="choice-chip-row">
               {profile.platform_choices.map((choice) => (
                 <button
@@ -195,20 +197,20 @@ export default function Recommendations() {
                   className={profile.platforms.includes(choice.id) ? "choice-chip active" : "choice-chip"}
                   onClick={() => toggleChoice("platforms", choice.id)}
                 >
-                  {choice.label}
+                  {tr(choice.label)}
                 </button>
               ))}
             </div>
           </div>
           <div className="button-row">
             <Button variant="primary" icon={Save} onClick={() => void saveProfile({ direction })}>
-              Save direction
+              {tr("Save direction")}
             </Button>
             <Button
               variant="ghost"
               onClick={() => void saveProfile({ direction: "", topics: [], platforms: [] })}
             >
-              Explore broadly
+              {tr("Explore broadly")}
             </Button>
           </div>
         </Panel>
@@ -217,10 +219,10 @@ export default function Recommendations() {
         <section className="recommendation-results">
           <div className="recommendation-results-heading">
             <div>
-              <span className="eyebrow">{showingStarters ? "Preparing real content" : "Ranked recommendations"}</span>
-              <h2>{showingStarters ? "A live slate will appear automatically" : "Worth your attention"}</h2>
+              <span className="eyebrow">{showingStarters ? tr("Preparing real content") : tr("Ranked recommendations")}</span>
+              <h2>{showingStarters ? tr("A live slate will appear automatically") : tr("Worth your attention")}</h2>
             </div>
-            <Chip tone={showingStarters ? "muted" : "ok"}>{recommendations.length} shown</Chip>
+            <Chip tone={showingStarters ? "muted" : "ok"}>{recommendations.length} {tr("shown")}</Chip>
           </div>
           <div className="rec-stack">
           {recommendations.map((rec) => {
@@ -240,22 +242,22 @@ export default function Recommendations() {
                 }}
                 onFetchPreview={async () => {
                   await client.fetchPreview(item.content_id, item.provider_peer_id);
-                  notify("ok", "Preview fetch requested through local node");
+                  notify("ok", tr("Preview fetch requested through local node"));
                 }}
                 onFetchFull={() =>
                   confirm({
-                    title: "Fetch full recommended item?",
-                    body: "Full content fetches are high-risk because they use bandwidth and local storage. The node will verify receipts before storing bytes.",
+                    title: tr("Fetch full recommended item?"),
+                    body: tr("Full content fetches are high-risk because they use bandwidth and local storage. The node will verify receipts before storing bytes."),
                     risk: "high",
-                    confirmLabel: "Fetch full",
+                    confirmLabel: tr("Fetch full"),
                     details: [
-                      { label: "Item", value: item.title },
-                      { label: "Provider", value: item.provider_peer_id },
-                      { label: "Size", value: item.size ?? "unknown" },
+                      { label: tr("Item"), value: item.title },
+                      { label: tr("Provider"), value: item.provider_peer_id },
+                      { label: tr("Size"), value: item.size ?? "unknown" },
                     ],
                     onConfirm: async () => {
                       await client.fetchFullContent(item.content_id, item.provider_peer_id);
-                      notify("ok", "Full fetch requested through local node");
+                      notify("ok", tr("Full fetch requested through local node"));
                     },
                   })
                 }
@@ -266,7 +268,7 @@ export default function Recommendations() {
                   }
                   setProfile(next);
                   setRecommendations(await client.requestRecommendations({ limit: 6 }));
-                  notify("ok", "Feedback saved; the local profile has been updated");
+                  notify("ok", tr("Feedback saved; the local profile has been updated"));
                 }}
               />
             );
@@ -274,7 +276,7 @@ export default function Recommendations() {
           </div>
         </section>
       ) : (
-        <EmptyState title="No recommendations" body="Ask the curator to review visible node evidence." />
+        <EmptyState title={tr("No recommendations")} body={tr("Ask the curator to review visible node evidence.")} />
       )}
       {viewing ? <ContentViewer item={viewing} onClose={() => setViewing(null)} /> : null}
     </div>

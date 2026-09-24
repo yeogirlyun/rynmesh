@@ -4,10 +4,25 @@ import asyncio
 
 from fastapi import HTTPException, Request
 
+from .crypto import SignedPayload
 from .personal_space import SpaceError
 
 
 def install_space_routes(app, *, space, local_control):
+    @app.post("/api/peer/space/exchange")
+    async def direct_exchange(request: Request):
+        raw = await request.body()
+        if len(raw) > 100000:
+            raise HTTPException(413, "Space request is too large.")
+        try:
+            signed = SignedPayload.from_dict(await request.json())
+            result = await asyncio.to_thread(space._process, signed, publish=False)
+            if result is None:
+                raise HTTPException(404, "Space coordinator unavailable.")
+            return result.to_dict()
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, "Invalid signed space request.") from exc
+
     @app.get("/api/local/space")
     def status(request: Request):
         local_control(request)
@@ -26,7 +41,10 @@ def install_space_routes(app, *, space, local_control):
             if action == "create":
                 return space.create(body.get("name"))
             if action == "join":
-                return space.join(body.get("invitation"), body.get("name"))
+                result = space.join(body.get("invitation"), body.get("name"))
+                # Submit immediately; the periodic mailbox loop is a retry path.
+                asyncio.create_task(asyncio.to_thread(space.tick))
+                return result
             if action == "policy":
                 return space.set_policy(body.get("access"))
             if action == "leave":

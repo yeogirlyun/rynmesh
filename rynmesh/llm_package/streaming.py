@@ -61,7 +61,12 @@ def peer_stream(url: str, body: dict[str, Any], *, timeout_s: float, on_event: A
         if "text/event-stream" not in response.headers.get("content-type", ""):
             raise ValueError("peer_streaming_not_supported")
         total = 0
-        for line in response:
+        while True:
+            line = response.readline(4 * 1024 * 1024 + 1)
+            if not line:
+                break
+            if len(line) > 4 * 1024 * 1024:
+                raise ValueError("peer stream line limit exceeded")
             total += len(line)
             if total > 128 * 1024 * 1024 or time.monotonic() > deadline:
                 raise ValueError("peer stream limit exceeded")

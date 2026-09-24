@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import { personalHref } from "../personal/model";
 import { ArrowLeft, Film, Play, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -10,6 +11,7 @@ const CAPABILITY = "signal50.veo_motion.v1";
 const OPERATION = "signal50.remote_action.complete_flow_video_veo_motion_clips";
 
 export default function VideoRendering() {
+  useUILanguage();
   const { client, notify } = useAppContext();
   const navigate = useNavigate();
   const [providers, setProviders] = useState<JobCapacity[]>([]);
@@ -25,7 +27,7 @@ export default function VideoRendering() {
     let active = true;
     void client.listJobCapacities({ capability: CAPABILITY })
       .then((items) => { if (active) setProviders(items.filter((item) => item.capabilities.includes(CAPABILITY))); })
-      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Could not find a renderer."); });
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : tr("Could not find a renderer.")); });
     return () => { active = false; };
   }, [client]);
 
@@ -51,9 +53,9 @@ export default function VideoRendering() {
       });
       setOrderId(order.work_order_id);
       setResults([]);
-      notify("ok", "Video render request submitted");
+      notify("ok", tr("Video render request submitted"));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not submit the render request.");
+      setError(reason instanceof Error ? reason.message : tr("Could not submit the render request."));
     } finally {
       setBusy(false);
     }
@@ -63,27 +65,27 @@ export default function VideoRendering() {
 
   return (
     <div className={styles.page}>
-      <button type="button" className={styles.back} onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={15} /> All services</button>
+      <button type="button" className={styles.back} onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={15} /> {tr("All services")}</button>
       <header className={styles.hero}>
-        <div className={styles.heroTitle}><span className={styles.heroIcon}><Film size={25} /></span><div><h1>Video rendering</h1><p>Create motion clips through an available rendering service.</p></div></div>
-        <span className={styles.status}>{provider ? "Renderer ready" : "Finding renderer"}</span>
+        <div className={styles.heroTitle}><span className={styles.heroIcon}><Film size={25} /></span><div><h1>{tr("Video rendering")}</h1><p>{tr("Create motion clips through an available rendering service.")}</p></div></div>
+        <span className={styles.status}>{provider ? tr("Renderer ready") : tr("Finding renderer")}</span>
       </header>
       <div className={styles.layout}>
         <section className={styles.panel}>
-          <h2>Create a render</h2><p className={styles.panelLead}>Choose the project to render. Ryn selects the provider and route for you.</p>
+          <h2>{tr("Create a render")}</h2><p className={styles.panelLead}>{tr("Choose the project to render. Ryn selects the provider and route for you.")}</p>
           <div className={styles.form}>
-            <label className={styles.field}>Video project ID<input aria-label="Video project ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="Enter a project ID" /></label>
-            <label className={styles.field}>Maximum scenes<input aria-label="Maximum scenes" type="number" min="0" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} /></label>
-            <label className={styles.check}><input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} /> Skip clips that are already rendered</label>
+            <label className={styles.field}>{tr("Video project ID")}<input aria-label={tr("Video project ID")} value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder={tr("Enter a project ID")} /></label>
+            <label className={styles.field}>{tr("Maximum scenes")}<input aria-label={tr("Maximum scenes")} type="number" min="0" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} /></label>
+            <label className={styles.check}><input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} /> {tr("Skip clips that are already rendered")}</label>
             {error ? <span role="alert" className={styles.error}>{error}</span> : null}
-            <button type="button" className={styles.primary} disabled={!provider || !projectId.trim() || busy} onClick={() => void submit()}><Play size={16} /> {busy ? "Submitting…" : "Start rendering"}</button>
-            {orderId ? <div className={styles.result}><strong>Render request submitted</strong><p>{latest ? `${latest.status}: ${latest.message}` : "Your provider has received the request. Check again for progress."}</p><button type="button" className={styles.secondary} onClick={() => void refreshResult()}><RotateCcw size={14} /> Check progress</button></div> : null}
+            <button type="button" className={styles.primary} disabled={!provider || !projectId.trim() || busy} onClick={() => void submit()}><Play size={16} /> {busy ? tr("Submitting…") : tr("Start rendering")}</button>
+            {orderId ? <div className={styles.result}><strong>{tr("Render request submitted")}</strong><p>{latest ? `${tr(latest.status)}: ${latest.message}` : tr("Your provider has received the request. Check again for progress.")}</p><button type="button" className={styles.secondary} onClick={() => void refreshResult()}><RotateCcw size={14} /> {tr("Check progress")}</button></div> : null}
           </div>
         </section>
         <aside className={styles.panel}>
-          <h2>Before you start</h2><p className={styles.panelLead}>The final cost will not exceed the amount shown here.</p>
-          <div className={styles.summary}><div className={styles.summaryRow}><span>Availability</span><strong>{provider ? "Ready" : "Unavailable"}</strong></div><div className={styles.summaryRow}><span>Maximum cost</span><strong>{provider ? `${price} credits` : "—"}</strong></div><div className={styles.summaryRow}><span>Capacity</span><strong>{provider ? `${provider.capacity_units} slot${provider.capacity_units === 1 ? "" : "s"}` : "—"}</strong></div></div>
-          {provider ? <details className={styles.details}><summary>Provider details</summary><div className={styles.detailBody}><span>{provider.provider_name || provider.node_name}</span><span>{provider.network_id}</span><span>{provider.peer_id}</span></div></details> : null}
+          <h2>{tr("Before you start")}</h2><p className={styles.panelLead}>{tr("The final cost will not exceed the amount shown here.")}</p>
+          <div className={styles.summary}><div className={styles.summaryRow}><span>{tr("Availability")}</span><strong>{provider ? tr("Ready") : tr("Unavailable")}</strong></div><div className={styles.summaryRow}><span>{tr("Maximum cost")}</span><strong>{provider ? tr("{{count}} credits", { count: price }) : "—"}</strong></div><div className={styles.summaryRow}><span>{tr("Capacity")}</span><strong>{provider ? tr("{{count}} slots", { count: provider.capacity_units }) : "—"}</strong></div></div>
+          {provider ? <details className={styles.details}><summary>{tr("Provider details")}</summary><div className={styles.detailBody}><span>{provider.provider_name || provider.node_name}</span><span>{provider.network_id}</span><span>{provider.peer_id}</span></div></details> : null}
         </aside>
       </div>
     </div>

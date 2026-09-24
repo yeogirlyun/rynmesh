@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import { Bot, CornerDownLeft, Server, User } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
@@ -9,12 +10,12 @@ const seed: ConversationMessage[] = [
   {
     id: "m1",
     role: "user",
-    text: "Search design references about urban gardens.",
+    get text() { return tr("Search design references about urban gardens."); },
   },
   {
     id: "m2",
     role: "system",
-    text: "Routed via local Ryn node. Querying trusted peers for design and urban-gardens tags.",
+    get text() { return tr("Routed via local Ryn node. Querying trusted peers for design and urban-gardens tags."); },
     operations: [
       { name: "discoverPeers", risk: "low", status: "done" },
       { name: "listContent(filters)", risk: "low", status: "done" },
@@ -24,13 +25,14 @@ const seed: ConversationMessage[] = [
   {
     id: "m3",
     role: "assistant",
-    text: "Two strong candidates from mira.studio are signed and safety-passed. A third from tomo-dataset is only metadata-reviewed, so I would fetch its preview before trusting the ranking.",
+    get text() { return tr("Two strong candidates from mira.studio are signed and safety-passed. A third from tomo-dataset is only metadata-reviewed, so I would fetch its preview before trusting the ranking."); },
     cites: ["cid_8f1a23b9c4", "cid_5012ff8801"],
-    suggests: ["Fetch previews for the top 3", "Show only proven peers", "More like this"],
+    get suggests() { return [tr("Fetch previews for the top 3"), tr("Show only proven peers"), tr("More like this")]; },
   },
 ];
 
 export default function SearchAsk() {
+  useUILanguage();
   const { client, notify } = useAppContext();
   const [messages, setMessages] = useState<ConversationMessage[]>(client.mode === "fixture" ? seed : []);
   const [text, setText] = useState("");
@@ -58,7 +60,7 @@ export default function SearchAsk() {
         },
       ]);
     } catch {
-      notify("danger", "Local node could not complete the request");
+      notify("danger", tr("Local node could not complete the request"));
     } finally {
       setSending(false);
     }
@@ -67,20 +69,20 @@ export default function SearchAsk() {
   return (
     <div className="searchask-layout">
       <PageHeader
-        eyebrow="Search and Ask"
-        title="Search & ask"
-        context="Find content across connected devices and ask questions about it."
+        eyebrow={tr("Search and Ask")}
+        title={tr("Search & ask")}
+        context={tr("Find content across connected devices and ask questions about it.")}
         actions={
           <>
-            <Chip tone="ok">via local node</Chip>
-            <Chip tone="muted">local model</Chip>
+            <Chip tone="ok">{tr("via local node")}</Chip>
+            <Chip tone="muted">{tr("local model")}</Chip>
           </>
         }
       />
 
       <Panel className="conversation-panel">
         <div className="messages">
-          {!messages.length && <EmptyState title="Ask about your content" body="Search connected devices or ask for an explanation of a recommendation." />}
+          {!messages.length && <EmptyState title={tr("Ask about your content")} body={tr("Search connected devices or ask for an explanation of a recommendation.")} />}
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} onSuggest={setText} />
           ))}
@@ -89,29 +91,29 @@ export default function SearchAsk() {
           <textarea
             value={text}
             onChange={(event) => setText(event.target.value)}
-            placeholder="Ask the node to search, rank, fetch previews, or explain recommendations..."
+            placeholder={tr("Ask the node to search, rank, fetch previews, or explain recommendations...")}
           />
           <Button type="submit" variant="primary" icon={CornerDownLeft} disabled={sending || !text.trim()}>
-            {sending ? "Routing" : "Send"}
+            {sending ? tr("Routing") : tr("Send")}
           </Button>
         </form>
       </Panel>
 
-      <Panel title="Active policy" className="policy-panel">
+      <Panel title={tr("Active policy")} className="policy-panel">
         <div className="policy-grid">
-          <span>Network access</span>
-          <Chip tone="ok">node mediated</Chip>
-          <span>Discovery</span>
-          <Chip tone="info">allowed</Chip>
-          <span>Fetch on suggest</span>
-          <Chip tone="warn">preview only</Chip>
-          <span>Cloud model</span>
-          <Chip tone="muted">disabled</Chip>
-          <span>Safety policy</span>
-          <Chip tone="info">standard</Chip>
+          <span>{tr("Network access")}</span>
+          <Chip tone="ok">{tr("node mediated")}</Chip>
+          <span>{tr("Discovery")}</span>
+          <Chip tone="info">{tr("allowed")}</Chip>
+          <span>{tr("Fetch on suggest")}</span>
+          <Chip tone="warn">{tr("preview only")}</Chip>
+          <span>{tr("Cloud model")}</span>
+          <Chip tone="muted">{tr("disabled")}</Chip>
+          <span>{tr("Safety policy")}</span>
+          <Chip tone="info">{tr("standard")}</Chip>
         </div>
         <div className="try-list">
-          {["Find more like this.", "Show only proven peers.", "Fetch previews for the top 10.", "Explain why item 4 outranks item 7."].map((suggestion) => (
+          {[tr("Find more like this."), tr("Show only proven peers."), tr("Fetch previews for the top 10."), tr("Explain why item 4 outranks item 7.")].map((suggestion) => (
             <button key={suggestion} type="button" onClick={() => setText(suggestion)}>
               {suggestion}
             </button>
@@ -129,12 +131,13 @@ function MessageBubble({
   message: ConversationMessage;
   onSuggest: (text: string) => void;
 }) {
+  useUILanguage();
   if (message.role === "system") {
     return (
       <div className="message message-system">
         <div className="message-title">
           <Server size={16} />
-          Search activity
+          {tr("Search activity")}
         </div>
         <p>{message.text}</p>
         <div className="operation-list">
@@ -142,9 +145,9 @@ function MessageBubble({
             <span key={operation.name}>
               {operation.name}
               <Chip tone={operation.risk === "low" ? "info" : operation.risk === "medium" ? "warn" : "danger"}>
-                {operation.risk}
+                {tr(operation.risk)}
               </Chip>
-              <Chip tone={operation.status === "done" ? "ok" : "warn"}>{operation.status}</Chip>
+              <Chip tone={operation.status === "done" ? "ok" : "warn"}>{tr(operation.status)}</Chip>
             </span>
           ))}
         </div>
@@ -155,7 +158,7 @@ function MessageBubble({
     <div className={`message message-${message.role}`}>
       <div className="message-title">
         {message.role === "user" ? <User size={16} /> : <Bot size={16} />}
-        {message.role === "user" ? "You" : "Assistant"}
+        {message.role === "user" ? tr("You") : tr("Assistant")}
       </div>
       <p>{message.text}</p>
       {message.cites?.length ? (

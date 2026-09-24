@@ -4,8 +4,41 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 import time
 from typing import Any
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
+from referencing import Registry
+
+
+def validate_tool_schema(schema):
+    pending = [(schema, 0)]
+    nodes = 0
+    while pending:
+        value, depth = pending.pop()
+        nodes += 1
+        if depth > 32 or nodes > 4096:
+            raise ValueError("tool schema complexity limit exceeded")
+        if isinstance(value, dict):
+            for name, item in value.items():
+                if name in {"$ref", "$dynamicRef"} and (not isinstance(item, str) or not item.startswith("#")):
+                    raise ValueError("external tool schema references are disabled")
+                pending.append((item, depth + 1))
+        elif isinstance(value, list):
+            pending.extend((item, depth + 1) for item in value)
+    try:
+        Draft202012Validator.check_schema(schema)
+    except (SchemaError, RecursionError) as exc:
+        raise ValueError("invalid tool parameter schema") from exc
+
+
+def validate_tool_arguments(schema, arguments):
+    try:
+        Draft202012Validator(schema, registry=Registry()).validate(arguments)
+    except (ValidationError, RecursionError) as exc:
+        raise ValueError("client tool arguments do not match its schema") from exc
 
 
 def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
@@ -81,8 +114,13 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
         function = tool.get("function", {}) if isinstance(tool, dict) else {}
         if not isinstance(tool, dict) or tool.get("type") != "function" or not isinstance(function, dict) or not isinstance(function.get("name"), str):
             raise ValueError("only named function tools are supported")
-        if function.get("strict"):
-            raise ValueError("strict tool schemas are not supported")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", function["name"]) or function["name"] in names:
+            raise ValueError("invalid or duplicate tool name")
+        if not isinstance(function.get("parameters", {}), dict):
+            raise ValueError("tool parameters must be a JSON schema object")
+        validate_tool_schema(function.get("parameters", {}))
+        if "strict" in function and type(function["strict"]) is not bool:
+            raise ValueError("strict must be boolean")
         names.add(function["name"])
     choice = body.get("tool_choice", "auto")
     if isinstance(choice, dict):

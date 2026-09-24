@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { setLanguagePreference } from "../i18n";
 import { MemoryRouter } from "react-router-dom";
 import { DesktopPage } from "./Desktop";
 import * as desktop from "../domain/desktopClient";
@@ -18,6 +19,21 @@ beforeEach(() => {
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
 function view() { render(<MemoryRouter><DesktopPage /></MemoryRouter>); }
+it("translates desktop controls and keeps preview actions working in Chinese", async () => {
+  window.history.replaceState({}, "", "/settings/desktop?client=fixture");
+  view();
+  await act(async () => { setLanguagePreference("zh-CN"); });
+  expect(screen.getByRole("switch", { name: "登录时启动" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "启动与后台运行" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "快捷操作" })).toBeInTheDocument();
+  expect(screen.queryByText("Startup & background")).not.toBeInTheDocument();
+  expect(screen.queryByText("At your fingertips")).not.toBeInTheDocument();
+  expect(screen.getByText("0 个进行中的 AI 任务")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "暂停 AI 共享" }));
+  expect(await screen.findByRole("heading", { name: "AI 共享已暂停" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("预览：AI 共享已暂停");
+  expect(desktop.runDesktopAction).not.toHaveBeenCalled();
+});
 it("fixture controls never invoke Windows actions", async () => {
   window.history.replaceState({}, "", "/settings/desktop?client=fixture");
   vi.mocked(isTauriDesktop).mockReturnValue(true);

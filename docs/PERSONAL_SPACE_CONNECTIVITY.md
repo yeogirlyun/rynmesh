@@ -7,9 +7,10 @@ chat's `auto` route. It does not introduce or deploy a relay server.
 
 ## What happens when you send a message
 
-1. Look up the selected provider by its device identity and read its current
-   advertised endpoint from discovery.
-2. Try HTTP directly. The socket connection has a 3-second budget; model inference
+1. Look up the selected provider by its device identity. LAN-facing nodes now
+   perform signed IPv4 multicast discovery; see [LAN discovery](LAN_DISCOVERY.md).
+2. Try fresh discovered LAN HTTP addresses first, then the provider's original
+   advertised endpoint. Each socket connection has a 3-second budget; model inference
    retains its own, longer timeout. Direct peer requests bypass HTTP proxies and
    do not follow redirects. Requests and responses remain signed and encrypted.
 3. If the direct attempt fails, collect fresh ICE candidates and exchange them

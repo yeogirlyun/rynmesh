@@ -19,6 +19,7 @@ if (-not $SkipSidecar) {
     & $pythonExe -m PyInstaller --onefile --noconfirm --clean --name rynmesh-peer `
         --collect-submodules uvicorn --collect-submodules rynmesh --collect-submodules anyio `
         --collect-data rynmesh --copy-metadata rynmesh `
+        --collect-data jsonschema_specifications `
         --distpath (Join-Path $buildRoot 'dist') --workpath (Join-Path $buildRoot 'work') `
         --specpath $buildRoot (Join-Path $tauriRoot 'sidecar/rynmesh_peer_entry.py')
     Assert-Success 'Build bundled node'

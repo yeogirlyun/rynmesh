@@ -60,11 +60,11 @@ fn update_startup(prefs: &Preferences) -> Result<(), String> {
                 &format!("\"{}\"{}", exe.display(), if prefs.silent_start { " --background" } else { "" }), "/f"]);
         } else { command.args(["delete", RUN_KEY, "/v", "Ryn", "/f"]); }
         if !command.output().map_err(|e| e.to_string())?.status.success() {
-            return Err("Windows could not update launch at sign-in.".into());
+            return Err(crate::localization::tr("Windows could not update launch at sign-in."));
         }
     }
     #[cfg(not(windows))]
-    if prefs.startup { return Err("Launch at sign-in is available in the Windows app.".into()); }
+    if prefs.startup { return Err(crate::localization::tr("Launch at sign-in is available in the Windows app.")); }
     Ok(())
 }
 #[tauri::command]

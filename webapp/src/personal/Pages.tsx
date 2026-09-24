@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   ArrowDownToLine,
   Check,
   ChevronRight,
   Copy,
   ExternalLink,
+  Globe2,
   Link2,
   Moon,
   Pencil,
   Plus,
   Search,
   Share2,
-  Sun,
   X,
 } from "lucide-react";
 import { useAppContext } from "../appContext";
@@ -20,7 +21,6 @@ import type { LLMOrderResult } from "../domain/nodeClient";
 import type { WorkResult } from "../domain/types";
 import {
   Arrow,
-  Connection,
   DeviceArt,
   Empty,
   Modal,
@@ -31,6 +31,10 @@ import {
   Tabs,
 } from "./components";
 import { EditDevice, PairDevice, ShareServices } from "./Dialogs";
+import { DeviceTopology } from "./DeviceTopology";
+import { LanguageSelect } from "./LanguageSelect";
+import { nativeModelRequest, nativeBusy } from "../domain/nativeModel";
+import { tr } from "../uiI18n";
 import { personalHref, usePersonal, type Device, type Service } from "./model";
 
 function useLinks() {
@@ -56,6 +60,7 @@ function ServiceRow({
   selected?: boolean;
   compact?: boolean;
 }) {
+  const { t } = useTranslation();
   const { resolveName, devices, demo } = usePersonal();
   const href = useLinks();
   const [preview, setPreview] = useState(false);
@@ -74,16 +79,16 @@ function ServiceRow({
               : navigate(href(serviceUrl(service))))
         }
       >
-        <ServiceArt kind={service.kind} />
+        <ServiceArt kind={service.kind} brand={service.brand} />
         <div>
-          <h3>{service.title}</h3>
+          <h3 className="pf-service-title">{service.title}{service.accessLabel && <span className="pf-access-label">{service.accessLabel}</span>}</h3>
           <p>
             {resolveName(service.deviceId)} ·{" "}
             {devices.find((device) => device.id === service.deviceId)?.own
-              ? "My device"
+              ? t("personal.myDevice")
               : demo
-                ? "Shared with me"
-                : "Discovered device"}
+                ? t("personal.sharedWithMe")
+                : t("personal.discoveredDevice")}
           </p>
           {!compact && <small>{service.description}</small>}
         </div>
@@ -103,12 +108,12 @@ function ServiceRow({
             : navigate(href(serviceUrl(service)))
         }
       >
-        {service.kind === "ai" ? "Open chat" : "Open"}
+        {service.kind === "ai" ? t("personal.openChat") : t("personal.open")}
       </button>
       {onSelect && (
         <button
           className="pf-icon-button"
-          aria-label={`View ${service.title} details`}
+          aria-label={t("personal.viewNameDetails", { name: service.title })}
           onClick={onSelect}
         >
           <Arrow />
@@ -118,12 +123,11 @@ function ServiceRow({
         <Modal title={service.title} onClose={() => setPreview(false)}>
           <ServiceArt kind={service.kind} />
           <p>
-            This service is shown as sample data in the design preview. It is
-            not installed or running.
+            {t("personal.thisServiceIsShownAsSampleDataInTheDesignPreviewItIsNotInstalledOrRunning")}
           </p>
           <footer className="pf-dialog-actions">
             <button className="pf-button" onClick={() => setPreview(false)}>
-              Close
+              {t("personal.close")}
             </button>
           </footer>
         </Modal>
@@ -132,7 +136,8 @@ function ServiceRow({
   );
 }
 export function PersonalHome() {
-  const { devices, services, loading, error, refresh } = usePersonal();
+  const { t } = useTranslation();
+  const { devices, services, loading, error, refresh, demo } = usePersonal();
   const [selectedId, setSelectedId] = useState("");
   const [pair, setPair] = useState(false);
   const [edit, setEdit] = useState<Device | null>(null);
@@ -146,73 +151,38 @@ export function PersonalHome() {
   return (
     <div className="pf-page">
       <PageHeading
-        title="Home"
-        description="Use your devices. Share what they can do."
+        title={t("nav.home")}
+        description={t("pages.homeSubtitle")}
       >
         <button className="pf-button dark" onClick={() => setPair(true)}>
           <Plus size={19} />
-          Add device
+          {t("personal.addDevice")}
         </button>
       </PageHeading>
       {error && (
         <div className="pf-callout">
           {error}
           <button className="pf-link" onClick={() => void refresh()}>
-            Retry
+            {t("personal.retry")}
           </button>
         </div>
       )}
-      <div className="pf-section-heading">
-        <h2>
-          My devices <span>({owned.length})</span>
-        </h2>
-      </div>
-      <div className="pf-device-grid">
-        {owned.map((device) => (
-          <article
-            className={`pf-device-card${selected?.id === device.id ? " selected" : ""}`}
-            key={device.id}
-          >
-            <button
-              className="pf-device-select"
-              onClick={() => setSelectedId(device.id)}
-              aria-pressed={selected?.id === device.id}
-            >
-              <div className="pf-device-card-top">
-                <DeviceArt kind={device.kind} />
-                <Status online={device.online} self={device.self} />
-              </div>
-              <h3>{device.name}</h3>
-              <p>
-                {device.hardware ? `${device.hardware} · ` : ""}
-                {services.filter((service) => service.deviceId === device.id)
-                  .length || ""}
-                {services.some((service) => service.deviceId === device.id)
-                  ? " services"
-                  : device.self
-                    ? "Current device"
-                    : ""}
-              </p>
-              <small>{device.note || "Add a private note"}</small>
-              <ChevronRight className="pf-card-arrow" size={19} />
-            </button>
-            <button
-              className="pf-device-edit pf-icon-button"
-              aria-label={`Edit ${device.name}`}
-              onClick={() => setEdit(device)}
-            >
-              <Pencil size={15} />
-            </button>
-          </article>
-        ))}
-      </div>
+      <DeviceTopology
+        devices={owned}
+        selected={selected}
+        loading={loading}
+        demo={demo}
+        onSelect={setSelectedId}
+        onEdit={setEdit}
+        onShare={() => setShare(true)}
+      />
       {selected && (
-        <div className="pf-home-bottom">
+        <div className="pf-home-services">
           <section>
             <div className="pf-section-heading">
               <div>
-                <h2>Services on {selected.name}</h2>
-                <p>From your {selected.name}</p>
+                <h2>{t("personal.servicesOnName", { name: selected.name })}</h2>
+                <p>{t("personal.fromYourName", { name: selected.name })}</p>
               </div>
             </div>
             <div className="pf-panel pf-service-stack">
@@ -222,14 +192,14 @@ export function PersonalHome() {
               {!offered.length && (
                 <Empty
                   title={
-                    loading ? "Finding services…" : "No services on this device"
+                    loading ? t("personal.findingServices") : t("personal.noServicesOnThisDevice")
                   }
                 >
                   {loading ? (
-                    "Checking your connected devices."
+                    t("personal.checkingYourConnectedDevices")
                   ) : (
                     <Link to={href("/services/manage")}>
-                      Set up a service on this device
+                      {t("personal.setUpAServiceOnThisDevice")}
                     </Link>
                   )}
                 </Empty>
@@ -237,45 +207,15 @@ export function PersonalHome() {
               <Link className="pf-browse-row" to={href("/services")}>
                 <Share2 size={29} strokeWidth={1.4} />
                 <div>
-                  <h3>From other devices</h3>
-                  <small>Browse services from your other devices</small>
+                  <h3>{t("personal.fromOtherDevices")}</h3>
+                  <small>{t("personal.browseServicesFromYourOtherDevices")}</small>
                 </div>
                 <span>
-                  Browse services <Arrow />
+                  {t("personal.browseServices")} <Arrow />
                 </span>
               </Link>
             </div>
           </section>
-          <aside className="pf-panel pf-connection-panel">
-            <div className="pf-section-heading">
-              <h2>{selected.name}</h2>
-              <Status online={selected.online} />
-            </div>
-            <Connection
-              device={selected}
-              current={devices.find((device) => device.self)}
-            />
-            <dl className="pf-properties">
-              <div>
-                <dt>Connection</dt>
-                <dd>
-                  {selected.self
-                    ? "This device"
-                    : selected.online
-                      ? "Online"
-                      : "Offline"}
-                </dd>
-              </div>
-              <div>
-                <dt>Access</dt>
-                <dd>{selected.self ? "Local device" : "My device"}</dd>
-              </div>
-            </dl>
-            <button className="pf-button full" onClick={() => setShare(true)}>
-              <Share2 size={17} />
-              Share service
-            </button>
-          </aside>
         </div>
       )}
       {pair && <PairDevice onClose={() => setPair(false)} />}{" "}
@@ -287,6 +227,7 @@ export function PersonalHome() {
   );
 }
 export function PersonalServices() {
+  const { t } = useTranslation();
   const { services, devices, resolveName, demo, loading, error, refresh } =
     usePersonal();
   const [params] = useSearchParams();
@@ -319,12 +260,12 @@ export function PersonalServices() {
   return (
     <div className="pf-page">
       <PageHeading
-        title="Services"
-        description="Use capabilities from your devices and devices shared with you."
+        title={t("nav.services")}
+        description={t("pages.servicesSubtitle")}
       >
         <Link className="pf-button primary" to={href("/services/manage")}>
           <Plus size={19} />
-          Add service
+          {t("personal.addService")}
         </Link>
       </PageHeading>
       <div className="pf-filter-row">
@@ -340,8 +281,8 @@ export function PersonalServices() {
         <label className="pf-search">
           <Search size={18} />
           <input
-            aria-label="Search services"
-            placeholder="Search services"
+            aria-label={t("personal.searchServices")}
+            placeholder={t("personal.searchServices")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -351,7 +292,7 @@ export function PersonalServices() {
         <Note>
           {error}{" "}
           <button className="pf-link" onClick={() => void refresh()}>
-            Retry
+            {t("personal.retry")}
           </button>
         </Note>
       )}
@@ -367,19 +308,19 @@ export function PersonalServices() {
           ))}
           {!visible.length && (
             <Empty
-              title={loading ? "Finding services…" : "No matching services"}
+              title={loading ? t("personal.findingServices") : t("personal.noMatchingServices")}
             >
-              Add a service on this device or try another filter.
+              {t("personal.addAServiceOnThisDeviceOrTryAnotherFilter")}
             </Empty>
           )}
         </div>
         {selected && (
           <aside className="pf-panel pf-service-detail">
             <div className="pf-detail-lockup">
-              <ServiceArt kind={selected.kind} />
+              <ServiceArt kind={selected.kind} brand={selected.brand} />
               <div>
                 <h2>{selected.title}</h2>
-                <p>On {resolveName(selected.deviceId)}</p>
+                <p>{t("personal.onName", { name: resolveName(selected.deviceId) })}</p>
               </div>
             </div>
             <Tabs
@@ -390,17 +331,16 @@ export function PersonalServices() {
             {tab === "Overview" ? (
               <>
                 <p className="pf-description">
-                  {selected.kind === "ai"
-                    ? `Chat with the model running on ${resolveName(selected.deviceId)}.`
-                    : selected.description}
+                  {selected.description}
+                  {selected.accessLabel && <><br />{t("personal.accessMethodMethod", { method: selected.accessLabel })}</>}
                 </p>
-                <h3>Access</h3>
+                <h3>{t("personal.access")}</h3>
                 <p>
                   {demo
                     ? owner?.own
-                      ? "Only my devices"
-                      : "Shared with me"
-                    : "Controlled by the service provider"}
+                      ? t("personal.onlyMyDevices")
+                      : t("personal.sharedWithMe")
+                    : t("personal.controlledByTheServiceProvider")}
                 </p>
                 <div className="pf-button-row">
                   <button
@@ -408,7 +348,7 @@ export function PersonalServices() {
                     onClick={() => setTab("API access")}
                   >
                     <Link2 size={15} />
-                    API access
+                    {t("personal.apiAccess")}
                   </button>
                   {owner?.own && (
                     <button
@@ -416,26 +356,26 @@ export function PersonalServices() {
                       onClick={() => setShare(true)}
                     >
                       <Share2 size={15} />
-                      Manage access
+                      {t("personal.manageAccess")}
                     </button>
                   )}
                 </div>
                 <hr />
-                <h3>Manage on {resolveName(selected.deviceId)}</h3>
-                <p>Service setup is managed on the device running it.</p>
+                <h3>{t("personal.manageOnName", { name: resolveName(selected.deviceId) })}</h3>
+                <p>{t("personal.serviceSetupIsManagedOnTheDeviceRunningIt")}</p>
                 <Link
                   className="pf-link"
                   to={href(
                     `/devices?device=${encodeURIComponent(selected.deviceId)}`,
                   )}
                 >
-                  View device <ExternalLink size={14} />
+                  {t("personal.viewDevice")} <ExternalLink size={14} />
                 </Link>
               </>
             ) : (
               <>
                 <p className="pf-description">
-                  Connect your apps and agents through the local inference API.
+                  {t("personal.connectYourAppsAndAgentsThroughTheLocalInferenceAPI")}
                 </p>
                 {selected.kind === "ai" ? (
                   <Link
@@ -443,13 +383,13 @@ export function PersonalServices() {
                     to={href("/services/api")}
                   >
                     <Link2 size={16} />
-                    Configure API access
+                    {t("personal.configureAPIAccess")}
                   </Link>
                 ) : (
                   <Note>
                     {selected.preview
-                      ? "This sample service does not provide a working API."
-                      : "API details are provided by the service owner."}
+                      ? t("personal.thisSampleServiceDoesNotProvideAWorkingAPI")
+                      : t("personal.apiDetailsAreProvidedByTheServiceOwner")}
                   </Note>
                 )}
               </>
@@ -462,12 +402,12 @@ export function PersonalServices() {
         style={{ marginTop: 22 }}
         to={href("/services/catalog")}
       >
-        More service tools <Arrow />
+        {t("personal.moreServiceTools")} <Arrow />
       </Link>
       <Note>
         {demo
-          ? "Request access before using a service that is not shared with you."
-          : "Discovered services are not proof of ownership or granted access. The provider checks every request."}
+          ? t("personal.requestAccessBeforeUsingAServiceThatIsNotSharedWithYou")
+          : t("personal.discoveredServicesAreNotProofOfOwnershipOrGrantedAccessTheProviderChecksEveryRequest")}
       </Note>
       {share && owner && (
         <ShareServices device={owner} onClose={() => setShare(false)} />
@@ -476,6 +416,7 @@ export function PersonalServices() {
   );
 }
 export function PersonalDevices() {
+  const { t } = useTranslation();
   const { devices, services, demo } = usePersonal();
   const { notify } = useAppContext();
   const [params] = useSearchParams();
@@ -514,12 +455,12 @@ export function PersonalDevices() {
   return (
     <div className="pf-page">
       <PageHeading
-        title="Devices"
-        description="Manage your devices and devices shared with you."
+        title={t("nav.devices")}
+        description={t("pages.devicesSubtitle")}
       >
         <button className="pf-button dark" onClick={() => setPair(true)}>
           <Plus size={19} />
-          Add device
+          {t("personal.addDevice")}
         </button>
       </PageHeading>
       <Tabs
@@ -541,17 +482,17 @@ export function PersonalDevices() {
                   <strong>{device.name}</strong>
                   <Status online={device.online} self={device.self} />
                 </div>
-                <small>{device.own ? "Your device" : "Remote device"}</small>
+                <small>{device.own ? t("personal.yourDevice") : t("personal.remoteDevice")}</small>
                 <small className="pf-ellipsis">
-                  Private note: {device.note || "Not set"}
+                  {t("personal.privateNote")} {device.note || t("personal.notSet")}
                 </small>
               </div>
               <Arrow />
             </button>
           ))}
           {!visible.length && (
-            <Empty title="No devices here yet">
-              Add a device to get started.
+            <Empty title={t("personal.noDevicesHereYet")}>
+              {t("personal.addADeviceToGetStarted")}
             </Empty>
           )}
         </div>
@@ -565,9 +506,9 @@ export function PersonalDevices() {
                     <h2>{selected.name}</h2>
                     <Status online={selected.online} self={selected.self} />
                   </div>
-                  <p>{selected.own ? "Your device" : "Remote device"}</p>
+                  <p>{selected.own ? t("personal.yourDevice") : t("personal.remoteDevice")}</p>
                   <div className="pf-device-id">
-                    Device ID:{" "}
+                    {t("personal.deviceID")}{" "}
                     <code title={selected.id}>
                       {selected.id.length > 20
                         ? `${selected.id.slice(0, 9)}…${selected.id.slice(-5)}`
@@ -575,13 +516,13 @@ export function PersonalDevices() {
                     </code>
                     <button
                       className="pf-icon-button"
-                      aria-label="Copy device ID"
+                      aria-label={t("personal.copyDeviceID")}
                       onClick={async () => {
                         try {
                           await navigator.clipboard.writeText(selected.id);
-                          notify("ok", "Device ID copied");
+                          notify("ok", t("personal.deviceIDCopied"));
                         } catch {
-                          notify("warn", "Could not copy the device ID.");
+                          notify("warn", t("personal.couldNotCopyTheDeviceID"));
                         }
                       }}
                     >
@@ -592,40 +533,40 @@ export function PersonalDevices() {
               </div>
               <dl className="pf-properties">
                 <div>
-                  <dt>{selected.own ? "Device name" : "Nickname"}</dt>
+                  <dt>{selected.own ? t("personal.deviceName") : t("personal.nickname")}</dt>
                   <dd>{selected.name}</dd>
                 </div>
                 <div>
-                  <dt>Private note</dt>
-                  <dd>{selected.note || "Not set"}</dd>
+                  <dt>{t("personal.privateNoteLabel")}</dt>
+                  <dd>{selected.note || t("personal.notSet")}</dd>
                 </div>
               </dl>
               <button className="pf-button" onClick={() => setEdit(true)}>
                 <Pencil size={15} />
-                Edit details
+                {t("personal.editDetails")}
               </button>
               <Note>
-                Only you can see private notes.
+                {t("personal.onlyYouCanSeePrivateNotes")}
                 {!selected.own
-                  ? " The owner’s device name stays unchanged."
+                  ? t("personal.theOwnersDeviceNameStaysUnchanged")
                   : ""}
               </Note>
             </section>
             <div className="pf-section-heading">
-              <h2>Access</h2>
+              <h2>{t("personal.access")}</h2>
             </div>
             <div className="pf-panel pf-access-list">
               {offered.map((service) => (
                 <div className="pf-access-row" key={service.id}>
-                  <ServiceArt kind={service.kind} small />
+                  <ServiceArt kind={service.kind} brand={service.brand} small />
                   <div>
                     <h3>{service.title}</h3>
                     <small>
                       {selected.own
-                        ? "Provided by this device"
+                        ? t("personal.providedByThisDevice")
                         : demo
-                          ? "Shared with me"
-                          : "Advertised by this device"}
+                          ? t("personal.sharedWithMe")
+                          : t("personal.advertisedByThisDevice")}
                     </small>
                   </div>
                   <Status
@@ -641,23 +582,23 @@ export function PersonalDevices() {
                 </div>
               ))}
               {!offered.length && (
-                <Note>No services advertised on this device.</Note>
+                <Note>{t("personal.noServicesAdvertisedOnThisDevice")}</Note>
               )}
               <Link className="pf-browse-row" to={href("/services")}>
-                View services <Arrow />
+                {t("personal.viewServices")} <Arrow />
               </Link>
             </div>
             <div className="pf-device-actions">
               {selected.own ? (
                 <button className="pf-button" onClick={() => setShare(true)}>
                   <Share2 size={16} />
-                  Share services
+                  {t("personal.shareServices")}
                 </button>
               ) : (
-                <Note>Service access is managed by the device owner.</Note>
+                <Note>{t("personal.serviceAccessIsManagedByTheDeviceOwner")}</Note>
               )}
               <Link className="pf-link" to={href("/peers")}>
-                Connection details <Arrow />
+                {t("personal.connectionDetails")} <Arrow />
               </Link>
             </div>
           </div>
@@ -685,11 +626,14 @@ type Task = {
   llm?: boolean;
   incoming?: boolean;
   sample?: boolean;
+  titleKey?: string;
+  localModel?: boolean;
 };
 const SAMPLE_TASKS: Task[] = [
   {
     id: "sample-transcription",
     title: "Meeting transcription",
+    titleKey: "personal.meetingTranscription",
     deviceId: "preview-alex",
     kind: "audio",
     status: "running",
@@ -699,6 +643,7 @@ const SAMPLE_TASKS: Task[] = [
   {
     id: "sample-document",
     title: "Convert proposal",
+    titleKey: "personal.convertProposal",
     deviceId: "peer:fixture-llm-provider",
     kind: "document",
     status: "completed",
@@ -709,6 +654,7 @@ const SAMPLE_TASKS: Task[] = [
   {
     id: "sample-failed",
     title: "Transcribe interview",
+    titleKey: "personal.transcribeInterview",
     deviceId: "preview-studio",
     kind: "audio",
     status: "failed",
@@ -723,6 +669,7 @@ function taskState(state: string) {
   return "Processing";
 }
 export function PersonalTasks() {
+  const { t } = useTranslation();
   const { client, node, notify } = useAppContext();
   const { demo, devices, resolveName } = usePersonal();
   const [tasks, setTasks] = useState<Task[]>(demo ? SAMPLE_TASKS : []);
@@ -738,25 +685,32 @@ export function PersonalTasks() {
         client.listLLMOrders(),
         client.listWorkResults(),
         client.listLLMProviderOrders(),
+          demo ? Promise.resolve(null) : nativeModelRequest().catch(() => null),
       ]);
       if (!active) return;
       const llm = results[0].status === "fulfilled" ? results[0].value : [];
       const work = results[1].status === "fulfilled" ? results[1].value : [];
+      const native = results[3].status === "fulfilled" ? results[3].value : null;
       const provider =
         results[2].status === "fulfilled" ? results[2].value : [];
       setError(
         results.some((result) => result.status === "rejected")
-          ? "Some tasks could not be loaded. Retrying automatically."
+          ? t("personal.someTasksCouldNotBeLoadedRetryingAutomatically")
           : "",
       );
       setTasks([
         ...(demo ? SAMPLE_TASKS : []),
+        ...(native && (nativeBusy(native) || native.state === "error") ? [{
+          id: "local-model", title: `${tr("本地模型")} · ${native.name}`,
+          deviceId: node.peer_id, kind: "ai" as const,
+          status: native.state === "error" ? "failed" : "running", localModel: true,
+        }] : []),
         ...llm.map(
           (order: LLMOrderResult): Task => ({
             id: order.task_id,
             title: order.model_alias
-              ? `AI chat · ${order.model_alias}`
-              : "AI chat",
+              ? `${t("personal.aiChat")} · ${order.model_alias}`
+              : t("personal.aiChat"),
             deviceId: order.provider_peer_id || "",
             kind: "ai",
             status: order.state,
@@ -768,8 +722,8 @@ export function PersonalTasks() {
           (order: LLMOrderResult): Task => ({
             id: `provider-${order.task_id}`,
             title: order.model_alias
-              ? `AI chat · ${order.model_alias}`
-              : "AI chat",
+              ? `${t("personal.aiChat")} · ${order.model_alias}`
+              : t("personal.aiChat"),
             deviceId: node.peer_id,
             kind: "ai",
             status: order.state,
@@ -779,7 +733,7 @@ export function PersonalTasks() {
         ...work.map(
           (order: WorkResult): Task => ({
             id: order.work_order_id,
-            title: order.message || "Service task",
+            title: order.message || t("personal.serviceTask"),
             deviceId: order.provider_peer_id,
             kind: "network",
             status: order.status,
@@ -794,7 +748,7 @@ export function PersonalTasks() {
       active = false;
       clearInterval(timer);
     };
-  }, [client, demo, node.peer_id]);
+  }, [client, demo, node.peer_id, t]);
   const visible = tasks.filter(
     (task) =>
       (direction === "Running on this device"
@@ -819,8 +773,8 @@ export function PersonalTasks() {
   return (
     <div className="pf-page">
       <PageHeading
-        title="Tasks"
-        description="Track work running across your devices."
+        title={t("nav.tasks")}
+        description={t("pages.tasksSubtitle")}
       />
       <div className={`pf-tasks-layout${selected ? " with-detail" : ""}`}>
         <section>
@@ -841,10 +795,10 @@ export function PersonalTasks() {
             <table className="pf-task-table">
               <thead>
                 <tr>
-                  <th>Task</th>
-                  <th>Runs on</th>
-                  <th>Status</th>
-                  <th>Action</th>
+                  <th>{t("personal.task")}</th>
+                  <th>{t("personal.runsOn")}</th>
+                  <th>{t("personal.status")}</th>
+                  <th>{t("personal.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -857,7 +811,7 @@ export function PersonalTasks() {
                       <div className="pf-inline">
                         <ServiceArt kind={task.kind} small />
                         <div>
-                          <strong>{task.title}</strong>
+                          <strong>{task.titleKey ? t(task.titleKey) : task.title}</strong>
                           <small>{task.input || task.id}</small>
                         </div>
                       </div>
@@ -875,7 +829,7 @@ export function PersonalTasks() {
                         <span>
                           {task.deviceId
                             ? resolveName(task.deviceId)
-                            : "Not reported"}
+                            : t("personal.notReported")}
                         </span>
                       </div>
                     </td>
@@ -888,9 +842,9 @@ export function PersonalTasks() {
                     <td>
                       <button
                         className="pf-button"
-                        onClick={() => setSelectedId(task.id)}
+                        onClick={() => task.localModel ? window.location.assign("/services/sources?model=local") : setSelectedId(task.id)}
                       >
-                        View <ChevronRight size={14} />
+                        {t("personal.view")} <ChevronRight size={14} />
                       </button>
                     </td>
                   </tr>
@@ -898,51 +852,50 @@ export function PersonalTasks() {
               </tbody>
             </table>
             {!visible.length && (
-              <Empty title="No tasks yet">
-                Tasks will appear here when you use a service.
+              <Empty title={t("personal.noTasksYet")}>
+                {t("personal.tasksWillAppearHereWhenYouUseAService")}
               </Empty>
             )}
           </div>
           <Note>
-            If a task fails due to a connection issue, you can try it again
-            later.
+            {t("personal.ifATaskFailsDueToAConnectionIssueYouCanTryItAgainLater")}
           </Note>
         </section>
         {selected && (
           <aside className="pf-panel pf-task-detail">
             <div className="pf-section-heading">
-              <h2>{selected.title}</h2>
+              <h2>{selected.titleKey ? t(selected.titleKey) : selected.title}</h2>
               <button
                 className="pf-icon-button"
-                aria-label="Close task details"
+                aria-label={t("personal.closeTaskDetails")}
                 onClick={() => setSelectedId("")}
               >
                 <X size={18} />
               </button>
             </div>
-            <p>Runs on</p>
+            <p>{t("personal.runsOn")}</p>
             <div className="pf-inline">
               <DeviceArt small />
               <strong>
                 {selected.deviceId
                   ? resolveName(selected.deviceId)
-                  : "Not reported by this task"}
+                  : t("personal.notReportedByThisTask")}
               </strong>
             </div>
-            <p>Service</p>
+            <p>{t("personal.service")}</p>
             <div className="pf-inline">
               <ServiceArt kind={selected.kind} />
               <strong>
                 {selected.kind === "ai"
-                  ? "AI chat"
+                  ? t("personal.aiChat")
                   : selected.kind === "audio"
-                    ? "Transcription"
+                    ? t("personal.transcription")
                     : selected.kind === "document"
-                      ? "Document converter"
-                      : "Service task"}
+                      ? t("personal.documentConverter")
+                      : t("personal.serviceTask")}
               </strong>
             </div>
-            <p>Status</p>
+            <p>{t("personal.status")}</p>
             <Status
               online={taskState(selected.status) === "Completed"}
               label={taskState(selected.status)}
@@ -952,7 +905,7 @@ export function PersonalTasks() {
                 {["Submitted", "Accepted", "Processing", "Result ready"].map(
                   (step, index) => (
                     <li
-                      key={step}
+                      key={t(`personal.${({ Submitted: "submitted", Accepted: "accepted", Processing: "processing", "Result ready": "resultReady" } as Record<string, string>)[step]}`)}
                       className={
                         index <
                         (taskState(selected.status) === "Completed" ? 4 : 2)
@@ -968,7 +921,7 @@ export function PersonalTasks() {
                           ""
                         )}
                       </span>
-                      {step}
+                      {t(`personal.${({ Submitted: "submitted", Accepted: "accepted", Processing: "processing", "Result ready": "resultReady" } as Record<string, string>)[step]}`)}
                     </li>
                   ),
                 )}
@@ -976,7 +929,7 @@ export function PersonalTasks() {
             )}
             {selected.input && (
               <>
-                <p>Input file</p>
+                <p>{t("personal.inputFile")}</p>
                 <strong>{selected.input}</strong>
               </>
             )}
@@ -986,7 +939,7 @@ export function PersonalTasks() {
                 onClick={() => download(selected)}
               >
                 <ArrowDownToLine size={16} />
-                Download result
+                {t("personal.downloadResult")}
               </button>
             )}
             {selected.llm && taskState(selected.status) === "Processing" && (
@@ -1007,20 +960,20 @@ export function PersonalTasks() {
                     notify(
                       "info",
                       result.state === "cancelled"
-                        ? "Task cancelled"
-                        : "Cancellation requested. Waiting for the processing device.",
+                        ? t("personal.taskCancelled")
+                        : t("personal.cancellationRequestedWaitingForTheProcessingDevice"),
                     );
                   } catch {
-                    notify("danger", "Could not cancel the task.");
+                    notify("danger", t("personal.couldNotCancelTheTask"));
                   } finally {
                     setBusy(false);
                   }
                 }}
               >
-                {busy ? "Requesting cancellation…" : "Cancel task"}
+                {busy ? t("personal.requestingCancellation") : t("personal.cancelTask")}
               </button>
             )}
-            {selected.sample && <Note>Sample task. No work is running.</Note>}
+            {selected.sample && <Note>{t("personal.sampleTaskNoWorkIsRunning")}</Note>}
           </aside>
         )}
       </div>
@@ -1028,6 +981,7 @@ export function PersonalTasks() {
   );
 }
 export function PersonalSettings() {
+  const { t } = useTranslation();
   const { appearance, setAppearance, demo } = usePersonal();
   const { node, registry, refreshShell, notify } = useAppContext();
   const href = useLinks();
@@ -1035,93 +989,105 @@ export function PersonalSettings() {
   return (
     <div className="pf-page pf-settings">
       <PageHeading
-        title="Settings"
-        description="These preferences apply to this device."
+        title={t("nav.settings")}
+        description={t("settings.subtitle")}
       />
-      <section className="pf-setting-row"><div><h2>Personal space</h2><p>Add your computers, manage membership and share AI.</p></div><Link className="pf-button" to={personalHref("/settings/space", demo)}>Manage space <ChevronRight size={16} /></Link></section>
-      <section>
-        <h2>Appearance</h2>
-        <p>Choose the app’s appearance.</p>
-        <div className="pf-appearance">
+      <section className="pf-settings-general">
+        <h2 className="pf-settings-group-label">{t("settings.general")}</h2>
+        <div className="pf-settings-control-row">
+          <Globe2 size={21} strokeWidth={1.7} aria-hidden="true" />
+          <div className="pf-settings-control-copy">
+            <h3>{t("settings.language")}</h3>
+            <p>{t("settings.languageHelp")}</p>
+          </div>
+          <LanguageSelect />
+        </div>
+        <div className="pf-settings-control-row">
+          <Moon size={21} strokeWidth={1.7} aria-hidden="true" />
+          <div className="pf-settings-control-copy">
+            <h3>{t("settings.appearance")}</h3>
+            <p>{t("settings.appearanceHelp")}</p>
+          </div>
+          <div className="pf-appearance-inline">
           {(["light", "dark", "system"] as const).map((theme) => (
             <button
+              type="button"
               aria-pressed={appearance === theme}
               className={appearance === theme ? "selected" : ""}
               key={theme}
               onClick={() => setAppearance(theme)}
             >
-              {theme === "system" ? (
-                <span className="pf-system-art">
-                  <Sun size={27} />
-                  <Moon size={27} />
-                </span>
-              ) : (
-                <DeviceArt dark={theme === "dark"} />
-              )}
-              <strong>{theme[0].toUpperCase() + theme.slice(1)}</strong>
-              <span className="pf-radio">{appearance === theme && <i />}</span>
+              {t(`settings.${theme}`)}
             </button>
           ))}
+          </div>
+        </div>
+        <div className="pf-settings-control-row">
+          <div className="pf-settings-control-copy no-icon">
+            <h3>{t("nav.personalSpace")}</h3>
+            <p>{t("settings.personalSpaceHelp")}</p>
+          </div>
+          <Link className="pf-button" to={personalHref("/settings/space", demo)}>{t("settings.manageSpace")} <ChevronRight size={16} /></Link>
         </div>
       </section>
-      <section className="pf-setting-row"><div><h2>Desktop</h2><p>Startup, system tray, availability and recovery.</p></div><Link className="pf-button" to={href("/settings/desktop")}>Desktop settings <ChevronRight size={16} /></Link></section>
+      <section className="pf-setting-row"><div><h2>{t("nav.desktop")}</h2><p>{t("settings.desktopHelp")}</p></div><Link className="pf-button" to={href("/settings/desktop")}>{t("settings.desktopSettings")} <ChevronRight size={16} /></Link></section>
       <section>
         <div className="pf-setting-row">
           <div>
-            <h2>Connection</h2>
+            <h2>{t("settings.connection")}</h2>
             <Status
               online={registry.status === "connected"}
-              label={`Status: ${registry.status === "connected" ? "Connected" : "Disconnected"}`}
+              label={t("settings.status", { status: t(registry.status === "connected" ? "settings.connected" : "settings.disconnected") })}
             />
-            <p>Show connection problems and retry options.</p>
+            <p>{t("settings.connectionHelp")}</p>
           </div>
           <button className="pf-button" onClick={() => setDiagnostics(true)}>
-            Connection diagnostics
+            {t("settings.diagnostics")}
           </button>
         </div>
       </section>
       <section>
-        <h2>Data &amp; privacy</h2>
+        <h2>{t("settings.dataPrivacy")}</h2>
         <Link className="pf-setting-row" to={href("/devices")}>
           <div>
-            <h3>Private notes</h3>
-            <p>Visible only to you.</p>
+            <h3>{t("settings.privateNotes")}</h3>
+            <p>{t("settings.privateNotesHelp")}</p>
           </div>
           <Arrow />
         </Link>
         <div className="pf-setting-row">
           <div>
-            <h3>Local history</h3>
-            <p>Manage records stored on this device.</p>
+            <h3>{t("settings.localHistory")}</h3>
+            <p>{t("settings.localHistoryHelp")}</p>
           </div>
           <Link className="pf-button" to={href("/settings/advanced")}>
-            Manage
+            {t("settings.manage")}
           </Link>
         </div>
       </section>
       <Link className="pf-link" to={href("/settings/advanced")}>
-        Advanced settings <Arrow />
+        {t("nav.advancedSettings")} <Arrow />
       </Link>
       {diagnostics && (
         <Modal
-          title="Connection diagnostics"
+          title={t("settings.diagnostics")}
           onClose={() => setDiagnostics(false)}
         >
           <dl className="pf-properties">
             <div>
-              <dt>This device</dt>
+              <dt>{t("settings.thisDevice")}</dt>
               <dd>{node.node_name}</dd>
             </div>
             <div>
-              <dt>Local service</dt>
-              <dd>{node.daemon_running ? "Running" : "Stopped"}</dd>
+              <dt>{t("settings.localService")}</dt>
+              <dd>{t(node.daemon_running ? "settings.running" : "settings.stopped")}</dd>
             </div>
             <div>
-              <dt>Discovery connection</dt>
+              <dt>{t("settings.discoveryConnection")}</dt>
               <dd>{registry.status}</dd>
             </div>
             <div>
-              <dt>Known devices</dt>
+              <dt>{t("settings.knownDevices")}</dt>
               <dd>{node.peer_count}</dd>
             </div>
           </dl>
@@ -1130,10 +1096,10 @@ export function PersonalSettings() {
               className="pf-button primary"
               onClick={async () => {
                 await refreshShell();
-                notify("info", "Connection check complete");
+                notify("info", t("settings.checkComplete"));
               }}
             >
-              Check again
+              {t("settings.checkAgain")}
             </button>
           </footer>
         </Modal>

@@ -8,6 +8,14 @@ import multiprocessing
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if len(sys.argv) > 1 and sys.argv[1] == "--ryn-native-worker":
+        from rynmesh.llm_package.native_worker import main as native_main
+        native_main(sys.argv[2:])
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "--ryn-private-cli-worker":
+        from rynmesh.llm_package.process_guard import limited_exec
+        limited_exec(sys.argv[2:])
+        sys.exit(1)
     if len(sys.argv) > 1 and sys.argv[1] == "--restore-space":
         sys.argv.pop(1)
         from rynmesh.personal_space import main as restore_main

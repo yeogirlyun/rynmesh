@@ -93,6 +93,16 @@
 .pf-subnav a { display: inline-flex; align-items: center; gap: 7px; color: var(--pf-muted); font-size: 12px; padding: 7px 11px; border: 1px solid transparent; border-radius: 6px; }
 .pf-subnav a.active { background: var(--pf-selection); border-color: var(--pf-line); color: var(--pf-blue); }
 .pf-subnav a:hover { color: var(--pf-blue); }
+.pf-service-nav { gap: 8px 20px; align-items: center; margin-bottom: 32px; padding-bottom: 0; }
+.pf-service-nav a { min-height: 48px; padding: 12px 4px; font-size: 14px; font-weight: 550; border: 0; border-bottom: 3px solid transparent; border-radius: 0; white-space: nowrap; }
+.pf-service-nav a.active { background: transparent; border-color: var(--pf-blue); color: var(--pf-blue); font-weight: 650; }
+.pf-service-nav a:focus-visible { outline: 2px solid var(--pf-blue); outline-offset: 3px; border-radius: 3px; }
+.pf-service-nav .pf-service-settings { margin-left: auto; }
+@media (max-width: 760px) {
+  .pf-service-nav { gap: 0 16px; margin-bottom: 24px; }
+  .pf-service-nav a { min-height: 44px; font-size: 13px; }
+  .pf-service-nav .pf-service-settings { margin-left: 0; }
+}
 .confirm-dialog, .tour-shell, .trust-drawer { background: var(--pf-panel); color: var(--pf-text); border: 1px solid var(--pf-line); border-radius: 12px; }
 .confirm-dialog h2, .tour-shell h2, .trust-drawer h2 { font-family: "Segoe UI", sans-serif; font-style: normal; }
 .confirm-dialog .btn { border-radius: 6px; }

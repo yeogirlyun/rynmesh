@@ -1046,6 +1046,19 @@ export function makeFixtureNodeClient(): NodeClient {
     async getInferenceAccess() {
       return { base_url: "http://127.0.0.1:8791/v1", keys: [], models: [], targets: [], aliases: {} };
     },
+    async getCLIModels() { return { models: [{ id: "fixture-model", name: "示例模型", default: true }] }; },
+    async getCLIServices() {
+      return { services: [
+        { kind: "codex_cli" as const, title: "Codex CLI", installed: false, configured: false, publication_enabled: false, online: false, api_text_only: true, service_id: "" },
+        { kind: "claude_cli" as const, title: "Claude Code", installed: false, configured: false, publication_enabled: false, online: false, api_text_only: true, service_id: "" },
+      ], personal_space_required: true, personal_space_ready: false };
+    },
+    async setupCLIService() {
+      throw new Error("Connect a live node to configure a CLI service.");
+    },
+    async setCLISharing() {
+      throw new Error("Connect a live node to share a CLI service.");
+    },
     async setInferenceModelAlias() {
       throw new Error("Connect a live node to save a model alias.");
     },

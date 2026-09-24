@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import {
   Bookmark,
   ChevronLeft,
@@ -62,6 +63,7 @@ export default function DigestViewer({
   onProgress: (item: DigestItem, progress: number) => void;
   initialProgress: number;
 }) {
+  useUILanguage();
   const item = items[index];
   const [article, setArticle] = useState<ReaderArticle | null>(null);
   const [readerState, setReaderState] = useState<"idle" | "loading" | "failed">("idle");
@@ -194,15 +196,15 @@ export default function DigestViewer({
       <section className="viewer" role="dialog" aria-modal="true" aria-label={item.title}>
         <header className="viewer-head">
           <div className="viewer-kicker">
-            <Chip tone="info">{item.source_kind}</Chip>
+            <Chip tone="info">{tr(item.source_kind)}</Chip>
             <span className="viewer-source">{item.source_title}</span>
             {hostOf(item.link) ? <span className="viewer-host">{hostOf(item.link)}</span> : null}
           </div>
           <div className="viewer-head-right">
             <span className="viewer-count">
-              {index + 1} of {items.length}
+              {index + 1} {tr("of")} {items.length}
             </span>
-            <button type="button" className="viewer-close" onClick={onClose} aria-label="Close">
+            <button type="button" className="viewer-close" onClick={onClose} aria-label={tr("Close")}>
               <X size={18} />
             </button>
           </div>
@@ -254,9 +256,9 @@ export default function DigestViewer({
                 />
               ) : (
                 <p className="viewer-note">
-                  This episode didn't publish a direct audio link.{" "}
+                  {tr("This episode didn't publish a direct audio link.")}{" "}
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
-                    Open it at the source
+                    {tr("Open it at the source")}
                   </a>
                   .
                 </p>
@@ -275,7 +277,7 @@ export default function DigestViewer({
               <p className="viewer-ai">
                 <Sparkles size={13} /> {item.ai_summary}
               </p>
-              <span>AI summary from the title and public-feed description — not the full content.</span>
+              <span>{tr("AI summary from the title and public-feed description — not the full content.")}</span>
             </div>
           ) : null}
 
@@ -285,7 +287,7 @@ export default function DigestViewer({
             <div className="viewer-article">
               {readerState === "loading" ? (
                 <p className="viewer-note">
-                  <Loader2 size={14} className="viewer-spin" /> Your node is fetching this article…
+                  <Loader2 size={14} className="viewer-spin" /> {tr("Your node is fetching this article…")}
                 </p>
               ) : null}
               {article?.byline ? <p className="viewer-byline">{article.byline}</p> : null}
@@ -302,9 +304,9 @@ export default function DigestViewer({
               )}
               {readerState === "failed" ? (
                 <p className="viewer-note">
-                  This page couldn't be read here — some sites render entirely in the browser.{" "}
+                  {tr("This page couldn't be read here — some sites render entirely in the browser.")}{" "}
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
-                    Open the original
+                    {tr("Open the original")}
                   </a>
                   .
                 </p>
@@ -320,14 +322,14 @@ export default function DigestViewer({
               variant={rated === "up" ? "primary" : "standard"}
               onClick={() => rate("up")}
             >
-              More like this
+              {tr("More like this")}
             </Button>
             <Button
               icon={ThumbsDown}
               variant={rated === "down" ? "danger" : "standard"}
               onClick={() => rate("down")}
             >
-              Less
+              {tr("Less")}
             </Button>
             <Button
               icon={Bookmark}
@@ -338,38 +340,38 @@ export default function DigestViewer({
                 void onBookmark(item, next);
               }}
             >
-              {saved ? "Saved" : "Save"}
+              {saved ? tr("Saved") : tr("Save")}
             </Button>
             <a className="viewer-original" href={item.link} target="_blank" rel="noreferrer noopener">
-              <ExternalLink size={13} /> Original
+              <ExternalLink size={13} /> {tr("Original")}
             </a>
           </div>
 
           <div className="viewer-steer">
             <input
               value={steerText}
-              placeholder="Tell Ryn what you want more of — “more math explainers, less politics”"
+              placeholder={tr("Tell Ryn what you want more of — “more math explainers, less politics”")}
               onChange={(event) => setSteerText(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void submitSteer();
               }}
             />
             <Button onClick={() => void submitSteer()} disabled={!steerText.trim()}>
-              {steerSaved ? "Saved" : "Send"}
+              {steerSaved ? tr("Saved") : tr("Send")}
             </Button>
           </div>
 
           <div className="viewer-nav">
-            <button type="button" onClick={() => go(-1)} disabled={index === 0} aria-label="Previous">
+            <button type="button" onClick={() => go(-1)} disabled={index === 0} aria-label={tr("Previous")}>
               <ChevronLeft size={18} />
             </button>
             <button
               type="button"
               onClick={() => go(1)}
               disabled={index >= items.length - 1}
-              aria-label="Next"
+              aria-label={tr("Next")}
             >
-              Next <ChevronRight size={18} />
+              {tr("Next")} <ChevronRight size={18} />
             </button>
           </div>
         </footer>

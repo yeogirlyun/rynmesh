@@ -6,7 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from rynmesh.crypto import sign_payload
+from rynmesh.crypto import SignedPayload, sign_payload
+from rynmesh.jobs import verify_work_result
 from rynmesh.personal_space import PersonalSpace, SpaceError, restore_backup
 from rynmesh.registry import FilePeerRegistry
 from rynmesh.store import RynmeshStore
@@ -32,6 +33,42 @@ def join(root, child, invitation=None):
     root.tick()
     child.tick()
     return invitation
+
+
+def test_same_lan_join_completes_without_registry_mailbox_roundtrip(nodes, monkeypatch):
+    root, laptop, *_ = nodes
+    root.create("Home")
+    laptop.join(root.act("invite", {})["invitation"], "Laptop")
+    monkeypatch.setattr(laptop, "_direct_exchange",
+                        lambda order, authority: root._process(order, publish=False))
+    laptop.tick()
+    assert laptop.status()["membership"] == "active"
+    assert laptop.status()["pending"] == []
+    assert root.status()["members"][1]["name"] == "Laptop"
+    assert root.store.registry.list_work_orders(
+        network_id="space-" + root.status()["space"]["id"],
+        provider_peer_id=root.store.peer_id,
+    ) == []
+
+
+def test_direct_space_http_returns_signed_encrypted_reply(nodes):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from rynmesh.personal_space_routes import install_space_routes
+
+    root, laptop, *_ = nodes
+    root.create("Home")
+    laptop.join(root.act("invite", {})["invitation"], "Laptop")
+    request = next(iter(laptop.data["pending"].values()))["order"]
+    app = FastAPI()
+    install_space_routes(app, space=root, local_control=lambda _: None)
+    with TestClient(app) as client:
+        response = client.post("/api/peer/space/exchange", json=request)
+    assert response.status_code == 200
+    result = verify_work_result(SignedPayload.from_dict(response.json()))
+    assert result.provider_peer_id == root.store.peer_id
+    assert result.requester_peer_id == laptop.store.peer_id
+    assert "envelope" in result.result_refs
 
 
 def sync(root, child):

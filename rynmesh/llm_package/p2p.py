@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import ipaddress
 import json
+import logging
 import math
 import os
 import socket
@@ -26,6 +28,19 @@ import aioice
 
 class P2PError(RuntimeError):
     pass
+
+
+class P2PTimeoutError(asyncio.TimeoutError):
+    def __init__(self, stage: str):
+        super().__init__(f"P2P {stage} timed out")
+        self.stage = stage
+
+
+async def _connection_phase(awaitable, *, stage: str, timeout_s: float):
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        raise P2PTimeoutError(stage) from exc
 
 
 _MAGIC = b"RYNP2P1"
@@ -128,6 +143,15 @@ def stun_server_from_env() -> tuple[str, int] | None:
 
 
 def new_connection(*, controlling: bool) -> aioice.Connection:
+    if os.environ.get("RYNMESH_P2P_DIAGNOSTICS", "").lower() in {"1", "true"}:
+        # INFO contains candidate-pair transitions, never STUN credentials or
+        # application payloads (those would require DEBUG).
+        logger = logging.getLogger("aioice.ice")
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+            logger.addHandler(handler)
     # No TURN server is accepted here: strict P2P must never nominate a relay.
     bind_port = _bind_port_from_env()
     connection_type = _FixedPortConnection if bind_port is not None else aioice.Connection
@@ -594,15 +618,14 @@ async def consumer_exchange(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     connection = new_connection(controlling=True)
     try:
-        # Bound discovery/signaling/ICE as one phase without shortening model
-        # inference. Each new request gathers current interfaces and mappings.
-        async def connect():
-            offer = await gather_signal(connection)
-            answer = await publish_offer(offer)
-            validate_distinct_public_egress(offer, answer)
-            await apply_remote_signal(connection, answer)
-            await connection.connect()
-        await asyncio.wait_for(connect(), timeout=connect_timeout_s or timeout_s)
+        # Waiting for the provider must not consume the time reserved for ICE
+        # checks. Each phase is bounded separately; inference keeps its budget.
+        phase_timeout = connect_timeout_s or timeout_s
+        offer = await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase_timeout)
+        answer = await _connection_phase(publish_offer(offer), stage="signaling", timeout_s=phase_timeout)
+        validate_distinct_public_egress(offer, answer)
+        await apply_remote_signal(connection, answer)
+        await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase_timeout)
         evidence = selected_pair(connection)
         if on_connected is not None:
             on_connected(evidence)
@@ -665,13 +688,16 @@ async def provider_exchange(
 ) -> dict[str, Any]:
     connection = new_connection(controlling=False)
     try:
-        async def connect():
-            answer = await gather_signal(connection)
-            await apply_remote_signal(connection, offer)
-            publish_answer(answer)
-            validate_distinct_public_egress(answer, offer)
-            await connection.connect()
-        await asyncio.wait_for(connect(), timeout=connect_timeout_s or timeout_s)
+        phase_timeout = connect_timeout_s or timeout_s
+        answer = await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase_timeout)
+        await apply_remote_signal(connection, offer)
+        async def publish():
+            result = publish_answer(answer)
+            if inspect.isawaitable(result):
+                await result
+        await _connection_phase(publish(), stage="signaling", timeout_s=phase_timeout)
+        validate_distinct_public_egress(answer, offer)
+        await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase_timeout)
         evidence = selected_pair(connection)
         request_id: list[bytes] = []
         request, request_bytes = await receive_json(
