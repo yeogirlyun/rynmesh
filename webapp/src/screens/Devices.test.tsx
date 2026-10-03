@@ -25,6 +25,38 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it("expires retained health on failure or a hanging poll and recovers on refresh", async () => {
+  state.data_transfer_available = true;
+  state.devices = [{ ...pair, status: "active", effective_scopes: ["reading"], sync: {
+    state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: {},
+  } }];
+  const polls: (() => void)[] = [];
+  vi.spyOn(window, "setInterval").mockImplementation((callback) => { polls.push(callback as () => void); return polls.length as unknown as ReturnType<typeof setInterval>; });
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const view = show();
+  await screen.findByText("Selected local changes acknowledged");
+  try {
+    vi.mocked(deviceSyncApi.status).mockRejectedValueOnce(new Error("disconnected"));
+    await act(async () => { now += 5000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Status out of date")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh");
+    await act(async () => { now += 5000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Selected local changes acknowledged")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    vi.mocked(deviceSyncApi.status).mockImplementationOnce(() => new Promise(() => undefined));
+    await act(async () => { now += 20000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Status out of date")).toBeInTheDocument();
+    expect(screen.queryByText("Selected local changes acknowledged")).not.toBeInTheDocument();
+    state.devices[0].sync!.pending = 4;
+    state.devices[0].sync!.state = "pending";
+    fireEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText("Awaiting acknowledgement")).toBeInTheDocument();
+    expect(screen.queryByText("Status out of date")).not.toBeInTheDocument();
+  } finally { view.unmount(); }
+});
+
 it("requires an explicit scope choice and preserves a copyable invite when clipboard fails", async () => {
   const invite = vi.spyOn(deviceSyncApi, "invite").mockImplementation(async () => {
     state.invites = [{ ...preview, status: "open", pair_id: null }];
