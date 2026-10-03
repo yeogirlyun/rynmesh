@@ -1,0 +1,8 @@
+.body { display: grid; gap: 12px; }
+.body h2, .body h3, .body p { margin: 0; }
+.body p { color: var(--text-muted); line-height: 1.6; }
+.selection { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.selection label { display: inline-flex; align-items: center; gap: 8px; }
+.selection input { width: 16px; height: 16px; min-height: 0; margin: 0; }
+.link { padding: 16px; border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 10px; }
+.link h3, .link p { width: 100%; overflow-wrap: anywhere; }
