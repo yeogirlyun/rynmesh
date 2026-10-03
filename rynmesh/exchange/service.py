@@ -102,6 +102,10 @@ class Exchange:
         return self.status()
 
     def options(self, value):
+        with self.submission_lock:
+            return self._options(value)
+
+    def _options(self, value):
         require(set(value) <= {"registry", "judge", "acting_for"})
         for name in ("registry", "judge"):
             if name in value:
@@ -111,6 +115,8 @@ class Exchange:
             from .protocol import key
 
             key(value["acting_for"])
+            if value["acting_for"] != self.actor:
+                require(not self.ledger.intents(), "exchange_pending_required")
             require(
                 value["acting_for"] == self.peer_id
                 or self.peer_id in view_account(self.ledger.state, value["acting_for"])["devices"],

@@ -507,3 +507,36 @@ def test_both_parties_can_refund_unsettled_dispute_and_keep_incurred_fees(tmp_pa
     assert mesh.buyer.status()['wallet']['available'] == expected
     assert mesh.provider.status()['wallet']['available'] == expected
     assert mesh.buyer.status()['wallet']['held'] == mesh.provider.status()['wallet']['held'] == 0
+
+
+def test_account_switch_waits_for_inflight_payment_and_cannot_change_payer(tmp_path):
+    import threading
+    mesh = Mesh(tmp_path); mesh.reward()
+    delegate = mesh.nodes[0]
+    delegate.action('profile', {'label': 'Separate account'}, new_id()); mesh.reward(delegate)
+    mesh.buyer.action('device', {'peer_id': delegate.peer_id, 'allowed': True}, new_id())
+    delegate.sync(); delegate.options({'acting_for': mesh.buyer.peer_id})
+    preparing, release, switching = threading.Event(), threading.Event(), threading.Event()
+    prepare = delegate.prepare
+    def paused(action, value, operation_id):
+        if action == 'transfer':
+            preparing.set(); assert release.wait(timeout=5)
+        return prepare(action, value, operation_id)
+    delegate.prepare = paused
+    def switch():
+        switching.set()
+        return delegate.options({'acting_for': delegate.peer_id})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        payment = pool.submit(delegate.action, 'transfer', {'recipient': mesh.provider.peer_id, 'amount': '0.5'}, new_id())
+        assert preparing.wait(timeout=5)
+        changed = pool.submit(switch)
+        assert switching.wait(timeout=5)
+        try:
+            with pytest.raises(TimeoutError): changed.result(timeout=0.05)
+        finally: release.set()
+        assert payment.result(timeout=5)['committed']
+        changed.result(timeout=5)
+    mesh.buyer.sync(); mesh.provider.sync()
+    assert mesh.buyer.status()['wallet']['available'] == 500000
+    assert delegate.status()['wallet']['available'] == UNITS
+    assert mesh.provider.status()['wallet']['available'] == 500000
