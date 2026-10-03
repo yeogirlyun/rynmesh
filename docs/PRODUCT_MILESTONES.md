@@ -1,227 +1,199 @@
 # Rynmesh Product Milestones
 
-Status: active roadmap, reviewed 2026-08-16. This document describes the
-user-facing product milestones and the contribution areas that move them
-forward. Protocol-level goals and safety gates remain in
-[`RYNMESH_VISION.md`](RYNMESH_VISION.md).
+Status: active roadmap, reviewed 2026-10-03 against merged main
+[`fa85833`](https://github.com/yeogirlyun/rynmesh/commit/fa85833f2cee8b4cfb70a0f7fc8c7a9a5e976c4e).
+The published release remains `v0.7.0` (2026-09-15). Changes merged afterward
+are not claimed to be present in its downloadable artifacts.
 
-Rynmesh is alpha software. “Implemented” below means the behavior exists in
-the repository and is covered by the current release process; it does not mean
-the behavior has completed production hardening or broad field validation.
+Rynmesh is alpha software. **Implemented** means code exists; **verified**
+names its evidence; **released** means a published artifact includes it.
+Neither implementation nor green CI proves production readiness. Historical
+release notes and acceptance records retain the scope of their own snapshots.
 
-The evidence each milestone must produce before it is claimed, and what a
-feature ships with beyond working code, are defined in
-[`TESTING_STRATEGY.md`](TESTING_STRATEGY.md). Its §5 records where coverage is
-currently short of the claims on this page.
+Direction: provide infrastructure for both people/nodes that **provide value**
+and those that **seek value**. Goods, hiring, consulting, AI media and network
+services are examples, not a fixed category list. Any lawful, ethical activity
+should be able to use shared identity, discovery, agreements, delivery and
+payments. Participation is free and open source, with no middleman/platform
+commission. Direct counterparties negotiate prices through demand and supply;
+verified basic system work earns protocol-issued Ryncoin. Neutral AI models
+apply public covenants to disputes, with corresponding disclosed Ryncoin fees
+paid by the involved parties for the resolution work. The proposed
+[network economy roadmap](NETWORK_ECONOMY_ROADMAP.md) details the extensions; it does not authorize implementation or reserve work.
 
-## Current release: P1 Ryn Companion
+## Current baseline: P1 Ryn Companion and P2 Friend Mesh
 
-The personal-assistant milestone is implemented and available in the public
-`v0.7.0` release for macOS on Apple Silicon and Intel. This release adds eight
-user-facing features covering first-run reading, friend pairing and sharing,
-and self device sync, plus the release-hardening fixes recorded in
-[`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md).
+### Released in v0.7.0
 
-### v0.7.0 features
+- Self-contained macOS desktop app for Apple Silicon and Intel; the bundled
+  node serves the web UI. The default experience needs no account, API key,
+  model or connected peer.
+- Real public-content recommendations and preference/feedback learning.
+- Reading, bookmarks, progress, offline saves and local data management.
+- Unified Ask Ryn, saved conversations, model selection, managed local AI
+  setup and friend AI permissions; cloud models require explicit opt-in.
+- Search across content, friend shares and conversations.
+- Reviewed friend invite/QR pairing, first sharing, follow feed, encrypted
+  messaging, revocation and owned-device reading/conversation sync.
+- Signed publication/fetching, provenance, safety receipts, discovery,
+  local control API, MCP tools and nontransferable contribution reputation.
 
-1. **First reading experience** — see, read, and bookmark real content right
-   after install.
-2. **Pairing and sharing** — invite a friend to join and complete the first
-   content share.
-3. **Unified Ask Ryn** — ask questions, review history, and switch models from
-   one entry point.
-4. **AI setup and friend permissions** — enable local AI with one click and
-   decide who can use it.
-5. **Search and retrieve** — one search recovers content, shares, and chat
-   history.
-6. **Follow friends' content updates** — keep seeing new content friends
-   choose to share.
-7. **Offline reading** — read downloaded content without a network
-   connection.
-8. **Multi-device sync** — switch to another computer and keep reading and
-   chatting.
+See [v0.7.0 release notes](RELEASE_NOTES_0_7_0.md) for that release's limits.
 
-### Implemented
+### Additional capabilities implemented on main
 
-- A self-contained Tauri desktop application starts and monitors its bundled
-  Ryn node daemon. A Python, Node.js, Ollama, account, API key, registry, or
-  connected peer is not required for the default experience.
-- Background discovery starts automatically from a built-in public catalog.
-  It covers YouTube, Reddit, research, technology and world news, podcasts,
-  public-domain audiobooks and books, images, and comics. Sources are refreshed
-  independently and cached content remains available during temporary source
-  failures.
-- The For You feed ranks real public content, reports discovery health and the
-  next refresh, and displays unread recommendation notifications.
-- The local recommendation profile learns from topic and platform choices,
-  written direction, opening content, More, Less, Hide, and source feedback.
-- The content viewer supports articles, YouTube video, feed-provided audio, and
-  images, with original-source links for unsupported or failed rendering.
-- Reading history, bookmarks, progress, read-later links, and page watchers are
-  stored locally and can be exported or erased.
-- Search & Ask, digest briefings, and item summaries use an optional
-  `ModelProvider`. Ollama is supported locally; Anthropic is available only
-  after explicit cloud-model permission and owner-supplied credentials. The
-  recommendation feed itself does not require a model.
-- Recommendation evidence packets identify the reviewed material, ranking
-  signals, review depth, safety status, provenance status, and limitations.
-- The local control API, webapp, MCP tools, peer discovery, encrypted peer
-  messaging, signed content publication and fetching, provenance validation,
-  safety receipts, and non-transferable credit ledger are implemented.
-- The release pipeline produces a wheel, source archive, checksums, installer,
-  and native macOS DMGs. CI verifies the backend, web build, packaged-node UI,
-  and both desktop architectures.
+- Friend publications ranked in For You with publisher/serving-node evidence
+  and access checks (#62).
+- Owner-triggered small-mesh diagnostics with fresh signed challenges and
+  recovery guidance (#64); physical cross-network acceptance remains open.
+- Friend publication offline saves and reviewed Ask handoff (#78), plus a
+  private deterministic weekly friend recap (#79).
+- Two-friend shared reading lists with durable offline operations (#80).
+- Bounded sync storage and diagnostics (#67), invitation reach review (#71),
+  and freshness-aware device sync health (#77).
+- Reviewed category cleanup across selected owned devices, with receiving-owner
+  approval and signed completion receipts (#69). It does not erase exports,
+  backups, independent copies or records outside the reviewed scope.
+- Direct Private AI streaming with cancellation, task recovery and final
+  archiving (#60). Other delivery paths can return whole responses.
+- Shared service descriptors/discovery/order lifecycle hooks across the catalog,
+  Private AI, video and secure-web screens (#66). Generic marketplace/payment
+  infrastructure is still proposed.
 
-### P1 hardening still needed
+Evidence: [integration PR #85](https://github.com/yeogirlyun/rynmesh/pull/85),
+1,661 backend and 383 webapp tests passed during integration; all nine
+[post-merge CI jobs](https://github.com/yeogirlyun/rynmesh/actions/runs/37137335701)
+passed, including packaged-node and both desktop architectures. This is a dated
+snapshot, not a coverage percentage or a promise of physical acceptance.
 
-These are active contribution areas, not claims that the personal assistant is
-missing entirely:
+### Remaining P1/P2 improvements
 
-1. **Webapp regression tests.** The Python backend has broad automated
-   coverage, while the React critical path currently relies on typechecking,
-   production builds, and manual use. Add deterministic component and
-   interaction tests for first launch, discovery health, preferences,
-   feedback, notifications, and the content viewer.
-2. **Recommendation-path consolidation.** Home and For You still span the
-   Daily Digest and older recommendation contracts. Converge on one contract,
-   one feedback vocabulary, and one source of profile state; remove the
-   dormant Recommendations screen after migration.
-3. **Source observability and recovery.** Make per-source health, last success,
-   cache use, failure reasons, and retries understandable and actionable.
-4. **Learning transparency.** Show what positive and negative signals Ryn has
-   learned, why the ranking changed, and allow individual feedback actions to
-   be undone.
-5. **Viewer completeness and privacy.** Improve accessibility, error handling,
-   PDF and generic-document support, media fallbacks, and the policy for
-   node-mediated versus direct third-party media requests.
-6. **Desktop distribution.** Add Windows and Linux packaging. Add Apple
-   Developer ID signing and notarization when the project has the required
-   maintainer credentials.
-7. **Safety hardening.** The current keyword scanner is an alpha protocol
-   implementation. Stronger safety packs, evidence retention, quarantine, and
-   moderation/appeal behavior are required before operating an open network of
-   untrusted peers.
+1. Consolidate recommendation contracts and profile state; expand explanation
+   and undo of learned signals rather than rebuild already-tested feed screens.
+2. Extend source recovery, document/media accessibility and viewer network
+   privacy; preserve explicit content review before AI processing.
+3. Finish installed-app and separate-machine/cross-network acceptance. Desktop
+   invite deep links (#72) remain outside main pending installed macOS checks.
+4. Harden multi-user egress credentials and real provider/revocation recovery.
+5. Make contribution evidence/history inspectable; preserve the distinction
+   between reputation and future spendable Ryncoin.
+6. Complete cleanup inventory for shared reading and disclose independent-copy
+   limits consistently.
+7. Add Windows/Linux desktop packaging and Apple signing/notarization when
+   maintainer credentials are available.
 
-P1 success is measured with voluntary, privacy-preserving evidence: successful
-installation, reliable first recommendations, repeat feed use, feedback use,
-and actionable failure reports. Rynmesh does not require centralized behavioral
-telemetry to work.
+Frontend component tests, friend product E2E and direct ICE/peer transit exist;
+these are no longer missing foundations. They do not substitute for physical
+field validation. See [Testing strategy](TESTING_STRATEGY.md).
 
-## P2: Friend Mesh
+## P3: Shared work and service infrastructure
 
-Goal: make a group of two to five trusted nodes more useful than one node while
-preserving local control.
+Goal: one durable infrastructure path supports providers and seekers across
+many activities, with owner control and optional AI assistance.
 
-### Shipped in v0.7.0
+Implemented foundations include encrypted service tasks, model publication and
+discovery, native inference, supervised workers, shared service UI lifecycles and
+ledger-backed **development** Task Balance. Full generalized value exchange is
+not implemented.
 
-The "Current release" section above already ships several of this
-milestone's building blocks: friend invite/QR pairing with explicit
-endpoint review, content sharing between friends, reliable friend and
-device revocation, self multi-device sync, and a Follow Friends feed of
-friend-shared content. See [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md)
-for the full list. The planned-work items below are marked against what
-those features do, and do not, already cover.
+Proposed extensions, before broad marketplace features:
 
-Implemented foundations:
+1. Restart-safe order lookup, reconciliation and cancellation; remove the
+   video form's current reload/purchase-recovery gap.
+2. Participant identity across nodes, key rotation, device authority and recovery.
+3. Versioned offers **and requests**, private discovery projections, negotiated
+   terms, availability and matching.
+4. Signed agreements, delivery adapters, milestones and dispute-ready evidence.
+5. Open schema/adapter SDK and conformance tests; new activities reuse shared
+   infrastructure and do not run arbitrary code by default.
+6. Budgeted agents with explicit permissions, spending limits and local audit.
 
-- signed peer identity and registry-assisted discovery
-- encrypted direct messages and small attachments
-- signed publication and verified peer fetches
-- credit and serve-receipt primitives
-- peer mailbox (delivered, #35): sealed, signed, short-TTL registry
-  store-and-forward so pairing and chat reach an offline or endpoint-less node
-  (`docs/PEER_MAILBOX.md`)
-
-Planned product work:
-
-1. ~~One-click invite links and QR joining with explicit network and endpoint
-   review before acceptance.~~ **Shipped in v0.7.0** — see
-   [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md).
-2. Friend-attributed content ranked inside For You, with an inspectable record
-   of the publisher and serving node. **Not in this release.** v0.7.0 ships a
-   separate Follow Friends feed instead of ranking friend-shared content
-   inside the main For You feed; this item is unchanged.
-3. Reliable small-mesh setup, connection diagnosis, revocation, and recovery.
-   **Partially shipped in v0.7.0**: friend invite/join, friend revocation,
-   and device-pairing setup, approval, and revocation are now reliable (see
-   [`RELEASE_NOTES_0_7_0.md`](RELEASE_NOTES_0_7_0.md)). Diagnosing
-   connectivity across a live multi-node mesh of 3-5 simultaneous friends is
-   not in this release.
-4. Safe multi-user egress sharing with per-user, short-lived credentials.
-5. A visible contribution history explaining how non-transferable reputation
-   was earned. Credits remain reputation, not money.
-
-P2 gate: the invite and revocation paths are safe for non-technical users, and
-friend-origin content can be distinguished, verified, muted, and removed.
-
-## P3: Working Agent and Services
-
-Goal: let an owner-approved agent perform useful work across nodes within clear
-limits.
-
-Status: the first service landed early. The local-LLM package delivers an
-encrypted node-to-node task protocol, provider publication and discovery, a
-task-first Services catalog with a Private AI chat, strict-P2P transport
-checks, and a development-only Task Balance ledger. Strict public-internet
-acceptance and the items in `SERVICE_PLATFORM_NEXT.md` remain before this
-graduates from preview.
-
-Planned work:
-
-1. A budgeted agent loop with permitted action types, per-period limits,
-   confirmations, and a complete local audit trail.
-2. A general service manifest and invocation protocol based on the existing
-   work-order path, with metering and result verification. The LLM package is
-   the reference implementation; the service-experience framework in
-   `SERVICE_PLATFORM_NEXT.md` generalizes its seams.
-3. Useful initial services such as local model generation (shipped as the
-   Private AI preview), media transcoding, and network egress.
-4. Agent-to-agent commissioning within the owner’s approval envelope.
-5. Credit debits and credits for verified service work. Credits remain
-   non-transferable during this milestone; the development Task Balance is
-   folded into the credit ledger as part of this item.
+Gate: typed service execution, restart/replay/crash safety, private-data tests
+and real distinct-egress acceptance. See [Service platform](SERVICE_PLATFORM_NEXT.md)
+and proposal packages INF-01 through INF-05 in the economy roadmap.
 
 ## P4: Open-network hardening
 
-Goal: become safe enough to consider interaction with nodes that are not
-personally trusted.
+Goal: support interaction beyond personally trusted nodes.
 
-Planned work includes sublinear trust weighting, anti-Sybil defenses,
-collusion and brigading analysis, EigenTrust integration, newcomer discovery
-allocation, authenticated registry writes, peer quarantine, stronger safety
-packs, moderation and appeals, and optional third-party attestations.
+Existing primitives include EigenTrust, configurable sublinear reputation
+weighting, exploration fraction, safety receipts, direct ICE/UDP transfer and
+peer transit. They are not a completed adversarial defense or a scalable reward
+system.
 
-Public network operation remains gated by the safety, legal, and accountable
-stewardship requirements in `RYNMESH_VISION.md`. Publishing the source code and
-desktop application does not mean an unrestricted public peer network is ready.
+Extend authenticated discovery, bounded admission/quotas, anti-Sybil and
+collusion defenses, verified useful-work/availability claims, stronger safety,
+quarantine, network covenants, neutral AI resolution/appeals and privacy-preserving
+observability. Define legal/ethical participation rules and activity-specific
+requirements. Validate hostile clients, partitions, wash transactions, fake
+views, brigading and concentrated validation power.
 
-## P5: Economy maturation
+Gate: adversarial evidence and legal/operating review before unrestricted public
+operation. Generic listings can be designed on a private mesh beforehand;
+public payments and network rewards cannot bypass this gate.
 
-Only after sustained demand for real node services should the project evaluate
-service pricing, issuance epochs, decay, or transferable credits. Any
-transferability requires anti-abuse maturity and legal review. The roadmap does
-not promise a token, monetary value, or future redemption.
+## P5: Internal Ryncoin earn/spend economy — proposed
+
+Goal: participants earn Ryncoin from direct customers or protocol rewards for
+useful network work, and spend it with other participants inside Rynmesh.
+
+Keep three concepts separate: **Rynmesh Credits** remain nontransferable
+reputation; **development Task Balance** stays simulated; **Ryncoin** is the
+planned spendable asset. No automatic migration, redemption, or minting from
+existing reputation events or development balances.
+
+Design wallet authority/recovery, integer amounts, supply/issuance, finality,
+anti-double-spend rules, escrow, refunds, splits, reconciliation and protocol-issued
+infrastructure rewards. Design decentralized consensus and validator incentives
+explicitly; a collection of local signed files is insufficient, and a sole
+platform settlement authority would conflict with the no-middleman principle.
+
+Gate: reviewed economy/operator design, conserved balances under concurrent
+spending, validator failure and forks; neutral AI disputes, disclosed fees and
+anti-abuse controls; then a controlled pilot with no fiat bridge. Unrestricted expansion also requires P4. These are new
+recommendations, not accepted implementation issues or a release date.
+
+## P6: General-purpose value exchange — proposed
+
+Goal: any lawful, ethical activity can implement an offer/request schema and
+fulfillment adapter over the same shared infrastructure.
+
+Possible experiences include P2P commerce, hiring/resumes/recruiting,
+consulting/part-time work, applications, commissioned AI drama/movies, licensed
+media viewing and paid infrastructure services. Both sides can publish their
+needs or capabilities. Hiring/application workflows need not charge applicants;
+paid delivery uses the common Ryncoin settlement path.
+
+Creator income comes from purchases, patronage or explicitly funded rewards;
+uploading or fabricating views never grants automatic coins. Add rights-aware
+entitlements, streaming/distribution, creator splits and private agreements.
+
+Gate: providers can earn and spend across at least three unrelated activities;
+new schemas pass privacy, policy, compatibility and settlement conformance
+without introducing a new wallet or bespoke ledger. Each activity adds its own
+lawful/ethical fulfillment requirements. This is an open capability platform,
+not an exhaustive list of product categories.
+
+## P7: Fiat conversion — much later
+
+Only after a dependable internal economy, design separate exchange adapters
+with demand/supply pricing, liquidity, expiry, custody and reconciled fiat/coin
+settlement. No fixed peg or guaranteed redemption is assumed.
+
+Plan for at least ten major currencies, including the owner's USD, CNY, HKD,
+JPY and KRW examples. The [economy roadmap](NETWORK_ECONOMY_ROADMAP.md#7-fiat-exchange-much-later)
+records candidate codes and selection sources. Fiat conversion remains disabled
+through the initial network earn/spend stage and requires a separate decision,
+qualified jurisdiction-specific review and operating readiness.
 
 ## Choosing a contribution
 
-[GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues) is the executable
-backlog; this roadmap provides direction but does not reserve work. The current
-accepted work is grouped in the
-[P1 hardening milestone](https://github.com/yeogirlyun/rynmesh/milestone/1).
-Contributors should choose an unassigned issue labeled `good first issue` or
-`help wanted`, comment before beginning substantial work, and open a focused
-pull request linked to that issue.
+[GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues) remains the executable
+backlog. Proposal IDs and roadmap entries are suggestions for owner/design
+review; they do not reserve work or claim milestone acceptance. Follow
+[CONTRIBUTING.md](../CONTRIBUTING.md) before starting implementation.
 
-Recommended order for new contributors:
-
-1. Webapp critical-path test foundation.
-2. Source-health details and recovery UX.
-3. Recommendation learning explanation and undo.
-4. Recommendation-contract consolidation.
-5. Content-viewer format, accessibility, and privacy hardening.
-6. Linux and Windows desktop packaging.
-
-Cryptography, node identity, authentication, credit issuance, registry trust,
-VPN credential sharing, and transferable-credit design require a maintainer
-design issue before implementation because mistakes can cross security and
-compatibility boundaries.
+Recommended next review: INF-01 durable orders; INF-02 participant identity;
+INF-03 offers/requests; ECO-01 settlement/supply design. Policy design begins
+alongside these, and money-like behavior requires a reviewed design issue before
+implementation. No autonomous or recurring work is authorized by this roadmap.
