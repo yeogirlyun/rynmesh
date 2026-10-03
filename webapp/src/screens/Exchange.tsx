@@ -45,7 +45,8 @@ function OrderCard({ order, actor, busy, run }: { order: Order; actor: string; b
 }
 
 export default function Exchange() {
-  const { confirm } = useAppContext();
+  const { confirm, client } = useAppContext();
+  const fixture = client?.mode === "fixture";
   const [state, setState] = useState<Status | null>(null); const [busy, setBusy] = useState(false);
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [fresh, setFresh] = useState(false);
   const [tab, setTab] = useState("market"); const [invite, setInvite] = useState(""); const [reviewed, setReviewed] = useState<Manifest | null>(null);
@@ -56,9 +57,10 @@ export default function Exchange() {
   const [endpoint, setEndpoint] = useState(""); const [device, setDevice] = useState("");
   const attempt = useRef({ fingerprint: "", id: "" }); const rewardJob = useRef(newId()); const mounted = useRef(true);
   useEffect(() => {
-    mounted.current = true; void exchange.status().then(value => { if (mounted.current) { setState(value); setFresh(true); } }).catch(cause => { if (mounted.current) setError(cause.message); });
+    mounted.current = true; if (fixture) return () => { mounted.current = false; };
+    void exchange.status().then(value => { if (mounted.current) { setState(value); setFresh(true); } }).catch(cause => { if (mounted.current) setError(cause.message); });
     return () => { mounted.current = false; };
-  }, []);
+  }, [fixture]);
   const run: Run = async (action, value) => {
     if (busy || !fresh || state?.pending?.length) return false;
     const fingerprint = JSON.stringify([action, value]);
@@ -81,6 +83,7 @@ export default function Exchange() {
   };
   const actor = state?.actor ?? state?.peer_id ?? "";
   const disabled = busy || !fresh || Boolean(state?.pending?.length);
+  if (fixture) return <div className="screen-stack"><PageHeader eyebrow="Live network required" title="Exchange" context="Exchange is unavailable in fixture mode. Connect the live local node to review real Ryncoin and sign operations." /></div>;
   return <div className="screen-stack exchange-screen">
     <PageHeader eyebrow="Direct value exchange · alpha" title="Exchange" context="Offer or find lawful, ethical digital work. Agree a price, deliver privately, and earn or spend internal Ryncoin with zero platform commission." />
     <p>This release uses a configured validator group and a capped experimental currency. It has no fiat conversion. Offline proposers can pause transactions. Rules and receipts are public; private delivery and evidence are encrypted.</p>
