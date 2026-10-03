@@ -1,6 +1,6 @@
 # Services UI architecture
 
-Status: implemented on `feature/local-llm-dual-node`.
+Status: v0.7.0 service screens with the #26 shared lifecycle framework.
 
 This document describes the user-facing Services catalog and its typed service
 experiences. It records current behavior and the boundaries contributors must
@@ -17,7 +17,7 @@ Each service type opens the interaction suited to its lifecycle:
 | Route | Experience | Node-client boundary |
 |---|---|---|
 | `/services` | Searchable and filterable service catalog | `listLLMServices`, `listJobCapacities` |
-| `/services/private-ai/chat` | Multi-conversation language-model chat | `submitLLMOrder`, `getLLMOrder`, `cancelLLMOrder` |
+| `/services/private-ai/chat` | Node-owned multi-conversation chat | `askHistory` / Ask runs; `NodeClient` orders in fixture mode |
 | `/services/video-rendering` | Bounded render workflow | `submitWorkOrder`, `listWorkResults` |
 | `/services/secure-web-access` | Connect, launch, and disconnect lifecycle | `egressStatus`, `egressConnect`, `egressLaunch`, `egressDisconnect` |
 | `/services/manage` | Advanced provider/package administration | Existing Services APIs |
@@ -53,29 +53,44 @@ The catalog stores up to three recently opened service IDs and timestamps in
 `localStorage` under `ryn.services.recent.v1`. It does not store prompts,
 results, provider IDs, or routes there.
 
-Private AI conversations use the `ryn-private-ai-chat` IndexedDB database:
+Live Private AI conversations and task state belong to the node's encrypted
+Ask history repository. The browser polls that repository and submits/cancels
+through Ask runs. It does not use IndexedDB as the primary live history store.
+Legacy browser history retains its encrypted migration/fixture adapter; a failed
+migration must remain visible. This change does not alter retention, settlement,
+archive-before-cleanup, or deletion semantics.
 
-- one non-extractable AES-GCM 256 `CryptoKey` is stored through IndexedDB
-  structured cloning;
-- each conversation receives a fresh 96-bit IV and is written as authenticated
-  ciphertext;
-- the storage key is the compound provider peer ID plus package ID, because
-  display aliases are not unique;
-- if IndexedDB, Web Crypto, key storage, or authenticated decryption is
-  unavailable, new content falls back to session memory rather than plaintext
-  persistence;
-- a corrupt record is skipped without hiding other valid conversations.
+Discovery, order snapshots and pending-operation flags in the shared hooks are
+memory-only. Provider identity includes network, peer and service; the existing
+conversation key format remains unchanged for storage compatibility. The selected
+provider necessarily sees plaintext during inference.
 
-This is encrypted local persistence, not confidential computing or an OS-bound
-secure enclave. JavaScript running under the same origin and a compromised
-browser profile can use the stored key. The selected inference provider also
-necessarily sees plaintext while generating a response. The UI states this in
-its Details panel.
+## Shared lifecycle framework
 
-Node-side LLM order history remains governed by the result-retention setting
-and does not store prompt bodies. Clearing Private AI history removes the local
-encrypted conversations and requests deletion of retained terminal order
-results from the local node.
+`serviceDescriptors.ts` owns capability/operation names, pricing units, region
+metadata and polling cadences. Prices still come from verified node advertisements.
+The secure-web descriptor retains CN as the supported default; adding regions is
+separate product work. Video discovery matches its exact capability.
+
+`useProviderDiscovery` deduplicates by full provider identity. `useServiceOrder`
+owns completion-scheduled reads, bounded exponential retry delay, terminal-state
+stopping and explicit operations. Manual refresh joins an in-flight read. Switching
+client or identity suppresses late results; unmount stops local timers and never
+cancels a remote task. A pending explicit operation is never retried automatically.
+A read started before a write cannot overwrite the write's result. Fixture chat
+uses the hook's exclusive `awaitTerminal` adapter for its original task.
+
+Catalog, Private AI, Video rendering, Secure web access and Services management
+use these hooks. The management page's local model installation/recovery jobs retain
+their dedicated lifecycle protocol. The #23 streaming subscription remains separate
+from node-owned final history reconciliation.
+
+Video result reads bind to the original network/provider/order and ignore unrelated
+results. A submission with an uncertain response cannot silently submit again;
+the user must check the original request before explicitly allowing a new render.
+This is not a durable purchase-recovery ledger: refreshing the page still loses
+that transient form, as before. Node-side consumer order lookup and durable recovery
+are separate protocol work. No shared hook creates an order merely by mounting.
 
 ## Compatibility rules
 

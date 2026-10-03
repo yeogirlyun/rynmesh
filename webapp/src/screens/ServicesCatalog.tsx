@@ -8,12 +8,14 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import type { JobCapacity } from "../domain/types";
 import type { LLMServiceRecord } from "../domain/nodeClient";
+import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
+import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
 import styles from "./ServicesCatalog.module.css";
 
 type ServiceCategory = "all" | "ai" | "creative" | "network";
@@ -67,44 +69,39 @@ function llmHref(service: LLMServiceRecord, networkId: string, clientMode: "live
 }
 
 function findVideoCapacity(capacities: JobCapacity[]) {
-  return capacities.find((capacity) => capacity.capabilities.some((item) => /video|veo|motion/i.test(item)));
+  return capacities.find((capacity) => capacity.capabilities.includes(serviceDescriptors.video.capability));
 }
 
 export default function ServicesCatalog() {
   const { client } = useAppContext();
   const navigate = useNavigate();
-  const [llmServices, setLlmServices] = useState<LLMServiceRecord[]>([]);
-  const [capacities, setCapacities] = useState<JobCapacity[]>([]);
-  const [networkId, setNetworkId] = useState("rynmesh-main");
-  const [loading, setLoading] = useState(true);
+  const network = useServiceOrder({ scope: client, key: "service-network", intervalMs: 15_000,
+    load: async () => (await client.getSettings().catch(() => null))?.network_id?.trim() || "rynmesh-main",
+    isTerminal: () => true,
+  });
+  const networkId = network.data ?? "rynmesh-main";
+  const llm = useProviderDiscovery<LLMServiceRecord>({ scope: client, key: networkId,
+    enabled: Boolean(network.data), intervalMs: serviceDescriptors.privateAI.discoveryIntervalMs,
+    load: () => client.listLLMServices(networkId),
+    identity: (item) => providerIdentity(networkId, item.peer_id, item.service.package_id),
+  });
+  const video = useProviderDiscovery<JobCapacity>({ scope: client, key: serviceDescriptors.video.id,
+    intervalMs: serviceDescriptors.video.discoveryIntervalMs, load: () => client.listJobCapacities(),
+    identity: (item) => providerIdentity(item.network_id, item.peer_id, serviceDescriptors.video.capability),
+  });
+  const llmServices = llm.providers;
+  const capacities = video.providers;
+  const loading = network.loading || llm.loading || video.loading;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ServiceCategory>("all");
   const [recent, setRecent] = useState<RecentService[]>(loadRecentServices);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      const settings = await client.getSettings().catch(() => null);
-      const network = settings?.network_id?.trim() || "rynmesh-main";
-      const [llmResult, capacityResult] = await Promise.allSettled([
-        client.listLLMServices(network),
-        client.listJobCapacities(),
-      ]);
-      if (!active) return;
-      setNetworkId(network);
-      if (llmResult.status === "fulfilled") setLlmServices(llmResult.value);
-      if (capacityResult.status === "fulfilled") setCapacities(capacityResult.value);
-      setLoading(false);
-    })();
-    return () => { active = false; };
-  }, [client]);
 
   const services = useMemo<CatalogService[]>(() => {
     const llm = llmServices.find((service) => service.online) ?? llmServices[0];
     const video = findVideoCapacity(capacities);
     const llmPrice = llm?.service.pricing.minimum ?? 0;
     const llmCurrency = llm?.service.pricing.currency === "DEV_TASK_BALANCE" ? "credits" : llm?.service.pricing.currency;
-    const videoCapability = video?.capabilities.find((item) => /video|veo|motion/i.test(item));
+    const videoCapability = video ? serviceDescriptors.video.capability : undefined;
     const videoPrice = videoCapability ? Number(video?.price_credits[videoCapability] ?? 0) : 0;
     return [
       {
@@ -194,6 +191,8 @@ export default function ServicesCatalog() {
           </button>
         </div>
       </header>
+
+      {llm.error || video.error ? <p role="alert">Some services could not be refreshed. Previously discovered services may be out of date. <button type="button" onClick={() => { void llm.refresh(); void video.refresh(); }}>Retry discovery</button></p> : null}
 
       <div className={styles.filters} aria-label="Service categories">
         {filters.map((item) => (
