@@ -1,5 +1,9 @@
 # Rynmesh Architecture
 
+Status: implementation framing reviewed 2026-10-03 against main `fa85833`.
+New general-purpose exchange and Ryncoin infrastructure is proposed in
+[NETWORK_ECONOMY_ROADMAP.md](NETWORK_ECONOMY_ROADMAP.md), not implemented here.
+
 Rynmesh is the verifiable content mesh for AI agents and the local nodes that users control. Its core premise is that AI-generated or AI-curated content should be publishable, discoverable, rankable, reviewable, and distributable without depending on a single opaque platform algorithm.
 
 The network is not designed as an unmoderated free-for-all. It is designed around local verification, signed receipts, transparent safety policy, and credit-weighted distribution reputation.
@@ -16,15 +20,18 @@ Product DNA: Rynmesh is local-node infrastructure with a human control surface. 
 - Make distribution weight inspectable through Rynmesh Credits rather than hidden platform ranking.
 - Allow safety and moderation to happen through coordinated protocol rules enforced locally by nodes.
 - Support AI-curated recommendations where the AI explains what it reviewed and why it recommended each item.
-- Preserve a path toward future token economics without making the first version depend on a transferable coin.
+- Extend these foundations toward open, free participation and direct provider/seeker value exchange, with no platform commission; Ryncoin settlement remains proposed.
 
 ## Non-Goals For The Current Alpha
 
 - Rynmesh is not yet a blockchain.
-- Rynmesh Credits are not yet a transferable token.
-- The current peer transport uses HTTPS with a pluggable censorship-resistance
-  layer (see §Censorship-Resistant Transport). NAT traversal and libp2p are
-  out of scope for the current alpha.
+- Rynmesh Credits are nontransferable reputation, separate from planned Ryncoin.
+- Current peer transport includes direct HTTP, encrypted task/mailbox paths,
+  direct ICE/UDP transfer and ordinary-peer transit. This does not establish
+  general public-internet/NAT reliability or mature decentralized discovery.
+- Spendable Ryncoin, generic trade agreements and neutral AI dispute settlement
+  are planned. Current Task Balance is development accounting, not production
+  currency; Rynmesh Credits remain nontransferable reputation.
 - The current registry implementation is a coordination plane, not a trust authority.
 - The current safety scanner is intentionally minimal and must be expanded before operating an
   unrestricted public network of untrusted peers.
@@ -392,7 +399,7 @@ The root registry gives the network a coordination anchor. Lower-tier registries
 
 Module: `rynmesh.credits`
 
-Rynmesh Credits are non-transferable signed reputation events in the current architecture. They are not a coin yet. They are distribution reputation.
+Rynmesh Credits are non-transferable signed reputation events in the current architecture. They are distribution reputation, distinct from planned spendable Ryncoin; they will not silently become a coin.
 
 Credit events reward useful work:
 
@@ -782,20 +789,21 @@ Remaining architecture work:
   one user-facing ranking and feedback path
 - node-mediated or explicitly consented loading for third-party media embedded
   by the content viewer
-- sublinear / saturating trust → distribution-weight transform (vision Q14)
-- newcomer reserved-discovery-bandwidth carve-out (vision Q2)
-- credit-weight validation curve and collusion-detection (vision Q2)
+- adversarial validation and concentration limits for existing sublinear
+  reputation weighting, exploration fraction and EigenTrust primitives
+- credit-weight validation and collusion detection under hostile peers
 - stronger safety packs, quarantine, moderation evidence, and appeal metadata
-- safe friend invitations, revocation, and multi-user egress credentials
+- installed/cross-network acceptance of existing invitations and revocation,
+  plus multi-user egress credential isolation
 
 ## Companion Documents
 
 - [`RYNMESH_VISION.md`](RYNMESH_VISION.md) — North Star above this doc
-  (first principle, agent-first thesis, fully open protocol with
+  (provider/seeker value exchange, optional agents, fully open protocol with
   optional third-party attestation services — see
-  `DECISION_AVARYN_SEPARATION.md` — decaying-issuance economy, 15 open
-  questions). This architecture follows the vision; where they
-  conflict, the vision wins.
+  `DECISION_AVARYN_SEPARATION.md` — open participation, separate Ryncoin,
+  protocol rewards, decentralized settlement and neutral AI covenants). The
+  vision states intended direction; this document describes current code.
 - [`RYN_NODE_WEBAPP_SPEC.md`](RYN_NODE_WEBAPP_SPEC.md) — product
   surface of the node + webapp.
 - [`RYNNET_TESTBED.md`](RYNNET_TESTBED.md) — transparent virtual-network
@@ -805,38 +813,47 @@ Remaining architecture work:
 
 ## Next Architecture Priorities
 
-The current product roadmap is maintained in `PRODUCT_MILESTONES.md`. The next
-architecture work should strengthen the implemented personal assistant before
-expanding the trust boundary:
+Existing component tests, friend product E2E, sync health, signed friend
+connectivity diagnostics, friend For You and direct peer transit are implemented.
+The next work should extend those foundations, not mark them absent:
 
-- protect the webapp critical path with deterministic interaction tests
-- consolidate recommendation state, ranking, and feedback contracts
-- make discovery-source failures and recovery inspectable
-- complete content-viewer format, accessibility, and network-privacy behavior
-- design and verify invite, revocation, and friend-attribution semantics
-- add authenticated registry writes, registry tiers, and registry reputation
-- add stronger safety packs, peer quarantine, and appeal metadata
-- add proof-of-availability and proof-of-delivery events
-- add anti-Sybil controls so node creation alone cannot be farmed
-- add category-specific credit scoreboards
-- extend policy-pluggable ranking beyond the current local Ranker seam
-- add NAT traversal or libp2p-style transport (censorship-resistance layer is
-  now pluggable; the next transport-layer step is WebRTC/Snowflake).
-- add encrypted/private swarm support
-- extend observability for node uptime, transfer success, and safety decisions
+1. Durable consumer order identity/recovery, bounded reads and reconciliation
+   after reload, restart or an uncertain write response.
+2. Participant identity across nodes, wallet authorization, rotation/recovery
+   and explicit resource budgets.
+3. Generic signed offers and requests, private discovery projections,
+   negotiation, versioned agreements and typed fulfillment adapters.
+4. Reviewed decentralized Ryncoin consensus/finality, integer amounts, escrow,
+   refunds and supply accounting, separate from reputation/development units.
+5. Protocol-issued rewards for verified basic infrastructure work, with public
+   issuance limits and defenses against fabricated demand and collusion.
+6. Public network covenants and neutral AI resolution with disclosed Ryncoin
+   fees, impartial selection, appeals and verifiable ledger execution.
+7. Open SDK/conformance and licensed content access/media delivery using those
+   same contracts; stronger receiver enforcement, privacy and scale testing.
 
-## Future Token Path
+Details and proposed packages are in
+[NETWORK_ECONOMY_ROADMAP.md](NETWORK_ECONOMY_ROADMAP.md). Current registries remain
+coordination services, not a sole wallet authority or a platform entry gate.
+New decentralized consensus requires a separate design; signatures alone do not
+provide global ordering or double-spend protection.
 
-The future coin/token path should be downstream of real utility, not the starting point.
+## Planned Economy Path
 
-The staged design is:
+1. Preserve current nontransferable reputation and simulated Task Balance.
+2. Establish open, free participation and common provider/seeker contracts.
+3. Introduce reviewed decentralized internal Ryncoin payments and escrow.
+4. Issue protocol rewards for independently verified useful system services;
+   participant purchases transfer existing coins at supply/demand prices.
+5. Resolve network disputes through neutral AI models under public covenants,
+   with disclosed Ryncoin fees for resolution work and independent appeals.
+6. Extend to arbitrary lawful, ethical value through open schemas/adapters.
+7. Consider demand/supply fiat exchange much later, after separate legal and
+   operating review. No fixed peg or present redemption is assumed.
 
-1. Rynmesh Credits as non-transferable distribution reputation.
-2. Signed contribution events and slashing as the evidence layer.
-3. Registry and peer work become measurable network labor.
-4. Token design can later map to proven contribution, staking, governance, or service payment.
-
-Any transferable token or public sale needs careful legal review. The architecture should avoid depending on token speculation and instead make the network valuable because credits already improve distribution, trust, and discovery.
+There is no implemented production Ryncoin wallet, generalized marketplace,
+neutral AI arbitration or fiat bridge. Code, rules and decisions must be
+verifiable; personal-data visibility remains an explicit design question.
 
 ## Design Principle
 
