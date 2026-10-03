@@ -281,6 +281,10 @@ def test_owner_routes_authentication_bounded_requests_and_reinstallation(tmp_pat
     assert [spec.name for spec in workers.specs()] == ['friend-feed.refresh']
     with TestClient(app) as client:
         assert client.get('/api/local/friend-feed').status_code == 403
+        assert client.get('/api/local/friend-feed/weekly').status_code == 403
+        weekly = client.get('/api/local/friend-feed/weekly', headers={'x-owner-test': 'yes'})
+        assert weekly.status_code == 200 and weekly.json()['items'] == []
+        assert weekly.headers['cache-control'] == 'no-store'
         assert client.post(PATH, json={}).status_code == 403
         assert client.post(PATH, content=b'x' * 8193).status_code == 413
         headers = {'x-owner-test': 'yes'}

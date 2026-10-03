@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 
@@ -33,6 +33,10 @@ class LLMAdapter(Protocol):
     def capabilities(self) -> dict[str, Any]: ...
     def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
               messages: list[dict[str, str]] | None = None) -> dict[str, Any]: ...
+    def infer_stream(
+        self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+        on_delta: Callable[[str], None], messages: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]: ...
     def cancel(self, task_id: str) -> bool: ...
     def metrics(self) -> dict[str, Any]: ...
     def shutdown(self) -> None: ...
@@ -181,7 +185,8 @@ class OpenAICompatibleAdapter:
             streaming = "data:" in sample or "text/event-stream" in sample.lower()
         except (OSError, urllib.error.HTTPError):
             streaming = False
-        return {"chat_completions": True, "streaming": streaming, "cancel": "best_effort"}
+        result = {"chat_completions": True, "streaming": streaming, "cancel": "best_effort"}
+        return dict(result)
 
     def infer(self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
               messages: list[dict[str, str]] | None = None) -> dict[str, Any]:
@@ -227,6 +232,178 @@ class OpenAICompatibleAdapter:
                 self._metrics.failures += 1
             raise
         finally:
+            self._cancelled.discard(task_id)
+
+    def infer_stream(
+        self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
+        on_delta: Callable[[str], None], messages: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Stream OpenAI-compatible SSE deltas and return final usage once.
+
+        Raw frames and generated text never enter exception messages.  A
+        runtime that answers the streaming request with ordinary JSON is
+        safely treated as one delta, without issuing a second inference.
+        """
+        if not prompt:
+            raise AdapterError("prompt is required")
+        if task_id in self._cancelled:
+            raise AdapterError("task_cancelled")
+        if not self.model and not self.health().get("ok"):
+            raise AdapterError("local API has no usable model")
+        request = urllib.request.Request(
+            self.base_url + "/v1/chat/completions",
+            data=json.dumps({
+                "model": self.model,
+                "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
+                "max_tokens": int(max_tokens),
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }).encode("utf-8"),
+            headers=self._headers(),
+            method="POST",
+        )
+        started = time.monotonic()
+        text_parts: list[str] = []
+        usage: dict[str, Any] = {}
+        output_bytes = 0
+        finished = False
+        response: Any = None
+        try:
+            response = urllib.request.urlopen(
+                request, timeout=min(float(timeout_s), self.timeout_s),
+            )
+            with self._lock:
+                self._active_responses[task_id] = response
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            if "application/json" in content_type and "event-stream" not in content_type:
+                raw = response.read(4 * 1024 * 1024 + 1)
+                if len(raw) > 4 * 1024 * 1024:
+                    raise AdapterError("local API response exceeded 4 MiB")
+                try:
+                    value = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise AdapterError("local API returned invalid JSON") from None
+                if not isinstance(value, dict):
+                    raise AdapterError("local API JSON root must be an object")
+                choices = value.get("choices") or []
+                message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
+                message = message if isinstance(message, dict) else {}
+                delta = str(
+                    message.get("content")
+                    or (choices[0].get("text") if choices else "")
+                    or ""
+                )
+                if not delta:
+                    raise AdapterError("local API returned no completion text")
+                on_delta(delta)
+                text_parts.append(delta)
+                usage = dict(value.get("usage") or {})
+            else:
+                while True:
+                    if task_id in self._cancelled:
+                        raise AdapterError("task_cancelled")
+                    if time.monotonic() - started > timeout_s:
+                        raise AdapterError("local API streaming timed out", code="inference_timeout")
+                    raw_line = response.readline(256 * 1024 + 1)
+                    if not raw_line:
+                        if not finished:
+                            raise AdapterError("local API stream ended before completion")
+                        break
+                    if len(raw_line) > 256 * 1024:
+                        raise AdapterError("local API stream event exceeded 256 KiB")
+                    try:
+                        line = raw_line.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        raise AdapterError("local API stream returned invalid UTF-8") from None
+                    if not line or line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        raise AdapterError("local API stream framing is invalid")
+                    data = line[5:].lstrip()
+                    if data == "[DONE]":
+                        finished = True
+                        break
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        raise AdapterError("local API stream event is invalid") from None
+                    if not isinstance(event, dict):
+                        raise AdapterError("local API stream event is not an object")
+                    if isinstance(event.get("usage"), dict):
+                        usage = dict(event["usage"])
+                    choices = event.get("choices") or []
+                    if not choices or not isinstance(choices[0], dict):
+                        continue
+                    choice = choices[0]
+                    if choice.get("finish_reason") is not None:
+                        finished = True
+                    delta_obj = choice.get("delta") or {}
+                    delta_obj = delta_obj if isinstance(delta_obj, dict) else {}
+                    delta = str(
+                        delta_obj.get("content")
+                        or choice.get("text")
+                        or ""
+                    )
+                    if not delta:
+                        continue
+                    output_bytes += len(delta.encode("utf-8"))
+                    if output_bytes > 4 * 1024 * 1024:
+                        raise AdapterError("local API stream output exceeded 4 MiB")
+                    on_delta(delta)
+                    text_parts.append(delta)
+            if task_id in self._cancelled:
+                raise AdapterError("task_cancelled")
+            text = "".join(text_parts)
+            if not text:
+                raise AdapterError("local API returned no completion text")
+            input_tokens = int(usage.get("prompt_tokens") or max(1, len(prompt) // 4))
+            output_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+            duration_ms = int((time.monotonic() - started) * 1000)
+            with self._lock:
+                self._metrics.requests += 1
+                self._metrics.input_tokens += input_tokens
+                self._metrics.output_tokens += output_tokens
+                self._metrics.total_duration_ms += duration_ms
+            return {
+                "text": text,
+                "model": self.model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "duration_ms": duration_ms,
+            }
+        except AdapterError:
+            with self._lock:
+                self._metrics.failures += 1
+            raise
+        except (OSError, urllib.error.HTTPError) as exc:
+            with self._lock:
+                self._metrics.failures += 1
+            if task_id in self._cancelled:
+                raise AdapterError("task_cancelled") from None
+            code = "runtime_connection_failed"
+            if isinstance(exc, urllib.error.HTTPError):
+                code = "inference_failed"
+                try:
+                    raw_error = exc.read(16 * 1024 + 1)
+                    value = json.loads(raw_error) if len(raw_error) <= 16 * 1024 else None
+                    detail = value.get("detail") if isinstance(value, dict) else None
+                    if isinstance(detail, str) and detail in RUNTIME_ERROR_CODES:
+                        code = detail
+                except (OSError, ValueError):
+                    pass
+                finally:
+                    exc.close()
+            elif isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError):
+                code = "inference_timeout"
+            raise AdapterError("local API streaming request failed", code=code) from None
+        finally:
+            with self._lock:
+                self._active_responses.pop(task_id, None)
+            if response is not None:
+                try:
+                    response.close()
+                except OSError:
+                    pass
             self._cancelled.discard(task_id)
 
     def cancel(self, task_id: str) -> bool:

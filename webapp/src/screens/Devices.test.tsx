@@ -8,6 +8,7 @@ import Devices from "./Devices";
 
 const confirm = vi.hoisted(() => vi.fn());
 vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm }) }));
+vi.mock("../components/DeviceErasurePanel", () => ({ default: () => null }));
 const identity = { name: "My laptop", peer_id: "public-key", actor: "a".repeat(64), endpoint: "http://192.168.1.2:8791" };
 const preview: DeviceInvite = { id: "invite", device: identity, scopes: ["bookmarks", "reading"], created: 1, expires: 4000000000 };
 const pair: DevicePair = { id: "pair", role: "inviter", status: "awaiting_owner", device: identity, review_token: "review",
@@ -24,6 +25,38 @@ beforeEach(() => {
   confirm.mockReset();
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("expires retained health on failure or a hanging poll and recovers on refresh", async () => {
+  state.data_transfer_available = true;
+  state.devices = [{ ...pair, status: "active", effective_scopes: ["reading"], sync: {
+    state: "confirmed", pending: 0, last_success_at: 1000, error_code: "", conflicts: 0, rejected_by_peer: {},
+  } }];
+  const polls: (() => void)[] = [];
+  vi.spyOn(window, "setInterval").mockImplementation((callback) => { polls.push(callback as () => void); return polls.length as unknown as ReturnType<typeof setInterval>; });
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const view = show();
+  await screen.findByText("Selected local changes acknowledged");
+  try {
+    vi.mocked(deviceSyncApi.status).mockRejectedValueOnce(new Error("disconnected"));
+    await act(async () => { now += 5000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Status out of date")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh");
+    await act(async () => { now += 5000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Selected local changes acknowledged")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    vi.mocked(deviceSyncApi.status).mockImplementationOnce(() => new Promise(() => undefined));
+    await act(async () => { now += 20000; polls.forEach((poll) => poll()); });
+    expect(screen.getByText("Status out of date")).toBeInTheDocument();
+    expect(screen.queryByText("Selected local changes acknowledged")).not.toBeInTheDocument();
+    state.devices[0].sync!.pending = 4;
+    state.devices[0].sync!.state = "pending";
+    fireEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText("Awaiting acknowledgement")).toBeInTheDocument();
+    expect(screen.queryByText("Status out of date")).not.toBeInTheDocument();
+  } finally { view.unmount(); }
+});
 
 it("requires an explicit scope choice and preserves a copyable invite when clipboard fails", async () => {
   const invite = vi.spyOn(deviceSyncApi, "invite").mockImplementation(async () => {
@@ -241,14 +274,14 @@ it("reports rows the node could not merge into this device's replica", async () 
   state.quarantined_count = 1;
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText(
-    "1 local record could not be merged into the sync replica on this device (conflicting history from a restored backup). They stay in your reading history."))
+    "1 local record could not be merged into the sync replica on this device (conflicting history from a restored backup). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them."))
     .toBeInTheDocument();
   state.quarantined = [{ scope: "reading", id: "article", code: "sync_value_invalid" },
                        { scope: "bookmarks", id: "saved", code: "sync_value_invalid" }];
   state.quarantined_count = 2;
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText(
-    "2 local records could not be merged into the sync replica on this device (an unexpected sync error). They stay in your reading history."))
+    "2 local records could not be merged into the sync replica on this device (an unexpected sync error). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them."))
     .toBeInTheDocument();
 });
 
@@ -259,4 +292,29 @@ it("reports a failed refresh as an error and never as work done on the node", as
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh device status.");
   expect(screen.queryByText(/Done on the node/)).not.toBeInTheDocument();
+});
+
+
+it.each(["awaiting_peer", "active", "expired"])("keeps the inviter code hidden after approval in %s", async (status) => {
+  state.devices = [{ ...pair, status }];
+  show();
+  const card = await screen.findByRole("article", { name: "Device My laptop" });
+  expect(within(card).queryByText(pair.verification_code)).not.toBeInTheDocument();
+});
+
+it("does not describe quarantined conversations as reading history", async () => {
+  state.quarantined = [{ scope: "conversations", id: "conversation", code: "sync_dot_conflict" }];
+  state.quarantined_count = 1;
+  show();
+  expect(await screen.findByText(/original records remain on this device/)).toHaveTextContent("conversations");
+  expect(screen.queryByText(/They stay in your reading history/)).not.toBeInTheDocument();
+});
+
+it("shows truncated rejection counts even when no detailed identifiers remain", async () => {
+  state.devices = [{ ...pair, status: "active", sync: { state: "confirmed", pending: 0,
+    last_success_at: 1000, conflicts: 0, error_code: "", rejected_by_peer: {}, rejected_details_truncated: true } }];
+  show();
+  expect(await screen.findByText(/Additional rejected records are not listed/)).toBeInTheDocument();
+  expect(screen.getByText("Remaining local changes confirmed by the other device.")).toBeInTheDocument();
+  expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
 });

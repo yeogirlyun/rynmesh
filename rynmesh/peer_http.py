@@ -7,6 +7,7 @@ manifests and content hashes locally before storing content bytes.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -294,6 +296,73 @@ class HttpPeerClient:
         if not isinstance(value, dict):
             raise PeerTransportError("peer_response_not_object")
         return value
+
+    def iter_post_ndjson(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        max_event_bytes: int = 256 * 1024,
+        max_total_bytes: int = 8 * 1024 * 1024,
+    ) -> Iterator[dict[str, Any]]:
+        """POST JSON and validate a bounded UTF-8 NDJSON response incrementally.
+
+        Only transports that explicitly implement ``iter_post_bytes`` may use
+        this path. Buffered/plugin transports therefore fail with a stable
+        unsupported code and callers can select the existing whole-response
+        path without a hidden raw-urllib bypass.
+        """
+        stream = getattr(self.transport, "iter_post_bytes", None)
+        if not callable(stream):
+            raise PeerTransportError("peer_transport_stream_unsupported")
+        if max_event_bytes < 2 or max_total_bytes < max_event_bytes:
+            raise PeerTransportError("peer_stream_limits_invalid")
+        body = json.dumps(
+            payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")
+        decoder = codecs.getincrementaldecoder("utf-8")("strict")
+        buffered = ""
+
+        def decode_line(line: str) -> dict[str, Any]:
+            if len(line.encode("utf-8")) > max_event_bytes:
+                raise PeerTransportError("peer_stream_event_too_large")
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                raise PeerTransportError("peer_stream_event_invalid") from None
+            if not isinstance(value, dict):
+                raise PeerTransportError("peer_stream_event_not_object")
+            return value
+
+        try:
+            chunks = stream(
+                self.endpoint + path,
+                body,
+                timeout_s=self.timeout_s,
+                max_chunk_bytes=min(64 * 1024, max_event_bytes),
+                max_total_bytes=max_total_bytes,
+                headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
+            )
+            for chunk in chunks:
+                buffered += decoder.decode(chunk)
+                while "\n" in buffered:
+                    line, buffered = buffered.split("\n", 1)
+                    line = line.rstrip("\r")
+                    if line:
+                        yield decode_line(line)
+                if len(buffered.encode("utf-8")) > max_event_bytes:
+                    raise PeerTransportError("peer_stream_event_too_large")
+            buffered += decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            raise PeerTransportError("peer_stream_utf8_invalid") from None
+        except TransportError as exc:
+            code = "peer_stream_too_large" if exc.reason == "too_large" else (
+                "peer_stream_limit_invalid" if exc.reason == "invalid_limit" else "peer_stream_failed"
+            )
+            raise PeerTransportError(code) from None
+        tail = buffered.rstrip("\r")
+        if tail:
+            yield decode_line(tail)
 
     def _bytes(self, path: str, *, max_bytes: int) -> bytes:
         try:
@@ -1461,6 +1530,8 @@ def create_app(store: RynmeshStore | None = None):
         active_store.home,
         bootstrap_defaults=desktop_discovery,
         profile_store=_recommendation_profile,
+        friend_items=lambda: app.state.friend_feed.service.for_you_items()
+            if hasattr(app.state, 'friend_feed') else [],
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
@@ -1585,7 +1656,7 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/digest")
     def local_digest(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        digest = _digest_service().last_digest()
+        digest = _digest_service().for_you_digest()
         return digest or {"generated_at_unix": 0.0, "items": [], "sources": []}
 
     @app.get("/api/local/discovery/status")
@@ -1606,6 +1677,7 @@ def create_app(store: RynmeshStore | None = None):
         provider = _model_provider()
         if provider is not None:
             result["digest"] = service.enrich_latest(provider)
+        result["digest"] = service.for_you_digest()
         status = result["status"]
         _audit().append(
             "rec",
@@ -2431,7 +2503,11 @@ def create_app(store: RynmeshStore | None = None):
     install_reading_cleanup(app, store=active_store, home=_home,
         workers=app.state.background_workers, local_control=local_control)
 
+    from .device_erasure.routes import install_device_erasure
     from .privacy_export.routes import install_privacy_export
+
+    install_device_erasure(app, home=active_store.home, messaging_key=_msg_priv,
+        local_control=local_control, workers=app.state.background_workers)
 
     install_privacy_export(app, local_control=local_control)
 
