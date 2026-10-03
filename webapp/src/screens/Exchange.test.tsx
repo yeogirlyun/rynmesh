@@ -5,7 +5,8 @@ import Exchange from "./Exchange";
 import { exchange, networkInvite, parseInvite, type Manifest, type Status } from "../domain/exchange";
 
 const confirm = vi.hoisted(() => vi.fn());
-vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm }) }));
+const mode = vi.hoisted(() => ({ current: "live" }));
+vi.mock("../appContext", () => ({ useAppContext: () => ({ confirm, client: { mode: mode.current } }) }));
 const manifest: Manifest = { version: "ryn.exchange.v1", name: "Alpha", validators: ["one", "two", "three", "four"].map(peer_id => ({ peer_id, endpoint: "http://127.0.0.1:9000" })), judges: [],
   issuance_limit: 100000000, work_reward: 1000000, appeal_window_s: 60, covenant: { version: "v1", principles: ["free participation"], acceptance: "Buyer accepts or both parties refund." } };
 const terms = { title: "Translate a paragraph", scope: "Translate 100 words", price: 250000, buyer_dispute_reserve: 3000, provider_dispute_reserve: 3000, platform_commission: 0,
@@ -14,7 +15,7 @@ const state: Status = { configured: true, peer_id: "buyer", actor: "buyer", encr
   wallet: { available: 1000000, held: 0, earned: 1000000, label: "Buyer", devices: [], nonce: 3 }, pending: [], listings: [], orders: [],
   proposals: [{ id: "proposal-id", listing_id: "listing-id", buyer: "buyer", provider: "seller", proposed_by: "seller", scope: terms.scope, price: terms.price, status: "offered", terms, terms_hash: "sha256:exact-terms" }] };
 beforeEach(() => {
-  vi.restoreAllMocks(); confirm.mockReset();
+  vi.restoreAllMocks(); confirm.mockReset(); mode.current = "live";
   vi.spyOn(exchange, "status").mockResolvedValue(structuredClone(state));
   vi.spyOn(exchange, "action").mockResolvedValue({ committed: true, status: structuredClone(state) });
   vi.spyOn(exchange, "control").mockResolvedValue(structuredClone(state));
@@ -70,4 +71,13 @@ it("round-trips Unicode invitations and rejects an unrelated link", () => {
   const unicode = { ...manifest, name: "Rynmesh · 日本語" };
   expect(parseInvite(networkInvite(unicode))).toEqual(unicode);
   expect(() => parseInvite("https://example.test")).toThrow();
+});
+
+
+it("never contacts a real wallet or signs operations from fixture mode", async () => {
+  mode.current = "fixture"; render(<Exchange />);
+  expect(await screen.findByText(/Exchange is unavailable in fixture mode/)).toBeInTheDocument();
+  expect(exchange.status).not.toHaveBeenCalled();
+  expect(exchange.action).not.toHaveBeenCalled();
+  expect(exchange.control).not.toHaveBeenCalled();
 });
