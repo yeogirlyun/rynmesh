@@ -1,0 +1,72 @@
+import { nodeControlUrl } from "./nodeUrl";
+
+export type PeerIdentity = { peer_id: string; endpoint: string };
+export type Judge = PeerIdentity & { encryption_key: string; model: string; fee: number };
+export type Manifest = { version: string; name: string; validators: PeerIdentity[]; judges: Judge[];
+  issuance_limit: number; work_reward: number; appeal_window_s: number; covenant: { version: string; principles: string[]; acceptance: string } };
+export type Listing = { id: string; owner: string; kind: "offer" | "request"; category: string; title: string; description: string; price: number; active: boolean };
+export type Terms = { title: string; scope: string; price: number; buyer_dispute_reserve: number; provider_dispute_reserve: number;
+  platform_commission: number; appeal_window_s: number; judges: Judge[]; covenant: Manifest["covenant"]; delivery: string };
+export type Proposal = { id: string; listing_id: string; buyer: string; provider: string; proposed_by: string; scope: string;
+  price: number; status: string; terms: Terms; terms_hash: string };
+export type Order = { id: string; buyer: string; provider: string; terms: Terms; price: number; status: string;
+  evidence_submitted: string[]; refund_requests: string[]; waivers: string[]; round?: number; appeal_until?: number;
+  ruling_share?: number; paid?: number; delivery_hash?: string };
+export type Status = { configured: boolean; peer_id: string; encryption_key: string; covenant?: Manifest["covenant"]; actor?: string;
+  name?: string; network?: string; height?: number; head?: string; manifest?: Manifest; issued?: number; issuance_limit?: number;
+  work_reward?: number; wallet?: { available: number; held: number; earned: number; label: string; devices: string[]; nonce: number };
+  receipts?: { id: string; action: string; status: string }[];
+  listings?: Listing[]; proposals?: Proposal[]; orders?: Order[]; pending?: { id: string; action: string; status: string }[]; registry?: boolean; judge?: boolean };
+
+export const coin = (minor: number) => `${(minor / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 6 })} Ryncoin`;
+export function parseInvite(input: string): Manifest {
+  const raw = input.trim();
+  const decoded = raw.startsWith("rynmesh-exchange://network/")
+    ? new TextDecoder().decode(Uint8Array.from(atob(raw.split("/network/")[1].replaceAll("-", "+").replaceAll("_", "/")), c => c.charCodeAt(0))) : raw;
+  const value = JSON.parse(decoded) as Manifest;
+  if (value.version !== "ryn.exchange.v1" || !Array.isArray(value.validators) || !Array.isArray(value.judges)) throw new Error("This network invitation is invalid.");
+  return value;
+}
+export function networkInvite(manifest: Manifest): string {
+  const encoded = btoa(Array.from(new TextEncoder().encode(JSON.stringify(manifest)), c => String.fromCharCode(c)).join(""));
+  return `rynmesh-exchange://network/${encoded.replaceAll("+", "-").replaceAll("/", "_")}`;
+}
+const errors: Record<string, string> = {
+  exchange_operation_superseded: "Another authorized operation used this account’s nonce first. This saved operation was not applied. Review your wallet and orders before creating a new request.",
+  exchange_delivery_changed: "The delivery changed after you reviewed it. Refresh and read the new delivery before accepting.",
+  exchange_pending_required: "Resume the saved operation before submitting another mutation from this node.",
+  exchange_open_orders_limit: "This pilot limits open work to protect access to every held balance. Close existing orders before agreeing more work.",
+  exchange_insufficient_balance: "The buyer needs the price plus their dispute reserve. The provider also needs their dispute reserve. Earn Ryncoin before agreeing.",
+  exchange_profile_required: "Create your free public profile first.",
+  exchange_quorum_unavailable: "Validator approval is unavailable. The original operation is saved. Refresh, then resume it when the validators reconnect.",
+  exchange_proposer_unavailable: "The next proposer is offline. Your original operation remains saved. Reconnect that validator, then resume.",
+  exchange_models_disagree: "The models disagree. Funds remain held. Review and resubmit evidence with the other party.",
+  exchange_model_uncertain: "A model could not decide safely. Funds remain held. Review the evidence with the other party.",
+  exchange_evidence_incomplete: "Both parties must submit evidence before requesting a decision.",
+  exchange_appeal_open: "The appeal window is still open. Wait or have both parties waive their appeal before settling.",
+  exchange_registry_disabled: "Enable registry participation before requesting this verification.",
+  exchange_registry_already_rewarded: "This identity has already received its registry registration reward.",
+  exchange_work_unverified: "Independent validators could not verify your registry. Check your endpoint and participation setting.",
+  exchange_issuance_exhausted: "This alpha network's published issuance budget is exhausted. Existing Ryncoin can still be spent.",
+  exchange_network_changed: "This node already belongs to a different exchange network. It cannot replace a ledger containing commitments.",
+  exchange_private_key_required: "Use the original node holding this account’s decryption keys to deliver or submit private evidence.",
+  exchange_recipient_invalid: "Use a different registered participant’s public identity.",
+  exchange_judges_unavailable: "Six independent judges must be available outside the buyer and provider identities. Review the network roster with its operators.",
+};
+async function request<T>(body?: object): Promise<T> {
+  const response = await fetch(nodeControlUrl(`/exchange${body ? "/action" : ""}`), {
+    method: body ? "POST" : "GET", credentials: "include", signal: AbortSignal.timeout(150000),
+    headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!response.ok) {
+    const value = await response.json().catch(() => ({}));
+    throw new Error(errors[value.detail] ?? "This operation could not be confirmed. Refresh and review saved operations before retrying. Funds move only after validator approval.");
+  }
+  return response.json();
+}
+export const exchange = {
+  status: () => request<Status>(),
+  control: (body: object) => request<Status>(body),
+  action: (action: string, value: object, operation_id: string) => request<{ committed: boolean; status: Status }>({ action, value, operation_id }),
+  delivery: (order_id: string) => request<{ body: string; hash: string }>({ action: "delivery", order_id }),
+};

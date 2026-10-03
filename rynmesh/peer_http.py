@@ -638,6 +638,9 @@ def create_app(store: RynmeshStore | None = None):
             llm_shutdown = getattr(lifespan_app.state, "llm_shutdown", None)
             if callable(llm_shutdown):
                 await _asyncio.to_thread(llm_shutdown)
+            exchange_shutdown = getattr(lifespan_app.state, "exchange_shutdown", None)
+            if callable(exchange_shutdown):
+                await _asyncio.to_thread(exchange_shutdown)
             lifespan_app.state.loop = None
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
@@ -2445,6 +2448,10 @@ def create_app(store: RynmeshStore | None = None):
         app, store=active_store, home=_home, workers=app.state.background_workers,
         local_control=local_control, messaging_key=_msg_priv,
     )
+
+    from .exchange.routes import install_exchange
+
+    install_exchange(app, store=active_store, messaging_key=_msg_priv, local_control=local_control)
 
     from .device_sync.routes import install_device_sync
 

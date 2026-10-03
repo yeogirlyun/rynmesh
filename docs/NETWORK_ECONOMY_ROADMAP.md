@@ -1,9 +1,18 @@
 # General-purpose value exchange and Ryncoin infrastructure
 
-Status: proposed infrastructure roadmap, 2026-10-03. Product direction reflects
-owner instructions; the designs below are recommendations for review, not
-implemented features or approved executable issues. Current-code baseline:
+Status: owner-approved direction and first digital-work alpha implementation,
+2026-10-03. [Exchange alpha](EXCHANGE_ALPHA.md) documents the delivered subset
+and [issue #87](https://github.com/yeogirlyun/rynmesh/issues/87) records its design.
+The remainder below is the broader roadmap, not a claim of public production
+readiness. The baseline preceding this milestone was
 [`fa85833`](https://github.com/yeogirlyun/rynmesh/commit/fa85833f2cee8b4cfb70a0f7fc8c7a9a5e976c4e).
+
+Delivered subset: free profiles/offers/requests, signed digital agreements,
+integer Ryncoin wallets, quorum-approved bounded registry registration issuance,
+escrow/refunds/direct transfers, encrypted text delivery, model-receipt decisions
+and one appeal. The roster is explicit and fixed; there is no round-changing
+BFT or permissionless issuance defense. Real AI impartiality, ongoing useful-work
+rewards and complete commerce/hiring/media adapters remain later gates.
 
 ## 1. Product direction
 
@@ -52,7 +61,7 @@ Initial economic scope: earn and spend **Ryncoin inside Rynmesh**, including
 payments between participants. Fiat purchase, withdrawal, redemption, and
 currency exchange are a much later stage. An internal economy still requires
 legal and operating review before launch; delaying fiat does not remove that
-gate. This roadmap starts no implementation, service, automation, or monitoring.
+gate. This roadmap does not independently authorize implementation, service, automation, or monitoring.
 
 Transparency includes open audit access to issuance, settlement proofs, fee
 calculation, reward attribution, model/covenant references and governance changes.
@@ -86,7 +95,7 @@ service was useful, a delivery occurred, or a view was genuine.
 |---|---|---|
 | Rynmesh Credits | Existing contribution reputation and distribution signals | Remain nontransferable; cannot be purchased through Ryncoin |
 | Development Task Balance | Existing simulated service hold/settle/release accounting | Remains explicitly development-only; no automatic conversion to spendable Ryncoin |
-| Ryncoin | Planned unit for earning and spending within the network | Transferable between participants for network transactions; no fiat bridge initially |
+| Ryncoin | Internal earn/spend unit implemented in the configured digital alpha | Transferable between participants for network transactions; no fiat bridge initially |
 
 Paying a provider transfers existing Ryncoin. It does not also mint the same
 amount again. Spending coins does not erase reputation. Buying coins must not
