@@ -35,7 +35,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
   const refused = syncScopes.filter((scope) => rejected[scope]);
   return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
-    {pair.status !== "revoked" && !approving ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
+    {pair.role === "joiner" && pair.status !== "revoked" && pair.verification_code ? <p>Enter this code on the computer that sent the invitation: <strong>{pair.verification_code}</strong></p> : null}
     {approving ? <>
       <p>Only approve a computer you own. Review its identity and choose what may sync in both directions.</p>
       <p>Read the code from the other computer's My devices screen and type it here. It is not shown on this screen.</p>
@@ -47,7 +47,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
     {active ? <>
       <p>{pair.paused ? "Paused on this device." : pair.remote_paused ? "Paused on the other device." : "Both devices have confirmed the pairing."}</p>
       {pair.sync ? <div role="status">
-        <p>{refused.length > 0 && pair.sync.state === "confirmed" ? "Remaining local changes confirmed by the other device."
+        <p>{(refused.length > 0 || pair.sync.rejected_details_truncated) && pair.sync.state === "confirmed" ? "Remaining local changes confirmed by the other device."
           : ({ confirmed: "Selected local changes confirmed by the other device.", pending: "Changes are waiting for confirmation.",
           waiting: "Last transfer was not confirmed. Reconnect and retry.", failed: "Local sync storage is unavailable. Free space or check storage, then retry.",
           paused: "Content transfer is paused.", no_scope: "No category is currently allowed by both devices.",
@@ -57,6 +57,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
         {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. <a href="#reading-sync-conflicts">Review reading choices below</a>; review conversation branches in <Link to="/ask">Ask Ryn</Link>.</p> : null}
         {refused.map((scope) => <p key={scope}>{rejected[scope]} {rejected[scope] === 1 ? "record" : "records"} in {scopeNames[scope]} could
           not be merged by {pair.device.name}. They will be sent again after they change on this device.</p>)}
+        {pair.sync.rejected_details_truncated ? <p>Additional rejected records are not listed because diagnostic storage reached its limit. The displayed counts are minimum counts; a cleared list does not confirm every record was merged.</p> : null}
       </div> : null}
       <p>Mutually allowed: {pair.effective_scopes.map((scope) => scopeNames[scope]).join(", ") || "None"}.</p>
       <ScopeChoice label="Your allowed scope" value={scopes} onChange={setScopes} disabled={busy} />
@@ -135,7 +136,7 @@ export default function Devices() {
     {status && status.capture_failures.count > 0 ? <p role="status">{status.capture_failures.count} local {status.capture_failures.count === 1 ? "change" : "changes"} could
       not be queued for sync ({captureFailureReason(status.capture_failures.codes)}). They stay on this device.</p> : null}
     {status && status.quarantined_count > 0 ? <p role="status">{status.quarantined_count} local {status.quarantined_count === 1 ? "record" : "records"} could
-      not be merged into the sync replica on this device ({quarantineReason(status.quarantined)}). They stay in your reading history.</p> : null}
+      not be merged into the sync replica on this device ({quarantineReason(status.quarantined)}). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them.</p> : null}
     <div className={styles.grid}>
       <Panel><h2>Invite your other computer</h2><p>One use, valid for 15 minutes. Choose the categories you want to allow in both directions; nothing is selected automatically.</p>
         <ScopeChoice label="Offer to sync" value={offered} onChange={setOffered} disabled={busy || Boolean(invite)} />

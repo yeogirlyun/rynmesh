@@ -241,14 +241,14 @@ it("reports rows the node could not merge into this device's replica", async () 
   state.quarantined_count = 1;
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText(
-    "1 local record could not be merged into the sync replica on this device (conflicting history from a restored backup). They stay in your reading history."))
+    "1 local record could not be merged into the sync replica on this device (conflicting history from a restored backup). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them."))
     .toBeInTheDocument();
   state.quarantined = [{ scope: "reading", id: "article", code: "sync_value_invalid" },
                        { scope: "bookmarks", id: "saved", code: "sync_value_invalid" }];
   state.quarantined_count = 2;
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByText(
-    "2 local records could not be merged into the sync replica on this device (an unexpected sync error). They stay in your reading history."))
+    "2 local records could not be merged into the sync replica on this device (an unexpected sync error). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them."))
     .toBeInTheDocument();
 });
 
@@ -259,4 +259,29 @@ it("reports a failed refresh as an error and never as work done on the node", as
   await userEvent.click(screen.getByRole("button", { name: "Refresh devices" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh device status.");
   expect(screen.queryByText(/Done on the node/)).not.toBeInTheDocument();
+});
+
+
+it.each(["awaiting_peer", "active", "expired"])("keeps the inviter code hidden after approval in %s", async (status) => {
+  state.devices = [{ ...pair, status }];
+  show();
+  const card = await screen.findByRole("article", { name: "Device My laptop" });
+  expect(within(card).queryByText(pair.verification_code)).not.toBeInTheDocument();
+});
+
+it("does not describe quarantined conversations as reading history", async () => {
+  state.quarantined = [{ scope: "conversations", id: "conversation", code: "sync_dot_conflict" }];
+  state.quarantined_count = 1;
+  show();
+  expect(await screen.findByText(/original records remain on this device/)).toHaveTextContent("conversations");
+  expect(screen.queryByText(/They stay in your reading history/)).not.toBeInTheDocument();
+});
+
+it("shows truncated rejection counts even when no detailed identifiers remain", async () => {
+  state.devices = [{ ...pair, status: "active", sync: { state: "confirmed", pending: 0,
+    last_success_at: 1000, conflicts: 0, error_code: "", rejected_by_peer: {}, rejected_details_truncated: true } }];
+  show();
+  expect(await screen.findByText(/Additional rejected records are not listed/)).toBeInTheDocument();
+  expect(screen.getByText("Remaining local changes confirmed by the other device.")).toBeInTheDocument();
+  expect(screen.queryByText("Selected local changes confirmed by the other device.")).not.toBeInTheDocument();
 });

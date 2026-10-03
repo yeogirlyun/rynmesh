@@ -41,6 +41,7 @@ class ReplicaStore:
         self.pub = peer_box.public_key_b64(messaging_key)
         self.actor = records.fingerprint(self.pub)
         self._validation_cache = set()
+        self._status_cache = None
 
     def _read(self):
         if not self.path.exists():
@@ -115,6 +116,7 @@ class ReplicaStore:
             if before != plain:
                 nonce, ciphertext = peer_box.seal(self.key, self.pub, plain, info=CHANNEL)
                 atomic_write_json(self.path, {**envelope, 'version': VERSION, 'nonce': nonce, 'ciphertext': ciphertext}, max_bytes=MAX_FILE)
+                self._status_cache = None
             return deepcopy(result)
 
     def read(self, scope, identifier):
@@ -290,10 +292,21 @@ class ReplicaStore:
         many rows are held back, not only how many fit in the projection.
         """
         with file_transaction(self.lock):
+            try:
+                stat = self.path.stat()
+                signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+            except FileNotFoundError:
+                signature = None
+            except OSError:
+                raise SyncError('sync_store_unavailable') from None
+            if self._status_cache is not None and self._status_cache[0] == signature:
+                return deepcopy(self._status_cache[1])
             _, data = self._read()
             rows = [{'scope': entry['scope'], 'id': entry['id'], 'code': entry['code']}
                     for _, entry in sorted(data.get('quarantine', {}).items())]
-            return {'quarantined': rows[:MAX_BATCH], 'quarantined_count': len(rows)}
+            result = {'quarantined': rows[:MAX_BATCH], 'quarantined_count': len(rows)}
+            self._status_cache = (signature, result)
+            return deepcopy(result)
 
     def acknowledge(self, device, receipts, *, scopes):
         records.actor_id(device)
