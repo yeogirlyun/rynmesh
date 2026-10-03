@@ -74,6 +74,7 @@ gpu-provider = [
 ]
 
 [project.scripts]
+rynmesh-exchange = "rynmesh.exchange.cli:main"
 rynmesh-mcp = "rynmesh.mcp_server:main"
 rynmesh-peer = "rynmesh.peer_http:main"
 rynmesh-registry = "rynmesh.registry_http:main"

@@ -34,6 +34,7 @@ import Friends from "./screens/Friends";
 import Devices from "./screens/Devices";
 import Search from "./screens/Search";
 import FriendFeed from "./screens/FriendFeed";
+import Exchange from "./screens/Exchange";
 import SharedReading from "./screens/SharedReading";
 import OfflineReading from "./screens/OfflineReading";
 import Reading from "./screens/Reading";
@@ -59,6 +60,7 @@ const navItems = [
   { path: "/shared-reading", label: "Shared lists", icon: Users },
   { path: "/offline", label: "Offline reading", icon: NavIcons.publish },
   { path: "/services", label: "Services", icon: NavIcons.services },
+  { path: "/exchange", label: "Exchange", icon: NavIcons.services },
   { path: "/chat", label: "Chat", icon: NavIcons.chat },
   { path: "/settings", label: "Settings", icon: NavIcons.settings },
 ];
@@ -427,6 +429,7 @@ export function AppRoutes() {
           <Route path="services/private-ai/chat" element={<LegacyAskRedirect />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route path="services/secure-web-access" element={<SecureWebAccess />} />
+          <Route path="exchange" element={<Exchange />} />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<Settings />} />
         </Route>

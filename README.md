@@ -26,6 +26,9 @@ The node, web interface, recommendation agent, peer protocol, registry, and comm
 - Reading history, bookmarks, offline reading and unified Ask Ryn
 - On current main: shared reading lists, friend content in For You, mesh/device
   diagnostics, reviewed device cleanup and direct Private AI streaming
+- On current main: an opt-in digital-service Exchange with free offers/requests,
+  negotiated agreements, an internal Ryncoin wallet, encrypted delivery,
+  refunds and AI dispute/appeal mechanics in a configured alpha network
 - Non-transferable Rynmesh Credits for distribution reputation
 
 Rynmesh is alpha software. APIs and storage formats may change before 1.0.
@@ -43,11 +46,13 @@ Rynmesh is alpha software. APIs and storage formats may change before 1.0.
 - Friend invitations and friend-attributed For You content are implemented.
   Multi-user egress hardening, broader physical acceptance and budgeted agent
   execution remain work.
-- General-purpose provider/seeker exchange, spendable Ryncoin, protocol-issued
-  infrastructure rewards and neutral AI dispute resolution are proposed in the
-  [Network economy roadmap](docs/NETWORK_ECONOMY_ROADMAP.md). Participation is
-  intended to be free and open source, with no platform commission; service
-  prices follow demand/supply and fiat exchange is a much later stage.
+- The first digital-value exchange milestone is implemented for configured
+  alpha groups; see [Exchange alpha](docs/EXCHANGE_ALPHA.md). Registry issuance
+  is finite and one-time per identity. The fixed-roster approval log and model
+  adapters do not prove permissionless security or impartial AI. Broad commerce,
+  hiring, paid media and public rewards remain in the
+  [Network economy roadmap](docs/NETWORK_ECONOMY_ROADMAP.md). Fiat conversion
+  remains a much later stage.
 - The safety scanner is an alpha implementation; operating an unrestricted
   network of untrusted peers requires the additional hardening described in
   [Product milestones](docs/PRODUCT_MILESTONES.md).

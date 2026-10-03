@@ -72,8 +72,12 @@ issuance and settlement require approved designs before implementation.
 ## Stage boundaries
 
 - Current reputation is nontransferable; development settlement is simulated.
-- Internal participant-to-participant Ryncoin transfers are planned, not built.
+- Internal participant-to-participant Ryncoin transfers and a complete written
+  digital-service journey are implemented in the configured alpha.
+  [Exchange alpha](EXCHANGE_ALPHA.md) records the limits; existing video/Private
+  AI service accounting is not automatically converted or migrated.
 - Paid launch needs finality, escrow, disputes, funding, abuse controls and
   operating review; unrestricted public use additionally requires P4 hardening.
 - Fiat conversion and exchange-rate markets belong to P7, much later.
-- This document starts no code work, jobs, background monitoring or automation.
+- Issue #87 records the owner-authorized first digital-work implementation.
+  This roadmap independently starts no jobs, monitoring or automation.
