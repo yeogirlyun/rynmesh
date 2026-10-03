@@ -1,9 +1,9 @@
 # Testing strategy: what "working" means at each layer
 
-Status: adopted 2026-09-04. This document defines the evidence a change must
-produce before it counts as delivered, and the gate each milestone must clear
-before it is claimed. It exists because the project's own quality claims have
-outrun its coverage in one specific place, named honestly in §5.
+Status: adopted 2026-09-04; implementation claims reviewed 2026-10-03.
+This document defines the evidence a change must produce before it counts as delivered, and the gate each milestone must clear
+before it is claimed. Section 5 separates the current automated foundation from
+remaining physical and adversarial acceptance gaps.
 
 Two audiences: a contributor deciding what to write alongside a feature, and a
 maintainer deciding whether a milestone can be called done.
@@ -18,7 +18,8 @@ maintainer deciding whether a milestone can be called done.
 | Packaged node (CI `packaged-node`) | Every push | The release form serves its own UI with no dev server | Anything about the desktop shell |
 | Desktop compile (CI `desktop-compile`, both macOS arches) | Every push | The Tauri shell builds, the bundled daemon boots and answers `/health`, and the bundled inference runtime resolves | That the app is usable |
 | Service end to end (CI `llm-e2e`) | Every push | Two real nodes exchange private LLM work over strict P2P, over the encrypted relay, and now over the peer mailbox, in Docker | Behaviour across real networks or NAT |
-| Two-node acceptance (#37, not yet built) | Planned, every push | Pairing, messaging, content cards, and revocation between two real nodes | Distinct public egress |
+| Friend product end to end (CI `friend-product-e2e`) | Every push | Fresh-node first sharing through an HTTP mailbox, quota/recovery without duplicate messages | Distinct public egress or every device-sync path |
+| Peer transit (CI `peer-transit-e2e`) | Every push | Three-node direct ICE/transit and persistent-worker soak smoke | Arbitrary real NATs or production-scale availability |
 | Physical acceptance (`docs/acceptance/`) | By hand, per gate | What only real machines on real networks can show | Nothing repeatable |
 
 The table's right-hand column is the point. Each layer has a blind spot that
@@ -103,30 +104,50 @@ that kill and resume.
 clusters, collusion, and brigading against the trust weighting, with results
 recorded before any untrusted-peer interaction is enabled.
 
-**P5 Economy maturation.** Out of scope until P4 holds. No testing scheme here
-implies a schedule.
+**P5 Internal Ryncoin (proposed).** Supply conservation, integer balances,
+concurrent double-spend rejection, consensus forks/partitions/validator failure,
+replay/crash/restore safety, escrow/refund/split correctness and deduplicated
+protocol issuance. Neutral AI cases test conflicts, forged evidence, prompt
+injection, model disagreement, fee limits, independent appeals and verifiable
+ruling execution. Public economic operation additionally requires P4; a private
+test network must disclose its validator/trust limitations.
 
-## 5. Where we are honestly short
+**P6 General-purpose exchange (proposed).** Complete provider and seeker paths
+across at least three unrelated activity schemas without separate ledgers.
+Private-data canaries, licensing, inventory/capacity races, subjective acceptance,
+cancellations and disputes are exercised against real persistence and transport.
+Joining and basic participation introduce no entry fee or platform commission.
 
-**The webapp is the gap.** The Python side has broad coverage. The React side
-has ten test files, and twelve screens have none at all, including Home,
-Digest, Search & Ask, Settings, Explore, Item Detail, Peers, Publish, and
-Recommendations. Several of those are on P1's own critical path, which means
-P1's gate above is not currently met by evidence, only by use. This is the same
-finding as the first P1 hardening item in
-[`PRODUCT_MILESTONES.md`](PRODUCT_MILESTONES.md); it is recorded here so it is
-visible from the quality side too.
+**P7 Fiat exchange (much later).** Separate jurisdiction/operating readiness,
+quote expiry, liquidity and two-leg settlement/reconciliation evidence before
+any live fiat adapter. No testing scheme implies permission to deploy.
 
-**There is no coverage measurement** in either language, so "broad coverage" on
-the backend is a claim from test count and reading, not from a number. Adding
-measurement is worth doing before it is used to argue any milestone is met.
+## 5. Current evidence and remaining gaps
 
-**No test exercises the desktop shell as a user.** `desktop-compile` proves the
-bundle builds and the daemon answers; nothing drives the packaged app.
+At main `fa85833` (2026-10-03), integration validation recorded **1,661 backend
+tests and 383 webapp tests**; the frontend has **61 test files**, including Home,
+Digest, Search, Settings, Ask, friend/device workflows and service experiences.
+The [post-merge CI run](https://github.com/yeogirlyun/rynmesh/actions/runs/37137335701)
+passed all nine jobs. Component tests and friend product E2E are implemented;
+earlier statements that those foundations were absent are superseded.
 
-**Two-node acceptance does not exist yet** (#37), so pairing work will land
-before the job that can verify it. That ordering is acceptable only if the job
-lands in the same milestone.
+Counts are a dated snapshot, not line/branch coverage or milestone acceptance.
+Coverage measurement is not established here as proof of completeness.
+
+**Physical acceptance remains incomplete.** Desktop compilation/sidecar smoke
+does not drive the installed app as a user. Loopback/containers and automated
+friend/transit checks do not prove two physical nodes across distinct public
+networks. GPU, revocation/restart and installed deep-link evidence remain scoped
+gaps, not automatically resolved by green CI.
+
+**Service durability is incomplete.** Shared lifecycle hooks do not prove durable
+video purchase recovery after reload. Real-provider delivery and cancellation
+need recorded acceptance beyond fixtures.
+
+**Open-network/economy evidence is future work.** Current suites do not establish
+permissionless consensus, production Ryncoin, neutral AI fairness or legal/ethical
+correctness. The new proposals need dedicated adversarial and conformance evidence
+before implementation can be claimed complete. They start no monitoring or jobs.
 
 ## 6. Working rules
 

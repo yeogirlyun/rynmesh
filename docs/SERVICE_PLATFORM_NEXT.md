@@ -1,96 +1,79 @@
-# Service platform: the next feature set
+# Service platform: shared infrastructure for providers and seekers
 
-Status: accepted plan, 2026-08-26; ownership split adopted 2026-09-03.
-Sequenced after the post-merge review of `feature/local-llm-dual-node`
-(fixes landed in `941e68b`).
+Status: reviewed 2026-10-03 against main `fa85833`. Delivered foundations are
+separated from proposed extensions. The owner requests a general-purpose value
+network, with internal Ryncoin earning/spending first and fiat exchange much
+later. See [Product milestones](PRODUCT_MILESTONES.md) and the detailed
+[network economy roadmap](NETWORK_ECONOMY_ROADMAP.md).
 
-## Ownership
+## Delivered foundations
 
-Two tracks, visible as labels on the
-[work board](https://www.rynmesh.ai/contribute/):
+| Layer | Implemented | Remaining boundary |
+|---|---|---|
+| Node lifecycle | Supervised background-worker registry (#33) | New resource-consuming contribution jobs require owner opt-in and limits |
+| Transport | Service peer POSTs use Transport/HttpPeerClient (#32); encrypted tasks/mailbox and direct peer transit | Distinct-machine/public-egress acceptance and field recovery |
+| Development accounting | Task Balance view over FileCreditLedger development events (#29) | Simulated units; no decentralized Ryncoin spend finality |
+| Native AI | Bundled/downloaded pinned llama.cpp runtime (#34), managed setup and provider permissions | Broader GPU, installed-desktop, restart and cross-network evidence |
+| Private AI experience | Unified Ask, model selection, reviewed content context, direct streaming/cancel/archive (#60) | Whole-response fallback on other paths; real provider/network coverage |
+| Service UI | Descriptors and shared provider/order hooks (#66) | Generic agreements, durable consumer-order lookup, paid fulfillment |
+| Friend Mesh | Reviewed invite/QR, mailbox (#35), friend For You (#62), diagnostics (#64), offline Ask (#78), recap (#79), shared lists (#80) | Installed deep links (#72), physical cross-network evidence and egress credential isolation |
 
-- **`track:system`** — node lifecycle, transport, registry, settlement. Delivered
-  by the maintainers directly; reviews of contributed system PRs are taken over
-  the line by the maintainers rather than iterated in review rounds.
-- **`track:user-facing`** — webapp experiences and product features. Open to
-  the core engineer and any contributor: comment `/claim` on the issue,
-  `/approve` gates design-sensitive work, reservations expire after seven
-  quiet days.
+The shared UI hooks already provide bounded retries, nonoverlapping reads,
+identity binding, terminal-state stopping and explicit writes. Discovery/order
+snapshots remain memory-only. Video submission uncertainty is visible, but a
+reload still loses transient recovery state: do not describe this as a durable
+purchase ledger.
 
-Delivered so far on the system track: the background-worker registry (§2.2,
-#27 via #33), Transport-routed peer POSTs (§2.4, #28 via #32), and the
-ledger-backed Task Balance (§3, #29).
+## Recommended extensions
 
-The local-LLM package proved the shape: encrypted node-to-node tasks, signed
-discovery, idempotent settlement, and a task-first catalog. The next set of
-work turns that one hand-built service into a platform, finishes the Private
-AI experience, and starts the Friend Mesh milestone that gives the network its
-first social pull.
+1. **Durable work first (INF-01).** Persist original order IDs and exact terms;
+   reconcile uncertain outcomes instead of resubmitting. Exercise reload,
+   restart, cancellation and interruption at every settlement boundary.
+2. **Participant identity (INF-02).** Separate an owner/organization from its
+   nodes, devices, service packages and wallets. Specify delegation, revocation,
+   rotation and recovery before balances become transferable.
+3. **Offers and requests (INF-03).** Generalize provider advertisements and
+   seeker requests through extensible schemas, selective public projections,
+   negotiation and matching. Private bodies stay out of registries.
+4. **Ryncoin design and pilot (ECO-01/02).** Introduce reviewed integer asset
+   accounting, decentralized finality, escrow/refunds and reconciliation.
+   Preserve reputation and simulated Task Balance as separate concepts.
+5. **Agreements and fulfillment (INF-04).** Bind revisions, price, scope,
+   milestones, rights, deadlines and dispute rules. Typed adapters support human,
+   digital, physical and compute delivery without inventing separate wallets.
+6. **Protocol infrastructure rewards (ECO-03).** Issue Ryncoin for verified
+   basic system work such as registry/discovery, serving and availability under
+   public issuance budgets. Other jobs can be participant-funded. Signed
+   activity alone is neither useful-work proof nor permission to self-mint.
+7. **Covenants and extension contracts (INF-05/06).** Add neutral AI dispute
+   resolution, corresponding Ryncoin fees and appeals; SDK/conformance, licenses,
+   paid access and media delivery. Safely handle unknown schemas; sandboxing is
+   required before local execution of service code.
 
-## 1. Finish Private AI (preview → dependable)
+These enable arbitrary lawful, ethical activities. Joining and participation
+are free; no platform charges a commission or controls the category list.
+Providers and seekers agree prices through demand and supply. Dispute fees pay
+neutral resolution providers under the published covenant, rather than a platform. Commerce, recruiting,
+consulting and AI entertainment are examples of adapters, not privileged
+hardcoded service classes. The same participant can provide and seek value.
 
-1. **Strict public P2P acceptance** — the one remaining P0 gate. Run the
-   documented two-machine test from a genuinely distinct public egress and
-   record the evidence (`LOCAL_LLM_DEVELOPMENT_STATUS.md` has the runbook).
-2. **Streaming responses** — the adapter already probes streaming support;
-   surface token streaming over the direct path so chat feels live instead of
-   40-second silences. Relay/P2P fall back to whole-message delivery.
-3. **In-chat provider/model switching** — the conversation store already keys
-   by (peer, package); let the user change provider mid-conversation with a
-   visible cost/capability comparison.
-4. **Digest integration** — "Ask about this item" from For You opens Private
-   AI with the article text as grounded context. First real cross-feature use
-   of a mesh service.
-5. **Bundled native inference runtime (delivered, #34)** — managed/GGUF-import
-   modes default to a bundled or downloaded `llama-server` runtime with no
-   Docker dependency; Docker remains an opt-in backend for server operators.
-   See `docs/ISSUE_34_NATIVE_RUNTIME_WORK_PLAN.md`.
+## Ownership and readiness
 
-## 2. Service Experience Framework (from review findings)
+System changes cover identity, transport, durability, settlement, discovery,
+policy and conformance. User-facing adapters cover presenting offers/requests,
+negotiating terms, delivery and reviewing receipts. Both use the local node as
+the enforcement point; browsers and agents do not bypass it.
 
-The four service screens each hand-roll discovery, ordering, and polling; the
-node bolts per-service loops into its lifespan. Generalize the seams the LLM
-package proved:
+[GitHub Issues](https://github.com/yeogirlyun/rynmesh/issues) and
+[CONTRIBUTING.md](../CONTRIBUTING.md) control accepted work. New proposal IDs
+are review suggestions, not issue reservations. Cryptography, wallet authority,
+issuance and settlement require approved designs before implementation.
 
-1. **Webapp**: service descriptors (capability, operation, region, pricing
-   metadata) + shared `useProviderDiscovery` / `useServiceOrder` hooks owning
-   polling cadence and provider identity. Screens become thin renderers;
-   Video Rendering and Secure Web Access stop hardcoding capability strings
-   and regions in components.
-2. **Node** (delivered, #33): a background-worker registry (`worker, interval, backoff`) that
-   service packages append to, replacing the hand-wired `_llm_relay_poll` /
-   `_llm_publish_refresh` pair; the next service must not copy-paste them.
-3. **Params policy**: capability param policies now live in
-   `jobs.CAPABILITY_PARAM_POLICIES`; video and egress register theirs so the
-   no-bodies-in-registry invariant is enforced per capability, not per hack.
-4. **Peer transport** (delivered, #32): route LLM peer POSTs through `Transport`/
-   `HttpPeerClient` so size caps, redirect blocking, and fronted/CDN transport
-   profiles apply to service traffic (today raw urllib bypasses them, and
-   censorship-resistant transports cannot carry LLM tasks at all).
+## Stage boundaries
 
-## 3. One settlement ledger (delivered, #29)
-
-`TaskBalanceLedger` is a second, parallel balance system next to the signed
-`FileCreditLedger`. Before a second paid-ish service ships, extend the credit
-ledger with hold → settle/release event kinds (a development-only category,
-clearly non-monetary) and make Task Balance a view over it. Every service then
-shares one escrow path, one idempotency story, and one auditable history.
-
-## 4. Friend Mesh (P2 start)
-
-The single-user experience is compelling; the network effect starts here:
-
-0. **Peer mailbox (delivered, #35)** — a sealed, signed, short-TTL registry
-   spool so invites, acceptances, revocations and chat reach a node that is
-   offline or has no reachable endpoint. See `docs/PEER_MAILBOX.md`.
-1. Invite links / QR with explicit network + endpoint review before trust.
-2. Friend-attributed content ranked in For You with inspectable provenance.
-3. Revocation and small-mesh diagnostics that non-technical users can drive.
-
-Private AI makes this concrete immediately: inviting a friend means their node
-can use your model — the first tangible answer to "why connect nodes at all?"
-
-## Explicitly not now
-
-- Transferable credits, pricing, or anything money-like (P5 gate unchanged).
-- Open untrusted-peer operation (P4 gate unchanged).
+- Current reputation is nontransferable; development settlement is simulated.
+- Internal participant-to-participant Ryncoin transfers are planned, not built.
+- Paid launch needs finality, escrow, disputes, funding, abuse controls and
+  operating review; unrestricted public use additionally requires P4 hardening.
+- Fiat conversion and exchange-rate markets belong to P7, much later.
+- This document starts no code work, jobs, background monitoring or automation.
