@@ -22,6 +22,10 @@ The node, web interface, recommendation agent, peer protocol, registry, and comm
 - Direct ICE/UDP file transfer with automatic ordinary-peer transit fallback; TURN is not used
 - Content publishing for video, images, audio, documents, slides, datasets, and other files
 - MCP tools for Codex-, Claude-, and other MCP-compatible AI operators
+- Friend invite/QR pairing, encrypted messages, follow feed and owned-device sync
+- Reading history, bookmarks, offline reading and unified Ask Ryn
+- On current main: shared reading lists, friend content in For You, mesh/device
+  diagnostics, reviewed device cleanup and direct Private AI streaming
 - Non-transferable Rynmesh Credits for distribution reputation
 
 Rynmesh is alpha software. APIs and storage formats may change before 1.0.
@@ -34,8 +38,16 @@ Rynmesh is alpha software. APIs and storage formats may change before 1.0.
 - Public-source recommendations work without peers, accounts, preferences, or
   a model. AI-generated briefings and Search & Ask require a reachable local
   Ollama model or explicit opt-in to a configured cloud provider.
-- Friend invitations, friend-attributed recommendations, multi-user egress,
-  and budgeted agent-to-agent services are planned milestones.
+- The latest published release is v0.7.0; newer main-branch features are listed
+  separately in [Product milestones](docs/PRODUCT_MILESTONES.md).
+- Friend invitations and friend-attributed For You content are implemented.
+  Multi-user egress hardening, broader physical acceptance and budgeted agent
+  execution remain work.
+- General-purpose provider/seeker exchange, spendable Ryncoin, protocol-issued
+  infrastructure rewards and neutral AI dispute resolution are proposed in the
+  [Network economy roadmap](docs/NETWORK_ECONOMY_ROADMAP.md). Participation is
+  intended to be free and open source, with no platform commission; service
+  prices follow demand/supply and fiat exchange is a much later stage.
 - The safety scanner is an alpha implementation; operating an unrestricted
   network of untrusted peers requires the additional hardening described in
   [Product milestones](docs/PRODUCT_MILESTONES.md).
