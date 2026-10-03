@@ -492,3 +492,18 @@ def test_open_hold_stays_visible_when_later_history_grows(tmp_path):
     rows = mesh.buyer.status()['orders']
     assert len(rows) == 200
     assert rows[0]['id'] == order_id and rows[0]['status'] == 'working'
+
+
+@pytest.mark.parametrize('decided', [False, True])
+def test_both_parties_can_refund_unsettled_dispute_and_keep_incurred_fees(tmp_path, decided):
+    mesh = Mesh(tmp_path, judges=True); order_id = mesh.dispute()
+    if decided: mesh.buyer.action('rule', {'order_id': order_id}, new_id())
+    mesh.buyer.action('refund', {'order_id': order_id}, new_id())
+    assert mesh.buyer.ledger.state['orders'][order_id]['status'] != 'refunded'
+    mesh.provider.action('refund', {'order_id': order_id}, new_id()); mesh.buyer.sync()
+    assert mesh.buyer.ledger.state['orders'][order_id]['status'] == 'refunded'
+    assert mesh.buyer.ledger.state['orders'][order_id]['paid'] == 0
+    expected = 998500 if decided else UNITS
+    assert mesh.buyer.status()['wallet']['available'] == expected
+    assert mesh.provider.status()['wallet']['available'] == expected
+    assert mesh.buyer.status()['wallet']['held'] == mesh.provider.status()['wallet']['held'] == 0

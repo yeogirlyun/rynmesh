@@ -133,7 +133,9 @@ enough for **both rounds**, including odd-unit rounding. Unused reserves return
 on acceptance, refund or final settlement. There is no separate platform fee.
 
 An incomplete case, unavailable or uncertain model, material disagreement, or
-open appeal keeps funds held. There is no unilateral override or admin release.
+open appeal keeps funds held. There is no unilateral override or admin release. Both parties may agree a
+full price refund at any unsettled stage, including model uncertainty or an
+appeal; already committed judge fees remain paid.
 A disagreeing panel's recipients may update evidence and request a new case;
 identical successful cases reuse cached signed rulings without extra model work.
 One appeal starts fresh evidence with a different panel. The second decision

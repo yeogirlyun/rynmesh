@@ -441,13 +441,13 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
             require(value["delivery_hash"] == order["delivery_hash"], "exchange_delivery_changed")
             close(result, order, order["price"], "accepted")
         elif action == "refund":
-            require(set(value) == {"order_id"} and order["status"] in {"working", "delivered"})
+            require(set(value) == {"order_id"})
             if owner not in order["refund_requests"]:
                 order["refund_requests"].append(owner)
             if len(order["refund_requests"]) == 2:
                 close(result, order, 0, "refunded")
         elif action == "dispute":
-            require(set(value) == {"order_id"} and order["status"] in {"working", "delivered"})
+            require(set(value) == {"order_id"})
             judge_panel(config, order, 0)
             judge_panel(config, order, 1)
             order.update(status="disputed", round=0, evidence={}, waivers=[])
