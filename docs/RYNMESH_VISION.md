@@ -7,8 +7,10 @@ merged and proposed work. The detailed infrastructure recommendations are in
 [Network economy roadmap](NETWORK_ECONOMY_ROADMAP.md).
 
 **Principles** below are owner-defined direction. **Open designs** are unresolved
-and must not be silently settled in code. Ryncoin, generalized trading and neutral
-AI arbitration are planned, not capabilities of the current release.
+and must not be silently settled in code. The first configured digital-work alpha now implements internal Ryncoin and
+model-receipt dispute mechanics; [Exchange alpha](EXCHANGE_ALPHA.md) specifies
+its trust limits. General trading, public consensus and proven impartial AI
+remain future stages. The downloadable v0.7.0 release predates this milestone.
 
 ## 1. Purpose: infrastructure for providers and seekers
 
@@ -96,7 +98,7 @@ Keep these concepts distinct:
 |---|---|
 | **Rynmesh Credits** | Implemented nontransferable reputation/distribution evidence |
 | **Development Task Balance** | Implemented simulated hold/settle/release accounting, isolated from reputation scoring |
-| **Ryncoin** | Planned spendable unit for direct participant payments and network rewards |
+| **Ryncoin** | Internal spendable unit in the configured digital-work alpha; public production use remains future work |
 
 **Principles:**
 
