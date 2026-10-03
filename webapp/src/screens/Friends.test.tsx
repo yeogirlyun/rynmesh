@@ -17,6 +17,7 @@ const preview: FriendInvitePreview = { ...friend, invite_id: "i1", expires_at: "
 
 beforeEach(() => {
   mocks.confirm.mockReset();
+  vi.spyOn(friendsApi, "invitationContext").mockResolvedValue({ endpoint: friend.endpoint, address_category: "LAN private" });
   vi.spyOn(friendsApi, "list").mockResolvedValue({ friends: [] });
   vi.spyOn(friendsApi, "invites").mockResolvedValue({ invites: [] });
   vi.spyOn(friendsApi, "cards").mockResolvedValue({ cards: [] });
@@ -55,6 +56,39 @@ it("clears a recovered message load failure without hiding an unconfirmed send",
 });
 
 describe("Friend pairing recovery", () => {
+  it("shows the reviewed sharing address before creating an invite without contacting a friend", async () => {
+    const create = vi.spyOn(friendsApi, "createInvite").mockResolvedValue({ invite_uri: "rynmesh://join/test", invite: preview });
+    const inspect = vi.spyOn(friendsApi, "inspect");
+    const join = vi.spyOn(friendsApi, "join");
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: "Create invite" })).toBeDisabled();
+    expect(await screen.findByText(/Sharing address:.*192.168.1.2/)).toHaveTextContent("same local network");
+    expect(create).not.toHaveBeenCalled();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(join).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Create invite" }));
+    expect(create).toHaveBeenCalledWith(friend.endpoint);
+  });
+
+  it("keeps creation disabled after address load failure and recovers after retry", async () => {
+    vi.mocked(friendsApi.invitationContext).mockRejectedValueOnce(new Error("offline"));
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    expect(await screen.findByText(/Could not load your sharing address/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create invite" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh sharing address" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create invite" })).toBeEnabled());
+  });
+
+  it("explains loopback limits before accepting an invite", async () => {
+    vi.spyOn(friendsApi, "inspect").mockResolvedValue({ ...preview, address_category: "loopback" });
+    const join = vi.spyOn(friendsApi, "join");
+    render(<MemoryRouter><Friends /></MemoryRouter>);
+    fireEvent.change(screen.getByLabelText("Friend invite"), { target: { value: "rynmesh://join/test" } });
+    await userEvent.click(screen.getByRole("button", { name: "Review invite" }));
+    expect(await screen.findByText(/This address works only on this computer/)).toHaveTextContent("Reachability has not been tested");
+    expect(join).not.toHaveBeenCalled();
+  });
+
   it("never accepts a stale preview after the pasted invite changes", async () => {
     let resolve!: (value: FriendInvitePreview) => void;
     vi.spyOn(friendsApi, "inspect").mockImplementationOnce(() => new Promise((done) => { resolve = done; }))

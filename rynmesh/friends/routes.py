@@ -35,6 +35,7 @@ class FriendsState:
 
 
 SAFE_ERRORS = {
+    "invite_endpoint_changed",
     'friend_card_erased', 'friend_card_cleanup_review_changed', 'friend_card_cleanup_file_unavailable',
     'friend_card_cleanup_version_unsupported', 'friend_card_cleanup_limit',
     "invalid_invite", "invite_expired", "invite_used", "invite_cancelled", "invite_not_found",
@@ -145,11 +146,17 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         return {"attachment_max_bytes": MAX_ATTACHMENT_BYTES, "mailbox_max_envelope_bytes": 65536,
                 "default_invite_minutes": 15, "message_ttl_seconds": 3600}
 
+    @app.get("/api/local/friends/invitation-context")
+    async def invitation_context(request: Request):
+        control(request)
+        return await call(current().invitation_context)
+
     @app.post("/api/local/friends/invites")
     async def invite(request: Request):
         control(request)
         body = await _body(request, 4096)
-        return await call(current().create_invite, ttl_minutes=body.get("ttl_minutes", 15))
+        return await call(current().create_invite, ttl_minutes=body.get("ttl_minutes", 15),
+                          reviewed_endpoint=body.get("reviewed_endpoint"))
 
     @app.get("/api/local/friends/invites")
     async def invites(request: Request):

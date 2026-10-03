@@ -5,7 +5,7 @@ import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import { runThenReload } from "../domain/actThenReload";
 import type { FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
-import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
+import { extractInvite, friendsApi, invitationReach, invitationText } from "../domain/friendsClient";
 import FriendConversation from "./components/FriendConversation";
 import FriendCards from "./components/FriendCards";
 import FriendAI from "./components/FriendAI";
@@ -17,6 +17,14 @@ export default function Friends() {
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [invite, setInvite] = useState<FriendInviteResult | null>(null);
+  const [reach, setReach] = useState<{ endpoint: string; address_category: string } | null>(null);
+  const [reachError, setReachError] = useState("");
+  const refreshReach = useCallback(async () => {
+    setReach(null); setReachError("");
+    try { setReach(await friendsApi.invitationContext()); }
+    catch { setReachError("Could not load your sharing address. Check the node's sharing address and retry."); }
+  }, []);
+  useEffect(() => { void refreshReach(); }, [refreshReach]);
   const [qr, setQr] = useState("");
   const [paste, setPaste] = useState("");
   const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview } | null>(null);
@@ -78,9 +86,17 @@ export default function Friends() {
     <div className={styles.heroGrid}>
       <Panel className={styles.actionCard}>
         <h2>Invite a friend</h2><p>One use, valid for 15 minutes. Allows messages, small attachments and content cards. AI access stays off.</p>
-        {!invite ? <Button disabled={busy} onClick={() => void act(async () => setInvite(await friendsApi.createInvite()))}>Create invite</Button> : <div className={styles.inviteBox}>
+        <p>Pair on the same local network or through an address your friend can already reach. Ryn does not open router ports for this invite. No connection has been tested.</p>
+        {!invite ? <>
+          {reach ? <p>Sharing address: {reach.endpoint} · {reach.address_category}. {invitationReach(reach.address_category)}</p> : <p role={reachError ? "alert" : "status"}>{reachError || "Loading sharing address…"}</p>}
+          <Button disabled={busy} onClick={() => void act(refreshReach)}>Refresh sharing address</Button>
+          <Button disabled={busy || !reach} onClick={() => void act(async () => {
+            try { setInvite(await friendsApi.createInvite(reach!.endpoint)); }
+            catch (cause) { await refreshReach(); throw cause; }
+          })}>Create invite</Button>
+        </> : <div className={styles.inviteBox}>
           {qr ? <img className={styles.qr} src={qr} alt="Friend invitation QR code" /> : null}
-          <div><p>Expires {new Date(invite.invite.expires_at).toLocaleString()}</p><p>Reachable address: {invite.invite.endpoint} · {invite.invite.address_category}</p>
+          <div><p>Expires {new Date(invite.invite.expires_at).toLocaleString()}</p><p>Sharing address: {invite.invite.endpoint} · {invite.invite.address_category}</p>
             <textarea aria-label="Invitation and installation instructions" className={styles.paste} readOnly value={invitationText(invite)} />
             <div className={styles.choiceRow}>
               <Button disabled={busy} onClick={() => void act(async () => { await navigator.clipboard.writeText(invitationText(invite)); setNotice("Invitation and installation instructions copied."); })}>Copy invitation</Button>
@@ -97,6 +113,7 @@ export default function Friends() {
           if (version === revision.current) setReview({ uri, preview });
         })}>Review invite</Button> : <div className={styles.review}>
           <strong>Signature checked locally. Your friend has not been contacted.</strong>
+          <p>{invitationReach(review.preview.address_category)} Ryn does not open router ports for this invite. Reachability has not been tested.</p>
           <dl><dt>Device</dt><dd>{review.preview.node_name}</dd><dt>Identity</dt><dd>{review.preview.peer_id}</dd><dt>Address</dt><dd>{review.preview.endpoint} · {review.preview.address_category}</dd><dt>Expires</dt><dd>{new Date(review.preview.expires_at).toLocaleString()}</dd><dt>Allows</dt><dd>Messages, attachments up to 5 MiB, content cards</dd><dt>Stays off</dt><dd>AI, VPN, access to your files and credits</dd></dl>
           <Button disabled={busy} onClick={() => void act(async () => {
             const version = revision.current;
