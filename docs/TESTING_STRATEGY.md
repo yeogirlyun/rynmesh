@@ -20,6 +20,7 @@ maintainer deciding whether a milestone can be called done.
 | Service end to end (CI `llm-e2e`) | Every push | Two real nodes exchange private LLM work over strict P2P, over the encrypted relay, and now over the peer mailbox, in Docker | Behaviour across real networks or NAT |
 | Friend product end to end (CI `friend-product-e2e`) | Every push | Fresh-node first sharing through an HTTP mailbox, quota/recovery without duplicate messages | Distinct public egress or every device-sync path |
 | Peer transit (CI `peer-transit-e2e`) | Every push | Three-node direct ICE/transit and persistent-worker soak smoke | Arbitrary real NATs or production-scale availability |
+| Digital exchange HTTP (`scripts/exchange_e2e.py`) | Explicit local run and CI backend | Twelve temporary HTTP surfaces; earn/buy/deliver/spend/dispute/settle, replica agreement and private plaintext checks | Public BFT, distinct-egress transport or real model neutrality |
 | Physical acceptance (`docs/acceptance/`) | By hand, per gate | What only real machines on real networks can show | Nothing repeatable |
 
 The table's right-hand column is the point. Each layer has a blind spot that
@@ -162,3 +163,17 @@ before implementation can be claimed complete. They start no monitoring or jobs.
   message, and it never contains user content.
 - Every claim in a status document names the evidence behind it, so that
   "implemented" and "verified" stay distinguishable.
+
+## First digital exchange evidence
+
+`tests/test_exchange.py` exercises pure rules plus real Ed25519 signatures,
+X25519 encryption and SQLite restarts: exact terms, supply and hold conservation,
+free profiles, finite issuance, independent work witnesses, concurrent ordering,
+vote locks, lost acknowledgements, replay, refund, partial decision, model
+uncertainty/disagreement, private data, appeals, delegation and owner HTTP gates.
+The Exchange component tests cover reviewed network joining, exact-price
+agreement, verified delivery before acceptance, and resuming a persisted intent
+without a replacement payment. The bounded one-time HTTP acceptance uses
+controlled model adapters and stops all temporary servers before returning.
+A green test does not establish real-model impartiality or public currency
+readiness; the [alpha limitations](EXCHANGE_ALPHA.md) remain explicit.

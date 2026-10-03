@@ -93,8 +93,11 @@ many activities, with owner control and optional AI assistance.
 
 Implemented foundations include encrypted service tasks, model publication and
 discovery, native inference, supervised workers, shared service UI lifecycles and
-ledger-backed **development** Task Balance. Full generalized value exchange is
-not implemented.
+ledger-backed **development** Task Balance. The first complete digital-work
+journey now also has free offers/requests, exact signed terms, original-operation
+recovery, encrypted delivery, escrow and internal Ryncoin settlement in a
+configured alpha. See [Exchange alpha](EXCHANGE_ALPHA.md) and [issue #87](https://github.com/yeogirlyun/rynmesh/issues/87).
+Video/Private AI workflows have not yet migrated to that new ledger.
 
 Proposed extensions, before broad marketplace features:
 
@@ -132,14 +135,14 @@ Gate: adversarial evidence and legal/operating review before unrestricted public
 operation. Generic listings can be designed on a private mesh beforehand;
 public payments and network rewards cannot bypass this gate.
 
-## P5: Internal Ryncoin earn/spend economy — proposed
+## P5: Internal Ryncoin earn/spend economy — configured alpha implemented
 
 Goal: participants earn Ryncoin from direct customers or protocol rewards for
 useful network work, and spend it with other participants inside Rynmesh.
 
 Keep three concepts separate: **Rynmesh Credits** remain nontransferable
 reputation; **development Task Balance** stays simulated; **Ryncoin** is the
-planned spendable asset. No automatic migration, redemption, or minting from
+spendable unit in the opt-in configured alpha. No automatic migration, redemption, or minting from
 existing reputation events or development balances.
 
 Design wallet authority/recovery, integer amounts, supply/issuance, finality,
@@ -148,10 +151,17 @@ infrastructure rewards. Design decentralized consensus and validator incentives
 explicitly; a collection of local signed files is insufficient, and a sole
 platform settlement authority would conflict with the no-middleman principle.
 
-Gate: reviewed economy/operator design, conserved balances under concurrent
+Delivered subset: integer wallet, fixed-roster quorum certificates and durable
+vote locks, capped one-time registry registration issuance, direct transfers,
+price/fee escrow, encrypted text delivery, buyer acceptance, mutual refund,
+three-model decision receipts, one independent-panel appeal and exact-operation
+recovery. Tests exercise concurrent submissions, replay, quorum loss, conserved
+supply, private data and real localhost HTTP. Model outputs in acceptance are
+controlled. This is not production BFT or evaluated neutral AI.
+
+Remaining gate: reviewed economy/operator design, conserved balances under concurrent
 spending, validator failure and forks; neutral AI disputes, disclosed fees and
-anti-abuse controls; then a controlled pilot with no fiat bridge. Unrestricted expansion also requires P4. These are new
-recommendations, not accepted implementation issues or a release date.
+anti-abuse controls; then a controlled pilot with no fiat bridge. Unrestricted expansion also requires P4. Broader public-network changes remain proposals, not a release date.
 
 ## P6: General-purpose value exchange — proposed
 
@@ -193,7 +203,8 @@ backlog. Proposal IDs and roadmap entries are suggestions for owner/design
 review; they do not reserve work or claim milestone acceptance. Follow
 [CONTRIBUTING.md](../CONTRIBUTING.md) before starting implementation.
 
-Recommended next review: INF-01 durable orders; INF-02 participant identity;
-INF-03 offers/requests; ECO-01 settlement/supply design. Policy design begins
+Recommended next review after this digital alpha: audited round-changing
+consensus, demand-backed infrastructure rewards, real independent-model dispute
+acceptance, abandonment rules and adapter migration. Policy design continues
 alongside these, and money-like behavior requires a reviewed design issue before
 implementation. No autonomous or recurring work is authorized by this roadmap.

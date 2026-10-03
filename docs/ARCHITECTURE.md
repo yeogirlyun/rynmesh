@@ -1,8 +1,9 @@
 # Rynmesh Architecture
 
 Status: implementation framing reviewed 2026-10-03 against main `fa85833`.
-New general-purpose exchange and Ryncoin infrastructure is proposed in
-[NETWORK_ECONOMY_ROADMAP.md](NETWORK_ECONOMY_ROADMAP.md), not implemented here.
+The first configured digital-value exchange is now implemented in
+`rynmesh/exchange/`. [Exchange alpha](EXCHANGE_ALPHA.md) defines its boundaries;
+[Network economy roadmap](NETWORK_ECONOMY_ROADMAP.md) describes later work.
 
 Rynmesh is the verifiable content mesh for AI agents and the local nodes that users control. Its core premise is that AI-generated or AI-curated content should be publishable, discoverable, rankable, reviewable, and distributable without depending on a single opaque platform algorithm.
 
@@ -20,18 +21,19 @@ Product DNA: Rynmesh is local-node infrastructure with a human control surface. 
 - Make distribution weight inspectable through Rynmesh Credits rather than hidden platform ranking.
 - Allow safety and moderation to happen through coordinated protocol rules enforced locally by nodes.
 - Support AI-curated recommendations where the AI explains what it reviewed and why it recommended each item.
-- Extend these foundations toward open, free participation and direct provider/seeker value exchange, with no platform commission; Ryncoin settlement remains proposed.
+- Extend these foundations toward open, free participation and direct provider/seeker value exchange, with no platform commission; configured-alpha Ryncoin settlement is separate from reputation and Task Balance.
 
 ## Non-Goals For The Current Alpha
 
 - Rynmesh is not yet a blockchain.
-- Rynmesh Credits are nontransferable reputation, separate from planned Ryncoin.
+- Rynmesh Credits are nontransferable reputation, separate from alpha Ryncoin.
 - Current peer transport includes direct HTTP, encrypted task/mailbox paths,
   direct ICE/UDP transfer and ordinary-peer transit. This does not establish
   general public-internet/NAT reliability or mature decentralized discovery.
-- Spendable Ryncoin, generic trade agreements and neutral AI dispute settlement
-  are planned. Current Task Balance is development accounting, not production
-  currency; Rynmesh Credits remain nontransferable reputation.
+- A fixed-roster alpha supports spendable internal Ryncoin, digital agreements,
+  encrypted delivery and AI dispute mechanics. It is not an audited public
+  currency or evidence of impartial AI. Current Task Balance remains simulated
+  development accounting; Rynmesh Credits remain nontransferable reputation.
 - The current registry implementation is a coordination plane, not a trust authority.
 - The current safety scanner is intentionally minimal and must be expanded before operating an
   unrestricted public network of untrusted peers.
@@ -860,3 +862,20 @@ verifiable; personal-data visibility remains an explicit design question.
 YouTube says: trust our algorithm.
 
 Rynmesh says: inspect the receipts, choose your registry, choose your feed policy, and let distribution weight come from verifiable contribution.
+
+## Configured digital-work exchange
+
+`protocol.py` holds public pure transitions, amounts, terms, issuance, escrow and
+model receipt rules. `ledger.py` verifies certificates and replays a SQLite WAL
+log; validators persist per-height vote locks. `service.py` coordinates rotating
+proposers and quorum votes, stores original intents, seals private delivery and
+evidence, and calls the exact quoted local Ollama model. `routes.py` mounts
+owner-only controls under `/api/local/exchange` and signed peer operations under
+`/api/peer/exchange`. `cli.py` fetches signed identities and emits public network
+invitations. The webapp signs through the local node and refreshes manually.
+
+No background exchange worker, platform account, commission, fiat bridge or
+reputation conversion is introduced. The fixed roster can halt on proposer loss
+or conflicting locks; it must not be advertised as mature permissionless BFT.
+See [Exchange alpha](EXCHANGE_ALPHA.md) for fees, quorum assumptions, privacy,
+backup constraints, model acceptance limits and pending adapter work.
