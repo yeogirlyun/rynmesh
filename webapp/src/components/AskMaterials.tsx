@@ -21,6 +21,8 @@ function Material({ id, byteLimit, onRemove }: { id: string; byteLimit?: number;
   return <section>
     {source ? <>
       <strong>Article: {source.title}</strong>
+      {source.shared_by_peer_id ? <p style={{ overflowWrap: "anywhere" }}>Saved from friend node: {source.shared_by_peer_id}. This is a private saved copy; current sharing permission may differ.</p> : null}
+      {source.publisher_peer_id ? <p style={{ overflowWrap: "anywhere" }}>Publisher recorded in the shared copy: {source.publisher_peer_id}. Original authorship is not independently verified.</p> : null}
       {source.source_url && /^https?:\/\//.test(source.source_url) ? <p>Source: <a href={source.source_url} target="_blank" rel="noreferrer">{source.source_url}</a></p> : <p>Source: private document on this node</p>}
       <p>{source.extraction_truncated ? "Document extraction was truncated. " : ""}{byteLimit === undefined ? "The model receives only the material shown in the send review." : `Supplied excerpt: ${byteLimit} bytes of ${source.text_bytes}.${byteLimit < source.text_bytes ? " Truncated for the context budget." : ""}`}</p>
       <details><summary>{byteLimit === undefined ? "Read local source copy" : "Read supplied excerpt"}</summary><p style={{ whiteSpace: "pre-wrap", maxHeight: "35vh", overflow: "auto" }}>{byteLimit === undefined ? source.text : new TextDecoder().decode(new TextEncoder().encode(source.text ?? "").slice(0, byteLimit))}</p></details>
