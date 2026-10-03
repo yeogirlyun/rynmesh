@@ -199,7 +199,7 @@ it("opens a recovered branch as readable history without a model and focuses it"
   vi.spyOn(askHistory, "restoreBranch").mockImplementation(async (_id, _choice, newId) => save({ ...value, id: newId }));
   await user.click(await screen.findByRole("button", { name: "Keep branch 1 as a separate conversation" }));
   expect(await screen.findByText(value.messages[0].content)).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "Selected conversation" })).toHaveFocus();
+  await waitFor(() => expect(screen.getByRole("region", { name: "Selected conversation" })).toHaveFocus());
   expect(screen.getByText(/original service is unavailable/)).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Continue with original provider" })).not.toBeInTheDocument();
   expect(submit).not.toHaveBeenCalled();
