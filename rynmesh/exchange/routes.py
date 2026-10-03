@@ -100,9 +100,15 @@ def install_exchange(app: Any, *, store: Any, messaging_key: Any, local_control)
             if action == "delivery":
                 require(set(value) == {"action", "order_id"})
                 return await call(lambda: current().delivery(value["order_id"]))
-            require(set(value) == {"action", "value", "operation_id"} and isinstance(action, str))
+            require(
+                set(value) == {"action", "value", "operation_id", "actor"}
+                and isinstance(action, str)
+                and isinstance(value["actor"], str)
+            )
             return await call(
-                lambda: current().action(action, value["value"], value["operation_id"])
+                lambda: current().action(
+                    action, value["value"], value["operation_id"], expected_actor=value["actor"]
+                )
             )
         except ExchangeError as exc:
             raise HTTPException(400, detail=str(exc)) from None

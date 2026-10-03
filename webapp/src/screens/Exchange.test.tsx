@@ -28,7 +28,7 @@ it("reviews exact terms and total hold before spending, with no automatic paymen
   expect(exchange.action).not.toHaveBeenCalled();
   expect(confirm.mock.calls[0][0].body).toContain("0.253 Ryncoin");
   await act(async () => confirm.mock.calls[0][0].onConfirm());
-  expect(exchange.action).toHaveBeenCalledWith("agree", { proposal_id: "proposal-id", terms_hash: "sha256:exact-terms" }, expect.any(String));
+  expect(exchange.action).toHaveBeenCalledWith("agree", { proposal_id: "proposal-id", terms_hash: "sha256:exact-terms" }, expect.any(String), "buyer");
 });
 
 it("requires a verified readable delivery before buyer acceptance", async () => {
@@ -42,7 +42,7 @@ it("requires a verified readable delivery before buyer acceptance", async () => 
   await user.click(within(order).getByRole("button", { name: "Accept and pay provider" }));
   expect(exchange.action).not.toHaveBeenCalled();
   await act(async () => confirm.mock.calls[0][0].onConfirm());
-  expect(exchange.action).toHaveBeenCalledWith("accept", { order_id: "order-id", delivery_hash: "sha256:delivery" }, expect.any(String));
+  expect(exchange.action).toHaveBeenCalledWith("accept", { order_id: "order-id", delivery_hash: "sha256:delivery" }, expect.any(String), "buyer");
 });
 
 it("blocks new spending and resumes the persisted operation after a reload", async () => {
