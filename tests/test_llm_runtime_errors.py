@@ -32,6 +32,7 @@ def failing_runtime():
         def send_json(self, status, value):
             raw = json.dumps(value).encode()
             self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(raw)))
             self.end_headers()
             try:
@@ -58,7 +59,8 @@ def failing_runtime():
     ('runtime_unavailable', 'runtime_unavailable'), ('model_not_found', 'model_not_found'),
     ('runtime_busy PRIVATE_ERROR_CANARY', 'inference_failed'),
 ])
-def test_runtime_http_failure_keeps_safe_code_through_provider(tmp_path, failing_runtime, detail, expected):
+@pytest.mark.parametrize("streaming", [False, True])
+def test_runtime_http_failure_keeps_safe_code_through_provider(tmp_path, failing_runtime, detail, expected, streaming):
     state, url = failing_runtime
     state['body']['detail'] = detail
     if detail == 'model_not_found':
@@ -71,10 +73,13 @@ def test_runtime_http_failure_keeps_safe_code_through_provider(tmp_path, failing
         public_model_alias='Error test', base_url=url), adapter=adapter, store=store, task_store=orders,
         balance=TaskBalanceLedger(tmp_path / 'balance.json'), messaging_key=key)
     request = seal_task(body={'task_id': 'error-task', 'service_id': 'error-test', 'prompt': 'PRIVATE_INPUT_CANARY',
-        'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key)},
+        'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key),
+        **({'response_mode': 'stream-v1'} if streaming else {})},
         task_id='error-task', kind='llm_request', sender_peer_id=store.peer_id, recipient_peer_id=store.peer_id,
         sender_signing_key=store.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires(60))
-    encrypted = provider.handle(request.to_dict())
+    def handle(wire):
+        return list(provider.handle_stream(wire))[-1] if streaming else provider.handle(wire)
+    encrypted = handle(request.to_dict())
     _, response = open_task(encrypted, recipient_peer_id=store.peer_id, recipient_messaging_key=key, expected_kind='llm_response')
     assert response['error_code'] == expected
     assert response['state'] == 'failed'
@@ -85,13 +90,14 @@ def test_runtime_http_failure_keeps_safe_code_through_provider(tmp_path, failing
     # after runtime recovery. A distinct, explicit task can use the freed slot.
     state['status'] = 200
     state['body'] = {'choices': [{'message': {'content': 'Recovered'}}]}
-    assert provider.handle(request.to_dict()) == encrypted
+    assert handle(request.to_dict()) == encrypted
     assert state['calls'] == 1
     retry = seal_task(body={'task_id': 'recovery-task', 'service_id': 'error-test', 'prompt': 'test',
-        'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key)},
+        'max_tokens': 8, 'max_amount': 0, 'reply_messaging_pub': peer_box.public_key_b64(key),
+        **({'response_mode': 'stream-v1'} if streaming else {})},
         task_id='recovery-task', kind='llm_request', sender_peer_id=store.peer_id, recipient_peer_id=store.peer_id,
         sender_signing_key=store.private_key_bytes, recipient_messaging_pub=peer_box.public_key_b64(key), expires_at=_expires(60))
-    _, recovered = open_task(provider.handle(retry.to_dict()), recipient_peer_id=store.peer_id,
+    _, recovered = open_task(handle(retry.to_dict()), recipient_peer_id=store.peer_id,
         recipient_messaging_key=key, expected_kind='llm_response')
     assert recovered['state'] == 'succeeded'
     assert recovered['output'] == 'Recovered'

@@ -28,6 +28,7 @@ import {
 import { askHistory, AskRequestError, conversationRepository, legacyMigrationNotice, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
+import { useLLMStream } from "../domain/useLLMStream";
 import styles from "./PrivateAIChat.module.css";
 
 const TERMINAL_STATES = LLM_TERMINAL_STATES;
@@ -119,6 +120,7 @@ export default function PrivateAIChat() {
   selectedConversationRef.current = selectedConversation?.id;
   const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
+  const stream = useLLMStream(nodeTask);
 
   const refreshNodeHistory = async () => {
     const rows = await history.list(selectedServiceKeyRef.current);
@@ -199,7 +201,7 @@ export default function PrivateAIChat() {
   useEffect(() => {
     const element = messageScrollRef.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [selectedConversation?.messages.length, sending]);
+  }, [selectedConversation?.messages.length, sending, stream.text]);
 
   const grouped = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -611,11 +613,12 @@ export default function PrivateAIChat() {
             <div className={`${styles.messageRow}${message.role === "user" ? ` ${styles.messageRowUser}` : ""}`} key={message.id}>
               {message.role === "assistant" ? <span className={styles.assistantAvatar}><Bot size={18} /></span> : null}
               <div className={styles.messageBlock}>
-                <div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.content}</div>
+                <div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.role === "assistant" && message.taskId === nodeTask && stream.text ? stream.text : message.content}</div>
+                {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={styles.messageMeta} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
                 <span className={styles.messageMeta}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
                 {message.role === "assistant" ? (
                   <div className={styles.messageActions}>
-                    <button type="button" onClick={() => void navigator.clipboard?.writeText(message.content)}><Copy size={12} /> Copy</button>
+                    <button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} /> Copy</button>
                     <button type="button" onClick={() => setHelpfulMessages((current) => new Set(current).add(message.id))}>
                       {helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />} {helpfulMessages.has(message.id) ? "Helpful" : "Good response"}
                     </button>

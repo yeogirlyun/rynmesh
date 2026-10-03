@@ -87,7 +87,7 @@ class AskRunService:
             run = {"task_id": task_id, "conversation_id": conversation_id, "fingerprint": fingerprint,
                    "state": "queued", "cancel_requested": False, "last_checked": 0,
                    "body": {"task_id": task_id, "idempotency_key": task_id, "provider_peer_id": preview["provider_peer_id"],
-                            "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto",
+                            "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto", "response_mode": "stream-v1",
                             "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
                             **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
                             "max_tokens": preview["max_output_tokens"]}}
