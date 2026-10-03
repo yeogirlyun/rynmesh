@@ -96,9 +96,15 @@ class FriendService:
         self.store = FriendStore(home)
         self.messages = MessagingStore(home)
 
-    def create_invite(self, *, ttl_minutes: int = 15) -> dict[str, Any]:
+    def invitation_context(self) -> dict[str, str]:
+        endpoint = validate_endpoint(self.endpoint, allow_loopback=self.allow_loopback)
+        return {"endpoint": endpoint, "address_category": endpoint_category(endpoint)}
+
+    def create_invite(self, *, ttl_minutes: int = 15, reviewed_endpoint: str | None = None) -> dict[str, Any]:
         ttl = max(1, min(int(ttl_minutes), 24 * 60))
         endpoint = validate_endpoint(self.endpoint, allow_loopback=self.allow_loopback)
+        if reviewed_endpoint is not None and reviewed_endpoint != endpoint:
+            raise FriendError("invite_endpoint_changed")
         created = self.clock()
         invite_id = uuid.uuid4().hex
         secret = os.urandom(32)
