@@ -33,6 +33,7 @@ export function networkInvite(manifest: Manifest): string {
 }
 const errors: Record<string, string> = {
   exchange_operation_superseded: "Another authorized operation used this account’s nonce first. This saved operation was not applied. Review your wallet and orders before creating a new request.",
+  exchange_account_changed: "This node switched accounts after your review. Refresh and review the payer identity and terms again before signing.",
   exchange_delivery_changed: "The delivery changed after you reviewed it. Refresh and read the new delivery before accepting.",
   exchange_pending_required: "Resume the saved operation before submitting another mutation from this node.",
   exchange_open_orders_limit: "This pilot limits open work to protect access to every held balance. Close existing orders before agreeing more work.",
@@ -67,6 +68,6 @@ async function request<T>(body?: object): Promise<T> {
 export const exchange = {
   status: () => request<Status>(),
   control: (body: object) => request<Status>(body),
-  action: (action: string, value: object, operation_id: string) => request<{ committed: boolean; status: Status }>({ action, value, operation_id }),
+  action: (action: string, value: object, operation_id: string, actor: string) => request<{ committed: boolean; status: Status }>({ action, value, operation_id, actor }),
   delivery: (order_id: string) => request<{ body: string; hash: string }>({ action: "delivery", order_id }),
 };

@@ -69,7 +69,9 @@ def key(value: Any) -> str:
     import base64
 
     try:
-        require(isinstance(value, str) and len(base64.b64decode(value, validate=True)) == 32)
+        require(isinstance(value, str))
+        raw = base64.b64decode(value, validate=True)
+        require(len(raw) == 32 and base64.b64encode(raw).decode() == value)
     except (ValueError, TypeError):
         raise ExchangeError("exchange_key_invalid") from None
     return value

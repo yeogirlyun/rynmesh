@@ -119,7 +119,15 @@ def run(root: Path):
             )
 
         def action(index, name, value, op=None):
-            return control(index, {"action": name, "value": value, "operation_id": op or new_id()})
+            return control(
+                index,
+                {
+                    "action": name,
+                    "value": value,
+                    "operation_id": op or new_id(),
+                    "actor": nodes[index].actor,
+                },
+            )
 
         for index in range(12):
             control(index, {"action": "configure", "manifest": manifest})

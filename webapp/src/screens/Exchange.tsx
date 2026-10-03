@@ -67,7 +67,7 @@ export default function Exchange() {
     if (attempt.current.fingerprint !== fingerprint) attempt.current = { fingerprint, id: newId() };
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await exchange.action(action, value, attempt.current.id);
+      const result = await exchange.action(action, value, attempt.current.id, state?.actor ?? state?.peer_id ?? "");
       if (mounted.current) { setState(result.status); setFresh(true); setNotice("Confirmed by validators. The public receipt is saved."); attempt.current = { fingerprint: "", id: "" }; }
       return true;
     } catch (cause) {

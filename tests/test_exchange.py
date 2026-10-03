@@ -349,6 +349,13 @@ def test_exchange_http_owner_gate_bounded_body_and_signed_identity(tmp_path):
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, content=b'x' * (512 * 1024 + 1)).status_code == 413
         assert client.post('/api/peer/exchange/vote', json={}).status_code == 409
         assert client.post('/api/peer/exchange/identity', json={'bad': True}).status_code == 400
+        scoped = {'action': 'listing', 'value': {'kind': 'offer', 'category': 'editing', 'title': 'Public work', 'description': 'A small service', 'price': '0'}, 'operation_id': new_id(), 'actor': None}
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 400
+        scoped['actor'] = mesh.provider.peer_id
+        rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped)
+        assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_account_changed'
+        scoped['actor'] = node.peer_id
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 200
         identity = client.post('/api/peer/exchange/identity', json={})
         assert identity.status_code == 200
         assert signature(identity.json()).public_key == node.peer_id
@@ -540,3 +547,23 @@ def test_account_switch_waits_for_inflight_payment_and_cannot_change_payer(tmp_p
     assert mesh.buyer.status()['wallet']['available'] == 500000
     assert delegate.status()['wallet']['available'] == UNITS
     assert mesh.provider.status()['wallet']['available'] == 500000
+
+
+def test_stale_account_review_rejects_before_signing_or_spending(tmp_path):
+    mesh = Mesh(tmp_path); mesh.reward()
+    with pytest.raises(ExchangeError, match='account_changed'):
+        mesh.buyer.action('transfer', {'recipient': mesh.provider.peer_id, 'amount': '0.5'}, new_id(), expected_actor=mesh.provider.peer_id)
+    assert mesh.buyer.status()['wallet']['available'] == UNITS
+    assert not mesh.buyer.status()['pending']
+
+
+def test_noncanonical_public_key_cannot_count_as_a_second_identity():
+    import base64
+
+    from rynmesh.crypto import public_key_from_private
+    from rynmesh.exchange.protocol import key
+    canonical = public_key_from_private(b'x' * 32)
+    alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    alias = canonical[:-2] + alphabet[alphabet.index(canonical[-2]) + 1] + '='
+    assert base64.b64decode(alias) == base64.b64decode(canonical)
+    with pytest.raises(ExchangeError, match='key_invalid'): key(alias)

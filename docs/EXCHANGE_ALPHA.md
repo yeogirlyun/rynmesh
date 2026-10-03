@@ -150,6 +150,10 @@ service deadlines, judge replacement and independently governed escape rules.
 
 ## Failure, identity and audit
 
+Every owner mutation binds the account identity the client reviewed; a stale
+tab cannot silently pay from another selected account. Account switching is
+serialized with in-flight mutations and blocked while an intent is pending.
+Public keys use canonical encodings so aliases cannot count as distinct keys.
 Every owner mutation retains its original operation ID and signed, encrypted
 intent in SQLite. Manual **Refresh network** reconciles certified blocks;
 **Resume saved operations** helps the exact existing proposal or intent.

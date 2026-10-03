@@ -297,9 +297,12 @@ class Exchange:
                 )
             return proposal
 
-    def action(self, action, value, operation_id):
+    def action(self, action, value, operation_id, *, expected_actor=None):
         with self.submission_lock:
             self.ledger.ready()
+            require(
+                expected_actor is None or expected_actor == self.actor, "exchange_account_changed"
+            )
             identifier(operation_id)
             fingerprint = sha256_bytes(
                 canonical_json({"actor": self.actor, "action": action, "value": value})
