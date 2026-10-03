@@ -566,12 +566,14 @@ class DigestService:
         fetcher: Fetcher | None = None,
         bootstrap_defaults: bool = False,
         profile_store: RecommendationProfileStore | None = None,
+        friend_items: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.dir = Path(home).expanduser() / "digest"
         self.dir.mkdir(parents=True, exist_ok=True)
         self.fetcher = fetcher or default_fetcher
         self.bootstrap_defaults = bootstrap_defaults
         self.profile_store = profile_store
+        self.friend_items = friend_items
         self._refresh_lock = threading.RLock()
         if bootstrap_defaults:
             self.ensure_default_sources()
@@ -1093,7 +1095,8 @@ class DigestService:
             # remain on disk for export, but must not survive undo in the ranker.
             if action != "opened":
                 self.profile_store.feedback({
-                    "content_id": f"digest:{item_id}", "title": item.get("title", ""),
+                    "content_id": f"digest:{item_id}",
+                    "title": "Friend publication" if item.get("friend_provenance") else item.get("title", ""),
                     "tags": list(_candidate_tags(source, item)) if source else [],
                     "publisher_peer_id": f"source:{item['source_id']}",
                     "source_platform": self._source_platform(source) if source else "",
@@ -1134,6 +1137,8 @@ class DigestService:
         return {"ok": True, "source_weight": weights[item["source_id"]]}
 
     def _find_item(self, item_id: str) -> dict[str, Any] | None:
+        if item_id.startswith('friend:') and self.friend_items is not None:
+            return next((item for item in self.friend_items() if item['item_id'] == item_id), None)
         for source_items in self._load("items.json", {}).values():
             for item in source_items:
                 if item["item_id"] == item_id:
@@ -1257,7 +1262,47 @@ class DigestService:
     def build(
         self, *, now_unix: float, limit: int = 30, provider: Any | None = None
     ) -> dict[str, Any]:
+        # Only public discovery may enter the plaintext cache or automatic AI.
+        digest = self._rank(now_unix=now_unix, limit=limit, provider=provider)
+        self._save("last_digest.json", digest)
+        return digest
+
+    def for_you_digest(self):
+        """Owner-only projection; other digest consumers remain public-only."""
+        digest = self.last_digest() or {'generated_at_unix': 0.0, 'items': [], 'sources': [], 'brief': '', 'ai': None}
+        return self._with_friends(digest)
+
+    def _with_friends(self, digest, *, now_unix=None, limit=30):
+        if self.friend_items is None:
+            return digest
+        try:
+            private_items = self.friend_items()
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
+            return {**digest, 'friend_feed_unavailable': True}
+        if not private_items:
+            return digest
+        mixed = self._rank(now_unix=now_unix or time.time(), limit=limit, private_items=private_items)
+        # Keep already reviewed public summaries without exposing private rows
+        # to the summarizer or changing what the cached public brief describes.
+        public = {item['item_id']: item for item in digest.get('items', [])}
+        for item in mixed['items']:
+            previous = public.get(item['item_id'])
+            if previous and not item.get('friend_provenance'):
+                for key in ('ai_summary', 'ai_summary_grounding_version'):
+                    item[key] = previous.get(key, item[key])
+        # Public brief reference numbers belong to the public slate; reordering
+        # it with private items would give those references a different meaning.
+        mixed.update(brief='', ai=digest.get('ai'), brief_scope='public_sources')
+        return mixed
+
+    def _rank(self, *, now_unix, limit=30, provider=None, private_items=()):
         sources = {source["id"]: source for source in self.list_sources()}
+        source_items_by_id = self._load("items.json", {})
+        for item in private_items:
+            source_id = item['source_id']
+            sources[source_id] = {'id': source_id, 'kind': 'friend', 'weight': 1.0,
+                'title': item['friend_provenance']['node_name'], 'tags': []}
+            source_items_by_id.setdefault(source_id, []).append(item)
         prefs = self._load("prefs.json", {})
         profile_signals = self.profile_store.signals() if self.profile_store is not None else None
         weights = {
@@ -1279,7 +1324,7 @@ class DigestService:
 
         candidates = []
         by_id: dict[str, dict[str, Any]] = {}
-        for source_id, source_items in self._load("items.json", {}).items():
+        for source_id, source_items in source_items_by_id.items():
             source = sources.get(source_id)
             if source is None:
                 continue
@@ -1427,6 +1472,9 @@ class DigestService:
                 signals=evidence_signals,
                 reviewed_at_unix=now_unix,
             )
+            if item.get('friend_provenance'):
+                digest_item['friend_provenance'] = item['friend_provenance']
+                digest_item['reasons'].append('shared by a friend you follow')
             digest_items.append(digest_item)
 
         digest: dict[str, Any] = {
@@ -1437,9 +1485,8 @@ class DigestService:
             "items": digest_items,
             "sources": self._load("health.json", []),
         }
-        if provider is not None:
+        if provider is not None and not private_items:
             digest = self._enrich(digest, provider)
-        self._save("last_digest.json", digest)
         return digest
 
     def last_digest(self) -> dict[str, Any] | None:
@@ -1455,6 +1502,8 @@ class DigestService:
         digest = self.last_digest() or {}
         out: list[dict[str, Any]] = []
         for item in digest.get("items", []):
+            if item.get('friend_provenance'):
+                continue  # This legacy public/external contract cannot serve private copies.
             raw_id = str(item.get("item_id", ""))
             if not raw_id:
                 continue

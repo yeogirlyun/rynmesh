@@ -70,4 +70,34 @@ describe("Service-specific experiences", () => {
     expect(disconnect).toHaveBeenCalledWith({ region: "CN" });
     expect(await screen.findByText("Connect when you are ready")).toBeInTheDocument();
   });
+
+  it("does not resubmit a render after a lost acknowledgement without explicit review", async () => {
+    const { client, user } = renderExperience("/services/video-rendering", <VideoRendering />);
+    const submit = vi.spyOn(client, "submitWorkOrder").mockRejectedValue(new Error("connection lost"));
+    await screen.findByText("Renderer ready");
+    await user.type(screen.getByLabelText("Video project ID"), "pending-project");
+    await user.click(screen.getByRole("button", { name: /Start rendering/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("may already be running");
+    expect(screen.getByRole("button", { name: /Start rendering/ })).toBeDisabled();
+    expect(submit).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /I checked the original request/ }));
+    expect(screen.getByRole("button", { name: /Start rendering/ })).toBeEnabled();
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an accepted render tied to its original order and displays refresh errors", async () => {
+    const { client, user } = renderExperience("/services/video-rendering", <VideoRendering />);
+    const original = client.submitWorkOrder.bind(client);
+    const submit = vi.spyOn(client, "submitWorkOrder").mockImplementation(original);
+    const results = vi.spyOn(client, "listWorkResults").mockRejectedValue(new Error("Result temporarily unavailable"));
+    await screen.findByText("Renderer ready");
+    await user.type(screen.getByLabelText("Video project ID"), "original-project");
+    await user.click(screen.getByRole("button", { name: /Start rendering/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Result temporarily unavailable");
+    const accepted = await submit.mock.results[0].value;
+    expect(results).toHaveBeenCalledWith({ work_order_id: accepted.order.work_order_id, network_id: accepted.order.network_id });
+    await user.click(screen.getByRole("button", { name: /Check progress/ }));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /Start rendering/ })).toBeDisabled();
+  });
 });

@@ -35,6 +35,7 @@ class FriendsState:
 
 
 SAFE_ERRORS = {
+    "invite_endpoint_changed",
     'friend_card_erased', 'friend_card_cleanup_review_changed', 'friend_card_cleanup_file_unavailable',
     'friend_card_cleanup_version_unsupported', 'friend_card_cleanup_limit',
     "invalid_invite", "invite_expired", "invite_used", "invite_cancelled", "invite_not_found",
@@ -48,6 +49,7 @@ SAFE_ERRORS = {
     "friend_card_content_changed",
     "library_cleanup_pending", "library_cleanup_review_changed", "library_cleanup_files_changed",
     "library_cleanup_not_found", "library_cleanup_limit", "library_cleanup_backup_failed",
+    "friend_probe_busy", "friend_probe_selection_invalid",
 }
 
 
@@ -99,6 +101,12 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
     def current():
         return app.state.friends.service
 
+    from .diagnostics import FriendDiagnostics, respond
+
+    if not hasattr(app.state, 'friend_diagnostics'):
+        app.state.friend_diagnostics = FriendDiagnostics(current)
+        app.router.add_event_handler('shutdown', app.state.friend_diagnostics.close)
+
     def control(request):
         app.state.friends.local_control(request)
 
@@ -139,17 +147,46 @@ def install_friends(app: Any, *, store: Any, home: str | Path, workers: Any,
         control(request)
         return {"friends": await call(current().list_friends)}
 
+    @app.get('/api/local/friends/diagnostics')
+    async def diagnostics(request: Request):
+        control(request)
+        result = await call(app.state.friend_diagnostics.snapshot)
+        return Response(json.dumps(result), media_type='application/json', headers={'Cache-Control': 'no-store'})
+
+    @app.post('/api/local/friends/diagnostics')
+    async def diagnose(request: Request):
+        control(request)
+        body = await _body(request, 1024)
+        if set(body) != {'relationship_ids'}:
+            raise HTTPException(400, detail='friend_probe_selection_invalid')
+        result = await call(app.state.friend_diagnostics.run, body['relationship_ids'])
+        return Response(json.dumps(result), media_type='application/json', headers={'Cache-Control': 'no-store'})
+
+    @app.post('/api/peer/friends/diagnostics')
+    async def peer_diagnostics(request: Request):
+        body = await _body(request, 2048)
+        try:
+            return await asyncio.to_thread(respond, current(), body, request.headers)
+        except (FriendError, FriendCryptoError, KeyError, TypeError, ValueError, OSError):
+            raise HTTPException(403, detail='friend_request_rejected') from None
+
     @app.get("/api/local/friends/capabilities")
     def capabilities(request: Request):
         control(request)
         return {"attachment_max_bytes": MAX_ATTACHMENT_BYTES, "mailbox_max_envelope_bytes": 65536,
                 "default_invite_minutes": 15, "message_ttl_seconds": 3600}
 
+    @app.get("/api/local/friends/invitation-context")
+    async def invitation_context(request: Request):
+        control(request)
+        return await call(current().invitation_context)
+
     @app.post("/api/local/friends/invites")
     async def invite(request: Request):
         control(request)
         body = await _body(request, 4096)
-        return await call(current().create_invite, ttl_minutes=body.get("ttl_minutes", 15))
+        return await call(current().create_invite, ttl_minutes=body.get("ttl_minutes", 15),
+                          reviewed_endpoint=body.get("reviewed_endpoint"))
 
     @app.get("/api/local/friends/invites")
     async def invites(request: Request):

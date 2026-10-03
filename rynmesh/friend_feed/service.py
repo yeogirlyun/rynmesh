@@ -373,6 +373,29 @@ class FriendFeed:
                 'next_cursor': cached.get('next_cursor', ''), 'error_code': subscription.get('last_error', '')})
         return result
 
+    def for_you_items(self):
+        """Project authenticated subscriptions into a bounded, transient slate.
+
+        The serving friend is the publisher of the share. A card's source is
+        only an attribution supplied by that friend, not verified authorship.
+        """
+        items = []
+        for feed in self.timeline():
+            for row in feed['rows'][:20]:
+                card = row['card']
+                items.append({'item_id': 'friend:' + digest([feed['relationship_id'], row['id']]),
+                    'source_id': 'friend:' + digest(feed['peer_id']),
+                    'title': card['title'], 'summary': card.get('summary', ''), 'link': '',
+                    'content_type': card.get('mime', 'text/plain'), 'published_unix': row['published_at'],
+                    'friend_provenance': {'relationship_id': feed['relationship_id'], 'publication_id': row['id'],
+                        'revision': row['revision'], 'publisher_peer_id': feed['peer_id'],
+                        'serving_peer_id': feed['peer_id'], 'node_name': feed['node_name'],
+                        'checked_at': feed['checked_at'], 'unreachable': bool(feed['error_code']),
+                        'source': card.get('source', ''), 'source_url': card.get('source_url', ''),
+                        'sha256': card['sha256'], 'content_truncated': card.get('content_truncated', False)}})
+        items.sort(key=lambda item: (-item['published_unix'], item['item_id']))
+        return items[:500]
+
     def mark_read(self, relationship_id, identifier, *, expected_revision):
         self.active(relationship_id)
         identity(identifier)
@@ -386,6 +409,10 @@ class FriendFeed:
             subscription.setdefault('read', {})[identifier] = expected_revision
             return {'id': identifier, 'revision': expected_revision, 'read': True}
         return self.store.mutate(change)
+
+    def weekly(self):
+        from .weekly import weekly_recap
+        return weekly_recap(self.timeline(), now=self.clock())
 
     def fetch(self, relationship_id, identifier, *, expected_revision):
         friend = self.active(relationship_id)

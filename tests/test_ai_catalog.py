@@ -82,3 +82,15 @@ def test_grant_to_one_friend_never_discloses_service_to_another(tmp_path):
     other = FriendAICatalog(friends=lambda: carol, grants=lambda: None, provider=lambda: None)
     assert consumer.refresh(alice.peer_id)["services"]
     assert other.refresh(alice.peer_id)["services"] == []
+
+
+def test_catalog_negotiates_streaming_only_for_authorized_friends(tmp_path):
+    _, alice, bob, grants, publisher, consumer, _, _, _ = setup(tmp_path)
+    status = publisher.provider()
+    status["delivery_protocols"] = ["complete-v1", "stream-v1", "unknown-protocol"]
+    assert consumer.refresh(alice.peer_id)["services"] == []
+    rid = alice.store.relationship_for_peer(bob.peer_id)["relationship_id"]
+    grants.set("model-x", rid, allowed=True, expected_revision=0)
+    assert consumer.refresh(alice.peer_id)["services"][0]["delivery_protocols"] == ["complete-v1", "stream-v1"]
+    del status["delivery_protocols"]
+    assert consumer.refresh(alice.peer_id)["services"][0]["delivery_protocols"] == []

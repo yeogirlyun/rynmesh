@@ -66,7 +66,8 @@ def test_both_owners_must_confirm_and_only_agreed_scopes_activate(devices):
     pair_id = pair['id']
     assert pair['status'] == 'awaiting_inviter'
     assert a.get(pair_id)['status'] == 'awaiting_owner'
-    assert a.get(pair_id)['verification_code'] == pair['verification_code']
+    assert a.get(pair_id)['verification_code'] == ''
+    assert pair['verification_code'] == code_for(pair_id)
     for node, remote in ((a, b), (b, a)):
         with pytest.raises(SyncError, match='sync_device_not_active'):
             authorized(node, remote, pair_id)
@@ -76,6 +77,8 @@ def test_both_owners_must_confirm_and_only_agreed_scopes_activate(devices):
     assert a.get(pair_id)['effective_scopes'] == []
     assert b.retry(pair_id)['status'] == 'active'
     assert a.get(pair_id)['effective_scopes'] == ['bookmarks']
+    assert a.get(pair_id)['verification_code'] == ''
+    assert b.get(pair_id)['verification_code'] == code_for(pair_id)
     authorized(a, b, pair_id)
     with pytest.raises(SyncError, match='sync_scope_denied'):
         authorized(a, b, pair_id, scopes=['reading'])

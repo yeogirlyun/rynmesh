@@ -247,7 +247,7 @@ class DeviceTransfer:
             else:
                 truncated = True
         count = min(max(count, 0), len(rows) + len(overflow))
-        if count:
+        if count or truncated:
             rejected[scope] = {'count': count, 'rows': rows,
                                **({'overflow': sorted(overflow)} if overflow else {}),
                                **({'overflow_truncated': True} if truncated else {})}
@@ -363,7 +363,7 @@ class DeviceTransfer:
     def status(self, pair_id):
         row = self._pair(pair_id)
         public = self.pairing().public(row)
-        base = {'pending': None, 'last_success_at': None, 'error_code': '', 'conflicts': 0, 'rejected_by_peer': {}}
+        base = {'pending': None, 'last_success_at': None, 'error_code': '', 'conflicts': 0, 'rejected_by_peer': {}, 'rejected_details_truncated': False}
         if public['status'] != 'active':
             return {**base, 'state': 'unpaired'}
         if public['paused'] or public['remote_paused']:
@@ -388,8 +388,11 @@ class DeviceTransfer:
                 # count is the only signal for the rows it refused: they are
                 # settled here and go again when they change on this device.
                 refused = {scope: saved.get('rejected', {}).get(scope, {}).get('count', 0) for scope in scopes}
+                truncated = bool(saved.get('rejected_truncated')) or any(
+                    saved.get('rejected', {}).get(scope, {}).get('overflow_truncated') for scope in scopes)
                 state = 'conflict' if conflicts else 'waiting' if error else 'pending' if pending or last is None else 'confirmed'
                 return {'state': state, 'pending': pending, 'last_success_at': last, 'error_code': error, 'conflicts': conflicts,
-                        'rejected_by_peer': {scope: count for scope, count in refused.items() if count}}
+                        'rejected_by_peer': {scope: count for scope, count in refused.items() if count},
+                        'rejected_details_truncated': truncated}
         except Exception:
             return {**base, 'state': 'failed', 'error_code': 'sync_storage_unavailable'}

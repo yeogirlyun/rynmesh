@@ -3,10 +3,12 @@ import { Link } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { Button, PageHeader, Panel } from "../components/ui";
 import ReadingSyncConflicts from "../components/ReadingSyncConflicts";
+import DeviceSyncHealth from "../components/DeviceSyncHealth";
 import { runThenReload } from "../domain/actThenReload";
 import { captureFailureReason, deviceSyncApi, pairLabels, quarantineReason, scopeNames, syncScopes } from "../domain/deviceSync";
 import type { DeviceIdentity, DeviceInvite, DevicePair, DeviceStatus, SyncScope } from "../domain/deviceSync";
 import styles from "./Devices.module.css";
+import DeviceErasurePanel from "../components/DeviceErasurePanel";
 
 function ScopeChoice({ value, onChange, allowed = syncScopes, disabled = false, label }: {
   value: SyncScope[]; onChange: (value: SyncScope[]) => void; allowed?: SyncScope[]; disabled?: boolean; label: string;
@@ -33,9 +35,9 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
   const active = pair.status === "active";
   const rejected: Partial<Record<SyncScope, number>> = pair.sync?.rejected_by_peer ?? {};
   const refused = syncScopes.filter((scope) => rejected[scope]);
-  return <article className={styles.device} aria-label={`Device ${pair.device.name}`}>
+  return <article id={`device-${pair.id}`} className={styles.device} aria-label={`Device ${pair.device.name}`}>
     <h3>{pair.device.name}</h3><p>{pairLabels[pair.status] ?? "Status unavailable"}</p><Identity device={pair.device} />
-    {pair.status !== "revoked" && !approving ? <p>Compare this code on both computers: <strong>{pair.verification_code}</strong></p> : null}
+    {pair.role === "joiner" && pair.status !== "revoked" && pair.verification_code ? <p>Enter this code on the computer that sent the invitation: <strong>{pair.verification_code}</strong></p> : null}
     {approving ? <>
       <p>Only approve a computer you own. Review its identity and choose what may sync in both directions.</p>
       <p>Read the code from the other computer's My devices screen and type it here. It is not shown on this screen.</p>
@@ -47,7 +49,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
     {active ? <>
       <p>{pair.paused ? "Paused on this device." : pair.remote_paused ? "Paused on the other device." : "Both devices have confirmed the pairing."}</p>
       {pair.sync ? <div role="status">
-        <p>{refused.length > 0 && pair.sync.state === "confirmed" ? "Remaining local changes confirmed by the other device."
+        <p>{(refused.length > 0 || pair.sync.rejected_details_truncated) && pair.sync.state === "confirmed" ? "Remaining local changes confirmed by the other device."
           : ({ confirmed: "Selected local changes confirmed by the other device.", pending: "Changes are waiting for confirmation.",
           waiting: "Last transfer was not confirmed. Reconnect and retry.", failed: "Local sync storage is unavailable. Free space or check storage, then retry.",
           paused: "Content transfer is paused.", no_scope: "No category is currently allowed by both devices.",
@@ -57,6 +59,7 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
         {pair.sync.conflicts > 0 ? <p>{pair.sync.conflicts} unresolved conflicts. <a href="#reading-sync-conflicts">Review reading choices below</a>; review conversation branches in <Link to="/ask">Ask Ryn</Link>.</p> : null}
         {refused.map((scope) => <p key={scope}>{rejected[scope]} {rejected[scope] === 1 ? "record" : "records"} in {scopeNames[scope]} could
           not be merged by {pair.device.name}. They will be sent again after they change on this device.</p>)}
+        {pair.sync.rejected_details_truncated ? <p>Additional rejected records are not listed because diagnostic storage reached its limit. The displayed counts are minimum counts; a cleared list does not confirm every record was merged.</p> : null}
       </div> : null}
       <p>Mutually allowed: {pair.effective_scopes.map((scope) => scopeNames[scope]).join(", ") || "None"}.</p>
       <ScopeChoice label="Your allowed scope" value={scopes} onChange={setScopes} disabled={busy} />
@@ -76,6 +79,10 @@ function PairCard({ pair, busy, act }: { pair: DevicePair; busy: boolean; act: (
 
 export default function Devices() {
   const [status, setStatus] = useState<DeviceStatus | null>(null);
+  const [readAt, setReadAt] = useState<number | null>(null);
+  const [statusFailed, setStatusFailed] = useState(false);
+  const [refreshError, setRefreshError] = useState("");
+  const [now, setNow] = useState(Date.now);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -90,9 +97,17 @@ export default function Devices() {
   const loadVersion = useRef(0);
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
-    const result = await deviceSyncApi.status();
+    let result: DeviceStatus;
+    try { result = await deviceSyncApi.status(); }
+    catch (cause) {
+      if (mounted.current && version === loadVersion.current) setStatusFailed(true);
+      throw cause;
+    }
     if (!mounted.current || version !== loadVersion.current) return;
     setStatus(result);
+    setReadAt(Date.now());
+    setStatusFailed(false);
+    setRefreshError("");
     setInvite((prior) => prior && result.invites.some((row) => row.id === prior.invite.id && row.status === "open") ? prior : null);
   }, []);
   const act = async (operation: () => Promise<unknown>) => {
@@ -108,7 +123,7 @@ export default function Devices() {
   const refresh = async () => {
     setBusy(true); setError(""); setNotice("");
     try { await load(); }
-    catch { if (mounted.current) setError("Could not refresh device status. Check your connection and refresh."); }
+    catch { if (mounted.current) setRefreshError("Could not refresh device status. Check your connection and refresh."); }
     if (mounted.current) setBusy(false);
   };
   useEffect(() => {
@@ -118,24 +133,25 @@ export default function Devices() {
       if (polling) return;
       polling = true;
       try { await load(); }
-      catch { if (mounted.current) setError("Could not refresh device status. Check your connection and refresh."); }
+      catch { if (mounted.current) setRefreshError("Could not refresh device status. Check your connection and refresh."); }
       finally { polling = false; }
     };
     void poll();
-    const timer = window.setInterval(() => void poll(), 5000);
+    const timer = window.setInterval(() => { setNow(Date.now()); void poll(); }, 5000);
     return () => { mounted.current = false; window.clearInterval(timer); };
   }, [load]);
   return <div className="screen-stack">
     <PageHeader eyebrow="Your computers" title="My devices" context="Pair computers you own. Review both identities and choose each category before allowing sync." />
     <p>Device pairing is separate from <Link to="/friends">Friends</Link>. It does not grant AI access or copy models, downloaded articles, credentials or friend permissions.</p>
     {status && !status.data_transfer_available ? <Panel><p>Device pairing is available in this development build. Personal data transfer is still being connected; a confirmed pairing does not mean your content has synced.</p></Panel> : null}
-    {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
+    {error || refreshError ? <p role="alert">{error || refreshError}</p> : null}{notice ? <p role="status">{notice}</p> : null}
     <Button disabled={busy} onClick={() => void refresh()}>Refresh devices</Button>
+    <DeviceSyncHealth status={status} readAt={readAt} stale={statusFailed || (readAt !== null && now - readAt >= 15000)} />
     {status && !status.pairing_available ? <p role="status">A reachable address is needed for new invitations. Check <Link to="/settings">Network settings</Link>. Existing devices can still be removed.</p> : null}
     {status && status.capture_failures.count > 0 ? <p role="status">{status.capture_failures.count} local {status.capture_failures.count === 1 ? "change" : "changes"} could
       not be queued for sync ({captureFailureReason(status.capture_failures.codes)}). They stay on this device.</p> : null}
     {status && status.quarantined_count > 0 ? <p role="status">{status.quarantined_count} local {status.quarantined_count === 1 ? "record" : "records"} could
-      not be merged into the sync replica on this device ({quarantineReason(status.quarantined)}). They stay in your reading history.</p> : null}
+      not be merged into the sync replica on this device ({quarantineReason(status.quarantined)}). The original records remain on this device. Review the affected bookmarks, reading records or conversations before resolving them.</p> : null}
     <div className={styles.grid}>
       <Panel><h2>Invite your other computer</h2><p>One use, valid for 15 minutes. Choose the categories you want to allow in both directions; nothing is selected automatically.</p>
         <ScopeChoice label="Offer to sync" value={offered} onChange={setOffered} disabled={busy || Boolean(invite)} />
@@ -179,5 +195,6 @@ export default function Devices() {
       </div>)}
     </Panel>
     {status?.data_transfer_available ? <ReadingSyncConflicts devices={status.devices} onResolved={load} /> : null}
+    {status ? <DeviceErasurePanel devices={status.devices} /> : null}
   </div>;
 }

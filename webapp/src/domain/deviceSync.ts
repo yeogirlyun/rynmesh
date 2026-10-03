@@ -12,7 +12,7 @@ export type DevicePair = { id: string; role: "inviter" | "joiner"; status: strin
   review_token: string; verification_code: string; expires: number; scopes: SyncScope[]; remote_scopes: SyncScope[];
   paused: boolean; remote_paused: boolean; revision: number; effective_scopes: SyncScope[]; removal_pending: boolean;
   sync?: { state: string; pending: number | null; last_success_at: number | null; error_code: string; conflicts: number;
-    rejected_by_peer: Partial<Record<SyncScope, number>> } };
+    rejected_by_peer: Partial<Record<SyncScope, number>>; rejected_details_truncated?: boolean } };
 export type QuarantinedRow = { scope: string; id: string; code: string };
 export type DeviceStatus = { pairing_available: boolean; reason: string | null; data_transfer_available: boolean;
   devices: DevicePair[]; invites: (Omit<DeviceInvite, "device"> & { status: string; pair_id: string | null })[];

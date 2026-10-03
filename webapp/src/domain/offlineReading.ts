@@ -7,6 +7,7 @@ export type OfflineStatus = { records: OfflineRecord[]; used_bytes: number; down
   cleanup?: { review_token: string; item_id: string | null; sequence: number; done: boolean; copies: number; bytes: number } | null;
   limits: { item_bytes: number; total_bytes: number; image_bytes: number; image_count: number } };
 export type OfflineBody = { item_id: string; title: string; source: string; url: string; text: string; truncated: boolean;
+  shared_by_peer_id?: string | null; publisher_peer_id?: string | null;
   images_omitted: boolean; source_mode: string; job_id: string; downloaded_at: number; partial: boolean;
   images: { index: number; alt: string; state: string; error_code: string; mime?: string }[] };
 export type ClearReview = { review_token: string; copies: number; bytes: number; pending: number };

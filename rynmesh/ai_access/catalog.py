@@ -48,6 +48,7 @@ class FriendAICatalog:
             if grant and grant["effective"] and grant["peer_id"] == relationship["peer_id"]:
                 status = "authorized"
                 services.append({"service": manifest, "capacity": current["capacity"],
+                    "delivery_protocols": [p for p in current.get("delivery_protocols", []) if p in {"complete-v1", "stream-v1"}],
                     "network_id": current.get("network_id", "rynmesh-main"),
                     "online": bool(current.get("online")), "ready": bool(current.get("ready")),
                     "ai_permission": {"relationship_id": grant["relationship_id"], "revision": grant["revision"]}})
@@ -87,6 +88,7 @@ class FriendAICatalog:
                 if permission["relationship_id"] != relationship["relationship_id"] or type(permission["revision"]) is not int or permission["revision"] < 1:
                     raise ValueError
                 records.append({"service": manifest, "capacity": service["capacity"], "online": service.get("online") is True,
+                    "delivery_protocols": [p for p in service.get("delivery_protocols", []) if p in {"complete-v1", "stream-v1"}],
                     "network_id": str(service.get("network_id", "rynmesh-main"))[:128],
                     "ready": service.get("ready") is True, "ai_permission": permission, "access": "friend",
                     "peer_id": peer_id, "node_name": relationship["node_name"], "node_messaging_pub": relationship["messaging_pub"],
