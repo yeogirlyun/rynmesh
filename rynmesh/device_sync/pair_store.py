@@ -11,6 +11,7 @@ from ..crypto import canonical_json
 from ..file_transactions import file_transaction
 from ..services import peer_box
 from . import pair_crypto as crypto
+from .diagnostic_budget import bound_rejections
 from .records import MAX_COUNTER, SyncError, actor_id, fingerprint
 
 VERSION = 'ryn.device-pairings.v1'
@@ -176,6 +177,7 @@ class PairingStore:
             result = operation(data)
             # Catch a revoke() the operation just performed pushing the count over the cap.
             self._clear_dangling_invite_links(data, self._trim_revoked(data))
+            bound_rejections(data, max_plaintext=MAX_PLAINTEXT)
             self._validate(data)
             plaintext = canonical_json(data)
             if len(plaintext) > MAX_PLAINTEXT:
