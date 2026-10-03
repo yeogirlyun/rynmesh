@@ -1461,6 +1461,8 @@ def create_app(store: RynmeshStore | None = None):
         active_store.home,
         bootstrap_defaults=desktop_discovery,
         profile_store=_recommendation_profile,
+        friend_items=lambda: app.state.friend_feed.service.for_you_items()
+            if hasattr(app.state, 'friend_feed') else [],
     )
     app.state.reader_cache = ReaderCache(active_store.home / "reader-cache")
     app.state.consumption_store = ConsumptionStore(active_store.home / "consumption.json")
@@ -1585,7 +1587,7 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/digest")
     def local_digest(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        digest = _digest_service().last_digest()
+        digest = _digest_service().for_you_digest()
         return digest or {"generated_at_unix": 0.0, "items": [], "sources": []}
 
     @app.get("/api/local/discovery/status")
@@ -1606,6 +1608,7 @@ def create_app(store: RynmeshStore | None = None):
         provider = _model_provider()
         if provider is not None:
             result["digest"] = service.enrich_latest(provider)
+        result["digest"] = service.for_you_digest()
         status = result["status"]
         _audit().append(
             "rec",
