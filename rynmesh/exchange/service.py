@@ -27,6 +27,7 @@ from .protocol import (
     judge_panel,
     quorum,
     require,
+    settlement_commitment,
     signature,
     terms_for,
     text,
@@ -837,11 +838,7 @@ class Exchange:
                     {k: v for k, v in order.items() if k not in {"delivery", "evidence"}}
                     | {"evidence_submitted": list(order["evidence"])}
                     | (
-                        {
-                            "settlement_hash": __import__(
-                                "rynmesh.exchange.protocol", fromlist=["settlement_commitment"]
-                            ).settlement_commitment(order)
-                        }
+                        {"settlement_hash": settlement_commitment(order)}
                         if self.ledger.config["version"] == VERSION
                         else {}
                     )
