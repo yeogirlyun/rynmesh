@@ -361,3 +361,16 @@ it("does not offer a v1 invitation as a hardened join", () => {
     parseInvite(networkInvite({ ...manifest, version: "ryn.exchange.v1" })),
   ).toThrow();
 });
+
+it("blocks an old v1 server even when it omits the new read-only flag", async () => {
+  vi.mocked(exchange.status).mockResolvedValue({
+    ...state,
+    manifest: { ...manifest, version: "ryn.exchange.v1" },
+  });
+  render(<Exchange />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("read-only");
+  expect(
+    screen.getByRole("button", { name: "Review and agree" }),
+  ).toBeDisabled();
+  expect(exchange.action).not.toHaveBeenCalled();
+});
