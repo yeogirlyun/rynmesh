@@ -355,13 +355,30 @@ def test_exchange_http_owner_gate_bounded_body_and_signed_identity(tmp_path):
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, content=b'x' * (512 * 1024 + 1)).status_code == 413
         assert client.post('/api/peer/exchange/vote', json={}).status_code == 409
         assert client.post('/api/peer/exchange/identity', json={'bad': True}).status_code == 400
-        scoped = {'action': 'listing', 'value': {'kind': 'offer', 'category': 'editing', 'title': 'Public work', 'description': 'A small service', 'price': '0'}, 'operation_id': new_id(), 'actor': None}
+        scoped = {'action': 'listing', 'value': {'kind': 'offer', 'category': 'editing', 'title': 'Public work', 'description': 'A small service', 'price': '0'}, 'operation_id': new_id(), 'actor': None, 'network': node.ledger.network}
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 400
         scoped['actor'] = mesh.provider.peer_id
         rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped)
         assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_account_changed'
         scoped['actor'] = node.peer_id
+        scoped['network'] = 'sha256:another-network'
+        rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped)
+        assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_review_network_changed'
+        del scoped['network']
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 400
+        scoped['network'] = node.ledger.network
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 200
+        from rynmesh.exchange.protocol import order_commitment
+        order_id = mesh.order()
+        node.sync()
+        order_action = {'action': 'refund', 'value': {'order_id': order_id}, 'operation_id': new_id(), 'actor': node.actor, 'network': node.ledger.network}
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action).status_code == 400
+        order_action['value']['reviewed_order'] = 'sha256:stale-order'
+        rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action)
+        assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_order_changed'
+        assert not node.ledger.intents()
+        order_action['value']['reviewed_order'] = order_commitment(node.ledger.state['orders'][order_id])
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action).status_code == 200
         identity = client.post('/api/peer/exchange/identity', json={})
         assert identity.status_code == 200
         assert signature(identity.json()).public_key == node.peer_id

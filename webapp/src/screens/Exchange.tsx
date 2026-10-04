@@ -78,6 +78,7 @@ export default function Exchange() {
         value,
         attempt.current.id,
         state?.actor ?? state?.peer_id ?? "",
+        state?.network ?? "",
       );
       if (mounted.current) {
         setState(result.status);
@@ -561,8 +562,8 @@ export default function Exchange() {
                 </ul>
                 <p>
                   A superseded operation was not applied because another
-                  authorized operation used the account nonce first. Refresh and
-                  review your orders before submitting it again.
+                  certified operation changed the nonce or reviewed order.
+                  Refresh and review your orders before submitting it again.
                 </p>
               </Panel>
               <Panel>

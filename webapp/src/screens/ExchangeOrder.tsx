@@ -52,6 +52,7 @@ export default function OrderCard({
   const request = (action: string) =>
     run(action, {
       order_id: order.id,
+      reviewed_order: order.order_hash,
       ...(action === "accept" ? { delivery_hash: readHash } : {}),
       ...(["timeout", "finalize", "waive"].includes(action)
         ? { settlement_hash: order.settlement_hash }
@@ -116,7 +117,11 @@ export default function OrderCard({
             <Button
               disabled={busy || !body.trim()}
               onClick={() =>
-                void run("deliver", { order_id: order.id, body }).then((ok) => {
+                void run("deliver", {
+                  order_id: order.id,
+                  reviewed_order: order.order_hash,
+                  body,
+                }).then((ok) => {
                   if (ok) setBody("");
                 })
               }
@@ -235,6 +240,7 @@ export default function OrderCard({
                     if (
                       await run("evidence", {
                         order_id: order.id,
+                        reviewed_order: order.order_hash,
                         body: evidence,
                       })
                     )

@@ -277,6 +277,11 @@ def deadline(order: dict) -> int:
     ]
 
 
+def order_commitment(order: dict) -> str:
+    # Includes the decreasing lifecycle reserve: an old context cannot recur.
+    return sha256_bytes(canonical_json(order))
+
+
 def settlement_commitment(order: dict) -> str:
     return sha256_bytes(
         canonical_json(
@@ -514,7 +519,9 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
         require(
             order and owner in {order["buyer"], order["provider"]}, "exchange_order_unavailable"
         )
+        require(value.get("reviewed_order") == order_commitment(order), "exchange_order_changed")
         require(order["status"] not in TERMINAL, "exchange_order_closed")
+        value = {k: v for k, v in value.items() if k != "reviewed_order"}
         require(action in ORDER_ACTIONS, "exchange_action_invalid")
         require(order["remaining_ops"] > 0, "exchange_order_capacity")
         order["remaining_ops"] -= 1

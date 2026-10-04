@@ -106,6 +106,7 @@ def test_slow_unreachable_validator_does_not_block_three_healthy_votes(tmp_path)
                 },
                 "operation_id": op,
                 "actor": nodes[4].actor,
+                "network": nodes[4].ledger.network,
             },
             max_bytes=3 * 1024 * 1024,
         )

@@ -19,12 +19,14 @@ from rynmesh.services.peer_box import open_sealed, public_key_b64, seal
 
 from .ledger import Ledger
 from .protocol import (
+    ORDER_ACTIONS,
     VERSION,
     ExchangeError,
     amount,
     case_payload,
     identifier,
     judge_panel,
+    order_commitment,
     quorum,
     require,
     settlement_commitment,
@@ -263,7 +265,13 @@ class Exchange:
                 command = json.loads(raw[0])
                 payload = command["payload"]
                 current = view_account(self.ledger.state, payload["actor"])
-                if payload["nonce"] <= current["nonce"]:
+                order = self.ledger.state["orders"].get(payload["value"].get("order_id"))
+                changed = (
+                    payload["action"] in ORDER_ACTIONS
+                    and order
+                    and payload["value"].get("reviewed_order") != order_commitment(order)
+                )
+                if payload["nonce"] <= current["nonce"] or changed:
                     with self.ledger.lock, self.ledger.db:
                         self.ledger.db.execute(
                             "UPDATE intents SET status='superseded' WHERE id=?", (payload["id"],)
@@ -315,11 +323,15 @@ class Exchange:
                 )
             return proposal
 
-    def action(self, action, value, operation_id, *, expected_actor=None):
+    def action(self, action, value, operation_id, *, expected_actor=None, expected_network=None):
         with self.submission_lock:
             self.ledger.writable()
             require(
                 expected_actor is None or expected_actor == self.actor, "exchange_account_changed"
+            )
+            require(
+                expected_network is None or expected_network == self.ledger.network,
+                "exchange_review_network_changed",
             )
             identifier(operation_id)
             fingerprint = sha256_bytes(
@@ -380,6 +392,11 @@ class Exchange:
                             "committed": True,
                             "status": self.status(),
                         }
+                    if str(exc) == "exchange_order_changed":
+                        with self.ledger.lock, self.ledger.db:
+                            self.ledger.db.execute(
+                                "UPDATE intents SET status='superseded' WHERE id=?", (operation_id,)
+                            )
                     if str(exc) in {"exchange_height_changed", "exchange_not_proposer"}:
                         continue
                     raise
@@ -388,6 +405,20 @@ class Exchange:
             raise ExchangeError("exchange_busy")
 
     def prepare(self, action, value, operation_id):
+        if action not in ORDER_ACTIONS:
+            return self._prepare(action, value, operation_id)
+        value = copy.deepcopy(value)
+        reviewed = value.pop("reviewed_order", None)
+        order = self.ledger.state["orders"].get(value.get("order_id"))
+        require(
+            order and self.actor in {order["buyer"], order["provider"]},
+            "exchange_order_unavailable",
+        )
+        context = order_commitment(order)
+        require(reviewed is None or reviewed == context, "exchange_order_changed")
+        return {**self._prepare(action, value, operation_id), "reviewed_order": context}
+
+    def _prepare(self, action, value, operation_id):
         if action == "profile":
             require(set(value) == {"label"})
             return {**value, "encryption_key": public_key_b64(self.messaging_key)}
@@ -838,7 +869,10 @@ class Exchange:
                     {k: v for k, v in order.items() if k not in {"delivery", "evidence"}}
                     | {"evidence_submitted": list(order["evidence"])}
                     | (
-                        {"settlement_hash": settlement_commitment(order)}
+                        {
+                            "settlement_hash": settlement_commitment(order),
+                            "order_hash": order_commitment(order),
+                        }
                         if self.ledger.config["version"] == VERSION
                         else {}
                     )
