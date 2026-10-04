@@ -3,6 +3,8 @@
 Implementation: `rynmesh/exchange/`, node owner/peer HTTP routes, the **Exchange**
 webapp screen, and `rynmesh-exchange` invitation tooling. Design record:
 [issue #87](https://github.com/yeogirlyun/rynmesh/issues/87).
+Current protocol: **`ryn.exchange.v2`**, hardened in [issue #89](https://github.com/yeogirlyun/rynmesh/issues/89).
+[Protocol hardening](EXCHANGE_PROTOCOL_HARDENING.md) records activation, deadlines, quotas and adversarial evidence.
 This is an explicitly configured alpha network; it is not a public currency
 launch or evidence of production BFT, permissionless rewards, or neutral AI.
 It is newer than the v0.7.0 downloadable release.
@@ -22,10 +24,11 @@ It is newer than the v0.7.0 downloadable release.
 6. Deliver encrypted digital text (up to 32 KiB). Read and verify it, then accept
    that exact delivery hash and pay the provider. A later revision requires a
    new review. Unused dispute reserves return to both parties.
-7. Request a mutual full refund, or submit a dispute with encrypted evidence.
+7. Request a mutual full refund, or submit a dispute with one immutable encrypted statement per party per round.
 8. Review a three-model decision, appeal once to three different models, or
    settle after the appeal window. Both parties can waive the remaining window.
-9. Spend earnings on another participant's work or make a reviewed direct
+9. Review and explicitly apply the agreed deadline outcome when work, review or a case expires. Nothing settles automatically.
+10. Spend earnings on another participant's work or make a reviewed direct
    transfer to a registered identity. Direct transfers have no escrow or dispute
    procedure. Wallet amounts use integer millionths of one Ryncoin.
 
@@ -57,8 +60,9 @@ identities to trade while leaving six independent judges available. With six
 judges, buyers/providers must be outside those identities. An order selects the
 first six eligible judges in published roster order, excluding its parties;
 three decide and three hear an appeal. All selected fees bind the accepted terms.
-A network with no judges supports acceptance and mutual refunds only; the terms
-and UI disclose that limitation before agreement.
+A network with no judges supports acceptance, mutual refunds and the disclosed
+delivery/review deadline outcomes; it cannot obtain AI rulings. Accepted terms
+and the UI disclose that limitation before agreement.
 
 Create the public invitation without starting any additional service:
 
@@ -69,7 +73,7 @@ rynmesh-exchange --name "Our digital-work alpha" \
   --validator http://192.168.1.13:8791 \
   --validator http://192.168.1.14:8791 \
   --issuance-limit 100 --work-reward 1 --appeal-window 86400 \
-  --output exchange-network.json
+  --output exchange-network-v2.json
 ```
 
 Add six to twelve repeated `--judge ENDPOINT EXACT_MODEL FEE_IN_RYNCOIN`
@@ -78,7 +82,7 @@ Verify the displayed identities with their operators; fetching a signed identity
 proves key possession, not who operates it. Share the public invitation and have
 **every validator, judge and participant** join it in Exchange. Joining fixes the
 network fingerprint; it cannot overwrite an existing ledger with a new network.
-Existing voting keys must never be reused in a reset network or restored with
+An existing v1 ledger stays read-only; it cannot join v2 in place. Use separate fresh node homes and keys for a new pilot, and preserve the old keys/history. Balances are not imported or converted. Existing voting keys must never be reused in a reset network or restored with
 outdated vote locks. A new isolated pilot needs new node keys and homes.
 
 Each judge operator explicitly enables **quoted judge model** in Wallet &
@@ -104,6 +108,10 @@ receipts. More than two-thirds of the configured validators must attest, the
 provider cannot attest its own work, and more than two-thirds then approve the
 issuance operation. The published finite budget cannot be exceeded.
 
+Private claimant endpoints outside the manifest roster are blocked by each witness unless its operator explicitly enables **private registry probes** in Wallet & network. This grants outbound LAN access for this controlled pilot; it is not enabled automatically. Public literal-IP endpoints and explicitly reviewed roster endpoints use the usual signed challenge.
+
+Pending receipts are keyed by provider, not arbitrary job IDs. Retry the same verification ID; stale receipts and attempt counters are reclaimed after ten minutes on explicit operations. Completed registration receipts are reclaimed after reconciliation. At most three failed outbound attempts per provider per ten-minute window run.
+
 This alpha rewards **one verified registry registration per signing identity**.
 Repeated job IDs or new job IDs for the same identity cannot earn another reward.
 It is an entry-path prototype, not proof of useful ongoing demand, uptime, or
@@ -118,7 +126,7 @@ coins, not a verified quality score or reputation weight.
 
 ## Disputes and transparent fees
 
-Both parties must submit evidence for the current round. Their statements and
+Each party can submit **one immutable statement per round**. Both statements bind a single case; collected receipts cannot be invalidated by replacing evidence. Both parties must submit evidence for the current round. Their statements and
 any readable delivery are sealed to that panel; the judges verify the delivery
 against its original hash. Models apply the public covenant and agreed terms,
 return a provider price share plus a small public reason code, and sign the
@@ -132,32 +140,55 @@ its rounded-up half and provider pays the remaining half. Agreement reserves
 enough for **both rounds**, including odd-unit rounding. Unused reserves return
 on acceptance, refund or final settlement. There is no separate platform fee.
 
-An incomplete case, unavailable or uncertain model, material disagreement, or
-open appeal keeps funds held. There is no unilateral override or admin release. Both parties may agree a
-full price refund at any unsettled stage, including model uncertainty or an
-appeal; already committed judge fees remain paid.
-A disagreeing panel's recipients may update evidence and request a new case;
-identical successful cases reuse cached signed rulings without extra model work.
-One appeal starts fresh evidence with a different panel. The second decision
-also has a waiver/window before settlement, but no further appeal.
+The price stays held while a case is open. Missing evidence, unavailable models,
+uncertainty and disagreement do not create a new ruling or charge judge fees.
+Each judge permits at most three model attempts for that immutable case; successful
+receipts are reused. No resubmission/reset of a case is allowed. Parties may agree
+a full price refund at any unsettled stage; committed judge fees remain paid.
+A first ruling permits one appeal to the other three judges. A party who waived
+its appeal cannot then open one. The second ruling has a settlement window, with
+no further appeal.
 
-The mechanism does **not** establish impartiality, model robustness, correct
-legal conclusions, or resistance to shared operator/model bias. A real deployment
-must evaluate those claims with real independent models and operators. If a
-party disappears without providing evidence, or model uncertainty persists,
-funds can remain held indefinitely. Before public use, specify abandonment,
-service deadlines, judge replacement and independently governed escape rules.
+**Deadline outcomes bind the accepted terms:**
+
+- Delivery: seven days from agreement. If no delivery is committed, either party
+  can explicitly settle a full price refund after the deadline.
+- Review: two days from the first delivery. At most three delivery revisions are
+  allowed, within the original delivery/review windows; revisions do not extend
+  review. After review expires, either party can explicitly pay the full price.
+  Open any dispute before that deadline.
+- Each dispute/appeal: two days. An unresolved first dispute with delivery splits
+  the price 50/50. Without any delivery it refunds the full price. An unresolved
+  appeal retains the first ruling. These are contractual fallbacks, not model
+  findings; malicious or unavailable evidence can trigger them.
+- A completed ruling uses the configured appeal window. After it expires, apply
+  that ruling. Both parties can waive the window to finalize it sooner.
+
+Unused reserves return and already committed judge fees remain paid. Every
+finalization, waiver and deadline operation binds the outcome hash the user
+reviewed; a changed ruling/deadline requires fresh review. Refresh manually after
+expiry. No timer, automatic payout, polling or administrator override exists.
+
+These rules require available consensus. They do **not** establish impartiality,
+model robustness, correct legal conclusions, or resistance to shared bias.
+Before public use, evaluate independent models/operators, fallback incentives,
+service-specific deadlines, judge replacement and independently governed recovery.
 
 ## Failure, identity and audit
 
-Every owner mutation binds the account identity the client reviewed; a stale
-tab cannot silently pay from another selected account. Account switching is
+Every owner mutation binds the network and account identity the client reviewed;
+a stale tab cannot silently pay from another selected network or account. Every
+signed order action also binds the complete reviewed order state, including its
+round and immutable evidence. A changed case requires a fresh review before
+encrypting statements, requesting models or signing payment. Account switching is
 serialized with in-flight mutations and blocked while an intent is pending.
 Public keys use canonical encodings so aliases cannot count as distinct keys.
 Every owner mutation retains its original operation ID and signed, encrypted
 intent in SQLite. Manual **Refresh network** reconciles certified blocks;
 **Resume saved operations** helps the exact existing proposal or intent.
-An uncertain response never creates a replacement payment automatically.
+An uncertain response never creates a replacement payment automatically. A saved
+intent superseded by a certified state/nonce change keeps its original signature
+and is marked superseded; it is never re-signed against different terms.
 Concurrent submissions are serialized by a rotating proposer. Every validator
 persists one vote lock per height before responding. More than two-thirds of the
 fixed roster must sign the same proposal; a certificate is verified before any
@@ -169,6 +200,7 @@ or malicious proposer can halt progress; conflicting durable votes can also
 halt it. Never delete locks to force progress. Safety assumes honest validators
 retain their current keys and vote history, and fewer than one-third of the
 roster violate the rules. VM rollback or stale backups can break that assumption.
+New votes require timestamps within 30 seconds of the local clock and enforce actual local deadlines, so backdating cannot reopen an expired appeal or pay an early timeout. Historical replay and exact already-persisted votes do not use current-clock freshness. A stale partial proposal lacking quorum can remain locked after an outage; this alpha has no safe round-change/retimestamp procedure. Keep clocks synchronized and do not delete locks.
 No permissionless admission, validator changes, public finality guarantee,
 anti-capture mechanism or consensus audit is claimed.
 
@@ -182,11 +214,22 @@ receipts or copies held by peers. A superseded intent did not execute because
 another authorized operation used that account nonce first; inspect its receipt
 and wallet before making a fresh request.
 
-Bounds: at most 10,000 committed operations per pilot; agreement admission
-requires fewer than 100 currently open orders touching either party so the
-wallet can display all live holds ahead of retained history; a 128 MiB local database
-and WAL vote-admission limit; bounded inputs, block batches and caches. This is
-an initial bounded implementation, not a scalable global marketplace.
+Bounds: at most 10,000 committed operations per pilot, 100 free admissions per
+root identity, and six open orders across the pilot. Opening an order reserves
+24 operations for its bounded lifecycle; ordinary profiles/listings/transfers
+cannot spend that reserve. Closing returns unused capacity. Order progress and
+closing remain possible when new activity is rejected by the admission budget.
+Per-node admission also reserves 16 MiB per open order plus 16 MiB headroom within
+the 128 MiB database/WAL budget. These are conservative pilot limits, not proof
+of unlimited storage. Actual disk exhaustion can still halt a node.
+
+Registry caches reclaim stale/completed work; judge caches follow the immutable
+active cases and are reclaimed after explicit reconciliation closes them. Cache
+cleanup never removes certificates, original intents or vote locks. Expiry
+quotas limit resource abuse but do not solve Sybil attacks or fair public admission.
+The first six eligible quoted judges still serve a case; independently governed
+fair selection remains work. Replica verification applies each operation once
+per block rather than twice; replay still copies state and has scaling limits.
 
 ## Examples and remaining scope
 
@@ -218,5 +261,5 @@ cd webapp && npm test -- --run src/screens/Exchange.test.tsx
 The HTTP acceptance starts 12 temporary localhost surfaces, completes earn/buy/
 deliver/spend/dispute/settle, checks agreement across replicas and absence of
 private plaintext in SQLite, and stops every server before returning. Its
-controlled model adapters test mechanics only. Distinct-egress/NAT, installed
+controlled model adapters test mechanics only. A separate six-node HTTP fault test exercises a nonproposer whose responses exceed the real four-second timeout and stops all temporary servers. Distinct-egress/NAT, installed
 macOS UI use and actual independent model impartiality remain acceptance gates.

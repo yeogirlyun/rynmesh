@@ -1,7 +1,7 @@
 # General-purpose value exchange and Ryncoin infrastructure
 
 Status: owner-approved direction and first digital-work alpha implementation,
-2026-10-03. [Exchange alpha](EXCHANGE_ALPHA.md) documents the delivered subset
+2026-10-04: v2 protocol hardening adds immutable cases, bound deadline outcomes, admission/closing reserves and legacy replay. See [hardening design](EXCHANGE_PROTOCOL_HARDENING.md) and [issue #89](https://github.com/yeogirlyun/rynmesh/issues/89). [Exchange alpha](EXCHANGE_ALPHA.md) documents the delivered subset
 and [issue #87](https://github.com/yeogirlyun/rynmesh/issues/87) records its design.
 The remainder below is the broader roadmap, not a claim of public production
 readiness. The baseline preceding this milestone was

@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request, Response
 
-from .protocol import VERSION, ExchangeError, require
+from .protocol import ORDER_ACTIONS, VERSION, ExchangeError, require
 from .service import Exchange
 
 
@@ -101,13 +101,23 @@ def install_exchange(app: Any, *, store: Any, messaging_key: Any, local_control)
                 require(set(value) == {"action", "order_id"})
                 return await call(lambda: current().delivery(value["order_id"]))
             require(
-                set(value) == {"action", "value", "operation_id", "actor"}
+                set(value) == {"action", "value", "operation_id", "actor", "network"}
                 and isinstance(action, str)
                 and isinstance(value["actor"], str)
+                and isinstance(value["network"], str)
+                and isinstance(value["value"], dict)
+                and (
+                    action not in ORDER_ACTIONS
+                    or isinstance(value["value"].get("reviewed_order"), str)
+                )
             )
             return await call(
                 lambda: current().action(
-                    action, value["value"], value["operation_id"], expected_actor=value["actor"]
+                    action,
+                    value["value"],
+                    value["operation_id"],
+                    expected_actor=value["actor"],
+                    expected_network=value["network"],
                 )
             )
         except ExchangeError as exc:

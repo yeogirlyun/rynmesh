@@ -13,6 +13,12 @@ from rynmesh.exchange.protocol import COVENANT, UNITS, VERSION, ExchangeError, a
 from rynmesh.exchange.service import Exchange
 
 
+def reviewed(node, order_id):
+    from rynmesh.exchange.protocol import settlement_commitment
+    node.sync()
+    return {"order_id": order_id, "settlement_hash": settlement_commitment(node.ledger.state["orders"][order_id])}
+
+
 def new_id():
     return uuid.uuid4().hex
 
@@ -197,14 +203,14 @@ def test_ai_dispute_fees_appeal_independent_panel_and_finalization(tmp_path):
     mesh.buyer.action('rule', {'order_id': order_id}, new_id())
     assert len(mesh.model_calls) == 3
     assert mesh.buyer.ledger.state['orders'][order_id]['status'] == 'ruling_ready'
-    with pytest.raises(ExchangeError, match='appeal_open'): mesh.buyer.action('finalize', {'order_id': order_id}, new_id())
+    with pytest.raises(ExchangeError, match='appeal_open'): mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id())
     mesh.buyer.action('appeal', {'order_id': order_id}, new_id())
     mesh.buyer.action('evidence', {'order_id': order_id, 'body': 'Appeal buyer statement'}, new_id())
     mesh.provider.action('evidence', {'order_id': order_id, 'body': 'Appeal provider statement'}, new_id())
     mesh.provider.action('rule', {'order_id': order_id}, new_id())
     assert len(mesh.model_calls) == 6 and len({call[0] for call in mesh.model_calls}) == 6
     mesh.now += 61
-    mesh.buyer.action('finalize', {'order_id': order_id}, new_id()); mesh.provider.sync()
+    mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id()); mesh.provider.sync()
     assert mesh.buyer.ledger.state['orders'][order_id]['status'] == 'resolved'
     assert mesh.buyer.status()['wallet']['available'] == 747000
     assert mesh.provider.status()['wallet']['available'] == 1247000
@@ -349,13 +355,30 @@ def test_exchange_http_owner_gate_bounded_body_and_signed_identity(tmp_path):
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, content=b'x' * (512 * 1024 + 1)).status_code == 413
         assert client.post('/api/peer/exchange/vote', json={}).status_code == 409
         assert client.post('/api/peer/exchange/identity', json={'bad': True}).status_code == 400
-        scoped = {'action': 'listing', 'value': {'kind': 'offer', 'category': 'editing', 'title': 'Public work', 'description': 'A small service', 'price': '0'}, 'operation_id': new_id(), 'actor': None}
+        scoped = {'action': 'listing', 'value': {'kind': 'offer', 'category': 'editing', 'title': 'Public work', 'description': 'A small service', 'price': '0'}, 'operation_id': new_id(), 'actor': None, 'network': node.ledger.network}
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 400
         scoped['actor'] = mesh.provider.peer_id
         rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped)
         assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_account_changed'
         scoped['actor'] = node.peer_id
+        scoped['network'] = 'sha256:another-network'
+        rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped)
+        assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_review_network_changed'
+        del scoped['network']
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 400
+        scoped['network'] = node.ledger.network
         assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=scoped).status_code == 200
+        from rynmesh.exchange.protocol import order_commitment
+        order_id = mesh.order()
+        node.sync()
+        order_action = {'action': 'refund', 'value': {'order_id': order_id}, 'operation_id': new_id(), 'actor': node.actor, 'network': node.ledger.network}
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action).status_code == 400
+        order_action['value']['reviewed_order'] = 'sha256:stale-order'
+        rejected = client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action)
+        assert rejected.status_code == 409 and rejected.json()['detail'] == 'exchange_order_changed'
+        assert not node.ledger.intents()
+        order_action['value']['reviewed_order'] = order_commitment(node.ledger.state['orders'][order_id])
+        assert client.post('/api/local/exchange/action', headers={'x-owner': 'yes'}, json=order_action).status_code == 200
         identity = client.post('/api/peer/exchange/identity', json={})
         assert identity.status_code == 200
         assert signature(identity.json()).public_key == node.peer_id
@@ -374,9 +397,9 @@ def test_partial_price_decision_refunds_remainder_and_unused_appeal_fees(tmp_pat
     mesh = Mesh(tmp_path, judges=True); order_id = mesh.dispute()
     mesh.shares = {f'model-{i}': 5000 for i in range(3)}
     mesh.buyer.action('rule', {'order_id': order_id}, new_id())
-    mesh.buyer.action('waive', {'order_id': order_id}, new_id())
-    mesh.provider.action('waive', {'order_id': order_id}, new_id())
-    mesh.buyer.action('finalize', {'order_id': order_id}, new_id()); mesh.provider.sync()
+    mesh.buyer.action('waive', reviewed(mesh.buyer, order_id), new_id())
+    mesh.provider.action('waive', reviewed(mesh.provider, order_id), new_id())
+    mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id()); mesh.provider.sync()
     assert mesh.buyer.status()['wallet']['available'] == 873500
     assert mesh.provider.status()['wallet']['available'] == 1123500
     assert mesh.buyer.ledger.state['orders'][order_id]['paid'] == 125000
