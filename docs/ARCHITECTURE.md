@@ -867,7 +867,7 @@ Rynmesh says: inspect the receipts, choose your registry, choose your feed polic
 
 `protocol.py` holds public pure transitions, amounts, terms, issuance, escrow and
 model receipt rules. `ledger.py` verifies certificates and replays a SQLite WAL
-log; validators persist per-height vote locks. `service.py` coordinates rotating
+log; validators persist per-height vote locks. `legacy_v1.py` freezes old rules for certificate replay only. New votes/spending use v2; no in-place network or balance rewrite is allowed. New-vote clocks are bounded, while historical replay stays independent of current wall time. Immutable cases and bounded accepted deadline outcomes prevent unilateral dispute resets. `service.py` coordinates rotating
 proposers and quorum votes, stores original intents, seals private delivery and
 evidence, and calls the exact quoted local Ollama model. `routes.py` mounts
 owner-only controls under `/api/local/exchange` and signed peer operations under
@@ -876,6 +876,6 @@ invitations. The webapp signs through the local node and refreshes manually.
 
 No background exchange worker, platform account, commission, fiat bridge or
 reputation conversion is introduced. The fixed roster can halt on proposer loss
-or conflicting locks; it must not be advertised as mature permissionless BFT.
+or conflicting/stale partial locks; it must not be advertised as mature permissionless BFT.
 See [Exchange alpha](EXCHANGE_ALPHA.md) for fees, quorum assumptions, privacy,
 backup constraints, model acceptance limits and pending adapter work.

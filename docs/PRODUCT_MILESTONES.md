@@ -155,11 +155,11 @@ Delivered subset: integer wallet, fixed-roster quorum certificates and durable
 vote locks, capped one-time registry registration issuance, direct transfers,
 price/fee escrow, encrypted text delivery, buyer acceptance, mutual refund,
 three-model decision receipts, one independent-panel appeal and exact-operation
-recovery. Tests exercise concurrent submissions, replay, quorum loss, conserved
+recovery. v2 adds immutable statements, state/round guards, real-clock deadline checks, explicit accepted timeout outcomes and reserved closing capacity. v1 ledgers remain read-only with preserved history; v2 needs a separate reviewed pilot and no balances migrate. Tests exercise concurrent submissions, replay, quorum loss, conserved
 supply, private data and real localhost HTTP. Model outputs in acceptance are
 controlled. This is not production BFT or evaluated neutral AI.
 
-Remaining gate: reviewed economy/operator design, conserved balances under concurrent
+Hardening evidence and current limits: [protocol hardening](EXCHANGE_PROTOCOL_HARDENING.md). Remaining gate: reviewed economy/operator design, conserved balances under concurrent
 spending, validator failure and forks; neutral AI disputes, disclosed fees and
 anti-abuse controls; then a controlled pilot with no fiat bridge. Unrestricted expansion also requires P4. Broader public-network changes remain proposals, not a release date.
 
