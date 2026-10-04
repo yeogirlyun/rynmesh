@@ -1,5 +1,5 @@
 import { webcrypto } from "node:crypto";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
@@ -86,6 +86,10 @@ it("keeps a rejected stale save visible and reloads current source state on requ
   await result.user.click(screen.getByRole("button", { name: "Reload saved position" }));
   await waitFor(() => expect(result.stage.scrollTop).toBe(200));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  result.write.mockResolvedValue({ ...result.record, sync_revisions: { reading: "local-new" } });
+  result.stage.scrollTop = 600; fireEvent.scroll(result.stage);
+  await waitFor(() => expect(result.write).toHaveBeenLastCalledWith(result.item, "progress", .6,
+    { content_version: result.version, expected_sync_revision: "remote-new" }));
 });
 
 it("closes without saving a rejected stale position instead of blocking on the retry", async () => {
@@ -113,10 +117,46 @@ it("reloads after queued source writes settle instead of reusing their old revis
   await screen.findByText("Loading the article through your Ryn…");
   expect(result.history).toHaveBeenCalledTimes(1);
   const updated = { ...result.record, progress: .7, sync_revisions: { reading: "after-save" } };
+  let restoreFrame!: FrameRequestCallback;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementationOnce((callback) => {
+    restoreFrame = callback;
+    return 1;
+  });
   result.history.mockResolvedValue([updated]); finish(updated);
   await screen.findByText("The complete local body with a saved position.");
-  await waitFor(() => expect(result.stage.scrollTop).toBe(700));
+  expect(result.history).toHaveBeenCalledTimes(2);
+  // The old scrollTop is already 700, but saving is blocked until restoration runs.
+  expect(result.stage.scrollTop).toBe(700);
+  result.stage.scrollTop = 200; fireEvent.scroll(result.stage);
+  expect(result.write).toHaveBeenCalledTimes(2);
+  act(() => restoreFrame(0));
+  expect(result.stage.scrollTop).toBe(700);
   result.stage.scrollTop = 200; fireEvent.scroll(result.stage);
   await waitFor(() => expect(result.write).toHaveBeenLastCalledWith(result.item, "progress", .2,
     { content_version: result.version, expected_sync_revision: "after-save" }));
+});
+
+it("serializes queued edits and waits for the final acknowledgement before closing", async () => {
+  const result = await setup();
+  await waitFor(() => expect(result.stage.scrollTop).toBe(400));
+  let finishFirst!: (value: ConsumptionRecord) => void;
+  let finishSecond!: (value: ConsumptionRecord) => void;
+  result.write
+    .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+    .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
+  result.stage.scrollTop = 200; fireEvent.scroll(result.stage);
+  await waitFor(() => expect(result.write).toHaveBeenCalledWith(result.item, "progress", .2,
+    { content_version: result.version, expected_sync_revision: "revision-one" }));
+  result.stage.scrollTop = 600; fireEvent.scroll(result.stage);
+  await result.user.click(screen.getByRole("button", { name: "Close content viewer" }));
+  expect(result.write).toHaveBeenCalledTimes(1);
+  expect(result.close).not.toHaveBeenCalled();
+  finishFirst({ ...result.record, sync_revisions: { reading: "revision-two" } });
+  await waitFor(() => expect(result.write).toHaveBeenLastCalledWith(result.item, "progress", .6,
+    { content_version: result.version, expected_sync_revision: "revision-two" }));
+  expect(result.write).toHaveBeenCalledTimes(2);
+  expect(result.close).not.toHaveBeenCalled();
+  finishSecond({ ...result.record, sync_revisions: { reading: "revision-three" } });
+  await waitFor(() => expect(result.close).toHaveBeenCalledOnce());
+  expect(result.write).toHaveBeenCalledTimes(2);
 });
