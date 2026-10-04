@@ -21,7 +21,7 @@ import uvicorn
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI, HTTPException
 
-from rynmesh.exchange.protocol import COVENANT, UNITS, VERSION
+from rynmesh.exchange.protocol import CASE_WINDOW, COVENANT, UNITS, VERSION
 from rynmesh.exchange.routes import install_exchange
 from rynmesh.exchange.service import Exchange
 from rynmesh.peer_http import HttpPeerClient
@@ -47,6 +47,7 @@ class ControlledModel:
 def run(root: Path):
     nodes, sockets, servers, threads, endpoints, calls = [], [], [], [], [], []
     token = secrets.token_hex(32)
+    controlled_clock = [int(time.time())]
     try:
         for index in range(12):
             sock = socket.socket()
@@ -60,6 +61,7 @@ def run(root: Path):
                 secrets.token_bytes(32),
                 X25519PrivateKey.generate(),
                 allow_loopback=True,
+                clock=lambda: controlled_clock[0],
                 model_factory=lambda name: ControlledModel(name, calls),
             )
             nodes.append(node)
@@ -212,15 +214,45 @@ def run(root: Path):
                 "evidence",
                 {"order_id": third, "body": "Only half the accepted scope was delivered."},
             )
+        before = nodes[4].ledger.height
+        try:
+            action(
+                4, "evidence", {"order_id": third, "body": "Attempt to replace signed evidence."}
+            )
+        except (OSError, ValueError, RuntimeError):
+            pass
+        else:
+            raise AssertionError("Immutable evidence was replaced")
+        assert nodes[4].ledger.height == before
         action(4, "rule", {"order_id": third})
+        before = nodes[4].ledger.height
+        try:
+            action(4, "dispute", {"order_id": third})
+        except (OSError, ValueError, RuntimeError):
+            pass
+        else:
+            raise AssertionError("Dispute re-entry was accepted")
+        assert nodes[4].ledger.height == before
         for index in (4, 5):
             action(index, "waive", {"order_id": third})
         action(4, "finalize", {"order_id": third})
+        fourth = order(4, 5, "0.2", "Resolve missing opposing evidence")
+        action(4, "dispute", {"order_id": fourth})
+        action(
+            4,
+            "evidence",
+            {"order_id": fourth, "body": "The other party never submits a statement."},
+        )
+        # Explicitly advance the isolated clock, never wait days or run an automatic payout.
+        controlled_clock[0] += CASE_WINDOW
+        action(4, "timeout", {"order_id": fourth})
         for index in range(12):
             control(index, {"action": "refresh"})
         state = nodes[4].ledger.state
         assert all(node.ledger.head == nodes[4].ledger.head for node in nodes)
         assert state["orders"][third]["paid"] == 50000
+        assert state["orders"][fourth]["paid"] == 100000
+        assert len(calls) == 3, "Missing evidence fallback charged or invoked new judges"
         assert sum(a["available"] + a["held"] for a in state["accounts"].values()) == 2 * UNITS
         for path in root.rglob("ledger.sqlite3*"):
             assert b"A private translated paragraph." not in path.read_bytes()
@@ -246,9 +278,15 @@ def run(root: Path):
                 "partial-price dispute",
                 "waivers",
                 "settlement",
+                "rejected evidence replacement",
+                "rejected dispute re-entry",
+                "missing opposing evidence",
+                "reviewed manual deadline settlement",
             ],
             "issued_minor": state["issued"],
             "price_paid_on_dispute_minor": state["orders"][third]["paid"],
+            "price_paid_on_deadline_minor": state["orders"][fourth]["paid"],
+            "isolated_clock_explicitly_advanced": True,
             "ledger_height": nodes[4].ledger.height,
             "all_replicas_agree": True,
             "private_plaintext_in_sqlite": False,

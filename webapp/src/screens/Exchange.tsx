@@ -19,6 +19,8 @@ export default function Exchange() {
   const fixture = client?.mode === "fixture";
   const [state, setState] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
+  const legacy =
+    Boolean(state?.read_only) || state?.manifest?.version === "ryn.exchange.v1";
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [fresh, setFresh] = useState(false);
@@ -63,8 +65,7 @@ export default function Exchange() {
     };
   }, [fixture]);
   const run: Run = async (action, value) => {
-    if (state?.read_only || busy || !fresh || state?.pending?.length)
-      return false;
+    if (legacy || busy || !fresh || state?.pending?.length) return false;
     const fingerprint = JSON.stringify([action, value]);
     if (attempt.current.fingerprint !== fingerprint)
       attempt.current = { fingerprint, id: newId() };
@@ -100,6 +101,7 @@ export default function Exchange() {
     }
   };
   const control = async (value: object) => {
+    if (legacy && (value as { action?: string }).action !== "refresh") return;
     setBusy(true);
     setError("");
     try {
@@ -122,11 +124,7 @@ export default function Exchange() {
     }
   };
   const actor = state?.actor ?? state?.peer_id ?? "";
-  const disabled =
-    Boolean(state?.read_only) ||
-    busy ||
-    !fresh ||
-    Boolean(state?.pending?.length);
+  const disabled = legacy || busy || !fresh || Boolean(state?.pending?.length);
   if (fixture)
     return (
       <div className="screen-stack">
@@ -150,7 +148,7 @@ export default function Exchange() {
         transactions. Rules and receipts are public; private delivery and
         evidence are encrypted.
       </p>
-      {state?.read_only ? (
+      {legacy ? (
         <p role="alert">
           Legacy v1 ledger: read-only. Balances and history are preserved. Keep
           the original keys and ledger; a v2 pilot needs a reviewed invitation
@@ -194,7 +192,7 @@ export default function Exchange() {
                 payment could pay twice.
               </p>
               <Button
-                disabled={busy || Boolean(state.read_only)}
+                disabled={busy || legacy}
                 onClick={() => void control({ action: "resume" })}
               >
                 Resume saved operations
