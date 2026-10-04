@@ -60,8 +60,9 @@ identities to trade while leaving six independent judges available. With six
 judges, buyers/providers must be outside those identities. An order selects the
 first six eligible judges in published roster order, excluding its parties;
 three decide and three hear an appeal. All selected fees bind the accepted terms.
-A network with no judges supports acceptance and mutual refunds only; the terms
-and UI disclose that limitation before agreement.
+A network with no judges supports acceptance, mutual refunds and the disclosed
+delivery/review deadline outcomes; it cannot obtain AI rulings. Accepted terms
+and the UI disclose that limitation before agreement.
 
 Create the public invitation without starting any additional service:
 
@@ -175,14 +176,19 @@ service-specific deadlines, judge replacement and independently governed recover
 
 ## Failure, identity and audit
 
-Every owner mutation binds the account identity the client reviewed; a stale
-tab cannot silently pay from another selected account. Account switching is
+Every owner mutation binds the network and account identity the client reviewed;
+a stale tab cannot silently pay from another selected network or account. Every
+signed order action also binds the complete reviewed order state, including its
+round and immutable evidence. A changed case requires a fresh review before
+encrypting statements, requesting models or signing payment. Account switching is
 serialized with in-flight mutations and blocked while an intent is pending.
 Public keys use canonical encodings so aliases cannot count as distinct keys.
 Every owner mutation retains its original operation ID and signed, encrypted
 intent in SQLite. Manual **Refresh network** reconciles certified blocks;
 **Resume saved operations** helps the exact existing proposal or intent.
-An uncertain response never creates a replacement payment automatically.
+An uncertain response never creates a replacement payment automatically. A saved
+intent superseded by a certified state/nonce change keeps its original signature
+and is marked superseded; it is never re-signed against different terms.
 Concurrent submissions are serialized by a rotating proposer. Every validator
 persists one vote lock per height before responding. More than two-thirds of the
 fixed roster must sign the same proposal; a certificate is verified before any

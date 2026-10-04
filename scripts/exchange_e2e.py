@@ -21,7 +21,7 @@ import uvicorn
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI, HTTPException
 
-from rynmesh.exchange.protocol import CASE_WINDOW, COVENANT, UNITS, VERSION
+from rynmesh.exchange.protocol import CASE_WINDOW, COVENANT, ORDER_ACTIONS, UNITS, VERSION
 from rynmesh.exchange.routes import install_exchange
 from rynmesh.exchange.service import Exchange
 from rynmesh.peer_http import HttpPeerClient
@@ -120,20 +120,38 @@ def run(root: Path):
                 max_bytes=3 * 1024 * 1024,
             )
 
+        prepared_actions = {}
+
         def action(index, name, value, op=None):
-            if name in {"finalize", "waive", "timeout"}:
+            op = op or new_id()
+            original_value = dict(value)
+            if op in prepared_actions:
+                original_name, prior_value, original_body = prepared_actions[op]
+                assert name == original_name and value == prior_value
+                # Recovery retries the exact reviewed request, even after the
+                # original commit has changed the current order commitment.
+                return control(index, original_body)
+            if name in ORDER_ACTIONS:
                 status = control(index, {"action": "refresh"})
                 order = next(o for o in status["orders"] if o["id"] == value["order_id"])
-                value = {**value, "settlement_hash": order["settlement_hash"]}
-            return control(
-                index,
-                {
-                    "action": name,
-                    "value": value,
-                    "operation_id": op or new_id(),
-                    "actor": nodes[index].actor,
-                },
-            )
+                value = {
+                    **value,
+                    "reviewed_order": order["order_hash"],
+                    **(
+                        {"settlement_hash": order["settlement_hash"]}
+                        if name in {"finalize", "waive", "timeout"}
+                        else {}
+                    ),
+                }
+            request = {
+                "action": name,
+                "value": value,
+                "operation_id": op,
+                "actor": nodes[index].actor,
+                "network": nodes[index].ledger.network,
+            }
+            prepared_actions[op] = (name, original_value, request)
+            return control(index, request)
 
         for index in range(12):
             control(index, {"action": "configure", "manifest": manifest})

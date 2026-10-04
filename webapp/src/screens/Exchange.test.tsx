@@ -51,6 +51,7 @@ const state: Status = {
   configured: true,
   peer_id: "buyer",
   actor: "buyer",
+  network: "sha256:reviewed-network",
   encryption_key: "key",
   name: "Alpha",
   manifest,
@@ -111,6 +112,7 @@ it("reviews exact terms and total hold before spending, with no automatic paymen
     { proposal_id: "proposal-id", terms_hash: "sha256:exact-terms" },
     expect.any(String),
     "buyer",
+    "sha256:reviewed-network",
   );
 });
 
@@ -120,6 +122,7 @@ it("requires a verified readable delivery before buyer acceptance", async () => 
     orders: [
       {
         id: "order-id",
+        order_hash: "sha256:reviewed-order",
         buyer: "buyer",
         provider: "seller",
         terms,
@@ -154,9 +157,14 @@ it("requires a verified readable delivery before buyer acceptance", async () => 
   await act(async () => confirm.mock.calls[0][0].onConfirm());
   expect(exchange.action).toHaveBeenCalledWith(
     "accept",
-    { order_id: "order-id", delivery_hash: "sha256:delivery" },
+    {
+      order_id: "order-id",
+      delivery_hash: "sha256:delivery",
+      reviewed_order: "sha256:reviewed-order",
+    },
     expect.any(String),
     "buyer",
+    "sha256:reviewed-network",
   );
 });
 
@@ -243,6 +251,7 @@ it("keeps legacy balances and private deliveries readable while disabling mutati
     orders: [
       {
         id: "order-id",
+        order_hash: "sha256:reviewed-order",
         buyer: "buyer",
         provider: "seller",
         terms,
@@ -286,6 +295,7 @@ it("requires review and binds deadline settlement without running it automatical
     orders: [
       {
         id: "order-id",
+        order_hash: "sha256:reviewed-order",
         buyer: "buyer",
         provider: "seller",
         terms,
@@ -313,9 +323,14 @@ it("requires review and binds deadline settlement without running it automatical
   await act(async () => confirm.mock.calls[0][0].onConfirm());
   expect(exchange.action).toHaveBeenCalledWith(
     "timeout",
-    { order_id: "order-id", settlement_hash: "sha256:reviewed-outcome" },
+    {
+      order_id: "order-id",
+      settlement_hash: "sha256:reviewed-outcome",
+      reviewed_order: "sha256:reviewed-order",
+    },
     expect.any(String),
     "buyer",
+    "sha256:reviewed-network",
   );
 });
 
@@ -325,6 +340,7 @@ it("requires confirmation for immutable evidence and blocks replacement", async 
     orders: [
       {
         id: "order-id",
+        order_hash: "sha256:reviewed-order",
         buyer: "buyer",
         provider: "seller",
         terms,
@@ -350,9 +366,14 @@ it("requires confirmation for immutable evidence and blocks replacement", async 
   await act(async () => confirm.mock.calls[0][0].onConfirm());
   expect(exchange.action).toHaveBeenCalledWith(
     "evidence",
-    { order_id: "order-id", body: "Reviewed statement" },
+    {
+      order_id: "order-id",
+      body: "Reviewed statement",
+      reviewed_order: "sha256:reviewed-order",
+    },
     expect.any(String),
     "buyer",
+    "sha256:reviewed-network",
   );
 });
 
@@ -373,4 +394,26 @@ it("blocks an old v1 server even when it omits the new read-only flag", async ()
     screen.getByRole("button", { name: "Review and agree" }),
   ).toBeDisabled();
   expect(exchange.action).not.toHaveBeenCalled();
+});
+
+it("keeps a saved confirmation scoped to the reviewed network after refresh", async () => {
+  const user = userEvent.setup();
+  render(<Exchange />);
+  await user.click(
+    await screen.findByRole("button", { name: "Review and agree" }),
+  );
+  const original = confirm.mock.calls[0][0];
+  vi.mocked(exchange.control).mockResolvedValueOnce({
+    ...state,
+    network: "sha256:different-network",
+  });
+  await user.click(screen.getByRole("button", { name: "Refresh network" }));
+  await act(async () => original.onConfirm());
+  expect(exchange.action).toHaveBeenCalledWith(
+    "agree",
+    { proposal_id: "proposal-id", terms_hash: "sha256:exact-terms" },
+    expect.any(String),
+    "buyer",
+    "sha256:reviewed-network",
+  );
 });

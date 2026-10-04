@@ -74,6 +74,7 @@ export type Order = {
   review_until?: number;
   case_until?: number;
   settlement_hash?: string;
+  order_hash?: string;
 };
 export type Status = {
   configured: boolean;
@@ -159,8 +160,12 @@ const errors: Record<string, string> = {
     "This identity already has a pending verification receipt. Retry its original job ID or wait ten minutes before a new verification.",
   exchange_registry_endpoint_blocked:
     "This endpoint is on a private network outside the reviewed roster. Each witness operator must explicitly allow private registry probes before verification.",
+  exchange_order_changed:
+    "This order changed after review. Refresh its state before submitting evidence, requesting models, paying or settling.",
+  exchange_review_network_changed:
+    "The connected network changed after review. Refresh and review the currency network before signing.",
   exchange_operation_superseded:
-    "Another authorized operation used this account’s nonce first. This saved operation was not applied. Review your wallet and orders before creating a new request.",
+    "Another certified operation changed the nonce or reviewed order context. This saved operation was not applied. Review your wallet and orders before creating a new request.",
   exchange_account_changed:
     "This node switched accounts after your review. Refresh and review the payer identity and terms again before signing.",
   exchange_delivery_changed:
@@ -229,12 +234,14 @@ export const exchange = {
     value: object,
     operation_id: string,
     actor: string,
+    network: string,
   ) =>
     request<{ committed: boolean; status: Status }>({
       action,
       value,
       operation_id,
       actor,
+      network,
     }),
   delivery: (order_id: string) =>
     request<{ body: string; hash: string }>({ action: "delivery", order_id }),

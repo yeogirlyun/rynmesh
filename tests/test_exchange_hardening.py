@@ -11,6 +11,10 @@ from rynmesh.exchange.protocol import VERSION, ExchangeError, apply
 
 
 def command(node, state, action, value):
+    from rynmesh.exchange.protocol import ORDER_ACTIONS, order_commitment
+
+    if action in ORDER_ACTIONS and value.get("order_id") in state["orders"]:
+        value = {"reviewed_order": order_commitment(state["orders"][value["order_id"]]), **value}
     return node.signed(
         {
             "version": VERSION,
@@ -812,3 +816,127 @@ def test_stale_partial_proposals_keep_locks_and_are_not_silently_retimestamped(t
     with pytest.raises(ExchangeError, match="time_invalid"):
         mesh.nodes[1].ledger.vote(proposal)
     assert mesh.nodes[0].ledger.pending() == [proposal]
+
+
+@pytest.mark.parametrize("action", ["evidence", "rule"])
+def test_reviewed_round_cannot_silently_target_a_new_appeal(tmp_path, action):
+    from rynmesh.exchange.protocol import order_commitment
+
+    mesh = Mesh(tmp_path, judges=True)
+    order_id = mesh.dispute()
+    mesh.buyer.action("rule", {"order_id": order_id}, new_id())
+    old_context = order_commitment(mesh.buyer.ledger.state["orders"][order_id])
+    mesh.provider.action("appeal", {"order_id": order_id}, new_id())
+    mesh.buyer.sync()
+    before = copy.deepcopy(mesh.buyer.ledger.state)
+    calls = len(mesh.model_calls)
+    value = {"order_id": order_id, "reviewed_order": old_context}
+    if action == "evidence":
+        value["body"] = "Statement intended for the original round"
+    with pytest.raises(ExchangeError, match="exchange_order_changed"):
+        mesh.buyer.action(action, value, new_id())
+    assert mesh.buyer.ledger.state == before
+    assert not mesh.buyer.ledger.intents()
+    assert len(mesh.model_calls) == calls
+
+
+def test_signed_order_command_requires_the_reviewed_state(tmp_path):
+    mesh = Mesh(tmp_path)
+    order_id = mesh.order()
+    mesh.buyer.sync()
+    before = copy.deepcopy(mesh.buyer.ledger.state)
+    signed = command(mesh.buyer, before, "refund", {"order_id": order_id})
+    del signed["payload"]["value"]["reviewed_order"]
+    signed = mesh.buyer.signed(signed["payload"])
+    with pytest.raises(ExchangeError, match="exchange_order_changed"):
+        apply(before, signed, mesh.config, mesh.now)
+    assert mesh.buyer.ledger.state == before
+
+
+def test_saved_intent_superseded_by_another_party_preserves_the_original(tmp_path):
+    import json
+
+    from rynmesh.crypto import canonical_json, sha256_bytes
+    from rynmesh.exchange.protocol import order_commitment
+
+    mesh = Mesh(tmp_path)
+    order_id = mesh.order()
+    mesh.buyer.sync()
+    value = {
+        "order_id": order_id,
+        "reviewed_order": order_commitment(mesh.buyer.ledger.state["orders"][order_id]),
+    }
+    signed = command(mesh.buyer, mesh.buyer.ledger.state, "refund", value)
+    operation_id = signed["payload"]["id"]
+    original = json.dumps(signed)
+    fingerprint = sha256_bytes(
+        canonical_json({"actor": mesh.buyer.actor, "action": "refund", "value": value})
+    )
+    with mesh.buyer.ledger.db:
+        mesh.buyer.ledger.db.execute(
+            "INSERT INTO intents VALUES (?,?,?,?)", (operation_id, fingerprint, original, "pending")
+        )
+    # The original has not reached any proposer. A different party changes the
+    # reviewed state without consuming this buyer's nonce or approving a refund.
+    mesh.provider.action("refund", {"order_id": order_id}, new_id())
+    mesh.buyer.sync()
+    before = copy.deepcopy(mesh.buyer.ledger.state)
+    mesh.buyer.resume()
+    assert mesh.buyer.ledger.state == before
+    assert not mesh.buyer.ledger.intents()
+    assert mesh.buyer.ledger.db.execute(
+        "SELECT command,status FROM intents WHERE id=?", (operation_id,)
+    ).fetchone() == (original, "superseded")
+    with pytest.raises(ExchangeError, match="exchange_operation_superseded"):
+        mesh.buyer.action("refund", value, operation_id)
+    assert operation_id not in mesh.buyer.ledger.state["operations"]
+    assert mesh.buyer.ledger.state["orders"][order_id]["status"] == "working"
+
+
+def test_network_change_rejects_before_signing_or_running_models(tmp_path):
+    mesh = Mesh(tmp_path, judges=True)
+    order_id = mesh.dispute()
+    mesh.buyer.sync()
+    before = copy.deepcopy(mesh.buyer.ledger.state)
+    calls = len(mesh.model_calls)
+    with pytest.raises(ExchangeError, match="exchange_review_network_changed"):
+        mesh.buyer.action(
+            "rule",
+            {"order_id": order_id},
+            new_id(),
+            expected_actor=mesh.buyer.actor,
+            expected_network="sha256:another-network",
+        )
+    assert mesh.buyer.ledger.state == before
+    assert not mesh.buyer.ledger.intents()
+    assert len(mesh.model_calls) == calls
+
+
+def test_context_race_after_signing_marks_original_intent_superseded(tmp_path):
+    mesh = Mesh(tmp_path)
+    order_id = mesh.order()
+    mesh.buyer.sync()
+    original_proposal = mesh.buyer.proposal
+    operation_id = new_id()
+    raced = False
+
+    def racing_proposal(signed):
+        nonlocal raced
+        if not raced:
+            raced = True
+            mesh.provider.action("refund", {"order_id": order_id}, new_id())
+        return original_proposal(signed)
+
+    mesh.buyer.proposal = racing_proposal
+    with pytest.raises(ExchangeError, match="exchange_order_changed"):
+        mesh.buyer.action("refund", {"order_id": order_id}, operation_id)
+    assert not mesh.buyer.ledger.intents()
+    row = mesh.buyer.ledger.db.execute(
+        "SELECT command,status FROM intents WHERE id=?", (operation_id,)
+    ).fetchone()
+    assert row[1] == "superseded"
+    assert operation_id not in mesh.buyer.ledger.state["operations"]
+    order = mesh.buyer.ledger.state["orders"][order_id]
+    assert order["status"] == "working"
+    assert order["refund_requests"] == [mesh.provider.actor]
+    assert mesh.buyer.status()["wallet"]["held"] > 0

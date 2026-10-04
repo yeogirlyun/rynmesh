@@ -47,8 +47,13 @@ The downloadable v0.7.0 release predates both exchange versions.
   rulings settle after the appeal window. These are accepted **fallbacks**, not
   claims that an AI evaluated the work. Committed model fees stay paid; unused
   reserves return. Opposing-party disappearance does not veto the fallback.
-- Deadline settlement, finalization and waivers bind the reviewed order outcome
-  hash. Changed decisions cannot silently use a stale confirmation.
+- Every signed order action binds the complete reviewed order state, including
+  round, evidence and remaining-operation counter. A stale submission is rejected
+  before signing, encrypting a statement or requesting model decisions. Owner HTTP
+  mutations also bind the reviewed network and payer. A confirmation cannot silently
+  spend in a different network or submit first-round evidence to a new appeal.
+- Deadline settlement, finalization and waivers additionally bind the reviewed
+  outcome hash. Changed decisions cannot silently use a stale confirmation.
 
 None of these actions runs automatically. The UI requires review; users refresh
 and explicitly settle. Uncertainty can still be induced; the bounded fallback
@@ -62,6 +67,10 @@ appeal cannot reopen a window and a forward-dated finalization/timeout cannot
 pay early. Historical verification and returning an exact already-persisted vote
 use the original certified rules/time, not today's clock. Replay applies each
 transition once, preserving monetary checks while eliminating duplicate copies.
+
+Saved intents retain their exact original signatures. An intent superseded by a
+certified order-state change or consumed payer nonce is marked superseded; it is
+never silently re-signed against the new context. A fresh review is required.
 
 Durable locks stay in place. **A stale partial proposal without quorum can halt
 the alpha after its freshness window**, even if all nodes reconnect. Previously
