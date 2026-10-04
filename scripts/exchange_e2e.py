@@ -214,6 +214,7 @@ def run(root: Path):
                 "evidence",
                 {"order_id": third, "body": "Only half the accepted scope was delivered."},
             )
+        control(4, {"action": "refresh"})
         before = nodes[4].ledger.height
         try:
             action(
