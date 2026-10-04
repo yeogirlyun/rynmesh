@@ -28,7 +28,7 @@ The node, web interface, recommendation agent, peer protocol, registry, and comm
   diagnostics, reviewed device cleanup and direct Private AI streaming
 - On current main: an opt-in digital-service Exchange with free offers/requests,
   negotiated agreements, an internal Ryncoin wallet, encrypted delivery,
-  refunds and AI dispute/appeal mechanics in a configured alpha network
+  refunds, immutable AI dispute/appeal cases and reviewed deadline settlement in a configured v2 alpha network
 - Non-transferable Rynmesh Credits for distribution reputation
 
 Rynmesh is alpha software. APIs and storage formats may change before 1.0.
@@ -48,7 +48,7 @@ Rynmesh is alpha software. APIs and storage formats may change before 1.0.
   execution remain work.
 - The first digital-value exchange milestone is implemented for configured
   alpha groups; see [Exchange alpha](docs/EXCHANGE_ALPHA.md). Registry issuance
-  is finite and one-time per identity. The fixed-roster approval log and model
+  is finite and one-time per identity. v1 histories remain read-only; there is no automatic balance migration. See [protocol hardening](docs/EXCHANGE_PROTOCOL_HARDENING.md) for deadline outcomes and limits. The fixed-roster approval log and model
   adapters do not prove permissionless security or impartial AI. Broad commerce,
   hiring, paid media and public rewards remain in the
   [Network economy roadmap](docs/NETWORK_ECONOMY_ROADMAP.md). Fiat conversion

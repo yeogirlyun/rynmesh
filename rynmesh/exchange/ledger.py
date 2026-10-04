@@ -17,16 +17,22 @@ from typing import Any
 from rynmesh.crypto import canonical_json, sha256_bytes, sign_payload
 
 from .protocol import (
+    CLOCK_SKEW,
+    ORDER_ACTIONS,
+    TERMINAL,
     VERSION,
-    apply,
+    case_payload,
     genesis,
     initial_state,
     quorum,
     require,
     signature,
+    vote_deadlines,
 )
 
 MAX_DATABASE_BYTES = 128 * 1024 * 1024
+ORDER_STORAGE_RESERVE = 16 * 1024 * 1024
+ADMISSION_HEADROOM = 16 * 1024 * 1024
 
 
 class Ledger:
@@ -48,6 +54,8 @@ class Ledger:
             CREATE TABLE IF NOT EXISTS proposals (height INTEGER PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS intents (id TEXT PRIMARY KEY, fingerprint TEXT, command TEXT NOT NULL, status TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS work (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS work_clock (id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, count INTEGER NOT NULL, created INTEGER NOT NULL);
         """)
         self.db.commit()
         self.state: dict | None = None
@@ -59,22 +67,20 @@ class Ledger:
         if config:
             self.config = genesis(config)
             self.network = sha256_bytes(canonical_json(self.config))
-            self.state = initial_state(self.config)
+            self.state = self.rules().initial_state(self.config)
             self.head = self.network
             for stored_height, stored_hash, raw in self.db.execute(
                 "SELECT height, hash, certificate FROM blocks ORDER BY height"
             ):
                 certificate = json.loads(raw)
-                self._verify(certificate)
+                replayed = self._verify(certificate)
                 proposal = certificate["proposal"]
                 require(
                     stored_height == self.height + 1
                     and stored_hash == sha256_bytes(canonical_json(proposal)),
                     "exchange_log_corrupt",
                 )
-                self.state = apply(
-                    self.state, proposal["command"], self.config, proposal["timestamp"]
-                )
+                self.state = replayed
                 self.height = stored_height
                 self.head = stored_hash
 
@@ -89,8 +95,18 @@ class Ledger:
                 "INSERT OR REPLACE INTO settings VALUES (?,?)", (name, json.dumps(value))
             )
 
+    def rules(self):
+        from . import legacy_v1, protocol
+
+        return protocol if self.config["version"] == VERSION else legacy_v1
+
+    def writable(self):
+        self.ready()
+        require(self.config["version"] == VERSION, "exchange_legacy_read_only")
+
     def configure(self, manifest: dict) -> None:
         config = genesis(manifest)
+        require(config["version"] == VERSION, "exchange_legacy_read_only")
         network = sha256_bytes(canonical_json(config))
         with self.lock:
             require(not self.network or self.network == network, "exchange_network_changed")
@@ -111,7 +127,9 @@ class Ledger:
             and set(proposal)
             == {"version", "network", "height", "parent", "timestamp", "command", "proposer"}
         )
-        require(proposal["version"] == VERSION and proposal["network"] == self.network)
+        require(
+            proposal["version"] == self.config["version"] and proposal["network"] == self.network
+        )
         require(
             type(proposal["height"]) is int and proposal["height"] == self.height + 1,
             "exchange_height_changed",
@@ -126,16 +144,18 @@ class Ledger:
             proposer.public_key == leader and proposer.payload == core, "exchange_proposer_invalid"
         )
         require(
-            type(proposal["timestamp"]) is int and proposal["timestamp"] <= int(self.clock()) + 30,
+            type(proposal["timestamp"]) is int and proposal["timestamp"] >= 0,
             "exchange_time_invalid",
         )
-        return apply(self.state, proposal["command"], self.config, proposal["timestamp"])
+        return self.rules().apply(
+            self.state, proposal["command"], self.config, proposal["timestamp"]
+        )
 
     def vote(self, proposal: dict) -> dict:
         from rynmesh.crypto import public_key_from_private
 
         with self.lock, self.db:
-            self.ready()
+            self.writable()
             own_key = public_key_from_private(self.private_key)
             require(
                 own_key in {v["peer_id"] for v in self.config["validators"]},
@@ -149,11 +169,11 @@ class Ledger:
             if prior:
                 require(prior[0] == digest, "exchange_height_locked")
                 return json.loads(prior[1])
-            require(
-                sum(path.stat().st_size for path in self.path.parent.glob("ledger.sqlite3*"))
-                < MAX_DATABASE_BYTES,
-                "exchange_capacity",
-            )
+            now = int(self.clock())
+            require(abs(proposal["timestamp"] - now) <= CLOCK_SKEW, "exchange_time_invalid")
+            vote_deadlines(self.state, proposal["command"]["payload"], now)
+            self.admit_storage(proposal["command"]["payload"]["action"])
+
             vote = sign_payload(
                 {
                     "version": VERSION,
@@ -170,13 +190,13 @@ class Ledger:
             )
             return vote
 
-    def _verify(self, certificate: dict) -> None:
+    def _verify(self, certificate: dict) -> dict:
         require(isinstance(certificate, dict) and set(certificate) == {"proposal", "votes"})
         proposal = certificate["proposal"]
-        self._proposal(proposal)
+        next_state = self._proposal(proposal)
         digest = sha256_bytes(canonical_json(proposal))
         expected = {
-            "version": VERSION,
+            "version": self.config["version"],
             "kind": "approval",
             "network": self.network,
             "height": proposal["height"],
@@ -194,6 +214,7 @@ class Ledger:
             require(vote.public_key not in signers, "exchange_duplicate_vote")
             signers.add(vote.public_key)
         require(len(signers) >= quorum(self.config), "exchange_quorum_unavailable")
+        return next_state
 
     def commit(self, certificate: dict) -> dict:
         with self.lock:
@@ -207,8 +228,7 @@ class Ledger:
             if prior:
                 require(prior[0] == digest, "exchange_fork")
                 return {"height": proposal["height"], "hash": digest, "committed": True}
-            self._verify(certificate)
-            new_state = apply(self.state, proposal["command"], self.config, proposal["timestamp"])
+            new_state = self._verify(certificate)
             with self.db:
                 self.db.execute(
                     "INSERT INTO blocks VALUES (?,?,?)",
@@ -221,7 +241,79 @@ class Ledger:
             self.state = new_state
             self.height = proposal["height"]
             self.head = digest
+            if self.config["version"] == VERSION:
+                self.prune_work()
+                try:
+                    self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.OperationalError:
+                    pass
             return {"height": self.height, "hash": digest, "committed": True}
+
+    def admit_storage(self, action):
+        if action in ORDER_ACTIONS:
+            return  # This order reserved its bounded lifecycle before escrow.
+        opened = sum(o["status"] not in TERMINAL for o in self.state["orders"].values())
+        if action == "agree":
+            opened += 1
+        size = sum(p.stat().st_size for p in self.path.parent.glob("ledger.sqlite3*"))
+        require(
+            size + opened * ORDER_STORAGE_RESERVE + ADMISSION_HEADROOM < MAX_DATABASE_BYTES,
+            "exchange_admission_exhausted",
+        )
+
+    def prune_work(self):
+        """Only disposable receipts/attempts; never history, intents or vote locks."""
+        with self.lock, self.db:
+            active = {
+                "case:" + sha256_bytes(canonical_json(case_payload(self.config, o, o["round"])))
+                for o in self.state["orders"].values()
+                if o["status"] == "disputed" and len(o["evidence"]) == 2
+            }
+            for (item,) in self.db.execute("SELECT id FROM work WHERE id LIKE 'case:%'").fetchall():
+                if item not in active:
+                    self.db.execute("DELETE FROM work WHERE id=?", (item,))
+            for (item,) in self.db.execute(
+                "SELECT id FROM attempts WHERE id LIKE 'case:%'"
+            ).fetchall():
+                if item not in active:
+                    self.db.execute("DELETE FROM attempts WHERE id=?", (item,))
+            self.db.execute(
+                "DELETE FROM work WHERE id IN (SELECT id FROM work_clock WHERE created<?)",
+                (int(self.clock()) - 600,),
+            )
+            self.db.execute("DELETE FROM work_clock WHERE id NOT IN (SELECT id FROM work)")
+            self.db.execute(
+                "DELETE FROM attempts WHERE id LIKE 'work:%' AND created<?",
+                (int(self.clock()) - 600,),
+            )
+            for provider in self.state["rewards"].values():
+                self.db.execute("DELETE FROM work WHERE id=?", ("work:" + provider,))
+                self.db.execute("DELETE FROM work_clock WHERE id=?", ("work:" + provider,))
+                self.db.execute("DELETE FROM attempts WHERE id=?", ("work:" + provider,))
+
+    def attempt(self, item):
+        with self.lock, self.db:
+            row = self.db.execute("SELECT count FROM attempts WHERE id=?", (item,)).fetchone()
+            require(not row or row[0] < 3, "exchange_attempt_limit")
+            require(
+                row
+                or self.db.execute(
+                    "SELECT count(*) FROM attempts WHERE id LIKE ?", (item.split(":")[0] + ":%",)
+                ).fetchone()[0]
+                < 1000,
+                "exchange_capacity",
+            )
+            self.db.execute(
+                "INSERT INTO attempts VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET count=count+1",
+                (item, 1, int(self.clock())),
+            )
+
+    def cache_work(self, item, value):
+        with self.lock, self.db:
+            self.db.execute("INSERT OR IGNORE INTO work VALUES (?,?)", (item, json.dumps(value)))
+            self.db.execute(
+                "INSERT OR IGNORE INTO work_clock VALUES (?,?)", (item, int(self.clock()))
+            )
 
     def blocks(self, after: int = 0) -> dict:
         with self.lock:

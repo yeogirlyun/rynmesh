@@ -13,6 +13,12 @@ from rynmesh.exchange.protocol import COVENANT, UNITS, VERSION, ExchangeError, a
 from rynmesh.exchange.service import Exchange
 
 
+def reviewed(node, order_id):
+    from rynmesh.exchange.protocol import settlement_commitment
+    node.sync()
+    return {"order_id": order_id, "settlement_hash": settlement_commitment(node.ledger.state["orders"][order_id])}
+
+
 def new_id():
     return uuid.uuid4().hex
 
@@ -197,14 +203,14 @@ def test_ai_dispute_fees_appeal_independent_panel_and_finalization(tmp_path):
     mesh.buyer.action('rule', {'order_id': order_id}, new_id())
     assert len(mesh.model_calls) == 3
     assert mesh.buyer.ledger.state['orders'][order_id]['status'] == 'ruling_ready'
-    with pytest.raises(ExchangeError, match='appeal_open'): mesh.buyer.action('finalize', {'order_id': order_id}, new_id())
+    with pytest.raises(ExchangeError, match='appeal_open'): mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id())
     mesh.buyer.action('appeal', {'order_id': order_id}, new_id())
     mesh.buyer.action('evidence', {'order_id': order_id, 'body': 'Appeal buyer statement'}, new_id())
     mesh.provider.action('evidence', {'order_id': order_id, 'body': 'Appeal provider statement'}, new_id())
     mesh.provider.action('rule', {'order_id': order_id}, new_id())
     assert len(mesh.model_calls) == 6 and len({call[0] for call in mesh.model_calls}) == 6
     mesh.now += 61
-    mesh.buyer.action('finalize', {'order_id': order_id}, new_id()); mesh.provider.sync()
+    mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id()); mesh.provider.sync()
     assert mesh.buyer.ledger.state['orders'][order_id]['status'] == 'resolved'
     assert mesh.buyer.status()['wallet']['available'] == 747000
     assert mesh.provider.status()['wallet']['available'] == 1247000
@@ -374,9 +380,9 @@ def test_partial_price_decision_refunds_remainder_and_unused_appeal_fees(tmp_pat
     mesh = Mesh(tmp_path, judges=True); order_id = mesh.dispute()
     mesh.shares = {f'model-{i}': 5000 for i in range(3)}
     mesh.buyer.action('rule', {'order_id': order_id}, new_id())
-    mesh.buyer.action('waive', {'order_id': order_id}, new_id())
-    mesh.provider.action('waive', {'order_id': order_id}, new_id())
-    mesh.buyer.action('finalize', {'order_id': order_id}, new_id()); mesh.provider.sync()
+    mesh.buyer.action('waive', reviewed(mesh.buyer, order_id), new_id())
+    mesh.provider.action('waive', reviewed(mesh.provider, order_id), new_id())
+    mesh.buyer.action('finalize', reviewed(mesh.buyer, order_id), new_id()); mesh.provider.sync()
     assert mesh.buyer.status()['wallet']['available'] == 873500
     assert mesh.provider.status()['wallet']['available'] == 1123500
     assert mesh.buyer.ledger.state['orders'][order_id]['paid'] == 125000

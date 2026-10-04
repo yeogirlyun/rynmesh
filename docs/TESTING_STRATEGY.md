@@ -177,3 +177,15 @@ without a replacement payment. The bounded one-time HTTP acceptance uses
 controlled model adapters and stops all temporary servers before returning.
 A green test does not establish real-model impartiality or public currency
 readiness; the [alpha limitations](EXCHANGE_ALPHA.md) remain explicit.
+
+Protocol hardening adds `tests/test_exchange_hardening.py`: 330 role/status/round
+combinations, original reset/replacement repros, expiry boundaries, stale outcome
+confirmation, late/early clock attacks, capacity exhaustion with closing, bounded
+work/model retries, waiver authority, v1 replay including an already-certified
+reset, and preservation of locks on stale partial proposals.
+`tests/test_exchange_http_faults.py` uses six foreground HTTP surfaces and a
+nonproposer whose response exceeds the real transport timeout. Healthy validators
+still certify; cleanup stops all servers. UI tests cover disclosed fallbacks,
+immutable evidence confirmation, reviewed settlement hashes and legacy read-only
+access. Real impartiality, independent security review, clock/outage recovery and
+public-network scale remain gates.

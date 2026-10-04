@@ -119,6 +119,10 @@ def run(root: Path):
             )
 
         def action(index, name, value, op=None):
+            if name in {"finalize", "waive", "timeout"}:
+                status = control(index, {"action": "refresh"})
+                order = next(o for o in status["orders"] if o["id"] == value["order_id"])
+                value = {**value, "settlement_hash": order["settlement_hash"]}
             return control(
                 index,
                 {

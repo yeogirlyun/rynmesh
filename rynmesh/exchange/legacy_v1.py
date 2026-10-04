@@ -1,4 +1,4 @@
-"""Public, deterministic exchange rules. No fiat or reputation conversion."""
+"""Frozen v1 rules for historical certificate replay ONLY. Never use for new votes."""
 
 from __future__ import annotations
 
@@ -9,33 +9,11 @@ from typing import Any
 
 from rynmesh.crypto import SignedPayload, canonical_json, sha256_bytes, verify_signed_payload
 
-VERSION = "ryn.exchange.v2"
-LEGACY_VERSION = "ryn.exchange.v1"
-MAX_OPERATIONS = 10000
-MAX_ACCOUNT_ADMISSIONS = 100
-ORDER_OPERATION_RESERVE = 24
-MAX_OPEN_ORDERS = 6
-CLOCK_SKEW = 30
-DELIVERY_WINDOW = 7 * 86400
-REVIEW_WINDOW = 2 * 86400
-CASE_WINDOW = 2 * 86400
-TERMINAL = {"accepted", "refunded", "resolved"}
-ORDER_ACTIONS = {
-    "deliver",
-    "accept",
-    "refund",
-    "dispute",
-    "evidence",
-    "rule",
-    "appeal",
-    "waive",
-    "finalize",
-    "timeout",
-}
+VERSION = "ryn.exchange.v1"
 UNITS = 1_000_000
 MAX_MINOR = 10**15
 COVENANT = {
-    "version": "ryn.covenant.digital.v2",
+    "version": "ryn.covenant.digital.v1",
     "principles": [
         "free participation",
         "no platform commission",
@@ -47,7 +25,7 @@ COVENANT = {
         "private keys and deliverables",
         "independent AI appeals",
     ],
-    "acceptance": "The buyer accepts delivery or both parties agree a refund. Disputed outcomes use independent model receipts. Accepted deadlines allow explicit timeout settlement: undelivered work is refunded; delivered work is paid after review; an unresolved initial dispute with delivery splits the price equally (without delivery it refunds); an unresolved appeal retains the first ruling. Committed judge fees remain paid.",
+    "acceptance": "The buyer accepts delivery or both parties agree a refund. Disputed outcomes use independent model receipts; uncertainty holds funds.",
 }
 
 
@@ -113,10 +91,6 @@ def signature(wire: dict) -> SignedPayload:
 
 
 def genesis(value: dict) -> dict:
-    if isinstance(value, dict) and value.get("version") == LEGACY_VERSION:
-        from .legacy_v1 import genesis as legacy_genesis
-
-        return legacy_genesis(value)
     require(
         isinstance(value, dict)
         and set(value)
@@ -193,7 +167,6 @@ def account(state: dict, owner: str) -> dict:
             "label": "",
             "devices": [],
             "nonce": 0,
-            "admissions": 0,
         },
     )
 
@@ -231,7 +204,7 @@ def close(state: dict, order: dict, paid: int, status: str) -> None:
     unhold(state, order["provider"], order["provider_reserve"])
     account(state, order["buyer"])["available"] -= paid
     earn(state, order["provider"], paid)
-    order.update(status=status, paid=paid, buyer_reserve=0, provider_reserve=0, remaining_ops=0)
+    order.update(status=status, paid=paid, buyer_reserve=0, provider_reserve=0)
 
 
 def judge_panel(config: dict, order: dict, round_number: int) -> list[dict]:
@@ -259,60 +232,9 @@ def case_payload(config: dict, order: dict, round_number: int) -> dict:
         "round": round_number,
         "terms": order["terms"],
         "delivery_hash": order.get("delivery_hash", ""),
-        "deadline": order["case_until"],
-        "previous_ruling_share": order.get("ruling_share") if round_number == 1 else None,
         "evidence": order["evidence"],
         "covenant": config["covenant"],
     }
-
-
-def deadline(order: dict) -> int:
-    return order[
-        {
-            "working": "delivery_until",
-            "delivered": "review_until",
-            "disputed": "case_until",
-            "ruling_ready": "appeal_until",
-        }[order["status"]]
-    ]
-
-
-def settlement_commitment(order: dict) -> str:
-    return sha256_bytes(
-        canonical_json(
-            {
-                k: order.get(k)
-                for k in (
-                    "id",
-                    "status",
-                    "round",
-                    "price",
-                    "terms",
-                    "delivery_hash",
-                    "delivery_until",
-                    "review_until",
-                    "case_until",
-                    "appeal_until",
-                    "ruling_share",
-                    "rulings",
-                )
-            }
-        )
-    )
-
-
-def vote_deadlines(state: dict, command: dict, now: int) -> None:
-    """Local clock guards for first votes only; historical replay has no wall clock."""
-    action, value = command["action"], command["value"]
-    order = state["orders"].get(value.get("order_id"))
-    if not order or order["status"] in TERMINAL:
-        return
-    if action in {"appeal", "dispute", "evidence", "rule", "deliver"}:
-        require(now < deadline(order), "exchange_deadline_expired")
-    if action == "deliver":
-        require(now < order["delivery_until"], "exchange_deadline_expired")
-    if action == "timeout" or (action == "finalize" and len(order["waivers"]) != 2):
-        require(now >= deadline(order), "exchange_timeout_open")
 
 
 def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict:
@@ -334,17 +256,7 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
     action = cmd["action"]
     value = cmd["value"]
     require(isinstance(value, dict))
-    if action not in ORDER_ACTIONS:
-        reserved = sum(
-            o["remaining_ops"] for o in result["orders"].values() if o["status"] not in TERMINAL
-        )
-        needed = 1 + (ORDER_OPERATION_RESERVE if action == "agree" else 0)
-        require(
-            len(result["operations"]) + reserved + needed <= MAX_OPERATIONS,
-            "exchange_admission_exhausted",
-        )
-        require(row["admissions"] < MAX_ACCOUNT_ADMISSIONS, "exchange_account_quota")
-        row["admissions"] += 1
+    require(len(result["operations"]) < 10000, "exchange_capacity")
     if action == "profile":
         require(set(value) == {"label", "encryption_key"})
         row["label"] = text(value["label"], 100)
@@ -395,7 +307,6 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
         require(set(value) == {"listing_id"})
         listing = result["listings"].get(value["listing_id"])
         require(listing and listing["owner"] == owner, "exchange_unauthorized")
-        require(listing["active"], "exchange_listing_closed")
         listing["active"] = False
     elif action == "propose":
         require(set(value) == {"listing_id", "scope", "price"})
@@ -445,10 +356,6 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
         require(
             value["terms_hash"] == sha256_bytes(canonical_json(terms)), "exchange_terms_changed"
         )
-        require(
-            sum(o["status"] not in TERMINAL for o in result["orders"].values()) < MAX_OPEN_ORDERS,
-            "exchange_open_orders_limit",
-        )
         buyer_fee, provider_fee = terms["buyer_dispute_reserve"], terms["provider_dispute_reserve"]
         hold(result, proposal["buyer"], proposal["price"] + buyer_fee)
         hold(result, proposal["provider"], provider_fee)
@@ -467,9 +374,6 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
             "refund_requests": [],
             "waivers": [],
             "created_at": timestamp,
-            "delivery_until": timestamp + terms["delivery_window_s"],
-            "remaining_ops": ORDER_OPERATION_RESERVE,
-            "delivery_revisions": 0,
         }
     elif action == "reward":
         require(set(value) == {"job_id", "receipts"})
@@ -514,22 +418,15 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
         require(
             order and owner in {order["buyer"], order["provider"]}, "exchange_order_unavailable"
         )
-        require(order["status"] not in TERMINAL, "exchange_order_closed")
-        require(action in ORDER_ACTIONS, "exchange_action_invalid")
-        require(order["remaining_ops"] > 0, "exchange_order_capacity")
-        order["remaining_ops"] -= 1
+        require(
+            order["status"] not in {"accepted", "refunded", "resolved"}, "exchange_order_closed"
+        )
         if action == "deliver":
             require(set(value) == {"order_id", "hash", "sealed"})
             require(
                 owner == order["provider"] and order["status"] in {"working", "delivered"},
                 "exchange_unauthorized",
             )
-            require(timestamp < order["delivery_until"], "exchange_delivery_expired")
-            require(order["delivery_revisions"] < 3, "exchange_delivery_revision_limit")
-            order["delivery_revisions"] += 1
-            if order["status"] == "working":
-                order["review_until"] = timestamp + order["terms"]["review_window_s"]
-            require(timestamp < order["review_until"], "exchange_review_expired")
             require(re.fullmatch("sha256:[a-f0-9]{64}", value["hash"]))
             sealed = value["sealed"]
             require(isinstance(sealed, dict) and set(sealed) == {"nonce", "ciphertext"})
@@ -547,30 +444,18 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
             close(result, order, order["price"], "accepted")
         elif action == "refund":
             require(set(value) == {"order_id"})
-            require(owner not in order["refund_requests"], "exchange_refund_already_requested")
-            order["refund_requests"].append(owner)
+            if owner not in order["refund_requests"]:
+                order["refund_requests"].append(owner)
             if len(order["refund_requests"]) == 2:
                 close(result, order, 0, "refunded")
         elif action == "dispute":
-            require(
-                set(value) == {"order_id"} and order["status"] in {"working", "delivered"},
-                "exchange_dispute_state",
-            )
-            require(timestamp < deadline(order), "exchange_case_expired")
+            require(set(value) == {"order_id"})
             judge_panel(config, order, 0)
             judge_panel(config, order, 1)
-            order.update(
-                status="disputed",
-                round=0,
-                evidence={},
-                waivers=[],
-                case_until=timestamp + order["terms"]["case_window_s"],
-            )
+            order.update(status="disputed", round=0, evidence={}, waivers=[])
         elif action == "evidence":
             require(set(value) == {"order_id", "commitment", "sealed"})
             require(order["status"] == "disputed")
-            require(timestamp < order["case_until"], "exchange_case_expired")
-            require(owner not in order["evidence"], "exchange_evidence_locked")
             require(re.fullmatch("sha256:[a-f0-9]{64}", value["commitment"]))
             panel = judge_panel(config, order, order["round"])
             require(
@@ -591,7 +476,6 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
                 set(order["evidence"]) == {order["buyer"], order["provider"]},
                 "exchange_evidence_incomplete",
             )
-            require(timestamp < order["case_until"], "exchange_case_expired")
             panel = judge_panel(config, order, order["round"])
             expected_hash = sha256_bytes(
                 canonical_json(case_payload(config, order, order["round"]))
@@ -657,59 +541,20 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
                 set(value) == {"order_id"}
                 and order["status"] == "ruling_ready"
                 and order["round"] == 0
-                and owner not in order["waivers"]
             )
             require(timestamp < order["appeal_until"], "exchange_appeal_expired")
-            order.update(
-                status="disputed",
-                round=1,
-                evidence={},
-                waivers=[],
-                case_until=timestamp + order["terms"]["case_window_s"],
-            )
+            order.update(status="disputed", round=1, evidence={}, waivers=[])
         elif action == "waive":
-            require(
-                value.get("settlement_hash") == settlement_commitment(order),
-                "exchange_settlement_changed",
-            )
-            require(
-                set(value) == {"order_id", "settlement_hash"} and order["status"] == "ruling_ready"
-            )
-            require(owner not in order["waivers"], "exchange_waiver_already_requested")
-            order["waivers"].append(owner)
+            require(set(value) == {"order_id"} and order["status"] == "ruling_ready")
+            if owner not in order["waivers"]:
+                order["waivers"].append(owner)
         elif action == "finalize":
-            require(
-                value.get("settlement_hash") == settlement_commitment(order),
-                "exchange_settlement_changed",
-            )
-            require(
-                set(value) == {"order_id", "settlement_hash"} and order["status"] == "ruling_ready"
-            )
+            require(set(value) == {"order_id"} and order["status"] == "ruling_ready")
             require(
                 timestamp >= order["appeal_until"] or len(order["waivers"]) == 2,
                 "exchange_appeal_open",
             )
             close(result, order, order["price"] * order["ruling_share"] // 10000, "resolved")
-        elif action == "timeout":
-            require(set(value) == {"order_id", "settlement_hash"})
-            require(
-                value["settlement_hash"] == settlement_commitment(order),
-                "exchange_settlement_changed",
-            )
-            require(timestamp >= deadline(order), "exchange_timeout_open")
-            if order["status"] == "working":
-                close(result, order, 0, "refunded")
-            elif order["status"] == "delivered":
-                close(result, order, order["price"], "accepted")
-            else:
-                share = (
-                    order["ruling_share"]
-                    if order["status"] == "ruling_ready" or order.get("round") == 1
-                    else order["terms"]["dispute_timeout_share_bps"]
-                    if order.get("delivery_hash")
-                    else 0
-                )
-                close(result, order, order["price"] * share // 10000, "resolved")
         else:
             raise ExchangeError("exchange_action_invalid")
     row["nonce"] += 1
@@ -727,10 +572,6 @@ def apply(state: dict, command_wire: dict, config: dict, timestamp: int) -> dict
 
 
 def terms_for(config: dict, proposal: dict, listing: dict) -> dict:
-    if config["version"] == LEGACY_VERSION:
-        from .legacy_v1 import terms_for as legacy_terms
-
-        return legacy_terms(config, proposal, listing)
     selected = (
         judge_panel(config, proposal, 0) + judge_panel(config, proposal, 1)
         if config["judges"]
@@ -752,13 +593,6 @@ def terms_for(config: dict, proposal: dict, listing: dict) -> dict:
         "judges": selected,
         "delivery": "encrypted digital text, at most 32 KiB",
         "platform_commission": 0,
-        "delivery_window_s": DELIVERY_WINDOW,
-        "review_window_s": REVIEW_WINDOW,
-        "case_window_s": CASE_WINDOW,
-        "dispute_timeout_share_bps": 5000,
-        "appeal_timeout": "retain first ruling",
-        "evidence_policy": "one immutable statement per party per round",
-        "delivery_revisions": 3,
     }
 
 
