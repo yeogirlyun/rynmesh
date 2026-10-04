@@ -3,6 +3,9 @@
   "productName": "Ryn",
   "version": "0.7.0",
   "identifier": "ai.rynmesh.desktop",
+  "plugins": {
+    "deep-link": { "desktop": { "schemes": ["ryn", "rynmesh"] } }
+  },
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",

@@ -6,6 +6,7 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -29,12 +30,18 @@ pub fn run() {
             focus_main(app);
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(NodeState {
             child: std::sync::Mutex::new(None),
             port,
             stopping: AtomicBool::new(false),
         })
         .setup(move |app| {
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |_event| {
+                // The frontend reviews the payload. Never log the URL or argv.
+                focus_main(&handle);
+            });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
