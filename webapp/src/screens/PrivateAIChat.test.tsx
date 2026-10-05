@@ -267,7 +267,9 @@ describe("Private AI chat", () => {
     await user.type(await screen.findByLabelText("Message AI chat"), "Hello Mac");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText("Waiting for the device's reply…");
-    await screen.findByText(/Waited 1s/);
+    // The elapsed label ticks once per second. CI scheduling may skip the
+    // exact "1s" frame; still require positive elapsed time before completing.
+    await screen.findByText(/Waited [1-9]\d*s/, {}, { timeout: 3500 });
     complete = true;
     await screen.findByText("Reply received from the Mac");
     await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
