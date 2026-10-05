@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import { Bot, Compass, Settings2, Sparkles, UploadCloud } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -21,6 +22,7 @@ type HomeSource = "activity" | "recommendations" | "content";
 const sourceLabels: Record<HomeSource, string> = { activity: "activity", recommendations: "recommendations", content: "content list" };
 
 export default function Home() {
+  useUILanguage();
   const { client, node, peers, notify, firstSuccess, openFirstSuccess, refreshFirstSuccess } = useAppContext();
   const navigate = useNavigate();
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
@@ -132,61 +134,61 @@ export default function Home() {
         </Panel>
       ) : null}
       <PageHeader
-        eyebrow="Ryn node"
-        title="Local node console"
-        context="Your private assistant, recommendation profile, digest, and peer network—all mediated by the node on this machine."
+        eyebrow={tr("Ryn node")}
+        title={tr("Local node console")}
+        context={tr("Your private assistant, recommendation profile, digest, and peer network—all mediated by the node on this machine.")}
         actions={
           <>
-            <Chip tone="ok">daemon online</Chip>
-            <Chip tone="info">{node.peer_count} peers</Chip>
+            <Chip tone="ok">{tr("daemon online")}</Chip>
+            <Chip tone="info">{node.peer_count} {tr("peers")}</Chip>
           </>
         }
       />
 
       <Panel className="home-hero">
         <div>
-          <span className="eyebrow">This node</span>
+          <span className="eyebrow">{tr("This node")}</span>
           <h2>{node.node_name}</h2>
           <p className="mono">{node.peer_id}</p>
         </div>
         <div className="hero-actions">
           <Button onClick={() => navigate("/reading")}>Continue reading</Button>
           <Button icon={Compass} onClick={() => navigate("/explore")}>
-            Explore
+            {tr("Explore")}
           </Button>
           <Button icon={Sparkles} onClick={() => navigate("/ask")}>
-            Ask AI
+            {tr("Ask AI")}
           </Button>
           <Button icon={UploadCloud} variant="primary" onClick={() => navigate("/publish")}>
-            Publish
+            {tr("Publish")}
           </Button>
           <Button icon={Settings2} onClick={() => navigate("/settings")}>
-            Settings
+            {tr("Settings")}
           </Button>
         </div>
       </Panel>
 
       <div className="stat-grid">
-        <StatTile label="Local items" value={node.local_items} to="/explore?source=local" />
-        <StatTile label="Fetched" value={node.fetched_items} to="/explore?source=fetched" />
+        <StatTile label={tr("Local items")} value={node.local_items} to="/explore?source=local" />
+        <StatTile label={tr("Fetched")} value={node.fetched_items} to="/explore?source=fetched" />
         <StatTile
-          label="Available recs"
+          label={tr("Available recs")}
           value={Math.max(availableRecommendations, recommendations.length)}
           to="/digest"
         />
         <StatTile label="Flagged" value={errors.content ? "Unavailable" : loading.content ? "Loading…" : flagged} to="/explore?safety=flagged" tone={flagged ? "warn" : "neutral"} />
       </div>
 
-      <Panel title={showingStarters ? "Start here: teach your assistant" : "Curator Highlights"} className="home-recs">
+      <Panel title={showingStarters ? tr("Start here: teach your assistant") : tr("Curator Highlights")} className="home-recs">
         {recommendations.length ? (
           <>
             {showingStarters ? (
               <div className="home-starter-note">
                 <div>
-                  <strong>Ryn is collecting the first live recommendations.</strong>
-                  <p>The background agent is reviewing its built-in public catalog now; this section updates automatically when real content is ready.</p>
+                  <strong>{tr("Ryn is collecting the first live recommendations.")}</strong>
+                  <p>{tr("The background agent is reviewing its built-in public catalog now; this section updates automatically when real content is ready.")}</p>
                 </div>
-                <Button icon={Sparkles} onClick={() => navigate("/digest")}>Open For You</Button>
+                <Button icon={Sparkles} onClick={() => navigate("/digest")}>{tr("Open For You")}</Button>
               </div>
             ) : null}
             <div className="rec-stack compact">
@@ -204,15 +206,15 @@ export default function Home() {
                   onOpen={() => {
                     setViewing(item);
                   }}
-                  onFetchPreview={() => notify("info", "Preview fetch requested through local node")}
-                  onFetchFull={() => notify("warn", "Full fetch requires confirmation from item detail")}
+                  onFetchPreview={() => notify("info", tr("Preview fetch requested through local node"))}
+                  onFetchFull={() => notify("warn", tr("Full fetch requires confirmation from item detail"))}
                   onFeedback={async (action) => {
                     await client.submitRecommendationFeedback(item.content_id, action);
                     if (item.digest_item_id) {
                       void digestApi.sendFeedback(item.digest_item_id, action === "more" ? "up" : "down").catch(() => undefined);
                     }
                     await load("recommendations");
-                    notify("ok", "Your local recommendation profile learned from that feedback");
+                    notify("ok", tr("Your local recommendation profile learned from that feedback"));
                   }}
                 />
               );
@@ -258,6 +260,7 @@ function StatTile({
   to: string;
   tone?: "neutral" | "warn";
 }) {
+  useUILanguage();
   return (
     <Link className={`stat-tile stat-${tone}`} to={to}>
       <span>{label}</span>

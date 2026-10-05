@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import { CloudCog, RefreshCw, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -17,19 +18,20 @@ import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from
 import type { JobCapacity, WorkResult } from "../domain/types";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
+import InferenceAccess from "./InferenceAccess";
 
 const VEO_CAPABILITY = serviceDescriptors.video.capability;
 const VEO_OPERATION = serviceDescriptors.video.operation;
 const LLM_ERROR_MESSAGES: Record<string, string> = {
-  p2p_distinct_public_egress_required: "This older strict-P2P package incorrectly requires different public exits. Update both nodes and retry on the current network.",
-  p2p_public_mapping_unavailable: "A public UDP mapping could not be created. Check outbound UDP and the configured STUN server.",
-  p2p_connection_timed_out: "The direct UDP connection timed out. Check whether private routing or NAT hairpin UDP is allowed between the two nodes.",
-  p2p_transport_failed: "The strict peer-to-peer path failed, and relay fallback is disabled.",
-  capacity_exhausted: "The Provider is busy. Wait for an available slot or choose another Provider.",
-  insufficient_task_balance: "The available development Task Balance is too low for this order.",
-  provider_unavailable: "The selected Provider is offline, unhealthy, or no longer advertised. Refresh services and choose an available Provider.",
-  invalid_order: "The order contains an invalid or missing value. Review the prompt and output-token limit.",
-  consumer_restarted_before_completion: "The Consumer node restarted before the task finished. The reserved balance was released; submit again.",
+  get p2p_distinct_public_egress_required() { return tr("This older strict-P2P package incorrectly requires different public exits. Update both nodes and retry on the current network."); },
+  get p2p_public_mapping_unavailable() { return tr("A public UDP mapping could not be created. Check outbound UDP and the configured STUN server."); },
+  get p2p_connection_timed_out() { return tr("The direct UDP connection timed out. Check whether private routing or NAT hairpin UDP is allowed between the two nodes."); },
+  get p2p_transport_failed() { return tr("The strict peer-to-peer path failed, and relay fallback is disabled."); },
+  get capacity_exhausted() { return tr("The Provider is busy. Wait for an available slot or choose another Provider."); },
+  get insufficient_task_balance() { return tr("The available development Task Balance is too low for this order."); },
+  get provider_unavailable() { return tr("The selected Provider is offline, unhealthy, or no longer advertised. Refresh services and choose an available Provider."); },
+  get invalid_order() { return tr("The order contains an invalid or missing value. Review the prompt and output-token limit."); },
+  get consumer_restarted_before_completion() { return tr("The Consumer node restarted before the task finished. The reserved balance was released; submit again."); },
 };
 
 function llmServiceKey(service: LLMServiceRecord): string {
@@ -72,6 +74,7 @@ function friendlyError(error: unknown, fallback: string): string {
 }
 
 export default function Services() {
+  useUILanguage();
   const { client, node, peers, notify, confirm } = useAppContext();
   const [selectedPeerId, setSelectedPeerId] = useState("");
   const [videoId, setVideoId] = useState("");
@@ -81,9 +84,9 @@ export default function Services() {
   const [results, setResults] = useState<WorkResult[]>([]);
   const [llmNetwork, setLlmNetwork] = useState("");
   const [selectedLlmServiceKey, setSelectedLlmServiceKey] = useState("");
-  const [llmPrompt, setLlmPrompt] = useState("Explain in one sentence why this request travelled through Rynmesh.");
+  const [llmPrompt, setLlmPrompt] = useState(tr("Explain in one sentence why this request travelled through Rynmesh."));
   const [llmMaxTokens, setLlmMaxTokens] = useState("64");
-  const [llmTransport, setLlmTransport] = useState<"auto" | "direct" | "p2p" | "relay">("auto");
+  const [llmTransport, setLlmTransport] = useState<"auto" | "direct" | "p2p" | "relay">("p2p");
   const [llmResult, setLlmResult] = useState<LLMOrderResult | null>(null);
   const [llmBalance, setLlmBalance] = useState<TaskBalanceSummary | null>(null);
   const [llmProvider, setLlmProvider] = useState<LLMProviderStatus | null>(null);
@@ -270,7 +273,7 @@ export default function Services() {
     });
     setLastOrderId(order.work_order_id);
     setResults([]);
-    notify("ok", "Veo render request submitted through Rynmesh");
+    notify("ok", tr("Veo render request submitted through Rynmesh"));
   };
 
   async function trackSetupJob(jobId: string) {
@@ -283,10 +286,10 @@ export default function Services() {
         setLlmSetupJob(job);
         if (["succeeded", "failed", "cancelled"].includes(job.state)) {
           if (job.state === "succeeded") {
-            notify("ok", "Local model configured and self-tested; publishing remains off");
+            notify("ok", tr("Local model configured and self-tested; publishing remains off"));
             await refresh(true);
           } else {
-            notify(job.state === "cancelled" ? "warn" : "danger", job.message || "Local model setup did not complete");
+            notify(job.state === "cancelled" ? "warn" : "danger", job.message || tr("Local model setup did not complete"));
           }
           break;
         }
@@ -298,7 +301,7 @@ export default function Services() {
         state: "failed",
         stage: "status",
         progress: 0,
-        message: friendlyError(error, "Setup status is temporarily unavailable. Retry status refresh."),
+        message: friendlyError(error, tr("Setup status is temporarily unavailable. Retry status refresh.")),
         retryable: true,
       });
     } finally {
@@ -313,9 +316,9 @@ export default function Services() {
     // only carries the state so the message never appears twice.
     setLlmProgress({
       tone: result.state === "succeeded" ? "ok" : "danger",
-      text: `Order ${result.state}${result.transport ? ` via ${result.transport}` : ""}`,
+      text: result.transport ? tr("Order {{state}} via {{transport}}", { state: tr(result.state), transport: tr(result.transport) }) : tr("Order {{state}}", { state: tr(result.state) }),
     });
-    notify(result.state === "succeeded" ? "ok" : "warn", `LLM task ${result.state}`);
+    notify(result.state === "succeeded" ? "ok" : "warn", tr("LLM task {{v0}}", { v0: result.state }));
     try {
       setLlmBalance(await client.getTaskBalance());
       setLlmOrders(await client.listLLMOrders());
@@ -351,10 +354,10 @@ export default function Services() {
     setLlmPublishing(true);
     try {
       await client.publishLLMService({ network_id: llmNetwork, benchmark: false });
-      notify("ok", "Local LLM service published to the Rynmesh discovery network");
+      notify("ok", tr("Local LLM service published to the Rynmesh discovery network"));
       await refresh();
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "LLM service publication failed");
+      notify("danger", error instanceof Error ? error.message : tr("LLM service publication failed"));
     } finally {
       setLlmPublishing(false);
     }
@@ -364,9 +367,9 @@ export default function Services() {
     setLlmPublishing(true);
     try {
       setLlmProvider(await client.pauseLLMService());
-      notify("ok", "Local LLM service paused; new orders will be rejected");
+      notify("ok", tr("Local LLM service paused; new orders will be rejected"));
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "LLM service pause failed");
+      notify("danger", error instanceof Error ? error.message : tr("LLM service pause failed"));
     } finally {
       setLlmPublishing(false);
     }
@@ -393,7 +396,7 @@ export default function Services() {
       setLlmSetupJob(job);
       await trackSetupJob(job.job_id || "");
     } catch (error) {
-      notify("danger", friendlyError(error, "Local model setup failed"));
+      notify("danger", friendlyError(error, tr("Local model setup failed")));
     } finally {
       setLlmConfiguring(false);
     }
@@ -405,7 +408,7 @@ export default function Services() {
       setLlmSetupJob(await client.cancelLLMSetup(llmSetupJob.job_id));
       notify("warn", "Setup cancellation requested. Wait for the final recovery status.");
     } catch (error) {
-      notify("danger", friendlyError(error, "Unable to cancel local model setup"));
+      notify("danger", friendlyError(error, tr("Unable to cancel local model setup")));
     }
   };
 
@@ -437,12 +440,12 @@ export default function Services() {
     setLlmProgress({
       tone: "info",
       text: llmTransport === "p2p"
-        ? "Order accepted locally. Strict P2P connection is in progress; relay fallback is disabled."
+        ? tr("Order accepted locally. Strict P2P connection is in progress; relay fallback is disabled.")
         : llmTransport === "relay"
-          ? "Order accepted locally. End-to-end ciphertext relay delivery is in progress."
+          ? tr("Order accepted locally. End-to-end ciphertext relay delivery is in progress.")
           : llmTransport === "direct"
-            ? "Order accepted locally. A direct Provider node connection is in progress."
-            : "Order accepted locally. The node is selecting an available encrypted transport.",
+            ? tr("Order accepted locally. A direct Provider node connection is in progress.")
+            : tr("Order accepted locally. The node is selecting an available encrypted transport."),
     });
     try {
       const result = await client.submitLLMOrder({
@@ -462,8 +465,8 @@ export default function Services() {
         await trackLlmOrder(result.task_id);
       }
     } catch (error) {
-      const message = friendlyError(error, "LLM task failed");
-      setLlmProgress({ tone: "danger", text: `Order failed: ${message}` });
+      const message = friendlyError(error, tr("LLM task failed"));
+      setLlmProgress({ tone: "danger", text: tr("Order failed: {{v0}}", { v0: message }) });
       setLlmBalance(await client.getTaskBalance());
       notify("danger", message);
     } finally {
@@ -480,10 +483,10 @@ export default function Services() {
     try {
       const result = await client.cancelLLMOrder(llmActiveTaskId);
       setLlmResult(result);
-      setLlmProgress({ tone: "info", text: `Order ${result.task_id} cancellation requested` });
-      notify("ok", "Cancellation sent to the Provider node; the reserved balance was released");
+      setLlmProgress({ tone: "info", text: tr("Order {{v0}} cancellation requested", { v0: result.task_id }) });
+      notify("ok", tr("Cancellation sent to the Provider node; the reserved balance was released"));
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "LLM task cancellation failed");
+      notify("danger", error instanceof Error ? error.message : tr("LLM task cancellation failed"));
     } finally {
       setLlmCancelling(false);
     }
@@ -492,22 +495,22 @@ export default function Services() {
   const updateLlmRetention = async (value: LLMPrivacySettings["result_retention_seconds"]) => {
     try {
       setLlmPrivacy(await client.updateLLMPrivacy(value));
-      notify("ok", value ? "Encrypted result retention updated" : "Stored encrypted results purged");
+      notify("ok", value ? tr("Encrypted result retention updated") : tr("Stored encrypted results purged"));
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "Result retention update failed");
+      notify("danger", error instanceof Error ? error.message : tr("Result retention update failed"));
     }
   };
 
   const clearLlmHistory = () => {
     confirm({
-      title: "Clear completed LLM task history?",
-      body: "This permanently removes local task metadata and any retained encrypted results. Running tasks are preserved.",
+      title: tr("Clear completed LLM task history?"),
+      body: tr("This permanently removes local task metadata and any retained encrypted results. Running tasks are preserved."),
       risk: "high",
-      confirmLabel: "Clear task history",
+      confirmLabel: tr("Clear task history"),
       onConfirm: async () => {
         const result = await client.clearLLMOrders();
         setLlmOrders(await client.listLLMOrders());
-        notify("ok", `${result.removed} local LLM task records removed`);
+        notify("ok", tr("{{v0}} local LLM task records removed", { v0: result.removed }));
       },
     });
   };
@@ -516,7 +519,7 @@ export default function Services() {
     try {
       setLlmResult(await client.getLLMOrder(taskId));
     } catch (error) {
-      notify("danger", error instanceof Error ? error.message : "Task result is unavailable");
+      notify("danger", error instanceof Error ? error.message : tr("Task result is unavailable"));
     }
   };
 
@@ -524,9 +527,9 @@ export default function Services() {
     if (!llmResult?.output) return;
     try {
       await navigator.clipboard.writeText(llmResult.output);
-      notify("ok", "Result copied to the clipboard");
+      notify("ok", tr("Result copied to the clipboard"));
     } catch {
-      notify("danger", "Clipboard access is unavailable; select the result text and copy it manually");
+      notify("danger", tr("Clipboard access is unavailable; select the result text and copy it manually"));
     }
   };
 
@@ -535,17 +538,19 @@ export default function Services() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Services"
-        title="Ryn job capacity"
-        context="Discover Provider nodes, submit signed work orders, and use a direct or end-to-end encrypted transport selected for each task."
-        actions={<Button icon={RefreshCw} onClick={() => void refresh()}>Refresh</Button>}
+        eyebrow={tr("Services")}
+        title={tr("Service setup")}
+        context={tr("Set up and manage the services running on this device.")}
+        actions={<Button icon={RefreshCw} onClick={() => void refresh()}>{tr("Refresh")}</Button>}
       />
+
+      <section id="inference-api"><InferenceAccess /></section>
 
       <Panel>
         <div className="panel-head">
           <div>
-            <span className="eyebrow">Provider control</span>
-            <h2>Local LLM service</h2>
+            <span className="eyebrow">{tr("Provider control")}</span>
+            <h2>{tr("Local LLM service")}</h2>
           </div>
           <Chip tone={llmProvider?.ready || llmProvider?.online ? "ok" : llmProvider?.configured === false ? "info" : "danger"}>
             {llmProvider?.ready ? (llmProvider.capacity?.available === 0 ? "busy" : "ready on this device") : llmProvider?.online ? "online" : llmProvider?.configured === false ? "not configured" : "not ready"}
@@ -556,8 +561,8 @@ export default function Services() {
             <div className="service-result">
               <span>{llmProvider.service.model_alias}</span>
               <small>
-                {llmProvider.service.package_id} · context {llmProvider.service.context_window} ·
-                {` ${llmProvider.capacity?.available ?? 0}/${llmProvider.capacity?.max_concurrent ?? 0} slots`}
+                {llmProvider.service.package_id} {tr("· context")} {llmProvider.service.context_window} ·
+                {` ${tr("{{available}}/{{total}} slots", { available: llmProvider.capacity?.available ?? 0, total: llmProvider.capacity?.max_concurrent ?? 0 })}`}
               </small>
             </div>
             <div className="button-row">
@@ -569,25 +574,25 @@ export default function Services() {
                 disabled={llmPublishing}
                 onClick={() => void publishLlm()}
               >
-                {llmPublishing ? "Publishing…" : "Publish / refresh service"}
+                {llmPublishing ? tr("Publishing…") : tr("Publish / refresh service")}
               </Button>
               {llmProvider.publication_enabled ? (
                 <Button disabled={llmPublishing} onClick={() => void pauseLlm()}>
-                  {llmPublishing ? "Pausing…" : "Pause new orders"}
+                  {llmPublishing ? tr("Pausing…") : tr("Pause new orders")}
                 </Button>
               ) : null}
-              <Chip tone="info">Publishes metadata only — never prompts or model files</Chip>
+              <Chip tone="info">{tr("Publishes metadata only — never prompts or model files")}</Chip>
             </div>
             <div className="button-row">
               <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("self-test")}>
-                {llmLifecycleAction === "self-test" ? "Testing…" : "Run self-test"}
+                {llmLifecycleAction === "self-test" ? tr("Testing…") : tr("Run self-test")}
               </Button>
               {llmProvider.lifecycle?.runtime?.managed !== false ? (
                 <>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("start")}>Start runtime</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("stop")}>Stop runtime</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("restart")}>Restart</Button>
-                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("update")}>Update runtime</Button>
+                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("start")}>{tr("Start runtime")}</Button>
+                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("stop")}>{tr("Stop runtime")}</Button>
+                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("restart")}>{tr("Restart")}</Button>
+                  <Button disabled={Boolean(llmLifecycleAction)} onClick={() => void runLlmLifecycle("update")}>{tr("Update runtime")}</Button>
                   <Button
                     variant="danger"
                     disabled={Boolean(llmLifecycleAction)}
@@ -595,11 +600,11 @@ export default function Services() {
                       title: "Remove this model's runtime instance?",
                       body: "This stops and removes this model's runtime instance. Shared native runtime files, model data, private configuration and conversations are preserved.",
                       risk: "high",
-                      confirmLabel: "Uninstall runtime",
+                      confirmLabel: tr("Uninstall runtime"),
                       onConfirm: () => runLlmLifecycle("uninstall"),
                     })}
                   >
-                    Uninstall runtime
+                    {tr("Uninstall runtime")}
                   </Button>
                   {llmProvider.lifecycle?.mode === "managed" ? (
                     <Button
@@ -609,7 +614,7 @@ export default function Services() {
                         title: "Delete the managed model too?",
                         body: "This removes the model's runtime instance and Rynmesh-owned model file. Shared native runtime files, private configuration and conversations are preserved. Imported or user-owned files are never deleted.",
                         risk: "high",
-                        confirmLabel: "Delete managed model",
+                        confirmLabel: tr("Delete managed model"),
                         onConfirm: () => runLlmLifecycle("uninstall", {
                           delete_environment: true,
                           delete_model: true,
@@ -617,13 +622,13 @@ export default function Services() {
                         }),
                       })}
                     >
-                      Delete managed model
+                      {tr("Delete managed model")}
                     </Button>
                   ) : null}
                 </>
-              ) : <Chip tone="info">External runtime is owner-managed</Chip>}
+              ) : <Chip tone="info">{tr("External runtime is owner-managed")}</Chip>}
               {llmProvider.lifecycle?.runtime?.status ? (
-                <Chip mono>{llmProvider.lifecycle.runtime.status}</Chip>
+                <Chip mono>{tr(llmProvider.lifecycle.runtime.status)}</Chip>
               ) : null}
             </div>
             {llmLifecycleError ? <p ref={lifecycleErrorRef} tabIndex={-1} role="alert">{llmLifecycleError}</p> : null}
@@ -634,21 +639,21 @@ export default function Services() {
           </div>
         ) : (
           <div className="empty-state">
-            <h3>No local provider configured</h3>
-            <p>This node can still discover and consume services from another Rynmesh node.</p>
+            <h3>{tr("No local provider configured")}</h3>
+            <p>{tr("This node can still discover and consume services from another Rynmesh node.")}</p>
           </div>
         )}
         <div className="form-stack">
           <div className="panel-head">
             <div>
-              <span className="eyebrow">Model setup</span>
-              <h3>{llmProvider?.configured ? "Change local model connection" : "Add a local model"}</h3>
+              <span className="eyebrow">{tr("Model setup")}</span>
+              <h3>{llmProvider?.configured ? tr("Change local model connection") : tr("Add a local model")}</h3>
             </div>
-            <Chip tone="info">Publishing stays off after setup</Chip>
+            <Chip tone="info">{tr("Publishing stays off after setup")}</Chip>
           </div>
           {llmResumeNotice ? <p>{llmResumeNotice}</p> : null}
           <label className="field">
-            <span>Setup mode</span>
+            <span>{tr("Setup mode")}</span>
             <select value={llmSetupMode} onChange={(event) => setLlmSetupMode(event.target.value as LLMSetupRequest["mode"])}>
               <option value="" disabled>Choose setup mode</option>
               <option value="openai-compatible">OpenAI-compatible local API</option>
@@ -671,32 +676,32 @@ export default function Services() {
             </div>
           ) : null}
           <label className="field">
-            <span>Package ID</span>
+            <span>{tr("Package ID")}</span>
             <input value={llmPackageId} onChange={(event) => setLlmPackageId(event.target.value)} />
           </label>
           <label className="field">
-            <span>Public model alias</span>
+            <span>{tr("Public model alias")}</span>
             <input value={llmAlias} onChange={(event) => setLlmAlias(event.target.value)} />
           </label>
           {llmSetupMode === "openai-compatible" || llmSetupMode === "ollama" ? (
             <>
               <label className="field">
-                <span>Local API URL</span>
+                <span>{tr("Local API URL")}</span>
                 <input value={llmBaseUrl} onChange={(event) => setLlmBaseUrl(event.target.value)} />
               </label>
               <label className="field">
-                <span>Model name (optional)</span>
+                <span>{tr("Model name (optional)")}</span>
                 <input value={llmModel} onChange={(event) => setLlmModel(event.target.value)} />
               </label>
               <label className="field">
-                <span>API key environment variable (optional)</span>
+                <span>{tr("API key environment variable (optional)")}</span>
                 <input
-                  aria-label="API key environment variable (optional)"
+                  aria-label={tr("API key environment variable (optional)")}
                   value={llmApiKeyEnv}
                   onChange={(event) => setLlmApiKeyEnv(event.target.value)}
-                  placeholder="For example: LOCAL_LLM_API_KEY"
+                  placeholder={tr("For example: LOCAL_LLM_API_KEY")}
                 />
-                <small>Enter the environment-variable name, never the secret value.</small>
+                <small>{tr("Enter the environment-variable name, never the secret value.")}</small>
               </label>
               <label className="checkbox-row">
                 <input
@@ -704,13 +709,13 @@ export default function Services() {
                   checked={llmAllowNonLoopback}
                   onChange={(event) => setLlmAllowNonLoopback(event.target.checked)}
                 />
-                Allow a trusted non-loopback API address. Only enable this for a network you control.
+                {tr("Allow a trusted non-loopback API address. Only enable this for a network you control.")}
               </label>
             </>
           ) : null}
           {llmSetupMode === "import-gguf" ? (
             <label className="field">
-              <span>GGUF file path</span>
+              <span>{tr("GGUF file path")}</span>
               <input value={llmModelPath} onChange={(event) => setLlmModelPath(event.target.value)} />
             </label>
           ) : null}
@@ -756,12 +761,12 @@ export default function Services() {
               </div> : null}
               {llmSetupMode === "managed" && !reviewedProfile ? <p role="status">No verified profile is currently recommended. Refresh device information or free memory and disk space.</p> : null}
               <label className="field">
-                <span>Local runtime port</span>
+                <span>{tr("Local runtime port")}</span>
                 <input value={llmPort} onChange={(event) => setLlmPort(event.target.value)} inputMode="numeric" />
               </label>
               <label className="checkbox-row">
                 <input type="checkbox" checked={llmSetupConfirmed} onChange={(event) => setLlmSetupConfirmed(event.target.checked)} />
-                I understand this prepares a local runtime and may download software or model data.
+                {tr("I understand this prepares a local runtime and may download software or model data.")}
               </label>
             </>
           ) : null}
@@ -786,16 +791,16 @@ export default function Services() {
                   && (!llmSetupConfirmed || !Number.isInteger(Number(llmPort)) || Number(llmPort) < 1 || Number(llmPort) > 65535))}
               onClick={() => void setupLlm()}
             >
-              {llmConfiguring ? "Configuring and self-testing…"
-                : llmSetupJob?.retryable ? "Retry configuration" : "Configure and run self-test"}
+              {llmConfiguring ? tr("Configuring and self-testing…")
+                : llmSetupJob?.retryable ? tr("Retry configuration") : tr("Configure and run self-test")}
             </Button>
             {llmSetupJob?.job_id && ["queued", "running", "cancelling"].includes(llmSetupJob.state) ? (
               <Button disabled={llmSetupJob.state === "cancelling"} onClick={() => void cancelLlmSetup()}>
-                {llmSetupJob.state === "cancelling" ? "Cancelling…" : "Cancel setup"}
+                {llmSetupJob.state === "cancelling" ? tr("Cancelling…") : tr("Cancel setup")}
               </Button>
             ) : null}
-            <Chip tone="info">The compute node sees plaintext during inference</Chip>
-            {!packageIdValid ? <Chip tone="danger">Package ID must be a lowercase slug</Chip> : null}
+            <Chip tone="info">{tr("The compute node sees plaintext during inference")}</Chip>
+            {!packageIdValid ? <Chip tone="danger">{tr("Package ID must be a lowercase slug")}</Chip> : null}
           </div>
         </div>
       </Panel>
@@ -803,35 +808,35 @@ export default function Services() {
       <Panel>
         <div className="panel-head">
           <div>
-            <span className="eyebrow">Private local inference</span>
-            <h2>LLM service order</h2>
+            <span className="eyebrow">{tr("Private local inference")}</span>
+            <h2>{tr("LLM service order")}</h2>
           </div>
           <Chip tone={llmServices.length ? "ok" : "warn"}>
-            {llmServices.length} available · {llmBalance?.available.toFixed(3) ?? "—"} DEV balance
+            {llmServices.length} {tr("available ·")} {llmBalance?.available.toFixed(3) ?? "—"} {tr("DEV balance")}
           </Chip>
         </div>
         <div className="form-stack">
           <label className="field">
-            <span>Filter task history</span>
+            <span>{tr("Filter task history")}</span>
             <input
               value={llmHistoryQuery}
               onChange={(event) => {
                 setLlmHistoryQuery(event.target.value);
                 setLlmHistoryPage(1);
               }}
-              placeholder="Task ID, state, transport, model, or error"
+              placeholder={tr("Task ID, state, transport, model, or error")}
             />
           </label>
           <label className="field">
-            <span>Discovery network</span>
+            <span>{tr("Discovery network")}</span>
             <input value={llmNetwork} onChange={(event) => setLlmNetwork(event.target.value)} />
           </label>
           <div className="button-row">
-            <Button onClick={() => void refresh()} icon={RefreshCw}>Discover services</Button>
-            <Chip tone="info">Ryn-to-Ryn encrypted path</Chip>
+            <Button onClick={() => void refresh()} icon={RefreshCw}>{tr("Discover services")}</Button>
+            <Chip tone="info">{tr("Ryn-to-Ryn encrypted path")}</Chip>
           </div>
           <label className="field">
-            <span>Provider service</span>
+            <span>{tr("Provider service")}</span>
             <select
               value={selectedLlmServiceKey || (selectedLlm ? llmServiceKey(selectedLlm) : "")}
               onChange={(event) => setSelectedLlmServiceKey(event.target.value)}
@@ -839,7 +844,7 @@ export default function Services() {
               {llmServices.map((service) => (
                 <option key={llmServiceKey(service)} value={llmServiceKey(service)}>
                   {service.service.model_alias} · {service.node_name || shortPeerId(service.peer_id)} · {service.service.package_id}
-                  {` · ${service.service.pricing.minimum} ${service.service.pricing.currency}`}
+                  {` · ${service.service.pricing.minimum} ${tr(service.service.pricing.currency)}`}
                 </option>
               ))}
             </select>
@@ -849,45 +854,43 @@ export default function Services() {
               <Chip tone={selectedLlm.online ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</Chip>
               <span>
                 {selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}
-                {` · Context ${selectedLlm.service.context_window} · max output ${selectedLlm.service.max_output_tokens}`}
-                {selectedLlm.capacity ? ` · ${selectedLlm.capacity.available ?? 0}/${selectedLlm.capacity.max_concurrent ?? 0} slots` : ""}
+                {tr(" · Context {{v0}} · max output {{v1}}", { v0: selectedLlm.service.context_window, v1: selectedLlm.service.max_output_tokens })}
+                {selectedLlm.capacity ? ` · ${tr("{{available}}/{{total}} slots", { available: selectedLlm.capacity.available ?? 0, total: selectedLlm.capacity.max_concurrent ?? 0 })}` : ""}
               </span>
-              <small>{selectedLlm.service.privacy.policy_text || "Provider compute node sees plaintext."}</small>
+              <small>{selectedLlm.service.privacy.policy_text || tr("Provider compute node sees plaintext.")}</small>
             </div>
           ) : (
             <div className="empty-state">
-              <h3>No LLM service discovered</h3>
-              <p>Check the network name, then choose Discover services.</p>
+              <h3>{tr("No LLM service discovered")}</h3>
+              <p>{tr("Check the network name, then choose Discover services.")}</p>
             </div>
           )}
           <label className="field">
-            <span>Prompt</span>
+            <span>{tr("Prompt")}</span>
             <textarea rows={5} value={llmPrompt} onChange={(event) => setLlmPrompt(event.target.value)} />
           </label>
           <label className="field">
-            <span>Maximum output tokens</span>
+            <span>{tr("Maximum output tokens")}</span>
             <input value={llmMaxTokens} onChange={(event) => setLlmMaxTokens(event.target.value)} inputMode="numeric" />
           </label>
           <label className="field">
-            <span>Transport policy</span>
+            <span>{tr("Transport policy")}</span>
             <select value={llmTransport} onChange={(event) => setLlmTransport(event.target.value as typeof llmTransport)}>
-              <option value="auto">Automatic — direct first, encrypted relay only if configured</option>
-              <option value="direct">Direct Provider HTTP only</option>
-              <option value="p2p">Strict ICE/UDP P2P — never relay</option>
-              <option value="relay">End-to-end ciphertext relay</option>
+              <option value="auto">{tr("Automatic — direct first, encrypted relay only if configured")}</option>
+              <option value="direct">{tr("Direct Provider HTTP only")}</option>
+              <option value="p2p">{tr("Strict ICE/UDP P2P — never relay")}</option>
+              <option value="relay">{tr("End-to-end ciphertext relay")}</option>
             </select>
           </label>
           <div className="service-result">
             <small>
-              Strict P2P exchanges host and STUN candidates and may use a private route or NAT hairpin when both nodes share one public gateway.
-              TURN and payload relay remain forbidden. The Provider sees plaintext during inference; Registry signaling never receives task bodies.
+              {tr("Strict P2P exchanges host and STUN candidates and may use a private route or NAT hairpin when both nodes share one public gateway. TURN and payload relay remain forbidden. The Provider sees plaintext during inference; Registry signaling never receives task bodies.")}
             </small>
           </div>
           <div className="service-result">
-            <span>Estimated reservation: {estimatedAmount.toFixed(6)} {selectedLlm?.service.pricing.currency || "DEV_TASK_BALANCE"}</span>
+            <span>{tr("Estimated reservation:")} {estimatedAmount.toFixed(6)} {tr(selectedLlm?.service.pricing.currency || "DEV_TASK_BALANCE")}</span>
             <small>
-              Based on approximately {estimatedInputTokens} input tokens and a {Number.isFinite(parsedMaxTokens) ? parsedMaxTokens : 0}-token output cap.
-              Final settlement uses actual usage; unused reservation is released.
+              {tr("Based on approximately")} {estimatedInputTokens} {tr("input tokens and a")} {Number.isFinite(parsedMaxTokens) ? parsedMaxTokens : 0}{tr("-token output cap. Final settlement uses actual usage; unused reservation is released.")}
             </small>
             {!selectedLlm ? <Chip tone="warn">Choose a Provider</Chip> : null}
             {selectedLlm && !selectedLlm.online ? <Chip tone="warn">{llmServiceAvailability(selectedLlm)}</Chip> : null}
@@ -904,19 +907,19 @@ export default function Services() {
               disabled={!canSubmitLlm}
               onClick={() => void submitLlm()}
             >
-              {llmSubmitting ? "Task running…" : "Place encrypted order"}
+              {llmSubmitting ? tr("Task running…") : tr("Place encrypted order")}
             </Button>
             {llmActiveTaskId ? (
               <Button disabled={llmCancelling} onClick={() => void cancelLlm()}>
-                {llmCancelling ? "Cancelling…" : "Cancel task"}
+                {llmCancelling ? tr("Cancelling…") : tr("Cancel task")}
               </Button>
             ) : null}
-            {llmBalance ? <Chip mono>held {llmBalance.held.toFixed(3)}</Chip> : null}
-            {llmActiveTaskId ? <Chip mono>resumed {llmActiveTaskId}</Chip> : null}
+            {llmBalance ? <Chip mono>{tr("held")} {llmBalance.held.toFixed(3)}</Chip> : null}
+            {llmActiveTaskId ? <Chip mono>{tr("resumed")} {llmActiveTaskId}</Chip> : null}
           </div>
           {llmProgress ? (
             <div className="service-result" role="status" aria-live="polite">
-              <Chip tone={llmProgress.tone}>{llmSubmitting ? "running" : llmProgress.tone === "ok" ? "complete" : "failed"}</Chip>
+              <Chip tone={llmProgress.tone}>{tr(llmSubmitting ? "running" : llmProgress.tone === "ok" ? "complete" : "failed")}</Chip>
               <span>{llmProgress.text}</span>
             </div>
           ) : null}
@@ -927,24 +930,24 @@ export default function Services() {
         <Panel>
           <div className="panel-head">
             <div>
-              <span className="eyebrow">Latest private LLM result</span>
-              <h2>{llmResult.model_alias || "Local model"}</h2>
+              <span className="eyebrow">{tr("Latest private LLM result")}</span>
+              <h2>{llmResult.model_alias || tr("Local model")}</h2>
             </div>
-            <Chip tone={llmResult.state === "succeeded" ? "ok" : "danger"}>{llmResult.state}</Chip>
+            <Chip tone={llmResult.state === "succeeded" ? "ok" : "danger"}>{tr(llmResult.state)}</Chip>
           </div>
           <div className="form-stack">
             <div className="service-result">
               <pre className="llm-output">
-                {llmResult.output || (llmResult.error_code ? llmErrorMessage(llmResult.error_code) : "No output")}
+                {llmResult.output || (llmResult.error_code ? llmErrorMessage(llmResult.error_code) : tr("No output"))}
               </pre>
             </div>
             <div className="button-row">
               <Chip mono>{llmResult.task_id}</Chip>
-              <Chip mono>{llmResult.input_tokens ?? 0} in / {llmResult.output_tokens ?? 0} out</Chip>
+              <Chip mono>{llmResult.input_tokens ?? 0} {tr("in /")} {llmResult.output_tokens ?? 0} {tr("out")}</Chip>
               <Chip mono>{llmResult.duration_ms ?? 0} ms</Chip>
-              <Chip mono>{llmResult.amount ?? 0} DEV_TASK_BALANCE</Chip>
-              {llmResult.transport ? <Chip mono>{llmResult.transport}</Chip> : null}
-              {llmResult.output ? <Button onClick={() => void copyLlmResult()}>Copy result</Button> : null}
+              <Chip mono>{llmResult.amount ?? 0} {tr("DEV_TASK_BALANCE")}</Chip>
+              {llmResult.transport ? <Chip mono>{tr(llmResult.transport)}</Chip> : null}
+              {llmResult.output ? <Button onClick={() => void copyLlmResult()}>{tr("Copy result")}</Button> : null}
             </div>
           </div>
         </Panel>
@@ -953,23 +956,23 @@ export default function Services() {
       <Panel>
         <div className="panel-head">
           <div>
-            <span className="eyebrow">Local task history & privacy</span>
-            <h2>Private LLM orders</h2>
+            <span className="eyebrow">{tr("Local task history & privacy")}</span>
+            <h2>{tr("Private LLM orders")}</h2>
           </div>
-          <Chip tone="info">Prompt text is never written to task history</Chip>
+          <Chip tone="info">{tr("Prompt text is never written to task history")}</Chip>
         </div>
         <div className="form-stack">
           <label className="field">
-            <span>Retain encrypted result bodies</span>
+            <span>{tr("Retain encrypted result bodies")}</span>
             <select
-              aria-label="Encrypted result retention"
+              aria-label={tr("Encrypted result retention")}
               value={llmPrivacy?.result_retention_seconds ?? 3600}
               onChange={(event) => void updateLlmRetention(Number(event.target.value) as LLMPrivacySettings["result_retention_seconds"])}
             >
-              <option value={0}>Do not retain after first delivery</option>
-              <option value={3600}>1 hour</option>
-              <option value={86400}>24 hours</option>
-              <option value={604800}>7 days</option>
+              <option value={0}>{tr("Do not retain after first delivery")}</option>
+              <option value={3600}>{tr("1 hour")}</option>
+              <option value={86400}>{tr("24 hours")}</option>
+              <option value={604800}>{tr("7 days")}</option>
             </select>
           </label>
           <div className="service-result">
@@ -980,33 +983,33 @@ export default function Services() {
           </div>
           {visibleLlmOrders.length ? visibleLlmOrders.map((order) => (
             <div className="service-result" key={order.task_id}>
-              <span>{order.state} · {order.task_id}</span>
+              <span>{tr(order.state)} · {order.task_id}</span>
               <small>
-                {order.transport || "transport pending"}
-                {order.amount !== undefined ? ` · ${order.amount} DEV_TASK_BALANCE` : ""}
-                {order.updated_at ? ` · ${new Date(order.updated_at).toLocaleString()}` : ""}
+                {order.transport ? tr(order.transport) : tr("transport pending")}
+                {order.amount !== undefined ? ` · ${order.amount} ${tr("DEV_TASK_BALANCE")}` : ""}
+                {order.updated_at ? ` · ${new Date(order.updated_at).toLocaleString(uiLocale())}` : ""}
               </small>
-              <Button onClick={() => void viewLlmOrder(order.task_id)}>View status / retained result</Button>
+              <Button onClick={() => void viewLlmOrder(order.task_id)}>{tr("View status / retained result")}</Button>
             </div>
           )) : (
-            <div className="empty-state"><p>{llmOrders.length ? "No task history matches this filter." : "No local LLM task history yet."}</p></div>
+            <div className="empty-state"><p>{llmOrders.length ? tr("No task history matches this filter.") : tr("No local LLM task history yet.")}</p></div>
           )}
           <div className="button-row">
             <Button
               disabled={llmHistoryPage <= 1}
               onClick={() => setLlmHistoryPage((page) => Math.max(1, page - 1))}
             >
-              Previous
+              {tr("Previous")}
             </Button>
-            <Chip mono>page {Math.min(llmHistoryPage, llmHistoryPages)} / {llmHistoryPages}</Chip>
+            <Chip mono>{tr("page")} {Math.min(llmHistoryPage, llmHistoryPages)} / {llmHistoryPages}</Chip>
             <Button
               disabled={llmHistoryPage >= llmHistoryPages}
               onClick={() => setLlmHistoryPage((page) => Math.min(llmHistoryPages, page + 1))}
             >
-              Next
+              {tr("Next")}
             </Button>
             <Button variant="danger" disabled={!llmOrders.length} onClick={clearLlmHistory}>
-              Clear completed task history
+              {tr("Clear completed task history")}
             </Button>
           </div>
         </div>
@@ -1015,20 +1018,20 @@ export default function Services() {
       <Panel className="table-panel">
         <div className="panel-head">
           <div>
-            <span className="eyebrow">Published capacity</span>
-            <h2>Signal50 Veo providers</h2>
+            <span className="eyebrow">{tr("Published capacity")}</span>
+            <h2>{tr("Signal50 Veo providers")}</h2>
           </div>
-          <Chip tone={veoServices.length ? "ok" : "warn"}>{veoServices.length} available</Chip>
+          <Chip tone={veoServices.length ? "ok" : "warn"}>{veoServices.length} {tr("available")}</Chip>
         </div>
         <div className="table-wrap">
           <table className="peer-table">
             <thead>
               <tr>
-                <th>Provider</th>
-                <th>Capability</th>
-                <th>Price</th>
-                <th>Route</th>
-                <th>Updated</th>
+                <th>{tr("Provider")}</th>
+                <th>{tr("Capability")}</th>
+                <th>{tr("Price")}</th>
+                <th>{tr("Route")}</th>
+                <th>{tr("Updated")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1056,14 +1059,14 @@ export default function Services() {
       <Panel>
         <div className="panel-head">
           <div>
-            <span className="eyebrow">Request form</span>
-            <h2>Signal50 Veo render</h2>
+            <span className="eyebrow">{tr("Request form")}</span>
+            <h2>{tr("Signal50 Veo render")}</h2>
           </div>
-          <Chip tone="info" icon={CloudCog}>polling relay</Chip>
+          <Chip tone="info" icon={CloudCog}>{tr("polling relay")}</Chip>
         </div>
         <div className="form-stack">
           <label className="field">
-            <span>Provider</span>
+            <span>{tr("Provider")}</span>
             <select value={selectedPeerId || selectedVeo?.peer_id || ""} onChange={(event) => setSelectedPeerId(event.target.value)}>
               {veoServices.map((service) => (
                 <option key={service.peer_id} value={service.peer_id}>
@@ -1073,20 +1076,20 @@ export default function Services() {
             </select>
           </label>
           <label className="field">
-            <span>Signal50 video ID</span>
+            <span>{tr("Signal50 video ID")}</span>
             <input value={videoId} onChange={(event) => setVideoId(event.target.value)} placeholder="20260518__casefile__example-tt-deep-veo" />
           </label>
           <label className="field">
-            <span>Max scenes</span>
+            <span>{tr("Max scenes")}</span>
             <input value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} inputMode="numeric" />
           </label>
           <label className="checkbox-row">
             <input type="checkbox" checked={skipExisting} onChange={(event) => setSkipExisting(event.target.checked)} />
-            Skip existing clips
+            {tr("Skip existing clips")}
           </label>
           <div className="button-row">
             <Button variant="primary" icon={SendHorizontal} onClick={() => void submit()}>
-              Submit request
+              {tr("Submit request")}
             </Button>
             {lastOrderId ? <Chip mono>{lastOrderId}</Chip> : null}
           </div>
@@ -1096,25 +1099,25 @@ export default function Services() {
       {lastOrderId ? (
         <Panel>
           <div className="panel-head">
-            <h2>Latest result</h2>
-            <Button onClick={() => void refresh()}>Refresh result</Button>
+            <h2>{tr("Latest result")}</h2>
+            <Button onClick={() => void refresh()}>{tr("Refresh result")}</Button>
           </div>
           {results.length ? (
             <div className="form-stack">
               {results.map((result) => (
                 <div className="service-result" key={`${result.work_order_id}-${result.created_at}`}>
                   <Chip tone={result.status === "completed" ? "ok" : result.status === "failed" ? "danger" : "info"}>
-                    {result.status}
+                    {tr(result.status)}
                   </Chip>
-                  <span>{result.message || "No message"}</span>
+                  <span>{result.message || tr("No message")}</span>
                   <small className="mono">{result.created_at}</small>
                 </div>
               ))}
             </div>
           ) : (
             <div className="empty-state">
-              <h3>No result yet</h3>
-              <p>The provider will post accepted, running, completed, or failed messages as it polls.</p>
+              <h3>{tr("No result yet")}</h3>
+              <p>{tr("The provider will post accepted, running, completed, or failed messages as it polls.")}</p>
             </div>
           )}
         </Panel>

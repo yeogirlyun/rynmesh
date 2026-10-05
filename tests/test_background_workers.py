@@ -340,6 +340,7 @@ def test_register_replaces_a_worker_only_when_asked() -> None:
 # that the expected workers are present and that no unrecognized worker sneaks
 # in.
 _KNOWN_WORKER_NAMES = {
+    "personal_space.poll",
     "llm.publish-refresh",
     "llm.friend-permissions",
     "ai-access.discovery",

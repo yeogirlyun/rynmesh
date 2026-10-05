@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import threading
+import time
+import weakref
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,8 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from rynmesh.atomic_io import atomic_write_json
 from rynmesh.crypto import SignedPayload, sign_payload, verify_signed_payload
 from rynmesh.services import peer_box
+
+from .safety import check_disk
 
 TASK_ENVELOPE_VERSION = "rynmesh.llm.e2ee.v1"
 TERMINAL_STATES = {"succeeded", "failed", "timed_out", "cancelled", "rejected"}
@@ -127,25 +131,68 @@ class TaskOrderStore:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._memory_responses = False
+        self._responses: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._response_timer = None
+
+    def _schedule_expiry(self):
+        if self._response_timer is not None or not self._responses:
+            return
+        reference = weakref.ref(self)
+        def expire():
+            store = reference()
+            if store is not None:
+                with store._lock:
+                    store._response_timer = None
+                    store._prune_responses()
+                    store._schedule_expiry()
+        delay = max(0.01, min(expiry for expiry, _ in self._responses.values()) - time.monotonic())
+        self._response_timer = threading.Timer(delay, expire)
+        self._response_timer.daemon = True
+        self._response_timer.start()
+
+    def use_memory_responses(self):
+        """Bounded encrypted retry cache; never persist provider response bodies."""
+        with self._lock:
+            if self._memory_responses:
+                return
+            for record in self.list():
+                self.purge_encrypted_response(record["task_id"])
+            self._memory_responses = True
+
+    def _prune_responses(self):
+        now = time.monotonic()
+        for key in [k for k, (expires, _) in self._responses.items() if expires <= now]:
+            self._responses.pop(key, None)
 
     def get(self, task_id: str) -> dict[str, Any] | None:
-        # Readers share the writer lock: on Windows the atomic replacement and
-        # private ACL update can otherwise transiently deny a concurrent read.
+        # Windows can reject reads/replaces while another thread holds the file.
+        # Use the same reentrant lock as transitions and checkpoints.
         with self._lock:
-            path = self._path(task_id)
-            if not path.exists():
-                return None
-            try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise TaskProtocolError(f"cannot read task record: {exc}") from exc
-            return value if isinstance(value, dict) else None
+            return self._read(task_id)
+
+    def _read(self, task_id: str) -> dict[str, Any] | None:
+        path = self._path(task_id)
+        if not path.exists():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise TaskProtocolError(f"cannot read task record: {exc}") from exc
+        if not isinstance(value, dict):
+            return None
+        self._prune_responses()
+        if task_id in self._responses:
+            value["encrypted_response"] = self._responses[task_id][1]
+        return value
 
     def claim(self, *, task_id: str, bindings: dict[str, str]) -> tuple[dict[str, Any], bool]:
         """Atomically create a task or validate an exact idempotent duplicate."""
         cleaned = {str(key): str(value) for key, value in bindings.items()}
         if not cleaned or any(not value for value in cleaned.values()):
             raise TaskProtocolError("task bindings must be non-empty strings")
+        if any(len(value) > 4096 for value in cleaned.values()):
+            raise TaskProtocolError("task binding exceeds limit")
         with self._lock:
             existing = self.get(task_id)
             if existing is not None:
@@ -153,6 +200,8 @@ class TaskOrderStore:
                     raise TaskProtocolError("task idempotency conflict")
                 return existing, False
             now = datetime.now(timezone.utc).isoformat()
+            if sum(1 for _ in self.root.glob("*.json")) >= 10000:
+                raise TaskProtocolError("task_record_limit_reached")
             record = {
                 "task_id": task_id,
                 "state": "created",
@@ -240,6 +289,7 @@ class TaskOrderStore:
             if record is None or "encrypted_response" not in record:
                 return False
             record.pop("encrypted_response", None)
+            self._responses.pop(task_id, None)
             record["response_purged_at"] = datetime.now(timezone.utc).isoformat()
             self._write(record)
             return True
@@ -261,6 +311,7 @@ class TaskOrderStore:
             if not path.exists():
                 return False
             path.unlink()
+            self._responses.pop(task_id, None)
             return True
 
     def purge_expired_responses(self) -> int:
@@ -302,10 +353,25 @@ class TaskOrderStore:
         return removed
 
     def _path(self, task_id: str) -> Path:
-        if not task_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in task_id):
+        if not task_id or len(task_id) > 128 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in task_id):
             raise TaskProtocolError("invalid task id")
         return self.root / f"{task_id}.json"
 
     def _write(self, value: dict[str, Any]) -> None:
+        value = dict(value)
+        if self._memory_responses:
+            encrypted = value.pop("encrypted_response", None)
+            if encrypted is not None:
+                self._prune_responses()
+                if len(self._responses) >= 8 and value["task_id"] not in self._responses:
+                    self._responses.pop(next(iter(self._responses)))
+                self._responses[value["task_id"]] = (time.monotonic() + 60, encrypted)
+                self._schedule_expiry()
         path = self._path(str(value["task_id"]))
+        if len(value.get("history", [])) > 64:
+            value["history"] = [value["history"][0], *value["history"][-63:]]
+        encoded = json.dumps(value, indent=2, sort_keys=True)
+        if len(encoded.encode()) > 16 * 1024 * 1024:
+            raise TaskProtocolError("task record size limit exceeded")
+        check_disk(self.root)
         atomic_write_json(path, value, indent=2, sort_keys=True)

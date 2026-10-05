@@ -8,7 +8,7 @@ import { friendsApi } from "../domain/friendsClient";
 import { createConversation, readLegacyConversations, saveConversation, type LLMConversation } from "../domain/llmConversationStore";
 import { llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { LLMServiceRecord } from "../domain/nodeClient";
-import PrivateAIChat from "./PrivateAIChat";
+import PrivateAIChat from "./AskRynConversation";
 import styles from "./AskRyn.module.css";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import AskSyncConflicts from "../components/AskSyncConflicts";

@@ -194,10 +194,8 @@ it("joining requires an explicit reviewed invitation and never starts earning au
   });
   const user = userEvent.setup();
   render(<Exchange />);
-  await user.type(
-    await screen.findByLabelText("Public network invitation"),
-    networkInvite(manifest),
-  );
+  await user.click(await screen.findByLabelText("Public network invitation"));
+  await user.paste(networkInvite(manifest));
   await user.click(
     screen.getByRole("button", { name: "Review network invitation" }),
   );

@@ -83,6 +83,10 @@ def _desktop_lan_ip() -> str:
                     return ip
         except (OSError, subprocess.SubprocessError):
             pass
+        # Do not fall back to hostname/mDNS resolution on macOS: it can block
+        # startup for minutes when the local hostname has no usable DNS record.
+        from .store import _primary_lan_ip
+        return _primary_lan_ip() or "127.0.0.1"
     try:
         for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
             if family == socket.AF_INET and not sockaddr[0].startswith("127."):
@@ -386,6 +390,9 @@ def create_app(store: RynmeshStore | None = None):
     globals()["FastAPIRequest"] = FastAPIRequest
 
     active_store = store or RynmeshStore()
+    from .personal_space import PersonalSpace
+    personal_space = PersonalSpace(active_store)
+    active_store.personal_space = personal_space
 
     import asyncio as _asyncio
     import hashlib as _hashlib
@@ -448,7 +455,11 @@ def create_app(store: RynmeshStore | None = None):
     def _sha256_of(path: str) -> str:
         return _hashlib.sha256(_Path(path).read_bytes()).hexdigest()
 
+    _bundled_runtime = bool(getattr(_sys, "frozen", False))
+
     def _pip_install(wheel_path: str) -> None:
+        if _bundled_runtime:
+            raise RuntimeError("Update this desktop app using a newer Ryn installer.")
         _subprocess.run(
             [_sys.executable, "-m", "pip", "install", "--upgrade", wheel_path], check=True
         )
@@ -493,7 +504,7 @@ def create_app(store: RynmeshStore | None = None):
         snapshot_current_wheel=_snapshot_current_wheel,
         record_installed=_record_installed,
         pinned_pubkeys=_pinned,
-        auto_update=lambda: bool(_settings.get().get("auto_update", True)),
+        auto_update=lambda: not _bundled_runtime and bool(_settings.get().get("auto_update", True)),
         current_version=RYNMESH_VERSION,
         state=update_state,
         now=_iso_now,
@@ -507,7 +518,14 @@ def create_app(store: RynmeshStore | None = None):
         # `asyncio.Queue` is not thread-safe, so the fan-out needs a handle on
         # the loop that owns those queues.
         lifespan_app.state.loop = _asyncio.get_running_loop()
-        updater.on_startup()  # may os.execv away on crash-loop rollback
+        if not _bundled_runtime:
+            updater.on_startup()  # may os.execv away on crash-loop rollback
+        from .lan_discovery import LanDiscovery
+
+        lan_discovery = LanDiscovery.from_environment(active_store)
+        active_store.lan_discovery = lan_discovery
+        if lan_discovery:
+            lan_discovery.start()
         if os.environ.get("RYNMESH_AUTO_REGISTER", "").strip().lower() in {"1", "true", "yes"}:
             network_id = (
                 os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main").strip() or "rynmesh-main"
@@ -527,6 +545,8 @@ def create_app(store: RynmeshStore | None = None):
             updater.mark_serving()
 
         def _update_poll_once() -> bool:
+            if _bundled_runtime:
+                return False
             res = updater.check()
             if res.get("available") and updater.status()["autoUpdate"]:
                 updater.apply(updater.check_manifest())
@@ -589,6 +609,9 @@ def create_app(store: RynmeshStore | None = None):
                 )
                 await _asyncio.sleep(delay)
 
+        native_model = getattr(lifespan_app.state, "native_model", None)
+        if native_model is not None:
+            await _asyncio.to_thread(native_model.on_startup)
         registry = lifespan_app.state.background_workers
         update_poll_interval = float(
             int(os.environ.get("RYNMESH_UPDATE_POLL_S", "1800") or 1800)
@@ -620,6 +643,10 @@ def create_app(store: RynmeshStore | None = None):
             ),
             replace=True,
         )
+        registry.register(BackgroundWorkerSpec(
+            name="personal_space.poll", run_once=personal_space.tick,
+            policy=BackoffPolicy.fixed(2.0),
+        ), replace=True)
         await registry.start()
         tasks = (
             _asyncio.create_task(_confirm_after_grace()),
@@ -641,6 +668,11 @@ def create_app(store: RynmeshStore | None = None):
             exchange_shutdown = getattr(lifespan_app.state, "exchange_shutdown", None)
             if callable(exchange_shutdown):
                 await _asyncio.to_thread(exchange_shutdown)
+            if native_model is not None:
+                await _asyncio.to_thread(native_model.close)
+            if lan_discovery:
+                await _asyncio.to_thread(lan_discovery.close)
+            active_store.lan_discovery = None
             lifespan_app.state.loop = None
 
     app = FastAPI(title="Rynmesh Peer", version="0.1", lifespan=lifespan)
@@ -665,6 +697,8 @@ def create_app(store: RynmeshStore | None = None):
         ],
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_credentials=True,
+        expose_headers=["X-Image-Width", "X-Image-Height"],
     )
 
     _local_token = os.environ.get("RYNMESH_LOCAL_TOKEN", "").strip()
@@ -782,6 +816,9 @@ def create_app(store: RynmeshStore | None = None):
         if not decision.allowed:
             raise HTTPException(status_code=401, detail="local_control_unauthorized")
 
+    from .nas import mount_nas
+    mount_nas(app, active_store.home, local_control)
+
     def first_http_endpoint(endpoints: Any) -> str:
         for endpoint in endpoints or []:
             value = str(endpoint)
@@ -830,23 +867,29 @@ def create_app(store: RynmeshStore | None = None):
                 record.get("node_name") or metadata.get("machine_name") or peer_slug(peer_id)
             ),
             "endpoint": endpoint,
+            # Fresh signed multicast discovery is physical-LAN evidence. The
+            # registry endpoint may be a VPN or another advertised address.
+            "lanEndpoints": list(record.get("lan_endpoints") or []),
             "network": str(record.get("network_id", "")),
             "tier": peer_tier(peer_id),
             "credits": float(account["score"]),
             "weight": float(account["distribution_weight"]),
             "lastSeen": str(record.get("updated_at", "") or "local"),
+            "discoverySource": str(record.get("discovery_source") or ""),
             "served": 0,
             "fetched": 0,
             "trustedRoot": peer_id in active_store._trusted_root_ids(),
             "isSelf": is_self,
         }
 
-    def discover_peer_items(network_id: str, *, include_self: bool = True) -> list[dict[str, Any]]:
+    def discover_peer_items(network_id: str, *, include_self: bool = True,
+                            cache_only: bool = False) -> list[dict[str, Any]]:
         discovered = active_store.discover_peers(
             network_id=network_id,
             include_self=include_self,
             max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
             use_cache_on_error=True,
+            cache_only=cache_only,
         )
         records = list(discovered.get("peers", []))
         if include_self and not any(
@@ -1134,6 +1177,28 @@ def create_app(store: RynmeshStore | None = None):
             "network_id": control_network_id(),
         }
 
+    @app.get("/api/peer/lan-record")
+    def lan_record(nonce: str, request: FastAPIRequest) -> dict[str, Any]:
+        """Return a nonce-bound signed record for same-subnet HTTP discovery."""
+        import ipaddress
+
+        from .crypto import sign_payload
+        from .lan_discovery import PROTOCOL, local_interfaces
+        from .registry import PeerRecord
+
+        host = request.url.hostname or ""
+        if (len(nonce) != 32 or not all(c in "0123456789abcdef" for c in nonce)
+                or host not in {str(item.ip) for item in local_interfaces()}):
+            raise HTTPException(status_code=400, detail="Invalid LAN discovery request")
+        ipaddress.IPv4Address(host)
+        record = PeerRecord(
+            peer_id=active_store.peer_id, node_name=active_store.node_name,
+            endpoints=(f"http://{host}:{request.url.port or 80}",),
+            capabilities=(), safety_packs=(), network_id=control_network_id(),
+        ).to_dict()
+        record.update(lan_protocol=PROTOCOL, lan_nonce=nonce)
+        return sign_payload(record, private_key_bytes=active_store.private_key_bytes).to_dict()
+
     @app.get("/api/local/auth/status")
     def local_auth_status(request: FastAPIRequest) -> dict[str, Any]:
         """Whether this caller is already authorized, and how.
@@ -1217,8 +1282,11 @@ def create_app(store: RynmeshStore | None = None):
             "daemon_running": True,
             "desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE", "").strip().lower()
             in {"1", "true", "yes"},
-            "registry": registry_status(network_id)["status"],
-            "peer_count": max(0, len(discover_peer_items(network_id, include_self=True)) - 1),
+            # Status is a local read: the desktop must not wait on registry I/O
+            # before it can display cached and LAN-discovered peers.
+            "registry": "disconnected" if app.state.registration_error else "connected",
+            "peer_count": max(0, len(discover_peer_items(network_id, include_self=True,
+                                                        cache_only=True)) - 1),
             "local_items": sum(
                 1 for item in local_items if item.get("publisher_peer_id") == active_store.peer_id
             ),
@@ -1353,16 +1421,21 @@ def create_app(store: RynmeshStore | None = None):
     @app.post("/api/local/peers/health")
     async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        items = discover_peer_items(control_network_id(), include_self=True)
+        # Registry I/O and unreachable peers must not block the event loop that
+        # polls ICE signaling and serves the desktop's status requests.
+        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
         peers = [
             {
                 "id": it["id"],
                 "endpoint": it.get("endpoint", ""),
+                "lanEndpoints": it.get("lanEndpoints", []),
                 "isSelf": bool(it.get("isSelf", False)),
+                "lastSeen": it.get("lastSeen", ""),
+                "discoverySource": it.get("discoverySource", ""),
             }
             for it in items
         ]
-        return peer_health_probe.check(peers)
+        return await _asyncio.to_thread(peer_health_probe.check, peers)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1378,7 +1451,9 @@ def create_app(store: RynmeshStore | None = None):
     @app.get("/api/local/peers")
     def local_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
         local_control(request)
-        return filtered_peers(discover_peer_items(control_network_id(), include_self=True), request)
+        quick = request.query_params.get("quick", "").lower() in {"1", "true"}
+        return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
+                                                 cache_only=quick), request)
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2108,6 +2183,17 @@ def create_app(store: RynmeshStore | None = None):
             "peer_http_host": os.environ.get("RYNMESH_PEER_HOST", "127.0.0.1"),
             "peer_http_port": int(os.environ.get("RYNMESH_PEER_PORT", "8791") or 8791),
             "public_endpoint": str(info.get("peer_endpoint", "")),
+            "lan_discovery": {
+                "enabled": active_store.lan_discovery is not None,
+                "running": bool(
+                    active_store.lan_discovery
+                    and active_store.lan_discovery._thread
+                    and active_store.lan_discovery._thread.is_alive()
+                ),
+                "error": str(active_store.lan_discovery.error) if active_store.lan_discovery else "",
+                "peer_count": len(active_store.lan_discovery.records(control_network_id()))
+                if active_store.lan_discovery else 0,
+            },
             "registry_url": str(registry.get("url") or registry.get("path") or ""),
             "trusted_roots": list(active_store.trusted_root_peer_ids),
             "safety_policy": stored["safety_policy"],
@@ -2141,20 +2227,25 @@ def create_app(store: RynmeshStore | None = None):
         _reset_model_provider()
         return local_settings(request)
 
+    from .personal_space_routes import install_space_routes
+    install_space_routes(app, space=personal_space, local_control=local_control)
+
     @app.get("/api/local/updates/status")
     def local_updates_status(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
-        return updater.status()
+        return {**updater.status(), "manualInstallRequired": _bundled_runtime}
 
     @app.post("/api/local/updates/check")
     async def local_updates_check(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
         await _asyncio.to_thread(updater.check)
-        return updater.status()
+        return local_updates_status(request)
 
     @app.post("/api/local/updates/apply")
     async def local_updates_apply(request: FastAPIRequest) -> dict[str, Any]:
         local_control(request)
+        if _bundled_runtime:
+            raise HTTPException(status_code=409, detail="Update this desktop app using a newer Ryn installer.")
         await _asyncio.to_thread(updater.check)
         manifest = updater.check_manifest()
         return await _asyncio.to_thread(updater.apply, manifest)

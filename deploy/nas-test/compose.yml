@@ -1,0 +1,27 @@
+name: rynmesh-nas-test
+services:
+  fnos:
+    image: qemux/qemu@sha256:e7f6fda52503a546fd649670ba46e4bc23dc6dcef275bc3fac48877fbbc430df
+    environment:
+      BOOT: https://iso.liveupdate.fnnas.com/x86_64/trim/fnos_Mainland-PE_x86_1.2.0604_2685.iso
+      RAM_SIZE: 3G
+      CPU_CORES: '2'
+      DISK_SIZE: 32G
+      DISK2_SIZE: 32G
+      KVM: 'N'
+      NETWORK: user
+      USER_PORTS: '5666,5667,445,22'
+    ports:
+      - 127.0.0.1:18006:8006
+      - 127.0.0.1:15666:5666
+      - 127.0.0.1:15667:5667
+      - 127.0.0.1:1445:445
+      - 127.0.0.1:12222:22
+    volumes:
+      - fnos-system:/storage
+      - fnos-data:/storage2
+      - ../../build/nas-test/fnos.iso:/boot.iso
+    stop_grace_period: 2m
+volumes:
+  fnos-system:
+  fnos-data:
