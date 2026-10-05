@@ -3,6 +3,7 @@
   "mainBinaryName": "Ryn",
   "bundle": {
     "targets": ["nsis"],
+    "resources": [],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": { "installMode": "currentUser", "languages": ["English", "SimpChinese"], "displayLanguageSelector": false, "installerHooks": "scripts/windows-installer-hooks.nsh" }

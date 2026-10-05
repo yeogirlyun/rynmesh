@@ -2,6 +2,12 @@
 
 > This page records several historical test packages. Current source also includes later work that has not been packaged together; see [the September 20–24 development report](PERSONAL_AI_WORKSPACE_20260920_20260924.md) for the current scope and acceptance limits.
 
+The October upstream integration keeps Windows resources separate from the pinned
+macOS/Linux llama.cpp bundle: `tauri.windows.conf.json` overrides `bundle.resources`
+with an empty list because the upstream runtime staging script has no Windows pin.
+Windows can use the existing configured model/API paths; this does not claim a
+bundled llama.cpp runtime or a new tested Windows installer.
+
 Branch: `development/personal-first-implementation`.
 Version: 0.6.2; x64; English and Simplified Chinese installer; light, dark and system appearance.
 

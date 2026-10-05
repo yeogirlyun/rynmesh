@@ -17,6 +17,7 @@ xcode-select -p >/dev/null
 cd "$ROOT/webapp"
 npm ci
 sh src-tauri/scripts/build-sidecar.sh
+sh src-tauri/scripts/fetch-llama-runtime.sh aarch64-apple-darwin
 npm run tauri -- build --target aarch64-apple-darwin --bundles app,dmg
 
 BUNDLE="$ROOT/webapp/src-tauri/target/aarch64-apple-darwin/release/bundle"
