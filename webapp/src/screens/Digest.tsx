@@ -4,13 +4,14 @@ import FeedbackSignalsPanel from "../components/FeedbackSignalsPanel";
 import ContentViewer from "../components/ContentViewer";
 import { DigestFriendActions } from "../components/FriendPublicationActions";
 import { contentFromHistory } from "../domain/readingHistory";
+import { tr, useUILanguage } from "../uiI18n";
 import { AlertTriangle, Bookmark, CheckCircle2, Clock3, Eye, ExternalLink, Plus, RefreshCcw, Save, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
 import { Button, Chip, EmptyState, EvidenceDetails, IconButton, LoadingPanel, NavIcons, PageHeader, Panel } from "../components/ui";
 import DigestViewer, { type ViewerAction } from "../components/DigestViewer";
 import {
-  digestApi,
+  digestApi as liveDigestApi,
   type AiStatus,
   type ConsumptionRecord,
   type DiscoveryStatus,
@@ -21,22 +22,23 @@ import {
 } from "../domain/digestClient";
 import type { ContentItem, RecommendationProfile } from "../domain/types";
 import { feedApi } from "../domain/friendFeed";
+import { fixtureDigestApi } from "../domain/fixtureDigestClient";
 
 function timeAgo(unix: number): string {
   if (!unix) return "";
   const hours = (Date.now() / 1000 - unix) / 3600;
-  if (hours < 1) return "just now";
-  if (hours < 24) return `${Math.floor(hours)}h ago`;
+  if (hours < 1) return tr("just now");
+  if (hours < 24) return tr("{{v0}}h ago", { v0: Math.floor(hours) });
   const days = Math.floor(hours / 24);
-  return days === 1 ? "1 day ago" : `${days} days ago`;
+  return days === 1 ? tr("1 day ago") : tr("{{v0}} days ago", { v0: days });
 }
 
 function timeUntil(unix: number): string {
-  if (!unix) return "not scheduled";
+  if (!unix) return tr("not scheduled");
   const seconds = Math.max(0, unix - Date.now() / 1000);
-  if (seconds < 90) return "within a minute";
-  if (seconds < 3600) return `in ${Math.ceil(seconds / 60)} minutes`;
-  return `in ${Math.ceil(seconds / 3600)} hours`;
+  if (seconds < 90) return tr("within a minute");
+  if (seconds < 3600) return tr("in {{count}} minutes", { count: Math.ceil(seconds / 60) });
+  return tr("in {{count}} hours", { count: Math.ceil(seconds / 3600) });
 }
 
 function DigestCard({
@@ -48,6 +50,7 @@ function DigestCard({
   onFeedback: (item: DigestItem, action: ViewerAction) => Promise<void>;
   onOpen: (item: DigestItem) => void;
 }) {
+  useUILanguage();
   const [pending, setPending] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
   const feedback = async (action: ViewerAction) => {
@@ -67,7 +70,7 @@ function DigestCard({
         ) : null}
         <div className="digest-card-body">
           <div className="digest-source-line">
-            <Chip tone="info">{item.source_kind}</Chip>
+            <Chip tone="info">{tr(item.source_kind)}</Chip>
             <span className="digest-source-title">{item.source_title}</span>
             <span className="digest-when">{timeAgo(item.published_unix)}</span>
           </div>
@@ -109,7 +112,7 @@ function DigestCard({
               <Button disabled={pending} onClick={() => void feedback("hide")}>Hide</Button>
               <IconButton
                 icon={ExternalLink}
-                label="Open"
+                label={tr("Open")}
                 onClick={() => {
                   onOpen(item);
                 }}
@@ -144,7 +147,9 @@ function DigestCard({
 }
 
 export default function Digest() {
+  useUILanguage();
   const { client, notify } = useAppContext();
+  const digestApi = client.mode === "fixture" ? fixtureDigestApi : liveDigestApi;
   const [digest, setDigest] = useState<DigestPayload | null>(null);
   const [sources, setSources] = useState<DigestSource[]>([]);
   const [watchers, setWatchers] = useState<Watcher[]>([]);
@@ -189,7 +194,7 @@ export default function Digest() {
       window.dispatchEvent(new Event("ryn-discovery-seen"));
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reach the local node.");
+      setError(err instanceof Error ? err.message : tr("Could not reach the local node."));
     } finally {
       setLoading(false);
     }
@@ -242,7 +247,7 @@ export default function Digest() {
       setDigest(result.digest);
       setDiscovery(result.status);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Refresh failed.");
+      setError(err instanceof Error ? err.message : tr("Refresh failed."));
     } finally {
       setRefreshing(false);
     }
@@ -259,7 +264,7 @@ export default function Digest() {
       setSources(await digestApi.listSources());
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add source.");
+      setError(err instanceof Error ? err.message : tr("Could not add source."));
     } finally {
       setAdding(false);
     }
@@ -271,7 +276,7 @@ export default function Digest() {
       setSources((current) => current.filter((source) => source.id !== sourceId));
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove source.");
+      setError(err instanceof Error ? err.message : tr("Could not remove source."));
     }
   };
 
@@ -318,7 +323,7 @@ export default function Digest() {
     setProfile(next);
     setDirection(next.direction);
     setDigest(await digestApi.getDigest());
-    notify("ok", "Your local For You profile has been updated");
+    notify("ok", tr("Your local For You profile has been updated"));
   };
 
   const toggleChoice = (field: "topics" | "platforms", id: string) => {
@@ -337,10 +342,10 @@ export default function Digest() {
     try {
       const result = await digestApi.saveReadLater(value);
       setSaveUrl("");
-      setNotice(`Saved "${result.title}" — it'll lead your next digest.`);
+      setNotice(tr("Saved \"{{v0}}\" — it'll lead your next digest.", { v0: result.title }));
       setDigest(await digestApi.getDigest().catch(() => digest));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save the link.");
+      setError(err instanceof Error ? err.message : tr("Could not save the link."));
     } finally {
       setSaving(false);
     }
@@ -356,9 +361,9 @@ export default function Digest() {
       const watcher = await digestApi.addWatcher(value, "");
       setSaveUrl("");
       setWatchers((current) => [...current, watcher]);
-      setNotice(`Watching "${watcher.title}" — changes will appear in your digest.`);
+      setNotice(tr("Watching \"{{v0}}\" — changes will appear in your digest.", { v0: watcher.title }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add the watcher.");
+      setError(err instanceof Error ? err.message : tr("Could not add the watcher."));
     } finally {
       setSaving(false);
     }
@@ -369,7 +374,7 @@ export default function Digest() {
       await digestApi.removeWatcher(watcherId);
       setWatchers((current) => current.filter((watcher) => watcher.id !== watcherId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove the watcher.");
+      setError(err instanceof Error ? err.message : tr("Could not remove the watcher."));
     }
   };
 
@@ -384,29 +389,29 @@ export default function Digest() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Personal assistant"
-        title="For You"
-        context="One local feed for public discovery, mesh recommendations, your interests, and every feedback signal."
+        eyebrow={tr("Personal assistant")}
+        title={tr("For You")}
+        context={tr("Discover content selected around your interests.")}
         actions={
           <>
             {aiStatus?.provider ? (
               <Chip tone="ok">{aiStatus.provider}: {aiStatus.model}</Chip>
             ) : (
-              <Chip tone="muted">no AI — run Ollama or add a key</Chip>
+              <Chip tone="muted">{tr("no AI — run Ollama or add a key")}</Chip>
             )}
-            {discovery?.phase === "refreshing" ? <Chip tone="info">agent discovering</Chip> : null}
-            {generated ? <Chip tone="muted">built {generated}</Chip> : null}
+            {discovery?.phase === "refreshing" ? <Chip tone="info">{tr("agent discovering")}</Chip> : null}
+            {generated ? <Chip tone="muted">{tr("built")} {generated}</Chip> : null}
             <Button icon={RefreshCcw} onClick={() => void refresh()} disabled={refreshing}>
-              {refreshing ? "Refreshing…" : "Refresh"}
+              {refreshing ? tr("Refreshing…") : tr("Refresh")}
             </Button>
           </>
         }
       />
 
       {digest?.brief ? (
-        <Panel title="Briefing" className="digest-brief">
+        <Panel title={tr("Briefing")} className="digest-brief">
           <p className="digest-brief-basis">
-            <Sparkles size={12} /> AI synthesis from titles and public-feed summaries only. Numbered references point to items below.
+            <Sparkles size={12} /> {tr("AI synthesis from titles and public-feed summaries only. Numbered references point to items below.")}
           </p>
           <p className="digest-brief-text">{digest.brief}</p>
         </Panel>
@@ -434,15 +439,15 @@ export default function Digest() {
           </div>
           <div>
             <Clock3 size={18} />
-            <span>Background schedule</span>
+            <span>{tr("Background schedule")}</span>
             <strong>{timeUntil(discovery?.next_refresh_unix ?? 0)}</strong>
-            <p>{discovery?.last_completed_unix ? `Last completed ${timeAgo(discovery.last_completed_unix)}.` : "The first review starts automatically after the daemon is ready."}</p>
+            <p>{discovery?.last_completed_unix ? tr("Last completed {{v0}}.", { v0: timeAgo(discovery.last_completed_unix) }) : tr("The first review starts automatically after the daemon is ready.")}</p>
           </div>
           <div>
             <Sparkles size={18} />
-            <span>Formats available</span>
-            <strong>{discovery?.formats.length ? discovery.formats.join(", ") : "Collecting"}</strong>
-            <p>No account, API key, YouTube handle, subreddit, or preference setup is required.</p>
+            <span>{tr("Formats available")}</span>
+            <strong>{discovery?.formats.length ? discovery.formats.map(format => tr(format)).join(", ") : tr("Collecting")}</strong>
+            <p>{tr("No account, API key, YouTube handle, subreddit, or preference setup is required.")}</p>
           </div>
         </div>
         {discovery?.failed_sources ? (
@@ -457,25 +462,25 @@ export default function Digest() {
         <Panel className="recommendation-profile-panel">
           <div className="recommendation-profile-heading">
             <div>
-              <span className="eyebrow">Your private recommendation profile</span>
-              <h2>Tell Ryn what deserves your attention</h2>
-              <p>With no choices, Ryn explores broadly. These preferences and every feedback action now drive this same feed.</p>
+              <span className="eyebrow">{tr("Your private recommendation profile")}</span>
+              <h2>{tr("Tell Ryn what deserves your attention")}</h2>
+              <p>{tr("With no choices, Ryn explores broadly. These preferences and every feedback action now drive this same feed.")}</p>
             </div>
             <Chip tone={profile.feedback_count ? "ok" : "muted"} icon={SlidersHorizontal}>
-              {profile.feedback_count} feedback {profile.feedback_count === 1 ? "signal" : "signals"}
+              {tr("{{count}} feedback signals", { count: profile.feedback_count })}
             </Chip>
           </div>
           <label className="recommendation-direction">
-            <span>Direction</span>
+            <span>{tr("Direction")}</span>
             <textarea
               value={direction}
               onChange={(event) => setDirection(event.target.value)}
-              placeholder="For example: More local AI and open-source research, less repetitive trend coverage."
+              placeholder={tr("For example: More local AI and open-source research, less repetitive trend coverage.")}
               rows={3}
             />
           </label>
           <div className="recommendation-choice-group">
-            <span>Topics</span>
+            <span>{tr("Topics")}</span>
             <div className="choice-chip-row">
               {profile.topic_choices.map((choice) => (
                 <button
@@ -484,13 +489,13 @@ export default function Digest() {
                   className={profile.topics.includes(choice.id) ? "choice-chip active" : "choice-chip"}
                   onClick={() => toggleChoice("topics", choice.id)}
                 >
-                  {choice.label}
+                  {tr(choice.label)}
                 </button>
               ))}
             </div>
           </div>
           <div className="recommendation-choice-group">
-            <span>Platforms and sources</span>
+            <span>{tr("Platforms and sources")}</span>
             <div className="choice-chip-row">
               {profile.platform_choices.map((choice) => (
                 <button
@@ -499,35 +504,35 @@ export default function Digest() {
                   className={profile.platforms.includes(choice.id) ? "choice-chip active" : "choice-chip"}
                   onClick={() => toggleChoice("platforms", choice.id)}
                 >
-                  {choice.label}
+                  {tr(choice.label)}
                 </button>
               ))}
             </div>
           </div>
           <div className="button-row">
             <Button variant="primary" icon={Save} onClick={() => void saveProfile({ direction })}>
-              Save direction
+              {tr("Save direction")}
             </Button>
             <Button variant="ghost" onClick={() => void saveProfile({ direction: "", topics: [], platforms: [] })}>
-              Explore broadly
+              {tr("Explore broadly")}
             </Button>
           </div>
         </Panel>
       ) : null}
 
       <Panel title="Sources Ryn watches">
-        <FeedbackSignalsPanel revision={feedbackRevision} onRefresh={refreshFeedback} />
-        <SourceHealthPanel status={discovery} onRefresh={async () => {
+        {client.mode === "live" && <FeedbackSignalsPanel revision={feedbackRevision} onRefresh={refreshFeedback} />}
+        {client.mode === "live" && <SourceHealthPanel status={discovery} onRefresh={async () => {
           const [nextDigest, nextStatus] = await Promise.all([digestApi.getDigest(), digestApi.getDiscoveryStatus()]);
           setDigest(nextDigest); setDiscovery(nextStatus);
-        }} />
+        }} />}
         <p className="digest-hint digest-default-note">
-          Ryn starts with a broad public catalog automatically. Add a source only when you want more from a particular channel, community, or publication.
+          {tr("Ryn starts with a broad public catalog automatically. Add a source only when you want more from a particular channel, community, or publication.")}
         </p>
         <div className="digest-add-row">
           <input
             className="digest-add-input"
-            placeholder="Paste a YouTube channel, @handle, r/subreddit, or RSS URL"
+            placeholder={tr("Paste a YouTube channel, @handle, r/subreddit, or RSS URL")}
             value={newSource}
             onChange={(event) => setNewSource(event.target.value)}
             onKeyDown={(event) => {
@@ -535,7 +540,7 @@ export default function Digest() {
             }}
           />
           <Button icon={Plus} variant="primary" onClick={() => void addSource()} disabled={adding}>
-            {adding ? "Checking…" : "Add"}
+            {adding ? tr("Checking…") : tr("Add")}
           </Button>
         </div>
         {sources.length ? (
@@ -546,23 +551,23 @@ export default function Digest() {
                 <span key={source.id} className="digest-source-chip">
                   <Chip tone={health && !health.ok ? "danger" : "ok"}>
                     {source.title}
-                    {source.builtin ? " · default" : ""}
-                    {health && !health.ok ? " — unreachable" : ""}
+                    {source.builtin ? tr(" · default") : ""}
+                    {health && !health.ok ? tr(" — unreachable") : ""}
                   </Chip>
-                  <IconButton icon={Trash2} label={`Remove ${source.title}`} onClick={() => void removeSource(source.id)} />
+                  <IconButton icon={Trash2} label={tr("Remove {{v0}}", { v0: source.title })} onClick={() => void removeSource(source.id)} />
                 </span>
               );
             })}
           </div>
         ) : (
           <p className="digest-hint">
-            The agent is restoring its default public catalog. You do not need to add anything.
+            {tr("The agent is restoring its default public catalog. You do not need to add anything.")}
           </p>
         )}
         <div className="digest-add-row digest-save-row">
           <input
             className="digest-add-input"
-            placeholder="Save a link for later, or watch a page for changes"
+            placeholder={tr("Save a link for later, or watch a page for changes")}
             value={saveUrl}
             onChange={(event) => setSaveUrl(event.target.value)}
             onKeyDown={(event) => {
@@ -570,20 +575,20 @@ export default function Digest() {
             }}
           />
           <Button icon={Bookmark} onClick={() => void saveForLater()} disabled={saving}>
-            Read later
+            {tr("Read later")}
           </Button>
           <Button icon={Eye} onClick={() => void watchPage()} disabled={saving}>
-            Watch
+            {tr("Watch")}
           </Button>
         </div>
         {watchers.length ? (
           <div className="chip-row digest-source-chips">
             {watchers.map((watcher) => (
               <span key={watcher.id} className="digest-source-chip">
-                <Chip tone="info">watching: {watcher.note || watcher.title}</Chip>
+                <Chip tone="info">{tr("watching:")} {watcher.note || watcher.title}</Chip>
                 <IconButton
                   icon={Trash2}
-                  label={`Stop watching ${watcher.title}`}
+                  label={tr("Stop watching {{v0}}", { v0: watcher.title })}
                   onClick={() => void removeWatcher(watcher.id)}
                 />
               </span>
@@ -619,7 +624,7 @@ export default function Digest() {
       {openingFriend ? <p role="status">Checking access and saving a private copy…</p> : null}
       {digest?.friend_feed_unavailable ? <p role="status">Friend updates are temporarily unavailable. Public recommendations are still available.</p> : null}
       {consumption.length ? (
-        <Panel title="Saved and recently opened">
+        <Panel title={tr("Saved and recently opened")}>
           <div className="digest-stack">
             {consumption.slice(0, 8).map((record) => (
               <button
@@ -629,8 +634,8 @@ export default function Digest() {
                 onClick={() => setMeshViewer(contentFromHistory(record))}
               >
                 {record.item.title}
-                {record.bookmarked ? " · saved" : ""}
-                {record.completed ? " · completed" : record.progress ? ` · ${Math.round(record.progress * 100)}%` : ""}
+                {record.bookmarked ? tr(" · saved") : ""}
+                {record.completed ? tr(" · completed") : record.progress ? ` · ${Math.round(record.progress * 100)}%` : ""}
               </button>
             ))}
           </div>
@@ -651,7 +656,7 @@ export default function Digest() {
           onProgress={(item, progress) => updateConsumption(item, "progress", progress)}
           onSteer={async (text) => {
             await digestApi.steer(text);
-            setNotice("Got it — Ryn will use that from the next refresh.");
+            setNotice(tr("Got it — Ryn will use that from the next refresh."));
           }}
         />
       ) : null}

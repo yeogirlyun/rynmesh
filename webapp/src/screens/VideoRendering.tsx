@@ -1,3 +1,5 @@
+import { tr, useUILanguage } from "../uiI18n";
+import { personalHref } from "../personal/model";
 import { ArrowLeft, Film, Play, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +15,7 @@ const CAPABILITY = descriptor.capability;
 const OPERATION = descriptor.operation;
 
 export default function VideoRendering() {
+  useUILanguage();
   const { client, notify } = useAppContext();
   const navigate = useNavigate();
   const discovery = useProviderDiscovery<JobCapacity>({ scope: client, key: descriptor.id,
@@ -72,14 +75,14 @@ export default function VideoRendering() {
 
   return (
     <div className={styles.page}>
-      <button type="button" className={styles.back} onClick={() => navigate(client.mode === "fixture" ? "/services?client=fixture" : "/services")}><ArrowLeft size={15} /> All services</button>
+      <button type="button" className={styles.back} onClick={() => navigate(personalHref("/services", client.mode === "fixture"))}><ArrowLeft size={15} /> {tr("All services")}</button>
       <header className={styles.hero}>
-        <div className={styles.heroTitle}><span className={styles.heroIcon}><Film size={25} /></span><div><h1>Video rendering</h1><p>Create motion clips through an available rendering service.</p></div></div>
-        <span className={styles.status}>{provider ? "Renderer ready" : "Finding renderer"}</span>
+        <div className={styles.heroTitle}><span className={styles.heroIcon}><Film size={25} /></span><div><h1>{tr("Video rendering")}</h1><p>{tr("Create motion clips through an available rendering service.")}</p></div></div>
+        <span className={styles.status}>{provider ? tr("Renderer ready") : tr("Finding renderer")}</span>
       </header>
       <div className={styles.layout}>
         <section className={styles.panel}>
-          <h2>Create a render</h2><p className={styles.panelLead}>Choose the project to render. Ryn selects the provider and route for you.</p>
+          <h2>{tr("Create a render")}</h2><p className={styles.panelLead}>{tr("Choose the project to render. Ryn selects the provider and route for you.")}</p>
           <div className={styles.form}>
             <label className={styles.field}>Video project ID<input aria-label="Video project ID" value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="Enter a project ID" /></label>
             <label className={styles.field}>Maximum scenes<input aria-label="Maximum scenes" type="number" min="0" value={maxScenes} onChange={(event) => setMaxScenes(event.target.value)} /></label>

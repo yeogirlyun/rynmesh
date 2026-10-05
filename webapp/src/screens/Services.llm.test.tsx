@@ -185,7 +185,7 @@ describe("Services local LLM flow", () => {
       { profile: "light", can_run: true, recommended: true, display_name: "Reviewed model", download_bytes: 512 * 1024 * 1024, estimated_disk_mb: 1200, estimated_memory_mb: 900, source_url: "https://example.test/pinned-model.gguf", license_id: "Apache-2.0", license_url: "https://www.apache.org/licenses/LICENSE-2.0", license_notice: "Review the license before use." },
     ] } });
     const setup = vi.spyOn(client, "startLLMSetup");
-    await screen.findByRole("heading", { name: "Ryn job capacity" });
+    await screen.findByRole("heading", { name: "Service setup" });
     await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
     expect(await screen.findByRole("link", { name: "Pinned model source" })).toHaveAttribute("href", "https://example.test/pinned-model.gguf");
     expect(screen.getByRole("link", { name: "License: Apache-2.0" })).toBeInTheDocument();
@@ -197,10 +197,29 @@ describe("Services local LLM flow", () => {
     await waitFor(() => expect(setup).toHaveBeenCalledWith(expect.objectContaining({ mode: "managed", profile: "light" })));
   });
 
+  it("saves a short model alias and uses it in the agent example", async () => {
+    const { client, user } = renderServices();
+    const target = { id: "peer/0123456789abcdef/qwen3-14b", rynmesh: { source: "peer", model_alias: "Qwen3 14B", max_output_tokens: 512 } };
+    const access = { base_url: "http://127.0.0.1:8791/v1", keys: [], models: [target], targets: [target], aliases: {} as Record<string, string> };
+    vi.spyOn(client, "getInferenceAccess").mockImplementation(async () => ({ ...access }));
+    const save = vi.spyOn(client, "setInferenceModelAlias").mockImplementation(async (name, id) => {
+      access.aliases = { [name]: id };
+      access.models = [{ ...target, id: name }];
+      return { name, target: id };
+    });
+    await user.click(await screen.findByRole("button", { name: "Configure API access" }));
+    expect(await screen.findByLabelText("Model alias")).toHaveValue("qwen");
+    await user.click(screen.getByRole("button", { name: "Save model alias" }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith("qwen", target.id));
+    expect(await screen.findByRole("option", { name: "qwen" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Model", { exact: true })).toHaveValue("qwen");
+    expect(screen.getByText(/from openai import OpenAI/)).toHaveTextContent('model="qwen"');
+  });
+
   it("uses the production network default and submits the selected transport policy", async () => {
     const { user, submit } = renderServices();
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     expect(screen.getByLabelText("Discovery network")).toHaveValue("rynmesh-main");
     await user.selectOptions(screen.getByLabelText("Transport policy"), "p2p");
     await user.click(screen.getByRole("button", { name: "Place encrypted order" }));
@@ -216,7 +235,7 @@ describe("Services local LLM flow", () => {
   it("uses the node's configured network for initial discovery", async () => {
     const { discover } = renderServices({ configuredNetwork: "rynmesh-llm-e2e" });
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     expect(screen.getByLabelText("Discovery network")).toHaveValue("rynmesh-llm-e2e");
     expect(discover).toHaveBeenCalledWith("rynmesh-llm-e2e");
   });
@@ -252,7 +271,7 @@ describe("Services local LLM flow", () => {
     ];
     const { user, submit } = renderServices({ services });
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     const provider = screen.getByLabelText("Provider service");
     expect(screen.getByRole("option", { name: /docker-provider.*e2e-host-real-service/ })).toBeInTheDocument();
     await user.selectOptions(
@@ -275,7 +294,7 @@ describe("Services local LLM flow", () => {
       error_code: "p2p_distinct_public_egress_required",
     }));
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Place encrypted order" }));
 
     expect(await screen.findByText(/incorrectly requires different public exits/)).toBeInTheDocument();
@@ -284,7 +303,7 @@ describe("Services local LLM flow", () => {
   it("keeps the Services screen usable when LLM discovery fails", async () => {
     renderServices({ discoveryFailure: true });
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     expect(screen.getByText(/Service discovery failed: LLM discovery unavailable/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
   });
@@ -294,7 +313,7 @@ describe("Services local LLM flow", () => {
     const setup = vi.spyOn(client, "startLLMSetup");
     const publish = vi.spyOn(client, "publishLLMService");
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.clear(screen.getByLabelText("Package ID"));
     await user.type(screen.getByLabelText("Package ID"), "my-local-api");
     await user.clear(screen.getByLabelText("Local API URL"));
@@ -322,7 +341,7 @@ describe("Services local LLM flow", () => {
       return { task_id: "task_async", state: "cancelled" };
     });
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Place encrypted order" }));
     await user.click(await screen.findByRole("button", { name: "Cancel task" }));
 
@@ -335,7 +354,7 @@ describe("Services local LLM flow", () => {
     const { client, user } = renderServices();
     const setup = vi.spyOn(client, "startLLMSetup");
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.type(screen.getByLabelText("API key environment variable (optional)"), "LOCAL_MODEL_KEY");
     await user.click(screen.getByRole("checkbox", { name: /trusted non-loopback API address/i }));
     await user.click(screen.getByRole("button", { name: "Configure and run self-test" }));
@@ -412,7 +431,7 @@ describe("Services local LLM flow", () => {
   it("labels the managed setup option as a bundled-runtime local model, not Docker", async () => {
     renderServices();
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Managed local model (bundled runtime)" })).toBeInTheDocument();
     expect(screen.queryByText(/Optional managed Docker model/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Docker Desktop\/Engine must already be installed and running/)).not.toBeInTheDocument();
@@ -421,7 +440,7 @@ describe("Services local LLM flow", () => {
   it("shows the bundled runtime helper text and profile select for managed setup", async () => {
     const { user } = renderServices();
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
 
     expect(await screen.findByText(
@@ -465,7 +484,7 @@ describe("Services local LLM flow", () => {
       },
     });
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
 
     const options = screen.getByLabelText("Model profile").querySelectorAll("option");
@@ -477,7 +496,7 @@ describe("Services local LLM flow", () => {
     const { client, user } = renderServices();
     const setup = vi.spyOn(client, "startLLMSetup");
 
-    expect(await screen.findByRole("heading", { name: "Ryn job capacity" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service setup" })).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Setup mode"), "managed");
     await user.selectOptions(screen.getByLabelText("Model profile"), "balanced");
     await user.click(screen.getByRole("checkbox", { name: /prepares a local runtime/i }));

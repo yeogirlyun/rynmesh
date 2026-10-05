@@ -4,12 +4,22 @@ This is the unmodified rynmesh peer (`rynmesh.peer_http:main`); freezing only
 removes the system-Python/rynmesh install requirement. Behavior is identical.
 """
 import sys
-from multiprocessing import freeze_support
+import multiprocessing
 
 if __name__ == "__main__":
-    # Dispatch supervised offline download children before importing the node.
-    # PyInstaller requires this on every platform, including macOS spawn.
-    freeze_support()
+    multiprocessing.freeze_support()
+    if len(sys.argv) > 1 and sys.argv[1] == "--ryn-native-worker":
+        from rynmesh.llm_package.native_worker import main as native_main
+        native_main(sys.argv[2:])
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "--ryn-private-cli-worker":
+        from rynmesh.llm_package.process_guard import limited_exec
+        limited_exec(sys.argv[2:])
+        sys.exit(1)
+    if len(sys.argv) > 1 and sys.argv[1] == "--restore-space":
+        sys.argv.pop(1)
+        from rynmesh.personal_space import main as restore_main
+        restore_main()
+        sys.exit(0)
     from rynmesh.peer_http import main
-
     sys.exit(main())

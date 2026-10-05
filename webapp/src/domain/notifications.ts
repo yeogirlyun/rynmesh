@@ -1,3 +1,4 @@
+import { tr } from "../uiI18n";
 import {
   isPermissionGranted,
   onAction,
@@ -51,7 +52,7 @@ export async function installNotificationNavigation(onOpen: () => void): Promise
   await registerActionTypes([
     {
       id: ACTION_TYPE,
-      actions: [{ id: "open-for-you", title: "Open For You", foreground: true }],
+      actions: [{ id: "open-for-you", title: tr("Open For You"), foreground: true }],
     },
   ]);
   const listener = await onAction((notification: Options) => {
@@ -70,8 +71,8 @@ export async function sendDiscoveryNotification(
   if (unreadCount <= 0 || !notificationDue(settings)) return false;
   const permission = await requestDesktopNotificationPermission();
   if (permission !== "granted") return false;
-  const title = "Ryn found something for you";
-  const body = `${unreadCount} new recommendation${unreadCount === 1 ? " is" : "s are"} ready.`;
+  const title = tr("Ryn found something for you");
+  const body = tr("{{count}} new recommendations ready.", { count: unreadCount });
   if (isTauri()) {
     sendNotification({
       title,
@@ -98,15 +99,15 @@ export async function sendTestNotification(onOpen: () => void): Promise<boolean>
   if (permission !== "granted") return false;
   if (isTauri()) {
     sendNotification({
-      title: "Ryn notifications are ready",
-      body: "Future recommendations can bring you directly back to For You.",
+      title: tr("Ryn notifications are ready"),
+      body: tr("Future recommendations can bring you directly back to For You."),
       actionTypeId: ACTION_TYPE,
       autoCancel: true,
       extra: { route: "/digest" },
     });
   } else {
-    const notification = new window.Notification("Ryn notifications are ready", {
-      body: "Future recommendations can bring you directly back to For You.",
+    const notification = new window.Notification(tr("Ryn notifications are ready"), {
+      body: tr("Future recommendations can bring you directly back to For You."),
     });
     notification.onclick = onOpen;
   }

@@ -3,3 +3,7 @@ docs/superpowers/ export-ignore
 scripts/publish_release.zsh export-ignore
 scripts/rynnode_egress_watchdog.zsh export-ignore
 scripts/setup_rynnode_mac.zsh export-ignore
+
+# macOS codesign rejects CRLF in entitlement XML; shell entry points also need LF.
+webapp/src-tauri/sidecar/*.plist text eol=lf
+webapp/src-tauri/scripts/*.sh text eol=lf

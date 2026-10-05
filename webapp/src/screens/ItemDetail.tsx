@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import { Copy, Download, Eye, FileText, Flag, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -24,6 +25,7 @@ import type { ContentBody, ContentItem, Peer, ProvenanceEvent } from "../domain/
 type Tab = "overview" | "provenance" | "receipts" | "fetch";
 
 export default function ItemDetail() {
+  useUILanguage();
   const { contentId } = useParams();
   const { client, peers, confirm, notify } = useAppContext();
   const navigate = useNavigate();
@@ -63,15 +65,15 @@ export default function ItemDetail() {
   if (!item) {
     return (
       <Panel>
-        <p>Unknown item.</p>
-        <Button onClick={() => navigate("/explore")}>Back to Explore</Button>
+        <p>{tr("Unknown item.")}</p>
+        <Button onClick={() => navigate("/explore")}>{tr("Back to Explore")}</Button>
       </Panel>
     );
   }
 
   const fetchPreview = async () => {
     await client.fetchPreview(item.content_id, item.provider_peer_id);
-    notify("ok", "Preview fetch requested through local node");
+    notify("ok", tr("Preview fetch requested through local node"));
   };
 
   const refreshReadableItem = async () => {
@@ -82,19 +84,19 @@ export default function ItemDetail() {
 
   const fetchFull = () =>
     confirm({
-      title: "Fetch full content?",
-      body: "The local Ryn node will fetch bytes from the provider, verify the manifest, safety receipts, provenance chain, and content hash, then store the item locally.",
+      title: tr("Fetch full content?"),
+      body: tr("The local Ryn node will fetch bytes from the provider, verify the manifest, safety receipts, provenance chain, and content hash, then store the item locally."),
       risk: "high",
-      confirmLabel: "Fetch full",
+      confirmLabel: tr("Fetch full"),
       details: [
-        { label: "Item", value: item.title },
-        { label: "Provider", value: provider?.name ?? item.provider_peer_id },
-        { label: "Size", value: item.size ?? "unknown" },
+        { label: tr("Item"), value: item.title },
+        { label: tr("Provider"), value: provider?.name ?? item.provider_peer_id },
+        { label: tr("Size"), value: item.size ?? "unknown" },
       ],
       onConfirm: async () => {
         await client.fetchFullContent(item.content_id, item.provider_peer_id);
         await refreshReadableItem();
-        notify("ok", "Full content fetched and verified locally");
+        notify("ok", tr("Full content fetched and verified locally"));
       },
     });
 
@@ -105,17 +107,17 @@ export default function ItemDetail() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Item detail"
+        eyebrow={tr("Item detail")}
         title={item.title}
-        context="Inspect manifest, provenance, safety receipts, peer identity, and fetch state before acting."
+        context={tr("Inspect manifest, provenance, safety receipts, peer identity, and fetch state before acting.")}
         actions={
           <>
-            <Button icon={Copy} onClick={() => notify("ok", "Citation copied")}>
-              Copy Citation
+            <Button icon={Copy} onClick={() => notify("ok", tr("Citation copied"))}>
+              {tr("Copy Citation")}
             </Button>
             {!isStoredLocally ? (
               <Button icon={Eye} onClick={() => void fetchPreview()}>
-                Fetch Preview
+                {tr("Fetch Preview")}
               </Button>
             ) : null}
             {isStoredLocally ? (
@@ -127,11 +129,11 @@ export default function ItemDetail() {
                   else window.open(localContentBytesUrl(item.content_id), "_blank", "noopener,noreferrer");
                 }}
               >
-                {isReadableDocument ? "Read Document" : "View Content"}
+                {isReadableDocument ? tr("Read Document") : tr("View Content")}
               </Button>
             ) : (
               <Button variant="primary" icon={Download} onClick={fetchFull}>
-                Fetch Full
+                {tr("Fetch Full")}
               </Button>
             )}
           </>
@@ -141,7 +143,7 @@ export default function ItemDetail() {
       <div className="tabs">
         {(["overview", "provenance", "receipts", "fetch"] as const).map((candidate) => (
           <button key={candidate} className={tab === candidate ? "active" : ""} type="button" onClick={() => setTab(candidate)}>
-            {candidate}
+            {tr(candidate)}
             {candidate === "provenance" ? <span>{events.length}</span> : null}
             {candidate === "fetch" ? <span>3</span> : null}
           </button>
@@ -159,16 +161,16 @@ export default function ItemDetail() {
               <PreviewSurface item={item} />
             )}
           </Panel>
-          <Panel title="Manifest">
+          <Panel title={tr("Manifest")}>
             <KV
               rows={[
-                { label: "Content ID", value: <Hash value={item.content_id} /> },
-                { label: "Manifest hash", value: <Hash value={item.manifest_hash} /> },
-                { label: "Kind", value: item.content_kind },
-                { label: "Type", value: item.content_type },
-                { label: "Size", value: item.size ?? "unknown" },
-                { label: "Published", value: item.published ? new Date(item.published).toLocaleString() : "not published" },
-                { label: "Tags", value: <span>{item.tags.join(", ")}</span> },
+                { label: tr("Content ID"), value: <Hash value={item.content_id} /> },
+                { label: tr("Manifest hash"), value: <Hash value={item.manifest_hash} /> },
+                { label: tr("Kind"), value: item.content_kind },
+                { label: tr("Type"), value: item.content_type },
+                { label: tr("Size"), value: item.size ?? "unknown" },
+                { label: tr("Published"), value: item.published ? new Date(item.published).toLocaleString(uiLocale()) : tr("not published") },
+                { label: tr("Tags"), value: <span>{item.tags.join(", ")}</span> },
               ]}
             />
           </Panel>
@@ -182,11 +184,11 @@ export default function ItemDetail() {
               provider={provider}
               onReport={() =>
                 confirm({
-                  title: "Report or quarantine this peer?",
-                  body: "This is a high-risk action. Your local node will create a signed report for review.",
+                  title: tr("Report or quarantine this peer?"),
+                  body: tr("This is a high-risk action. Your local node will create a signed report for review."),
                   risk: "high",
-                  confirmLabel: "Report",
-                  onConfirm: () => notify("warn", "Report prepared by local node"),
+                  confirmLabel: tr("Report"),
+                  onConfirm: () => notify("warn", tr("Report prepared by local node")),
                 })
               }
             />
@@ -237,6 +239,7 @@ async function loadReadableBody(
 }
 
 function MediaViewer({ item }: { item: ContentItem }) {
+  useUILanguage();
   const src = localContentBytesUrl(item.content_id);
   return (
     <div className="media-viewer">
@@ -246,7 +249,7 @@ function MediaViewer({ item }: { item: ContentItem }) {
       <div className="media-toolbar">
         <span>{item.title}</span>
         <a href={src} target="_blank" rel="noreferrer">
-          Open bytes
+          {tr("Open bytes")}
         </a>
       </div>
     </div>
@@ -254,29 +257,31 @@ function MediaViewer({ item }: { item: ContentItem }) {
 }
 
 function PreviewSurface({ item }: { item: ContentItem }) {
+  useUILanguage();
   return (
     <div className="preview-surface">
       <KindIcon kind={item.content_kind} size={42} />
       <div>
-        <span className="eyebrow">{item.content_kind}</span>
+        <span className="eyebrow">{tr(item.content_kind)}</span>
         <h2>{item.title}</h2>
         <p>{item.description}</p>
       </div>
-      {item.fetch_status === "discovered" ? <span className="preview-overlay">Not fetched - metadata only</span> : null}
-      {item.fetch_status === "preview_only" ? <span className="preview-overlay">Preview only - fetch full to inspect</span> : null}
+      {item.fetch_status === "discovered" ? <span className="preview-overlay">{tr("Not fetched - metadata only")}</span> : null}
+      {item.fetch_status === "preview_only" ? <span className="preview-overlay">{tr("Preview only - fetch full to inspect")}</span> : null}
     </div>
   );
 }
 
 function DocumentViewer({ item, body }: { item: ContentItem; body: ContentBody }) {
+  useUILanguage();
   return (
     <div className="document-viewer">
       <div className="document-toolbar">
         <div>
-          <span className="eyebrow">{item.content_kind}</span>
+          <span className="eyebrow">{tr(item.content_kind)}</span>
           <h2>{item.title}</h2>
         </div>
-        <span>{body.truncated ? `${body.size}, truncated` : body.size}</span>
+        <span>{body.truncated ? tr("{{size}}, truncated", { size: body.size }) : body.size}</span>
       </div>
       <pre className="document-body">{body.text}</pre>
     </div>
@@ -294,45 +299,46 @@ function OverviewTab({
   provider: Peer | undefined;
   onReport: () => void;
 }) {
+  useUILanguage();
   return (
     <div className="tab-stack">
       {item.safety_outcome === "flagged" || item.safety_outcome === "blocked" ? (
         <div className="alert-callout">
           <Flag size={16} />
-          {item.safety_notes ?? "Safety scanner recommends review before propagation."}
+          {item.safety_notes ?? tr("Safety scanner recommends review before propagation.")}
         </div>
       ) : null}
       <section>
-        <h3>Source</h3>
+        <h3>{tr("Source")}</h3>
         <div className="source-cards">
           <div>
-            <span className="eyebrow">Publisher</span>
+            <span className="eyebrow">{tr("Publisher")}</span>
             <PeerPill peer={publisher} />
           </div>
           <div>
-            <span className="eyebrow">Provider</span>
+            <span className="eyebrow">{tr("Provider")}</span>
             <PeerPill peer={provider} />
           </div>
         </div>
       </section>
       <section>
-        <h3>Trust signals</h3>
+        <h3>{tr("Trust signals")}</h3>
         <KV
           rows={[
-            { label: "Safety", value: <SafetyBadge outcome={item.safety_outcome} /> },
-            { label: "Provenance", value: <ProvBadge status={item.provenance_status} /> },
-            { label: "Distribution weight", value: <WeightBar value={item.distribution_weight} /> },
-            { label: "Identity tier", value: <TierBadge tier={publisher?.tier ?? "unverified"} /> },
-            { label: "Fetch state", value: <FetchChip status={item.fetch_status} /> },
+            { label: tr("Safety"), value: <SafetyBadge outcome={item.safety_outcome} /> },
+            { label: tr("Provenance"), value: <ProvBadge status={item.provenance_status} /> },
+            { label: tr("Distribution weight"), value: <WeightBar value={item.distribution_weight} /> },
+            { label: tr("Identity tier"), value: <TierBadge tier={publisher?.tier ?? "unverified"} /> },
+            { label: tr("Fetch state"), value: <FetchChip status={item.fetch_status} /> },
           ]}
         />
       </section>
       <div className="button-row">
-        <Button icon={Sparkles}>More Like This</Button>
-        <Button variant="ghost">Hide</Button>
-        <Button variant="ghost">Downrank</Button>
+        <Button icon={Sparkles}>{tr("More Like This")}</Button>
+        <Button variant="ghost">{tr("Hide")}</Button>
+        <Button variant="ghost">{tr("Downrank")}</Button>
         <Button variant="danger" icon={Flag} onClick={onReport}>
-          Report
+          {tr("Report")}
         </Button>
       </div>
     </div>
@@ -346,30 +352,31 @@ function ReceiptsTab({
   item: ContentItem;
   publisher: Peer | undefined;
 }) {
+  useUILanguage();
   return (
     <div className="tab-stack">
       <section>
-        <h3>Safety receipt</h3>
+        <h3>{tr("Safety receipt")}</h3>
         <KV
           rows={[
-            { label: "Outcome", value: <SafetyBadge outcome={item.safety_outcome} /> },
-            { label: "Scanner", value: item.safety_scanner_id ?? "unscanned" },
-            { label: "Notes", value: item.safety_notes ?? "No scanner notes." },
+            { label: tr("Outcome"), value: <SafetyBadge outcome={item.safety_outcome} /> },
+            { label: tr("Scanner"), value: item.safety_scanner_id ?? tr("unscanned") },
+            { label: tr("Notes"), value: item.safety_notes ?? tr("No scanner notes.") },
           ]}
         />
       </section>
       <section>
-        <h3>Credit signals</h3>
+        <h3>{tr("Credit signals")}</h3>
         <KV
           rows={[
-            { label: "Credits", value: <span className="mono">{publisher?.credits ?? 0}</span> },
-            { label: "Identity tier", value: <TierBadge tier={publisher?.tier ?? "unverified"} /> },
-            { label: "Distribution weight", value: <WeightBar value={item.distribution_weight} /> },
+            { label: tr("Credits"), value: <span className="mono">{publisher?.credits ?? 0}</span> },
+            { label: tr("Identity tier"), value: <TierBadge tier={publisher?.tier ?? "unverified"} /> },
+            { label: tr("Distribution weight"), value: <WeightBar value={item.distribution_weight} /> },
           ]}
         />
       </section>
       <section className="citation-box">
-        <span className="eyebrow">Citation</span>
+        <span className="eyebrow">{tr("Citation")}</span>
         <pre>{`rynmesh:${item.content_id}
 manifest: ${item.manifest_hash}
 publisher: ${publisher?.name ?? item.publisher_peer_id}`}</pre>
@@ -385,16 +392,17 @@ function FetchLog({
   item: ContentItem;
   provider: Peer | undefined;
 }) {
+  useUILanguage();
   const rows = [
     ["verify", provider?.name ?? item.provider_peer_id, "manifest", item.manifest_hash],
-    ["preview", provider?.name ?? item.provider_peer_id, item.fetch_status === "discovered" ? "not fetched" : "ok", item.content_id],
-    ["full", provider?.name ?? item.provider_peer_id, item.fetch_status === "fetched_full" ? item.size ?? "ok" : "not fetched", item.provenance_head_hash ?? "none"],
+    ["preview", provider?.name ?? item.provider_peer_id, item.fetch_status === "discovered" ? tr("not fetched") : "ok", item.content_id],
+    ["full", provider?.name ?? item.provider_peer_id, item.fetch_status === "fetched_full" ? item.size ?? "ok" : tr("not fetched"), item.provenance_head_hash ?? "none"],
   ];
   return (
     <div className="fetch-log">
       {rows.map(([kind, peer, size, hash]) => (
         <div key={`${kind}-${hash}`} className="fetch-row">
-          <span>{kind}</span>
+          <span>{tr(kind)}</span>
           <b>{peer}</b>
           <span>{size}</span>
           <Hash value={hash} />

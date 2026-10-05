@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../../uiI18n";
 import { KeyRound } from "lucide-react";
 import { useCallback, useState } from "react";
 
@@ -13,6 +14,7 @@ function baseUrl(): string {
 }
 
 export default function AccessPanel() {
+  useUILanguage();
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -26,7 +28,7 @@ export default function AccessPanel() {
       if (!response.ok) throw new Error(String(response.status));
       setToken(((await response.json()) as { token: string }).token);
     } catch {
-      setError("Could not read the token from the local node.");
+      setError(tr("Could not read the token from the local node."));
     } finally {
       setBusy(false);
     }
@@ -43,7 +45,7 @@ export default function AccessPanel() {
       if (!response.ok) throw new Error(String(response.status));
       setToken(((await response.json()) as { token: string }).token);
     } catch {
-      setError("Could not rotate the token.");
+      setError(tr("Could not rotate the token."));
     } finally {
       setBusy(false);
     }
@@ -59,10 +61,9 @@ export default function AccessPanel() {
     <div className="access-panel">
       <div className="setting-row">
         <span>
-          <b>Device token</b>
+          <b>{tr("Device token")}</b>
           <small>
-            Pair another device when you reach this node over a tunnel. Anyone
-            with this token can control the node — treat it like a password.
+            {tr("Pair another device when you reach this node over a tunnel. Anyone with this token can control the node — treat it like a password.")}
           </small>
         </span>
         <div className="access-actions">
@@ -70,22 +71,22 @@ export default function AccessPanel() {
             <>
               <code className="access-token">{token}</code>
               <button type="button" onClick={copy} disabled={busy}>
-                {copied ? "Copied" : "Copy"}
+                {copied ? tr("Copied") : tr("Copy")}
               </button>
               <button type="button" onClick={rotate} disabled={busy}>
-                Rotate
+                {tr("Rotate")}
               </button>
             </>
           ) : (
             <button type="button" onClick={load} disabled={busy}>
-              <KeyRound size={14} /> {busy ? "Reading…" : "Show token"}
+              <KeyRound size={14} /> {busy ? tr("Reading…") : tr("Show token")}
             </button>
           )}
         </div>
       </div>
       {error ? <p className="service-status error">⚠ {error}</p> : null}
       <p className="access-hint">
-        Rotating invalidates every paired device immediately.
+        {tr("Rotating invalidates every paired device immediately.")}
       </p>
     </div>
   );

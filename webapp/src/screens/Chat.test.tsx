@@ -5,10 +5,16 @@ import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import type { Peer } from "../domain/types";
 import Chat from "./Chat";
+import { PersonalProvider } from "../personal/model";
 
 // jsdom has no EventSource; Chat opens one on mount. The stream is not what
 // these tests are about, so a no-op stand-in is enough.
 beforeAll(() => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   class FakeEventSource {
     onmessage: ((event: MessageEvent) => void) | null = null;
     close() {}
@@ -41,11 +47,13 @@ function renderChat(history: Record<string, unknown>[]) {
   };
   return render(
     <MemoryRouter initialEntries={["/chat"]}>
+      <PersonalProvider client={client} node={context.node} peers={context.peers} refreshShell={context.refreshShell}>
       <Routes>
         <Route element={<Outlet context={context} />}>
           <Route path="/chat" element={<Chat />} />
         </Route>
       </Routes>
+      </PersonalProvider>
     </MemoryRouter>,
   );
 }

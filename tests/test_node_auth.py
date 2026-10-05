@@ -302,11 +302,27 @@ def test_same_origin_browser_request_is_trusted(auth):
 
 def test_desktop_shell_origin_is_trusted(auth):
     """Tauri and the dev server are local origins, not another site."""
-    for origin in ("tauri://localhost", "http://localhost:5173"):
+    for origin in ("tauri://localhost", "http://localhost:5173", "http://tauri.localhost", "https://tauri.localhost"):
         decision = auth.authorize(
             client_host="127.0.0.1", headers={"host": "127.0.0.1:8791", "origin": origin}
         )
         assert decision.allowed, origin
+
+
+def test_windows_shell_origin_does_not_grant_remote_or_forwarded_access(auth):
+    for origin in ("http://tauri.localhost", "https://tauri.localhost"):
+        for client_host, extra in (("192.0.2.22", {}), ("127.0.0.1", {"x-forwarded-for": "192.0.2.22"})):
+            decision = auth.authorize(client_host=client_host, headers={
+                "host": "127.0.0.1:8791", "origin": origin, **extra,
+            })
+            assert not decision.allowed
+
+
+def test_windows_shell_origin_must_match_exactly(auth):
+    for origin in ("https://tauri.localhost.evil.example", "https://evil-tauri.localhost", "https://evil.example/tauri.localhost"):
+        assert not auth.authorize(client_host="127.0.0.1", headers={
+            "host": "127.0.0.1:8791", "origin": origin,
+        }).allowed
 
 
 def test_dns_rebinding_host_is_not_trusted(auth):

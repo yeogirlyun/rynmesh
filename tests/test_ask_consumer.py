@@ -72,7 +72,11 @@ def test_auto_connection_reports_attempted_route_without_disabling_fallback(tmp_
     def relay(*_, **__):
         attempts.append('relay')
         raise ConnectionRefusedError('Synthetic closed relay')
+    async def p2p(**_):
+        attempts.append('p2p')
+        raise ConnectionRefusedError('Synthetic unavailable P2P route')
     monkeypatch.setattr(consumer, '_peer_post_json', direct)
+    monkeypatch.setattr(consumer, 'consumer_exchange', p2p)
     monkeypatch.setattr(consumer, '_upload_relay_ciphertext', relay)
     app = FastAPI()
     commands = consumer.install_llm_routes(app, store=store, home=store.home, messaging_key=key,
@@ -89,7 +93,7 @@ def test_auto_connection_reports_attempted_route_without_disabling_fallback(tmp_
         if result.get('state') == 'failed':
             break
         time.sleep(0.01)
-    expected = 'encrypted_relay_failed' if relay_configured else 'direct_transport_failed'
+    expected = 'encrypted_relay_failed' if relay_configured else 'p2p_transport_failed'
     assert result.get('error_code') == expected, result
     # The durable order can finish just before its background receipt updates.
     # Resubmitting that identity in either window must never run it again.
@@ -98,7 +102,7 @@ def test_auto_connection_reports_attempted_route_without_disabling_fallback(tmp_
         time.sleep(0.01)
         repeated = commands.submit(request)
     assert repeated['state'] == 'failed'
-    assert attempts == (['direct', 'relay'] if relay_configured else ['direct'])
+    assert attempts == (['direct', 'p2p', 'relay'] if relay_configured else ['direct', 'p2p'])
     balance = client.get('/api/local/task-balance').json()
     assert balance['held'] == 0 and balance['available'] == before['available']
     assert [event['kind'] for event in balance['events'] if event.get('task_id') == task_id] == ['hold', 'release']

@@ -19,7 +19,11 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "i18next": "^26.4.2",
+    "react-i18next": "^17.0.15",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
+    "remark-gfm": "^4.0.1",
     "typescript": "^5.9.3",
     "vite": "^8.2.1"
   },
