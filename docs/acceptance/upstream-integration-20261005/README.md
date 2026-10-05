@@ -42,6 +42,11 @@ fixture API drift, and test expectations for the additional P2P route/worker.
   A fresh `python -S` regression plus native-runtime/API/HTTP-streaming tests passed
   (**83 passed, 13 skipped**). This addresses both macOS architectures' first CI
   failure without installing application dependencies into the staging interpreter.
+- High-resolution clock regression: deriving membership issuance and expiry from
+  separate clock reads could exceed the strict 24-hour lease and reject valid
+  joins on Linux. The new advancing-clock test failed before the fix; after using
+  one clock sample, all **31 personal-space and real HTTP/ICE connection tests**
+  passed locally. The lease validation and revocation rules were not relaxed.
 - `python -m ruff check rynmesh/ tests/` — passed.
 - `python scripts/exchange_e2e.py` — passed; replicas agree and the private
   plaintext SQLite canary remains absent. Real-model neutrality was not evaluated.

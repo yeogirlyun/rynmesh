@@ -35,6 +35,20 @@ def join(root, child, invitation=None):
     return invitation
 
 
+def test_membership_lease_uses_one_clock_sample(nodes):
+    from itertools import count
+
+    root, child, *_ = nodes
+    # A high-resolution clock advances between consecutive reads on Linux.
+    # Sampling twice must not make the signed lease exceed its 24-hour limit.
+    ticks = count(time.time(), 0.001)
+    root.clock = lambda: next(ticks)
+    root.create("Home")
+    join(root, child)
+    assert child.status()["membership"] == "active"
+    assert child._verify(root.data["snapshot"])["id"] == root.status()["space"]["id"]
+
+
 def test_same_lan_join_completes_without_registry_mailbox_roundtrip(nodes, monkeypatch):
     root, laptop, *_ = nodes
     root.create("Home")

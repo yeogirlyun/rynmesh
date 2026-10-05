@@ -117,8 +117,9 @@ class PersonalSpace:
     def _sign(self, snapshot):
         snapshot = copy.deepcopy(snapshot)
         snapshot["revision"] = snapshot.get("revision", 0) + 1
-        snapshot["issued_at"] = self.clock()
-        snapshot["valid_until"] = self.clock() + LEASE_SECONDS
+        issued_at = self.clock()
+        snapshot["issued_at"] = issued_at
+        snapshot["valid_until"] = issued_at + LEASE_SECONDS
         self.data["snapshot"] = sign_payload(
             snapshot, private_key_bytes=self.store.private_key_bytes
         ).to_dict()
