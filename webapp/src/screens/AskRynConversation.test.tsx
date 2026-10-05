@@ -274,9 +274,12 @@ describe("Private AI chat", () => {
   it("does not throw out of the click handler when the recovery refresh fails, and keeps the prior view", async () => {
     const { user } = await setupResumedRunningTask();
     vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
-    vi.mocked(askHistory.list).mockRejectedValueOnce(new Error("The node could not be reached"));
+    // Background polling shares this mock: the node stays unreachable for recovery too.
+    vi.mocked(askHistory.list).mockRejectedValue(new Error("The node could not be reached"));
     await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The node could not confirm clearing this task. Reload history and try again.");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(
+      "The node could not confirm clearing this task. Reload history and try again.",
+    ));
     expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
   });
 
