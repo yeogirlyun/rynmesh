@@ -21,7 +21,7 @@ or completion of the physical acceptance gates in `docs/TESTING_STRATEGY.md`.
 | Inference | Preserve upstream signed `stream-v1` verification, bounded replay, settlement and durable orders alongside structured chat/tools/SSE, local CLI/model sources, LAN-first discovery and strict P2P support. |
 | Authorization | Preserve upstream friend grants and rechecks, with explicit owned-device/personal-space authorization where applicable. Discovery alone grants no access. |
 | Lifecycle | Register personal-space polling through the shared background-worker registry and retain bounded shutdown and owned-runtime cleanup. |
-| Desktop | Keep the upstream pinned llama.cpp resource bundle on supported targets. The Apple Silicon build script stages it; Windows explicitly retains no bundled llama.cpp resources because upstream has no Windows pin. |
+| Desktop | Keep the upstream pinned llama.cpp resource bundle on targets supported by the shell staging script. The Apple Silicon build script stages it; Windows retains no bundled resources, while its Python runtime installer can obtain a pinned Windows runtime separately. |
 | Localization | Personal UI remains English/Chinese. Existing upstream-only English text is recorded as exact file/text baseline pairs; new translation keys must exist in both catalogs. This is not full translation of upstream's new modules. |
 
 Integration regressions corrected include duplicate SSE cache headers, archived
@@ -37,6 +37,11 @@ fixture API drift, and test expectations for the additional P2P route/worker.
 - Webapp: `npm run build` — typecheck and production bundle passed.
 - Backend targeted regression set — **66 passed**, including real HTTP streaming,
   consumer archival/replay, runtime concurrency and worker lifecycle.
+- Follow-up desktop CI dependency fix: delay structured-chat imports until chat
+  execution so the stdlib-only runtime staging interpreter can read pinned assets.
+  A fresh `python -S` regression plus native-runtime/API/HTTP-streaming tests passed
+  (**83 passed, 13 skipped**). This addresses both macOS architectures' first CI
+  failure without installing application dependencies into the staging interpreter.
 - `python -m ruff check rynmesh/ tests/` — passed.
 - `python scripts/exchange_e2e.py` — passed; replicas agree and the private
   plaintext SQLite canary remains absent. Real-model neutrality was not evaluated.

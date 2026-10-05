@@ -4,7 +4,8 @@
 
 The October upstream integration keeps Windows resources separate from the pinned
 macOS/Linux llama.cpp bundle: `tauri.windows.conf.json` overrides `bundle.resources`
-with an empty list because the upstream runtime staging script has no Windows pin.
+with an empty list because the shell staging script does not handle Windows
+targets. The Python runtime installer does have pinned Windows downloads.
 Windows can use the existing configured model/API paths; this does not claim a
 bundled llama.cpp runtime or a new tested Windows installer.
 
