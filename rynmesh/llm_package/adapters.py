@@ -14,9 +14,6 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
-from .chat import ChatAccumulator, validate_chat
-
-
 class AdapterError(RuntimeError):
     def __init__(self, message: str, *, code: str = "inference_failed") -> None:
         super().__init__(message)
@@ -246,6 +243,10 @@ class OpenAICompatibleAdapter:
 
     def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
              on_event: Any = None) -> dict[str, Any]:
+        # Runtime staging reads package metadata with stdlib-only Python.
+        # Load structured-chat dependencies only when a chat is requested.
+        from .chat import ChatAccumulator, validate_chat
+
         body = {**self.request_defaults, **validate_chat(body)}
         if task_id in self._cancelled:
             raise AdapterError("task_cancelled")
