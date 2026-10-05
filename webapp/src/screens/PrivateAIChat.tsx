@@ -144,6 +144,14 @@ export default function PrivateAIChat() {
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [connectionStatus, setConnectionStatus] = useState("");
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
+  useEffect(() => {
+    setWaitingSeconds(0);
+    if (!sending) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => setWaitingSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [sending]);
   const [error, setError] = useState("");
   const [cliModels, setCLIModels] = useState<{ id: string; name: string; default: boolean }[]>([]);
   const [cliModelsError, setCLIModelsError] = useState("");
@@ -457,7 +465,7 @@ export default function PrivateAIChat() {
         if (mountedRef.current) {
           setConnectionStatus(
             result.connection_phase === "connecting_p2p" ? tr("Establishing peer connection…")
-              : result.connection_phase === "connecting_direct" ? tr("Connecting directly / waiting for response…")
+              : result.connection_phase === "connecting_direct" ? tr("Waiting for the device's reply…")
               : result.connection_phase === "connecting_relay" ? tr("Connecting through configured relay…")
               : result.transport === "local_process" ? tr("已连接 · 正在生成…")
               : result.transport === "ice_udp_direct" ? tr("Connected peer to peer · generating…")
@@ -805,7 +813,10 @@ export default function PrivateAIChat() {
                 <span />
                 <span />
               </div>
-              <small role="status" className={styles.connectionStatus}>{connectionStatus}</small>
+              <small role="status" className={styles.connectionStatus}>
+                <span>{connectionStatus}</span> · {tr("Waited {{seconds}}s", { seconds: waitingSeconds })}
+                {waitingSeconds >= 10 && <><br />{tr("The reply appears when generation finishes. You can stop this request below.")}</>}
+              </small>
             </div>
           ) : null}
         </div>

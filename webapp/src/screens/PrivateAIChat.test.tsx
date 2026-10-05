@@ -257,6 +257,22 @@ describe("Private AI chat", () => {
     expect(screen.queryByText("Connected")).not.toBeInTheDocument();
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({ transport: "auto" }));
   });
+  it("replaces direct-route waiting with the returned answer and releases the composer", async () => {
+    const { client, submit, user } = renderChat();
+    submit.mockResolvedValue({ task_id: "lan-reply", state: "queued" });
+    let complete = false;
+    vi.spyOn(client, "getLLMOrder").mockImplementation(async () => complete
+      ? { task_id: "lan-reply", state: "succeeded", output: "Reply received from the Mac", transport: "peer_http_direct" }
+      : { task_id: "lan-reply", state: "running", connection_phase: "connecting_direct" });
+    await user.type(await screen.findByLabelText("Message AI chat"), "Hello Mac");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Waiting for the device's reply…");
+    await screen.findByText(/Waited 1s/);
+    complete = true;
+    await screen.findByText("Reply received from the Mac");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
+    expect(screen.queryByLabelText("AI is thinking")).not.toBeInTheDocument();
+  });
   it("does not silently choose another provider when the requested device is missing", async () => {
     const { submit } = renderChat('/services/private-ai/chat?peer=missing&service=missing');
     expect(await screen.findByRole('heading', { name: 'The selected AI service is unavailable' })).toBeInTheDocument();
