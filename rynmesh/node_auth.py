@@ -104,6 +104,10 @@ def is_browser_cross_site(headers: Mapping[str, str]) -> bool:
     # the Vite dev server), and those are local origins rather than other sites.
     origin = lowered.get("origin", "").strip()
     if origin and origin.lower() != "null":
+        # WebView2 uses these exact virtual origins for the bundled Windows
+        # frontend. This still requires an unforwarded loopback socket below.
+        if origin.lower() in {"http://tauri.localhost", "https://tauri.localhost"}:
+            return False
         if _hostname_of(origin) == _hostname_of(lowered.get("host", "")):
             return False
         return not _is_local_hostname(origin)

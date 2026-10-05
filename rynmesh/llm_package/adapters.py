@@ -37,6 +37,7 @@ class LLMAdapter(Protocol):
         self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
         on_delta: Callable[[str], None], messages: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]: ...
+    def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float, on_event: Any = None) -> dict[str, Any]: ...
     def cancel(self, task_id: str) -> bool: ...
     def metrics(self) -> dict[str, Any]: ...
     def shutdown(self) -> None: ...
@@ -76,10 +77,12 @@ class OpenAICompatibleAdapter:
     supports_chat_messages = True
 
     def __init__(self, *, base_url: str, model: str = "", api_key_env: str = "",
-                 api_key: str = "", allow_non_loopback: bool = False,
-                 timeout_s: float = 120.0) -> None:
+                 allow_non_loopback: bool = False, timeout_s: float = 120.0,
+                 api_prefix: str = "/v1", api_key: str = "", request_defaults: dict | None = None) -> None:
         self.base_url = validate_local_url(base_url, allow_non_loopback=allow_non_loopback)
         self.model = model
+        self.api_prefix = api_prefix
+        self.request_defaults = dict(request_defaults or {})
         self.api_key_env = api_key_env
         # A literal loopback token for a Rynmesh-owned runtime (never logged,
         # never echoed in an error). An owner-configured `api_key_env` wins.
@@ -101,10 +104,15 @@ class OpenAICompatibleAdapter:
             headers["Authorization"] = "Bearer " + self.api_key
         return headers
 
+    def _endpoint(self, path: str) -> str:
+        return self.base_url + (self.api_prefix + path[3:] if path.startswith("/v1/") else path)
+
     def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float,
               *, task_id: str = "") -> dict[str, Any]:
+        if payload is not None:
+            payload = {**self.request_defaults, **payload}
         request = urllib.request.Request(
-            self.base_url + path,
+            self._endpoint(path),
             data=json.dumps(payload).encode("utf-8") if payload is not None else None,
             headers=self._headers(), method="POST" if payload is not None else "GET",
         )
@@ -172,7 +180,7 @@ class OpenAICompatibleAdapter:
         if not self.model and not self.health().get("ok"):
             return {"chat_completions": False, "streaming": False, "cancel": "best_effort"}
         request = urllib.request.Request(
-            self.base_url + "/v1/chat/completions",
+            self._endpoint("/v1/chat/completions"),
             data=json.dumps({
                 "model": self.model, "messages": [{"role": "user", "content": "Reply: ok"}],
                 "max_tokens": 2, "stream": True,
@@ -234,6 +242,86 @@ class OpenAICompatibleAdapter:
         finally:
             self._cancelled.discard(task_id)
 
+    def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
+             on_event: Any = None) -> dict[str, Any]:
+        # Runtime staging reads package metadata with stdlib-only Python.
+        # Load structured-chat dependencies only when a chat is requested.
+        from .chat import ChatAccumulator, validate_chat
+
+        body = {**self.request_defaults, **validate_chat(body)}
+        if task_id in self._cancelled:
+            raise AdapterError("task_cancelled")
+        if not self.model and not self.health().get("ok"):
+            raise AdapterError("local API has no usable model")
+        body["model"] = self.model
+        streaming = bool(body.get("stream"))
+        if streaming:
+            body["stream_options"] = {"include_usage": True}
+        started = time.monotonic()
+        deadline = started + timeout_s
+        try:
+            if not streaming:
+                raw = self._json("/v1/chat/completions", body, timeout_s, task_id=task_id)
+                choice = raw["choices"][0]
+                message = choice["message"]
+                usage = raw.get("usage") or {}
+                finish = choice.get("finish_reason") or "stop"
+            else:
+                request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
+                                                 data=json.dumps(body).encode(), headers=self._headers())
+                accumulator = ChatAccumulator()
+                with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                        raise AdapterError("upstream_streaming_not_supported")
+                    with self._lock:
+                        self._active_responses[task_id] = response
+                    total = 0
+                    while True:
+                        line = response.readline(1024 * 1024 + 1)
+                        if not line:
+                            break
+                        if len(line) > 1024 * 1024:
+                            raise AdapterError("stream line exceeds 1 MiB")
+                        total += len(line)
+                        if total > 32 * 1024 * 1024:
+                            raise AdapterError("stream exceeds 32 MiB")
+                        if task_id in self._cancelled:
+                            raise AdapterError("task_cancelled")
+                        if time.monotonic() > deadline:
+                            raise AdapterError("inference timed out")
+                        if not line.startswith(b"data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == b"[DONE]":
+                            break
+                        chunk = json.loads(data)
+                        if "error" in chunk:
+                            raise AdapterError("upstream_stream_error")
+                        accumulator.add(chunk)
+                        if on_event:
+                            on_event(chunk)
+                if not accumulator.finished:
+                    raise AdapterError("upstream_stream_truncated")
+                message, usage, finish = accumulator.message(), accumulator.usage, accumulator.finish_reason
+            if task_id in self._cancelled:
+                raise AdapterError("task_cancelled")
+            if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
+                raise AdapterError("upstream_empty_completion")
+            input_tokens = int(usage.get("prompt_tokens") or max(1, len(json.dumps(body["messages"])) // 4))
+            output_tokens = int(usage.get("completion_tokens") or max(1, len(json.dumps(message)) // 4))
+            return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
+                    "input_tokens": input_tokens, "output_tokens": output_tokens,
+                    "duration_ms": int((time.monotonic() - started) * 1000)}
+        except (OSError, ValueError, KeyError, IndexError) as exc:
+            if task_id in self._cancelled:
+                raise AdapterError("task_cancelled") from exc
+            raise AdapterError("upstream_chat_failed") from exc
+        finally:
+            with self._lock:
+                self._active_responses.pop(task_id, None)
+                self._cancelled.discard(task_id)
+
+
     def infer_stream(
         self, *, prompt: str, max_tokens: int, task_id: str, timeout_s: float,
         on_delta: Callable[[str], None], messages: list[dict[str, str]] | None = None,
@@ -251,7 +339,7 @@ class OpenAICompatibleAdapter:
         if not self.model and not self.health().get("ok"):
             raise AdapterError("local API has no usable model")
         request = urllib.request.Request(
-            self.base_url + "/v1/chat/completions",
+            self._endpoint("/v1/chat/completions"),
             data=json.dumps({
                 "model": self.model,
                 "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
@@ -438,6 +526,9 @@ class OllamaAdapter(OpenAICompatibleAdapter):
 
 
 def adapter_from_manifest(manifest: Any) -> LLMAdapter:
+    if manifest.adapter in {"codex_cli", "claude_cli"}:
+        from .cli_adapter import CLIAgentAdapter
+        return CLIAgentAdapter(manifest.adapter)
     kwargs = {
         "base_url": manifest.base_url, "model": manifest.model,
         "api_key_env": manifest.api_key_env,

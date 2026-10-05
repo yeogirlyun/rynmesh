@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import ipaddress
 import json
+import logging
 import math
 import os
 import socket
@@ -35,6 +37,17 @@ class P2PCapacityError(P2PError):
 
 _FIXED_PORTS: set[int] = set()
 _FIXED_PORTS_LOCK = threading.Lock()
+class P2PTimeoutError(asyncio.TimeoutError):
+    def __init__(self, stage: str):
+        super().__init__(f"P2P {stage} timed out")
+        self.stage = stage
+
+
+async def _connection_phase(awaitable, *, stage: str, timeout_s: float):
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        raise P2PTimeoutError(stage) from exc
 
 
 _MAGIC = b"RYNP2P1"
@@ -137,6 +150,15 @@ def stun_server_from_env() -> tuple[str, int] | None:
 
 
 def new_connection(*, controlling: bool) -> aioice.Connection:
+    if os.environ.get("RYNMESH_P2P_DIAGNOSTICS", "").lower() in {"1", "true"}:
+        # INFO contains candidate-pair transitions, never STUN credentials or
+        # application payloads (those would require DEBUG).
+        logger = logging.getLogger("aioice.ice")
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s"))
+            logger.addHandler(handler)
     # No TURN server is accepted here: strict P2P must never nominate a relay.
     bind_port = _bind_port_from_env()
     connection_type = _FixedPortConnection if bind_port is not None else aioice.Connection
@@ -621,25 +643,49 @@ async def consumer_exchange(
     signed_request: dict[str, Any],
     publish_offer: Callable[[IceSignal], Awaitable[IceSignal]],
     timeout_s: float,
+    on_event: Any = None,
+    connect_timeout_s: float | None = None,
+    on_connected: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     connection = new_connection(controlling=True)
     try:
-        offer = await gather_signal(connection)
-        answer = await publish_offer(offer)
+        # Waiting for the provider must not consume the time reserved for ICE
+        # checks. Each phase is bounded separately; inference keeps its budget.
+        phase_timeout = connect_timeout_s or timeout_s
+        offer = await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase_timeout)
+        answer = await _connection_phase(publish_offer(offer), stage="signaling", timeout_s=phase_timeout)
         validate_distinct_public_egress(offer, answer)
         await apply_remote_signal(connection, answer)
-        await asyncio.wait_for(connection.connect(), timeout=timeout_s)
+        await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase_timeout)
         evidence = selected_pair(connection)
+        if on_connected is not None:
+            on_connected(evidence)
         pending: list[bytes] = []
         evidence["request_bytes"] = await send_json(
             connection, signed_request, timeout_s=timeout_s, pending_out=pending
         )
-        response_id: list[bytes] = []
-        response, response_bytes = await receive_json(
-            connection, timeout_s=timeout_s,
-            initial_packets=pending, message_id_out=response_id,
-        )
-        evidence["response_bytes"] = response_bytes
+        seen: set[bytes] = set()
+        deadline = time.monotonic() + timeout_s
+        evidence["response_bytes"] = 0
+        while True:
+            response_id: list[bytes] = []
+            response, response_bytes = await receive_json(
+                connection, timeout_s=max(0.01, deadline - time.monotonic()),
+                initial_packets=pending, message_id_out=response_id,
+            )
+            pending = []
+            if response_id and response_id[0] in seen:
+                continue
+            if response_id:
+                seen.add(response_id[0])
+            if len(seen) > 131072 or time.monotonic() > deadline:
+                raise P2PError("stream limit exceeded")
+            evidence["response_bytes"] += response_bytes
+            if response.get("payload", {}).get("kind") != "llm_stream":
+                break
+            if on_event is None:
+                raise P2PError("unexpected stream event")
+            await asyncio.to_thread(on_event, response)
         # Linger briefly re-ACKing response retransmits: if our assembly ACKs
         # were all lost, the provider is still resending and would otherwise
         # time out and misrecord the exchange as failed.
@@ -668,20 +714,43 @@ async def provider_exchange(
     publish_answer: Callable[[IceSignal], Any],
     handle_request: Callable[[dict[str, Any]], dict[str, Any]],
     timeout_s: float,
+    handle_stream_request: Any = None,
+    connect_timeout_s: float | None = None,
 ) -> dict[str, Any]:
     connection = new_connection(controlling=False)
     try:
-        answer = await gather_signal(connection)
+        phase_timeout = connect_timeout_s or timeout_s
+        answer = await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase_timeout)
         await apply_remote_signal(connection, offer)
-        publish_answer(answer)
+        async def publish():
+            result = publish_answer(answer)
+            if inspect.isawaitable(result):
+                await result
+        await _connection_phase(publish(), stage="signaling", timeout_s=phase_timeout)
         validate_distinct_public_egress(answer, offer)
-        await asyncio.wait_for(connection.connect(), timeout=timeout_s)
+        await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase_timeout)
         evidence = selected_pair(connection)
         request_id: list[bytes] = []
         request, request_bytes = await receive_json(
             connection, timeout_s=timeout_s, message_id_out=request_id,
         )
-        response = await asyncio.to_thread(handle_request, request)
+        loop = asyncio.get_running_loop()
+
+        def emit(value: dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                send_json(connection, value, timeout_s=min(timeout_s, 15),
+                          reack_message_id=request_id[0] if request_id else None), loop,
+            )
+            try:
+                future.result(timeout=min(timeout_s, 15) + 1)
+            except Exception:
+                future.cancel()
+                raise
+
+        if handle_stream_request:
+            response = await asyncio.to_thread(handle_stream_request, request, emit)
+        else:
+            response = await asyncio.to_thread(handle_request, request)
         evidence["request_bytes"] = request_bytes
         evidence["response_bytes"] = await send_json(
             connection, response, timeout_s=timeout_s,

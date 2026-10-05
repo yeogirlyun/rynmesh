@@ -1,3 +1,4 @@
 fn main() {
+  println!("cargo:rustc-env=RYN_TARGET={}", std::env::var("TARGET").unwrap());
   tauri_build::build()
 }

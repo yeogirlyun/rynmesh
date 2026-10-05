@@ -8,6 +8,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      // Tauri watches Rust sources itself; keep native build output out of Vite.
+      ignored: ["**/src-tauri/**"],
+    },
     proxy: {
       "/api/local": {
         target: "http://127.0.0.1:8791",

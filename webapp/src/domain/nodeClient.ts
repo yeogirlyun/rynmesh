@@ -27,8 +27,34 @@ import type {
   WorkResult,
 } from "./types";
 
+export interface InferenceAccess {
+  base_url: string;
+  keys: { id: string; name: string; revoked: number; output_token_limit: number; used_output_tokens: number }[];
+  models: { id: string; rynmesh: { source: string; model_alias: string; max_output_tokens: number; service_id?: string; provider_peer_id?: string; adapter?: string; capabilities?: string[] } }[];
+  targets: InferenceAccess["models"];
+  aliases: Record<string, string>;
+}
+
+export interface CLIServiceStatus {
+  kind: "codex_cli" | "claude_cli";
+  title: string;
+  installed: boolean;
+  configured: boolean;
+  publication_enabled: boolean;
+  online: boolean;
+  api_text_only: boolean;
+  service_id: string;
+}
+
+export interface CLIServicesStatus {
+  services: CLIServiceStatus[];
+  personal_space_required: boolean;
+  personal_space_ready: boolean;
+}
+
 export interface LLMServiceRecord {
   network_id?: string;
+  local_only?: boolean;
   peer_id: string;
   node_name?: string;
   online: boolean;
@@ -39,6 +65,8 @@ export interface LLMServiceRecord {
   service: {
     package_id: string;
     model_alias: string;
+    runtime?: string;
+    adapter?: "codex_cli" | "claude_cli" | string;
     capabilities: string[];
     context_window: number;
     max_output_tokens: number;
@@ -57,6 +85,7 @@ export interface LLMServiceRecord {
 export interface LLMOrderResult {
   task_id: string;
   state: string;
+  provider_peer_id?: string;
   output?: string;
   model_alias?: string;
   input_tokens?: number;
@@ -66,7 +95,9 @@ export interface LLMOrderResult {
   error_code?: string;
   created_at?: string;
   updated_at?: string;
-  transport?: "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
+  connection_phase?: "connecting_direct" | "connecting_p2p" | "connecting_relay" | "connected" | "failed";
+  connection_attempts?: { transport: string; error_code: string }[];
+  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
   transport_evidence?: {
     relay_used?: boolean;
     public_nat_traversal_required?: boolean;
@@ -172,6 +203,9 @@ export interface LLMHardwareReport {
 }
 
 export interface NodeClient {
+  spaceStatus(): Promise<import("./space").SpaceStatus>;
+  spaceAction(action: string, body?: Record<string, unknown>): Promise<import("./space").SpaceStatus>;
+  spaceBackup(password: string): Promise<Record<string, unknown>>;
   mode: "live" | "fixture";
   getNodeStatus(): Promise<NodeStatus>;
   getRegistryStatus(): Promise<RegistryStatus>;
@@ -186,6 +220,14 @@ export interface NodeClient {
   }): Promise<{ work_order_id: string; order: WorkOrder }>;
   listWorkResults(filters?: { work_order_id?: string; status?: string; network_id?: string }): Promise<WorkResult[]>;
   listLLMServices(networkId?: string): Promise<LLMServiceRecord[]>;
+  getInferenceAccess(): Promise<InferenceAccess>;
+  getCLIServices(): Promise<CLIServicesStatus>;
+  getCLIModels(kind: "codex_cli"): Promise<{ models: { id: string; name: string; default: boolean }[] }>;
+  setupCLIService(kind: CLIServiceStatus["kind"]): Promise<{ configured: boolean }>;
+  setCLISharing(kind: CLIServiceStatus["kind"], enabled: boolean): Promise<{ publication_enabled: boolean }>;
+  setInferenceModelAlias(name: string, target: string): Promise<{ name: string; target: string }>;
+  createInferenceKey(name: string, outputTokenLimit: number): Promise<{ id: string; key: string }>;
+  revokeInferenceKey(id: string): Promise<{ revoked: boolean }>;
   getLLMServiceStatus(): Promise<LLMProviderStatus>;
   publishLLMService(req?: { network_id?: string; benchmark?: boolean }): Promise<Record<string, unknown>>;
   pauseLLMService(): Promise<LLMProviderStatus>;
@@ -200,8 +242,10 @@ export interface NodeClient {
   ): Promise<Record<string, unknown>>;
   getTaskBalance(): Promise<TaskBalanceSummary>;
   submitLLMOrder(req: {
+    response_mode?: "stream-v1" | "complete-v1";
     task_id?: string;
     idempotency_key?: string;
+    cli_model?: string;
     network_id?: string;
     provider_peer_id: string;
     service_id: string;
@@ -212,6 +256,7 @@ export interface NodeClient {
   getLLMOrder(taskId: string): Promise<LLMOrderResult>;
   cancelLLMOrder(taskId: string): Promise<LLMOrderResult>;
   listLLMOrders(): Promise<LLMOrderResult[]>;
+  listLLMProviderOrders(): Promise<LLMOrderResult[]>;
   getLLMPrivacy(): Promise<LLMPrivacySettings>;
   updateLLMPrivacy(retentionSeconds: LLMPrivacySettings["result_retention_seconds"]): Promise<LLMPrivacySettings>;
   clearLLMOrders(): Promise<{ ok: boolean; removed: number }>;

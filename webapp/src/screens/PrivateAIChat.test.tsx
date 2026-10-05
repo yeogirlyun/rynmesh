@@ -1,41 +1,43 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import i18n from "../i18n";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
-import { clearConversations, type LLMConversation } from "../domain/llmConversationStore";
+import { clearConversations } from "../domain/llmConversationStore";
 import PrivateAIChat from "./PrivateAIChat";
-import { askHistory, AskRequestError } from "../domain/askHistory";
+import { http, HttpResponse } from "msw";
+import { server } from "../test/server";
+import { setNasHandoff } from "../domain/nas";
+import type { LLMServiceRecord, NodeClient } from "../domain/nodeClient";
 
 beforeEach(async () => {
+  Object.keys(localStorage).filter(key => key.startsWith("ryn-ai-services-v1:")).forEach(key => localStorage.removeItem(key));
+  setNasHandoff(null);
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
 });
-afterEach(() => vi.restoreAllMocks());
 
-function liveHistory() {
-  const rows = new Map<string, LLMConversation>();
-  vi.spyOn(askHistory, "list").mockImplementation(async () => [...rows.values()]);
-  vi.spyOn(askHistory, "run").mockImplementation(async (taskId) => ({ task_id: taskId, conversation_id: "original", state: "succeeded", cancel_requested: false }));
-  vi.spyOn(askHistory, "beginRun").mockImplementation(async (request) => {
-    const prior = rows.get(request.conversation_id)!;
-    rows.set(prior.id, { ...prior, revision: (prior.revision ?? 0) + 1, messages: [
-      { id: "question", taskId: request.task_id, role: "user", content: request.question, status: "complete", createdAt: prior.createdAt },
-      { id: "answer", taskId: request.task_id, role: "assistant", content: "An answer with [1].", status: "complete", createdAt: prior.createdAt, contextIds: ["import:imp_" + "b".repeat(64)], contextBytes: [1000], promptSha256: request.prompt_sha256 },
-    ] });
-    return { task_id: request.task_id, conversation_id: prior.id, state: "succeeded", cancel_requested: false };
-  });
-  vi.spyOn(askHistory, "preview").mockImplementation(async (row, question) => ({ conversation_id: row.id, revision: row.revision ?? 1,
-    provider_peer_id: row.providerPeerId, service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: question, prompt_sha256: "fixture",
-    context_window: 4096, input_token_upper_estimate: question.length, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 0, sources: [] }));
-  return vi.spyOn(askHistory, "save").mockImplementation(async (row) => {
-    const saved = { ...row, revision: (row.revision ?? 0) + 1 }; rows.set(row.id, saved); return saved;
-  });
-}
+it("keeps conversation history and user text intact when changing UI language", async () => {
+  const { user } = renderChat();
+  await screen.findByRole("heading", { name: "AI workspace" });
+  await user.type(screen.getByLabelText("Message AI chat"), "My English question");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await screen.findByText(/Fixture response for: My English question/);
+  expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage("zh-CN"); });
+  expect(screen.getByRole("heading", { name: "今天" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+  expect(within(screen.getByRole("complementary", { name: "AI 对话" })).getByText("My English question", { selector: "strong" })).toBeInTheDocument();
+  await act(async () => { await i18n.changeLanguage("en"); });
+  expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
+});
 
-function renderChat(mode: "fixture" | "live" = "fixture") {
+function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main", services?: LLMServiceRecord[], configure?: (client: NodeClient) => void) {
   const client = makeFixtureNodeClient();
-  client.mode = mode;
+  if (services) client.listLLMServices = vi.fn(async () => services);
+  configure?.(client);
   const submit = vi.spyOn(client, "submitLLMOrder");
   const confirm = vi.fn();
   const context: AppOutletContext = {
@@ -49,7 +51,7 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
     peers: [], refreshShell: vi.fn(async () => undefined), confirm, notify: vi.fn(),
   };
   const result = render(
-    <MemoryRouter initialEntries={["/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main"]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<Outlet context={context} />}>
           <Route path="/services/private-ai/chat" element={<PrivateAIChat />} />
@@ -60,266 +62,249 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
   return { ...result, client, confirm, submit, user: userEvent.setup() };
 }
 
-// A running task resumed from history (as opposed to one just submitted in
-// this session): save a "running" conversation directly, then unmount and
-// remount so the fresh render's initial load picks it up, matching how a
-// reopened tab would observe it.
-async function setupResumedRunningTask(taskId = "task_original") {
-  const save = liveHistory();
-  const first = renderChat("live");
-  await screen.findByRole("heading", { name: "Ask Ryn" });
-  const prior = save.mock.calls[0][0];
-  const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId, createdAt: prior.createdAt }] };
-  await save(running);
-  first.unmount();
-  const rendered = renderChat("live");
-  expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
-  return { save, ...rendered };
-}
-
 describe("Private AI chat", () => {
-  it("shows a transient partial answer then replaces it with the node archive", async () => {
-    class Stream extends EventTarget {
-      static latest: Stream;
-      onerror: (() => void) | null = null;
-      close = vi.fn();
-      constructor() { super(); Stream.latest = this; }
-    }
-    vi.stubGlobal("EventSource", Stream);
-    try {
-      const { save, submit, unmount } = await setupResumedRunningTask("task_streaming");
-      const savesBefore = save.mock.calls.length;
-      act(() => Stream.latest.dispatchEvent(new MessageEvent("delta", { data: JSON.stringify({ sequence: 0, delta: "Partial visible now" }) })));
-      expect(await screen.findByText("Partial visible now")).toBeInTheDocument();
-      expect(screen.getByText("Generating · partial answer")).toBeInTheDocument();
-      expect(save.mock.calls).toHaveLength(savesBefore);
-      expect(submit).not.toHaveBeenCalled();
-      expect(askHistory.beginRun).not.toHaveBeenCalled();
-      const running = save.mock.calls[1][0];
-      await save({ ...running, messages: [{ ...running.messages[0], content: "Saved final answer", status: "complete" }] });
-      expect(await screen.findByText("Saved final answer", {}, { timeout: 3000 })).toBeInTheDocument();
-      expect(screen.queryByText("Partial visible now")).not.toBeInTheDocument();
-      expect(Stream.latest.close).toHaveBeenCalled();
-      unmount();
-    } finally { vi.unstubAllGlobals(); }
-  });
-
-  it("restores a node-owned running task and reads its archived answer after reopening", async () => {
-    const save = liveHistory();
-    const first = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    const prior = save.mock.calls[0][0];
-    const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId: "task_original", createdAt: prior.createdAt }] };
-    await save(running);
-    first.unmount();
-    const reopened = renderChat("live");
-    expect(await screen.findByText("Waiting on the node")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
-    await save({ ...running, messages: [{ ...running.messages[0], content: "Archived while the page was closed", status: "complete" }] });
-    expect(await screen.findByText("Archived while the page was closed", {}, { timeout: 3000 })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
-    expect(reopened.submit).not.toHaveBeenCalled();
-    expect(askHistory.beginRun).not.toHaveBeenCalled();
-  });
-
-  it("shows source truncation and confirms its fingerprint before node dispatch", async () => {
-    liveHistory();
-    const { submit, user, confirm } = renderChat("live");
-    submit.mockImplementation(async (request) => ({ task_id: request.task_id!, state: "succeeded", output: "An answer with [1]." }));
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    vi.mocked(askHistory.preview).mockImplementation(async (row) => ({ conversation_id: row.id, revision: row.revision!, provider_peer_id: row.providerPeerId,
-      service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: "A verified prompt with bounded untrusted article material", prompt_sha256: "a".repeat(64),
-      context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
-      ai_permission: { relationship_id: "d".repeat(32), revision: 7 },
-      sources: [{ library_id: "import:imp_" + "b".repeat(64), title: "Article", source_url: "https://example.test/article", sha256: "c".repeat(64), extraction_truncated: false,
-        text_bytes: 10000, source_number: 1, included_bytes: 1000, budget_truncated: true }] }));
-    await user.type(screen.getByLabelText("Message Private AI"), "Summarize this article");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
-    const review = confirm.mock.calls[0][0];
-    expect(review.details[0]).toEqual({ label: "Question", value: "Summarize this article" });
-    expect(review.details[1].value).toContain("TRUNCATED");
-    expect(review.body).toContain("3 older history messages omitted");
-    expect(submit).not.toHaveBeenCalled();
-    await act(() => review.onConfirm());
-    expect(askHistory.beginRun).toHaveBeenCalledWith(expect.objectContaining({ prompt_sha256: "a".repeat(64), question: "Summarize this article", ai_permission: { relationship_id: "d".repeat(32), revision: 7 } }));
-    expect(submit).not.toHaveBeenCalled();
-    expect(await screen.findByText("An answer with [1].")).toBeInTheDocument();
-    expect(screen.getByText("Sources supplied for this answer")).toBeInTheDocument();
-  });
-
-  it("keeps input and does not submit when node history cannot be saved", async () => {
-    const save = liveHistory();
-    const { submit, user, confirm } = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(409, "Node history unavailable"));
-    await user.type(screen.getByLabelText("Message Private AI"), "Keep this draft");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
-    await act(() => confirm.mock.calls[0][0].onConfirm());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Node history unavailable");
-    expect(screen.getByLabelText("Message Private AI")).toHaveValue("Keep this draft");
-    expect(submit).not.toHaveBeenCalled();
-    expect(save).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the reviewed request retryable and frees the composer when the node times out", async () => {
-    const save = liveHistory();
-    const { submit, user, confirm } = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(0,
-      "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.", "ask_request_timeout"));
-    await user.type(screen.getByLabelText("Message Private AI"), "Question that times out");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
-    await act(() => confirm.mock.calls[0][0].onConfirm());
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.",
-    );
-    expect(screen.getByRole("button", { name: "Retry same reviewed request" })).toBeEnabled();
-    expect(submit).not.toHaveBeenCalled();
-    expect(save).toHaveBeenCalledTimes(1);
-  });
-
-  it("reuses the reviewed task identity after a lost response and never calls legacy submission", async () => {
-    liveHistory();
-    const { submit, user, confirm } = renderChat("live");
-    vi.mocked(askHistory.beginRun).mockRejectedValue(new Error("Response lost"));
-    const check = vi.mocked(askHistory.run).mockRejectedValue(new Error("Unreachable"));
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    await user.type(screen.getByLabelText("Message Private AI"), "Original request");
-    await user.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
-    expect(submit).not.toHaveBeenCalled();
-    await act(() => confirm.mock.calls[0][0].onConfirm());
-    const retry = await screen.findByRole("button", { name: "Check original task" });
-    const request = vi.mocked(askHistory.beginRun).mock.calls[0][0];
-    const task = request.task_id;
-    expect(task).toMatch(/^task_/);
-    await user.click(retry);
-    expect(check).toHaveBeenCalledWith(task);
-    await user.click(screen.getByRole("button", { name: "Retry same reviewed request" }));
-    expect(askHistory.beginRun).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(askHistory.beginRun).mock.calls[1][0]).toEqual(request);
-    expect(submit).not.toHaveBeenCalled();
-  });
-
-  it("recovers the composer when the node has no record of the task being cancelled", async () => {
-    const { save, user } = await setupResumedRunningTask();
-    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
-    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.", "ask_run_not_found"));
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
-    // A resumed-from-history running task keeps `isSending` true via the
-    // stale message status alone; recovery must clear that too, or the
-    // composer stays stuck on "Stop generating" forever.
-    expect(await screen.findByText("The node has no record of this task; nothing is running there.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-    // The rewrite went through the normal save path (revision-checked),
-    // not a purely local patch.
-    expect(save).toHaveBeenCalled();
-  });
-
-  it("frees the composer once a confirmed cancellation is reflected in refreshed history", async () => {
-    const { save, user } = await setupResumedRunningTask("task_running");
-    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
-    const running = save.mock.calls[1][0] as LLMConversation;
-    const cancelRun = vi.spyOn(askHistory, "cancelRun").mockImplementation(async (taskId) => {
-      await save({ ...running, messages: [{ ...running.messages[0], status: "cancelled",
-        content: "Cancellation was recorded. The provider may still be finishing computation." }] });
-      return { task_id: taskId, conversation_id: running.id, state: "cancelled", cancel_requested: true };
+  it.each([false, true])("opens cached history before slow discovery and preserves new work (local=%s)", async (localOnly) => {
+    const first = renderChat(undefined, undefined, client => {
+      const discover = client.listLLMServices;
+      client.listLLMServices = async network => (await discover(network)).map(service => ({ ...service, local_only: localOnly }));
     });
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(cancelRun).toHaveBeenCalledWith("task_running");
-    expect(await screen.findByText("Cancellation was recorded. The provider may still be finishing computation.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await first.user.type(await screen.findByLabelText("Message AI chat"), "Cached private question");
+    await first.user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText(/Fixture response for: Cached private question/);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
+    const services = await first.client.listLLMServices();
+    first.unmount();
+
+    let finish!: (services: LLMServiceRecord[]) => void;
+    const pending = new Promise<LLMServiceRecord[]>(resolve => { finish = resolve; });
+    const second = renderChat(undefined, undefined, client => { client.listLLMServices = vi.fn(() => pending); });
+    await screen.findByText(/Fixture response for: Cached private question/);
+    expect(screen.getByText("Refreshing service status…")).toBeInTheDocument();
+    expect(screen.queryByText("Opening AI chat")).not.toBeInTheDocument();
+    expect(JSON.stringify(localStorage)).not.toContain("Cached private question");
+    await second.user.click(screen.getByRole("button", { name: "New conversation" }));
+    await second.user.type(screen.getByLabelText("Message AI chat"), "Draft during refresh");
+    await act(async () => { finish(services); });
+    await screen.findByText("Service available");
+    expect(screen.getByLabelText("Message AI chat")).toHaveValue("Draft during refresh");
+    expect(screen.queryByText(/Fixture response for: Cached private question/)).not.toBeInTheDocument();
+    expect(second.submit).not.toHaveBeenCalled();
   });
 
-  it("shows the cancellation as unconfirmed and leaves Stop generating in place when cancelRun fails for a reason other than a missing task", async () => {
-    const { user } = await setupResumedRunningTask("task_running");
-    const cancelRun = vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(500, "The node is unreachable"));
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(cancelRun).toHaveBeenCalledWith("task_running");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Cancellation has not been confirmed. The task may still be running; check it again.");
-    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
-    expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
+  it("opens a cached default workspace without waiting for settings", async () => {
+    const path = "/services/private-ai/chat";
+    const first = renderChat(path);
+    await screen.findByLabelText("Message AI chat");
+    first.unmount();
+    const second = renderChat(path, undefined, client => {
+      client.getSettings = vi.fn(() => new Promise<never>(() => {}));
+      client.listLLMServices = vi.fn(() => new Promise<never>(() => {}));
+    });
+    await screen.findByLabelText("Message AI chat");
+    expect(second.client.getSettings).toHaveBeenCalledTimes(1);
+    expect(second.client.listLLMServices).not.toHaveBeenCalled();
+    expect(screen.queryByText("Opening AI chat")).not.toBeInTheDocument();
   });
 
-  it("recovers a stale running task after one revision conflict, by retrying against the refreshed revision", async () => {
-    const { save, user } = await setupResumedRunningTask();
-    await user.type(screen.getByLabelText("Message Private AI"), "Ready to retry");
-    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
-    save.mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"));
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The node has no record of this task, so nothing is running there. The request was not confirmed; you can send it again.");
-    expect(screen.queryByRole("button", { name: "Stop generating" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+  it("keeps cached history when discovery fails and disables sending until recovery", async () => {
+    const first = renderChat();
+    await screen.findByLabelText("Message AI chat");
+    first.unmount();
+    const second = renderChat(undefined, undefined, client => {
+      client.listLLMServices = vi.fn().mockRejectedValue(new Error("offline"));
+    });
+    await screen.findByLabelText("Message AI chat");
+    await screen.findByText("Offline");
+    await second.user.type(screen.getByLabelText("Message AI chat"), "Keep this draft");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "Could not load AI services" })).not.toBeInTheDocument();
+    expect(second.submit).not.toHaveBeenCalled();
   });
 
-  it("shows an explicit error and leaves Stop generating in place when recovery fails twice", async () => {
-    const { save, user } = await setupResumedRunningTask();
-    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
-    save
-      .mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"))
-      .mockRejectedValueOnce(new AskRequestError(409, "This conversation changed in another view.", "ask_revision_conflict"));
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The node could not confirm clearing this task. Reload history and try again.");
-    // Honest state: recovery never confirmed, so the task is still shown running.
-    expect(screen.getByRole("button", { name: "Stop generating" })).toBeInTheDocument();
+  it("does not use cached services for another requested provider or network", async () => {
+    const first = renderChat();
+    await screen.findByLabelText("Message AI chat");
+    first.unmount();
+    const missing = renderChat("/services/private-ai/chat?peer=missing&service=missing&network=rynmesh-main", []);
+    await screen.findByRole("heading", { name: "The selected AI service is unavailable" });
+    expect(screen.queryByLabelText("Message AI chat")).not.toBeInTheDocument();
+    missing.unmount();
+    renderChat("/services/private-ai/chat?network=another-network", []);
+    await screen.findByRole("heading", { name: "The selected AI service is unavailable" });
+    expect(screen.queryByLabelText("Message AI chat")).not.toBeInTheDocument();
   });
 
-  it("does not throw out of the click handler when the recovery refresh fails, and keeps the prior view", async () => {
-    const { user } = await setupResumedRunningTask();
-    vi.spyOn(askHistory, "cancelRun").mockRejectedValue(new AskRequestError(404, "The node has no saved receipt for this task.", "ask_run_not_found"));
-    vi.mocked(askHistory.list).mockRejectedValueOnce(new Error("The node could not be reached"));
-    await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("The node could not confirm clearing this task. Reload history and try again.");
-    expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
+  it("recovers from a discovery error with Retry without sending a request", async () => {
+    const { client, submit, user } = renderChat();
+    vi.spyOn(client, "listLLMServices").mockRejectedValueOnce(new Error("registry timeout"));
+    expect(await screen.findByRole("heading", { name: "Could not load AI services" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
   });
 
-  it("clears the poll-unreachable error once the node responds again, without touching other errors", async () => {
-    liveHistory();
-    renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
-    await screen.findByLabelText("Message Private AI");
-    // The 1.5s poll runs on a real interval created at mount; drive it with
-    // real time (as the existing node-owned-task test above does) rather
-    // than fake timers, since the interval is already scheduled before this
-    // test gets a chance to install fake timers.
-    vi.mocked(askHistory.list).mockImplementationOnce(async () => { throw new Error("offline"); });
-    expect(await screen.findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent(
-      "The node could not be reached. Saved tasks continue on the node; no new request was submitted.",
+  it("automatically recovers when the requested service reappears", async () => {
+    const { client, submit, unmount } = renderChat();
+    const discover = vi.spyOn(client, "listLLMServices").mockResolvedValueOnce([]);
+    const timeout = vi.spyOn(window, "setTimeout");
+    try {
+      await screen.findByRole("heading", { name: "The selected AI service is unavailable" });
+      const retry = timeout.mock.calls.find(call => call[1] === 10000)?.[0];
+      expect(retry).toBeTypeOf("function");
+      await act(async () => { (retry as () => void)(); });
+      expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
+      expect(discover).toHaveBeenCalledTimes(2);
+      expect(submit).not.toHaveBeenCalled();
+    } finally {
+      unmount();
+      timeout.mockRestore();
+    }
+  });
+
+  it("keeps Codex context at the origin without creating a provider conversation", async () => {
+    const service: LLMServiceRecord = {
+      peer_id: "local-codex", node_name: "This PC", local_only: true, online: true,
+      service: { package_id: "codex-cli", model_alias: "Codex CLI", adapter: "codex_cli",
+        capabilities: ["text-generation"], context_window: 32768, max_output_tokens: 256,
+        pricing: { currency: "DEV_TASK_BALANCE", input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 0 },
+        privacy: { compute_node_sees_plaintext: true } },
+    };
+    await clearConversations("local-codex::codex-cli");
+    const { client, submit, user } = renderChat("/services/private-ai/chat?peer=local-codex&service=codex-cli", [service]);
+    vi.spyOn(client, "getCLIModels").mockResolvedValue({ models: [
+      { id: "model-a", name: "Model A", default: true }, { id: "model-b", name: "Model B", default: false },
+    ] });
+    submit.mockResolvedValue({ task_id: "private-task", state: "succeeded", output: "Private answer" });
+    await waitFor(() => expect(screen.getByLabelText("Codex model")).toBeEnabled());
+    await user.click(screen.getByLabelText("Codex model"));
+    await user.click(screen.getByRole("option", { name: "Model B" }));
+    expect(screen.getByLabelText("AI service")).toHaveTextContent("ChatGPT");
+    await user.type(screen.getByLabelText("Message AI chat"), "Remember kumquat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Private answer");
+    await user.click(screen.getByText("Conversation details"));
+    expect(screen.queryByText("Copy session ID")).not.toBeInTheDocument();
+    const first = submit.mock.calls[0][0];
+    expect(first.cli_model).toBe("model-b");
+    expect(first.prompt).toContain("Remember kumquat");
+    expect(first).not.toHaveProperty("conversation_id");
+    await user.type(screen.getByLabelText("Message AI chat"), "Which word?");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
+      cli_model: "model-b", prompt: expect.stringContaining("Which word?"),
+    })));
+    expect(submit.mock.lastCall![0].prompt).toContain("Remember kumquat");
+    expect(submit.mock.lastCall![0].prompt).toContain("Private answer");
+    expect(submit.mock.lastCall![0]).not.toHaveProperty("conversation_id");
+  });
+  it("lets a selected CLI service use the encrypted LAN-first automatic route", async () => {
+    const service: LLMServiceRecord = {
+      peer_id: "home", node_name: "Home PC", online: true,
+      service: { package_id: "codex-cli", model_alias: "Codex CLI", adapter: "codex_cli",
+        capabilities: ["text-generation"], context_window: 32768, max_output_tokens: 256,
+        pricing: { currency: "DEV_TASK_BALANCE", input_per_1k: 0.001, output_per_1k: 0.002, minimum: 0.001, maximum_per_task: 1 },
+        privacy: { compute_node_sees_plaintext: true },
+      },
+    };
+    const { client, submit, user } = renderChat("/services/private-ai/chat?peer=home&service=codex-cli", [service]);
+    submit.mockResolvedValue({ task_id: "cli-task", state: "succeeded", output: "ready" });
+    vi.spyOn(client, "getLLMOrder").mockResolvedValue({ task_id: "cli-task", state: "succeeded", output: "ready" });
+    await screen.findByRole("heading", { name: "AI workspace" });
+    await user.type(screen.getByLabelText("Message AI chat"), "hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ service_id: "codex-cli", transport: "auto" })));
+  });
+  it("requires Send before passing a NAS document to the selected model and saves the result", async () => {
+    const marker = "NAS_DOCUMENT_ACCEPTANCE_42";
+    let saved = "";
+    server.use(
+      http.get("*/api/local/plugins/nas/sources/home/content", () => HttpResponse.json({ name: "report.txt", text: marker })),
+      http.put("*/api/local/plugins/nas/sources/home/content", async ({ request }) => { saved = await request.text(); return HttpResponse.json({ ok: true }); }),
     );
-    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 3000 });
-  }, 10_000);
-
+    setNasHandoff({ sourceId: "home", sourceName: "Home NAS", path: "report.txt", text: marker, writable: true });
+    const { submit, user, confirm } = renderChat();
+    await screen.findByLabelText("Message AI chat");
+    expect(submit).not.toHaveBeenCalled();
+    expect(window.location.href).not.toContain(marker);
+    expect(JSON.stringify(localStorage)).not.toContain(marker);
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ prompt: expect.stringContaining(marker) })));
+    await user.click(await screen.findByRole("button", { name: "Save to NAS" }));
+    await confirm.mock.calls.at(-1)?.[0].onConfirm();
+    expect(saved).toBe((await submit.mock.results[0].value).output);
+  });
+  it("does not send a NAS document after the backend disables access", async () => {
+    server.use(http.get("*/api/local/plugins/nas/sources/home/content", () => HttpResponse.json({ detail: "nas_plugin_disabled" }, { status: 409 })));
+    setNasHandoff({ sourceId: "home", sourceName: "Home NAS", path: "report.txt", text: "secret", writable: false });
+    const { submit, user } = renderChat();
+    await screen.findByLabelText("Message AI chat");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("nas plugin disabled");
+    expect(submit).not.toHaveBeenCalled();
+  });
+  it("shows peer connection progress and explains a UDP timeout", async () => {
+    const { client, submit, user } = renderChat();
+    submit.mockResolvedValue({ task_id: "connecting-test", state: "running" });
+    const poll = vi.spyOn(client, "getLLMOrder");
+    poll.mockResolvedValueOnce({ task_id: "connecting-test", state: "running", connection_phase: "connecting_p2p" });
+    poll.mockResolvedValue({ task_id: "connecting-test", state: "failed", error_code: "p2p_connection_timed_out" });
+    await screen.findByRole("heading", { name: "AI workspace" });
+    await user.type(screen.getByLabelText("Message AI chat"), "Connect to my home PC");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("Establishing peer connection…")).toBeInTheDocument();
+    expect(await screen.findByText(/Could not connect directly to this device/)).toBeInTheDocument();
+    expect(await screen.findByText("Request failed")).toBeInTheDocument();
+    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ transport: "auto" }));
+  });
+  it("replaces direct-route waiting with the returned answer and releases the composer", async () => {
+    const { client, submit, user } = renderChat();
+    submit.mockResolvedValue({ task_id: "lan-reply", state: "queued" });
+    let complete = false;
+    vi.spyOn(client, "getLLMOrder").mockImplementation(async () => complete
+      ? { task_id: "lan-reply", state: "succeeded", output: "Reply received from the Mac", transport: "peer_http_direct" }
+      : { task_id: "lan-reply", state: "running", connection_phase: "connecting_direct" });
+    await user.type(await screen.findByLabelText("Message AI chat"), "Hello Mac");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Waiting for the device's reply…");
+    // The elapsed label ticks once per second. CI scheduling may skip the
+    // exact "1s" frame; still require positive elapsed time before completing.
+    await screen.findByText(/Waited [1-9]\d*s/, {}, { timeout: 3500 });
+    complete = true;
+    await screen.findByText("Reply received from the Mac");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument());
+    expect(screen.queryByLabelText("AI is thinking")).not.toBeInTheDocument();
+  });
+  it("does not silently choose another provider when the requested device is missing", async () => {
+    const { submit } = renderChat('/services/private-ai/chat?peer=missing&service=missing');
+    expect(await screen.findByRole('heading', { name: 'The selected AI service is unavailable' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument();
+    expect(submit).not.toHaveBeenCalled();
+  });
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
 
-    const composer = screen.getByLabelText("Message Private AI");
+    const composer = screen.getByLabelText("Message AI chat");
     await user.type(composer, "Why is this request private?");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Why is this request private/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "New chat" }));
-    await user.type(await screen.findByLabelText("Message Private AI"), "Draft a launch email");
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.type(composer, "Draft a launch email");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Draft a launch email/)).toBeInTheDocument();
     expect(submit).toHaveBeenCalledTimes(2);
 
     await user.type(screen.getByLabelText("Search conversations"), "private");
     expect(screen.getByText("Why is this request private?", { selector: "strong" })).toBeInTheDocument();
-    expect(screen.queryByText("Draft a launch email", { selector: "strong" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "AI conversations" })).queryByText("Draft a launch email", { selector: "strong" })).not.toBeInTheDocument();
   });
 
   it("includes prior messages in a follow-up and requests destructive confirmation before clearing", async () => {
     const { confirm, submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
-    const composer = screen.getByLabelText("Message Private AI");
+    expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
+    const composer = screen.getByLabelText("Message AI chat");
     await user.type(composer, "First question");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText(/Fixture response for: First question/);

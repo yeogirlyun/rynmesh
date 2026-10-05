@@ -1,0 +1,20 @@
+{
+  "date": "2026-09-24",
+  "timezone": "Asia/Hong_Kong",
+  "platform": "Windows",
+  "branch": "feature/personal-ai-workspace",
+  "production_code_commit": "48710c0",
+  "scope": "Personal AI workspace development since September 20; older v070 integration excluded",
+  "checks": [
+    {"name": "frontend_all", "command": "npm --prefix webapp test -- --reporter=dot", "status": "passed", "test_files": 27, "passed": 136, "duration_seconds": 75.67},
+    {"name": "backend_targeted", "status": "passed", "test_files": 16, "passed": 253, "duration_seconds": 109.66, "files": ["test_inference_privacy.py", "test_cli_agent.py", "test_llm_package.py", "test_llm_hardening.py", "test_inference_api.py", "test_llm_auto_connect.py", "test_ai_sources.py", "test_nas.py", "test_native_model.py", "test_lan_discovery.py", "test_macos_addresses.py", "test_personal_space.py", "test_async_private_answer.py", "test_peer_health.py", "test_peer_health_responsiveness.py", "test_frozen_cli_worker.py"]},
+    {"name": "real_codex_isolation", "command": ".venv/Scripts/python.exe -m pytest tests/test_codex_isolation_live.py -q", "environment": {"RYNMESH_TEST_CODEX_BINARY": "1"}, "status": "passed", "passed": 2, "duration_seconds": 3.34, "model": "local fake model; no cloud inference"},
+    {"name": "frontend_production_build", "command": "npm --prefix webapp run build", "status": "passed", "advisory": "Main JavaScript chunk exceeds 500 kB"},
+    {"name": "source_diff_whitespace", "command": "git diff 7009670 HEAD --check -- rynmesh tests scripts webapp deploy .gitattributes pyproject.toml", "status": "passed", "note": "Historical Markdown retains hard line breaks and two EOF blank-line notices"},
+    {"name": "source_branch_ancestry", "status": "passed", "branches": ["codex/nas-plugin", "development/personal-first-implementation", "development/personal-first-ui", "codex/local-inference-api-p2p"]}
+  ],
+  "not_run": ["full backend suite", "Rust native tests", "paid cloud inference", "live NAS writes", "cross-device deployment", "installer rebuild or publication"],
+  "older_v070_merge": {"branch": "codex/v070-followup-integration", "commit": "397ad18", "conflicting_files": 36, "status": "trial merge aborted; original branch retained"},
+  "main_updated": false,
+  "pull_request_created": false
+}

@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import {
   ArrowRight,
   Bot,
@@ -10,6 +11,8 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ServiceArt } from "../personal/components";
+import { personalHref } from "../personal/model";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
 import type { JobCapacity } from "../domain/types";
@@ -52,10 +55,10 @@ function loadRecentServices(): RecentService[] {
 }
 
 const filters: Array<{ id: ServiceCategory; label: string }> = [
-  { id: "all", label: "All" },
+  { id: "all", get label() { return tr("All"); } },
   { id: "ai", label: "AI" },
-  { id: "creative", label: "Creative" },
-  { id: "network", label: "Network" },
+  { id: "creative", get label() { return tr("Creative"); } },
+  { id: "network", get label() { return tr("Network"); } },
 ];
 
 function llmHref(service: LLMServiceRecord, networkId: string, clientMode: "live" | "fixture") {
@@ -73,6 +76,7 @@ function findVideoCapacity(capacities: JobCapacity[]) {
 }
 
 export default function ServicesCatalog() {
+  const uiLanguage = useUILanguage();
   const { client } = useAppContext();
   const navigate = useNavigate();
   const network = useServiceOrder({ scope: client, key: "service-network", intervalMs: 15_000,
@@ -106,47 +110,47 @@ export default function ServicesCatalog() {
     return [
       {
         id: "private-ai",
-        title: "Private AI",
-        description: "Have a private conversation with a language model.",
+        title: tr("AI chat"),
+        description: tr("Talk to an AI model running on a connected device."),
         category: "ai",
         experience: "Chat",
-        price: llm ? `From ${llmPrice} ${llmCurrency || "credits"}` : "No provider online",
-        action: "Open chat",
+        price: llm ? tr("From {{v0}} {{v1}}", { v0: llmPrice, v1: tr(llmCurrency || "credits") }) : tr("No provider online"),
+        action: tr("Open chat"),
         available: Boolean(llm?.online),
         icon: Bot,
         href: llm ? llmHref(llm, networkId, client.mode) : "/services/manage#private-ai",
       },
       {
         id: "video-rendering",
-        title: "Video rendering",
-        description: "Create and render video clips with an available provider.",
+        title: tr("Video rendering"),
+        description: tr("Create and render video clips with an available provider."),
         category: "creative",
         experience: "Workflow",
-        price: video ? `${videoPrice} credits` : "No provider online",
-        action: "Create video",
+        price: video ? tr("{{count}} credits", { count: videoPrice }) : tr("No provider online"),
+        action: tr("Create video"),
         available: Boolean(video),
         icon: Film,
         href: `/services/video-rendering${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
       {
         id: "secure-web-access",
-        title: "Secure web access",
-        description: "Browse through a trusted encrypted route.",
+        title: tr("Secure web access"),
+        description: tr("Browse through a trusted encrypted route."),
         category: "network",
         experience: "Connection",
-        price: "Price shown before connecting",
-        action: "Connect",
+        price: tr("Price shown before connecting"),
+        action: tr("Connect"),
         available: true,
         icon: ShieldCheck,
         href: `/services/secure-web-access${client.mode === "fixture" ? "?client=fixture" : ""}`,
       },
     ];
-  }, [capacities, client.mode, llmServices, networkId]);
+  }, [capacities, client.mode, llmServices, networkId, uiLanguage]);
 
   const visible = services.filter((service) => {
     const matchesCategory = filter === "all" || service.category === filter;
     const needle = query.trim().toLowerCase();
-    const matchesQuery = !needle || `${service.title} ${service.description} ${service.experience}`.toLowerCase().includes(needle);
+    const matchesQuery = !needle || `${service.title} ${service.description} ${tr(service.experience)}`.toLowerCase().includes(needle);
     return matchesCategory && matchesQuery;
   });
 
@@ -159,42 +163,42 @@ export default function ServicesCatalog() {
     } catch {
       // Recent service shortcuts are optional and never contain private content.
     }
-    navigate(service.href);
+    navigate(personalHref(service.href, client.mode === "fixture"));
   };
 
   const recentServices = recent
     .map((item) => ({ item, service: services.find((service) => service.id === item.id) }))
     .filter((entry): entry is { item: RecentService; service: CatalogService } => Boolean(entry.service));
 
-  if (loading) return <LoadingPanel label="Finding available services" />;
+  if (loading) return <LoadingPanel label={tr("Finding available services")} />;
 
   return (
     <div className={styles.page}>
       <header className={styles.hero}>
         <div>
-          <span className="eyebrow">Ryn services</span>
-          <h1>Choose a service</h1>
-          <p>Each service opens the experience designed for it.</p>
+
+          <h1>{tr("Browse services")}</h1>
+          <p>{tr("Tools available across your connected devices.")}</p>
         </div>
         <div className={styles.heroTools}>
           <label className={styles.search}>
             <Search size={17} />
             <input
-              aria-label="Search services"
+              aria-label={tr("Search services")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search services"
+              placeholder={tr("Search services")}
             />
           </label>
-          <button className={styles.manageButton} type="button" onClick={() => navigate("/services/manage")}>
-            <Settings2 size={16} /> Manage
+          <button className={styles.manageButton} type="button" onClick={() => navigate(personalHref("/services/manage", client.mode === "fixture"))}>
+            <Settings2 size={16} /> {tr("Manage")}
           </button>
         </div>
       </header>
 
       {llm.error || video.error ? <p role="alert">Some services could not be refreshed. Previously discovered services may be out of date. <button type="button" onClick={() => { void llm.refresh(); void video.refresh(); }}>Retry discovery</button></p> : null}
 
-      <div className={styles.filters} aria-label="Service categories">
+      <div className={styles.filters} aria-label={tr("Service categories")}>
         {filters.map((item) => (
           <button
             key={item.id}
@@ -210,28 +214,27 @@ export default function ServicesCatalog() {
 
       <section>
         <div className={styles.sectionHeading}>
-          <h2>Available now</h2>
-          <span>{visible.length} {visible.length === 1 ? "service" : "services"}</span>
+          <h2>{tr("Available now")}</h2>
+          <span>{tr("{{count}} services", { count: visible.length })}</span>
         </div>
         <div className={styles.grid}>
           {visible.map((service) => {
-            const Icon = service.icon;
-            const iconClass = service.category === "creative" ? styles.iconCreative : service.category === "network" ? styles.iconNetwork : "";
+
             return (
               <article className={styles.card} key={service.id}>
                 <div className={styles.cardTop}>
-                  <span className={`${styles.icon}${iconClass ? ` ${iconClass}` : ""}`}><Icon size={28} /></span>
+                  <ServiceArt kind={service.id === "private-ai" ? "ai" : service.id === "video-rendering" ? "video" : "network"} />
                   <div className={styles.cardTitle}>
-                    <span className={styles.type}>{service.experience}</span>
+                    <span className={styles.type}>{tr(service.experience)}</span>
                     <h3>{service.title}</h3>
                   </div>
                 </div>
                 <p className={styles.description}>{service.description}</p>
                 <div className={styles.meta}>
-                  <span className={styles.ready}>{service.available ? "Ready" : "Unavailable"}</span>
+                  <span className={service.available ? styles.ready : styles.unavailable}>{service.available ? tr("Ready") : tr("Unavailable")}</span>
                   <span>{service.price}</span>
                 </div>
-                <button className={styles.cardAction} type="button" onClick={() => openService(service)}>
+                <button className={styles.cardAction} disabled={!service.available && service.id !== "private-ai"} type="button" onClick={() => openService(service)}>
                   {service.action} <ArrowRight size={16} />
                 </button>
               </article>
@@ -240,17 +243,17 @@ export default function ServicesCatalog() {
           {!visible.length ? (
             <div className={styles.empty}>
               <Sparkles size={24} />
-              <h3>No matching services</h3>
-              <p>Try a different search or category.</p>
+              <h3>{tr("No matching services")}</h3>
+              <p>{tr("Try a different search or category.")}</p>
             </div>
           ) : null}
         </div>
       </section>
 
       {recentServices.length ? (
-        <section className={styles.recentSection} aria-label="Recently used services">
+        <section className={styles.recentSection} aria-label={tr("Recently used services")}>
           <div className={styles.sectionHeading}>
-            <h2>Recently used</h2>
+            <h2>{tr("Recently used")}</h2>
           </div>
           <div className={styles.recentList}>
             {recentServices.map(({ item, service }) => {
@@ -259,7 +262,7 @@ export default function ServicesCatalog() {
                 <button type="button" key={service.id} className={styles.recentRow} onClick={() => openService(service)}>
                   <span className={styles.recentIcon}><Icon size={17} /></span>
                   <span className={styles.recentTitle}>{service.title}</span>
-                  <span className={styles.recentTime}>{new Date(item.openedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                  <span className={styles.recentTime}>{new Date(item.openedAt).toLocaleDateString(uiLocale(), { month: "short", day: "numeric" })}</span>
                   <ArrowRight size={15} />
                 </button>
               );
@@ -269,7 +272,7 @@ export default function ServicesCatalog() {
       ) : null}
 
       <footer className={styles.footer}>
-        <LockKeyhole size={14} /> Providers and routes are selected automatically
+        <LockKeyhole size={14} /> {tr("Providers and routes are selected automatically")}
       </footer>
     </div>
   );

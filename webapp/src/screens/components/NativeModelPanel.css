@@ -1,0 +1,40 @@
+.native-model-panel { padding: 8px 2px 0; color: var(--pf-text); }
+.native-model-heading { display: flex; align-items: center; gap: 20px; margin: 15px 0 28px; }
+.native-model-symbol { width: 68px; height: 68px; display: grid; place-items: center; border-radius: 12px; background: var(--pf-subtle); color: #9890cb; flex: 0 0 auto; }
+.ais-modal .native-model-heading h3 { margin: 0 0 6px; font-size: 23px; font-weight: 650; }
+.native-model-heading p { margin: 0 0 9px; font-size: 14px; color: var(--pf-muted); }
+.native-model-heading small { color: var(--pf-muted); font-size: 12px; }
+.native-model-heading > div { min-width: 0; overflow-wrap: anywhere; }
+.native-model-state { display: inline-flex; align-items: center; gap: 7px; color: var(--pf-muted); font-size: 13px; }
+.native-model-state i { width: 8px; height: 8px; background: currentColor; border-radius: 50%; }
+.native-model-state.running { color: var(--pf-green); }
+.native-model-actions { display: flex; gap: 10px; margin: 24px 0; }
+.native-model-actions > :first-child { flex: 1; }
+.native-model-actions .ais-primary, .native-model-actions .ais-secondary { min-height: 44px; font-size: 14px; text-decoration: none; }
+.native-model-actions .native-model-more { padding: 10px; }
+.native-model-link { display: inline-flex; align-items: center; gap: 9px; border: 0; background: transparent; color: var(--pf-blue); font-size: 14px; padding: 5px 0; cursor: pointer; }
+.native-model-import { border-top: 1px solid var(--pf-line); padding: 18px 0; }
+.native-model-import p { margin: 0 0 8px; color: var(--pf-muted); font-size: 12px; line-height: 1.7; }
+.native-model-import small { display: block; color: var(--pf-muted); font-size: 12px; line-height: 1.7; }
+.native-model-settings { border-top: 1px solid var(--pf-line); margin-top: 22px; }
+.native-model-settings label { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 0; cursor: pointer; }
+.native-model-settings label + label { border-top: 1px solid var(--pf-line); }
+.native-model-settings strong { font-size: 14px; font-weight: 550; }
+.native-model-settings small { display: block; color: var(--pf-muted); font-size: 12px; margin-top: 6px; }
+.native-model-settings input { appearance: none; width: 38px; min-width: 38px; height: 22px; min-height: 22px; border: 0; border-radius: 20px; background: var(--pf-strong); cursor: pointer; padding: 3px; transition: background .15s; }
+.native-model-settings input::before { content: ""; display: block; width: 16px; height: 16px; background: var(--pf-panel); border-radius: 50%; transition: transform .15s; }
+.native-model-settings input:checked { background: var(--pf-blue); }
+.native-model-settings input:checked::before { transform: translateX(16px); }
+.native-model-panel :focus-visible { outline: 2px solid var(--pf-blue); outline-offset: 3px; }
+.native-model-panel button:disabled, .native-model-panel input:disabled { opacity: .5; cursor: not-allowed; }
+.native-model-footer { border-top: 1px solid var(--pf-line); padding: 18px 0 0; text-align: center; color: var(--pf-muted); font-size: 12px; line-height: 1.7; }
+.native-model-footer button { display: block; margin: 8px auto 0; font-size: 12px; }
+.native-model-notice { background: var(--pf-subtle); padding: 12px; border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 15px; }
+.native-model-notice a { display: block; color: var(--pf-blue); }
+.native-model-progress { padding: 6px 0 24px; }
+.native-model-progress p, .native-model-progress > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 13px; }
+.native-model-progress progress { width: 100%; height: 7px; accent-color: var(--pf-blue); }
+.native-model-progress small { color: var(--pf-muted); font-size: 12px; }
+.native-model-details { padding: 15px 0; border-top: 1px solid var(--pf-line); font-size: 12px; color: var(--pf-muted); overflow-wrap: anywhere; }
+.native-model-details button + button { margin-left: 16px; }
+@media (max-width: 520px) { .native-model-heading { gap: 12px; }.ais-modal .native-model-heading h3 { font-size: 20px; }.native-model-heading small { font-size: 11px; } }

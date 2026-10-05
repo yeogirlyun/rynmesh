@@ -124,6 +124,7 @@ def _nvidia() -> tuple[list[GPUInfo], str]:
         result = subprocess.run(
             [executable, "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader,nounits"],
             check=True, capture_output=True, text=True, timeout=8,
+            creationflags=0x08000000 if os.name == "nt" else 0,
         )
         gpus = []
         for line in result.stdout.splitlines():

@@ -39,7 +39,7 @@ describe("Services catalog", () => {
     const user = userEvent.setup();
     renderCatalog();
 
-    expect(await screen.findByRole("heading", { name: "Choose a service" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Browse services" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open chat/ })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Create video/ })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Connect/ })).toBeEnabled();
@@ -47,7 +47,7 @@ describe("Services catalog", () => {
     expect(screen.queryByText(/DEV_TASK_BALANCE/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "AI" }));
-    expect(screen.getByRole("heading", { name: "Private AI" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "AI chat" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Video rendering" })).not.toBeInTheDocument();
   });
 

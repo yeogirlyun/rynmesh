@@ -10,6 +10,7 @@ where a manifest does not exist yet (`install_managed`/`import_gguf` call
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import shutil
@@ -133,6 +134,10 @@ def _run_container(manifest: LLMPackageManifest) -> None:
     command = [
         docker, "run", "-d", "--name", name, "--read-only", "--tmpfs", "/tmp:size=128m",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "256",
+        "--cpus", str(min(2, max(0.5, (os.cpu_count() or 2) / 2))),
+        "--memory", str(max(1024, int(manifest.hardware_requirements.get("estimated_memory_mb", 2048))) * 1024**2),
+        "--memory-swap", str(max(1024, int(manifest.hardware_requirements.get("estimated_memory_mb", 2048))) * 1024**2),
+        "--log-driver", "none", "--ulimit", "core=0",
         "-p", f"127.0.0.1:{port}:8080", "-v", f"{model.parent}:/models:ro", runtime_image,
         "-m", f"/models/{model.name}", "--host", "0.0.0.0", "--port", "8080",
         "--alias", manifest.public_model_alias, "-c", str(manifest.context_window),

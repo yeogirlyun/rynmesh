@@ -1,7 +1,7 @@
 import type { JobCapacity, PeerHealth } from "./types";
 
 export interface PeerMeta {
-  online: boolean;
+  online: boolean | null;
   capabilities: string[];
 }
 
@@ -22,7 +22,7 @@ export function joinPeerMeta(
   }
   const out = new Map<string, PeerMeta>();
   for (const id of peerIds) {
-    out.set(id, { online: onlineById.get(id) ?? false, capabilities: capsById.get(id) ?? [] });
+    out.set(id, { online: onlineById.get(id) ?? null, capabilities: capsById.get(id) ?? [] });
   }
   return out;
 }

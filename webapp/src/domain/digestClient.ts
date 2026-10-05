@@ -1,3 +1,5 @@
+import { tr } from "../uiI18n";
+import { nodeControlBaseUrl } from "./nodeUrl";
 import type { RecommendationEvidencePacket, ReviewBasis } from "./types";
 
 // Client for the node's Daily Digest API (/api/local/sources, /api/local/digest).
@@ -198,12 +200,7 @@ export class DigestClientError extends Error {
 
 // Same base-URL rule as App.tsx resolveNodeBaseUrl: env override > Tauri
 // loopback default > Vite dev proxy.
-function baseUrl(): string {
-  const explicit = import.meta.env.VITE_RYN_NODE_BASE_URL;
-  if (explicit) return explicit;
-  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-  return isTauri ? "http://127.0.0.1:8791/api/local" : "/api/local";
-}
+const baseUrl = nodeControlBaseUrl;
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl()}${path}`, {
@@ -213,7 +210,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    let detail = `Local Ryn node returned ${response.status}`;
+    let detail = tr("Local Ryn node returned {{v0}}", { v0: response.status });
     try {
       const body = (await response.json()) as { detail?: string };
       if (body.detail) detail = body.detail;

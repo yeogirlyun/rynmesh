@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../../uiI18n";
 import { useEffect, useState } from "react";
 import type { NodeClient } from "../../domain/nodeClient";
 import type { JobCapacity } from "../../domain/types";
@@ -11,6 +12,7 @@ interface CapGroup {
 }
 
 export default function RecommendedServices({ client }: { client: NodeClient }) {
+  useUILanguage();
   const [groups, setGroups] = useState<CapGroup[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -42,20 +44,19 @@ export default function RecommendedServices({ client }: { client: NodeClient }) 
 
   return (
     <section className="recommended-services">
-      <h2 className="section-title">Recommended Services</h2>
-      {!loaded && <p className="service-empty">Loading services…</p>}
+      <h2 className="section-title">{tr("Recommended Services")}</h2>
+      {!loaded && <p className="service-empty">{tr("Loading services…")}</p>}
       {hasVpn && <VpnServiceCard client={client} />}
       {others.length > 0 && (
         <div className="service-chips">
           {others.map((g) => (
-            <span key={g.capability} className="service-chip" title={`${g.providerCount} provider(s)`}>
-              {g.capability} · available
-            </span>
+            <span key={g.capability} className="service-chip" title={tr("{{count}} providers", { count: g.providerCount })}>
+              {g.capability} {tr("· available")} </span>
           ))}
         </div>
       )}
       {loaded && !hasVpn && others.length === 0 && (
-        <p className="service-empty">No services discovered yet — connect to a peer to see recommendations.</p>
+        <p className="service-empty">{tr("No services discovered yet — connect to a peer to see recommendations.")}</p>
       )}
     </section>
   );

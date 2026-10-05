@@ -22,9 +22,11 @@ export interface LLMChatMessage {
   contextIds?: string[];
   contextBytes?: number[];
   promptSha256?: string;
+  transport?: "local_process" | "local_runtime" | "peer_http_direct" | "ice_udp_direct" | "encrypted_relay" | "unknown";
 }
 
 export interface LLMConversation {
+  cliModel?: string;
   id: string;
   title: string;
   serviceKey: string;
@@ -74,7 +76,9 @@ function serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
 export class BrowserErasureError extends Error {}
 
 function cloneConversation(conversation: LLMConversation): LLMConversation {
-  return JSON.parse(JSON.stringify(conversation)) as LLMConversation;
+  const copy = JSON.parse(JSON.stringify(conversation));
+  delete copy.codexThreadId;
+  return copy as LLMConversation;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -176,7 +180,7 @@ async function decryptConversation(record: EncryptedConversationRecord): Promise
     key,
     base64ToBytes(record.ciphertext),
   );
-  return JSON.parse(new TextDecoder().decode(plaintext)) as LLMConversation;
+  return cloneConversation(JSON.parse(new TextDecoder().decode(plaintext)) as LLMConversation);
 }
 
 export function createConversation(input: {
