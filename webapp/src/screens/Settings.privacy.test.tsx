@@ -31,11 +31,12 @@ it("reports a failed reading export, prevents duplicate requests, and retries wi
   expect(request).toHaveBeenCalledTimes(1);
   reject(new Error("private transport diagnostic"));
   const error = await screen.findByText(/did not return a complete reading/);
-  expect(error).toHaveFocus();
+  await waitFor(() => expect(error).toHaveFocus());
   expect(screen.queryByText(/private transport diagnostic/)).not.toBeInTheDocument();
   expect(create).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Export reading & preferences (JSON)" }));
-  expect(await screen.findByText(/export prepared; download requested/)).toHaveFocus();
+  const notice = await screen.findByText(/export prepared; download requested/);
+  await waitFor(() => expect(notice).toHaveFocus());
   expect(click).toHaveBeenCalledTimes(1);
   expect(request).toHaveBeenCalledTimes(2);
 });
