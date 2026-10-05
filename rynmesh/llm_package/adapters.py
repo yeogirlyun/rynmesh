@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
+
 class AdapterError(RuntimeError):
     def __init__(self, message: str, *, code: str = "inference_failed") -> None:
         super().__init__(message)
