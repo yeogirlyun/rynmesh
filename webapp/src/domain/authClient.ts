@@ -1,3 +1,5 @@
+import { tr } from "../uiI18n";
+import { nodeControlBaseUrl } from "./nodeUrl";
 // Control-surface auth. On the desktop the node trusts the loopback socket and
 // nothing here ever renders; over a tunnel the node returns 401 and the owner
 // pastes the device token once to get a session cookie.
@@ -8,17 +10,12 @@ export type AuthStatus = {
   remote: boolean;
 };
 
-function baseUrl(): string {
-  const explicit = import.meta.env.VITE_RYN_NODE_BASE_URL;
-  if (explicit) return explicit;
-  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-  return isTauri ? "http://127.0.0.1:8791/api/local" : "/api/local";
-}
+const baseUrl = nodeControlBaseUrl;
 
 export const authApi = {
   async status(): Promise<AuthStatus> {
     const response = await fetch(`${baseUrl()}/auth/status`, { credentials: "include" });
-    if (!response.ok) throw new Error(`auth status ${response.status}`);
+    if (!response.ok) throw new Error(tr("auth status {{v0}}", { v0: response.status }));
     return (await response.json()) as AuthStatus;
   },
 
@@ -32,8 +29,8 @@ export const authApi = {
     });
     if (response.ok) return "";
     if (response.status === 429) {
-      return "Too many attempts. Wait five minutes and try again.";
+      return tr("Too many attempts. Wait five minutes and try again.");
     }
-    return "That token didn't match. Check it and try again.";
+    return tr("That token didn't match. Check it and try again.");
   },
 };

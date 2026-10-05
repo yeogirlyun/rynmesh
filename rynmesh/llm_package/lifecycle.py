@@ -16,6 +16,7 @@ from .errors import LifecycleError
 from .hardware import HardwareReport, detect_hardware, recommend, usable_memory_mb
 from .manifest import (
     LLMPackageManifest,
+    PrivacyPolicy,
     fingerprint_file,
     load_manifest,
     save_manifest,
@@ -395,6 +396,39 @@ def connect_local_api(*, base_url: str, package_id: str, alias: str, model: str 
     save_manifest(manifest, path)
     _progress(progress, cancel_check, "completed", 100, "Local API connection is ready")
     return {"manifest": str(path), "health": health, "capabilities": capabilities,
+            "self_test": result}
+
+
+def connect_cli(*, kind: str, root: str | Path | None = None,
+                progress: ProgressCallback | None = None,
+                cancel_check: CancelCheck | None = None) -> dict[str, Any]:
+    """Prepare an installed CLI as a text-only provider without sharing credentials."""
+    if kind not in {"codex_cli", "claude_cli"}:
+        raise LifecycleError("unsupported CLI kind")
+    title = "Codex CLI" if kind == "codex_cli" else "Claude Code"
+    manifest = LLMPackageManifest(
+        package_id=kind.replace("_", "-"), mode=kind,
+        public_model_alias=title, adapter=kind, runtime="external",
+        capabilities=["text-generation", "client-tools", "buffered-streaming"] if kind == "codex_cli" else ["text-generation", "api-text-only"],
+        context_window=32768, max_output_tokens=4096,
+        timeout_seconds=300, max_concurrent=1,
+        privacy=PrivacyPolicy(policy_text="CLI content may be sent to the configured cloud model provider."),
+        license_notice="The owner must sign in to this CLI locally and follow its terms.",
+        risk_labels=["cloud_model"],
+    )
+    _progress(progress, cancel_check, "detect", 20, f"Checking {title} installation")
+    health = adapter_from_manifest(manifest).health()
+    if not health.get("ok"):
+        raise LifecycleError(str(health.get("error") or f"{title} is unavailable"))
+    # A live prompt is required: executable presence alone does not prove the
+    # owner is authenticated or that the installed CLI accepts our flags.
+    _progress(progress, cancel_check, "self_test", 70, f"Checking {title} login")
+    result = self_test(manifest)
+    path = manifest_path(manifest.package_id, root)
+    save_manifest(manifest, path)
+    _progress(progress, cancel_check, "completed", 100, f"{title} is ready")
+    return {"manifest": str(path), "health": health,
+            "capabilities": adapter_from_manifest(manifest).capabilities(),
             "self_test": result}
 
 

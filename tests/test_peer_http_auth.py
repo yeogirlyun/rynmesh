@@ -7,11 +7,35 @@ from the desktop owner is the forwarding header.
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
 
 from rynmesh import node_auth as node_auth_mod
+
+
+def test_bundled_node_requires_installer_update(tmp_path, monkeypatch):
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_DEFAULT_DISCOVERY", "0")
+    monkeypatch.setenv("RYNMESH_REGISTRY_URL", "")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    from rynmesh.peer_http import create_app
+    from rynmesh.services.updater import Updater
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Bundled runtime must not run wheel installation or rollback")
+
+    monkeypatch.setattr(Updater, "on_startup", unexpected)
+    monkeypatch.setattr(Updater, "apply", unexpected)
+    with TestClient(create_app()) as desktop:
+        status = desktop.get("/api/local/updates/status").json()
+        assert status["manualInstallRequired"] is True
+        assert status["autoUpdate"] is False
+        response = desktop.post("/api/local/updates/apply")
+        assert response.status_code == 409
+        assert "installer" in response.json()["detail"]
 
 # Headers a real cloudflared/nginx hop adds. The socket still says loopback.
 TUNNEL = {"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": "203.0.113.9"}
@@ -81,6 +105,21 @@ def test_auth_status_reports_local_for_desktop(client):
     assert body["authorized"] is True
     assert body["via"] == "local"
     assert body["remote"] is False
+
+
+@pytest.mark.parametrize("origin", ["http://tauri.localhost", "https://tauri.localhost"])
+def test_windows_webview_can_read_control_api_with_credentials(client, origin):
+    headers = {"Origin": origin, "Sec-Fetch-Site": "cross-site"}
+    response = client.get("/api/local/node/status", headers=headers)
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
+    preflight = client.options("/api/local/settings", headers={
+        **headers, "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    })
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-credentials"] == "true"
 
 
 def test_unlock_then_access(client, tmp_path):

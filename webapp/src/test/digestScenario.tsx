@@ -66,13 +66,17 @@ export function createDigestScenario(options: DigestScenarioOptions = {}) {
     NodeClient,
     "mode" | "getRecommendationProfile" | "updateRecommendationProfile"
   > = {
-    mode: "fixture",
+    // Exercise the HTTP-backed feed, with all requests intercepted by MSW.
+    mode: "live",
     getRecommendationProfile,
     updateRecommendationProfile,
   };
   const client = profileClient as NodeClient;
 
   const handlers: HttpHandler[] = [
+    http.get(`${TEST_API_BASE}/friend-feed/weekly`, () => HttpResponse.json({
+      week_start: "2026-09-14T00:00:00Z", items: [], available_count: 0, incomplete: false,
+    })),
     http.post(`${TEST_API_BASE}/offline-reading/resolve`, () => HttpResponse.json(null)),
     http.get(`${TEST_API_BASE}/recommendations/signals`, () => HttpResponse.json({ items: [], total: 0, offset: 0, limit: 20 })),
     http.get(`${TEST_API_BASE}/digest`, () => HttpResponse.json(digest)),

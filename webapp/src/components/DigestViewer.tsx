@@ -1,3 +1,4 @@
+import { tr, useUILanguage } from "../uiI18n";
 import {
   Bookmark,
   ChevronLeft,
@@ -67,6 +68,7 @@ export default function DigestViewer({
   onProgress: (item: DigestItem, progress: number) => Promise<void> | void;
   initialProgress: number;
 }) {
+  useUILanguage();
   const item = items[index];
   const [article, setArticle] = useState<ReaderArticle | null>(null);
   const [readerState, setReaderState] = useState<"idle" | "loading" | "failed">("idle");
@@ -261,15 +263,15 @@ export default function DigestViewer({
       <section className="viewer" role="dialog" aria-modal="true" aria-label={item.title}>
         <header className="viewer-head">
           <div className="viewer-kicker">
-            <Chip tone="info">{item.source_kind}</Chip>
+            <Chip tone="info">{tr(item.source_kind)}</Chip>
             <span className="viewer-source">{item.source_title}</span>
             {hostOf(item.link) ? <span className="viewer-host">{hostOf(item.link)}</span> : null}
           </div>
           <div className="viewer-head-right">
             <span className="viewer-count">
-              {index + 1} of {items.length}
+              {index + 1} {tr("of")} {items.length}
             </span>
-            <button type="button" className="viewer-close" onClick={() => void closeViewer()} aria-label="Close">
+            <button type="button" className="viewer-close" onClick={() => void closeViewer()} aria-label={tr("Close")}>
               <X size={18} />
             </button>
           </div>
@@ -325,9 +327,9 @@ export default function DigestViewer({
                 />
               ) : (
                 <p className="viewer-note">
-                  This episode didn't publish a direct audio link.{" "}
+                  {tr("This episode didn't publish a direct audio link.")}{" "}
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
-                    Open it at the source
+                    {tr("Open it at the source")}
                   </a>
                   .
                 </p>
@@ -346,7 +348,7 @@ export default function DigestViewer({
               <p className="viewer-ai">
                 <Sparkles size={13} /> {item.ai_summary}
               </p>
-              <span>AI summary from the title and public-feed description — not the full content.</span>
+              <span>{tr("AI summary from the title and public-feed description — not the full content.")}</span>
             </div>
           ) : null}
 
@@ -379,7 +381,7 @@ export default function DigestViewer({
                 <p className="viewer-note">
                   {readerError || "This page could not be read here."}{" "}
                   <a href={item.link} target="_blank" rel="noreferrer noopener">
-                    Open the original
+                    {tr("Open the original")}
                   </a>
                   . <Button onClick={() => setReaderAttempt((value) => value + 1)}>Retry reading</Button>
                   {!forceSource ? <Button onClick={() => setSourceItem(item.item_id)}>Try the source instead</Button> : null}
@@ -402,7 +404,7 @@ export default function DigestViewer({
               disabled={pending}
               onClick={() => rate("up")}
             >
-              More like this
+              {tr("More like this")}
             </Button>
             <Button
               icon={ThumbsDown}
@@ -410,7 +412,7 @@ export default function DigestViewer({
               disabled={pending}
               onClick={() => rate("down")}
             >
-              Less
+              {tr("Less")}
             </Button>
             <Button disabled={pending} onClick={() => void rate("hide")}>Hide</Button>
             <Button
@@ -431,38 +433,38 @@ export default function DigestViewer({
                 }
               }}
             >
-              {saved ? "Saved" : "Save"}
+              {saved ? tr("Saved") : tr("Save")}
             </Button>
             <a className="viewer-original" href={item.link} target="_blank" rel="noreferrer noopener">
-              <ExternalLink size={13} /> Original
+              <ExternalLink size={13} /> {tr("Original")}
             </a>
           </div>
 
           <div className="viewer-steer">
             <input
               value={steerText}
-              placeholder="Tell Ryn what you want more of — “more math explainers, less politics”"
+              placeholder={tr("Tell Ryn what you want more of — “more math explainers, less politics”")}
               onChange={(event) => setSteerText(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void submitSteer();
               }}
             />
             <Button onClick={() => void submitSteer()} disabled={!steerText.trim()}>
-              {steerSaved ? "Saved" : "Send"}
+              {steerSaved ? tr("Saved") : tr("Send")}
             </Button>
           </div>
 
           <div className="viewer-nav">
-            <button type="button" onClick={() => go(-1)} disabled={index === 0} aria-label="Previous">
+            <button type="button" onClick={() => go(-1)} disabled={index === 0} aria-label={tr("Previous")}>
               <ChevronLeft size={18} />
             </button>
             <button
               type="button"
               onClick={() => go(1)}
               disabled={index >= items.length - 1}
-              aria-label="Next"
+              aria-label={tr("Next")}
             >
-              Next <ChevronRight size={18} />
+              {tr("Next")} <ChevronRight size={18} />
             </button>
           </div>
         </footer>

@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import { Radar, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../appContext";
@@ -8,6 +9,7 @@ import { joinPeerMeta, type PeerMeta } from "../domain/peerMeta";
 const tierValues: Array<IdentityTier | "all"> = ["all", "unverified", "attested", "staked", "proven"];
 
 export default function Peers() {
+  useUILanguage();
   const { client, confirm, notify } = useAppContext();
   const [peers, setPeers] = useState<Peer[]>([]);
   const [capacities, setCapacities] = useState<JobCapacity[]>([]);
@@ -58,30 +60,30 @@ export default function Peers() {
   return (
     <div className="screen-stack">
       <PageHeader
-        eyebrow="Peers"
-        title="Discovered Ryn nodes"
-        context="Inspect identity tiers, credits, distribution weight, and local trust decisions."
+        eyebrow={tr("Peers")}
+        title={tr("Connection details")}
+        context={tr("Inspect device identities, connection status, and trust.")}
         actions={
           <Button
             icon={Radar}
             onClick={async () => {
               await client.discoverPeers();
-              notify("ok", "Peer discovery requested through local node");
+              notify("ok", tr("Peer discovery requested through local node"));
             }}
           >
-            Discover
+            {tr("Discover")}
           </Button>
         }
       />
       <Panel className="filter-panel">
         <div className="source-chips">
           <label className="field inline-field">
-            <span>Search</span>
+            <span>{tr("Search")}</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} onBlur={() => void refresh()} />
           </label>
           {tierValues.map((candidate) => (
             <button key={candidate} className={tier === candidate ? "filter-chip active" : "filter-chip"} type="button" onClick={() => setTier(candidate)}>
-              {candidate}
+              {tr(candidate)}
             </button>
           ))}
         </div>
@@ -91,14 +93,14 @@ export default function Peers() {
           <table className="peer-table">
             <thead>
               <tr>
-                <th>Peer</th>
-                <th>Tier</th>
-                <th>Credits</th>
-                <th>Weight</th>
-                <th>Last seen</th>
-                <th>Served/Fetched</th>
-                <th>Trust status</th>
-                <th>Actions</th>
+                <th>{tr("Peer")}</th>
+                <th>{tr("Tier")}</th>
+                <th>{tr("Credits")}</th>
+                <th>{tr("Weight")}</th>
+                <th>{tr("Last seen")}</th>
+                <th>{tr("Served/Fetched")}</th>
+                <th>{tr("Trust status")}</th>
+                <th>{tr("Actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -106,9 +108,9 @@ export default function Peers() {
                 <tr key={peer.id}>
                   <td>
                     <span
-                      className={`status-dot ${meta.get(peer.id)?.online ? "online" : "offline"}`}
-                      title={meta.get(peer.id)?.online ? "online" : "offline"}
-                      aria-label={meta.get(peer.id)?.online ? "online" : "offline"}
+                      className={`status-dot ${meta.get(peer.id)?.online === true ? "online" : meta.get(peer.id)?.online === false ? "offline" : "unknown"}`}
+                      title={tr(meta.get(peer.id)?.online === true ? "online" : meta.get(peer.id)?.online === false ? "offline" : "Status unknown")}
+                      aria-label={tr(meta.get(peer.id)?.online === true ? "online" : meta.get(peer.id)?.online === false ? "offline" : "Status unknown")}
                     />
                     <PeerPill peer={peer} />
                     <small className="mono">{peer.endpoint}</small>
@@ -123,7 +125,7 @@ export default function Peers() {
                   <td>
                     <TierBadge tier={peer.tier} />
                   </td>
-                  <td className="mono number-cell">{peer.credits.toLocaleString()}</td>
+                  <td className="mono number-cell">{peer.credits.toLocaleString(uiLocale())}</td>
                   <td>
                     <WeightBar value={peer.weight} />
                   </td>
@@ -132,10 +134,10 @@ export default function Peers() {
                     {peer.served}/{peer.fetched}
                   </td>
                   <td>
-                    {peer.quarantined ? <Chip tone="danger">quarantined</Chip> : peer.trustedRoot ? <Chip tone="ok">trusted root</Chip> : <Chip tone="muted">local default</Chip>}
+                    {peer.quarantined ? <Chip tone="danger">{tr("quarantined")}</Chip> : peer.trustedRoot ? <Chip tone="ok">{tr("trusted root")}</Chip> : <Chip tone="muted">{tr("local default")}</Chip>}
                   </td>
                   <td>
-                    <Button onClick={() => setSelected(peer)}>Inspect</Button>
+                    <Button onClick={() => setSelected(peer)}>{tr("Inspect")}</Button>
                   </td>
                 </tr>
               ))}
@@ -149,19 +151,19 @@ export default function Peers() {
             <h2 id="peer-drawer-title">{selected.name}</h2>
             <KV
               rows={[
-                { label: "Peer ID", value: <Hash value={selected.id} /> },
-                { label: "Endpoint", value: <span className="mono">{selected.endpoint}</span> },
+                { label: tr("Peer ID"), value: <Hash value={selected.id} /> },
+                { label: tr("Endpoint"), value: <span className="mono">{selected.endpoint}</span> },
                 {
-                  label: "Status",
+                  label: tr("Status"),
                   value: (
                     <span>
-                      <span className={`status-dot ${meta.get(selected.id)?.online ? "online" : "offline"}`} />
-                      {meta.get(selected.id)?.online ? "online" : "offline"}
+                      <span className={`status-dot ${meta.get(selected.id)?.online === true ? "online" : meta.get(selected.id)?.online === false ? "offline" : "unknown"}`} />
+                      {tr(meta.get(selected.id)?.online === true ? "online" : meta.get(selected.id)?.online === false ? "offline" : "Status unknown")}
                     </span>
                   ),
                 },
                 {
-                  label: "Services",
+                  label: tr("Services"),
                   value: (meta.get(selected.id)?.capabilities.length ?? 0) > 0 ? (
                     <div className="service-chip-row">
                       {meta.get(selected.id)!.capabilities.map((cap) => (
@@ -169,12 +171,12 @@ export default function Peers() {
                       ))}
                     </div>
                   ) : (
-                    <span className="muted">none</span>
+                    <span className="muted">{tr("none")}</span>
                   ),
                 },
-                { label: "Tier", value: <TierBadge tier={selected.tier} /> },
-                { label: "Credits", value: <span className="mono">{selected.credits.toLocaleString()}</span> },
-                { label: "Weight", value: <WeightBar value={selected.weight} /> },
+                { label: tr("Tier"), value: <TierBadge tier={selected.tier} /> },
+                { label: tr("Credits"), value: <span className="mono">{selected.credits.toLocaleString(uiLocale())}</span> },
+                { label: tr("Weight"), value: <WeightBar value={selected.weight} /> },
               ]}
             />
             <div className="button-column">
@@ -183,34 +185,34 @@ export default function Peers() {
                 icon={ShieldCheck}
                 onClick={() =>
                   confirm({
-                    title: "Trust this peer as a root?",
-                    body: "This changes local identity policy. The node will treat signed evidence from this peer as trusted root evidence.",
+                    title: tr("Trust this peer as a root?"),
+                    body: tr("This changes local identity policy. The node will treat signed evidence from this peer as trusted root evidence."),
                     risk: "high",
-                    confirmLabel: "Trust root",
-                    onConfirm: () => notify("ok", "Trust root change sent to local node"),
+                    confirmLabel: tr("Trust root"),
+                    onConfirm: () => notify("ok", tr("Trust root change sent to local node")),
                   })
                 }
               >
-                Trust as root
+                {tr("Trust as root")}
               </Button>
-              <Button>Downrank locally</Button>
+              <Button>{tr("Downrank locally")}</Button>
               <Button
                 variant="danger"
                 icon={ShieldAlert}
                 onClick={() =>
                   confirm({
-                    title: "Quarantine this peer?",
-                    body: "The local node will downrank this peer and prepare a signed report if configured.",
+                    title: tr("Quarantine this peer?"),
+                    body: tr("The local node will downrank this peer and prepare a signed report if configured."),
                     risk: "high",
-                    confirmLabel: "Quarantine",
-                    onConfirm: () => notify("warn", "Quarantine request sent to local node"),
+                    confirmLabel: tr("Quarantine"),
+                    onConfirm: () => notify("warn", tr("Quarantine request sent to local node")),
                   })
                 }
               >
-                Quarantine
+                {tr("Quarantine")}
               </Button>
               <Button variant="ghost" onClick={() => setSelected(null)}>
-                Close
+                {tr("Close")}
               </Button>
             </div>
           </aside>

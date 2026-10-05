@@ -1,3 +1,4 @@
+import { tr, useUILanguage, uiLocale } from "../../uiI18n";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { NodeClient } from "../../domain/nodeClient";
 import { egressReducer, initialEgressCardState } from "../../domain/egressCardState";
@@ -6,6 +7,7 @@ const REGION = "CN";
 const POLL_MS = 5000;
 
 export default function VpnServiceCard({ client }: { client: NodeClient }) {
+  useUILanguage();
   const [state, dispatch] = useReducer(egressReducer, initialEgressCardState);
   const busy = state.kind === "connecting" || state.kind === "launching";
   const busyRef = useRef(busy);
@@ -72,34 +74,34 @@ export default function VpnServiceCard({ client }: { client: NodeClient }) {
       <header className="service-card-head">
         <span className="service-icon" aria-hidden>🛰️</span>
         <div>
-          <h3>Shenzhen VPN <span className="service-tag">net.egress</span></h3>
-          <p className="service-sub">Browse as if you're inside mainland China.</p>
+          <h3>{tr("Shenzhen VPN")} <span className="service-tag">net.egress</span></h3>
+          <p className="service-sub">{tr("Browse as if you're inside mainland China.")}</p>
         </div>
       </header>
 
       {state.kind === "available" && (
-        <button className="btn primary" onClick={onConnect}>Connect · 1 credit</button>
+        <button className="btn primary" onClick={onConnect}>{tr("Connect · 1 credit")}</button>
       )}
 
-      {state.kind === "connecting" && <p className="service-status">Setting up tunnel between nodes…</p>}
+      {state.kind === "connecting" && <p className="service-status">{tr("Setting up tunnel between nodes…")}</p>}
 
       {(state.kind === "connected" || state.kind === "launching") && (
         <div className="service-connected">
           <p className="service-status">
-            {state.warning ? "⚠ Connected — exit not in CN" : "● Connected · Shenzhen"}
+            {state.warning ? tr("⚠ Connected — exit not in CN") : tr("● Connected · Shenzhen")}
             {state.status.exitIp ? ` · ${state.status.exitIp}` : ""}
-            {state.status.locVerified ? " · loc=CN ✓" : ""}
-            {state.status.uptimeSeconds != null ? ` · up ${Math.floor(state.status.uptimeSeconds / 60)}m` : ""}
+            {state.status.locVerified ? tr(" · loc=CN ✓") : ""}
+            {state.status.uptimeSeconds != null ? tr(" · up {{count}}m", { count: Math.floor(state.status.uptimeSeconds / 60) }) : ""}
           </p>
           <p className="service-meta">
-            {state.status.priceCredits ? `${state.status.priceCredits} credit · ` : ""}
-            {state.status.ttlExpiresAt ? `expires ${new Date(state.status.ttlExpiresAt).toLocaleTimeString()}` : ""}
+            {state.status.priceCredits ? `${tr("{{count}} credits", { count: state.status.priceCredits })} · ` : ""}
+            {state.status.ttlExpiresAt ? tr("expires {{time}}", { time: new Date(state.status.ttlExpiresAt).toLocaleTimeString(uiLocale()) }) : ""}
           </p>
           <div className="service-actions">
             <button className="btn primary" disabled={state.kind === "launching"} onClick={onLaunch}>
-              {state.kind === "launching" ? "Launching…" : "Watch CN TV"}
+              {state.kind === "launching" ? tr("Launching…") : tr("Watch CN TV")}
             </button>
-            <button className="btn ghost" onClick={onDisconnect}>Disconnect</button>
+            <button className="btn ghost" onClick={onDisconnect}>{tr("Disconnect")}</button>
           </div>
         </div>
       )}
@@ -107,7 +109,7 @@ export default function VpnServiceCard({ client }: { client: NodeClient }) {
       {state.kind === "error" && (
         <div className="service-error">
           <p className="service-status error">⚠ {state.message}</p>
-          <button className="btn" onClick={onConnect}>Retry</button>
+          <button className="btn" onClick={onConnect}>{tr("Retry")}</button>
         </div>
       )}
     </article>

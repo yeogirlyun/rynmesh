@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import socket
+import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -120,11 +121,19 @@ def _machine_name() -> str:
 def _local_ip_addresses() -> tuple[str, ...]:
     addresses: set[str] = set()
     configured = os.environ.get("RYNMESH_MACHINE_IP", "").strip()
-    if configured:
+    if configured and os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
         addresses.add(configured)
     try:
-        for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            address = item[4][0]
+        if sys.platform == "darwin":
+            # A Mac's hostname may wait minutes for mDNS. Interface enumeration
+            # is local and must not hold up startup or the health endpoint.
+            import ifaddr
+            candidates = (ip.ip for adapter in ifaddr.get_adapters() for ip in adapter.ips
+                          if isinstance(ip.ip, str))
+        else:
+            candidates = (item[4][0] for item in
+                          socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
+        for address in candidates:
             if address and not address.startswith("127."):
                 addresses.add(address)
     except OSError:
@@ -142,6 +151,18 @@ def _local_ip_addresses() -> tuple[str, ...]:
 
 
 def _primary_lan_ip() -> str:
+    if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() != "1":
+        addresses = _local_ip_addresses()
+        return addresses[0] if addresses else ""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            # Route lookup only; connect sends no UDP packet.
+            probe.connect(("1.1.1.1", 80))
+            address = str(probe.getsockname()[0])
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
     addresses = _local_ip_addresses()
     return addresses[0] if addresses else ""
 
@@ -295,6 +316,7 @@ class RynmeshStore:
             sorted(env_root_set | set(trusted_root_peer_ids or ()))
         )
         self.registry = default_peer_registry(self.network_dir)
+        self.lan_discovery = None  # Owned and stopped by the HTTP app lifespan.
         # What this process has already advertised per network, so concurrent
         # services on one node merge into the single per-peer capacity record
         # instead of overwriting each other. See register_job_capacity.
@@ -706,6 +728,11 @@ class RynmeshStore:
         client = self._relay_client(relay_url)
         return client.blob_info(content_hash)
 
+    def lan_peer_endpoints(self, peer_id: str, *, network_id: str = "rynmesh-main") -> list[str]:
+        if self.lan_discovery is None:
+            return []
+        return self.lan_discovery.endpoints(peer_id, network_id)
+
     def discover_peers(
         self,
         *,
@@ -713,22 +740,39 @@ class RynmeshStore:
         include_self: bool = False,
         max_age_hours: float | None = None,
         use_cache_on_error: bool = True,
+        cache_only: bool = False,
     ) -> dict[str, Any]:
-        source = "registry"
-        try:
-            signed_records = self.registry.list_peers(
-                network_id=network_id,
-                max_age_hours=max_age_hours,
-            )
-            self._cache_peer_records(network_id, signed_records)
-        except RegistryError:
-            if not use_cache_on_error:
-                raise
+        source = "cache" if cache_only else "registry"
+        if cache_only:
             signed_records = self._cached_peer_records(
                 network_id=network_id,
                 max_age_hours=max_age_hours,
             )
-            source = "cache"
+        else:
+            try:
+                signed_records = self.registry.list_peers(
+                    network_id=network_id,
+                    max_age_hours=max_age_hours,
+                )
+                self._cache_peer_records(network_id, signed_records)
+            except RegistryError:
+                if not use_cache_on_error:
+                    raise
+                signed_records = self._cached_peer_records(
+                    network_id=network_id,
+                    max_age_hours=max_age_hours,
+                )
+                source = "cache"
+
+        lan_records = self.lan_discovery.records(network_id) if self.lan_discovery else []
+        lan_endpoints: dict[str, list[str]] = {}
+        known = {signed.public_key for signed in signed_records}
+        for signed in lan_records:
+            record = verify_peer_record(signed)
+            lan_endpoints.setdefault(record.peer_id, []).extend(record.endpoints)
+            if record.peer_id not in known:
+                signed_records = [*signed_records, signed]
+                known.add(record.peer_id)
 
         peers: list[dict[str, Any]] = []
         for signed in signed_records:
@@ -739,6 +783,10 @@ class RynmeshStore:
             item["peer_slug"] = _hash_hex(record.peer_id)[:16]
             item["record_hash"] = signed.subject_hash
             item["discovery_source"] = source
+            if record.peer_id in lan_endpoints:
+                item["lan_endpoints"] = lan_endpoints[record.peer_id]
+                if signed.payload.get("lan_protocol"):
+                    item["discovery_source"] = "lan"
             peers.append(item)
         peers.sort(key=lambda item: (item.get("node_name", ""), item.get("peer_id", "")))
         return {"peers": peers, "network_id": network_id, "source": source}
@@ -1590,6 +1638,10 @@ class RynmeshStore:
         return peer_info
 
     def _default_peer_endpoint(self) -> str:
+        if os.environ.get("RYNMESH_AUTO_PEER_ENDPOINT", "").strip() == "1":
+            port = os.environ.get("RYNMESH_PEER_PORT", "").strip()
+            if port:
+                return f"http://{_primary_lan_ip() or '127.0.0.1'}:{port}"
         configured = os.environ.get("RYNMESH_PEER_ENDPOINT", "").strip()
         if configured:
             return configured
