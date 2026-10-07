@@ -415,3 +415,23 @@ def test_owner_http_and_reinstalled_worker_use_current_node(tmp_path):
     result = client.get(f"/api/local/ask/runs/{request['task_id']}", headers={"x-owner": "yes"}).json()
     assert result["state"] == "running" and "prompt" not in str(result)
     assert len(current.conversations.get("conversation")["messages"]) == 2
+
+
+def test_reviewed_cli_model_survives_restart_and_cannot_cross_provider(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    context = runs.context()
+    context.catalog = lambda _: [{"peer_id": "provider", "local_only": True,
+        "service": {"package_id": "model", "adapter": "codex_cli", "context_window": 4096, "max_output_tokens": 256}}]
+    row = history.get("conversation")
+    row = history.save({**row, "cliModel": "gpt-test-review"}, expected_revision=row["revision"])
+    request.update(expected_revision=row["revision"], prompt_sha256=context.preview(row, request["question"])["prompt_sha256"])
+    runs.begin(request)
+    restarted = AskRunService(ConversationStore(history.root, history.key), runs.context, lambda: orders)
+    restarted.run_once()
+    assert orders.sent[0]["cli_model"] == "gpt-test-review"
+    assert restarted.history.get("conversation")["cliModel"] == "gpt-test-review"
+    context.catalog = lambda _: [{"peer_id": "provider", "service": {"package_id": "model", "adapter": "openai_compatible", "context_window": 4096, "max_output_tokens": 256}}]
+    with pytest.raises(ConversationError, match="ask_cli_model_unavailable"):
+        context.preview(row, request["question"])
+    with pytest.raises(ConversationError, match="ask_invalid_conversation"):
+        history.save({**history.get("conversation"), "cliModel": "bad --shell-flag"}, expected_revision=history.get("conversation")["revision"])

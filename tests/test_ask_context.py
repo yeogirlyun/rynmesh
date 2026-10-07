@@ -149,3 +149,75 @@ def test_owner_http_prepares_cached_article_and_checks_revision(tmp_path, monkey
     assert preview.json()["provider_peer_id"] == "provider"
     assert "Actual cached material." in preview.json()["prompt"]
     assert client.post("/api/local/ask/preview", headers=auth, json={**body, "expected_revision": 0}).status_code == 409
+
+
+@pytest.fixture
+def nas_webdav(tmp_path):
+    import base64
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    document = tmp_path / "webdav-report.txt"
+    document.write_bytes(b"Synthetic original source")
+    class Handler(BaseHTTPRequestHandler):
+        def reply(self, raw, status=200):
+            expected = "Basic " + base64.b64encode(b"tester:private-secret").decode()
+            if self.headers.get("Authorization") != expected:
+                self.send_error(401)
+                return
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        def do_PROPFIND(self):
+            self.reply(b'<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/report.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>25</d:getcontentlength></d:prop></d:propstat></d:response></d:multistatus>', 207)
+        def do_GET(self):
+            if self.path != "/dav/report.txt":
+                self.send_error(404)
+                return
+            self.reply(document.read_bytes())
+        def log_message(self, *_):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/dav", document
+    finally:
+        server.shutdown()
+        thread.join(timeout=3)
+
+def test_nas_source_copy_requires_owner_and_ai_permission_and_survives_source_change(tmp_path, monkeypatch, nas_webdav):
+    from fastapi.testclient import TestClient
+
+    from rynmesh.peer_http import create_app
+    from rynmesh.store import RynmeshStore
+
+    monkeypatch.setenv("RYNMESH_HOME", str(tmp_path / "node"))
+    monkeypatch.setenv("RYNMESH_AUTO_REGISTER", "0")
+    monkeypatch.setenv("RYNMESH_DISABLE_DISCOVERY", "1")
+    monkeypatch.setenv("RYNMESH_LOCAL_TOKEN", "nas-owner")
+    app = create_app(RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network"))
+    plugin = app.state.nas_plugin
+    plugin.enable(True)
+    url, document = nas_webdav
+    source = plugin.configure({"name": "Home NAS", "system": "fnos", "protocol": "webdav", "url": url, "username": "tester", "password": "private-secret", "allow_ai": True})["id"]
+    route = "/api/local/ask/contexts/nas"
+    body = {"source_id": source, "path": "report.txt", "text": "Spoofed browser body"}
+    auth = {"x-ryn-local-token": "nas-owner"}
+    with TestClient(app) as client:
+        assert client.post(route, json=body).status_code in {401, 403}
+        assert client.post(route, headers=auth, json={**body, "path": "../secret"}).status_code == 400
+        response = client.post(route, headers=auth, json=body)
+        assert response.status_code == 200, response.text
+        copy = response.json()
+        assert copy["text"] == "Synthetic original source"
+        assert copy["nas"] == {"source_id": source, "path": "report.txt", "source_name": "Home NAS"}
+        assert "private-secret" not in response.text and "nas.local" not in response.text
+        document.write_bytes(b"Changed after attaching")
+        with plugin.lock:
+            plugin.source(source)["allow_ai"] = False
+            plugin.save()
+        assert client.post(route, headers=auth, json=body).status_code == 403
+        assert client.get("/api/local/ask/contexts/" + copy["library_id"], headers=auth).json()["text"] == "Synthetic original source"
+        plugin.enable(False)
+        assert client.post(route, headers=auth, json=body).status_code == 409

@@ -1397,6 +1397,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             local["service"] = {**local["service"], "pricing": {**local["service"]["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}}
             services.append({**local, "online": local["ready"], "peer_id": store.peer_id,
                              "node_name": "This device", "access": "self", "updated_at": datetime.now(timezone.utc).isoformat()})
+        # The owner HTTP catalog and durable Ask review must see the same local
+        # sources. These records are not published and grant no remote access.
+        for local_service in [*active_cli_managers().values(), *active_source_managers().values()]:
+            services = [item for item in services if not (
+                item.get("peer_id") == store.peer_id and
+                item.get("service", {}).get("package_id") == local_service.manifest.package_id)]
+            status = local_service.public_status()
+            services.insert(0, {**status, "peer_id": store.peer_id, "node_name": store.node_name,
+                                "local_only": True, "online": bool(local_service.adapter.health().get("ok"))})
         access_state = getattr(app.state, "ai_access", None)
         if access_state and access_state.catalog:
             services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
@@ -1767,16 +1776,6 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             services = discover(network_id)
         except Exception:
             services = []
-        # Installed/configured CLIs are usable on their own desktop before
-        # sharing is enabled. This local catalog is never published to peers.
-        for current in [*active_cli_managers().values(), *active_source_managers().values()]:
-            services = [item for item in services if not (
-                item.get("peer_id") == store.peer_id and
-                item.get("service", {}).get("package_id") == current.manifest.package_id)]
-            status = current.public_status()
-            services.insert(0, {**status, "peer_id": store.peer_id,
-                                "node_name": store.node_name, "local_only": True,
-                                "online": bool(current.adapter.health().get("ok"))})
         return {"network_id": network_id, "services": services}
 
     @app.get("/api/local/llm/sources")
