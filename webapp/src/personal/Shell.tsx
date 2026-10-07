@@ -48,7 +48,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   ];
   const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
-  const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
+  const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/") || location.pathname === "/ask";
   // Keep every service entry available before configuration and across AI pages.
   const serviceLinks = [
     ["/services", t("nav.myServices")],
@@ -68,7 +68,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
-    (inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
+    (inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
     )?.label) || t("nav.home");
   const href = (path: string) => personalHref(path, demo);
@@ -155,7 +155,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
             {inServices && location.pathname !== "/services" && (
               <>
                 <span>/</span>
-                <span>{serviceLinks.find(([path]) => path === location.pathname)?.[1]
+                <span>{(location.pathname === "/ask" ? t("personal.aiWorkspace") : serviceLinks.find(([path]) => path === location.pathname)?.[1])
                   || (location.pathname === "/services/model-mapping" ? tr("模型映射")
                     : location.pathname === "/services/agent-sharing" ? tr("管理共享")
                     : location.pathname === "/services/video-rendering" ? tr("Video rendering")
@@ -197,7 +197,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         </header>
         <main className="pf-main" id="main-content">
           {sublinks.length > 0 && <nav className={`pf-subnav${inServices ? " pf-service-nav" : ""}`} aria-label={title}>
-            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : undefined}>
+            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : path === "/services/private-ai/chat" && location.pathname === "/ask" ? "active" : undefined}>
               {inServices && path === "/services/manage" && <Settings size={17} aria-hidden="true" />}{label}
             </NavLink>)}
           </nav>}

@@ -5,7 +5,7 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppOutletContext } from "../appContext";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
-import { clearConversations } from "../domain/llmConversationStore";
+import { clearConversations, createConversation, saveConversation, listConversations } from "../domain/llmConversationStore";
 import PrivateAIChat from "./PrivateAIChat";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
@@ -34,7 +34,7 @@ it("keeps conversation history and user text intact when changing UI language", 
   expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
 });
 
-function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main", services?: LLMServiceRecord[], configure?: (client: NodeClient) => void) {
+function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main", services?: LLMServiceRecord[], configure?: (client: NodeClient) => void, unified = false) {
   const client = makeFixtureNodeClient();
   if (services) client.listLLMServices = vi.fn(async () => services);
   configure?.(client);
@@ -54,7 +54,7 @@ function renderChat(path = "/services/private-ai/chat?peer=peer%3Afixture-llm-pr
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route element={<Outlet context={context} />}>
-          <Route path="/services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="/services/private-ai/chat" element={<PrivateAIChat unified={unified} />} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -319,4 +319,25 @@ describe("Private AI chat", () => {
     await user.click(screen.getByRole("button", { name: "Clear history" }));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ risk: "high", confirmLabel: "Clear history" }));
   });
+});
+
+
+it("opens a browser original even when its provider and cached service are gone", async () => {
+  const row = createConversation({ serviceKey: "peer:fixture-llm-provider::fixture-local-llm", serviceName: "Original provider", providerPeerId: "peer:fixture-llm-provider", networkId: "rynmesh-main" });
+  row.messages = [{ id: "original-answer", role: "assistant", content: "Browser original still readable", createdAt: row.createdAt, status: "complete" }];
+  await saveConversation(row);
+  const { submit } = renderChat(`/services/private-ai/chat?storage=browser&conversation=${row.id}&peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main`, [], undefined, true);
+  expect(await screen.findByText("Browser original still readable")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("reports a missing requested browser ID without creating a replacement or leaving a spinner", async () => {
+  const row = createConversation({ serviceKey: "peer:fixture-llm-provider::fixture-local-llm", serviceName: "Original provider", providerPeerId: "peer:fixture-llm-provider", networkId: "rynmesh-main" });
+  await saveConversation(row);
+  const { submit } = renderChat("/services/private-ai/chat?storage=browser&conversation=missing-id&peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main", undefined, undefined, true);
+  expect(await screen.findByRole("alert")).toHaveTextContent("This conversation is unavailable for this provider and network");
+  expect(screen.queryByText("Opening AI chat")).not.toBeInTheDocument();
+  expect((await listConversations(row.serviceKey)).map(item => item.id)).toEqual([row.id]);
+  expect(submit).not.toHaveBeenCalled();
 });

@@ -1,3 +1,5 @@
+import UnifiedAIHistory from "../components/UnifiedAIHistory";
+import { useNavigate } from "react-router-dom";
 import { tr, useUILanguage, uiLocale } from "../uiI18n";
 import {
   Bot,
@@ -30,6 +32,7 @@ import {
   createConversation,
   deleteConversation,
   listConversations,
+  readLegacyConversations,
   saveConversation,
   titleFromPrompt,
   type LLMChatMessage,
@@ -118,7 +121,8 @@ function resultMessage(result: LLMOrderResult) {
   );
 }
 
-export default function PrivateAIChat() {
+export default function PrivateAIChat({ unified = false }: { unified?: boolean }) {
+  const navigate = useNavigate();
   useUILanguage();
   const { client, node, confirm, notify } = useAppContext();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -126,6 +130,16 @@ export default function PrivateAIChat() {
   const requestedNetwork = searchParams.get("network") || "";
   const requestedPeer = searchParams.get("peer");
   const requestedService = searchParams.get("service");
+  const requestedConversation = searchParams.get("conversation");
+  const [browserOriginal, setBrowserOriginal] = useState<LLMConversation | null>(null);
+  useEffect(() => {
+    let active = true; setBrowserOriginal(null);
+    if (unified && requestedConversation) void readLegacyConversations().then(result => {
+      const row = result.conversations.find(item => item.id === requestedConversation && item.providerPeerId === requestedPeer && item.serviceKey === `${requestedPeer}::${requestedService}` && item.networkId === requestedNetwork);
+      if (active) setBrowserOriginal(row ?? null);
+    }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : tr("Browser history could not be loaded.")); });
+    return () => { active = false; };
+  }, [unified, requestedConversation, requestedPeer, requestedService, requestedNetwork]);
   const personal = useContext(PersonalContext);
   const [services, setServices] = useState<LLMServiceRecord[]>([]);
   const [selectedService, setSelectedService] =
@@ -219,6 +233,9 @@ export default function PrivateAIChat() {
     let retryTimer: number | undefined;
     let displayedService: LLMServiceRecord | null = null;
     let displayedNetwork = "";
+    const failedLoad = (cause: unknown) => {
+      if (active) { setError(cause instanceof Error ? cause.message : tr("Browser history could not be loaded.")); setCheckingService(false); setLoading(false); }
+    };
     setLoading(true);
     setCheckingService(true);
     setDiscoveryFailed(false);
@@ -238,7 +255,8 @@ export default function PrivateAIChat() {
           conversationStorageMode(), listConversations(serviceKey(selected)),
         ]);
         if (!active) return;
-        let stored = history;
+        let stored = history.filter(row => row.networkId === network);
+        if (requestedConversation && !stored.some(row => row.id === requestedConversation)) throw new Error(tr("This conversation is unavailable for this provider and network. It has not been replaced by another history."));
         if (!stored.length) {
           const fresh = createConversation({
             serviceKey: serviceKey(selected),
@@ -252,7 +270,9 @@ export default function PrivateAIChat() {
         if (!active) return;
         setStorageMode(mode);
         setConversations(stored);
-        setSelectedId(stored[0].id);
+        const opened = stored.find(row => row.id === requestedConversation) ?? stored[0];
+        if (requestedConversation && opened.id !== requestedConversation) throw new Error(tr("This conversation is unavailable for this provider and network. It has not been replaced by another history."));
+        setSelectedId(opened.id);
       }
       displayedService = selected;
       displayedNetwork = network;
@@ -265,7 +285,7 @@ export default function PrivateAIChat() {
     // discovery request no longer holds the cached workspace behind a spinner.
     const cachedSelection = cached && selectService(cached.services);
     setServices(cached?.services ?? []);
-    const hydration = cachedSelection ? showService(cachedSelection, cached!.networkId) : Promise.resolve();
+    const hydration = cachedSelection ? showService(cachedSelection, cached!.networkId).catch(failedLoad) : Promise.resolve();
     const settingsPromise = requestedNetwork ? Promise.resolve(null) : client.getSettings().catch(() => null);
     const load = async () => {
       const settings = await settingsPromise;
@@ -306,14 +326,14 @@ export default function PrivateAIChat() {
       setLoading(false);
       // Schedule after completion so slow discovery never builds up overlapping
       // requests. Retry missing services sooner than normal status refreshes.
-      retryTimer = window.setTimeout(() => void load(), selected && !failed ? 15000 : 10000);
+      retryTimer = window.setTimeout(() => void load().catch(failedLoad), selected && !failed ? 15000 : 10000);
     };
-    void load();
+    void load().catch(failedLoad);
     return () => {
       active = false;
       window.clearTimeout(retryTimer);
     };
-  }, [client, cacheScope, requestedNetwork, requestedPeer, requestedService, discoveryAttempt]);
+  }, [client, cacheScope, requestedNetwork, requestedPeer, requestedService, requestedConversation, discoveryAttempt]);
 
   useEffect(() => {
     const element = messageScrollRef.current;
@@ -558,10 +578,11 @@ export default function PrivateAIChat() {
 
   if (!selectedService) {
     return (
-      <div className="empty-state">
+      <><div className="empty-state">
         <Bot size={28} />
         <h3>{discoveryFailed ? tr("Could not load AI services") : tr("The selected AI service is unavailable")}</h3>
         <p>{tr("Keep Ryn open on the other computer. This page will retry automatically.")}</p>
+        {error ? <p role="alert">{error}</p> : null}
         <button type="button" className="button secondary" onClick={() => setDiscoveryAttempt(value => value + 1)}>
           <RotateCcw size={16} /> {tr("Retry")}
         </button>
@@ -572,7 +593,7 @@ export default function PrivateAIChat() {
         >
           {tr("View services")}
         </Link>
-      </div>
+      </div>{unified ? <div className="ai-browser-recovery"><UnifiedAIHistory rows={browserOriginal ? [browserOriginal] : []} selectedId={browserOriginal?.id} storage="browser" onNew={() => navigate("/ask?new=1")} /><div>{browserOriginal?.messages.map(message => <div key={message.id}><ChatMarkdown>{message.content}</ChatMarkdown></div>)}</div></div> : null}</>
     );
   }
 
@@ -586,6 +607,11 @@ export default function PrivateAIChat() {
   const changeService = (key: string) => {
     const service = services.find((item) => serviceKey(item) === key);
     if (!service || sending) return;
+    if (unified) {
+      confirm({ title: tr("Start a separate conversation?"), risk: "low", confirmLabel: tr("新建对话"), body: tr("The new conversation starts with this service. Existing messages and materials stay with their original provider."),
+        onConfirm: () => navigate(`/ask?${new URLSearchParams({ peer: service.peer_id, service: service.service.package_id, network: networkId, new: "1" })}`) });
+      return;
+    }
     const next = new URLSearchParams(searchParams);
     next.set("peer", service.peer_id);
     next.set("service", service.service.package_id);
@@ -641,7 +667,7 @@ export default function PrivateAIChat() {
         </Link>
         {cliModelsError && <div role="alert" className={styles.codexSession}>{cliModelsError}</div>}
       </div>
-      <aside className={styles.history} aria-label={tr("AI conversations")}>
+      {unified ? <UnifiedAIHistory selectedId={selectedConversation?.id} storage="browser" rows={conversations} serviceScope={{ key: serviceKey(selectedService), network: networkId }} onNew={() => navigate(`/ask?${new URLSearchParams({ peer: selectedService.peer_id, service: selectedService.service.package_id, network: networkId, new: "1" })}`)} /> : <aside className={styles.history} aria-label={tr("AI conversations")}>
         <button
           className={styles.newButton}
           type="button"
@@ -700,7 +726,7 @@ export default function PrivateAIChat() {
         >
           <Trash2 size={14} /> {tr("清除历史")}
         </button>
-      </aside>
+      </aside>}
 
       <main className={styles.workspace}>
         <div className={styles.workspaceHeading}>

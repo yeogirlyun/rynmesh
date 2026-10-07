@@ -47,7 +47,7 @@ import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
 import AskRyn from "./screens/AskRyn";
-import PrivateAIChat from "./screens/PrivateAIChat";
+import AIWorkspace from "./screens/AIWorkspace";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
@@ -364,13 +364,14 @@ export function AppRoutes() {
           <Route path="services/api" element={<APIAccessPage />} />
           <Route path="services/model-mapping" element={<ModelMappingPage />} />
           <Route path="services/agent-sharing" element={<AgentSharingPage />} />
-          <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="services/private-ai/chat" element={<AIWorkspace />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route
             path="services/secure-web-access"
             element={<SecureWebAccess />}
           />
-          <Route path="ask" element={<AskRyn />} />
+          <Route path="ask" element={<AIWorkspace />} />
+          <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
           <Route path="devices/sync" element={<Devices />} />
           <Route path="exchange" element={<Exchange />} />
