@@ -227,10 +227,10 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 raise HTTPException(404, "model_not_found; choose an id from /v1/models")
             model = {**model, "id": requested}
             target = model["rynmesh"]
-            if target.get("adapter") in {"codex_cli", "claude_cli"}:
-                if chat.get("stream") and target["adapter"] != "codex_cli":
+            if target.get("adapter") in {"codex_cli", "claude_cli", "antigravity_cli"}:
+                if chat.get("stream") and target["adapter"] == "claude_cli":
                     raise HTTPException(400, "CLI API mode does not support streaming yet")
-                if target["adapter"] != "codex_cli" and (chat.get("tools") or chat.get("tool_choice", "auto") not in ("auto", "none")):
+                if target["adapter"] == "claude_cli" and (chat.get("tools") or chat.get("tool_choice", "auto") not in ("auto", "none")):
                     raise HTTPException(400, "CLI API mode does not support client tool calls")
                 unsupported = set(chat) & {"temperature", "top_p", "stop", "enable_thinking"}
                 if unsupported:

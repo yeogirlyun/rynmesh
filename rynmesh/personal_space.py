@@ -611,9 +611,32 @@ class PersonalSpace:
                 raise SpaceError("Choose local or space access.")
             if access == "space" and self.status()["membership"] != "active":
                 raise SpaceError("An active personal space is required.")
+            if self.data.get("ai_access", "local") != access or not self.data.get("ai_binding_epoch"):
+                self.data["ai_binding_epoch"] = uuid.uuid4().hex
             self.data["ai_access"] = access
             self._save()
             return self.status()
+
+    def model_permission(self, peer_id):
+        """Non-secret current recipient authorization for bound model egress.
+
+        This supplements existing manual AI access; it never grants membership.
+        Recovery/leave omit the local epoch, so old egress cannot resurrect.
+        """
+        with self.lock:
+            if not self.allows_ai(peer_id) or self.data.get("ai_access") != "space":
+                raise SpaceError("space_model_permission_denied")
+            snapshot = self._verify(self.data["snapshot"])
+            if not self.data.get("ai_binding_epoch"):
+                self.data["ai_binding_epoch"] = uuid.uuid4().hex
+                self._save()
+            return {"space_id": snapshot["id"], "snapshot_revision": snapshot["revision"],
+                    "access_generation": self.data["ai_binding_epoch"]}
+
+    def authorize_model(self, peer_id, permission):
+        with self.lock:
+            if permission != self.model_permission(peer_id):
+                raise SpaceError("space_model_permission_changed")
 
     def allows_ai(self, peer_id):
         if peer_id == self.store.peer_id:

@@ -7,3 +7,8 @@ scripts/setup_rynnode_mac.zsh export-ignore
 # macOS codesign rejects CRLF in entitlement XML; shell entry points also need LF.
 webapp/src-tauri/sidecar/*.plist text eol=lf
 webapp/src-tauri/scripts/*.sh text eol=lf
+
+# Test fixture hashes must remain identical across Windows and Linux checkouts.
+tests/fixtures/agent_acceptance/** text eol=lf
+docs/acceptance/ryn-agent-delivery/** text eol=lf
+*.pdf binary

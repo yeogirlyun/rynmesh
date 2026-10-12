@@ -239,7 +239,7 @@ describe("Private AI chat", () => {
     const { submit, user } = renderChat();
     await screen.findByLabelText("Message AI chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("nas plugin disabled");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enable Drives before accessing storage.");
     expect(submit).not.toHaveBeenCalled();
   });
   it("shows peer connection progress and explains a UDP timeout", async () => {

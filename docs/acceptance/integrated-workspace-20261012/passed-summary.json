@@ -1,0 +1,92 @@
+{
+  "document_date": "2026-10-12",
+  "branch": "feature/ryn-integrated-workspace",
+  "source_form": "current working tree including uncommitted integration changes",
+  "upstream_main": "e9cde6c8ce097efe02376692923850b44815fc79",
+  "checks": {
+    "upstream_history_included": "passed",
+    "original_1448_files_preserved": "passed",
+    "frontend": {
+      "test_files": 100,
+      "passed": 660,
+      "method": "final full run"
+    },
+    "backend": {
+      "passed_unique": 3697,
+      "method": "full regression combined with targeted rechecks; count each case once",
+      "targeted_rechecks_passed": 100,
+      "targeted_rechecks_included_in_unique_total": true
+    },
+    "frontend_and_backend_unique_passed": 4357,
+    "context_and_approval_passed": 26,
+    "reference_context_passed": 2,
+    "localization_passed": 6,
+    "contribution_workflow_passed": 5,
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "frontend_production_build": "passed",
+    "python_wheel_build": "passed",
+    "python_modules_matching_source": 241,
+    "windows_native_release_build": "passed",
+    "native_window_started": "passed",
+    "runtime_http_checks": {
+      "/health": 200,
+      "/api/local/agent/tasks": 200,
+      "/api/local/agent/models": 200,
+      "/api/local/llm/sources": 200,
+      "/api/local/plugins/nas": 200
+    }
+  },
+  "stage_specific_passed_observations": {
+    "cloud_drives": "Baidu, Google Drive and OneDrive real create/upload/list/download content verification, 2026-10-09",
+    "p2p": "two physical Windows hosts: direct ICE and real GLM tool rounds, separate consumer sessions, manual calls with Agent off",
+    "p2p_cancel_return_seconds": 0.10899999999674037,
+    "cli": "Antigravity source setup, ordinary inference probe, two-round client-tool probe and catalog admission observed; sharing stayed off"
+  },
+  "evidence": [
+    {
+      "file": "frontend-passed.log",
+      "sha256": "5d5da50cef521089dbbc7e898b164075f773449d53d6276cedeeda3806e56010",
+      "result": "660 passed"
+    },
+    {
+      "file": "backend-retest-passed.log",
+      "sha256": "18862c9ebef77f90d1b9b61c104d1ef3deb10c5006b989be87e37182f286477e",
+      "result": "100 passed"
+    },
+    {
+      "file": "context-approval-passed.log",
+      "sha256": "74e97f22d13c569b514724da19aa3988073d84a8a59ec7764fc3fd079cfefbaf",
+      "result": "26 passed"
+    },
+    {
+      "file": "reference-context-passed.log",
+      "sha256": "f2868bdc7b88fe4abe19200f836ef8fb3cce9bd16ab31351ff2e9f27e0dabe49",
+      "result": "2 passed"
+    },
+    {
+      "local_record": "frontend-build-final.log",
+      "sha256": "32321b7ee00ee9830b40326c0d9c3299e56d2ca7c4a8c7dd4bd09282bbc88947"
+    },
+    {
+      "local_record": "wheel-build-final.log",
+      "sha256": "363cdee61e0bdd6f496e2a88615872d915698933308f161e97ea555575875b47"
+    },
+    {
+      "record": ".codex-tmp/all-features-integration-native-build.log",
+      "sha256": "056d990bc53ea7d7d4b169c8d845b5c73d629c8f5affb87478478f9fe0fffde9"
+    },
+    {
+      "record": ".codex-tmp/cli-agent-fix-report.md",
+      "sha256": "8ee586e87b062209b09bb6997b948fd499bc5891bb169d44b009d178562f4c30"
+    },
+    {
+      "record": "docs/acceptance/drives-p2p-20261008.md",
+      "sha256": "2c186bc422e26c4135b4babe680bcef1c25dbe1e70152a87ca78550da4e2ffb1"
+    },
+    {
+      "record": "docs/acceptance/ryn-agent-delivery/two-host/phase6-cancellation-operator-review.json",
+      "sha256": "a9c6f11ec9875920344f07d4d93be38c9f761dc449da053e04469b05769cdff2"
+    }
+  ]
+}

@@ -21,40 +21,46 @@ import {
 } from "lucide-react";
 import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
-import { useNasStatus } from "../domain/nas";
+import { AgentNavigationContext } from "./agentNavigation";
+import "../screens/rynAgentText";
 export function PersonalShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const { t: agentText } = useTranslation("rynAgent");
   const { demo, appearance, setAppearance, devices, services, space } = usePersonal();
-  const { status: nas } = useNasStatus(demo);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [agentNavCollapsed, setAgentNavCollapsed] = useState(() => {
+    try { return sessionStorage.getItem("ryn.agent.navigation") === "closed" || (window.innerWidth <= 760 && sessionStorage.getItem("ryn.agent.navigation") !== "open"); }
+    catch { return window.innerWidth <= 760; }
+  });
   const navigate = useNavigate();
   const location = useLocation();
   const input = useRef<HTMLInputElement>(null);
   const primary = [
     { to: "/", label: t("nav.home"), icon: Home },
     { to: "/services", label: t("nav.services"), icon: Box },
+    { to: "/agent", label: agentText("title"), icon: MessageCircle },
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
-    ...(nas?.enabled ? [{ to: "/nas", label: t("nav.nas"), icon: HardDrive }] : []),
+    { to: "/drives", label: t("drive.title"), icon: HardDrive },
   ];
   const more = [
     { to: "/explore", label: t("nav.explore"), icon: Compass },
     { to: "/chat", label: t("nav.messages"), icon: MessageCircle },
-    { to: "/ask", label: tr("Ask Ryn"), icon: MessageCircle },
     { to: "/friends", label: tr("Friends"), icon: UserRound },
     { to: "/exchange", label: tr("Exchange"), icon: Box },
   ];
   const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
-  const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/") || location.pathname === "/ask";
+  const inAgent = location.pathname === "/agent";
+  const inServices = location.pathname === "/services" || location.pathname.startsWith("/services/");
   // Keep every service entry available before configuration and across AI pages.
   const serviceLinks = [
     ["/services", t("nav.myServices")],
     ["/services/catalog", t("nav.browseServices")],
     ["/services/private-ai/chat", t("personal.aiWorkspace")],
-    ["/services/sources", t("personal.aiSources")],
+    ["/services/sources", agentText("models")],
     ["/services/api", t("nav.apiAccess")],
     ["/services/manage", t("nav.serviceSetup")],
   ];
@@ -101,8 +107,11 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     </NavLink>
   );
   return (
-    <div className={`pf-shell${menuOpen ? " menu-open" : ""}`}>
-      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")}>
+    <AgentNavigationContext.Provider value={{ collapsed: agentNavCollapsed, toggle: () => {
+      setAgentNavCollapsed(current => { const next = !current; try { sessionStorage.setItem("ryn.agent.navigation", next ? "closed" : "open"); } catch { /* Preferences are optional. */ } return next; });
+    } }}>
+    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inAgent ? " pf-agent-shell" : ""}${inAgent && agentNavCollapsed ? " pf-agent-nav-collapsed" : ""}`}>
+      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={inAgent && agentNavCollapsed}>
         <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
@@ -118,9 +127,11 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           <span>{space?.space?.name || t("shell.personal")}</span>
           <ChevronDown size={15} />
         </button>
-        <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
-        <div className="pf-more-label">{t("nav.more")}</div>
-        <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
+        <div className="pf-sidebar-content">
+          <nav aria-label={t("shell.primary")}>{primary.map(link)}</nav>
+          <div className="pf-more-label">{t("nav.more")}</div>
+          <nav aria-label={t("nav.more")}>{more.map(link)}</nav>
+        </div>
         <div className="pf-sidebar-bottom">
           {demo && (
             <span className="pf-preview-label">
@@ -140,7 +151,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         />
       )}
       <div className="pf-main-column">
-        <header className="pf-topbar">
+        {!inAgent && <header className="pf-topbar">
           <button
             className="pf-icon-button pf-menu-toggle"
             aria-label={t("shell.toggleNavigation")}
@@ -194,7 +205,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
               )}
             </button>
           </div>
-        </header>
+        </header>}
         <main className="pf-main" id="main-content">
           {sublinks.length > 0 && <nav className={`pf-subnav${inServices ? " pf-service-nav" : ""}`} aria-label={title}>
             {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : path === "/services/private-ai/chat" && location.pathname === "/ask" ? "active" : undefined}>
@@ -280,5 +291,6 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         </Modal>
       )}
     </div>
+    </AgentNavigationContext.Provider>
   );
 }

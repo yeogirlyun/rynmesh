@@ -35,6 +35,12 @@ class Adapter:
     def shutdown(self):
         pass
 
+    def infer_stream(self, *, on_delta, **kwargs):
+        result = self.infer(**kwargs)
+        on_delta("Private ")
+        on_delta("response")
+        return result
+
     def chat(self, body, *, task_id, timeout_s, on_event=None):
         result = self.infer()
         if body.get("stream") and on_event:
@@ -105,6 +111,7 @@ def mesh(tmp_path, monkeypatch):
             public_model_alias="Test model",
             base_url="http://127.0.0.1:1",
             timeout_seconds=10,
+            capabilities=["text-generation", "streaming"],
         ),
         provider.home / "llm" / "manifest.json",
     )
@@ -152,7 +159,35 @@ def mesh(tmp_path, monkeypatch):
         )
     stop.set()
     thread.join(5)
+    for app in apps:
+        app.state.llm_shutdown()
     assert not failures
+
+
+def test_p2p_signed_stream_reuses_connection_and_rechecks_permissions(mesh, monkeypatch):
+    mesh.endpoint[0] = "http://127.0.0.1:1"
+    with TestClient(mesh.apps[1]) as client:
+        body = {"network_id": "test-space", "provider_peer_id": mesh.nodes[0].peer_id,
+                "service_id": "test-model", "prompt": "private", "max_tokens": 16,
+                "transport": "p2p", "response_mode": "stream-v1"}
+        for n in range(2):
+            response = client.post("/api/local/llm/orders", json={**body, "task_id": f"reuse-{n}"})
+            assert response.status_code == 200, response.text
+            result = response.json()
+            assert result["output"] == "Private response"
+            assert result["transport_evidence"]["connection_reused"] == bool(n)
+            assert result["transport_evidence"]["stream_events"] == 2
+            events = client.get(f"/api/local/llm/orders/reuse-{n}/events").text
+            assert '"delta":"Private "' in events and "event: complete" in events
+        # Auto must use the live P2P route without waiting on stale HTTP again.
+        monkeypatch.setattr(routes, "_peer_post_json", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("unexpected HTTP")))
+        response = client.post("/api/local/llm/orders", json={**body, "transport": "auto", "task_id": "reuse-auto"})
+        assert response.status_code == 200, response.text
+        assert response.json()["transport_evidence"]["connection_reused"]
+        mesh.spaces[0].act("remove", {"peer_id": mesh.nodes[1].peer_id})
+        response = client.post("/api/local/llm/orders", json={**body, "task_id": "revoked"})
+        assert response.status_code in (403, 409, 502), response.text
+        assert mesh.adapter.calls == 3
 
 
 def order(mesh, client_index=1, **overrides):

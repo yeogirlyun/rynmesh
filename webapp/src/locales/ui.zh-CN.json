@@ -1,4 +1,12 @@
 {
+  "添加模型": "添加模型",
+  "接入一次，自己使用，也可以分享给其他设备。": "接入一次，自己使用，也可以分享给其他设备。",
+  "管理来源": "管理来源",
+  "一个来源可以提供多个模型，模型分享单独设置。": "一个来源可以提供多个模型，模型分享单独设置。",
+  "从已有来源添加模型": "从已有来源添加模型",
+  "修改模型列表或读取可用模型": "修改模型列表或读取可用模型",
+  "逐模型分享": "逐模型分享",
+  "新增模型默认不分享。凭据保留在本机，调用方只能使用已分享的模型。": "新增模型默认不分享。凭据保留在本机，调用方只能使用已分享的模型。",
   "开始聊天": "开始聊天",
   "运行方式": "运行方式",
   "取消": "取消",
@@ -8,6 +16,9 @@
   "填写厂商密钥或自定义地址": "填写厂商密钥或自定义地址",
   "连接 Ollama、LM Studio 或 GGUF 模型": "连接 Ollama、LM Studio 或 GGUF 模型",
   "使用 Codex、Claude Code 登录": "使用 Codex、Claude Code 登录",
+  "连接 Codex、Claude Code、Antigravity": "连接 Codex、Claude Code、Antigravity",
+  "使用 Antigravity 官方调用程序。首次连接请在终端启动 agy 完成登录；无需填写 API 地址或密钥。": "使用 Antigravity 官方调用程序。首次连接请在终端启动 agy 完成登录；无需填写 API 地址或密钥。",
+  "调用家里电脑上已登录的 Antigravity": "调用家里电脑上已登录的 Antigravity",
   "开始连接": "开始连接",
   "想让其他程序调用 AI？": "想让其他程序调用 AI？",
   "API 接入提供本机调用地址、模型名称和项目密钥。": "API 接入提供本机调用地址、模型名称和项目密钥。",
@@ -1603,5 +1614,6 @@
   "Source {{number}}: {{title}}": "资料 {{number}}：{{title}}",
   "Private local document": "本机私人资料",
   "bytes": "字节",
-  "TRUNCATED": "已截断"
+  "TRUNCATED": "已截断",
+  "Private AI connection established and first task completed": "私人 AI 连接已建立，首个任务已完成"
 }

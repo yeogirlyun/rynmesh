@@ -1,63 +1,40 @@
-# NAS design QA — 2026-09-23
-
-final result: blocked
-
-Web visual checks passed. The remaining blocker is native Windows visual verification: Windows rejects cursor access and monitor capture. The rebuilt client and its file APIs work; this does not substitute for a native-window screenshot. No claim of completed Windows visual acceptance is made.
-
-## Visual truth and evidence
-
-- Source: `C:/Users/子陵/.codex/generated_images/01a0c921-937f-7c01-be86-3b9cc7509fad/exec-689b35bb-8225-4a20-837b-8280b0ec291f.png` (1586 × 992 raster mock).
-- User's explicit override: remove the NAS device illustration, foliage and decorative hero; retain the file preview design, color accents and implement both appearances on Web and Windows.
-- Implementation: `http://127.0.0.1:18841/nas`, actual fnOS SMB files in `RynAcceptance/预览体验`.
-- Dark: `D:/code/rynmesh/build/nas-test/nas-web-dark-image.png` (1280 × 800).
-- Light: `D:/code/rynmesh/build/nas-test/nas-web-light-image.png` (1265 × 791 browser screenshot).
-- Text: `D:/code/rynmesh/build/nas-test/nas-web-light-text.png`.
-- CSS viewport 1280 × 800, devicePixelRatio 1. The light capture is scaled by the browser capture surface to 1265 pixels; compare proportionally, not as a pixel-perfect font raster comparison. Source art is proportionally larger; original sidebar maps from ~278 to the existing 224 CSS px.
-- Source, final dark and final light captures were opened together in one comparison input. File names, thumbnail, selected row, preview heading and controls are readable in these full-resolution captures; a separate region crop was unnecessary for this scoped comparison.
-- Temporary 960 × 700 and 800 × 700 viewport tests: no horizontal overflow; at 800 the preview moves below the list. Viewport override reset after testing.
-
-## Findings and iteration history
-
-1. [P2, fixed] Duplicate connection heading consumed a full row and pushed preview controls too low. Removed the repeated workspace title and moved ready/refresh/details next to sorting. Final dark screenshot shows the resulting compact toolbar and visible image controls.
-2. [P2, fixed] Focus styling overrode the mint selection background. Raised selected-row specificity to include tbody; final light text screenshot shows a mint selected row with a mint edge.
-3. [Evidence issue, resolved] Browser fullPage screenshot export produced an invalid narrow rendering. Discarded that evidence by replacing files with current-viewport getScreenshot captures, inspected afterward. This was capture behavior, not accepted UI evidence.
-4. [Verification blocker] Native Windows screenshot/input unavailable (`GetCursorPos` access denied; monitor capture unavailable). Read-only accessibility confirms the running Ryn client, existing device identity and NAS entry. Await desktop access to verify dark/light, photo and text in the actual client.
-
-## Required fidelity surfaces
-
-- Typography: retained Ryn's Segoe UI/Microsoft Chinese fallback, 13 px filenames, 14 px preview heading and clear secondary metadata. Intentional use of existing app typography instead of a new global font. Chinese filenames remain readable; long names truncate and retain titles.
-- Layout: source selector above one continuous file workspace; equal list/preview columns at desktop size, bounded scroll for long lists, compact controls. Extra source selector is required for real multi-NAS support. No hero artwork. Modified/type columns collapse when space is limited.
-- Colors: mint primary actions, mint selected rows, lavender documents, amber folders, blue image icons. Dark uses lighter mint on navy; light uses a darker green primary for white-label contrast. Global app chrome retained, NAS active navigation coordinated.
-- Imagery: actual NAS file thumbnails and decoded previews, preserving aspect ratio with contain; thumbnails crop intentionally. Sample sunset was generated with built-in ImageGen, stored on the local fnOS test share, and retrieved through the real file API. Standard icons use the existing Lucide library. No replacement decorative NAS illustration.
-- Copy/content: actual source names, filenames, image dimensions and sizes. No invented disk capacity, synchronization or remote-connection metrics. Original-download action distinguished from bounded preview. Image AI is not implied.
-
-## Functional validation
-
-- 69 frontend tests / 14 files pass; 20 NAS backend tests pass; TypeScript/Vite production build and Ruff pass.
-- Web: select image/text, thumbnail load, 125% zoom, fit, large modal, close, both themes, responsive layout. Final console error list empty.
-- Backend: JPEG/PNG/WebP decoding, dimensions/pixel/byte bounds, corrupt/active input rejection, metadata removal, retained original bytes and plugin disable gate covered.
-- Actual fnOS: image 1536 × 1024; thumbnail 160 × 107; original 2,671,505 bytes. Web and Windows node API calls succeeded. Download hash equals local source. Desktop-origin CORS exposes dimensions.
-- Windows: Ryn.exe, bundled backend and NSIS installer rebuilt; latest client restarted. Native dark/light visual confirmation remains pending.
-
-## Implementation checklist
-
-- [x] Remove decorative header; shared Web/Windows design and both palettes.
-- [x] Real image thumbnails, preview, zoom, large view and text side preview.
-- [x] Tests, actual fnOS reads/downloads and desktop packaging.
-- [x] Web visual evidence and responsive checks.
-- [ ] Native Windows dark/light UI verification after desktop access returns.
-
-## Generated test image provenance
-
-- Local file: `D:/code/rynmesh/build/nas-test/海边日落.png`.
-- Built-in ImageGen, no API CLI. Prompt: “Create one photographic landscape image, 1536x1024, no UI, no text, no frame: a quiet ocean beach at sunset, gentle turquoise surf and reflective wet sand, golden sun near horizon, peach and lavender cloud sky, distant dark headland on the right. Natural realistic travel photograph with beautiful warm colors. This is a sample photo file for testing a NAS image preview, not a hero illustration or interface mockup.”
-
-## Separate AI workbench polish — 2026-09-23
-
-The shared frontend polish passed scoped visual and functional checks. See [workbench polish QA](docs/design/agent-api-sharing-v1/workbench-polish-qa.md). This result does not supersede the NAS native-window verification limitation above.
-
-## Service navigation and AI sources — 2026-09-24
+# Ryn agent conversation QA — 2026-10-12
 
 final result: passed
 
-Scoped acceptance of the user's selected second navigation design. Full source/implementation evidence, viewport normalization, fixed visual findings, functional preservation inventory and test results are recorded in [service navigation design QA](docs/acceptance/service-navigation/design-qa.md). All existing routes and service handlers were retained; 60 related tests and the production build passed. This separate result does not change the earlier NAS native-window limitation.
+Scope: Codex-style conversation hierarchy and removal of task administration from the message body. This records the chat work only. The earlier NAS report, including its unresolved native acceptance result, is preserved at `.codex-tmp/design-qa-before-chat-ui.md`.
+
+## Visual evidence
+
+- Reference: `.codex-tmp/codex-chat-reference.png`, actual Codex desktop, 1621 × 799 capture.
+- User problem screenshot: `C:/Users/子陵/AppData/Local/Temp/codex-clipboard-16e307bf-4fb3-49e8-9807-b30bad0e34fe.png`.
+- Implementation: `.codex-tmp/ryn-chat-ui-final.jpg`, native Windows client, 1282 × 832 capture.
+- Additional states: `.codex-tmp/ryn-chat-ui-after.jpg` (expanded main navigation), `.codex-tmp/ryn-chat-menu-after.jpg` (task controls menu).
+- Source and implementation opened together in the same comparison input. Native captures use their original pixels; no claim of matching screenshot density or pixel-perfect geometry. Comparison concerns the chat column, approximately 737 px in Codex and 780 px in Ryn, rather than different desktop chrome. Codex is running this long conversation; Ryn displays the user's completed `hi`. The running controls are checked in the UI regression test without starting a paid task.
+
+## Findings resolved
+
+- P1: Execution details and record management occupied the conversation. Both now live in the header actions menu; no administrative section remains in the message scroll area.
+- P1: A banner for unrelated waiting tasks displaced the selected conversation. It now lives inside the actions menu; task state remains available in history.
+- P2: Scope and skill configuration displaced the welcome/chat experience. New-task configuration now lives in composer Options; existing-task model, scope, budget and plan remain in the header menu.
+- P2: Running tasks lacked a composer Stop control. Empty running composer now shows Stop using the existing authorized cancel action, respecting control revision and grant checks. Drafts retain the existing send/steer behavior.
+
+## Fidelity surfaces
+
+- Typography: existing system typography retained, readable message body; removed repeated assistant/model headings and technical result headings. Exact Codex font rasterization is not claimed.
+- Spacing: right-aligned user bubble, open assistant text, centered chat column, anchored compact composer. Main navigation can be collapsed without removing access; final capture uses the focused layout.
+- Colors: existing Ryn light/dark tokens retained; pale user bubble, quiet borders and menu shadow. This is a hierarchy/interaction adaptation, not a replacement of the application theme.
+- Assets: standard Lucide icons for actions, send and stop; no generated artwork needed.
+- Copy: task administration absent from the conversation; original approval, input, error, artifact and verification semantics preserved. Detailed goal verification remains accessible through the menu.
+
+## Validation and delivery
+
+- TypeScript check passed; all 48 RynAgent tests passed, including controls, approvals, scope, continuation and receipts.
+- Windows production build passed. Native existing conversation and header menu opened successfully; Escape closes the menu and returns focus to its trigger.
+- Desktop shortcut now points to `C:/Users/子陵/AppData/Local/Programs/Ryn-Preview/20261011-chat-ui/Ryn.exe`; client launched and agent page left open.
+- Backend binary unchanged (matching SHA-256 AC5AFC96BC77A2256A923FF49011114AF73FB70C469AF14888CE38A7843335E6). No new model call or paused Codex task was started.
+
+## Remaining limits
+
+- Exact pixel cloning and identical content/state are not claimed; product navigation and Ryn-specific approval/settings remain functional.
+- Running UI checked with realistic server fixtures; no extra paid inference started for visual testing.

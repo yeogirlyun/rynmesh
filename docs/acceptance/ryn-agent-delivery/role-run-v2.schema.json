@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Draft development v2 evidence envelope; never formal acceptance",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "dataset_version",
+    "status",
+    "formal_trial_registered",
+    "run_id",
+    "run_nonce",
+    "task_id",
+    "node_bindings",
+    "contract",
+    "run",
+    "role_evidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "kind": {
+      "const": "ryn.agent.role-evidence-run"
+    },
+    "dataset_version": {
+      "const": "ryn-agent-acceptance-2026-10-10.v2-draft.1"
+    },
+    "status": {
+      "const": "draft/not_formal_ready"
+    },
+    "formal_trial_registered": {
+      "const": false
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "run_nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "task_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "node_bindings": {
+      "type": "object",
+      "required": [],
+      "additionalProperties": false,
+      "properties": {
+        "node-a": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "node-b": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "node-c": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "node-d": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": [
+        "effective_suite_sha256",
+        "effective_case_sha256",
+        "effective_world_sha256",
+        "base_cases_sha256",
+        "base_world_sha256",
+        "overlay_sha256",
+        "overlay_schema_sha256",
+        "loader_sha256",
+        "decision_sha256",
+        "grader_sha256",
+        "run_schema_sha256",
+        "common_validator_sha256",
+        "common_run_schema_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "effective_suite_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "effective_case_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "effective_world_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base_cases_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "base_world_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "overlay_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "overlay_schema_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "loader_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "decision_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "grader_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "run_schema_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "common_validator_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "common_run_schema_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "Unchanged common run schema, with the actual v2 dataset_version and effective_suite_sha256; validated against pinned v1 schema."
+    },
+    "role_evidence": {
+      "type": "object",
+      "required": [
+        "registration",
+        "task_binding",
+        "runtime",
+        "storage",
+        "deployment",
+        "physical_hosts",
+        "review"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "registration": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_binding": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deployment": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "physical_hosts": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

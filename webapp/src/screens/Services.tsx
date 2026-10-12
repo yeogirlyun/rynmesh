@@ -1109,7 +1109,7 @@ export default function Services() {
                   <Chip tone={result.status === "completed" ? "ok" : result.status === "failed" ? "danger" : "info"}>
                     {tr(result.status)}
                   </Chip>
-                  <span>{result.message || tr("No message")}</span>
+                  <span>{result.message === "Private AI connection established and first task completed" ? tr("Private AI connection established and first task completed") : result.message || tr("No message")}</span>
                   <small className="mono">{result.created_at}</small>
                 </div>
               ))}

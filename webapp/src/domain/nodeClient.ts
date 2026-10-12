@@ -36,7 +36,7 @@ export interface InferenceAccess {
 }
 
 export interface CLIServiceStatus {
-  kind: "codex_cli" | "claude_cli";
+  kind: "codex_cli" | "claude_cli" | "antigravity_cli";
   title: string;
   installed: boolean;
   configured: boolean;
@@ -66,7 +66,7 @@ export interface LLMServiceRecord {
     package_id: string;
     model_alias: string;
     runtime?: string;
-    adapter?: "codex_cli" | "claude_cli" | string;
+    adapter?: "codex_cli" | "claude_cli" | "antigravity_cli" | string;
     capabilities: string[];
     context_window: number;
     max_output_tokens: number;
