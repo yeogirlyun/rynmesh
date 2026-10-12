@@ -46,23 +46,27 @@
   "evidence": [
     {
       "file": "frontend-passed.log",
-      "sha256": "5d5da50cef521089dbbc7e898b164075f773449d53d6276cedeeda3806e56010",
-      "result": "660 passed"
+      "sha256": "6e42738c287306168c6e223a2df1c956d8a9ae9e55479660f55e75e5bac6e2d7",
+      "result": "660 passed",
+      "original_local_log_sha256": "5d5da50cef521089dbbc7e898b164075f773449d53d6276cedeeda3806e56010"
     },
     {
       "file": "backend-retest-passed.log",
       "sha256": "18862c9ebef77f90d1b9b61c104d1ef3deb10c5006b989be87e37182f286477e",
-      "result": "100 passed"
+      "result": "100 passed",
+      "original_local_log_sha256": "18862c9ebef77f90d1b9b61c104d1ef3deb10c5006b989be87e37182f286477e"
     },
     {
       "file": "context-approval-passed.log",
       "sha256": "74e97f22d13c569b514724da19aa3988073d84a8a59ec7764fc3fd079cfefbaf",
-      "result": "26 passed"
+      "result": "26 passed",
+      "original_local_log_sha256": "74e97f22d13c569b514724da19aa3988073d84a8a59ec7764fc3fd079cfefbaf"
     },
     {
       "file": "reference-context-passed.log",
       "sha256": "f2868bdc7b88fe4abe19200f836ef8fb3cce9bd16ab31351ff2e9f27e0dabe49",
-      "result": "2 passed"
+      "result": "2 passed",
+      "original_local_log_sha256": "f2868bdc7b88fe4abe19200f836ef8fb3cce9bd16ab31351ff2e9f27e0dabe49"
     },
     {
       "local_record": "frontend-build-final.log",
