@@ -252,7 +252,8 @@ class CLIAgentAdapter:
                 on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
                 on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
                           "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
-                                    "total_tokens": result["input_tokens"] + result["output_tokens"]}})
+                                    "total_tokens": (result["input_tokens"] + result["output_tokens"]
+                                                     if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
             return result
         if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
             raise AdapterError("CLI API mode does not support client tool calls")
