@@ -75,11 +75,13 @@ def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None):
         answer = payload.get("response")
         if not isinstance(answer, str):
             raise AdapterError("Antigravity did not return a text answer")
-        usage = payload.get("usage") or {}
+        usage = payload.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        counters = {key: usage.get(key) if type(usage.get(key)) is int and usage[key] >= 0 else None
+                    for key in ("input_tokens", "output_tokens")}
         return {"text": answer, "structured_output": payload.get("structured_output"),
                 "message": {"role": "assistant", "content": answer},
-                "input_tokens": max(0, int(usage.get("input_tokens") or 0)),
-                "output_tokens": max(0, int(usage.get("output_tokens") or 0)),
+                **counters,
                 "duration_ms": int((time.monotonic() - started) * 1000), "finish_reason": "stop"}
 
 
