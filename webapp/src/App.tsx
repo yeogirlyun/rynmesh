@@ -49,6 +49,7 @@ import ItemDetail from "./screens/ItemDetail";
 import AskRyn from "./screens/AskRyn";
 import AIWorkspace from "./screens/AIWorkspace";
 import RynAgent from "./screens/RynAgent";
+import NodeApps from "./screens/NodeApps";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
@@ -374,6 +375,7 @@ export function AppRoutes() {
             element={<SecureWebAccess />}
           />
           <Route path="agent" element={<RynAgent />} />
+          <Route path="apps" element={<NodeApps />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />

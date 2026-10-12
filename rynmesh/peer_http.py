@@ -2695,6 +2695,10 @@ def create_app(store: RynmeshStore | None = None):
         resolve_pubkey=_resolve_pubkey,
     )
 
+    from .node_apps.routes import install_node_apps
+    install_node_apps(app, home=active_store.home, messaging_key=_msg_priv, peer_id=active_store.peer_id,
+                      friends=lambda: app.state.friends.service, local_control=local_control)
+
     # Agent sessions belong to this consumer node; model sharing stays stateless.
     from .agent_runtime.routes import install_agent
     install_agent(

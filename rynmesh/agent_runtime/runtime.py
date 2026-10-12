@@ -1787,7 +1787,7 @@ class AgentRuntime:
                 if "read_only" in {row["permission_mode"], data["settings"]["permission_mode"]}:
                     raise AgentError("agent_permission_denied")
                 approved = row["approved"]
-                automatic = (row["permission_mode"] == "automatic" and data["settings"]["permission_mode"] == "automatic"
+                automatic = (not meta.get("requires_explicit_approval") and row["permission_mode"] == "automatic" and data["settings"]["permission_mode"] == "automatic"
                              and call["name"] in row.get("allowed_write_tools", []) and call["name"] in data["settings"].get("allowed_write_tools", []))
                 if not approved and not automatic:
                     approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
