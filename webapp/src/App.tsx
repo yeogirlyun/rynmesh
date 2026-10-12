@@ -48,6 +48,7 @@ import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
 import AskRyn from "./screens/AskRyn";
 import AIWorkspace from "./screens/AIWorkspace";
+import RynAgent from "./screens/RynAgent";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
@@ -68,6 +69,7 @@ import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIW
 import AISources from "./screens/AISources";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
+const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
 const PluginsPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.PluginsPage })));
 
 // Resolve the local Ryn node control-API base.
@@ -101,7 +103,8 @@ export default function App() {
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const lastUnread = useRef(0);
-  const firstSuccessEnabled = import.meta.env.VITE_RYN_FIRST_SUCCESS_V1_ENABLED !== "0";
+  const firstSuccessEnabled = import.meta.env.VITE_RYN_FIRST_SUCCESS_V1_ENABLED !== "0"
+    && !(client.mode === "fixture" && window.location.pathname === "/drives");
 
   const notify = useCallback((tone: ToastMessage["tone"], text: string) => {
     const message = { id: crypto.randomUUID(), tone, text };
@@ -370,7 +373,8 @@ export function AppRoutes() {
             path="services/secure-web-access"
             element={<SecureWebAccess />}
           />
-          <Route path="ask" element={<AIWorkspace />} />
+          <Route path="agent" element={<RynAgent />} />
+          <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
           <Route path="devices/sync" element={<Devices />} />
@@ -378,6 +382,7 @@ export function AppRoutes() {
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<PersonalSettings />} />
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
+          <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
           <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
           <Route path="settings/desktop" element={<DesktopPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
@@ -391,4 +396,11 @@ export function AppRoutes() {
 function LegacyAskRedirect() {
   const location = useLocation();
   return <Navigate replace to={`/ask${location.search}`} />;
+}
+
+export function LegacyAgentRedirect() {
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const manualChat = ["material", "conversation", "peer", "service", "network", "new"].some(key => query.has(key));
+  return <Navigate replace to={`${manualChat ? "/services/private-ai/chat" : "/agent"}${location.search}`} />;
 }

@@ -50,16 +50,21 @@ def _mac_codex_apps(refresh_bucket: int) -> tuple[Path, ...]:
 
 class CLIAgentAdapter:
     def __init__(self, kind: str, *, executable: str = "") -> None:
-        if kind not in {"codex_cli", "claude_cli"}:
+        if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
             raise ValueError("unsupported CLI adapter")
         self.kind = kind
-        self.executable = executable or ("codex" if kind == "codex_cli" else "claude")
+        self.executable = executable or {"codex_cli": "codex", "claude_cli": "claude", "antigravity_cli": "agy"}[kind]
         self._lock = threading.Lock()
         self._running: dict[str, subprocess.Popen[str]] = {}
         self._cancelled: set[str] = set()
 
     def _command_path(self) -> str:
         found = shutil.which(self.executable)
+        if not found and self.kind == "antigravity_cli" and self.executable == "agy":
+            candidates = [Path.home() / ".local" / "bin" / "agy"]
+            if os.environ.get("LOCALAPPDATA"):
+                candidates.insert(0, Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy.exe")
+            found = next((str(path) for path in candidates if path.is_file()), None)
         # Explorer-started desktop apps do not inherit Codex's private PATH.
         # The desktop installer keeps versioned CLI binaries in this folder.
         if not found and self.kind == "codex_cli" and self.executable == "codex":
@@ -111,8 +116,8 @@ class CLIAgentAdapter:
         return [{"id": self.kind}]
 
     def capabilities(self) -> dict[str, Any]:
-        return {"chat_completions": True, "streaming": self.kind == "codex_cli",
-                "tools": self.kind == "codex_cli", "tool_execution": "origin_client",
+        return {"chat_completions": True, "streaming": self.kind in {"codex_cli", "antigravity_cli"},
+                "tools": self.kind in {"codex_cli", "antigravity_cli"}, "tool_execution": "origin_client",
                 "conversation_storage": "none", "cancel": "process_tree_termination"}
 
     @staticmethod
@@ -135,6 +140,9 @@ class CLIAgentAdapter:
              max_tokens: int) -> dict[str, Any]:
         from .codex_session import private_workspace
 
+        if self.kind == "antigravity_cli":
+            from .antigravity_session import infer
+            return infer(self, prompt, task_id=task_id, timeout_s=timeout_s, max_tokens=max_tokens)
         if self.kind != "claude_cli":
             raise AdapterError("Codex requires the environment-free app-server")
         command = self._command_path()
@@ -224,12 +232,18 @@ class CLIAgentAdapter:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
         body = validate_chat(body)
-        if self.kind == "codex_cli":
-            from .codex_session import chat
+        if self.kind in {"codex_cli", "antigravity_cli"}:
+            if self.kind == "codex_cli":
+                from .codex_session import chat
+            else:
+                from .antigravity_session import chat
             for key in ("temperature", "top_p", "stop", "enable_thinking"):
                 if key in body:
                     raise AdapterError(f"CLI API mode does not support {key}")
-            result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
+            if self.kind == "codex_cli":
+                result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
+            else:
+                result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300))
             if body.get("stream") and on_event:
                 # Buffered SSE: no provider turn remains alive awaiting tools.
                 delta = dict(result["message"])

@@ -1,4 +1,12 @@
 {
+  "添加模型": "Add model",
+  "接入一次，自己使用，也可以分享给其他设备。": "Connect once to use models yourself or share them with other devices.",
+  "管理来源": "Manage sources",
+  "一个来源可以提供多个模型，模型分享单独设置。": "One source can provide multiple models. Sharing is configured per model.",
+  "从已有来源添加模型": "Add models from an existing source",
+  "修改模型列表或读取可用模型": "Edit the model list or discover available models",
+  "逐模型分享": "Share individual models",
+  "新增模型默认不分享。凭据保留在本机，调用方只能使用已分享的模型。": "New models are private by default. Credentials stay on this device; consumers can only use shared models.",
   "开始聊天": "Start chat",
   "运行方式": "Runtime",
   "取消": "Cancel",
@@ -8,6 +16,9 @@
   "填写厂商密钥或自定义地址": "Enter a provider key or a custom endpoint",
   "连接 Ollama、LM Studio 或 GGUF 模型": "Connect Ollama, LM Studio or a GGUF model",
   "使用 Codex、Claude Code 登录": "Use your Codex or Claude Code login",
+  "连接 Codex、Claude Code、Antigravity": "Connect Codex, Claude Code or Antigravity",
+  "使用 Antigravity 官方调用程序。首次连接请在终端启动 agy 完成登录；无需填写 API 地址或密钥。": "Use the official Antigravity client. Before connecting for the first time, run agy in a terminal to sign in. No API endpoint or key is required.",
+  "调用家里电脑上已登录的 Antigravity": "Use Antigravity signed in on your home computer",
   "开始连接": "Connect",
   "想让其他程序调用 AI？": "Want to use AI in another app?",
   "API 接入提供本机调用地址、模型名称和项目密钥。": "API access provides a local endpoint, model names and project keys.",
@@ -1603,5 +1614,6 @@
   "Source {{number}}: {{title}}": "Source {{number}}: {{title}}",
   "Private local document": "Private local document",
   "bytes": "bytes",
-  "TRUNCATED": "TRUNCATED"
+  "TRUNCATED": "TRUNCATED",
+  "Private AI connection established and first task completed": "Private AI connection established and first task completed"
 }

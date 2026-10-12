@@ -11,6 +11,10 @@ import type { AppOutletContext } from "../appContext";
 import AISources from "./AISources";
 
 beforeEach(() => {
+  server.use(
+    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [] })),
+    http.get("*/api/local/agent/settings", () => HttpResponse.json({ enabled: false, model_id: "", permission_mode: "confirm_changes" })),
+  );
   server.use(http.get("*/api/local/llm/native", () => HttpResponse.json({
     id: "ryn-qwen3-1.7b", name: "Qwen3-1.7B", state: "not_installed", installed: false,
     supported: true, autostart: false, sharing: false,
@@ -86,26 +90,22 @@ it("offers all three first-use connections without requiring an existing service
   expect(screen.getByRole("dialog", { name: "连接本地 CLI" })).toBeInTheDocument();
 });
 
-it("retains search, device filtering, source editing and add-source selection for existing sources", async () => {
+it("shows individual models in one pool and retains source configuration", async () => {
   const stored = { ...newSource(), id: "src-zai", name: "My GLM", status: "ready" };
   server.use(http.get("*/api/local/llm/sources", () => HttpResponse.json({ sources: [stored], peer_id: "self", node_name: "My PC" })));
   const user = page("/services/sources", true);
-  await screen.findByRole("button", { name: "编辑 My GLM" });
+  await screen.findByRole("button", { name: "配置 glm-5.3-flash" });
   expect(screen.queryByRole("region", { name: "连接你的第一个 AI 来源" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "设备筛选" }));
-  await user.click(screen.getByRole("option", { name: "其他设备" }));
-  expect(screen.queryByRole("button", { name: "编辑 My GLM" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "设备筛选" }));
-  await user.click(screen.getByRole("option", { name: "全部设备" }));
-  await user.type(screen.getByRole("textbox", { name: "搜索来源" }), "no-match");
-  expect(screen.queryByRole("button", { name: "编辑 My GLM" })).not.toBeInTheDocument();
-  await user.clear(screen.getByRole("textbox", { name: "搜索来源" }));
-  await user.click(screen.getByRole("button", { name: "编辑 My GLM" }));
+  expect(screen.queryByRole("button", { name: "设备筛选" })).not.toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "搜索模型" }), "no-match");
+  expect(screen.queryByRole("button", { name: "配置 glm-5.3-flash" })).not.toBeInTheDocument();
+  await user.clear(screen.getByRole("textbox", { name: "搜索模型" }));
+  await user.click(screen.getByRole("button", { name: "配置 glm-5.3-flash" }));
   expect(screen.getByRole("dialog", { name: "编辑来源" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "保存并测试" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "删除来源" })).toBeInTheDocument();
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "关闭弹窗" }));
-  await user.click(screen.getByRole("button", { name: "添加来源" }));
-  const dialog = within(screen.getByRole("dialog", { name: "添加来源" }));
+  await user.click(screen.getByRole("button", { name: "添加模型" }));
+  const dialog = within(screen.getByRole("dialog", { name: "添加模型" }));
   for (const kind of ["厂商 API", "本地 CLI", "本地模型"]) expect(dialog.getByRole("button", { name: new RegExp(kind) })).toBeEnabled();
 });

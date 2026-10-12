@@ -15,17 +15,20 @@ import threading
 import time
 import urllib.request
 import zipfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 
-from .adapters import AdapterError, OpenAICompatibleAdapter
+from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
 from .gguf_import import NativeModelError, inspect_model
 from .hardware import _memory, _nvidia
 from .manifest import LLMPackageManifest
+from .native_policy import NativeModelPolicy
 
 MODEL_ID = "ryn-local-model"
 ENGINE_VERSION = "b11153"
 ENGINE_BASE = f"https://github.com/ggml-org/llama.cpp/releases/download/{ENGINE_VERSION}/"
+_NATIVE_BOUND = ContextVar("ryn_native_model_binding", default=None)
 # GitHub release asset digests, verified against the official release API.
 ENGINES = {
     "windows-cpu": [("llama-b11153-bin-win-cpu-x64.zip", 18559858,
@@ -175,8 +178,14 @@ def extract_runtime(archive: Path, destination: Path) -> None:
 
 class ManagedAdapter:
     """Admission and drain apply equally to chat, local API and peer requests."""
+    supports_request_deadline = True
+
     def __init__(self, owner):
         self.owner = owner
+        self.service_id = owner.manifest.package_id
+        policy = owner.policies.current(self.service_id)
+        self.model_binding = owner.policies.binding(self.service_id, policy) if policy else None
+        self.maximum = policy["configuration"]["max_output_tokens"] if policy else owner.manifest.max_output_tokens
 
     def health(self):
         with self.owner.lock:
@@ -185,9 +194,21 @@ class ManagedAdapter:
 
     @contextmanager
     def request(self):
-        with self.owner.lock:
+        bound = _NATIVE_BOUND.get()
+        with (bound[2] if bound and bound[2] is not None else nullcontext()), self.owner.lock:
             if not self.health()["ok"]:
                 raise AdapterError("local_model_stopped")
+            if self.owner.manifest.package_id != self.service_id:
+                raise AdapterError("model_configuration_changed", code="model_configuration_changed")
+            if bound:
+                if bound[0] != self.model_binding or self.model_binding is None:
+                    raise AdapterError("model_configuration_changed", code="model_configuration_changed")
+                try:
+                    bound[1]()
+                except (ValueError, OSError):
+                    raise AdapterError("ai_permission_denied", code="ai_permission_denied") from None
+            if self.model_binding:
+                self.owner.policies.admit(self.service_id, self.model_binding, self.owner.active)
             adapter = self.owner.upstream
             self.owner.active += 1
         try:
@@ -199,11 +220,21 @@ class ManagedAdapter:
 
     def infer(self, **kwargs):
         with self.request() as adapter:
+            kwargs["max_tokens"] = min(kwargs.get("max_tokens", self.maximum), self.maximum)
             return adapter.infer(**kwargs)
 
-    def chat(self, *args, **kwargs):
+    def chat(self, body, *, deadline=None, **kwargs):
+        kwargs = deadline_options(kwargs, deadline)
         with self.request() as adapter:
-            return adapter.chat(*args, **kwargs)
+            return adapter.chat({**body, "max_tokens": min(body.get("max_tokens", self.maximum), self.maximum)},
+                                **deadline_options(kwargs, deadline))
+
+    def call_bound(self, method, expected, authorize, *args, authority_lock=None, **kwargs):
+        token = _NATIVE_BOUND.set((expected, authorize, authority_lock))
+        try:
+            return getattr(self, method)(*args, **kwargs)
+        finally:
+            _NATIVE_BOUND.reset(token)
 
     def capabilities(self):
         return {"chat_completions": True, "streaming": True, "cancel": "best_effort"}
@@ -226,6 +257,7 @@ class NativeModel:
     def __init__(self, home: Path):
         self.root = home.resolve() / "llm" / "native"
         self.config_path = self.root / "settings.json"
+        self.policies = NativeModelPolicy(self.root)
         self.model_path = self.root / "models" / "model.gguf"
         self.lock = threading.Condition(threading.RLock())
         self.cancel_event = threading.Event()
@@ -251,7 +283,6 @@ class NativeModel:
             pass
         self.config["installed"] = bool(self.config["installed"] and self.metadata and self.model_path.is_file())
         self.state = "stopped" if self.config["installed"] else "not_installed"
-        self.adapter = ManagedAdapter(self)
         self._update_manifest()
 
     def _update_manifest(self):
@@ -265,6 +296,25 @@ class NativeModel:
             model_fingerprint="sha256:" + sha if sha else "", license_id=self.metadata.get("license_id", "unknown"),
             capabilities=["text-generation", "streaming", "personal-space-only"],
         )
+        if sha:
+            policy = self.policies.ensure(self.manifest, self.config["sharing"])
+            self.manifest.max_output_tokens = policy["configuration"]["max_output_tokens"]
+            self.manifest.max_concurrent = policy["configuration"]["max_concurrent"]
+        self.adapter = ManagedAdapter(self)
+
+    def configure_model(self, body):
+        with self.lock:
+            if not self.config["installed"] or not self.metadata.get("sha256"):
+                raise ValueError("native_model_not_installed")
+            self.policies.configure(self.manifest, body)
+            self._update_manifest()
+            return self.status()
+
+    def rotate_model_binding(self):
+        with self.lock:
+            if self.metadata.get("sha256"):
+                self.policies.ensure(self.manifest, self.config["sharing"], rotate=True)
+                self._update_manifest()
 
     def _save(self):
         self.root.mkdir(parents=True, exist_ok=True)
@@ -278,6 +328,8 @@ class NativeModel:
         with self.lock:
             self.config.update(values)
             self._save()
+            if self.metadata.get("sha256"):
+                self._update_manifest()
         return self.status()
 
     def status(self):
@@ -288,11 +340,17 @@ class NativeModel:
                 supported = bool(platform_key())
             except NativeModelError:
                 supported = False
+            policy = self.policies.current(self.manifest.package_id)
             return {"id": self.manifest.package_id, "name": self.metadata.get("name", ""), "file_name": self.metadata.get("file_name", ""),
                     "size_bytes": self.metadata.get("size_bytes", 0), "state": "installing" if self.uploading else self.state,
                     "stage": "uploading" if self.uploading else self.stage,
                     "progress": self.upload_progress if self.uploading else self.progress, "error": self.error, "backend": self.backend,
-                    "supported": supported, "active_requests": self.active, **self.config}
+                    "supported": supported, "active_requests": self.active, **self.config,
+                    "model_settings": {"configuration": policy["configuration"], "context_window": self.manifest.context_window,
+                        "rule_revision": policy["rule_revision"],
+                        "model_binding": self.policies.binding(self.manifest.package_id, policy),
+                        "enforcement": {"output_tokens": "upstream_request_limit", "concurrency": "node_process",
+                                        "quota": "persisted_dispatch_attempts_utc_day"}} if policy else None}
 
     def _report(self, stage, progress=None):
         if self.cancel_event.is_set() or self.closed:
@@ -342,6 +400,7 @@ class NativeModel:
                 self._kill()
                 with self.lock:
                     if action == "uninstall":
+                        self.rotate_model_binding()
                         self.model_path.unlink(missing_ok=True)
                         self.config.update(installed=False, autostart=False, sharing=False)
                         self.metadata = {}
@@ -396,6 +455,7 @@ class NativeModel:
                         if self.metadata["name"] == original.stem:
                             self.metadata["name"] = Path(file_name).stem[:160]
                     self._update_manifest()
+                    self.rotate_model_binding()
                 self.config["installed"] = True
                 self._save()
             engine = self._engine(backend)
@@ -495,6 +555,7 @@ class NativeModel:
         self._report("ready")
         with self.lock:
             self.upstream = upstream
+            self.rotate_model_binding()
 
     def _kill(self):
         from .process_guard import terminate

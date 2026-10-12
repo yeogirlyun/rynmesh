@@ -3,6 +3,7 @@ mod preferences;
 mod desktop;
 mod localization;
 mod local_model;
+mod drive_browser;
 use localization::tr;
 
 use node::NodeState;
@@ -45,7 +46,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
-            local_model::choose_local_model])
+            local_model::choose_local_model, drive_browser::open_drive_browser])
         .manage(preferences::DesktopState::default())
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())

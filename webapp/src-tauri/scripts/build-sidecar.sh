@@ -18,13 +18,14 @@ pip install -q --upgrade pip
 # Source archives can carry older mtimes than a previous setuptools build/lib
 # cache. Refresh mtimes so build_py copies the current source, then verify it.
 find "$ROOT/rynmesh" -type f -name '*.py' -exec touch {} +
-pip install -q "$ROOT" 'pyinstaller==6.22.3'
+pip install -q "${ROOT}[documents]" 'pyinstaller==6.22.3'
 # Fail before freezing if the selected interpreter cannot load the application.
 python - "$ROOT" <<'PY'
 from pathlib import Path
 import sys
 import rynmesh
 import rynmesh.peer_http
+import pypdf
 
 source = Path(sys.argv[1]) / "rynmesh"
 installed = Path(rynmesh.__file__).resolve().parent
@@ -42,6 +43,7 @@ pyinstaller --onefile --noconfirm --clean \
   --collect-submodules uvicorn \
   --collect-submodules rynmesh \
   --collect-submodules anyio \
+  --collect-submodules pypdf \
   --hidden-import ifaddr \
   --collect-data rynmesh --copy-metadata rynmesh \
   --collect-data jsonschema_specifications \

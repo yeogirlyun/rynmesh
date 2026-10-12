@@ -388,6 +388,7 @@ def create_app(store: RynmeshStore | None = None):
     except ImportError as exc:  # pragma: no cover
         raise ImportError("Rynmesh peer HTTP server requires `fastapi`") from exc
     globals()["FastAPIRequest"] = FastAPIRequest
+    globals()["Response"] = Response
 
     active_store = store or RynmeshStore()
     from .personal_space import PersonalSpace
@@ -2692,6 +2693,14 @@ def create_app(store: RynmeshStore | None = None):
         messaging_key=_msg_priv,
         resolve_endpoint=_resolve_endpoint,
         resolve_pubkey=_resolve_pubkey,
+    )
+
+    # Agent sessions belong to this consumer node; model sharing stays stateless.
+    from .agent_runtime.routes import install_agent
+    install_agent(
+        app, store=active_store, home=active_store.home,
+        workers=app.state.background_workers, local_control=local_control,
+        messaging_key=_msg_priv,
     )
 
     # ---- bundled web UI -------------------------------------------------

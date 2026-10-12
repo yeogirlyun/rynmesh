@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
-import threading
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 
+from ..atomic_io import atomic_write_bytes
+from ..file_transactions import file_transaction
+from . import model_settings
 from .adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 
 
@@ -29,10 +32,26 @@ class SourceAdapter(OpenAICompatibleAdapter):
 
 
 class SourceStore:
-    def __init__(self, home: Path, private_key: bytes):
+    def __init__(self, home: Path, private_key: bytes, *, migrate: bool = True):
         self.path = home / "llm" / "sources.enc"
         self.cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"ryn-ai-sources-v1" + private_key).digest()))
-        self.lock = threading.RLock()
+        self.lock_path = home / "llm" / ".sharing.lock"
+        self._active_models = {}
+        with self.lock:
+            records = self.read()
+            changed = False
+            for record in records.values() if migrate else ():
+                if set(record.get("model_settings", {})) != set(record["models"]):
+                    model_settings.reconcile(record, copy.deepcopy(record))
+                    changed = True
+            if changed:
+                self._write(records)
+
+    @property
+    def lock(self):
+        # Shared with AIAccessStore: source configuration, grant imports and
+        # subsequent owner grant edits have one cross-process lock order.
+        return file_transaction(self.lock_path)
 
     def read(self):
         with self.lock:
@@ -41,15 +60,20 @@ class SourceStore:
             return json.loads(self.cipher.decrypt(self.path.read_bytes()))
 
     def _write(self, records):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_suffix(".tmp")
-        temp.write_bytes(self.cipher.encrypt(json.dumps(records).encode()))
-        temp.chmod(0o600)
-        temp.replace(self.path)
+        atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
 
     @staticmethod
     def public(record):
-        return {**{k: v for k, v in record.items() if k != "api_key"}, "has_key": bool(record.get("api_key"))}
+        return {**{k: v for k, v in record.items() if k != "api_key" and not k.startswith("_")},
+                "shared_models": SourceStore.shared_models(record),
+                "model_settings": {m: model_settings.public(record, m) for m in record["models"]},
+                "tool_support": record.get("tool_support", {}), "has_key": bool(record.get("api_key"))}
+
+    @staticmethod
+    def shared_models(record):
+        """Legacy whole-source grants apply only to the models already present."""
+        return [m for m in record.get("models", []) if m in record.get(
+            "shared_models", record.get("models", []) if record.get("sharing") else [])]
 
     def prepare(self, body, source_id=""):
         old = self.read().get(source_id, {})
@@ -84,19 +108,57 @@ class SourceStore:
             raise ValueError("请求参数仅支持 thinking、reasoning_effort、temperature、top_p")
         if len(json.dumps(defaults)) > 4096:
             raise ValueError("请求参数过长")
-        return {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind,
+        shared = body.get("shared_models", [m for m in self.shared_models(old) if m in models])
+        if "shared_models" not in body and "sharing" in body:
+            if type(body["sharing"]) is not bool:
+                raise ValueError("sharing must be boolean")
+            shared = models if body["sharing"] else []
+        if not isinstance(shared, list) or any(not isinstance(m, str) or m not in models for m in shared):
+            raise ValueError("shared_models must contain configured model IDs")
+        shared = list(dict.fromkeys(shared))
+        record = {"id": source_id or "src-" + uuid.uuid4().hex[:16], "kind": kind,
                 "name": name, "provider": str(body.get("provider", old.get("provider", "custom")))[:80],
                 "base_url": base, "api_key": key.strip(), "models": models,
                 "context_window": context, "max_output_tokens": output, "request_defaults": defaults,
-                "sharing": bool(body.get("sharing", old.get("sharing", False))),
+                "sharing": bool(shared), "shared_models": shared,
                 "enabled": bool(body.get("enabled", old.get("enabled", True))),
                 "status": "needs_key" if kind == "api" and not key else "untested"}
+        # A text test or a user-supplied flag cannot assert client-tool support.
+        fields = ("kind", "provider", "base_url", "api_key", "models", "context_window", "max_output_tokens", "request_defaults")
+        record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
+        record["model_settings"] = copy.deepcopy(old.get("model_settings", {}))
+        # Preserve unaffected sibling evidence when merely adding/removing a model.
+        if all(record.get(k) == old.get(k) for k in fields if k != "models"):
+            record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
+        model_settings.reconcile(record, old)
+        return record
 
     def save(self, record):
+        caller_record = record
         with self.lock:
             records = self.read()
+            old = records.get(record["id"], {})
+            # Private grants and receipts are server-owned, never accepted from
+            # request bodies or overwritten by a previously prepared UI draft.
+            record = {k: copy.deepcopy(v) for k, v in record.items() if not k.startswith("_")}
+            record.update({k: copy.deepcopy(v) for k, v in old.items() if k.startswith("_")})
+            model_settings.reconcile(record, old)
+            destination_fields = ("kind", "provider", "base_url", "api_key", "models", "context_window",
+                                  "max_output_tokens", "request_defaults", "enabled")
+            unchanged = all(record.get(k) == old.get(k) for k in destination_fields)
+            # This opaque generation is authoritative, never accepted from the
+            # request body. Restoring an older endpoint/key does not resurrect an
+            # earlier task's egress grant (including an A -> B -> A edit).
+            record["destination_revision"] = old.get("destination_revision", uuid.uuid4().hex) if unchanged else uuid.uuid4().hex
+            # Whole-source edits/probe results have a separate CAS generation;
+            # destination_revision intentionally ignores sharing and labels.
+            record["source_revision"] = uuid.uuid4().hex
             records[record["id"]] = record
             self._write(records)
+            # Existing internal callers retain this record for later CAS/probe
+            # updates; keep their authoritative generations current as before.
+            caller_record.clear()
+            caller_record.update(copy.deepcopy(record))
         return self.public(record)
 
     def delete(self, source_id):
@@ -112,7 +174,31 @@ class SourceStore:
         return SourceAdapter(base_url=record["base_url"], api_prefix="", api_key=record.get("api_key", ""),
                              model=model or next(iter(record["models"]), ""),
                              allow_non_loopback=record["kind"] == "api", timeout_s=180,
-                             request_defaults=record.get("request_defaults", {}))
+                             request_defaults=model_settings.effective(record, model or next(iter(record["models"]), ""))["request_defaults"])
+
+    def configure_model(self, source_id, body):
+        if not isinstance(body, dict) or set(body) != {"model_id", "expected_rule_revision", "configuration"}:
+            raise ValueError("model_configuration_request_invalid")
+        with self.lock:
+            record = self.read().get(source_id)
+            if not record or body["model_id"] not in record["models"]:
+                raise ValueError("configured_model_required")
+            model = body["model_id"]
+            row = record.get("model_settings", {}).get(model, {})
+            if row.get("rule_revision", "") != body["expected_rule_revision"]:
+                raise ValueError("model_rule_revision_conflict")
+            patch = body["configuration"]
+            if not isinstance(patch, dict) or set(patch) - model_settings.FIELDS:
+                raise ValueError("model_configuration_invalid")
+            overrides = copy.deepcopy(row.get("overrides", {}))
+            for key, value in patch.items():
+                if value is None and key != "requests_per_day":
+                    overrides.pop(key, None)
+                else:
+                    overrides[key] = value
+            model_settings.validate({**model_settings.defaults(record), **overrides})
+            record.setdefault("model_settings", {})[model] = {**row, "overrides": overrides}
+            return self.save(record)
 
     @staticmethod
     def model_service_id(record, model):
@@ -125,7 +211,39 @@ class SourceStore:
         if not record["models"]:
             raise ValueError("请先添加至少一个模型 ID")
         result = adapter.chat({"messages": [{"role": "user", "content": "Reply briefly: OK"}],
-                               "max_tokens": min(4096, record["max_output_tokens"])}, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
+                               "max_tokens": min(4096, model_settings.effective(record, record["models"][0])["max_output_tokens"])}, task_id="source-test-" + uuid.uuid4().hex, timeout_s=90)
         if not result.get("text"):
             raise AdapterError("模型未返回正文，请检查输出上限或推理参数")
         return {"ok": True, "model": adapter.model}
+
+    def probe_model_tools(self, record, model):
+        """Explicit owner-triggered two-turn test, never called by discovery."""
+        if model not in record["models"]:
+            raise ValueError("unknown configured model")
+        self.probe_adapter_tools(self.adapter(record, model), model_settings.effective(record, model)["max_output_tokens"])
+        return {"model_id": model, "tool_support": "supported"}
+
+    @staticmethod
+    def probe_adapter_tools(adapter, max_output_tokens):
+        from .chat import validate_tool_arguments
+
+        schema = {"type": "object", "properties": {"value": {"const": "ryn-tool-test"}},
+                  "required": ["value"], "additionalProperties": False}
+        spec = {"type": "function", "function": {"name": "ryn_capability_probe", "description": "Return the requested test value.", "parameters": schema}}
+        messages = [{"role": "user", "content": "Call ryn_capability_probe with value ryn-tool-test."}]
+        first = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "required",
+                              "max_tokens": min(4096, max_output_tokens)},
+                             task_id="source-tools-" + uuid.uuid4().hex, timeout_s=60)
+        message = first.get("message") or {}
+        calls = message.get("tool_calls") or []
+        if len(calls) != 1 or calls[0].get("function", {}).get("name") != "ryn_capability_probe":
+            raise ValueError("model did not return a structured client tool call")
+        validate_tool_arguments(schema, json.loads(calls[0]["function"]["arguments"]))
+        messages += [message, {"role": "tool", "tool_call_id": calls[0]["id"], "content": "ryn-tool-test-ok"},
+                     {"role": "user", "content": "Return the tool result as text; do not call another tool."}]
+        final = adapter.chat({"messages": messages, "tools": [spec], "tool_choice": "none",
+                              "max_tokens": min(4096, max_output_tokens)},
+                             task_id="source-tools-" + uuid.uuid4().hex, timeout_s=60)
+        if not final.get("text") or final.get("message", {}).get("tool_calls"):
+            raise ValueError("model did not complete the tool-result continuation")
+        return {"tool_support": "supported"}
