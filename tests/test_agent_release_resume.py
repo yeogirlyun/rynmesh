@@ -2,6 +2,7 @@
 import copy
 import importlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,15 @@ from test_agent_release_registry import activate, prepared, registry, save  # no
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLERS = ROOT / "docs/acceptance/ryn-agent-delivery/real-model"
+
+
+@pytest.fixture
+def worker_dependencies(cohort):
+    executable = os.environ.get("RYN_REFERENCE_NODE") or shutil.which("node")
+    upstream = Path(os.environ.get("RYN_REFERENCE_UPSTREAM", ROOT / ".codex-tmp/research/zcode-runtime-reference"))
+    if cohort == "reference" and (not executable or not upstream.is_dir()):
+        pytest.skip("Pinned native dependencies absent; set RYN_REFERENCE_NODE and RYN_REFERENCE_UPSTREAM")
+    return Path(executable), upstream
 
 
 def policy():
@@ -53,12 +63,11 @@ def activate_case(p, case_id, collector):
 
 
 @pytest.mark.parametrize("cohort", ["ryn", "reference"])
-def test_registered_r02_actual_worker_restart_preserves_single_registration(prepared, monkeypatch, cohort):  # noqa: F811
+def test_registered_r02_actual_worker_restart_preserves_single_registration(prepared, monkeypatch, cohort, worker_dependencies):  # noqa: F811
     monkeypatch.syspath_prepend(str(CONTROLLERS))
     runner = importlib.import_module("run_sharing_recovery")
     collector = importlib.import_module("release_collection")
-    executable = Path(shutil.which("node"))
-    upstream = ROOT / ".codex-tmp/research/zcode-runtime-reference"
+    executable, upstream = worker_dependencies
     if cohort == "reference":
         prepared["manifest"]["artifacts"]["reference_node"] = registry.binding(executable)
     activate_case(prepared, "R02", collector)
@@ -127,12 +136,12 @@ def test_document_roles_reopen_in_new_process_without_reseeding(tmp_path, monkey
 
 
 @pytest.mark.parametrize("cohort", ["ryn", "reference"])
-def test_r03_real_worker_restore_keeps_original_operation_and_one_put(prepared, monkeypatch, cohort):  # noqa: F811
+def test_r03_real_worker_restore_keeps_original_operation_and_one_put(prepared, monkeypatch, cohort, worker_dependencies):  # noqa: F811
     monkeypatch.syspath_prepend(str(CONTROLLERS))
     resume = importlib.import_module("release_resume")
     collector = importlib.import_module("release_collection")
     proof = importlib.import_module("consumer_process_proof")
-    executable = Path(shutil.which("node"))
+    executable, upstream = worker_dependencies
     prepared["manifest"]["artifacts"]["reference_node"] = registry.binding(executable)
     activate_case(prepared, "R03", collector)
     root, output = prepared["root"], prepared["root"] / "raw"
@@ -145,7 +154,7 @@ def test_r03_real_worker_restore_keeps_original_operation_and_one_put(prepared, 
         "trial": 1, "release_activation": str(prepared["activation"]), "output": str(output),
         "owner_home": str(owner), "owner_source_sha256": registry.sha(owner / "llm/sources.enc"),
         "source_id": "src-7de9fb1d36c44bc8", "planner_policy": policy(), "prompt": case["prompt"],
-        "node": str(executable), "upstream": str(ROOT / ".codex-tmp/research/zcode-runtime-reference")}
+        "node": str(executable), "upstream": str(upstream)}
     with ExitStack() as stack:
         spec = importlib.util.spec_from_file_location("resume_r03_dav", ROOT / "tests/fixtures/agent_acceptance/webdav_fixture.py")
         fixture = importlib.util.module_from_spec(spec)

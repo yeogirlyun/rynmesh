@@ -115,7 +115,15 @@ def test_q06_write_rejected_at_real_boundaries(node, tmp_path, modules, boundary
                     host.execute(call)
         evidence = world.collect()
         assert evidence["metrics"]["writes"] == 0 and evidence["access_query"]["read_only_boundary_passed"]
-        assert evidence["access_query"]["hashes_before"] == evidence["access_query"]["hashes_after"]
+        access = evidence["access_query"]
+        # Signed catalog reads persist anti-replay nonces, even when a proposed
+        # write is rejected. Compare every other byte and the full relationship
+        # business state rather than depending on whether nonce timestamps match.
+        relationships = access["relationship_business_hashes_before"]
+        assert relationships == access["relationship_business_hashes_after"]
+        for name, before in access["hashes_before"].items():
+            if name not in relationships:
+                assert before == access["hashes_after"][name], name
 
 
 def test_q06_detects_out_of_band_grant_mutation(node, tmp_path, modules):  # noqa: F811
