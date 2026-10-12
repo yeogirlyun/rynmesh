@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 from ..ai_access.store import AIAccessError
 from ..file_transactions import file_transaction
 from ..llm_package.chat import validate_tool_arguments
+from ..node_apps.agent import ACTION as APP_ACTION
+from ..node_apps.agent import LIST as APP_LIST
+from ..node_apps.agent import NAMES as APP_NAMES
+from ..node_apps.agent import SPECS as APP_SPECS
+from ..node_apps.agent import VERIFIER as APP_VERIFIER
+from ..node_apps.agent import AppTools
 from ..services.peer_health import PeerHealthProbe
 from .cli_sources import CONNECT as CLI_CONNECT
 from .cli_sources import KINDS as CLI_KINDS
@@ -114,6 +120,7 @@ def bounded_result(value, *, opaque_keys=(), strict=False):
 class RynTools:
     def __init__(self, app, store, services, catalog):
         self.app, self.store, self.services, self.catalog = app, store, services, catalog
+        self.node_apps = AppTools(app)
         self.lock = threading.RLock()
         self.completed = OrderedDict()
         self.peer_health = PeerHealthProbe(timeout_s=1.5, max_concurrency=8)
@@ -160,7 +167,7 @@ class RynTools:
         return self.resources.validate_context(context, cheap_only=cheap_only)
 
     def verification_specs(self):
-        return copy.deepcopy(READ_SPECS) + [{"id": "local_cli_configuration_state", "tool_name": CLI_CONNECT, "kind": "mechanical", "effect": "write", "description": "Read attributable CLI setup and current configuration; client tools require a separate probe.", "target_fields": ["kind"]},
+        return ([copy.deepcopy(APP_VERIFIER)] if getattr(self.app.state, "node_apps", None) else []) + copy.deepcopy(READ_SPECS) + [{"id": "local_cli_configuration_state", "tool_name": CLI_CONNECT, "kind": "mechanical", "effect": "write", "description": "Read attributable CLI setup and current configuration; client tools require a separate probe.", "target_fields": ["kind"]},
                 {"id": "local_cli_tool_test_state", "tool_name": CLI_TEST, "kind": "mechanical", "effect": "read", "description": "Verify the attributable client-tool probe and unchanged installed CLI/configuration.", "target_fields": ["kind"]},
                 {"id": FRIEND_SHARING_VERIFIER, "tool_name": FRIEND_SHARING_NAME, "kind": "mechanical", "effect": "write",
                  "description": "Verify the atomic sharing receipt, friends scope and exact recipient grants; receiver connectivity is separate.", "target_fields": ["model_id", "relationship_id"]},
@@ -193,6 +200,8 @@ class RynTools:
             return {"status": "unknown", "evidence": {"reason": "unregistered_verifier", "operation_attribution": "not_established"}, "checked_at": stamp}
         try:
             self._validate(tool, args)
+            if tool == APP_ACTION:
+                return self.node_apps.verify(receipt, context, cancelled)
             if tool == DEFAULT_MODEL_NAME:
                 return self.default_model.verify(receipt, context=context, cancelled=cancelled)
             if tool == FRIEND_SHARING_NAME:
@@ -251,6 +260,8 @@ class RynTools:
         if operation.get("operation_id") != operation_id or not isinstance(operation.get("arguments"), dict):
             return unknown
         tool, args = operation.get("tool"), operation["arguments"]
+        if tool == APP_ACTION:
+            return self.node_apps.reconcile(operation_id, context, cancelled)
         if tool == DEFAULT_MODEL_NAME:
             return self.default_model.reconcile(operation_id, context=context, cancelled=cancelled)
         if tool == FRIEND_SHARING_NAME:
@@ -275,9 +286,11 @@ class RynTools:
 
     def specs(self):
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in _SPECS.items()] + self.diagnostics.specs()
+                for name, row in _SPECS.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
 
     def metadata(self, name):
+        if name in APP_NAMES and getattr(self.app.state, "node_apps", None):
+            return {"effect": "read" if name == APP_LIST else "write", "title": "Node app capabilities" if name == APP_LIST else "App operation and model data release", "risk": "high", "scope_context_supported": True, "supports_preview": name == APP_ACTION, "preview_precondition": name == APP_ACTION, "requires_explicit_approval": name == APP_ACTION}
         if name in DIAGNOSTIC_NAMES:
             return self.diagnostics.metadata(name)
         if name not in _SPECS:
@@ -304,10 +317,10 @@ class RynTools:
 
     def _validate(self, name, arguments):
         self.metadata(name)
-        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > (24 * 1024 if name in WRITE_NAMES else 8192):
+        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > (24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192):
             raise AgentToolRejected("agent_tool_arguments_invalid")
         try:
-            schema = next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else _SPECS[name][3]
+            schema = next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else _SPECS[name][3]
             validate_tool_arguments(schema, arguments)
         except ValueError:
             raise AgentToolRejected("agent_tool_arguments_invalid") from None
@@ -347,6 +360,8 @@ class RynTools:
 
     def preview(self, name, arguments, *, context=None):
         self._validate(name, arguments)
+        if name == APP_ACTION:
+            return self.node_apps.preview(arguments, context)
         if name == DEFAULT_MODEL_NAME:
             return self.default_model.preview(arguments, context)
         if name == FRIEND_SHARING_NAME:
@@ -408,6 +423,8 @@ class RynTools:
         self._validate(name, arguments)
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 256:
             raise AgentToolRejected("agent_operation_id_required")
+        if name in APP_NAMES:
+            return self.node_apps.execute(name, arguments, operation_id, cancelled, expected_preview, context)
         if name == DEFAULT_MODEL_NAME:
             return self.default_model.execute(arguments, operation_id=operation_id, context=context,
                                               expected_preview=expected_preview, cancelled=cancelled)

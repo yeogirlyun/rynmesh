@@ -41,6 +41,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/", label: t("nav.home"), icon: Home },
     { to: "/services", label: t("nav.services"), icon: Box },
     { to: "/agent", label: agentText("title"), icon: MessageCircle },
+    { to: "/apps", label: tr("Apps"), icon: Box },
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
     { to: "/drives", label: t("drive.title"), icon: HardDrive },
