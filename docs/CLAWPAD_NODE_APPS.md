@@ -62,3 +62,12 @@ Open `http://127.0.0.1:8796/apps` on MS-1 and select MS-2 Apps as provider. MS-2
 A hosted workspace is processed and retained by the chosen provider node. Transport and storage are encrypted and consumers are isolated, but the provider operator has the keys; this does not hide hosted records from that operator. Draft arguments stay on the consumer until approval. An assistant using app results additionally sends those results to the selected model, identified in its approval preview.
 
 See [the local handoff](NODE_APPS_LOCAL_HANDOFF.md) for exact installed homes, authentication, access and recovery boundaries. No autostart, scheduled monitoring, public release, push or main merge was performed.
+
+
+## Craft suite follow-on — 2026-10-13
+
+The same branch now also contains 13 Craft adapters: CADCraft, DeckCraft, DesignCraft, EffectCraft, FigCraft, FilmCraft, GridCraft, LightCraft, PDFCraft, PhotoCraft, SoundCraft, VectorCraft and WordCraft. This brings the catalog to 16 entries and 41 reviewed operations (28 original business operations and one `editor_info` per Craft entry). These editor wrappers are different from the three business engines: 12 pinned WebAssembly builds run in the consuming browser, and FilmCraft is native-only at its recorded version.
+
+Implementation `946b35d25224b6e5c2c6317dda018883ef2679cf` adds existing-grant/approval integration, honest UI/runtime labels and an explicit verified installer plus separate static-only host. It does not connect document editing to Ryn Agent or sync documents into node workspaces. All 12 web builds were verified and started; PhotoCraft has a missing optional font manifest needing follow-up. Final focused regressions: 568 backend and 666 frontend tests, production build, package checks and real two-node catalog UI acceptance. Existing physical pilot services were not upgraded.
+
+See [the Craft review](reviews/CLAWPAD_CRAFT_2026-10-13.md), [acceptance evidence](acceptance/craft-20261013/README.md) and [Ziling's Chinese handoff](CRAFT_ZILING_HANDOFF_ZH.md). Ziling takes over user access/launch configuration, chosen-node deployment, document round trips and any carefully scoped editing tools. The earlier physical-pilot evidence above describes the original three-app deployment, not a Craft rollout.

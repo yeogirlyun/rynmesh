@@ -1,0 +1,19 @@
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 50%]
+........................................................................ [ 63%]
+........................................................................ [ 76%]
+........................................................................ [ 88%]
+................................................................         [100%]
+=============================== warnings summary ===============================
+tests/test_exchange_http_faults.py::test_slow_unreachable_validator_does_not_block_three_healthy_votes
+  /Users/yeogirlyun/Library/Python/3.13/lib/python/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+tests/test_exchange_http_faults.py::test_slow_unreachable_validator_does_not_block_three_healthy_votes
+  /Users/yeogirlyun/Library/Python/3.13/lib/python/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+568 passed, 2 warnings in 49.93s

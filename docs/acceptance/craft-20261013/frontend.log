@@ -1,0 +1,13 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run --maxWorkers=4
+
+
+ RUN  v4.1.11 /Users/yeogirlyun/.codex/worktrees/clawpad-node-apps/rynmesh/webapp
+
+
+ Test Files  101 passed (101)
+      Tests  666 passed (666)
+   Start at  21:45:31
+   Duration  36.03s (transform 3.42s, setup 12.99s, import 9.53s, tests 81.56s, environment 31.95s)
+
