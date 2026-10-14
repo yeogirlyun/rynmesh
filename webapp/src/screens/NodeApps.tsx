@@ -290,7 +290,7 @@ export default function NodeApps({
     setAction(
       { resume: "create_resume", recruit: "create_job", desk: "create_ticket" }[
         id
-      ] ?? "",
+      ] ?? "editor_info",
     );
     setValues({});
   }
@@ -467,86 +467,115 @@ export default function NodeApps({
       {app && (
         <>
           <h2>
-            {tr(
-              app.id === "resume"
-                ? "Resume"
-                : app.id === "recruit"
-                  ? "Recruit"
-                  : "Desk",
-            )}
+            {app.runtime
+              ? app.name
+              : tr(
+                  app.id === "resume"
+                    ? "Resume"
+                    : app.id === "recruit"
+                      ? "Recruit"
+                      : "Desk",
+                )}
           </h2>
-          <p>
-            {tr(
-              app.id === "resume"
-                ? "Build resumes and cover letters; export reviewed text."
-                : app.id === "recruit"
-                  ? "Manage job requests and candidate stages. Budgets quote Ryncoin; payments use Exchange."
-                  : "Track service requests, private comments and resolutions.",
-            )}
-          </p>
+          {app.runtime ? (
+            <section aria-label={tr("Craft editor details")}>
+              <p>{app.description}</p>
+              <p>
+                {tr("Pinned version")}: {app.editor?.version}
+              </p>
+              <p>
+                {app.runtime === "craft_web"
+                  ? tr(
+                      "Browser editor: install the verified build on a separate editor origin. Documents stay in the editor browser or explicit file exports; they are not synced to this workspace.",
+                    )
+                  : tr(
+                      "Native only in this pinned release. Browser editing is unavailable; no native app is installed or launched by Rynmesh.",
+                    )}
+              </p>
+              <p>
+                {tr(
+                  "Editor information is available through the reviewed operation below. Document editing tools and user launch configuration are not connected yet.",
+                )}
+              </p>
+            </section>
+          ) : (
+            <p>
+              {tr(
+                app.id === "resume"
+                  ? "Build resumes and cover letters; export reviewed text."
+                  : app.id === "recruit"
+                    ? "Manage job requests and candidate stages. Budgets quote Ryncoin; payments use Exchange."
+                    : "Track service requests, private comments and resolutions.",
+              )}
+            </p>
+          )}
           <div className="na-columns">
-            <section>
-              <h3>{tr("Your workspace")}</h3>
-              {Object.entries(workspace?.records ?? {})
-                .filter(([key]) => !["settings", "exports"].includes(key))
-                .map(([bucket, records]) => (
-                  <div key={bucket}>
-                    <h4>{label(bucket)}</h4>
-                    {records.map((record) => (
-                      <article key={String(record.id)}>
-                        <h4>{String(record.name ?? record.title ?? bucket)}</h4>
-                        <p>
-                          {String(
-                            record.target_role ??
-                              record.description ??
-                              record.stage ??
-                              record.status ??
-                              "",
-                          )}
-                        </p>
-                        {Boolean(record.budget_ryncoin) && (
+            {!app.runtime && (
+              <section>
+                <h3>{tr("Your workspace")}</h3>
+                {Object.entries(workspace?.records ?? {})
+                  .filter(([key]) => !["settings", "exports"].includes(key))
+                  .map(([bucket, records]) => (
+                    <div key={bucket}>
+                      <h4>{label(bucket)}</h4>
+                      {records.map((record) => (
+                        <article key={String(record.id)}>
+                          <h4>
+                            {String(record.name ?? record.title ?? bucket)}
+                          </h4>
                           <p>
-                            {String(record.budget_ryncoin)}{" "}
-                            {tr(
-                              "Ryncoin quoted \u00B7 payment handled in Exchange",
+                            {String(
+                              record.target_role ??
+                                record.description ??
+                                record.stage ??
+                                record.status ??
+                                "",
                             )}
                           </p>
-                        )}
-                        <button
-                          onClick={() => {
-                            setValues({
-                              [bucket.slice(0, -1) + "_id"]: record.id,
-                            });
-                            setAction(
-                              {
-                                resumes: "get_resume",
-                                jobs: "get_job",
-                                candidates: "get_candidate",
-                                tickets: "get_ticket",
-                              }[bucket] ?? action,
-                            );
-                          }}
-                        >
-                          {tr("Open record")}
-                        </button>
-                      </article>
-                    ))}
-                  </div>
-                ))}
-              {!Object.values(workspace?.records ?? {}).some(
-                (rows) => rows.length,
-              ) && (
-                <p>
-                  {tr("No records yet. Create your first")}{" "}
-                  {app.id === "resume"
-                    ? "resume"
-                    : app.id === "recruit"
-                      ? "job request"
-                      : "service ticket"}
-                  .
-                </p>
-              )}
-            </section>
+                          {Boolean(record.budget_ryncoin) && (
+                            <p>
+                              {String(record.budget_ryncoin)}{" "}
+                              {tr(
+                                "Ryncoin quoted \u00B7 payment handled in Exchange",
+                              )}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => {
+                              setValues({
+                                [bucket.slice(0, -1) + "_id"]: record.id,
+                              });
+                              setAction(
+                                {
+                                  resumes: "get_resume",
+                                  jobs: "get_job",
+                                  candidates: "get_candidate",
+                                  tickets: "get_ticket",
+                                }[bucket] ?? action,
+                              );
+                            }}
+                          >
+                            {tr("Open record")}
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  ))}
+                {!Object.values(workspace?.records ?? {}).some(
+                  (rows) => rows.length,
+                ) && (
+                  <p>
+                    {tr("No records yet. Create your first")}{" "}
+                    {app.id === "resume"
+                      ? "resume"
+                      : app.id === "recruit"
+                        ? "job request"
+                        : "service ticket"}
+                    .
+                  </p>
+                )}
+              </section>
+            )}
             <section>
               <h3>
                 {tr("Work on")}

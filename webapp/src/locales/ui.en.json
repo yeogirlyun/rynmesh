@@ -1755,5 +1755,11 @@
   "Interview": "Interview",
   "Offer": "Offer",
   "Hired": "Hired",
-  "Rejected": "Rejected"
+  "Rejected": "Rejected",
+  "Craft editor details": "Craft editor details",
+  "Pinned version": "Pinned version",
+  "Browser editor: install the verified build on a separate editor origin. Documents stay in the editor browser or explicit file exports; they are not synced to this workspace.": "Browser editor: install the verified build on a separate editor origin. Documents stay in the editor browser or explicit file exports; they are not synced to this workspace.",
+  "Native only in this pinned release. Browser editing is unavailable; no native app is installed or launched by Rynmesh.": "Native only in this pinned release. Browser editing is unavailable; no native app is installed or launched by Rynmesh.",
+  "Editor information is available through the reviewed operation below. Document editing tools and user launch configuration are not connected yet.": "Editor information is available through the reviewed operation below. Document editing tools and user launch configuration are not connected yet.",
+  "Editor info": "Editor info"
 }

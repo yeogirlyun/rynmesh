@@ -16,6 +16,13 @@ export type NodeApp = {
   name: string;
   description: string;
   operations: Record<string, Operation>;
+  runtime?: "craft_web" | "craft_native_only";
+  editor?: {
+    version: string;
+    web: boolean;
+    formats: string[];
+    source_url: string;
+  };
 };
 export type WorkspaceContext = {
   app: string;

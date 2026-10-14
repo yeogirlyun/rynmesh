@@ -430,3 +430,37 @@ CATALOG = {
         },
     },
 }
+
+
+# Craft adapters expose honest runtime metadata, not invented editing commands.
+from .craft_catalog import CLAWPAD_COMMIT, CRAFT  # noqa: E402
+
+for _slug, _spec in CRAFT.items():
+    CATALOG[_slug] = {
+        "id": _slug,
+        "name": _spec["name"],
+        "description": _spec["summary"],
+        "runtime": "craft_web" if _spec["web"] else "craft_native_only",
+        "editor": {
+            "version": _spec["tag"],
+            "web": _spec["web"],
+            "formats": _spec["formats"],
+            "source_url": f"https://github.com/storytold/{_slug}/tree/{_spec['tag']}",
+        },
+        "operations": {
+            "editor_info": {
+                "effect": "read",
+                "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "source": {
+            "repository": "owner Clawpad / storytold ArtCraft",
+            "commit": CLAWPAD_COMMIT,
+            "spec_sha256": _spec["source_spec_sha256"],
+        },
+    }
