@@ -355,7 +355,14 @@ def test_lost_response_original_intent_survives_reload_and_resumes_once(mesh, mo
     assert len(restored.call(peer, "view", {"app": "desk"})["records"]["tickets"]) == 1
 
 
-def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path):
+@pytest.mark.parametrize(
+    "app_id, action, arguments",
+    [
+        ("desk", "create_ticket", {"name": "Approved task"}),
+        ("wordcraft", "editor_info", {}),
+    ],
+)
+def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path, app_id, action, arguments):
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
     from test_agent_runtime import Catalog, Model, approve, assistant
 
@@ -395,10 +402,10 @@ def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path):
         assistant(
             name=ACTION,
             args={
-                "app": "desk",
-                "action": "create_ticket",
-                "arguments": {"name": "Approved task"},
-                "reviewed_context": service.call("", "context", {"app": "desk"}),
+                "app": app_id,
+                "action": action,
+                "arguments": arguments,
+                "reviewed_context": service.call("", "context", {"app": app_id}),
             },
         )
     )
@@ -429,10 +436,14 @@ def test_app_agent_requires_approval_even_in_automatic_mode(tmp_path):
     )
     approve(runtime, created["id"])
     runtime.run_once()
-    assert (
-        service.call("", "view", {"app": "desk"})["records"]["tickets"][0]["name"]
-        == "Approved task"
-    )
+    if app_id == "desk":
+        assert (
+            service.call("", "view", {"app": "desk"})["records"]["tickets"][0]["name"]
+            == "Approved task"
+        )
+    else:
+        assert service.call("", "view", {"app": app_id})["records"] == {}
+        assert any(w["operations"] for w in service.store.read()["workspaces"].values())
 
 
 def test_standalone_host_remote_auth_and_no_background_workers(tmp_path):
@@ -537,3 +548,48 @@ def test_stale_client_view_cannot_be_rebased_during_preview(mesh):
     with pytest.raises(AppError, match="review_changed"):
         mesh.buyer.preview(peer, "desk", "create_ticket", {"name": "Draft stays local"}, original)
     assert mesh.buyer.call(peer, "view", {"app": "desk"})["revision"] == 1
+
+
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "cadcraft",
+        "deckcraft",
+        "designcraft",
+        "effectcraft",
+        "figcraft",
+        "filmcraft",
+        "gridcraft",
+        "lightcraft",
+        "pdfcraft",
+        "photocraft",
+        "soundcraft",
+        "vectorcraft",
+        "wordcraft",
+    ],
+)
+def test_craft_catalog_honest_runtime_and_existing_peer_contract(mesh, slug):
+    from rynmesh.node_apps.craft_catalog import CRAFT
+
+    peer = mesh.provider.peer_id
+    assert slug not in {a["id"] for a in mesh.buyer.call(peer, "catalog", {})["apps"]}
+    allow(mesh, mesh.buyer, slug)
+    catalog = mesh.buyer.call(peer, "catalog", {})
+    item = next(a for a in catalog["apps"] if a["id"] == slug)
+    assert list(item["operations"]) == ["editor_info"]
+    assert item["editor"]["web"] is CRAFT[slug]["web"]
+    first = invoke(mesh.buyer, peer, slug, "editor_info", {}, operation_id="craft-information")
+    info = first["result"]
+    assert info["web_sha256"] == CRAFT[slug]["web_sha256"]
+    assert info["editing_api"] == "not_exposed"
+    assert info["network_workspace_sync"] is False
+    assert first["price_ryncoin"] == "0" and first["revision"] == 0
+    assert mesh.buyer.call(peer, "view", {"app": slug})["records"] == {}
+    with pytest.raises(AppError):
+        mesh.buyer.preview(peer, slug, "install", {})
+    with pytest.raises(AppError, match="denied"):
+        mesh.other.call(peer, "view", {"app": slug})
+    grant = mesh.provider.grant_preview(slug, mesh.buyer.peer_id, False)
+    mesh.provider.grant(slug, mesh.buyer.peer_id, False, grant["preview_hash"])
+    with pytest.raises(AppError, match="denied"):
+        mesh.buyer.call(peer, "view", {"app": slug})

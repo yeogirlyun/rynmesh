@@ -170,3 +170,103 @@ it("late provider data cannot populate another provider workspace", async () => 
   );
   expect(screen.queryByText("Late old data")).not.toBeInTheDocument();
 });
+it("shows Craft browser runtime without inventing service ticket records", async () => {
+  const user = userEvent.setup();
+  vi.mocked(nodeApps.catalog).mockResolvedValue({
+    provider_peer: "owner-node",
+    apps: [
+      {
+        id: "wordcraft",
+        name: "WordCraft",
+        description: "Document editor",
+        runtime: "craft_web",
+        editor: {
+          version: "v0.6.1",
+          web: true,
+          formats: ["docx", "pdf"],
+          source_url: "https://github.com/storytold/wordcraft",
+        },
+        operations: {
+          editor_info: {
+            effect: "read",
+            schema: { properties: {}, required: [] },
+          },
+        },
+      },
+    ],
+  });
+  vi.mocked(nodeApps.workspace).mockResolvedValue({
+    ...workspace,
+    app: "wordcraft",
+  });
+  render(
+    <MemoryRouter>
+      <NodeApps />
+    </MemoryRouter>,
+  );
+  expect(
+    await screen.findByRole("heading", { name: "WordCraft" }),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Craft editor details")).toHaveTextContent(
+    "v0.6.1",
+  );
+  expect(
+    screen.queryByText("No records yet. Create your first"),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Operation")).toHaveValue("editor_info");
+  await user.click(screen.getByRole("button", { name: "Review operation" }));
+  await waitFor(() =>
+    expect(nodeApps.preview).toHaveBeenCalledWith(
+      "",
+      "wordcraft",
+      "editor_info",
+      {},
+      expect.objectContaining({ app: "wordcraft" }),
+    ),
+  );
+  expect(nodeApps.invoke).not.toHaveBeenCalled();
+});
+
+it("marks FilmCraft as native only without a browser launch or install action", async () => {
+  vi.mocked(nodeApps.catalog).mockResolvedValue({
+    provider_peer: "owner-node",
+    apps: [
+      {
+        id: "filmcraft",
+        name: "FilmCraft",
+        description: "Film editor",
+        runtime: "craft_native_only",
+        editor: {
+          version: "v0.7.2",
+          web: false,
+          formats: [],
+          source_url: "https://github.com/storytold/filmcraft",
+        },
+        operations: {
+          editor_info: {
+            effect: "read",
+            schema: { properties: {}, required: [] },
+          },
+        },
+      },
+    ],
+  });
+  vi.mocked(nodeApps.workspace).mockResolvedValue({
+    ...workspace,
+    app: "filmcraft",
+  });
+  render(
+    <MemoryRouter>
+      <NodeApps />
+    </MemoryRouter>,
+  );
+  expect(
+    await screen.findByRole("heading", { name: "FilmCraft" }),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Craft editor details")).toHaveTextContent(
+    "Native only",
+  );
+  expect(
+    screen.queryByRole("button", { name: /install|launch/i }),
+  ).not.toBeInTheDocument();
+});

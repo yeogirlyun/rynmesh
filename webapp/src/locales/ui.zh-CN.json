@@ -1755,5 +1755,11 @@
   "Interview": "面试",
   "Offer": "录用意向",
   "Hired": "已录用",
-  "Rejected": "已拒绝"
+  "Rejected": "已拒绝",
+  "Craft editor details": "Craft 编辑器详情",
+  "Pinned version": "固定版本",
+  "Browser editor: install the verified build on a separate editor origin. Documents stay in the editor browser or explicit file exports; they are not synced to this workspace.": "浏览器编辑器：请在独立的编辑器源站安装已校验版本。文档保留在编辑器浏览器中，或由用户明确导出为文件；不会同步到此工作区。",
+  "Native only in this pinned release. Browser editing is unavailable; no native app is installed or launched by Rynmesh.": "此固定版本仅支持原生应用，无法在浏览器中编辑。Rynmesh 不会安装或启动原生应用。",
+  "Editor information is available through the reviewed operation below. Document editing tools and user launch configuration are not connected yet.": "可通过下方经确认的操作查看编辑器信息。文档编辑工具和用户启动配置尚未接入。",
+  "Editor info": "编辑器信息"
 }

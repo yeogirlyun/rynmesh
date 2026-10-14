@@ -15,7 +15,7 @@ SPECS = [
         "type": "function",
         "function": {
             "name": LIST,
-            "description": "List explicitly shared free Resume, Recruit and Desk apps. Contains capabilities, never private workspace records.",
+            "description": "List explicitly shared free node apps, including Resume, Recruit, Desk and the Craft editor catalog. Craft editor_info describes pinned builds; it cannot edit documents or install/launch software. Contains capabilities, never private workspace records.",
             "parameters": {
                 "type": "object",
                 "properties": {"provider_peer": {"type": "string", "maxLength": 128}},

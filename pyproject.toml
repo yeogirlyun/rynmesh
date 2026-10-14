@@ -79,6 +79,7 @@ gpu-provider = [
 ]
 
 [project.scripts]
+rynmesh-craft = "rynmesh.node_apps.craft_host:main"
 rynmesh-apps = "rynmesh.node_apps.host:main"
 rynmesh-exchange = "rynmesh.exchange.cli:main"
 rynmesh-mcp = "rynmesh.mcp_server:main"

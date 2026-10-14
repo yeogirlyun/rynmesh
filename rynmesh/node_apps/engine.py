@@ -7,6 +7,7 @@ from uuid import uuid4
 from jsonschema import ValidationError, validate
 
 from .catalog_data import CATALOG
+from .craft_catalog import CRAFT
 from .resume import EngineError, ResumeEngine
 
 
@@ -25,6 +26,22 @@ def contract(app, action, args):
 
 def run(app, action, args, state):
     contract(app, action, args)
+    if app in CRAFT:
+        spec = CRAFT[app]
+        return {
+            "name": spec["name"],
+            "version": spec["tag"],
+            "web_editor": spec["web"],
+            "formats": spec["formats"],
+            "source_url": f"https://github.com/storytold/{app}/tree/{spec['tag']}",
+            "release_url": f"https://github.com/storytold/{app}/releases/tag/{spec['tag']}",
+            "web_sha256": spec["web_sha256"],
+            "editing_api": "not_exposed",
+            "document_storage": "editor_browser_or_explicit_file_export",
+            "network_workspace_sync": False,
+            "installation": "explicit_node_operator_cli" if spec["web"] else "native_only",
+            "price_ryncoin": "0",
+        }, deepcopy(state)
     if app == "resume":
         engine = ResumeEngine(state or None)
         try:
