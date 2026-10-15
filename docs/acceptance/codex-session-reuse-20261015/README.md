@@ -106,22 +106,33 @@ content. It spends real Codex inference, so it requires `--live`.
 
 Each kept thread is one idle `codex app-server` process. The script records the
 resident memory of every kept process after each step (`kept_rss_kb`,
-`kept_rss_kb_max`). It could not be measured here, because Codex is not installed.
+`kept_rss_kb_max`). The development VM had no Codex installation. The host run
+later measured a maximum of 150.05 MiB per kept process; see the host report for
+sample counts and limits.
 The default stays 4, so idle memory is bounded at 4 × that RSS. The Windows job
 object also caps each process at 2 GiB. If the measured RSS is small, for example
 under about 100 MB, raising the limit to 6–8 with `RYN_CODEX_SESSION_LIMIT` keeps
 more windows warm. Each eviction costs one cold start on that window's next turn,
 not a failure.
 
+## Host acceptance — 2026-10-15
+
+- Agent wiring is done: `AgentRuntime._complete` passes `conversation=row["id"]`
+  for ordinary tool-bearing steps when `supports_conversation_key` is true;
+  summaries (no tools) and nested checks send none
+  (`tests/test_agent_speedups.py::test_window_id_reaches_conversation_aware_models`).
+  A live C/F/B retest now confirms same-window follow-up reuse after the prompt
+  guidance was made constant. All 80 selected regression tests passed.
+- Three alternating live rounds completed 48/48 steps: later-step median
+  13.343 s stateless versus 2.686 s with reuse; follow-up median 13.171 s versus
+  3.093 s. The real Agent P2 retest recorded F's first adapter call at 5.725 s,
+  resumed on C's thread, versus C's cold first call at 13.737 s.
+- Full timings, RSS, the fixed prompt-prose invalidation and remaining broad-test
+  failures are recorded in [the host report](../agent-speedups-20261015/live-results.md).
+  These targeted results do not establish that the full suite is green.
+
 ## Not yet verified
 
-- Agent wiring: `AgentRuntime._complete` (in `runtime.py`, outside this change)
-  must pass `conversation=row["id"]` for non-nested calls when
-  `self.model.supports_conversation_key` is true. Until it does, the agent sends
-  no window key and gets tool-loop reuse only; cross-turn retention is covered
-  by the adapter, bridge and provider tests above.
-- Live per-step latency, follow-up latency and kept-process RSS on a machine
-  with a logged-in Codex CLI (`measure_steps.py --live`).
 - Mixed versions: an older provider ignores `conversation_key` and an older
   consumer sends none; both fall back to tool-loop reuse. This follows from the
   code paths but was not run against an older build.
