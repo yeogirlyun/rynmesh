@@ -22,7 +22,10 @@ def bundle(extra=None):
             "wordcraft/LICENSE-APACHE": "Fixture license retained",
             **(extra or {}),
         }.items():
-            archive.writestr(name, content)
+            member = zipfile.ZipInfo(name)
+            # Preserve hostile names instead of normalizing them on Windows.
+            member.filename = name
+            archive.writestr(member, content)
     return output.getvalue()
 
 
@@ -88,6 +91,14 @@ def test_checksum_failure_never_publishes_and_cleans_stage(tmp_path):
 def test_hostile_archive_rejected_before_writing(tmp_path, name):
     archive = tmp_path / "bad.zip"
     archive.write_bytes(bundle({name: "bad"}))
+    with pytest.raises(host.CraftError, match="unsafe"):
+        host.extract(archive, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+def test_nul_in_original_archive_name_rejected_before_writing(tmp_path):
+    archive = tmp_path / "bad.zip"
+    archive.write_bytes(bundle({"wordcraft/rawXname.txt": "bad"}).replace(b"rawXname", b"raw\x00name"))
     with pytest.raises(host.CraftError, match="unsafe"):
         host.extract(archive, tmp_path / "out")
     assert not (tmp_path / "out").exists()

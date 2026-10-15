@@ -1,0 +1,39 @@
+{
+  "reviewer": "sharing_transaction / gpt-6-astra high",
+  "status": "consumer_deployment_design_reviewed_implementation_assigned",
+  "explicit_constraints": [
+    "Q06 authorization.consumer_node is node-b; its model destination is binding:primary_model.",
+    "world.json does not explicitly assign owner_node=node-a to its source/model rows.",
+    "The delivery plan specifies a two-host provider A / Agent consumer B acceptance topology.",
+    "world model-a is granted to node-b; real FriendService forbids self-friendship, so in this deployment its provider must be distinct from the actual node-b receiver."
+  ],
+  "consumer_visibility": [
+    "Authenticated friend catalog exposes model-a to node-b, not private model-b or third-party receiver grants.",
+    "The absence of B cannot independently distinguish private, not granted, missing, or other unavailable states.",
+    "ryn_inspect_services friend_grants describes this local node's outgoing grants, not the remote provider's grant table."
+  ],
+  "implementation": {
+    "preferred": "Deploy the actual Agent runtime/tools/store in node-b home. Select authorized peer model-a via real signed production consumer/provider transport. Retain GLM replacement only inside provider ModelDispatchAdapter, with owner hash guard.",
+    "ground_truth": "Keep provider sources/grants/probes as independent collector evidence, never inject them into the consumer prompt or fabricate a B catalog row.",
+    "cohorts": "Candidate and pinned reference must see the same consumer tools and planner policy.",
+    "preserve_frozen_case": true,
+    "unknown_handling": "Report unknown when consumer evidence cannot justify a cause; retain original assertions and record a failure if they require unobservable facts."
+  },
+  "separate_production_findings": [
+    {
+      "component": "agent_runtime/models.py ModelCatalog",
+      "status": "unfixed_static_review_finding",
+      "description": "Remote catalog rows use access='friend' but model projection reads access_policy, potentially displaying share_scope='none'. Own receiver access must be distinguished from the unknown provider-wide sharing policy."
+    },
+    {
+      "component": "agent_runtime/tools.py ryn_inspect_services",
+      "status": "clarification_pending",
+      "description": "Clearly scope friend_grants as local outgoing grants; do not imply they describe remote provider grants."
+    }
+  ],
+  "limitations": [
+    "No implementation or tests in this design review.",
+    "Logical nodes on one host do not satisfy the two-physical-host dependency."
+  ],
+  "formal_executed_trials": 0
+}

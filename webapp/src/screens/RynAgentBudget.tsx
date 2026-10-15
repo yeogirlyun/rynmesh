@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentAPIError, canUseAgentAction, rynAgent, type AgentBudgetLimits, type AgentTask } from "../domain/rynAgent";
 
-type Request = { limits: AgentBudgetLimits; expected_control_revision: number; client_request_id: string };
+type Request = { limits: AgentBudgetLimits; run_max_seconds?: number; expected_control_revision: number; client_request_id: string };
 const ranges: Record<keyof AgentBudgetLimits, [number, number]> = { max_total_model_calls: [1, 1024], max_total_tool_calls: [1, 4096], max_total_tokens: [1000, 20000000], max_total_seconds: [10, 86400] };
 function readPending(key: string): Request | null {
   try { const item = JSON.parse(sessionStorage.getItem(key) || "null"); return item && typeof item.client_request_id === "string" && typeof item.expected_control_revision === "number" && item.limits ? item : null; } catch { return null; }
@@ -15,6 +15,7 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
   const [pending, setPending] = useState<Request | null>(() => readPending(key));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<AgentBudgetLimits | null>(null);
+  const [runSeconds, setRunSeconds] = useState<number | null>(null);
   const [revision, setRevision] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -25,11 +26,11 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
     max_total_tokens: "Token", max_total_seconds: text("执行时间（秒）", "Execution time (seconds)"),
   };
   const allowed = canUseAgentAction(task, "budget");
-  const valid = draft && Object.entries(ranges).every(([name, [min, max]]) => Number.isInteger(draft[name as keyof AgentBudgetLimits]) && draft[name as keyof AgentBudgetLimits] >= min && draft[name as keyof AgentBudgetLimits] <= max);
+  const valid = draft && (runSeconds === null || (Number.isInteger(runSeconds) && runSeconds >= 10 && runSeconds <= 3600)) && Object.entries(ranges).every(([name, [min, max]]) => Number.isInteger(draft[name as keyof AgentBudgetLimits]) && draft[name as keyof AgentBudgetLimits] >= min && draft[name as keyof AgentBudgetLimits] <= max);
   const remember = (value: Request | null) => { setPending(value); try { if (value) sessionStorage.setItem(key, JSON.stringify(value)); else sessionStorage.removeItem(key); } catch { /* Memory retry remains available. */ } };
   const save = async () => {
     if (busy || saving || (!pending && (!valid || !allowed || revision === null))) return;
-    const body = pending || { limits: draft!, expected_control_revision: revision!, client_request_id: crypto.randomUUID() };
+    const body = pending || { limits: draft!, ...(runSeconds === null ? {} : { run_max_seconds: runSeconds }), expected_control_revision: revision!, client_request_id: crypto.randomUUID() };
     remember(body); setSaving(true); setError("");
     try { const updated = await rynAgent.updateBudget(task.id, body); remember(null); setEditing(false); onChange(updated); }
     catch (reason) {
@@ -69,7 +70,8 @@ export default function RynAgentBudget({ task, busy, onChange }: { task: AgentTa
     <p>{text("费用：未知。继续或重启不会清空累计用量；保存新上限不会自动继续任务。", "Cost: unknown. Continuing or restarting preserves lifetime usage; saving limits does not resume the task.")}</p>
     {(editing || pending) && <div className="ra-budget-inputs">{(Object.keys(ranges) as Array<keyof AgentBudgetLimits>).map(name => <label key={name}><span>{labels[name]}</span><input type="number" min={ranges[name][0]} max={ranges[name][1]} step={1} value={(pending?.limits || draft)?.[name] ?? ""} disabled={saving || busy || Boolean(pending)} onChange={event => setDraft(current => current ? { ...current, [name]: Number(event.target.value) } : current)} /></label>)}</div>}
     {error && <p role="alert">{error}</p>}
-    <div className="ra-approval-actions">{editing || pending ? <><button className="ra-primary" disabled={busy || saving || (!pending && (!valid || !allowed))} onClick={() => void save()}>{pending ? text("核对原保存请求", "Check original save") : text("保存累计上限", "Save lifetime limits")}</button>{!pending && <button className="ra-link" disabled={saving} onClick={() => setEditing(false)}>{text("取消编辑", "Cancel editing")}</button>}</> : <button className="ra-link" disabled={busy || !allowed} onClick={() => { setDraft({ ...data.limits }); setRevision(task.control_revision!); setEditing(true); setError(""); }}>{text("调整累计上限", "Adjust lifetime limits")}</button>}</div>
+    {(editing || pending) && (runSeconds !== null || pending?.run_max_seconds !== undefined) && <label className="ra-setting"><span>{text("单轮运行时限（秒）", "Run limit (seconds)")}</span><input type="number" min={10} max={3600} step={1} value={pending?.run_max_seconds ?? runSeconds ?? ""} disabled={saving || busy || Boolean(pending)} onChange={event => setRunSeconds(Number(event.target.value))} /></label>}
+    <div className="ra-approval-actions">{editing || pending ? <><button className="ra-primary" disabled={busy || saving || (!pending && (!valid || !allowed))} onClick={() => void save()}>{pending ? text("核对原保存请求", "Check original save") : text("保存预算", "Save limits")}</button>{!pending && <button className="ra-link" disabled={saving} onClick={() => setEditing(false)}>{text("取消编辑", "Cancel editing")}</button>}</> : <button className="ra-link" disabled={busy || !allowed} onClick={() => { setDraft({ ...data.limits }); setRunSeconds(task.limits?.max_seconds ?? null); setRevision(task.control_revision!); setEditing(true); setError(""); }}>{text("调整预算", "Adjust limits")}</button>}</div>
     {!allowed && !pending && <small>{text("任务停止且没有待处理操作时才可调整。", "Limits can be adjusted when the task is stopped with no unresolved operation.")}</small>}
   </details>;
 }

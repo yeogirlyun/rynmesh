@@ -8,8 +8,9 @@ from __future__ import annotations
 import copy
 
 SCHEMA_VERSION = 2
-CONTROL_EVENTS = {"created", "message_added", "approval_requested", "approved", "denied", "paused",
+CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_requested", "approved", "denied", "paused",
                   "resumed", "cancelled", "goal_changed", "information_added", "input_requested", "input_answered", "scope_changed", "permissions_changed", "reconciliation_requested", "archived", "restored", "budget_changed", "source_credential_saved", "source_credential_revoked", "model_changed"}
+CONTROL_EVENTS.add("approval_no_longer_required")
 PUBLIC_STATE_FIELDS = ("schema_version", "goal", "criteria", "plan", "control_revision", "event_cursor",
                        "run_state", "pending_input", "outcome", "scope_revision")
 
@@ -76,6 +77,13 @@ def migrate(data: dict) -> dict:
                 if required not in row:
                     raise ValueError("incomplete Agent task state")
             synchronize(row)
+    if data.get("context_budget_version", 0) < 1:
+        # 120000 was the default ceiling, not an owner choice; a model's declared
+        # window now bounds context. Applied once, so a later explicit value stays.
+        for limits in [data["settings"], *(row.get("limits", {}) for row in data["tasks"].values())]:
+            if limits.get("max_context_chars") == 120000:
+                limits["max_context_chars"] = 600000
+        data["context_budget_version"] = 1
     data["schema_version"] = SCHEMA_VERSION
     return data
 

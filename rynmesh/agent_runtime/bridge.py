@@ -5,17 +5,18 @@ import asyncio
 import copy
 import json
 import math
+import re
 import threading
 import time
 import uuid
 
 from fastapi import HTTPException
 
-from ..llm_package import model_settings, peer_binding
+from ..llm_package import codex_threads, model_settings, peer_binding
 from ..llm_package.adapters import AdapterError
 from ..llm_package.api_formats import normalize
 from ..llm_package.chat import validate_chat, validate_tool_arguments
-from . import output_policy
+from . import output_policy, reasoning
 from .models import ModelCatalog
 from .prompt import INTERNAL_NAMES
 from .store import AgentError, AgentModelResponseError, cancellation_reason
@@ -23,9 +24,13 @@ from .tools import RynTools
 
 
 class AgentModelBridge:
+    supports_image_input = True
     supports_destination_binding = True
     supports_output_token_limit = True
     supports_request_deadline = True
+    supports_reasoning_effort = True
+    # The runtime passes its task id; only an opaque hash leaves this process.
+    supports_conversation_key = True
 
     def __init__(self, services, catalog):
         self.services, self.catalog = services, catalog
@@ -44,6 +49,7 @@ class AgentModelBridge:
     def _response(result, target, tool_specs, policy):
         data = result if isinstance(result, dict) else {}
         usage, finish = AgentModelBridge._response_metadata(result, target)
+        detail = "the response was malformed"
         try:
             if len(json.dumps(result).encode()) > output_policy.MAX_RAW_RESPONSE_BYTES:
                 raise AgentModelResponseError(usage, finish, "agent_model_output_limit")
@@ -52,27 +58,50 @@ class AgentModelBridge:
                 raise ValueError
             specs = {s["function"]["name"]: s["function"].get("parameters", {}) for s in tool_specs}
             calls = message.get("tool_calls") or []
-            if not isinstance(calls, list) or len(calls) > 16 or not message.get("content") and not calls:
+            if not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS or not message.get("content") and not calls:
+                detail = (f"more than {output_policy.MAX_TOOL_CALLS} tool calls in one response" if isinstance(calls, list) and len(calls) > output_policy.MAX_TOOL_CALLS
+                          else "the response had neither text nor a tool call")
                 raise ValueError
             for call in calls:
                 function = call.get("function") or {}
-                if function.get("name") not in specs:
+                name = function.get("name")
+                shown = name if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name) else "(unnamed)"
+                if name not in specs:
+                    detail = f"'{shown}' is not one of the available tools; use only the tools offered"
                     raise ValueError
-                arguments = json.loads(function["arguments"])
+                try:
+                    arguments = json.loads(function["arguments"])
+                except (ValueError, TypeError, KeyError):
+                    detail = f"the arguments of '{shown}' were not valid JSON"
+                    raise ValueError from None
                 if not isinstance(arguments, dict):
+                    detail = f"the arguments of '{shown}' must be a JSON object"
                     raise ValueError
-                if function["name"] not in INTERNAL_NAMES:
-                    validate_tool_arguments(specs[function["name"]], arguments)
+                if name not in INTERNAL_NAMES:
+                    try:
+                        validate_tool_arguments(specs[name], arguments)
+                    except ValueError as exc:
+                        cause = exc.__cause__
+                        where = "/".join(re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())) or "the top level"
+                        keyword = re.sub(r"[^A-Za-z]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
+                        extra = ""
+                        if keyword in {"required", "additionalProperties"}:
+                            # These messages only name properties; they never echo argument values.
+                            extra = ": " + re.sub(r"[^A-Za-z0-9_ ',.()-]", "", str(getattr(cause, "message", "")))[:140]
+                        detail = f"the arguments of '{shown}' violate its schema at {where} ({keyword}){extra}"
+                        raise
             validate_chat({"messages": [message, *[
                 {"role": "tool", "tool_call_id": call["id"], "content": ""} for call in calls]]})
         except AgentModelResponseError:
             raise
         except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
-            raise AgentModelResponseError(usage, finish) from None
+            error = AgentModelResponseError(usage, finish)
+            error.detail = detail
+            raise error from None
         finish = finish if isinstance(finish, str) and finish in {"stop", "length", "tool_calls", "content_filter", "cancelled"} else "unknown"
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -87,6 +116,8 @@ class AgentModelBridge:
         policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
         maximum = policy["effective_cap"]
         chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
+        if reasoning_effort is not None:
+            chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
         streaming = bool(on_event and tool_specs and target.get("streaming"))
         if streaming:
             chat["stream"] = True
@@ -105,6 +136,7 @@ class AgentModelBridge:
                     emitted_chars += len(text)
                     on_event({"type": "text_delta", "text": text})
         task_id = "agent_" + uuid.uuid4().hex
+        window = codex_threads.window_key(conversation)
         manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
         if expected_destination is not None and target["source"] == "local_api":
             # Bind the actual immutable provider instance to the authorized
@@ -120,7 +152,11 @@ class AgentModelBridge:
                     raise AgentError("agent_model_destination_changed")
         elif expected_destination is not None and target["source"] == "local_service":
             native_binding = target.get("local_model_binding")
-            if (manager is None or native_binding != getattr(manager.adapter, "model_binding", None)
+            if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
+                actual_binding = manager.adapter.binding_for_model(target.get("cli_model", "")) if hasattr(manager.adapter, "binding_for_model") else None
+            else:
+                actual_binding = getattr(manager.adapter, "model_binding", None) if manager else None
+            if (manager is None or native_binding != actual_binding
                     or peer_binding.local_revision(native_binding, target["peer_id"]) != expected_destination["destination_revision"]):
                 raise AgentError("agent_model_destination_changed")
         if target["source"] != "peer" and manager is None:
@@ -178,10 +214,15 @@ class AgentModelBridge:
                 raise AgentError("agent_inference_timeout")
             if manager:
                 options = {"task_id": task_id, "timeout_s": request_policy["effective_timeout_seconds"], "on_event": emit if streaming else None}
+                if target.get("cli_model"):
+                    options["model"] = target["cli_model"]
                 if options["timeout_s"] <= 0:
                     raise AgentError("agent_inference_timeout")
                 if getattr(manager.adapter, "supports_request_deadline", False) is True:
                     options["deadline"] = request_deadline
+                if getattr(manager.adapter, "supports_conversation_scope", False) is True:
+                    # This process is the authenticated requester of its own adapter.
+                    options["conversation_scope"] = codex_threads.scope("local", window)
                 if expected_destination is not None and target["source"] == "local_service":
                     result = manager.adapter.call_bound("chat", target["local_model_binding"], lambda: None, chat, **options)
                 else:
@@ -192,7 +233,10 @@ class AgentModelBridge:
                 request = {
                     "network_id": self.catalog.network, "provider_peer_id": target["peer_id"],
                     "service_id": target["service_id"], "chat": chat, "max_tokens": maximum,
-                    "task_id": task_id, "transport": "p2p", "_no_retention": True}
+                    "task_id": task_id, "transport": "p2p", "_prefer_lan": True, "_no_retention": True,
+                    **({"conversation_key": window} if window else {})}
+                if target.get("cli_model"):
+                    request["cli_model"] = target["cli_model"]
                 if expected_destination is not None:
                     if target.get("destination_binding_supported") is not True or not target.get("expected_model_binding"):
                         raise AgentError("agent_model_destination_unverifiable")
@@ -215,11 +259,20 @@ class AgentModelBridge:
                 raise AgentError("agent_inference_timeout") from None
             raise AgentError("agent_model_destination_changed" if exc.detail == "model_configuration_changed" else "agent_inference_failed") from None
         except AdapterError as exc:
+            if exc.code == "upstream_response_invalid" and not cancelled() and not expired():
+                rejected = AgentModelResponseError(exc.reported_usage, exc.finish_reason)
+                rejected.detail = "The model response or client tool proposal was invalid. Return the required response format and tool names, and obey each argument schema and size limit. No proposed tool was executed."
+                from ..llm_package.codex_tools import FEEDBACK
+                feedback = FEEDBACK.get(getattr(exc, "proposal_feedback_code", None))
+                if feedback:
+                    rejected.detail = feedback + " No proposed tool was executed."
+                raise rejected from None
             # Adapters already reduce upstream errors to this closed code set.
             # Keep transport failures distinguishable without copying an HTTP
             # response, URL, credential, or exception message into task state.
             code = {"inference_timeout": "agent_inference_timeout",
                     "runtime_connection_failed": "agent_model_connection_failed",
+                    "upstream_http_failed": "agent_model_upstream_failed",
                     "runtime_busy": "agent_model_busy",
                     "model_configuration_changed": "agent_model_destination_changed",
                     "model_daily_quota_exhausted": "agent_model_quota_exhausted",

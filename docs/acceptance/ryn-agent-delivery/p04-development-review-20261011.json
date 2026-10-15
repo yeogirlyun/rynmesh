@@ -1,0 +1,816 @@
+{
+  "kind": "P04-single-development-attempt-operator-review",
+  "date": "2026-10-11",
+  "not_independent": true,
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "development_verdict": "failed_enabled_phase_output_and_unverified_outcomes; disabled_phase_not_executed_due_frozen_prepared_stop_gate",
+  "task_count": 3,
+  "authorized_task_maximum": 5,
+  "followups": 0,
+  "whole_task_reruns": 0,
+  "owner_sources_unchanged": true,
+  "owner_sources_sha256": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+  "wheel_sha256": "0b3dfc445171d2bb0835996cc2c2db41059d89a82e08db61d2dc859cc266983a",
+  "runtime_sha256": "ac669efe83e903f8e057a38680919adbb697d17925fac885a51f418f796ae7f6",
+  "model_generation_unchanged": true,
+  "executed_payloads": {
+    "provider-seed-body.json": {
+      "message": "这是本机所有者的独立私有会话。请记住标记 PROVIDER_ONLY_551。只读检查本机模型目录，简短说明哪些模型本机可用，最后原样回复标记。不要发送消息或修改配置。",
+      "model_id": "local/src-two-host-glm-0d8724178b09",
+      "title": "P04 provider private Agent seed",
+      "client_request_id": "2c44c6b3-dd82-4d5a-b458-479b847da591",
+      "scope": {
+        "resources": [],
+        "allow_model_data": false
+      },
+      "budget_limits": {
+        "max_total_model_calls": 23
+      }
+    },
+    "consumer-enabled-A-body.json": {
+      "message": "在消费节点的独立会话处理 SESSION_A_104，只报告本会话标记，调用 node-a 的同一共享模型。",
+      "model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+      "title": "P04 enabled session A",
+      "client_request_id": "dc15daf3-d675-4f4a-aa77-67bdca0d4f4e",
+      "scope": {
+        "resources": [],
+        "allow_model_data": false
+      },
+      "expected_destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646",
+      "budget_limits": {
+        "max_total_model_calls": 23
+      }
+    },
+    "consumer-enabled-B-body.json": {
+      "message": "在消费节点的独立会话处理 SESSION_B_907，只报告本会话标记，调用 node-a 的同一共享模型。",
+      "model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+      "title": "P04 enabled session B",
+      "client_request_id": "f54cad10-151c-45e6-a161-40872838f5b8",
+      "scope": {
+        "resources": [],
+        "allow_model_data": false
+      },
+      "expected_destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646",
+      "budget_limits": {
+        "max_total_model_calls": 23
+      }
+    }
+  },
+  "limits": {
+    "probe_calls_max": 2,
+    "tasks_max": 5,
+    "model_calls_per_task": 23,
+    "total_model_calls_max": 117,
+    "tokens_per_task": 2000000,
+    "repetitions": 1,
+    "followups": 0,
+    "reruns": 0
+  },
+  "actual_per_task_limits": {
+    "agent_44e1e1f36f684a2db10fd98f11587884": {
+      "max_context_chars": 60000,
+      "max_output_chars": 20000,
+      "max_seconds": 180,
+      "max_steps": 16
+    },
+    "agent_ddda3f0f37334d36953dd1514067fb35": {
+      "max_context_chars": 60000,
+      "max_output_chars": 20000,
+      "max_seconds": 180,
+      "max_steps": 16
+    },
+    "agent_ff0e5d092d5f4097bd8f49847293c852": {
+      "max_context_chars": 60000,
+      "max_output_chars": 20000,
+      "max_seconds": 180,
+      "max_steps": 16
+    }
+  },
+  "actual_lifetime_limits": {
+    "agent_44e1e1f36f684a2db10fd98f11587884": {
+      "max_total_model_calls": 23,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "agent_ddda3f0f37334d36953dd1514067fb35": {
+      "max_total_model_calls": 23,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "agent_ff0e5d092d5f4097bd8f49847293c852": {
+      "max_total_model_calls": 23,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    }
+  },
+  "identity": {
+    "provider": {
+      "hostname": "子陵台式",
+      "peer_id": "aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=",
+      "pid": 32868,
+      "home": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\state-provider",
+      "endpoint": "http://172.16.8.191:18781"
+    },
+    "consumer": {
+      "hostname": "DESKTOP-SQ6VA8I",
+      "peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc=",
+      "pid": 5052,
+      "home": "C:\\Users\\ziling\\rynmesh-agent-test-20261010\\state-consumer-p04-20261011",
+      "endpoint": "http://172.16.8.82:18782"
+    },
+    "runtime_owner_labels": [
+      "local_owner",
+      "local_owner"
+    ],
+    "distinct_encrypted_store_keys": true
+  },
+  "seed": {
+    "id": "agent_44e1e1f36f684a2db10fd98f11587884",
+    "status": "completed",
+    "outcome": "verified",
+    "private_marker_in_saved_answer": true,
+    "model_calls": 3
+  },
+  "consumer_results": [
+    {
+      "session": "B",
+      "id": "agent_ddda3f0f37334d36953dd1514067fb35",
+      "status": "completed",
+      "outcome": "unverified",
+      "error": null,
+      "verification_errors": [
+        "agent_inference_failed"
+      ],
+      "own_marker_present": true,
+      "only_own_marker": false,
+      "final_answer": "## 会话报告\n\n**本会话标记：SESSION_B_907**\n\n（对应本消费节点 `state-consumer-p04-20261011` 上本次独立会话运行记录 task_id `agent_ddda3f0f37334d36953dd1514067fb35`，当前状态 running。该标记来自你的消息文本，服务器侧无独立登记字段，故以本条报告为准。）\n\n**关于\"同一共享模型\"的核对（配置证据）：**\n- 本会话默认模型即唯一一个对端共享模型：`Two-host GLM development · glm-5.3-flash`（id `peer/3885a3fb…/src-two-host-glm-0d8724178b09`），来源为好友节点 `state-provider`，kind=friend（ryn_list_models / ryn_get_agent_configuration）。\n- 模型绑定 `ai_permission.relationship_id=43794a4d…ace7f4be` 与该好友关系一致，即本会话调用按配置走该共享模型。\n- 节点连接性：`state-provider` HTTP 探测可达（2026-10-11T07:56:03，http_reachable=true）。\n\n**需说明的限度：**\n- 你提到的 \"node-a\" 名称无法用工具核实；本节点唯一远端好友节点名为 `state-provider`，是唯一候选，两者对应关系未经证实。\n- 目录观测显示 `current_access=unknown`、`invocation_verified=false`，诊断无新探测记录——**没有工具回执可证明本次推理调用实际成功**，以上为配置/网络层证据，非调用成功证明。\n\n本会话未做任何写操作（未改共享、未改默认模型、未建文件）。",
+      "usage": {
+        "model_calls": 4,
+        "tool_calls": 12,
+        "charged_model_calls": 4,
+        "charged_tool_calls": 12,
+        "known_input_tokens": 20606,
+        "known_output_tokens": 3248,
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "charged_tokens": 193587,
+        "charged_seconds": 88.33000000000902,
+        "active_seconds": 88.33000000000902,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": false,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      }
+    },
+    {
+      "session": "A",
+      "id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+      "status": "completed",
+      "outcome": "unverified",
+      "error": null,
+      "verification_errors": [
+        "agent_time_limit"
+      ],
+      "own_marker_present": false,
+      "only_own_marker": false,
+      "final_answer": "本会话检查完成，均为只读检查，未做任何更改。按约定只报告本会话标记：\n\n**本会话标记**\n- 会话/任务 ID：`agent_ff0e5d092d5f4097bd8f49847293c852`（原始消息 `…:owner:0`，运行状态 running，步骤 1）\n\n**模型调用绑定（调用 node-a 的同一共享模型）**\n- 本任务由服务端绑定模型 `peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09`（\"Two-host GLM development · glm-5.3-flash\"），与 Agent 默认模型一致（settings_revision 1，default_model_in_catalog: true）。\n- 该模型来源为对端节点 `state-provider`（peer_id `aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=`），即本消费节点 `state-consumer-p04-20261011` 的唯一 active 好友关系（relationship_id `43794a4db3254430a3a83148ace7f4be`）。若 \"node-a\" 即指该对端，则本会话正在使用其共享模型，无需另行配置。\n\n**证据边界（如实说明）**\n- 该共享模型为远端目录广播（sharing_basis: remote_catalog_advertisement），recipient_access.current_access = unknown，invocation_verified = false——这是目录观察，不是当前可用性或调用成功的证明。\n- 配置读取未做新探测（connection/inference probe 均未执行）；对端节点层面 2026-10-11T07:54:52Z 有一次 HTTP 探测可达记录，仅证明节点在线，不等于模型推理可用。\n- 我无法从本会话确认 \"node-a\" 这个别名的对应关系，仅能按 peer_id/节点名报告事实。",
+      "usage": {
+        "model_calls": 3,
+        "tool_calls": 8,
+        "charged_model_calls": 3,
+        "charged_tool_calls": 8,
+        "known_input_tokens": 11130,
+        "known_output_tokens": 3208,
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null,
+        "charged_tokens": 170681,
+        "charged_seconds": 179.50100000000384,
+        "active_seconds": 179.50100000000384,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": false,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      }
+    }
+  ],
+  "window": {
+    "enabled_start": "2026-10-11T07:53:39.307368+00:00",
+    "consumer_final_snapshot_at": "2026-10-11T07:59:16.742820+00:00",
+    "provider_final_snapshot_at": "2026-10-11T07:59:22.125936+00:00",
+    "provider_enabled_at_start": true,
+    "provider_enabled_at_end": true,
+    "disabled_not_started": true,
+    "reason": "Both prior tasks have outcome=unverified; manifest stages[3_toggle] forbids continuing after unknown prior phase. No provider-disable API and no disabled task creations."
+  },
+  "captured_isolation": {
+    "foreign_marker_findings": [],
+    "provider_context_injected_in_correlated_requests": [],
+    "provider_tool_executions_in_window": 0,
+    "provider_agent_model_calls_in_window": 0,
+    "consumer_business_tool_executions": 10,
+    "consumer_business_tools": [
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_list_models",
+        "operation_id": "op_e1922412b63241aaa396e74ec2ad57bc",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_list_devices",
+        "operation_id": "op_196e3d63dbc4477aaa1e5e7e01ca8aaa",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_inspect_services",
+        "operation_id": "op_8c0749e693ea4ad6a05d6b2d07dd16df",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_diagnose_current_task",
+        "operation_id": "op_213cd750ba5949f189d9cb05e08949d1",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_get_agent_configuration",
+        "operation_id": "op_a30a0ec088514a5081dc3341d40d1cb1",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+        "tool": "ryn_get_system_diagnostics",
+        "operation_id": "op_7e898708a85c47e4ac5f93dd321d6cc4",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+        "tool": "ryn_diagnose_current_task",
+        "operation_id": "op_6a8b2028085245178a0d321a4758cda1",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+        "tool": "ryn_list_models",
+        "operation_id": "op_c8f9f40282ac47bca6cd8f602c116f1e",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+        "tool": "ryn_list_devices",
+        "operation_id": "op_41feefe80b7540459777af72b8bfda88",
+        "effect": "read"
+      },
+      {
+        "task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+        "tool": "ryn_get_agent_configuration",
+        "operation_id": "op_e8f920dbd3244d03a8657d9aa9457506",
+        "effect": "read"
+      }
+    ],
+    "consumer_business_tool_nodes": [
+      "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+    ],
+    "logical_consumer_node_ids": [
+      "node-b"
+    ],
+    "business_writes": [],
+    "scopes": [
+      {
+        "at": "2026-10-11T07:59:15.296792+00:00",
+        "method": "GET",
+        "path": "/api/local/agent/tasks/agent_ff0e5d092d5f4097bd8f49847293c852/scope",
+        "request": null,
+        "status_code": 200,
+        "response": {
+          "scope": {
+            "egress_grants": [],
+            "resource_grants": [],
+            "revision": 1,
+            "selection": {
+              "allow_model_data": false,
+              "resources": []
+            }
+          },
+          "scope_revision": 1,
+          "control_revision": 1,
+          "model_destination": {
+            "catalog_model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+            "destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646",
+            "provider_peer_id": "aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=",
+            "source_id": ""
+          },
+          "current_model_destination": {
+            "catalog_model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+            "provider_peer_id": "aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=",
+            "source_id": "",
+            "destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646"
+          }
+        }
+      },
+      {
+        "at": "2026-10-11T07:59:16.014823+00:00",
+        "method": "GET",
+        "path": "/api/local/agent/tasks/agent_ddda3f0f37334d36953dd1514067fb35/scope",
+        "request": null,
+        "status_code": 200,
+        "response": {
+          "scope": {
+            "egress_grants": [],
+            "resource_grants": [],
+            "revision": 1,
+            "selection": {
+              "allow_model_data": false,
+              "resources": []
+            }
+          },
+          "scope_revision": 1,
+          "control_revision": 1,
+          "model_destination": {
+            "catalog_model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+            "destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646",
+            "provider_peer_id": "aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=",
+            "source_id": ""
+          },
+          "current_model_destination": {
+            "catalog_model_id": "peer/3885a3fb1e663258b97a623530d477aa137e86f5e5c9e0295ba134a8afc2af15/src-two-host-glm-0d8724178b09",
+            "provider_peer_id": "aHJQNPFZytXYr2vRe2wmDSSaPtjRzD50ftVXENAIxuQ=",
+            "source_id": "",
+            "destination_revision": "b7baebd6ac1f4c6bf78705dedb020a4c3a65884c5d0e39fb80d131b13f40a646"
+          }
+        }
+      }
+    ],
+    "peer_http_truncated_records": 0,
+    "scope_limit": "Observed exact test markers and captured API/tool/order bodies only; not universal absence of arbitrary secrets or hardware attestation. Signed UDP packets were not directly captured."
+  },
+  "request_linkage": [
+    {
+      "session": "A",
+      "agent_task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+      "inference_task_id": "agent_3b699174797a4e50aa06d57654ccafe4",
+      "provider_dispatches": 1,
+      "provider_responses": 1,
+      "messages_exact_match": true,
+      "consumer_state": "succeeded",
+      "error_code": null,
+      "provider_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 5969,
+        "connection_reused": false,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 12094,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 60603,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 62166,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 48061,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 1316,
+        "total_ms": 44875,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "B",
+      "agent_task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+      "inference_task_id": "agent_2a290690de784eb180648a6553bf94cd",
+      "provider_dispatches": 1,
+      "provider_responses": 1,
+      "messages_exact_match": true,
+      "consumer_state": "succeeded",
+      "error_code": null,
+      "provider_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 0,
+        "connection_reused": true,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 5719,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 60603,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 62166,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 48061,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 825,
+        "total_ms": 22797,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "A",
+      "agent_task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+      "inference_task_id": "agent_419a245ccc384a56b323a84cdefae43f",
+      "provider_dispatches": 1,
+      "provider_responses": 1,
+      "messages_exact_match": true,
+      "consumer_state": "succeeded",
+      "error_code": null,
+      "provider_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 0,
+        "connection_reused": true,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 5719,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 60603,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 62166,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 81113,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 1868,
+        "total_ms": 31453,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "B",
+      "agent_task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+      "inference_task_id": "agent_baef224f9a354a3196f63e304ac37d97",
+      "provider_dispatches": 1,
+      "provider_responses": 1,
+      "messages_exact_match": true,
+      "consumer_state": "succeeded",
+      "error_code": null,
+      "provider_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 0,
+        "connection_reused": true,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 6031,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 60603,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 62166,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 82601,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 1411,
+        "total_ms": 32906,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "B",
+      "agent_task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+      "inference_task_id": "agent_fc6dd3a91a894a2597bdd75eb86dcb4b",
+      "provider_dispatches": 1,
+      "provider_responses": 1,
+      "messages_exact_match": true,
+      "consumer_state": "succeeded",
+      "error_code": null,
+      "provider_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 0,
+        "connection_reused": true,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 5781,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 60603,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 62166,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 106597,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 974,
+        "total_ms": 24515,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "A",
+      "agent_task_id": "agent_ff0e5d092d5f4097bd8f49847293c852",
+      "inference_task_id": "agent_cb836eff6e864e63817db82b62d2e6c5",
+      "provider_dispatches": 1,
+      "provider_responses": 0,
+      "messages_exact_match": true,
+      "consumer_state": "cancelled",
+      "error_code": null,
+      "provider_state": "cancelled",
+      "transport": null,
+      "transport_evidence": null,
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    },
+    {
+      "session": "B",
+      "agent_task_id": "agent_ddda3f0f37334d36953dd1514067fb35",
+      "inference_task_id": "agent_c9f3ee55317b49ccb97038f6dc973b96",
+      "provider_dispatches": 0,
+      "provider_responses": 0,
+      "messages_exact_match": null,
+      "consumer_state": "rejected",
+      "error_code": "capacity_exhausted",
+      "provider_state": "rejected",
+      "transport": "ice_udp_direct",
+      "transport_evidence": {
+        "connection_ms": 5985,
+        "connection_reused": false,
+        "distinct_public_egress_required": false,
+        "first_event_ms": 6453,
+        "local": {
+          "host": "172.16.8.82",
+          "port": 51119,
+          "transport": "udp",
+          "type": "host"
+        },
+        "path_kind": "host_direct",
+        "peer_public_mapping_nominated": false,
+        "public_nat_traversal_required": false,
+        "relay_used": false,
+        "remote": {
+          "host": "172.16.8.191",
+          "port": 58331,
+          "transport": "udp",
+          "type": "host"
+        },
+        "request_bytes": 119217,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "stream_events": 0,
+        "total_ms": 6453,
+        "transport": "ice_udp_direct"
+      },
+      "actual_binding": {
+        "model_binding": {
+          "model_generation": "f09cbc1cc8614c398a566d8088f12764",
+          "rule_revision": "ec0f0c0038dc4064b46630cfea308939",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "43794a4db3254430a3a83148ace7f4be",
+          "revision": 1
+        },
+        "consumer_peer_id": "ouq8JcBmiaYQbvVZBGYZuRQIBIjAFzsutg5KQDliVYc="
+      },
+      "foreign_markers": []
+    }
+  ],
+  "usage": {
+    "probe_upstream_dispatches": 2,
+    "seed_agent_model_reservations": 3,
+    "consumer_agent_model_reservations": 7,
+    "all_upstream_dispatches": 11,
+    "all_upstream_responses": 10,
+    "known_usage_by_bucket": {
+      "probe": {
+        "responses_with_usage": 2,
+        "input_tokens": 419,
+        "output_tokens": 83
+      },
+      "consumer": {
+        "responses_with_usage": 5,
+        "input_tokens": 31736,
+        "output_tokens": 6456
+      },
+      "provider_seed": {
+        "responses_with_usage": 3,
+        "input_tokens": 18133,
+        "output_tokens": 4608
+      }
+    },
+    "known_total_input_tokens": 50288,
+    "known_total_output_tokens": 11147,
+    "unknown_supplier_usage_requests": 1,
+    "runtime_unknown_usage_records": 2,
+    "unknown_explanation": "A checker reached upstream then was cancelled without response/usage. B checker was rejected capacity_exhausted with no upstream dispatch; runtime still retains unknown conservative reservation. Do not equate reservation count with supplier request count.",
+    "cost": null,
+    "cost_status": "unknown"
+  },
+  "firewall": {
+    "local_profiles_enabled": false,
+    "local_rule_creation": "Access denied; no OS firewall enforcement claimed or profiles changed",
+    "consumer_created_rules": [
+      "Ryn-P04-20261011-Consumer-TCP",
+      "Ryn-P04-20261011-Consumer-UDP"
+    ],
+    "consumer_scope": "Only test venv Python, local172.16.8.82, remote172.16.8.191; TCP18782 and dynamic UDP."
+  },
+  "setup_incidents": [
+    "Remote Start-Process ended when SSH returned; no state/token/task was created. Existing foreground SSH approach then retained session74246; no model retry occurred.",
+    "Invitation console redirection used a non-UTF8 Python locale; join rejected before HTTP. Used the already saved UTF8 original control receipt for the same invitation, without generating a new invitation or model call."
+  ],
+  "evidence_files": [
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\pre-inference.json",
+      "sha256": "d2e87483bd5afa356f3b75b0ab080449c5794f200188ddd2f7df356bda573b06"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\local-installation-verification.json",
+      "sha256": "b85dad4bbcc5f53fe88592e539cdc5b010d3f1678743f608f75cb49f79e0304d"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\remote-installation-verification.json",
+      "sha256": "a176d16fa34419ce4cbb7bb860c09eef935291062a98713a7838d26da3c94896"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\remote-live-processes.json",
+      "sha256": "e6fa8475b2f3e88710e6c152c636f1f86ff48ccd42f24afcde2b6c935f8f9126"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\local-prestart.json",
+      "sha256": "9836bad85889bb7917b23f994fb67b5468102cc75f42e0bba7b1fb7be6638612"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\tools-probe-cli.json",
+      "sha256": "f195a31f821a84a584f9cbbbcd13ed12cefdb28761544b54951398248847828e"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\provider-seed-create.json",
+      "sha256": "ecfa0b084d1b43a578fb57ab6e201babe8c392851d917888a3bea888156402ec"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\provider-seed-terminal.json",
+      "sha256": "d6e30f3449890e13e2bb6578b98bf0184c5f662553935b2b96e5aebc7ff45541"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\seed-gate.json",
+      "sha256": "266705250fa7e0dca4e6b3001c3d57bfc12d2033a7978a718374ff832ef616d5"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\enabled-pre-window.json",
+      "sha256": "9186bcd4690a1d4ceeeca14e4640207c9735f55b157052af58b1840cf03b5292"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\enabled-final-provider.json",
+      "sha256": "df1cd39a1bfab1593eafc12d451bf9fc91555773c7edc7220623611c63985d3d"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\enabled-final-consumer.json",
+      "sha256": "504b28bf2c0356b9f574d2ed0468a900083c600b211f3c8ca54a62c0e36bd7f0"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\enabled-final-provider-audit.jsonl",
+      "sha256": "f8b623473b04fb6288ea36b1a4c6b329f2e5d036bb64efd62a3708afcaaca43d"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\enabled-final-consumer-audit.jsonl",
+      "sha256": "7a7df99e5d4357d7f5c88d1993d9cdb4b18c37f24a7a3390d4c24372b80a085b"
+    },
+    {
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\p04-two-host-20261011\\consumer-control-receipts.zip",
+      "sha256": "e644d41737b1623f7c0436ccf560b587fa5cbfe4a0b088c9741272f6c8269f10"
+    }
+  ],
+  "pending": [
+    "Independent result review",
+    "Provider-off subscenario was not reached and is not counted as checked",
+    "Original three frozen formal repetitions remain unexecuted"
+  ],
+  "preserved_nodes_for_possible_R05": "No extra scenario authorized by this review; nodes remain at existing P04 snapshot pending root handoff. Consumer SSH session74246 and two named remote firewall rules need owned cleanup if no handoff."
+}

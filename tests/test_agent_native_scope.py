@@ -9,7 +9,7 @@ from test_native_model_policy import native  # noqa: F401
 
 from rynmesh.agent_runtime.bridge import build_agent_integrations
 from rynmesh.agent_runtime.runtime import AgentRuntime
-from rynmesh.agent_runtime.store import AgentError, AgentStore
+from rynmesh.agent_runtime.store import DEFAULT_SETTINGS, AgentError, AgentStore
 from rynmesh.services import peer_box
 
 
@@ -77,7 +77,8 @@ def test_small_native_window_projects_tools_before_actual_dispatch(native):  # n
     assert len(traces) == 1, runtime.get(task["id"]).get("error")
     assert "ryn_discover_tools" in [tool["function"]["name"] for tool in traces[0]["tools"]]
     assert len(json.dumps([traces[0]["messages"], traces[0]["tools"]], ensure_ascii=False)) // 3 + traces[0]["max_tokens"] <= 4096
-    assert runtime.get(task["id"])["limits"]["max_context_chars"] == 60000
+    # The saved owner limit is the unchanged default; the 4K window is clamped only in the working projection.
+    assert runtime.get(task["id"])["limits"]["max_context_chars"] == DEFAULT_SETTINGS["max_context_chars"]
 
 
 @pytest.mark.parametrize("change", [

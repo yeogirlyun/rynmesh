@@ -75,6 +75,8 @@ def test_production_peer_stream_reaches_runtime_deltas_without_catalog_override(
 
 def test_stream_controller_observes_real_runtime_control_sequence(controller, tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path)
+    # This controller intentionally admits isolated read-only/strict sessions.
+    runtime.update_settings({"permission_mode": "read_only"})
     finished, calls = threading.Event(), []
     def synthetic_stream(_model, _messages, _specs, cancelled, on_event):
         calls.append(True)
@@ -175,6 +177,8 @@ def test_actual_http_commit_cancel_release_retains_original_receipt_once(control
         task = runtime.create({"message": prompt, "scope": {"resources": [{"connection_id": source["id"],
             "root_path": "reports/acceptance", "recursive": True, "actions": ["list", "read_ai", "create_file", "create_directory"]}],
             "allow_model_data": True}, "expected_destination_revision": "rev1"})
+        from agent_tool_fixtures import expose
+        expose(runtime, task["id"], ["ryn_create_text_file"])
         root_ref = runtime.store.read()["tasks"][task["id"]]["scope"]["resource_grants"][0]["root_resource_ref"]
         try:
             result = controller.late_write_controls(runtime, task, dav, timeout=5)

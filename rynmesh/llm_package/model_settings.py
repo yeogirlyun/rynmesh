@@ -89,6 +89,6 @@ def public(record, model):
 def fingerprint(record, model):
     # Internal only: never expose hashes of secret-bearing source snapshots.
     value = {key: record.get(key) for key in ("kind", "provider", "base_url", "api_key", "enabled")}
-    value.update(model=model, configuration=effective(record, model), tool_support=record.get("tool_support", {}).get(model),
+    value.update(model=model, configuration=effective(record, model),
                  rule_revision=record.get("model_settings", {}).get(model, {}).get("rule_revision"))
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()

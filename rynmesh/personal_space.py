@@ -98,6 +98,9 @@ class PersonalSpace:
             raise SpaceError("Space identity does not match.")
         if not isinstance(p.get("members"), dict) or len(p["members"]) > 64:
             raise SpaceError("Invalid member list.")
+        if "access_revision" in p and (type(p["access_revision"]) is not int
+                or not 1 <= p["access_revision"] <= p["revision"]):
+            raise SpaceError("Invalid access revision.")
         if p["members"].get(p["authority"], {}).get("role") != "manager":
             raise SpaceError("Invalid coordinator membership.")
         if fresh and (
@@ -116,6 +119,17 @@ class PersonalSpace:
 
     def _sign(self, snapshot):
         snapshot = copy.deepcopy(snapshot)
+        previous = self._snapshot()
+        def authority_state(value):
+            return (value.get("id"), value.get("authority"), {
+                peer: {key: member.get(key) for key in ("role", "removed")}
+                for peer, member in value.get("members", {}).items()})
+        # Lease renewals and display-name syncs are not authorization changes.
+        # Keep a signed monotonic access revision, including remove/rejoin ABA.
+        access_revision = previous.get("access_revision", previous.get("revision", 0))
+        if authority_state(snapshot) != authority_state(previous):
+            access_revision += 1
+        snapshot["access_revision"] = access_revision
         snapshot["revision"] = snapshot.get("revision", 0) + 1
         issued_at = self.clock()
         snapshot["issued_at"] = issued_at
@@ -630,7 +644,7 @@ class PersonalSpace:
             if not self.data.get("ai_binding_epoch"):
                 self.data["ai_binding_epoch"] = uuid.uuid4().hex
                 self._save()
-            return {"space_id": snapshot["id"], "snapshot_revision": snapshot["revision"],
+            return {"space_id": snapshot["id"], "snapshot_revision": snapshot.get("access_revision", snapshot["revision"]),
                     "access_generation": self.data["ai_binding_epoch"]}
 
     def authorize_model(self, peer_id, permission):

@@ -111,7 +111,7 @@ def test_public_long_notes_all_checkpoints_to_approved_anonymous_report(writable
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     model = Model()
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
-    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_context_chars": 12000, "max_steps": 24, "max_seconds": 600})
+    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_context_chars": 12000, "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
     task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed", "actions": ["list", "read_ai", "create_file"]}],
                   "allow_model_data": True}, "expected_destination_revision": "rev1"})

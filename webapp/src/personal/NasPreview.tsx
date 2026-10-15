@@ -19,6 +19,10 @@ import { Modal } from "./components";
 
 export const isNasImage = (entry: NasEntry) =>
   !entry.directory && /\.(jpe?g|png|webp)$/i.test(entry.name);
+/** Formats the browser can draw in an <img>: no scripts run there, even for SVG. */
+export const isPreviewImage = (entry: NasEntry) =>
+  !entry.directory && /\.(jpe?g|png|webp|gif|svg)$/i.test(entry.name);
+export type ImageLoader = (signal: AbortSignal) => Promise<Blob>;
 export const isNasText = (entry: NasEntry) =>
   !entry.directory &&
   (["application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet", "application/vnd.google-apps.presentation"].includes(entry.mime_type || "") || /\.(txt|md|csv|json|log|ya?ml|xml|ini|toml|css|js|ts|py|html)$/i.test(
@@ -30,6 +34,7 @@ function useImage(
   entry: NasEntry,
   thumbnail: boolean,
   enabled = true,
+  load?: ImageLoader,
 ) {
   const [state, setState] = useState({ url: "", error: "", dimensions: "" });
   useEffect(() => {
@@ -37,16 +42,20 @@ function useImage(
     if (!enabled) return;
     const controller = new AbortController();
     let url = "";
-    void nasRequest(
-      `/sources/${source}/content?path=${encodeURIComponent(entry.path)}&mode=${thumbnail ? "thumbnail" : "image"}`,
-      { signal: controller.signal },
-    )
-      .then(async (response) => {
-        const blob = await response.blob();
+    const request = load
+      ? load(controller.signal).then((blob) => ({ blob, width: null, height: null }))
+      : nasRequest(
+          `/sources/${source}/content?path=${encodeURIComponent(entry.path)}&mode=${thumbnail ? "thumbnail" : "image"}`,
+          { signal: controller.signal },
+        ).then(async (response) => ({
+          blob: await response.blob(),
+          width: response.headers.get("X-Image-Width"),
+          height: response.headers.get("X-Image-Height"),
+        }));
+    void request
+      .then(({ blob, width, height }) => {
         if (controller.signal.aborted) return;
         url = URL.createObjectURL(blob);
-        const width = response.headers.get("X-Image-Width");
-        const height = response.headers.get("X-Image-Height");
         setState({
           url,
           error: "",
@@ -61,7 +70,7 @@ function useImage(
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [source, entry.path, thumbnail, enabled]);
+  }, [source, entry.path, thumbnail, enabled, load]);
   return state;
 }
 
@@ -105,6 +114,7 @@ export function NasPreview({
   askAi,
   busy,
   readText,
+  loadImage,
   readOnly = false,
 }: {
   source: Pick<NasSource, "id" | "name" | "allow_ai">;
@@ -114,16 +124,18 @@ export function NasPreview({
   askAi: () => void;
   busy: boolean;
   readText?: (signal: AbortSignal) => Promise<string>;
+  /** Supplies image bytes from another store; SVG is then drawn as an inert image. */
+  loadImage?: ImageLoader;
   readOnly?: boolean;
 }) {
   const { t, i18n } = useTranslation();
-  const picture = isNasImage(entry);
-  const textFile = isNasText(entry);
+  const picture = loadImage ? isPreviewImage(entry) : isNasImage(entry);
+  const textFile = !picture && isNasText(entry);
   const {
     url,
     error: imageError,
     dimensions,
-  } = useImage(source.id, entry, false, picture);
+  } = useImage(source.id, entry, false, picture, loadImage);
   const [text, setText] = useState("");
   const [textError, setTextError] = useState("");
   const [loading, setLoading] = useState(textFile);

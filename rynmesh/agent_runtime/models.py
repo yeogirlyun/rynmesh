@@ -1,16 +1,24 @@
 """Credential-free model pool, independent of local Agent preferences."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
+import threading
 
 from ..llm_package import model_settings, peer_binding
+from ..llm_package.reasoning import metadata as reasoning_metadata
+from ..llm_package.tool_capabilities import client_tools_contract
 
 
 class ModelCatalog:
     def __init__(self, services, store):
         self.services, self.store = services, store
         self.network = os.environ.get("RYNMESH_NETWORK_ID", "rynmesh-main")
+        # Only CLI model metadata is retained. Availability and data authority
+        # are rebuilt from the current provider and exact model binding.
+        self._cli_metadata = {}
+        self._cli_metadata_lock = threading.Lock()
 
     @staticmethod
     def destination(row):
@@ -26,13 +34,26 @@ class ModelCatalog:
         # never a public digest of low-entropy credential material.
         return "legacy-" + hashlib.sha256(self.services["source_store"].path.read_bytes()).hexdigest()
 
-    def list_models(self):
+    @staticmethod
+    def _bind_cli(row, manager, model=""):
+        binding = None
+        try:
+            if manager and hasattr(manager.adapter, "binding_for_model"):
+                binding = manager.adapter.binding_for_model(model)
+        except (ValueError, OSError, RuntimeError):
+            pass  # No executable/configuration evidence means no project-data authority.
+        valid = peer_binding.valid(binding, row["service_id"])
+        row.update(local_model_binding=binding if valid else None,
+                   destination_binding_supported=bool(valid),
+                   destination_revision=peer_binding.local_revision(binding, row["peer_id"]) if valid else "")
+
+    def list_models(self, *, selected_model_id=None):
         sources = self.services["source_store"]
         records = sources.read()
         source_index = {sources.model_service_id(record, model): (record, model)
                         for record in records.values() for model in record["models"]}
         try:
-            discovered = self.services["discover"](self.network)
+            discovered = self.services.get("discover_agent", self.services["discover"])(self.network)
         except Exception:
             discovered = []
         rows = {}
@@ -46,12 +67,11 @@ class ModelCatalog:
                          "peer/" + hashlib.sha256(peer_id.encode()).hexdigest() + "/" + service_id)
             adapter = manifest.get("adapter", "")
             capabilities = manifest.get("capabilities") or []
-            # Protocol support alone does not demonstrate model tool ability.
-            supported = "client-tools" in capabilities and value.get("chat_protocol") == "rynmesh.chat.v1"
-            if adapter == "claude_cli":
-                supported = False
-            if adapter in {"codex_cli", "antigravity_cli"}:
-                supported = supported and value.get("tool_support") == "supported"
+            # Admission follows the bridge contract, not optional inference probes.
+            # Older providers omitted client-tools when a probe was missing. A known
+            # bridge plus the chat protocol still declares the same wire contract.
+            declared = client_tools_contract(adapter, capabilities)
+            supported = declared and value.get("chat_protocol") == "rynmesh.chat.v1"
             available = bool(value.get("online") and value.get("ready", True))
             row = {"id": model_ref, "name": manifest.get("model_alias", service_id),
                    "source": "local_service" if own else "peer", "source_name": value.get("node_name", ""),
@@ -60,7 +80,8 @@ class ModelCatalog:
                    "model_id": manifest.get("model_alias", service_id), "source_id": "",
                    "destination_revision": "",
                    "available": available, "agent_supported": supported,
-                   "tool_support": "supported" if supported else "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
+                   "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
+                   "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    "context_window": manifest.get("context_window", 32768),
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
@@ -89,6 +110,21 @@ class ModelCatalog:
                 row.update(destination_revision=peer_binding.revision(value, self.store.peer_id),
                            destination_binding_supported=bound is not None, expected_model_binding=bound,
                            consumer_peer_id=self.store.peer_id, recipient_access=access)
+                if adapter in {"codex_cli", "antigravity_cli"}:
+                    for upstream in value.get("cli_models", []):
+                        if not upstream.get("id"):
+                            continue
+                        specific = {**value, "model_binding": upstream.get("model_binding")}
+                        child_bound = peer_binding.expected(specific, self.store.peer_id)
+                        support = upstream.get("tool_support", "unknown")
+                        identifier = model_ref + "/model/" + upstream["id"]
+                        rows[identifier] = {**row, "id": identifier, "name": upstream["name"],
+                            "cli_model": upstream["id"], "cli_source": adapter, "model_id": upstream["id"],
+                            "tool_support": support, "agent_supported": row["agent_supported"],
+                            "destination_revision": peer_binding.revision(specific, self.store.peer_id),
+                            "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
+                        if adapter == "codex_cli":
+                            rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
         # Include drafts/offline sources so absence never masquerades as deletion.
         for service_id, (record, model) in source_index.items():
             model_ref = "local/" + service_id
@@ -104,22 +140,96 @@ class ModelCatalog:
                 "availability_basis": "configured_source_readiness_not_live_probe",
                 # A source's two-turn tool probe proves tools, not streaming.
                 "streaming": False,
-                "agent_supported": support == "supported", "tool_support": support,
+                "agent_supported": True, "tool_support": support, "agent_support_basis": "adapter_contract",
                 "context_window": policy["effective"]["context_window"], "max_output_tokens": policy["effective"]["max_output_tokens"],
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
                 "destination_binding_supported": True}
+        # CLI sources are containers; each upstream model keeps its identity and diagnostics.
+        for row in list(rows.values()):
+            if row["source"] != "local_service" or row["adapter"] not in {"codex_cli", "antigravity_cli"}:
+                continue
+            # Task admission and context sizing need one current model. A cold
+            # unrelated CLI can take seconds to enumerate, even for API tasks.
+            if selected_model_id is not None and selected_model_id != row["id"] and not selected_model_id.startswith(row["id"] + "/model/"):
+                continue
+            row["name"] += " · CLI default"
+            try:
+                from ..llm_package.cli_adapter import CLIAgentAdapter
+                from ..llm_package.cli_models import cached_models, list_models
+                adapter = CLIAgentAdapter(row["adapter"])
+                executable = adapter._command_path()
+                manager = self.services["provider_for"](row["service_id"])
+                self._bind_cli(row, manager)
+                binding = copy.deepcopy(row.get("local_model_binding"))
+                with self._cli_metadata_lock:
+                    snapshot = self._cli_metadata.get(row["id"])
+                same_binding = bool(snapshot and binding and snapshot["manager"] is manager
+                                    and snapshot["binding"] == binding)
+                prefix = row["id"] + "/model/"
+                selected = selected_model_id[len(prefix):] if selected_model_id and selected_model_id.startswith(prefix) else None
+                if (selected and same_binding and
+                        any(model["id"] == selected for model in snapshot["models"])):
+                    upstream = copy.deepcopy(snapshot["models"])
+                else:
+                    if snapshot and not same_binding:
+                        # A changed executable/configuration must not bless older
+                        # metadata under a new binding, even within the CLI TTL.
+                        upstream = list_models(row["adapter"], executable, refresh=True)
+                    else:
+                        upstream = cached_models(row["adapter"], executable) or list_models(row["adapter"], executable)
+                    self._bind_cli(row, manager)
+                    if binding and row.get("local_model_binding") == binding:
+                        with self._cli_metadata_lock:
+                            self._cli_metadata[row["id"]] = {"manager": manager, "binding": binding,
+                                                            "models": copy.deepcopy(upstream)}
+            except Exception:
+                continue
+            for model in upstream:
+                if not model["id"]:
+                    continue
+                support = self.store.llm_tool_capabilities.support(manager.manifest, model["id"]) if manager else "unknown"
+                identifier = row["id"] + "/model/" + model["id"]
+                rows[identifier] = {**row, "id": identifier, "name": model["name"],
+                    "cli_model": model["id"], "cli_source": row["adapter"], "model_id": model["id"],
+                    "source_name": "Codex" if row["adapter"] == "codex_cli" else "Antigravity",
+                    "tool_support": support, "agent_supported": row["agent_supported"]}
+                if type(model.get("context_window")) is int and 256 <= model["context_window"] <= 2000000:
+                    rows[identifier]["context_window"] = model["context_window"]
+                    rows[identifier]["context_window_basis"] = "installed_cli_model_cache"
+                self._bind_cli(rows[identifier], manager, model["id"])
+                if row["adapter"] == "codex_cli":
+                    rows[identifier].update(reasoning_metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort")))
+            if row["adapter"] == "codex_cli":
+                default = next((model for model in upstream if model.get("default")), {})
+                row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
         for row in rows.values():
             row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
                 "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
                 "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else
-                "Codex CLI 尚未通过隔离客户端工具验证；当前版本可能禁止无执行环境的工具调用，普通推理仍可用。" if row["adapter"] == "codex_cli" else
-                "尚未通过工具调用验证，可重试；暂不能用于助手。" if row["tool_support"] == "unsupported" else
-                "尚未验证结构化工具调用，请先验证此模型。")
+                "此接入未声明助手工具协议支持。")
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
+    def get_model(self, model_id):
+        return next((row for row in self.list_models(selected_model_id=model_id) if row["id"] == model_id), None)
+
+    def refresh_destination(self, model_id):
+        """Refresh metadata only; never send task text to repair discovery."""
+        records = self.services["discover"](self.network)
+        locator = next((row for row in records if row.get("peer_id")
+            and model_id.startswith("peer/" + hashlib.sha256(row["peer_id"].encode()).hexdigest() + "/")
+            and row.get("access_policy") == "personal_space"), None)
+        if locator is not None and self.store.personal_space.allows_ai(locator["peer_id"]):
+            try:
+                self.services["space_catalog"].refresh(locator)
+            except Exception:
+                pass  # No stale record is promoted to authenticated authority.
+        return self.get_model(model_id)
+
     def resolve(self, model_id, *, require_tools=True):
-        row = next((row for row in self.list_models() if row["id"] == model_id), None)
+        row = self.get_model(model_id)
+        if model_id.startswith("peer/") and (not row or not row.get("destination_binding_supported")):
+            row = self.refresh_destination(model_id)
         if not row or not row["available"]:
             raise ValueError("agent_model_unavailable")
         if require_tools and not row["agent_supported"]:

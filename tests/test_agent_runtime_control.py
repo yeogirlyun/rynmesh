@@ -224,6 +224,10 @@ def resource_runtime(tmp_path, resources):
     set_scope(runtime, row["id"], [{"connection_id": "docs", "root_path": "allowed", "actions": ["list", "read_ai"]}])
     stored = runtime.store.read()["tasks"][row["id"]]
     ref = file_ref(resource_tools, runtime._execution_context(stored))
+    # Exercise the actual discovery protocol before isolating the scope race.
+    failing_model(model, assistant(name="ryn_discover_tools", args={"load": ["ryn_read_resource"]}))
+    advance(runtime, 2)
+    model.calls.clear()
     return runtime, model, plugin, state, row, ref, key
 
 
@@ -343,7 +347,8 @@ def test_source_edit_revalidated_same_id_cannot_receive_old_history(tmp_path, re
     advance(runtime)
     rejected = runtime.get(row["id"])
     assert rejected["status"] == "failed" and rejected["error"] == "agent_model_destination_changed"
-    assert len(model.calls) == 3
+    # Two normal-loop inferences; no implicit independent checker request.
+    assert len(model.calls) == 2
     scope = runtime.get_scope(row["id"])
     assert scope["model_destination"]["destination_revision"] == "generation-1"
     assert scope["current_model_destination"]["destination_revision"] == "generation-2"

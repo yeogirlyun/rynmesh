@@ -1,0 +1,47 @@
+{
+  "kind": "independent_non_author_actual_run_review",
+  "reviewer": "sharing_review",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "verdict": "development_pass_with_process_termination_evidence_limit",
+  "formal_case_score": false,
+  "evidence_sha256": {
+    "run.json": "46f38f98c6c3cd80d4b2abecfe96a4ebef9cd21b8f8d65c964074f73c5246756",
+    "start-worker.json": "c2a5c60c1ff6c83c1972e4df4a3daeb68a6808ab216df38bbc4b3ad02555f9a7",
+    "recover-worker.json": "e72f320d8fcbcdbd93257208ede006999fb597f288aab77091971984257cdcdc",
+    "approval-ready.json": "d670391d3c6294c7707bef21b2d7ec96cb2877c62006581e144af6477b0a9c56"
+  },
+  "inspected": [
+    "originalprompt",
+    "before/after worker snapshots",
+    "actualmodelrequests",
+    "boundapproval",
+    "receipts",
+    "catalogfields",
+    "source replacements",
+    "signedprobeaudits"
+  ],
+  "facts": {
+    "original_approval_retained": true,
+    "zero_preapproval_writes": true,
+    "approved_at": "2026-10-10T03:53:50.990454Z",
+    "sole_dispatch_at": "2026-10-10T03:53:51.027592Z",
+    "actual_source_replacements": 1,
+    "non_target_model_rows_unchanged": true,
+    "main_execution_model_unchanged": true,
+    "main_and_checker_bound_approval_present": true,
+    "main_discloses_unverified_connectivity_and_publication": true,
+    "receiver_allowed_upstream_requests": 1,
+    "other_receiver_denied_upstream_requests": 0,
+    "credential_scans": 6,
+    "reported_credential_egress": 0
+  },
+  "retry": "Firstchecker emptylength4096; oneformatretry returnedcompletepassed. SixGLMcalls211.484seconds.",
+  "limitations": [
+    "Launcher termination recorded; original actualworker handle notheld across boundary. Independent probe cannotretroactivelycloseper-run gap.",
+    "Mainre-readmodelcatalog; transitionbranchnotexercisedlive.",
+    "Onephysicalhost andcontrolled receiverfixture; exportedauthenticationaudit notindependentarchivedwiresignatureverification.",
+    "Controller supplied exactapproval; notproduction humaninteractiontrial."
+  ],
+  "no_live_calls_or_file_edits_by_reviewer": true
+}

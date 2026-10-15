@@ -179,7 +179,8 @@ def test_c03_actual_pinned_native_worker(node, tmp_path, monkeypatch, ports):  #
         assert record["reference"]["result"]["persistent_session"] is True
         assert (store.home / "reference-session.sqlite").stat().st_size > 0
         counts = record["reference"]["dispatch_counts"]
-        assert counts == {"model": 11, "tool": 9, "approval": 4}
+        # One schema-discovery exchange is now part of the native protocol.
+        assert counts == {"model": 12, "tool": 10, "approval": 4}
         assert set(model_ids) == {selected} and len(model_ids) == counts["model"]
         assert all(item["approved"] for item in record["approvals"])
         assert result["settings_after"]["model_id"] == selected != before["model_id"]

@@ -1,0 +1,32 @@
+{
+  "kind": "synthetic_process_regression_green",
+  "source_run_sha256": "b93ac432d1f62d99c64322b9ddd6bf12dcea9f67ce8370ae4ba9610215f4dc83",
+  "source_path": "evidence-bundles/sharing-transition-green/run.json",
+  "formal_case_score": false,
+  "real_model": false,
+  "root_validation": {
+    "tests": 53,
+    "seconds": 17.48,
+    "files": [
+      "tests/test_agent_observation_transitions.py",
+      "tests/test_agent_sharing_recovery_case.py",
+      "tests/test_agent_sharing_verification.py",
+      "tests/test_agent_operation_permissions.py"
+    ]
+  },
+  "process_restart": {
+    "identity_preserved": true,
+    "control_revision_preserved": true,
+    "different_process": true
+  },
+  "metrics": {
+    "writes_before_approval": 0,
+    "write_dispatches": 1,
+    "effective_writes": 1,
+    "source_file_replacements": 1,
+    "counting_note": "Each successful write tool receipt and actual source-file replacement counted separately; no collapsing a multi-step sequence."
+  },
+  "all_mechanical_passed": true,
+  "outcome": "unverified",
+  "note": "Same failed GLM sequence exercised after actual process termination/reopen. Scripted checker still unknown, so not a real-model quality pass."
+}

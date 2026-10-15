@@ -478,5 +478,14 @@
   "messagesAttach": "Attach",
   "messagesTypeAMessage": "Type a message",
   "messagesSend": "Send",
-  "advertisedDiscoveryAddress": "Advertised address: {{address}} (actual connection may use another address)"
+  "advertisedDiscoveryAddress": "Advertised address: {{address}} (actual connection may use another address)",
+  "notConnected": "Not connected",
+  "connectDevice": "Connect device",
+  "discoveredNearbyCount": "Discovered devices ({{count}})",
+  "discoveredNearbyHint": "Found on your network but not connected to you. Services they advertise become usable after you connect the device.",
+  "reviewDiscoveredDevices": "Review discovered devices",
+  "serviceNeedsConnection": "This service is offered to the device owner's own devices. Connect the device before using it; the provider checks every request.",
+  "advertisedServiceCount": "{{count}} services advertised",
+  "advertisedServiceCount_one": "{{count}} service advertised",
+  "advertisedServiceCount_other": "{{count}} services advertised"
 }

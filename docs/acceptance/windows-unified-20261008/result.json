@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-08",
+  "source_commit": "278e6474547618ab23bf1c83a514a054c67e8db1",
+  "base_ui_commit": "1b62b2f",
+  "version": "0.7.0",
+  "desktop_sha256": "1CA367099876FE77AFEF136FA5D6E7E5489C1B8A0603C27F903BB9D1E7E5AE0B",
+  "sidecar_sha256": "82C4CEEE39398AFD76EC33577ED77D34699F44460D813A9840E68C0544025D29",
+  "installer_sha256": "81EAAA953D58C7706951CE0D1A20757C8B3C1E11B72B2796FC7E217BCC0F2179",
+  "frontend_build": "passed",
+  "desktop_build": "passed",
+  "desktop_tests_passed": 6,
+  "native_window_opened": true,
+  "native_unified_history_visible": true,
+  "native_add_materials_visible": true,
+  "node_history_http_status": 200,
+  "ai_source_config_preserved": true,
+  "identity_preserved": true,
+  "backup": ".codex-tmp/windows-unified-20261008/before",
+  "screenshot": "01-desktop-workspace.png"
+}

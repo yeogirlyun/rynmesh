@@ -1,0 +1,92 @@
+{
+  "review_version": 1,
+  "reviewer": "sharing_review (non-author of v2 query controller changes)",
+  "reviewed_at": "2026-10-10T06:31:20.081398+00:00",
+  "verdict": "no_material_findings_in_opt_in_draft_Q01_Q06_scope",
+  "findings": [],
+  "implementation_record_sha256": "1e3c97f975a904a3440f77bda289d603a432ffd54906f8f1ea9015b2cc1c34c5",
+  "reviewed_sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "f096ea2f03eaa9bba8757e47e0c7e679dd70552739e46cbbcf2100f75d6e05d1",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "1c0a80e07eae4f2e945debd59f1ac8c492de4d5984bad9a454c88a1724445ae0",
+    "docs/acceptance/ryn-agent-delivery/real-model/access_query.py": "239df2e1bc2091c61c11a755aae09b3837486d644c2205719d3f809b84afb5ce",
+    "docs/acceptance/ryn-agent-delivery/real-model/role_query_world.py": "ffe4b306131e9a7614ab44a4bb6cd8c8f0be3c1e4d47cb9fc836b8efc03b4e72",
+    "tests/test_agent_role_query_world.py": "f573ea7ca7a6b2767dbeacbad6916d3fcd1868e9cca74807b81a70bd5cc6d9d0"
+  },
+  "all_five_hashes_matched_before_and_after": true,
+  "independent_validation": [
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_role_query_world.py -k \"owner_role or (fixture_cli and Q06) or v2_kind\" --tb=short",
+      "passed": 7,
+      "deselected": 3,
+      "seconds": 48.78,
+      "exit_code": 0,
+      "scope": "Actual owner store/tool identity on both Q01/Q06, wrong owner/node rejected before task, read-only gate, v1 normalizer rejection, real production outer dispatch plus actual pinned native reference worker through both Q06 fixture CLIs."
+    },
+    {
+      "command": ".venv\\Scripts\\python.exe -m pytest -q -p no:cacheprovider tests/test_agent_query_planner_guard.py tests/test_agent_query_cases.py --tb=short",
+      "passed": 20,
+      "seconds": 25.61,
+      "exit_code": 0,
+      "scope": "Existing owner ciphertext per-dispatch gate and provenance/fixture-no-owner-read cases plus legacy query world regression."
+    }
+  ],
+  "new_synthetic_evidence": [
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T062944458151Z-Q06-ryn-v2-draft-fixture/run.json",
+      "sha256": "17eeffdef228d9c84a710f984680c741fa38f0518a6f6ac35c542f31214ab692",
+      "real_model": false,
+      "code_unchanged": true,
+      "writes": 0,
+      "runtime_role": "ryn_agent_executor"
+    },
+    {
+      "path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T062952787253Z-Q06-reference-v2-draft-fixture/run.json",
+      "sha256": "24236218110f66c40fb911324087519a9c27d8484c7a9b50f2517145cdb4b5ab",
+      "real_model": false,
+      "code_unchanged": true,
+      "writes": 0,
+      "runtime_role": "reference_accounting_and_tool_permission_host"
+    }
+  ],
+  "checks": [
+    {
+      "topic": "Actual owner role binding",
+      "assessment": "RoleQueryWorld uses actual owner RynmeshStore for signed node-a registry identity and sources. create_task checks runtime owner-test/consumer ID, tool store object, AgentStore path/key and read-only mode before creating task; decrypted task readback/execution context and empty resource/egress grants are checked. A/B/C/D distinctness is enforced by composer; B remains separate receiver. Context owner/node are accurately labeled runtime-derived rather than invented persisted task fields."
+    },
+    {
+      "topic": "Role world and visibility",
+      "assessment": "Only explicit Q01/Q06 draft flag selects RoleQueryWorld. Composer binds frozen v1 inputs and new draft effective authorization to A. Sources and real per-model friend grants are constructed at A; A receives production local configuration/complete model rows, B only authorized model-a. Fixture identity labels only identify actual rows; expected answers and collector setup probes are not injected into model context. Other source/history/connection deployments are explicitly uninstantiated, not falsely observed."
+    },
+    {
+      "topic": "Task registration ordering",
+      "assessment": "Both candidate execute and reference path invoke create_task/on_task_created before runtime.run_once or documents.execute. Callback writes effective-input.json, registration.json, task-binding.json and initial run.json first. Checked four frozen fixture records: candidate registration precedes first model_started; source call order also covers reference worker start. Registration is draft only and binds effective/case/base/overlay hashes plus task. Earlier exploratory records lacking registration are preserved and not retroactively registered."
+    },
+    {
+      "topic": "Reference state separation",
+      "assessment": "Reference branch uses actual A owner tool gateway and same scoped accounting host but actual pinned worker native SQLite for its conversation. Read-only SQLite checks of frozen Q01/Q06 reference samples found one native session with4/6 messages respectively and matching file hashes; accounting tasks remain queued. Recorded upstream commit29628c9acdb81b703bbd4080c207a0e7ce5e276e. Labels correctly avoid treating accounting task as Ryn planner or full session proof."
+    },
+    {
+      "topic": "Source and generation restrictions",
+      "assessment": "Live branch still reads only configured source src-7de9fb1d36c44bc8 / glm-5.3-flash via unchanged planner_policy with migrate=False. Every selected provider lookup rechecks startup owner ciphertext hash and exact mapped generation policy before replacing only ModelDispatchAdapter.inner. Fixture-only branch installs ScriptedProvider inside real outer gate and does not read owner credentials. No additional real-model source introduced."
+    },
+    {
+      "topic": "Snapshot and version boundaries",
+      "assessment": "Draft snapshot includes role_query_world.py, immutable loader, overlay and schema in addition to common production/controller/reference files. All5 author final hashes matched before/after independent tests. New real/local-role-query-v2-draft kinds are rejected by existing v1 normalizer; default no-flag Q06 still takes distinct B consumer path. No existing v1 result rewritten."
+    },
+    {
+      "topic": "Write and setup accounting",
+      "assessment": "Q01/Q06 tasks use read_only runtime and actual tool-effect gate. Task source replacements/grant changes and source/grant/relationship hashes are checked separately from setup writes and nonce protocol updates. Both new synthetic CLI runs record0 business writes and unchanged code/source state. Owner health loopback probe is collector-only and does not falsely change self-presence tool semantics."
+    }
+  ],
+  "limits": [
+    "Synthetic fixture planner tests are not real GLM quality evidence; no API was called. Reference synthetic verifier pass and candidate unverified are not formal semantic judgments.",
+    "This is an opt-in draft controller for two cases; overlay activation, v2 formal grading/full suite and isolated blind-role binding remain separate pending work.",
+    "All nodes are isolated logical homes on one physical host and local signed wire; no physical two-node/ICE or process-isolation proof. No remote host was operated in this review.",
+    "Native SQLite file/hash/table counts distinguish real engine state from accounting; this is not an exhaustive native persistence/security audit.",
+    "Registration ordering is proven by code path and retained fixture timestamps/artifacts, not cryptographically attested immutable external time.",
+    "Live owner-source safety and generation handling were reviewed and offline guard tested; a separately authorized real-model run still requires independent outcome/semantics review."
+  ],
+  "production_or_historical_edits": false,
+  "heldout_or_generator_access": false,
+  "issue_repair_chain": []
+}

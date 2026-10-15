@@ -1,0 +1,33 @@
+{
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "root_cause_unresolved_diagnostics_assigned",
+  "failure_bundle": "evidence-bundles/windows-process-proof-transient-failure-20261010",
+  "observations": [
+    "Original elapsed time 4.86 seconds, not the 660-second timeout.",
+    "approval-ready and start-worker both retain PID 53068: parent PID injection did not persist.",
+    "No before_restart, replacement worker, or cleanup_errors; task waiting_approval with read tools only.",
+    "Worker does not rewrite the marker after its atomic publication.",
+    "Three controller/helper hashes still match the failure snapshot."
+  ],
+  "independent_reproduction": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -s -p no:cacheprovider tests/test_agent_consumer_process_proof.py::test_controller_rejects_unowned_boundary_before_replacement",
+    "passed": 1,
+    "seconds": 9.25,
+    "technique": "One invocation with in-memory sys.settrace; no file edits.",
+    "result": "Did not reproduce. PermissionError errno 13 observed in atomic_io._fsync_dir was locally caught and is not evidence of the historical failure cause."
+  },
+  "next_change": "Add closed stage names and sanitized errno/winerror/repository-frame metadata to the controller. Preserve unexpected marker injection failures. Do not change process ownership, ACLs, timeouts or retries.",
+  "unsupported_causes": [
+    "Antivirus",
+    "File contention",
+    "TerminateProcess"
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_sharing_recovery.py": "241b3c67abb5f4b3b18aa4245d0387424b7cda9b50fe344f0ad4cdc08147dfbc",
+    "docs/acceptance/ryn-agent-delivery/real-model/sharing_recovery_worker.py": "165788ed6012b110a7917f189527bf7dc8a2104179b8cc48a95325f539b729bf",
+    "docs/acceptance/ryn-agent-delivery/real-model/consumer_process_proof.py": "6cd2ebf821f45984fcfd0d9e77bf3936abf936037b57b8b853ba904fa601c901",
+    "tests/test_agent_consumer_process_proof.py": "7f78981e83a483d8767de7bc6c284dc916200da71bdad174221db90d85b9ab57",
+    "docs/acceptance/ryn-agent-delivery/evidence-bundles/windows-process-proof-transient-failure-20261010/run.json": "76961bafc40d4f100a658c4031983657aa03813a1a71df78c100d404ee010e8e"
+  },
+  "formal_executed_trials": 0
+}

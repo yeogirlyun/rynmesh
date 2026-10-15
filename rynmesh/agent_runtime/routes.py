@@ -31,7 +31,9 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         startup_error = "agent_state_unreadable"
     app.state.agent_runtime = runtime
     app.state.agent_startup_error = startup_error
-    workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_once, policy=BackoffPolicy.fixed(0.5)), replace=True)
+    workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
+    for slot in (2, 3):
+        workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
 
     @app.middleware("http")
     async def prevent_agent_caching(request: Request, call_next):
@@ -81,10 +83,32 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def update_settings(request: Request):
         return await call("update_settings", await body(request))
 
+    @app.post("/api/local/agent/tasks/{task_id}/workspace")
+    async def bind_workspace(task_id: str, request: Request):
+        return await call("bind_workspace", task_id, await body(request))
+
     @app.get("/api/local/agent/models")
     async def models(request: Request):
         local_control(request)
         return {"models": await call("models")}
+
+    @app.get("/api/local/agent/projects")
+    async def list_projects(request: Request):
+        local_control(request)
+        return {"projects": await call("list_projects"), "selected_project_id": await call("project_selection")}
+
+    @app.post("/api/local/agent/projects")
+    async def load_project(request: Request):
+        return await call("load_project", await body(request))
+
+    @app.post("/api/local/agent/projects/selection")
+    async def select_project(request: Request):
+        return await call("select_project", await body(request))
+
+    @app.delete("/api/local/agent/projects/{project_id}")
+    async def remove_project(project_id: str, request: Request):
+        local_control(request)
+        return await call("remove_project", project_id)
 
     @app.get("/api/local/agent/skills")
     async def skills(request: Request):
@@ -162,9 +186,9 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         return await call("create", await body(request))
 
     @app.get("/api/local/agent/tasks/{task_id}")
-    async def get_task(task_id: str, request: Request):
+    async def get_task(task_id: str, request: Request, since_revision: int | None = None):
         local_control(request)
-        return await call("get", task_id)
+        return await call("get", task_id, since_revision)
 
     @app.post("/api/local/agent/tasks/{task_id}/messages")
     async def add_message(task_id: str, request: Request):
@@ -188,6 +212,33 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def read_artifact(task_id: str, operation_id: str, request: Request):
         local_control(request)
         return await call("read_artifact", task_id, operation_id)
+
+    @app.post("/api/local/agent/tasks/{task_id}/files/{file_id}/actions")
+    async def open_file_artifact(task_id: str, file_id: str, request: Request):
+        local_control(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="agent_artifact_action_invalid")
+        return await call("open_file_artifact", task_id, file_id, body.get("action"))
+
+    @app.get("/api/local/agent/tasks/{task_id}/files/{file_id}")
+    async def read_file_artifact(task_id: str, file_id: str, request: Request, v: str | None = None):
+        local_control(request)
+        from urllib.parse import quote
+
+        from fastapi.responses import Response
+
+        from .workspace_artifacts import CONTENT_SECURITY_POLICY
+        item = await call("read_file_artifact", task_id, file_id)
+        if isinstance(item, JSONResponse):
+            return item  # a refusal carrying the current task, as for every other task route
+        if v and v != item["sha256"]:
+            return JSONResponse(status_code=409, content={"detail": "agent_artifact_content_changed"})
+        # Bytes for a sandboxed preview or download, never an active document of this origin.
+        return Response(item["bytes"], media_type=item["media_type"], headers={
+            "Content-Security-Policy": CONTENT_SECURITY_POLICY, "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "inline; filename*=UTF-8''" + quote(item["name"]), "ETag": '"' + item["sha256"] + '"',
+            "X-Ryn-Artifact-Sha256": item["sha256"], "X-Ryn-Artifact-Status": item["status"]})
 
     @app.get("/api/local/agent/tasks/{task_id}/results/{result_id}")
     async def get_result(task_id: str, result_id: str, request: Request, offset: int = 0, limit: int = 8192):

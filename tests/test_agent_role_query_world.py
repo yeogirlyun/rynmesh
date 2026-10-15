@@ -31,7 +31,7 @@ def runtime_for(world, app, store, planner, *, owner_id="owner-test", consumer_i
                            owner_id=owner_id, consumer_node_id=consumer_id or store.peer_id)
     app.state.agent_runtime = runtime
     runtime.update_settings({"enabled": True, "model_id": world.selected, "max_steps": 24,
-                             "max_seconds": 600, "max_context_chars": 100000, "permission_mode": "read_only"})
+                             "max_seconds": 600, "max_context_chars": 100000, "permission_mode": "read_only", "verify_text_responses": True})
     return runtime
 
 

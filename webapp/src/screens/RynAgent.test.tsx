@@ -4,7 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
-import type { AgentSettings, AgentTask } from "../domain/rynAgent";
+import { rynAgent, type AgentProject, type AgentSettings, type AgentTask } from "../domain/rynAgent";
+import { agentTaskCache } from "../domain/agentWorkspaceCache";
 import { PersonalShell } from "../personal/Shell";
 import RynAgent from "./RynAgent";
 import i18n from "../i18n";
@@ -32,6 +33,7 @@ function api(enabled = true, initialTasks: AgentTask[] = []) {
   const actions = vi.fn();
   let createTask = task();
   server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [] })),
     http.get("*/api/local/agent/settings", () => HttpResponse.json(settings)),
     http.get("*/api/local/agent/resources", () => HttpResponse.json({ connections: [], supported_formats: [], create_scope_supported: false })),
     http.put("*/api/local/agent/settings", async ({ request }) => {
@@ -50,6 +52,7 @@ function api(enabled = true, initialTasks: AgentTask[] = []) {
       { name: "set_model_sharing", title: "Manage model sharing", effect: "write" },
     ] })),
     http.get("*/api/local/agent/tasks", () => HttpResponse.json({ tasks })),
+    http.get("*/api/local/agent/tasks/:id/artifacts", () => HttpResponse.json({ artifacts: [] })),
     http.get("*/api/local/agent/tasks/:id", ({ params }) => HttpResponse.json(tasks.find(item => item.id === params.id))),
     http.post("*/api/local/agent/tasks", async ({ request }) => {
       const body = await request.json() as { message: string; model_id: string; client_request_id: string };
@@ -71,10 +74,231 @@ function api(enabled = true, initialTasks: AgentTask[] = []) {
 function mount(shell = false) {
   return render(<MemoryRouter initialEntries={["/agent"]}>{shell ? <PersonalShell><RynAgent /></PersonalShell> : <RynAgent />}</MemoryRouter>);
 }
+
+it("keeps multiple project conversations grouped and restores a separate new draft for each project", async () => {
+  const projects: AgentProject[] = ["Alpha", "Beta"].map(name => ({ id: name.toLowerCase(), name, path: `D:\\code\\${name}`, generation: 1, entry_files: [], manifests: [], directories: [] }));
+  const alphaTask = task({ id: "alpha-task", title: "Alpha history", project: projects[0], status: "completed", messages: [{ role: "assistant", content: "Existing Alpha conversation" }] });
+  const betaTask = task({ id: "beta-task", title: "Beta history", project: projects[1], status: "completed", messages: [{ role: "assistant", content: "Existing Beta conversation" }] });
+  api(true, [alphaTask, betaTask]);
+  const selectProject = vi.fn();
+  server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects })),
+    http.post("*/api/local/agent/projects/selection", async ({ request }) => { const body = await request.json(); selectProject(body); return HttpResponse.json(body); }),
+  );
+  const user = userEvent.setup(); mount();
+  const sidebar = within(await screen.findByRole("region", { name: "Projects" }));
+  await user.click(await sidebar.findByRole("button", { name: /^Alpha ·/ }));
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Alpha?" });
+  await user.type(screen.getByRole("textbox"), "Alpha draft");
+  await user.click(sidebar.getByRole("button", { name: /^Beta ·/ }));
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Beta?" });
+  expect(screen.getByRole("textbox")).toHaveValue("");
+  await user.type(screen.getByRole("textbox"), "Beta draft");
+  await user.click(sidebar.getByRole("button", { name: /^Alpha ·/ }));
+  await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Alpha draft"));
+  await user.click(sidebar.getByRole("button", { name: /Beta history/ }));
+  await screen.findByText("Existing Beta conversation");
+  expect(screen.getByRole("textbox")).toHaveValue("");
+  expect(screen.getByRole("button", { name: "D:\\code\\Beta" })).toBeVisible();
+  await user.click(within(screen.getByRole("complementary", { name: "Task list" })).getByRole("button", { name: "New task" }));
+  await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Beta draft"));
+  expect(sidebar.getByRole("button", { name: /^Beta ·/ })).toHaveAttribute("aria-pressed", "true");
+  expect(selectProject).toHaveBeenCalledWith({ project_id: "alpha" });
+});
+
+it("submits the selected project ID and retains its task under that project after creation", async () => {
+  const project: AgentProject = { id: "alpha", name: "Alpha", path: "D:\\code\\Alpha", generation: 1, entry_files: [], manifests: [], directories: [] };
+  const backend = api();
+  backend.setCreate(task({ title: "New Alpha task", project }));
+  server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project] })),
+    http.post("*/api/local/agent/projects/selection", () => HttpResponse.json({ selected_project_id: project.id })),
+  );
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: /^Alpha ·/ }));
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Alpha?" });
+  await user.type(screen.getByRole("textbox"), "Inspect the Alpha project");
+  await user.click(screen.getByRole("button", { name: "Send task" }));
+  await waitFor(() => expect(backend.creates).toHaveBeenCalledWith(expect.objectContaining({ project_id: "alpha", message: "Inspect the Alpha project" })));
+  const sidebar = within(screen.getByRole("region", { name: "Projects" }));
+  expect(await sidebar.findByRole("button", { name: /New Alpha task/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "D:\\code\\Alpha" })).toBeVisible();
+});
+
+it("keeps an explicit general draft when reopening with an older server project selection", async () => {
+  const project: AgentProject = { id: "alpha", name: "Alpha", path: "D:\\code\\Alpha", generation: 1, entry_files: [], manifests: [], directories: [] };
+  api();
+  const selections = vi.fn();
+  server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project], selected_project_id: "alpha" })),
+    http.post("*/api/local/agent/projects/selection", async ({ request }) => { const body = await request.json(); selections(body); return HttpResponse.json(body); }),
+  );
+  const user = userEvent.setup(); const first = mount();
+  await screen.findByRole("heading", { name: "What would you like to build in D:\\code\\Alpha?" });
+  await user.click(screen.getByRole("button", { name: "New task without a project" }));
+  await screen.findByRole("heading", { name: "What would you like me to do?" });
+  await user.type(screen.getByRole("textbox"), "General task draft");
+  await waitFor(() => expect(selections).toHaveBeenCalledWith({ project_id: "" }));
+  first.unmount(); mount();
+  await screen.findByRole("button", { name: /^Alpha ·/ });
+  await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("General task draft"));
+  expect(screen.getByRole("heading", { name: "What would you like me to do?" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Alpha ·/ })).toHaveAttribute("aria-pressed", "false");
+});
+
+it.each(["unknown", "unsupported"] as const)("sends a configured CLI model directly with %s diagnostic evidence and no verification request", async tool_support => {
+  await i18n.changeLanguage("en");
+  const backend = api();
+  const probes = vi.fn();
+  server.use(
+    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [
+      { id: "local/codex-cli", name: "Codex CLI · CLI default", source: "local_service", available: true, agent_supported: true },
+      { id: "local/codex-cli/model/model-a", name: "Model A", source: "local_service", source_name: "Codex", cli_source: "codex_cli", cli_model: "model-a", service_id: "codex-cli", available: true, agent_supported: true, tool_support },
+    ] })),
+    http.post("*/api/local/llm/services/codex-cli/tools/test", () => { probes(); return HttpResponse.json({ tool_support: "supported" }); }),
+  );
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("combobox", { name: /^Model$/ }));
+  await user.click(screen.getByRole("option", { name: /^Model A/ }));
+  expect(screen.queryByRole("button", { name: "Verify and use this model" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Needs verification")).not.toBeInTheDocument();
+  await user.type(screen.getByRole("textbox"), "Hello");
+  await user.click(screen.getByRole("button", { name: "Send task" }));
+  await waitFor(() => expect(backend.creates).toHaveBeenCalledWith(expect.objectContaining({ model_id: "local/codex-cli/model/model-a" })));
+  expect(probes).not.toHaveBeenCalled();
+});
+
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
+  agentTaskCache().clear();
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.setAttribute("open", ""); } });
   Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value() { this.removeAttribute("open"); } });
+});
+
+it("can select autonomous workstation execution and retain it in the workspace cache", async () => {
+  await i18n.changeLanguage("en");
+  const backend = api();
+  const user = userEvent.setup(); mount();
+  await screen.findByRole("heading", { name: "What would you like me to do?" });
+  await user.click(screen.getByLabelText("Tool permissions", { selector: "summary" }));
+  await user.click(screen.getByRole("menuitemradio", { name: "Work autonomously" }));
+  await waitFor(() => expect(backend.updates).toHaveBeenCalledWith({ permission_mode: "workspace" }));
+  await waitFor(() => expect(screen.getByText("Full access", { selector: ".ra-composer-permissions summary span" })).toBeVisible());
+});
+
+it("shows a normal completed answer without an independent-assessment warning card", async () => {
+  await i18n.changeLanguage("en");
+  server.use(http.get("*/api/local/agent/tasks/:id/artifacts", () => HttpResponse.json({ artifacts: [] })));
+  api(true, [task({ status: "completed", run_state: "ended", result: "Balance: CNY 123.45",
+    messages: [{ role: "assistant", content: "Balance: CNY 123.45" }],
+    outcome: { assessment_requested: false, status: "unverified", goal_revision: 1, summary: "Balance: CNY 123.45", criteria_results: [], evidence_refs: [], uncertainties: [] } })]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: /^Inspect devices/ }));
+  expect(await screen.findByText("Balance: CNY 123.45", { selector: "p" })).toBeVisible();
+  await user.click(screen.getByLabelText("Chat actions"));
+  expect(screen.queryByRole("region", { name: "Goal outcome" })).not.toBeInTheDocument();
+});
+
+it("reopens with cached configuration and sends while startup checks are still pending", async () => {
+  const backend = api();
+  const first = mount();
+  await screen.findByRole("heading", { name: "What would you like me to do?" });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("verified-model"));
+  await waitFor(() => expect(localStorage.length).toBeGreaterThan(0));
+  first.unmount();
+  // These checks never settle during the assertion; usability must come from storage.
+  const settings = vi.spyOn(rynAgent, "settings").mockImplementation(() => new Promise(() => {}));
+  const models = vi.spyOn(rynAgent, "models").mockImplementation(() => new Promise(() => {}));
+  const tasks = vi.spyOn(rynAgent, "tasks").mockImplementation(() => new Promise(() => {}));
+  try {
+    const user = userEvent.setup(); mount();
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("verified-model");
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    await user.type(screen.getByRole("textbox"), "Use the saved model immediately");
+    expect(screen.getByRole("button", { name: "Send task" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Send task" }));
+    await waitFor(() => expect(backend.creates).toHaveBeenCalledWith(expect.objectContaining({ model_id: "verified-model" })));
+  } finally { settings.mockRestore(); models.mockRestore(); tasks.mockRestore(); }
+});
+
+it("loads settings and task history independently of a pending model catalog", async () => {
+  api(true, [controlled({ messages: [{ role: "assistant", content: "History without waiting for models" }] })]);
+  const models = vi.spyOn(rynAgent, "models").mockImplementation(() => new Promise(() => {}));
+  try {
+    const user = userEvent.setup(); mount();
+    await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+    expect(await screen.findByText("History without waiting for models")).toBeVisible();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    await user.type(screen.getByRole("textbox"), "Additional requirements");
+    expect(screen.getByRole("button", { name: "Send requirements update" })).toBeEnabled();
+  } finally { models.mockRestore(); }
+});
+
+it("starts a new draft and restores a visited conversation without checking models again", async () => {
+  api(true, [controlled({ messages: [{ role: "assistant", content: "Cached conversation" }] })]);
+  const modelRequests = vi.spyOn(rynAgent, "models");
+  const user = userEvent.setup(); mount();
+  try {
+    await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+    await screen.findByText("Cached conversation");
+    await user.type(screen.getByRole("textbox"), "Conversation draft");
+    const count = modelRequests.mock.calls.length;
+    await user.click(screen.getAllByRole("button", { name: "New task" })[0]);
+    await user.type(screen.getByRole("textbox"), "New draft");
+    expect(screen.getByRole("button", { name: "Send task" })).toBeEnabled();
+    expect(modelRequests).toHaveBeenCalledTimes(count);
+    const detail = vi.spyOn(rynAgent, "task").mockImplementation(() => new Promise(() => {}));
+    try {
+      await user.click(screen.getByRole("button", { name: /^Inspect devices.*Running$/ }));
+      expect(screen.getByText("Cached conversation")).toBeVisible();
+      expect(screen.getByRole("textbox")).toBeEnabled();
+      expect(screen.getByRole("textbox")).toHaveValue("Conversation draft");
+      expect(screen.getByRole("button", { name: "Send requirements update" })).toBeEnabled();
+      expect(modelRequests).toHaveBeenCalledTimes(count);
+    } finally { detail.mockRestore(); }
+  } finally { modelRequests.mockRestore(); }
+});
+
+it("restores the selected conversation when reopening while all refresh requests are pending", async () => {
+  api(true, [controlled({ messages: [{ role: "assistant", content: "Conversation survives navigation" }] })]);
+  const user = userEvent.setup();
+  const first = mount();
+  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await screen.findByText("Conversation survives navigation");
+  await user.type(screen.getByRole("textbox"), "Saved conversation draft");
+  first.unmount();
+  const requests = ["settings", "models", "tasks", "task"].map(method =>
+    vi.spyOn(rynAgent, method as "settings").mockImplementation(() => new Promise(() => {})));
+  try {
+    mount();
+    expect(screen.getByText("Conversation survives navigation")).toBeVisible();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("textbox")).toHaveValue("Saved conversation draft");
+    expect(screen.getByRole("button", { name: "Send requirements update" })).toBeEnabled();
+  } finally { requests.forEach(request => request.mockRestore()); }
+});
+
+it("keeps cached models usable after refresh errors and reports actual send rejection", async () => {
+  const backend = api();
+  const user = userEvent.setup(); mount();
+  await screen.findByRole("heading", { name: "What would you like me to do?" });
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("verified-model"));
+  const settings = vi.spyOn(rynAgent, "settings").mockRejectedValue(new Error("Disconnected"));
+  const models = vi.spyOn(rynAgent, "models").mockRejectedValue(new Error("Disconnected"));
+  try {
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(models).toHaveBeenCalled());
+    await user.type(screen.getByRole("textbox"), "Keep this message");
+    expect(screen.getByRole("button", { name: "Send task" })).toBeEnabled();
+    expect(screen.queryByText(/Could not load the model catalog/)).not.toBeInTheDocument();
+    server.use(http.post("*/api/local/agent/tasks", () => HttpResponse.json({ detail: "agent_model_unavailable" }, { status: 400 })));
+    await user.click(screen.getByRole("button", { name: "Send task" }));
+    expect(await screen.findByText(/The selected model is unavailable/)).toBeVisible();
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this message");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send task" })).toBeEnabled());
+    expect(backend.creates).not.toHaveBeenCalled();
+  } finally { settings.mockRestore(); models.mockRestore(); }
 });
 
 it("opens a confirmed created file while the task is still running without a final outcome", async () => {
@@ -380,18 +604,20 @@ it("creates a data task with scope and destination consent in the same request b
   await user.click(screen.getByRole("checkbox", { name: "Allow this task to send selected directory contents to Verified model." }));
   await user.click(screen.getByRole("button", { name: "Send task" }));
   await waitFor(() => expect(backend.creates).toHaveBeenCalledTimes(1));
-  expect(backend.creates).toHaveBeenCalledWith({ message: "Summarize the reports", model_id: "verified-model", client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/), scope: { resources: [{ connection_id: "reports", root_path: "", recursive: false, actions: ["list", "read_ai"] }], allow_model_data: true }, expected_destination_revision: "api-version-1" });
+  expect(backend.creates).toHaveBeenCalledWith({ message: "Summarize the reports", model_id: "verified-model", response_language: "en", client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/), scope: { resources: [{ connection_id: "reports", root_path: "", recursive: false, actions: ["list", "read_ai"] }], allow_model_data: true }, expected_destination_revision: "api-version-1" });
 });
 
-it("starts disabled, persists enabling, and excludes unavailable or unverified models", async () => {
+it("starts disabled, persists enabling, and excludes unavailable or unsupported connections", async () => {
   const backend = api(false);
   const user = userEvent.setup();
   mount();
   await screen.findByRole("heading", { name: "Let Ryn take care of a task" });
   expect(screen.queryByRole("textbox", { name: "Tell Ryn what to do" })).not.toBeInTheDocument();
   expect(backend.creates).not.toHaveBeenCalled();
-  expect(screen.getAllByRole("option", { name: /Unverified model/ })[0]).toBeDisabled();
-  expect(screen.getAllByRole("option", { name: /Offline model/ })[0]).toBeDisabled();
+  await user.click(screen.getByRole("combobox", { name: "Model" }));
+  expect(screen.getByRole("option", { name: /Unverified model/ })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("option", { name: /Offline model/ })).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Escape}");
   await user.click(screen.getAllByRole("button", { name: "Enable Ryn Agent" })[0]);
   await screen.findByRole("heading", { name: "What would you like me to do?" });
   expect(backend.updates).toHaveBeenCalledWith({ enabled: true, model_id: "verified-model" });
@@ -425,12 +651,12 @@ it("presents server goal and plan without upgrading a finished model reply to ve
   expect(within(outcome).queryByText(/server has verified/)).not.toBeInTheDocument();
 });
 
-it("keeps model setup available before enabling when no verified model exists", async () => {
+it("keeps model setup available before enabling when no supported model exists", async () => {
   const backend = api(false);
   server.use(http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [] })));
   mount();
   await screen.findByRole("heading", { name: "Let Ryn take care of a task" });
-  expect(screen.getByText(/No verified Agent model is available/)).toBeVisible();
+  expect(screen.getByText(/No assistant model is available/)).toBeVisible();
   expect(screen.getByRole("link", { name: "Configure models" })).toHaveAttribute("href", "/services/sources");
   expect(screen.getByRole("button", { name: "Enable Ryn Agent" })).toBeDisabled();
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -577,10 +803,12 @@ it("disables Agent without erasing tasks and saves only explicitly opted-in writ
   await screen.findByText("Manage model sharing");
   expect(within(dialog).queryByText("inspect_devices")).not.toBeInTheDocument();
   await user.click(within(dialog).getByRole("checkbox", { name: /Manage model sharing/ }));
+  await user.type(within(dialog).getByRole("textbox", { name: "Working directory" }), "D:\\RynWorkspace");
+  await user.click(within(dialog).getByRole("checkbox", { name: "Allow computer and browser operations" }));
   await user.click(within(dialog).getByRole("checkbox", { name: /Enable Agent on this device/ }));
   await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, allowed_write_tools: ["set_model_sharing"] });
+  expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true, allowed_write_tools: ["set_model_sharing"] });
   await user.click(screen.getByRole("button", { name: /Inspect devices.*Turn finished/ }));
   await screen.findByText("Saved evidence");
   expect(screen.getByRole("textbox")).toBeDisabled();
@@ -603,8 +831,9 @@ it("resumes a safe restart interruption and keeps the task's recorded permission
   mount();
   await user.click(await screen.findByRole("button", { name: /Inspect devices.*Interrupted/ }));
   await screen.findByText(/The node restarted before this task finished/);
-  expect(screen.getByRole("combobox", { name: "Tool permissions" })).toHaveValue("read_only");
-  expect(screen.getByRole("combobox", { name: "Tool permissions" })).toBeDisabled();
+  expect(screen.getByText("Read only", { selector: ".ra-composer-permissions summary span" })).toBeVisible();
+  await user.click(screen.getByLabelText("Tool permissions", { selector: "summary" }));
+  expect(screen.getByRole("menuitemradio", { name: "Work autonomously" })).toBeDisabled();
   expect(screen.queryByText(/A change may have started without a confirmed result/)).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Resume" }));
   expect(backend.actions).toHaveBeenCalledWith({ action: "resume", expected_revision: 1 });
@@ -629,10 +858,10 @@ it("keeps tasks in update-time order when an older task is selected and refreshe
   await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running/ }));
   await screen.findByRole("button", { name: "Pause" });
   const list = within(screen.getByRole("complementary", { name: "Task list" }));
-  expect(list.getAllByRole("button").map(button => button.textContent)).toEqual(["New task", "Recent taskRunning", "Inspect devicesRunning"]);
+  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent taskRunning", "Inspect devicesRunning"]);
   await user.click(screen.getByRole("button", { name: "Hide task list" }));
   await user.click(screen.getByRole("button", { name: "Show task list" }));
-  expect(list.getAllByRole("button").map(button => button.textContent)).toEqual(["New task", "Recent taskRunning", "Inspect devicesRunning"]);
+  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent taskRunning", "Inspect devicesRunning"]);
 });
 
 
@@ -758,7 +987,7 @@ it("ignores an older focus refresh that resolves after a newer visibility refres
   // Wait for the older response to finish crossing fetch's asynchronous boundary.
   await new Promise(resolve => setTimeout(resolve, 30));
   expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("new-default");
-  await userEvent.setup().click(screen.getByText("Options"));
+  await userEvent.setup().click(screen.getByLabelText("Options", { selector: "summary" }));
   expect(screen.getByText(/Default for new tasks: new-default/)).toBeVisible();
 });
 
@@ -768,6 +997,8 @@ it("shows public progress and keeps technical receipts and interim commentary co
   api(true, [task({ messages: [
     { role: "user", content: "Inspect devices" },
     { role: "assistant", content: "I will inspect the device configuration.", tool_calls: [{ id: "c1", function: { name: "inspect_devices", arguments: "{}" } }] },
+    { role: "tool", content: "internal result", tool_call_id: "c1" },
+    { role: "assistant", content: null, tool_calls: [{ id: "c2", function: { name: "inspect_devices", arguments: "{}" } }] },
     { role: "assistant", content: "The device is online." },
   ], events: [{ seq: 1, at: 1, type: "tool_started", tool: "inspect_devices" }, { seq: 2, at: 2, type: "tool_result", tool: "inspect_devices", result: { online: true } }] })]);
   const user = userEvent.setup(); const { container } = mount();
@@ -778,9 +1009,11 @@ it("shows public progress and keeps technical receipts and interim commentary co
   expect(container.querySelector(".ra-scroll .ra-record-options")).toBeNull();
   expect(container.querySelector(".ra-chat-menu .ra-activity")).not.toHaveAttribute("open");
   expect(screen.getByRole("button", { name: "Stop" })).toBeVisible();
-  expect(container.querySelector("details.ra-thinking")).not.toHaveAttribute("open");
-  await user.click(screen.getByText("Thinking and progress"));
-  expect(container.querySelector("details.ra-thinking")).toHaveAttribute("open");
+  expect(container.querySelectorAll("details.ra-process-details")).toHaveLength(1);
+  expect(screen.getByText("2 actions")).toBeVisible();
+  expect(container.querySelector("details.ra-process-details")).not.toHaveAttribute("open");
+  await user.click(screen.getByText("View activity"));
+  expect(container.querySelector("details.ra-process-details")).toHaveAttribute("open");
   expect(screen.getByText("I will inspect the device configuration.")).toBeVisible();
 });
 
@@ -794,4 +1027,31 @@ it("lets an owner clarify a CLI source without submitting credentials or startin
   expect(screen.getByRole("textbox")).toHaveValue("I use a local AI app or CLI. Confirm the application and supported connection method first; do not ask me for an API endpoint or key.");
   expect(backend.actions).not.toHaveBeenCalled();
   expect(backend.creates).not.toHaveBeenCalled();
+});
+
+
+it("reports an unverifiable shared-model destination instead of pretending the task changed", async () => {
+  await i18n.changeLanguage("en"); api();
+  server.use(http.post("*/api/local/agent/tasks", () => HttpResponse.json({ detail: "agent_model_destination_unverifiable" }, { status: 409 })));
+  const user = userEvent.setup(); mount();
+  await user.type(await screen.findByRole("textbox"), "Inspect this computer without changing files");
+  await user.click(screen.getByRole("button", { name: "Send task" }));
+  expect(await screen.findByText(/Cannot verify this shared model's destination/)).toBeVisible();
+  expect(screen.queryByText(/This task changed in another view/)).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveValue("Inspect this computer without changing files");
+});
+
+it("binds a missing workspace through an explicit owner action rather than a chat answer", async () => {
+  await i18n.changeLanguage('en');
+  const current = controlled({status:'failed', run_state:'ended', error:'agent_operation_failed', local_execution:{workspace_root:''}, events:[{seq:1,at:1,type:'tool_result',tool:'ryn_file_list',result:{error:'agent_workspace_required'}}]});
+  api(true,[current]);
+  const binds = vi.fn();
+  server.use(http.get('*/api/local/agent/tasks/task-1/artifacts',()=>HttpResponse.json({artifacts:[]})),
+    http.post('*/api/local/agent/tasks/task-1/workspace',async ({request})=>{const body=await request.json(); binds(body); return HttpResponse.json({...current,status:'queued',local_execution:{workspace_root:'D:\\Drawings'}})}));
+  const user=userEvent.setup(); mount();
+  await user.click(await screen.findByRole('button',{name:/^Inspect devices.*Failed$/}));
+  await user.type(await screen.findByRole('textbox',{name:'Working directory'}),'D:\\Drawings');
+  expect(binds).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button',{name:'Use folder and continue'}));
+  await waitFor(()=>expect(binds).toHaveBeenCalledWith({workspace_root:'D:\\Drawings',expected_control_revision:7,client_request_id:expect.any(String)}));
 });

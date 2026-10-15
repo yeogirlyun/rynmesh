@@ -649,6 +649,10 @@ def create_app(store: RynmeshStore | None = None):
             policy=BackoffPolicy.fixed(2.0),
         ), replace=True)
         await registry.start()
+        drop_engine = getattr(lifespan_app.state, "drop_engine", None)
+        if drop_engine is not None:
+            drop_engine.attach_loop(_asyncio.get_running_loop())
+            await _asyncio.to_thread(drop_engine.start)
         tasks = (
             _asyncio.create_task(_confirm_after_grace()),
             _asyncio.create_task(_discover()),
@@ -656,6 +660,8 @@ def create_app(store: RynmeshStore | None = None):
         try:
             yield
         finally:
+            if drop_engine is not None:
+                await _asyncio.to_thread(drop_engine.stop)
             await registry.stop()
             for task in tasks:
                 task.cancel()
@@ -883,16 +889,44 @@ def create_app(store: RynmeshStore | None = None):
             "isSelf": is_self,
         }
 
+    from .peer_directory import FreshnessPolicy, add_advertised_providers, build_snapshot
+
+    # One freshness policy for devices and for the services they advertise.
+    freshness = FreshnessPolicy.from_environment()
+    advertised_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+    def advertised_capacities(network_id: str, *, cache_only: bool) -> list[dict[str, Any]]:
+        """Providers that published capacity. They are devices even without a peer record."""
+        hit = advertised_cache.get(network_id)
+        if hit and (cache_only or time.monotonic() - hit[0] < 10):
+            return hit[1]
+        if cache_only:
+            return []
+        try:
+            rows = active_store.list_job_capacities(
+                network_id=network_id,
+                max_age_hours=freshness.advertisement_max_age_hours,
+            ).get("capacities", [])
+        except Exception:
+            return hit[1] if hit else []
+        advertised_cache[network_id] = (time.monotonic(), rows)
+        return rows
+
     def discover_peer_items(network_id: str, *, include_self: bool = True,
                             cache_only: bool = False) -> list[dict[str, Any]]:
         discovered = active_store.discover_peers(
             network_id=network_id,
             include_self=include_self,
-            max_age_hours=float(os.environ.get("RYNMESH_DISCOVERY_MAX_AGE_HOURS", "24") or 24),
+            max_age_hours=freshness.peer_record_max_age_hours,
             use_cache_on_error=True,
             cache_only=cache_only,
         )
-        records = list(discovered.get("peers", []))
+        records = add_advertised_providers(
+            list(discovered.get("peers", [])),
+            advertised_capacities(network_id, cache_only=cache_only),
+            self_id=active_store.peer_id,
+            network_id=network_id,
+        )
         if include_self and not any(
             item.get("peer_id") == active_store.peer_id for item in records
         ):
@@ -1415,16 +1449,15 @@ def create_app(store: RynmeshStore | None = None):
         body = await request.json()
         return egress_controller.disconnect(region=str(body.get("region") or "CN"))
 
-    from .services.peer_health import PeerHealthProbe
+    from .services.peer_health import PeerHealthProbe, PeerPresenceCache
 
     peer_health_probe = PeerHealthProbe()
+    # One observation of each device, read by both the device list and the AI services view.
+    peer_presence = PeerPresenceCache()
+    app.state.peer_presence = peer_presence
 
-    @app.post("/api/local/peers/health")
-    async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
-        local_control(request)
-        # Registry I/O and unreachable peers must not block the event loop that
-        # polls ICE signaling and serves the desktop's status requests.
-        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
+    def probe_peers(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The one place a device is probed; the result is shared via ``peer_presence``."""
         peers = [
             {
                 "id": it["id"],
@@ -1436,7 +1469,17 @@ def create_app(store: RynmeshStore | None = None):
             }
             for it in items
         ]
-        return await _asyncio.to_thread(peer_health_probe.check, peers)
+        results = peer_health_probe.check(peers)
+        peer_presence.update(results)
+        return results
+
+    @app.post("/api/local/peers/health")
+    async def local_peers_health(request: FastAPIRequest) -> list[dict[str, Any]]:
+        local_control(request)
+        # Registry I/O and unreachable peers must not block the event loop that
+        # polls ICE signaling and serves the desktop's status requests.
+        items = await _asyncio.to_thread(discover_peer_items, control_network_id(), include_self=True)
+        return await _asyncio.to_thread(probe_peers, items)
 
     @app.post("/api/local/peers/discover")
     async def local_discover_peers(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -1455,6 +1498,51 @@ def create_app(store: RynmeshStore | None = None):
         quick = request.query_params.get("quick", "").lower() in {"1", "true"}
         return filtered_peers(discover_peer_items(control_network_id(), include_self=True,
                                                  cache_only=quick), request)
+
+    @app.get("/api/local/directory")
+    async def local_directory(request: FastAPIRequest) -> dict[str, Any]:
+        """Devices and their services as one snapshot (docs/PEER_DIRECTORY_REDESIGN.md, P2)."""
+        local_control(request)
+        from datetime import datetime, timezone
+
+        network_id = control_network_id()
+        quick = request.query_params.get("quick", "").lower() in {"1", "true"}
+        items = await _asyncio.to_thread(discover_peer_items, network_id, include_self=True, cache_only=quick)
+        if not quick:
+            # Probe before judging services, so a device and its services are decided
+            # against the same fresh observation (no separate /peers/health poll needed).
+            try:
+                await _asyncio.to_thread(probe_peers, items)
+            except Exception:
+                pass  # Presence stays "unconfirmed" rather than failing the whole directory.
+        services: list[dict[str, Any]] = []
+        discover_services = getattr(app.state, "llm_discover", None)
+        if discover_services is not None:
+            try:
+                services = await _asyncio.to_thread(
+                    lambda: discover_services(network_id, cache_registry=True))
+            except Exception:
+                services = []  # Devices stay listed when the service catalog is unavailable.
+        members: list[str] = []
+        try:
+            status = active_store.personal_space.status()
+            if status.get("membership") == "active":
+                members = [m["peer_id"] for m in status.get("members", []) if not m.get("removed")]
+        except Exception:
+            members = []
+        friend_ids: list[str] = []
+        try:
+            friends_state = getattr(app.state, "friends", None)
+            if friends_state is not None:
+                friend_ids = [str(row.get("peer_id")) for row in friends_state.service.store.list_relationships()
+                              if row.get("peer_id")]
+        except Exception:
+            friend_ids = []
+        return build_snapshot(
+            items, services, self_id=active_store.peer_id, network_id=network_id,
+            members=members, friend_ids=friend_ids, probe_for=peer_presence.get,
+            policy=freshness, now=datetime.now(timezone.utc),
+        )
 
     @app.get("/api/local/content")
     def local_content(request: FastAPIRequest) -> list[dict[str, Any]]:
@@ -2540,6 +2628,11 @@ def create_app(store: RynmeshStore | None = None):
         app, store=active_store, home=_home, workers=app.state.background_workers,
         local_control=local_control, messaging_key=_msg_priv,
     )
+
+    from .drop.integration import install_device_drop
+
+    install_device_drop(app, store=active_store, messaging_key=_msg_priv, personal_space=personal_space,
+                        network_id=control_network_id, local_control=local_control)
 
     from .exchange.routes import install_exchange
 

@@ -40,6 +40,7 @@ def semantic_transport(p):
 def test_plain_peer_task_main_and_checker_carry_exact_permission_without_resource_grants(consumer, explicit):  # noqa: F811
     p, runtime, model, _, envelopes, _ = consumer
     semantic_transport(p)
+    runtime.update_settings({"verify_text_responses": True})
     created = runtime.create({"message": "Give a short synthetic answer.", **({"model_id": model["id"]} if explicit else {})})
     row = assert_empty_scope(runtime, created["id"])
     assert row["model_destination_required"] is True
@@ -99,7 +100,7 @@ def test_plain_peer_task_fails_closed_when_binding_is_unverifiable(consumer, tam
             altered["expected_model_binding"]["consumer_peer_id"] = "other-recipient"
         else:
             runtime.model.supports_destination_binding = False
-        runtime.catalog.list_models = lambda: [altered]
+        runtime.catalog.list_models = lambda **_kwargs: [altered]
         with pytest.raises(AgentError, match="agent_model_destination_unverifiable"):
             runtime.create({"message": "No documents, still needs a bound peer"})
     assert not envelopes

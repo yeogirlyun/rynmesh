@@ -1,0 +1,1172 @@
+{
+  "kind": "synthetic_ui_and_runtime_integration_only",
+  "formal_case_score": false,
+  "task_id": "agent_2783fd344507446fbfcdb77611ff5f84",
+  "task": {
+    "id": "agent_2783fd344507446fbfcdb77611ff5f84",
+    "client_request_id": "91c2c589-46b4-49b1-ad9b-e7bc2e6774db",
+    "title": "核验反馈 UI 验收：只查询隔离模型目录，不改变任何设置。这是合成联调，请在反馈后更正答复。",
+    "model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+    "status": "completed",
+    "revision": 21,
+    "created_at": "2026-10-09T15:12:39.724932+00:00",
+    "updated_at": "2026-10-09T15:12:44.855767+00:00",
+    "messages": [
+      {
+        "content": "核验反馈 UI 验收：只查询隔离模型目录，不改变任何设置。这是合成联调，请在反馈后更正答复。",
+        "message_id": "agent_2783fd344507446fbfcdb77611ff5f84:owner:0",
+        "role": "user"
+      },
+      {
+        "content": "我先检查模型配置。",
+        "context_epoch": 0,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{}",
+              "name": "ryn_list_models"
+            },
+            "id": "inspect",
+            "type": "function"
+          }
+        ]
+      },
+      {
+        "content": "{\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":false,\"available\":false,\"context_window\":4096,\"description\":\"模型当前不可用，请检查来源连接。\",\"destination_binding_supported\":true,\"destination_revision\":\"0491970830dfd5b12e9c34949ab7ab4bfdfe8111a06abdd3ad3b35bfb22169be\",\"id\":\"local/ryn-local-model-c29eda6b20014fc3\",\"local_model_binding\":{\"model_generation\":\"289c6e5616d4441987eeaa5ac757d13a\",\"rule_revision\":\"60aaa5d3b6f5453f9bfbe18af79e885b\",\"service_id\":\"ryn-local-model-c29eda6b20014fc3\",\"version\":\"ryn.model-binding.v1\"},\"model_id\":\"本机参数 UI 验收 · 合成模型\",\"name\":\"本机参数 UI 验收 · 合成模型\",\"peer_id\":\"kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=\",\"runtime\":\"native_llama_cpp\",\"service_id\":\"ryn-local-model-c29eda6b20014fc3\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_service\",\"source_id\":\"\",\"source_name\":\"ryn-agent-acceptance-spvetm7q\",\"streaming\":true,\"tool_support\":\"unknown\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"5a5e9b9389ee4ca99850befb32e7a3da\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-44516966ec61409c-8ed3f6ad685b\",\"model_id\":\"alpha\",\"model_settings\":{\"destination_revision\":\"5a5e9b9389ee4ca99850befb32e7a3da\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"friends\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\"],\"overrides\":{\"share_scope\":\"friends\"},\"rule_revision\":\"8f0de3da1a9d45658f84502328980352\"},\"name\":\"来源配置 UI 验收 · alpha\",\"peer_id\":\"kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=\",\"rule_revision\":\"8f0de3da1a9d45658f84502328980352\",\"runtime\":\"external\",\"service_id\":\"src-44516966ec61409c-8ed3f6ad685b\",\"share_scope\":\"friends\",\"sharing\":true,\"source\":\"local_api\",\"source_id\":\"src-44516966ec61409c\",\"source_name\":\"来源配置 UI 验收\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"3a9e2a064e194690aee86d3f6a1f8da1\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-44516966ec61409c-f44e64e75f39\",\"model_id\":\"beta\",\"model_settings\":{\"destination_revision\":\"3a9e2a064e194690aee86d3f6a1f8da1\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"effe725ad7174d3cb59a2f94a2a2bc57\"},\"name\":\"来源配置 UI 验收 · beta\",\"peer_id\":\"kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=\",\"rule_revision\":\"effe725ad7174d3cb59a2f94a2a2bc57\",\"runtime\":\"external\",\"service_id\":\"src-44516966ec61409c-f44e64e75f39\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-44516966ec61409c\",\"source_name\":\"来源配置 UI 验收\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"aabd71b4a4ef49dfb9c7654726d28d1d\",\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"id\":\"local/src-1fe50b9c7ce9432b-a3cfb2a53f09\",\"model_id\":\"acceptance-model\",\"model_settings\":{\"destination_revision\":\"aabd71b4a4ef49dfb9c7654726d28d1d\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{\"temperature\":0.2},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":null,\"status\":\"unknown\"},\"model_exists\":{\"checked_at\":null,\"status\":\"unknown\"},\"tools\":{\"checked_at\":null,\"status\":\"unknown\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"max_output_tokens\",\"request_defaults\",\"requests_per_day\",\"share_scope\"],\"overrides\":{},\"rule_revision\":\"ac467d96da6540e4a24dec10e288708d\"},\"name\":\"验收用本机模型 · acceptance-model\",\"peer_id\":\"kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=\",\"rule_revision\":\"ac467d96da6540e4a24dec10e288708d\",\"runtime\":\"external\",\"service_id\":\"src-1fe50b9c7ce9432b-a3cfb2a53f09\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-1fe50b9c7ce9432b\",\"source_name\":\"验收用本机模型\",\"streaming\":false,\"tool_support\":\"supported\"},{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"availability_basis\":\"configured_source_readiness_not_live_probe\",\"available\":true,\"context_window\":32768,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"0b32ff9e201e42b9a2104c20b32e36d7\",\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"passed\"},\"model_exists\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"present\"},\"tools\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"passed\"}},\"id\":\"local/src-1fe50b9c7ce9432b-fcda1814c7c9\",\"model_id\":\"second-model\",\"model_settings\":{\"destination_revision\":\"0b32ff9e201e42b9a2104c20b32e36d7\",\"effective\":{\"context_window\":32768,\"max_concurrent\":1,\"request_defaults\":{\"temperature\":0.2},\"requests_per_day\":null,\"share_scope\":\"personal_space\"},\"evidence\":{\"connection\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"passed\"},\"model_exists\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"present\"},\"tools\":{\"checked_at\":\"2026-10-09T11:40:48.517669+00:00\",\"method\":\"two_turn_client_tool\",\"status\":\"passed\"}},\"inherited_fields\":[\"context_window\",\"max_concurrent\",\"request_defaults\",\"share_scope\"],\"overrides\":{\"requests_per_day\":null},\"rule_revision\":\"1adb26e0cd7e430fa977182d1ab49e57\"},\"name\":\"验收用本机模型 · second-model\",\"peer_id\":\"kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=\",\"rule_revision\":\"1adb26e0cd7e430fa977182d1ab49e57\",\"runtime\":\"external\",\"service_id\":\"src-1fe50b9c7ce9432b-fcda1814c7c9\",\"share_scope\":\"personal_space\",\"sharing\":false,\"source\":\"local_api\",\"source_id\":\"src-1fe50b9c7ce9432b\",\"source_name\":\"验收用本机模型\",\"streaming\":false,\"tool_support\":\"supported\"}]}",
+        "context_epoch": 0,
+        "role": "tool",
+        "tool_call_id": "inspect"
+      },
+      {
+        "content": "初次答复：已收到模型目录。这是确定性 UI 联调，不是实际模型效果评测。",
+        "context_epoch": 0,
+        "role": "assistant"
+      },
+      {
+        "content": "Server verification feedback (read-only evidence): {\"checks\":[{\"assessment_kind\":\"semantic\",\"description\":\"Satisfy the owner's complete current goal and constraints.\",\"evidence_refs\":[\"evidence_274fc17e32614c68b500d10d00ece79b\"],\"goal_revision\":1,\"id\":\"goal-coverage\",\"kind\":\"semantic\",\"required\":true,\"source\":\"user\",\"source_ref\":\"agent_2783fd344507446fbfcdb77611ff5f84:owner:0\",\"status\":\"unknown\",\"verifier\":null},{\"description\":\"Re-read the current model catalog and compare the reported configuration facts.\",\"evidence_refs\":[\"evidence_274fc17e32614c68b500d10d00ece79b\"],\"goal_revision\":1,\"id\":\"criterion_op_5d8cb52c8d0e4655b32386d76fd912bc\",\"kind\":\"mechanical\",\"required\":true,\"source\":\"tool\",\"source_ref\":\"receipt_op_5d8cb52c8d0e4655b32386d76fd912bc\",\"status\":\"passed\",\"verifier\":\"ryn_list_models_facts\"}],\"goal_revision\":1,\"note\":\"Independent checks did not establish the whole goal. Inspect missing evidence or correct the result within existing permissions. Do not repeat confirmed changes or denied operations. Ask the owner only if necessary facts are missing. This feedback grants no permission and does not change the goal. This is the single allowed correction continuation.\",\"uncovered_requirements\":[\"合成核验反馈：请明确仅查询模型目录，未更改配置。\"]}",
+        "context_epoch": 0,
+        "role": "assistant",
+        "ui": {
+          "kind": "verification_feedback"
+        }
+      },
+      {
+        "content": "纠正后：只查询了隔离模型目录，没有执行任何配置变更。这是确定性 UI 联调，不是实际模型效果评测。",
+        "context_epoch": 0,
+        "role": "assistant"
+      }
+    ],
+    "events": [
+      {
+        "at": "2026-10-09T15:12:39.724932+00:00",
+        "context_epoch": 0,
+        "seq": 1,
+        "type": "created"
+      },
+      {
+        "at": "2026-10-09T15:12:39.847538+00:00",
+        "context_epoch": 0,
+        "menu": {
+          "catalog_revision": "45a6e19951454cd0ccb320d22744cdad09cfeebfe58bf6d9a3a9b82dc1f3b2a8",
+          "context_epoch": 0,
+          "goal_revision": 1,
+          "loaded_names": [],
+          "mode": "full",
+          "revision": 1
+        },
+        "reason": "projection",
+        "seq": 2,
+        "type": "tool_menu_changed"
+      },
+      {
+        "at": "2026-10-09T15:12:39.869536+00:00",
+        "context_epoch": 0,
+        "seq": 3,
+        "step": 1,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T15:12:40.113739+00:00",
+        "content": "我先检查模型配置。",
+        "context_epoch": 0,
+        "seq": 4,
+        "tool_count": 1,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T15:12:40.665532+00:00",
+        "call_id": "inspect",
+        "context_epoch": 0,
+        "effect": "read",
+        "operation_id": "op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "seq": 5,
+        "tool": "ryn_list_models",
+        "type": "tool_started"
+      },
+      {
+        "at": "2026-10-09T15:12:40.707276+00:00",
+        "call_id": "inspect",
+        "context_epoch": 0,
+        "operation_id": "op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "result": {
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": false,
+              "available": false,
+              "context_window": 4096,
+              "description": "模型当前不可用，请检查来源连接。",
+              "destination_binding_supported": true,
+              "destination_revision": "0491970830dfd5b12e9c34949ab7ab4bfdfe8111a06abdd3ad3b35bfb22169be",
+              "id": "local/ryn-local-model-c29eda6b20014fc3",
+              "local_model_binding": {
+                "model_generation": "289c6e5616d4441987eeaa5ac757d13a",
+                "rule_revision": "60aaa5d3b6f5453f9bfbe18af79e885b",
+                "service_id": "ryn-local-model-c29eda6b20014fc3",
+                "version": "ryn.model-binding.v1"
+              },
+              "model_id": "本机参数 UI 验收 · 合成模型",
+              "name": "本机参数 UI 验收 · 合成模型",
+              "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+              "runtime": "native_llama_cpp",
+              "service_id": "ryn-local-model-c29eda6b20014fc3",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_service",
+              "source_id": "",
+              "source_name": "ryn-agent-acceptance-spvetm7q",
+              "streaming": true,
+              "tool_support": "unknown"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-44516966ec61409c-8ed3f6ad685b",
+              "model_id": "alpha",
+              "model_settings": {
+                "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "friends"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day"
+                ],
+                "overrides": {
+                  "share_scope": "friends"
+                },
+                "rule_revision": "8f0de3da1a9d45658f84502328980352"
+              },
+              "name": "来源配置 UI 验收 · alpha",
+              "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+              "rule_revision": "8f0de3da1a9d45658f84502328980352",
+              "runtime": "external",
+              "service_id": "src-44516966ec61409c-8ed3f6ad685b",
+              "share_scope": "friends",
+              "sharing": true,
+              "source": "local_api",
+              "source_id": "src-44516966ec61409c",
+              "source_name": "来源配置 UI 验收",
+              "streaming": false,
+              "tool_support": "supported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-44516966ec61409c-f44e64e75f39",
+              "model_id": "beta",
+              "model_settings": {
+                "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {},
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "effe725ad7174d3cb59a2f94a2a2bc57"
+              },
+              "name": "来源配置 UI 验收 · beta",
+              "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+              "rule_revision": "effe725ad7174d3cb59a2f94a2a2bc57",
+              "runtime": "external",
+              "service_id": "src-44516966ec61409c-f44e64e75f39",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-44516966ec61409c",
+              "source_name": "来源配置 UI 验收",
+              "streaming": false,
+              "tool_support": "supported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+              "evidence": {
+                "connection": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "model_exists": {
+                  "checked_at": null,
+                  "status": "unknown"
+                },
+                "tools": {
+                  "checked_at": null,
+                  "status": "unknown"
+                }
+              },
+              "id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+              "model_id": "acceptance-model",
+              "model_settings": {
+                "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {
+                    "temperature": 0.2
+                  },
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "max_output_tokens",
+                  "request_defaults",
+                  "requests_per_day",
+                  "share_scope"
+                ],
+                "overrides": {},
+                "rule_revision": "ac467d96da6540e4a24dec10e288708d"
+              },
+              "name": "验收用本机模型 · acceptance-model",
+              "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+              "rule_revision": "ac467d96da6540e4a24dec10e288708d",
+              "runtime": "external",
+              "service_id": "src-1fe50b9c7ce9432b-a3cfb2a53f09",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-1fe50b9c7ce9432b",
+              "source_name": "验收用本机模型",
+              "streaming": false,
+              "tool_support": "supported"
+            },
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "availability_basis": "configured_source_readiness_not_live_probe",
+              "available": true,
+              "context_window": 32768,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+              "evidence": {
+                "connection": {
+                  "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                  "method": "two_turn_client_tool",
+                  "status": "passed"
+                },
+                "model_exists": {
+                  "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                  "method": "two_turn_client_tool",
+                  "status": "present"
+                },
+                "tools": {
+                  "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                  "method": "two_turn_client_tool",
+                  "status": "passed"
+                }
+              },
+              "id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+              "model_id": "second-model",
+              "model_settings": {
+                "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+                "effective": {
+                  "context_window": 32768,
+                  "max_concurrent": 1,
+                  "request_defaults": {
+                    "temperature": 0.2
+                  },
+                  "requests_per_day": null,
+                  "share_scope": "personal_space"
+                },
+                "evidence": {
+                  "connection": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "passed"
+                  },
+                  "model_exists": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "present"
+                  },
+                  "tools": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "passed"
+                  }
+                },
+                "inherited_fields": [
+                  "context_window",
+                  "max_concurrent",
+                  "request_defaults",
+                  "share_scope"
+                ],
+                "overrides": {
+                  "requests_per_day": null
+                },
+                "rule_revision": "1adb26e0cd7e430fa977182d1ab49e57"
+              },
+              "name": "验收用本机模型 · second-model",
+              "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+              "rule_revision": "1adb26e0cd7e430fa977182d1ab49e57",
+              "runtime": "external",
+              "service_id": "src-1fe50b9c7ce9432b-fcda1814c7c9",
+              "share_scope": "personal_space",
+              "sharing": false,
+              "source": "local_api",
+              "source_id": "src-1fe50b9c7ce9432b",
+              "source_name": "验收用本机模型",
+              "streaming": false,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "seq": 6,
+        "tool": "ryn_list_models",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-09T15:12:41.298831+00:00",
+        "context_epoch": 0,
+        "seq": 7,
+        "step": 2,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T15:12:41.459994+00:00",
+        "content": "初次答复：已收到模型目录。这是确定性 UI 联调，不是实际模型效果评测。",
+        "context_epoch": 0,
+        "seq": 8,
+        "tool_count": 0,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T15:12:41.460993+00:00",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "seq": 9,
+        "type": "verification_started"
+      },
+      {
+        "at": "2026-10-09T15:12:42.072357+00:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "evidence_id": "evidence_274fc17e32614c68b500d10d00ece79b",
+        "seq": 10,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T15:12:42.660636+00:00",
+        "context_epoch": 0,
+        "seq": 11,
+        "step": 3,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T15:12:42.786039+00:00",
+        "context_epoch": 0,
+        "reason": "reported_pass_with_uncovered_requirements",
+        "reported_status": "passed",
+        "seq": 12,
+        "status": "unknown",
+        "type": "verification_assessment_normalized"
+      },
+      {
+        "at": "2026-10-09T15:12:42.786039+00:00",
+        "context_epoch": 0,
+        "outcome": "unverified",
+        "seq": 13,
+        "type": "verification_finished"
+      },
+      {
+        "at": "2026-10-09T15:12:42.786039+00:00",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "repair_count": 1,
+        "seq": 14,
+        "type": "verification_retry_scheduled"
+      },
+      {
+        "at": "2026-10-09T15:12:43.381853+00:00",
+        "context_epoch": 0,
+        "seq": 15,
+        "step": 4,
+        "type": "model_started"
+      },
+      {
+        "at": "2026-10-09T15:12:43.559047+00:00",
+        "content": "纠正后：只查询了隔离模型目录，没有执行任何配置变更。这是确定性 UI 联调，不是实际模型效果评测。",
+        "context_epoch": 0,
+        "seq": 16,
+        "tool_count": 0,
+        "type": "assistant"
+      },
+      {
+        "at": "2026-10-09T15:12:43.559047+00:00",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "seq": 17,
+        "type": "verification_started"
+      },
+      {
+        "at": "2026-10-09T15:12:44.178319+00:00",
+        "context_epoch": 0,
+        "criterion_id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "evidence_id": "evidence_b105ba6ee74d4ff984aa8b05f03bed05",
+        "seq": 18,
+        "status": "passed",
+        "type": "criterion_checked"
+      },
+      {
+        "at": "2026-10-09T15:12:44.765242+00:00",
+        "context_epoch": 0,
+        "seq": 19,
+        "step": 5,
+        "type": "verification_model_started"
+      },
+      {
+        "at": "2026-10-09T15:12:44.855767+00:00",
+        "context_epoch": 0,
+        "outcome": "verified",
+        "seq": 20,
+        "type": "verification_finished"
+      },
+      {
+        "at": "2026-10-09T15:12:44.855767+00:00",
+        "context_epoch": 0,
+        "seq": 21,
+        "type": "completed"
+      }
+    ],
+    "pending_approval": null,
+    "steps": 5,
+    "result": "纠正后：只查询了隔离模型目录，没有执行任何配置变更。这是确定性 UI 联调，不是实际模型效果评测。",
+    "error": null,
+    "limits": {
+      "max_context_chars": 60000,
+      "max_output_chars": 20000,
+      "max_seconds": 180,
+      "max_steps": 16
+    },
+    "permission_mode": "read_only",
+    "allowed_write_tools": [],
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "verification_evidence": [
+      {
+        "checked_at": "2026-10-09T15:12:44.135320+00:00",
+        "criterion_id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "evidence": {
+          "checked_facts": {
+            "models": [
+              {
+                "adapter": "openai_compatible",
+                "agent_supported": false,
+                "available": false,
+                "context_window": 4096,
+                "description": "模型当前不可用，请检查来源连接。",
+                "destination_binding_supported": true,
+                "destination_revision": "0491970830dfd5b12e9c34949ab7ab4bfdfe8111a06abdd3ad3b35bfb22169be",
+                "id": "local/ryn-local-model-c29eda6b20014fc3",
+                "local_model_binding": {
+                  "model_generation": "289c6e5616d4441987eeaa5ac757d13a",
+                  "rule_revision": "60aaa5d3b6f5453f9bfbe18af79e885b",
+                  "service_id": "ryn-local-model-c29eda6b20014fc3",
+                  "version": "ryn.model-binding.v1"
+                },
+                "model_id": "本机参数 UI 验收 · 合成模型",
+                "name": "本机参数 UI 验收 · 合成模型",
+                "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+                "runtime": "native_llama_cpp",
+                "service_id": "ryn-local-model-c29eda6b20014fc3",
+                "share_scope": "personal_space",
+                "sharing": false,
+                "source": "local_service",
+                "source_id": "",
+                "source_name": "ryn-agent-acceptance-spvetm7q",
+                "streaming": true,
+                "tool_support": "unknown"
+              },
+              {
+                "adapter": "openai_compatible",
+                "agent_supported": true,
+                "availability_basis": "configured_source_readiness_not_live_probe",
+                "available": true,
+                "context_window": 32768,
+                "description": "可供本机 Agent 使用；工具在本机执行。",
+                "destination_binding_supported": true,
+                "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "id": "local/src-44516966ec61409c-8ed3f6ad685b",
+                "model_id": "alpha",
+                "model_settings": {
+                  "destination_revision": "5a5e9b9389ee4ca99850befb32e7a3da",
+                  "effective": {
+                    "context_window": 32768,
+                    "max_concurrent": 1,
+                    "request_defaults": {},
+                    "requests_per_day": null,
+                    "share_scope": "friends"
+                  },
+                  "evidence": {
+                    "connection": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "model_exists": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "tools": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    }
+                  },
+                  "inherited_fields": [
+                    "context_window",
+                    "max_concurrent",
+                    "max_output_tokens",
+                    "request_defaults",
+                    "requests_per_day"
+                  ],
+                  "overrides": {
+                    "share_scope": "friends"
+                  },
+                  "rule_revision": "8f0de3da1a9d45658f84502328980352"
+                },
+                "name": "来源配置 UI 验收 · alpha",
+                "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+                "rule_revision": "8f0de3da1a9d45658f84502328980352",
+                "runtime": "external",
+                "service_id": "src-44516966ec61409c-8ed3f6ad685b",
+                "share_scope": "friends",
+                "sharing": true,
+                "source": "local_api",
+                "source_id": "src-44516966ec61409c",
+                "source_name": "来源配置 UI 验收",
+                "streaming": false,
+                "tool_support": "supported"
+              },
+              {
+                "adapter": "openai_compatible",
+                "agent_supported": true,
+                "availability_basis": "configured_source_readiness_not_live_probe",
+                "available": true,
+                "context_window": 32768,
+                "description": "可供本机 Agent 使用；工具在本机执行。",
+                "destination_binding_supported": true,
+                "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "id": "local/src-44516966ec61409c-f44e64e75f39",
+                "model_id": "beta",
+                "model_settings": {
+                  "destination_revision": "3a9e2a064e194690aee86d3f6a1f8da1",
+                  "effective": {
+                    "context_window": 32768,
+                    "max_concurrent": 1,
+                    "request_defaults": {},
+                    "requests_per_day": null,
+                    "share_scope": "personal_space"
+                  },
+                  "evidence": {
+                    "connection": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "model_exists": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "tools": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    }
+                  },
+                  "inherited_fields": [
+                    "context_window",
+                    "max_concurrent",
+                    "max_output_tokens",
+                    "request_defaults",
+                    "requests_per_day",
+                    "share_scope"
+                  ],
+                  "overrides": {},
+                  "rule_revision": "effe725ad7174d3cb59a2f94a2a2bc57"
+                },
+                "name": "来源配置 UI 验收 · beta",
+                "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+                "rule_revision": "effe725ad7174d3cb59a2f94a2a2bc57",
+                "runtime": "external",
+                "service_id": "src-44516966ec61409c-f44e64e75f39",
+                "share_scope": "personal_space",
+                "sharing": false,
+                "source": "local_api",
+                "source_id": "src-44516966ec61409c",
+                "source_name": "来源配置 UI 验收",
+                "streaming": false,
+                "tool_support": "supported"
+              },
+              {
+                "adapter": "openai_compatible",
+                "agent_supported": true,
+                "availability_basis": "configured_source_readiness_not_live_probe",
+                "available": true,
+                "context_window": 32768,
+                "description": "可供本机 Agent 使用；工具在本机执行。",
+                "destination_binding_supported": true,
+                "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+                "evidence": {
+                  "connection": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "model_exists": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  },
+                  "tools": {
+                    "checked_at": null,
+                    "status": "unknown"
+                  }
+                },
+                "id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+                "model_id": "acceptance-model",
+                "model_settings": {
+                  "destination_revision": "aabd71b4a4ef49dfb9c7654726d28d1d",
+                  "effective": {
+                    "context_window": 32768,
+                    "max_concurrent": 1,
+                    "request_defaults": {
+                      "temperature": 0.2
+                    },
+                    "requests_per_day": null,
+                    "share_scope": "personal_space"
+                  },
+                  "evidence": {
+                    "connection": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "model_exists": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    },
+                    "tools": {
+                      "checked_at": null,
+                      "status": "unknown"
+                    }
+                  },
+                  "inherited_fields": [
+                    "context_window",
+                    "max_concurrent",
+                    "max_output_tokens",
+                    "request_defaults",
+                    "requests_per_day",
+                    "share_scope"
+                  ],
+                  "overrides": {},
+                  "rule_revision": "ac467d96da6540e4a24dec10e288708d"
+                },
+                "name": "验收用本机模型 · acceptance-model",
+                "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+                "rule_revision": "ac467d96da6540e4a24dec10e288708d",
+                "runtime": "external",
+                "service_id": "src-1fe50b9c7ce9432b-a3cfb2a53f09",
+                "share_scope": "personal_space",
+                "sharing": false,
+                "source": "local_api",
+                "source_id": "src-1fe50b9c7ce9432b",
+                "source_name": "验收用本机模型",
+                "streaming": false,
+                "tool_support": "supported"
+              },
+              {
+                "adapter": "openai_compatible",
+                "agent_supported": true,
+                "availability_basis": "configured_source_readiness_not_live_probe",
+                "available": true,
+                "context_window": 32768,
+                "description": "可供本机 Agent 使用；工具在本机执行。",
+                "destination_binding_supported": true,
+                "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+                "evidence": {
+                  "connection": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "passed"
+                  },
+                  "model_exists": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "present"
+                  },
+                  "tools": {
+                    "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                    "method": "two_turn_client_tool",
+                    "status": "passed"
+                  }
+                },
+                "id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+                "model_id": "second-model",
+                "model_settings": {
+                  "destination_revision": "0b32ff9e201e42b9a2104c20b32e36d7",
+                  "effective": {
+                    "context_window": 32768,
+                    "max_concurrent": 1,
+                    "request_defaults": {
+                      "temperature": 0.2
+                    },
+                    "requests_per_day": null,
+                    "share_scope": "personal_space"
+                  },
+                  "evidence": {
+                    "connection": {
+                      "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                      "method": "two_turn_client_tool",
+                      "status": "passed"
+                    },
+                    "model_exists": {
+                      "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                      "method": "two_turn_client_tool",
+                      "status": "present"
+                    },
+                    "tools": {
+                      "checked_at": "2026-10-09T11:40:48.517669+00:00",
+                      "method": "two_turn_client_tool",
+                      "status": "passed"
+                    }
+                  },
+                  "inherited_fields": [
+                    "context_window",
+                    "max_concurrent",
+                    "request_defaults",
+                    "share_scope"
+                  ],
+                  "overrides": {
+                    "requests_per_day": null
+                  },
+                  "rule_revision": "1adb26e0cd7e430fa977182d1ab49e57"
+                },
+                "name": "验收用本机模型 · second-model",
+                "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+                "rule_revision": "1adb26e0cd7e430fa977182d1ab49e57",
+                "runtime": "external",
+                "service_id": "src-1fe50b9c7ce9432b-fcda1814c7c9",
+                "share_scope": "personal_space",
+                "sharing": false,
+                "source": "local_api",
+                "source_id": "src-1fe50b9c7ce9432b",
+                "source_name": "验收用本机模型",
+                "streaming": false,
+                "tool_support": "supported"
+              }
+            ]
+          },
+          "coverage": "Current catalog/configuration and explicit grants only; no new inference, throughput, remote host or end-to-end access test.",
+          "current_state_matches": true,
+          "observation_sha256": "99f0f336921148a27148ca68f15002d55c9946786112cd03865a28f43327e9ad",
+          "operation_attribution": "read_only_observation",
+          "uncertainties": []
+        },
+        "goal_revision": 1,
+        "id": "evidence_b105ba6ee74d4ff984aa8b05f03bed05",
+        "kind": "mechanical",
+        "receipt_id": "receipt_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "scope_revision": 1,
+        "status": "passed"
+      }
+    ],
+    "schema_version": 2,
+    "goal": {
+      "constraints": [
+        {
+          "id": "constraint:agent_2783fd344507446fbfcdb77611ff5f84:owner:0",
+          "message_id": "agent_2783fd344507446fbfcdb77611ff5f84:owner:0",
+          "required": true,
+          "source": "user",
+          "text": "核验反馈 UI 验收：只查询隔离模型目录，不改变任何设置。这是合成联调，请在反馈后更正答复。"
+        }
+      ],
+      "kind": "unclassified",
+      "original_message_id": "agent_2783fd344507446fbfcdb77611ff5f84:owner:0",
+      "revision": 1,
+      "text": "核验反馈 UI 验收：只查询隔离模型目录，不改变任何设置。这是合成联调，请在反馈后更正答复。"
+    },
+    "criteria": [
+      {
+        "assessment_kind": "semantic",
+        "description": "Satisfy the owner's complete current goal and constraints.",
+        "evidence_refs": [
+          "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+        ],
+        "goal_revision": 1,
+        "id": "goal-coverage",
+        "kind": "semantic",
+        "required": true,
+        "source": "user",
+        "source_ref": "agent_2783fd344507446fbfcdb77611ff5f84:owner:0",
+        "status": "passed",
+        "verifier": null
+      },
+      {
+        "description": "Re-read the current model catalog and compare the reported configuration facts.",
+        "evidence_refs": [
+          "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+        ],
+        "goal_revision": 1,
+        "id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "kind": "mechanical",
+        "required": true,
+        "source": "tool",
+        "source_ref": "receipt_op_5d8cb52c8d0e4655b32386d76fd912bc",
+        "status": "passed",
+        "verifier": "ryn_list_models_facts"
+      }
+    ],
+    "plan": {
+      "goal_revision": 1,
+      "revision": 0,
+      "steps": []
+    },
+    "control_revision": 1,
+    "event_cursor": 21,
+    "run_state": "ended",
+    "pending_input": null,
+    "outcome": {
+      "coverage_method": "independent_model_assessment",
+      "criteria_results": [
+        {
+          "criterion_id": "goal-coverage",
+          "evidence_refs": [
+            "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+          ],
+          "kind": "semantic",
+          "status": "passed"
+        },
+        {
+          "criterion_id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+          "evidence_refs": [
+            "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+          ],
+          "kind": "mechanical",
+          "status": "passed"
+        }
+      ],
+      "evidence_refs": [
+        "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+      ],
+      "goal_revision": 1,
+      "mechanical_scope": [
+        {
+          "criterion_id": "criterion_op_5d8cb52c8d0e4655b32386d76fd912bc",
+          "description": "Re-read the current model catalog and compare the reported configuration facts.",
+          "status": "passed"
+        }
+      ],
+      "semantic_assessment": {
+        "evidence_refs": [
+          "evidence_b105ba6ee74d4ff984aa8b05f03bed05"
+        ],
+        "status": "passed",
+        "summary": "Synthetic UI check only",
+        "uncovered_requirements": []
+      },
+      "status": "verified",
+      "summary": "Registered mechanical checks passed; independent semantic assessment found the current goal covered.",
+      "uncertainties": []
+    },
+    "scope_revision": 1,
+    "archived": false,
+    "skills": [],
+    "budget": {
+      "limits": {
+        "max_total_model_calls": 128,
+        "max_total_seconds": 3600,
+        "max_total_tokens": 2000000,
+        "max_total_tool_calls": 256
+      },
+      "round": 1,
+      "lifetime": {
+        "model_calls": 5,
+        "tool_calls": 3,
+        "charged_model_calls": 5,
+        "charged_tool_calls": 3,
+        "known_input_tokens": 200,
+        "known_output_tokens": 125,
+        "input_tokens": 200,
+        "output_tokens": 125,
+        "total_tokens": 325,
+        "charged_tokens": 325,
+        "charged_seconds": 0.6390000000101281,
+        "active_seconds": 0.6390000000101281,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "current_round": {
+        "model_calls": 5,
+        "tool_calls": 3,
+        "charged_model_calls": 5,
+        "charged_tool_calls": 3,
+        "known_input_tokens": 200,
+        "known_output_tokens": 125,
+        "input_tokens": 200,
+        "output_tokens": 125,
+        "total_tokens": 325,
+        "charged_tokens": 325,
+        "charged_seconds": 0.6390000000101281,
+        "active_seconds": 0.6390000000101281,
+        "cost": null,
+        "cost_status": "unknown",
+        "usage_complete": true,
+        "legacy_usage_unknown": false,
+        "unsettled_operations": 0
+      },
+      "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing."
+    },
+    "allowed_actions": {
+      "pause": {
+        "enabled": false,
+        "requires_control_revision": false,
+        "reason": "agent_invalid_transition"
+      },
+      "cancel": {
+        "enabled": false,
+        "requires_control_revision": false,
+        "reason": "agent_invalid_transition"
+      },
+      "resume": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "approve": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "deny": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "answer": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "steer": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "information": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "scope": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "reconcile": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "archive": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "restore": {
+        "enabled": false,
+        "requires_control_revision": true,
+        "reason": "agent_invalid_transition"
+      },
+      "delete": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "budget": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "source_credential": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      },
+      "model": {
+        "enabled": true,
+        "requires_control_revision": true,
+        "reason": null
+      }
+    }
+  },
+  "checks": {
+    "completed": true,
+    "normalized_once": true,
+    "feedback_once": true,
+    "one_business_read": true,
+    "no_business_write": true,
+    "corrected_result": true,
+    "read_only": true
+  },
+  "note": "Loopback deterministic checker intentionally reports passed with a gap, then succeeds after correction. No real-model capability or universal security score claimed. Prior UI task with max_output_chars=1000 stopped unverified; this task snapshots 20000."
+}

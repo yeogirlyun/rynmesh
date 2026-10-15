@@ -18,10 +18,15 @@ if (-not $SkipSidecar) {
     Assert-Success 'Install node dependencies'
     & $pythonExe -c 'import pypdf; import rynmesh.services.document_extract_child'
     Assert-Success 'Verify bundled document extractor'
+    # Native P2P transport (hole punching + QUIC in Rust); maturin builds it with cargo.
+    & $pythonExe -m pip install (Join-Path $repoRoot 'native/ryn_transport')
+    Assert-Success 'Build native P2P transport'
+    & $pythonExe -c 'import ryn_transport, rynmesh.native_transport as n; assert n.enabled()'
+    Assert-Success 'Verify native P2P transport'
     & $pythonExe -m PyInstaller --onefile --noconfirm --clean --name rynmesh-peer `
-        --collect-submodules uvicorn --collect-submodules rynmesh --collect-submodules anyio --collect-submodules pypdf `
+        --collect-submodules uvicorn --collect-submodules rynmesh --collect-submodules anyio --collect-submodules aioquic --collect-submodules pypdf `
         --collect-data rynmesh --copy-metadata rynmesh `
-        --collect-data jsonschema_specifications `
+        --collect-data jsonschema_specifications --hidden-import ryn_transport `
         --distpath (Join-Path $buildRoot 'dist') --workpath (Join-Path $buildRoot 'work') `
         --specpath $buildRoot (Join-Path $tauriRoot 'sidecar/rynmesh_peer_entry.py')
     Assert-Success 'Build bundled node'

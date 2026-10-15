@@ -41,6 +41,10 @@ def projection(row):
                         fact.update(permission_basis="owner_approved", approval_id=decision["approval_id"], approved_at=accepted["at"])
                 elif basis == "automatic" and receipt["effect"] == "write":
                     fact["permission_basis"] = "automatic_policy"
+                elif basis == "read" and receipt["effect"] == "write":
+                    # Shell effects stay conservatively journalled as writes,
+                    # even when the host granted a literal read without a dialog.
+                    fact["permission_basis"] = "read_policy"
                 if fact["permission_basis"] != "unknown":
                     fact.update(**expected, control_revision=decision["control_revision"])
         result.append(fact)

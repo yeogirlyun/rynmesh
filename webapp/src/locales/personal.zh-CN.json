@@ -478,5 +478,14 @@
   "messagesAttach": "添加附件",
   "messagesTypeAMessage": "输入消息",
   "messagesSend": "发送",
-  "advertisedDiscoveryAddress": "设备公布地址：{{address}}（实际连接可能使用其他地址）"
+  "advertisedDiscoveryAddress": "设备公布地址：{{address}}（实际连接可能使用其他地址）",
+  "notConnected": "未连接",
+  "connectDevice": "连接设备",
+  "discoveredNearbyCount": "发现的设备（{{count}}）",
+  "discoveredNearbyHint": "已在网络中发现，但尚未与你连接。连接设备后，它们发布的服务才可使用。",
+  "reviewDiscoveredDevices": "查看发现的设备",
+  "serviceNeedsConnection": "该服务仅提供给设备所有者自己的设备。请先连接该设备后再使用；服务提供方会校验每个请求。",
+  "advertisedServiceCount": "已发布 {{count}} 项服务",
+  "advertisedServiceCount_one": "已发布 {{count}} 项服务",
+  "advertisedServiceCount_other": "已发布 {{count}} 项服务"
 }

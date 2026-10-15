@@ -20,6 +20,9 @@ from ..node_apps.agent import NAMES as APP_NAMES
 from ..node_apps.agent import SPECS as APP_SPECS
 from ..node_apps.agent import VERIFIER as APP_VERIFIER
 from ..node_apps.agent import AppTools
+from ..node_apps.plugin_agent import NAMES as PLUGIN_NAMES
+from ..node_apps.plugin_agent import SPECS as PLUGIN_SPECS
+from ..node_apps.plugin_agent import PluginTools
 from ..services.peer_health import PeerHealthProbe
 from .cli_sources import CONNECT as CLI_CONNECT
 from .cli_sources import KINDS as CLI_KINDS
@@ -30,6 +33,9 @@ from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
 from .diagnostics import NAMES as DIAGNOSTIC_NAMES
 from .diagnostics import DiagnosticTools
+from .local_specs import NAMES as LOCAL_NAMES
+from .local_specs import SPECS as LOCAL_SPECS
+from .local_tools import LocalTools
 from .read_verification import READ_NAMES, READ_SPECS, verify_read
 from .resource_writes import NAMES as WRITE_NAMES
 from .resource_writes import ResourceWrites
@@ -57,8 +63,8 @@ _SOURCE_CONFIG = _schema({"name": {"type": "string", "minLength": 1, "maxLength"
         "temperature": {"type": "number"}, "top_p": {"type": "number"}}), "enabled": {"type": "boolean"}}, ["name", "kind", "base_url", "models"])
 _SPECS = {
     "ryn_discover_local_cli_sources": ("Discover supported CLI sources installed on THIS device, their setup status and sharing availability. Returns adapter kinds; detection is not login or inference proof. No shell commands, paths or secrets accepted.", "read", "low", _schema()),
-    CLI_CONNECT: ("Connect a discovered installed CLI as a private local AI source. Runs a fixed login/chat probe under this task budget. Reuses existing configuration without resetting sharing. Does not install software, change default/current models or enable sharing. Requires exact setup preview approval. Then test client tools with ryn_test_local_cli_source.", "write", "high", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
-    CLI_TEST: ("Test a configured local CLI using two fixed synthetic client-tool exchanges; persist capability evidence for the model catalog. Charged to this task budget. No user data or real business tools execute. Unsupported client tools mean ordinary inference only, not an Agent-ready model.", "read", "medium", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
+    CLI_CONNECT: ("Connect a discovered installed CLI as a private local AI source. Runs a fixed login/chat probe under this task budget. Reuses existing configuration without resetting sharing. Does not install software, change default/current models or enable sharing. Requires exact setup preview approval. Connected models with an Agent tool bridge are ready to use; no separate tool test is required.", "write", "high", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
+    CLI_TEST: ("Optionally diagnose a configured local CLI using two fixed synthetic client-tool exchanges; persist diagnostic evidence. Charged to this task budget. No user data or real business tools execute. The diagnostic result does not enable or disable connected models and is not required before selecting or using one.", "read", "medium", _schema({"kind": {"enum": list(CLI_KINDS)}}, ["kind"])),
     FRIEND_SHARING_NAME: ("Share one owned configured model with exactly one active friend in ONE approved transaction. Copy model_id from ryn_list_models id and relationship_id from ryn_list_devices friends. Atomically enables friends-only sharing, grants that recipient and revokes all other friend grants for this model. Preview lists all prior grants and the exact recipient. Use for a request to share a model with a specific friend/device; receiver connectivity is a separate check.", "write", "high",
         _schema({"model_id": _STRING, "relationship_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}}, ["model_id", "relationship_id"])),
     DEFAULT_MODEL_NAME: ("Set the default model for NEW tasks only. Read expected_settings_revision from ryn_get_agent_configuration and copy the exact catalog id from ryn_list_models. Requires approval; never changes this task, Agent enablement, permissions or sharing.", "write", "high",
@@ -121,6 +127,7 @@ class RynTools:
     def __init__(self, app, store, services, catalog):
         self.app, self.store, self.services, self.catalog = app, store, services, catalog
         self.node_apps = AppTools(app)
+        self.craft_plugins = PluginTools(app)
         self.lock = threading.RLock()
         self.completed = OrderedDict()
         self.peer_health = PeerHealthProbe(timeout_s=1.5, max_concurrency=8)
@@ -131,6 +138,7 @@ class RynTools:
         self.default_model = DefaultModelTool(app)
         self.cli_sources = CLISources(app, getattr(store, "home", None), services, lambda: self.resource_writes.ledger)
         self.friend_sharing = FriendSharingTool(app, services, personal_space=getattr(store, "personal_space", None))
+        self.local = LocalTools(store, lambda: self.resource_writes.ledger)
 
     def _device_evidence(self, cancelled):
         operation_id = "diagnostic-read-" + uuid.uuid4().hex
@@ -143,11 +151,19 @@ class RynTools:
     def scope_catalog(self):
         return self.resources.catalog()
 
+    def change_review(self, task_id, workspace_root=""):
+        """Net change of files this task modified through file tools, against their originals."""
+        return self.local.change_review(task_id, workspace_root)
+
+    def collect_command_artifacts(self, task_id):
+        return self.local.collect_command_artifacts(task_id)
+
     def forget_task(self, task_id, *, operation_ids):
         try:
             self.resource_writes.forget_task(task_id)
             self.source_drafts.forget_task(task_id)
             self.friend_sharing.forget_task(task_id)
+            self.local.forget_baselines(task_id)
         except Exception:
             raise AgentError("agent_task_cleanup_failed") from None
         with self.lock:
@@ -167,7 +183,7 @@ class RynTools:
         return self.resources.validate_context(context, cheap_only=cheap_only)
 
     def verification_specs(self):
-        return ([copy.deepcopy(APP_VERIFIER)] if getattr(self.app.state, "node_apps", None) else []) + copy.deepcopy(READ_SPECS) + [{"id": "local_cli_configuration_state", "tool_name": CLI_CONNECT, "kind": "mechanical", "effect": "write", "description": "Read attributable CLI setup and current configuration; client tools require a separate probe.", "target_fields": ["kind"]},
+        return ([copy.deepcopy(APP_VERIFIER)] if getattr(self.app.state, "node_apps", None) else []) + self.local.verification_specs() + copy.deepcopy(READ_SPECS) + [{"id": "local_cli_configuration_state", "tool_name": CLI_CONNECT, "kind": "mechanical", "effect": "write", "description": "Read attributable CLI setup and current configuration. Connected models use the adapter's Agent tool bridge without a separate probe.", "target_fields": ["kind"]},
                 {"id": "local_cli_tool_test_state", "tool_name": CLI_TEST, "kind": "mechanical", "effect": "read", "description": "Verify the attributable client-tool probe and unchanged installed CLI/configuration.", "target_fields": ["kind"]},
                 {"id": FRIEND_SHARING_VERIFIER, "tool_name": FRIEND_SHARING_NAME, "kind": "mechanical", "effect": "write",
                  "description": "Verify the atomic sharing receipt, friends scope and exact recipient grants; receiver connectivity is separate.", "target_fields": ["model_id", "relationship_id"]},
@@ -202,6 +218,8 @@ class RynTools:
             self._validate(tool, args)
             if tool == APP_ACTION:
                 return self.node_apps.verify(receipt, context, cancelled)
+            if tool in LOCAL_NAMES:
+                return self.local.verify(receipt, context, cancelled)
             if tool == DEFAULT_MODEL_NAME:
                 return self.default_model.verify(receipt, context=context, cancelled=cancelled)
             if tool == FRIEND_SHARING_NAME:
@@ -262,6 +280,8 @@ class RynTools:
         tool, args = operation.get("tool"), operation["arguments"]
         if tool == APP_ACTION:
             return self.node_apps.reconcile(operation_id, context, cancelled)
+        if tool in LOCAL_NAMES:
+            return self.local.reconcile(operation_id, context)
         if tool == DEFAULT_MODEL_NAME:
             return self.default_model.reconcile(operation_id, context=context, cancelled=cancelled)
         if tool == FRIEND_SHARING_NAME:
@@ -286,11 +306,17 @@ class RynTools:
 
     def specs(self):
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in _SPECS.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else [])
+                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs()
 
     def metadata(self, name):
+        if name in PLUGIN_NAMES:
+            return {"effect": "read", "title": "Plugin information", "risk": "low", "supports_preview": False, "preview_precondition": False}
         if name in APP_NAMES and getattr(self.app.state, "node_apps", None):
             return {"effect": "read" if name == APP_LIST else "write", "title": "Node app capabilities" if name == APP_LIST else "App operation and model data release", "risk": "high", "scope_context_supported": True, "supports_preview": name == APP_ACTION, "preview_precondition": name == APP_ACTION, "requires_explicit_approval": name == APP_ACTION}
+        if name in LOCAL_NAMES:
+            description, effect, risk, _ = LOCAL_SPECS[name]
+            return {"effect": effect, "title": description, "risk": risk, "scope_context_supported": True,
+                    "supports_preview": effect == "write", "preview_precondition": effect == "write"}
         if name in DIAGNOSTIC_NAMES:
             return self.diagnostics.metadata(name)
         if name not in _SPECS:
@@ -317,10 +343,10 @@ class RynTools:
 
     def _validate(self, name, arguments):
         self.metadata(name)
-        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > (24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192):
+        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > (96 * 1024 if name in LOCAL_NAMES else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192):
             raise AgentToolRejected("agent_tool_arguments_invalid")
         try:
-            schema = next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else _SPECS[name][3]
+            schema = next(s["function"]["parameters"] for s in PLUGIN_SPECS if s["function"]["name"] == name) if name in PLUGIN_NAMES else next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else {**_SPECS, **LOCAL_SPECS}[name][3]
             validate_tool_arguments(schema, arguments)
         except ValueError:
             raise AgentToolRejected("agent_tool_arguments_invalid") from None
@@ -362,6 +388,8 @@ class RynTools:
         self._validate(name, arguments)
         if name == APP_ACTION:
             return self.node_apps.preview(arguments, context)
+        if name in LOCAL_NAMES:
+            return self.local.preview(name, arguments, context)
         if name == DEFAULT_MODEL_NAME:
             return self.default_model.preview(arguments, context)
         if name == FRIEND_SHARING_NAME:
@@ -423,8 +451,13 @@ class RynTools:
         self._validate(name, arguments)
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 256:
             raise AgentToolRejected("agent_operation_id_required")
+        if name in PLUGIN_NAMES:
+            return self.craft_plugins.execute(name, arguments, cancelled)
         if name in APP_NAMES:
             return self.node_apps.execute(name, arguments, operation_id, cancelled, expected_preview, context)
+        if name in LOCAL_NAMES:
+            return self.local.execute(name, arguments, operation_id=operation_id, context=context,
+                                      expected_preview=expected_preview, cancelled=cancelled)
         if name == DEFAULT_MODEL_NAME:
             return self.default_model.execute(arguments, operation_id=operation_id, context=context,
                                               expected_preview=expected_preview, cancelled=cancelled)

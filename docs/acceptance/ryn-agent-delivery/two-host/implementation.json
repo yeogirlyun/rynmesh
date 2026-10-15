@@ -1,0 +1,90 @@
+{
+  "kind": "two-physical-host-development-harness-implementation",
+  "date": "2026-10-10",
+  "formal_trial_registered": false,
+  "grading_activation": "pending",
+  "scope": "New independent files under two-host only; no production, frozen query, role loader, grader, normalizer, heldout or generator changes.",
+  "implementation": [
+    "Production peer_http app on exact LAN and loopback sockets; local admin token stays on its host and LAN local API access is blocked by an explicitly test-only IP wrapper.",
+    "Immutable existing authorized GLM adapter is read only on provider. Isolated source stores no credential; dispatch checks original source ciphertext hash before and after actual inference.",
+    "Production SourceStore two-turn client-tool probe establishes capability explicitly; startup is zero-inference. Private synthetic sibling has no working inference adapter.",
+    "Actual production manager cache is rebuilt through the constrained adapter on restart and checked for ModelDispatchAdapter wrapping.",
+    "Production FriendService/catalog/admission and actual HTTP transport remain intact. Peer request bytes, authenticated decoded requests, response bytes and real network endpoints are observed with truncation flags.",
+    "Consumer actual runtime model/order/tool events, encrypted store identity and decrypted saved destination fields are collected. Runtime owner context is labeled as context rather than nonexistent persistent owner fields.",
+    "Local controls preserve UTF-8 raw operation receipts. Two actual consumer tasks receive distinct markers; followups use actual revisions. Provider canary is genuine encrypted manual history without an Agent task.",
+    "Direct consumer-key signed negative probes preserve request and authenticated response. Conservative offline summary does not convert missing checks into passes."
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest docs/acceptance/ryn-agent-delivery/two-host/test_harness.py -q -p no:cacheprovider --tb=short",
+      "result": "8 passed in 1.88s",
+      "coverage": "fresh synthetic source/key mapping without secret export or unevidenced tool-support; zero startup dispatch; source mutation before/during dispatch; forbidden sibling; cached-manager restart rebuild; loopback admin and peer IP wrapper; actual production consumer bootstrap and authenticated snapshot"
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m ruff check docs/acceptance/ryn-agent-delivery/two-host --fix",
+      "result": "Final import-format fix applied; all identified lint findings resolved."
+    },
+    {
+      "command": ".venv/Scripts/python.exe docs/acceptance/ryn-agent-delivery/two-host/node.py --role consumer --home .codex-tmp/two-host-launcher-smoke --bind 127.0.0.1 --port 18882",
+      "result": "Local-only mechanism smoke started. control snapshot returned 200 for evidence, Agent models, friend services, consumer orders and provider orders. Not physical-host proof."
+    }
+  ],
+  "preserved_initial_failures": [
+    "Initial plain python launcher command failed ModuleNotFoundError fastapi because it used the system interpreter. Retried with repository venv and passed.",
+    "Initial provider implementation required legacy owner tool_support=supported. Actual owner record had no such evidence; startup failed configured_glm_tool_support_required without API calls. Removed the unwarranted inherited assertion and required explicit isolated production tools probe instead. No earlier run was retroactively promoted.",
+    "First Ruff run found import-order and E731 lambda style findings; fixed. Later test-cache-rebuild edit added one import-order finding, then fixed."
+  ],
+  "live_api": "No API or remote operations performed by this implementation agent. Parent owns two-host deployment and explicit live tests; their receipts are separate evidence.",
+  "limitations": [
+    "The provider canary covers manual AskRyn history, not preexisting provider Agent assistant history. No provider Agent task is fabricated to fill that gap.",
+    "Two queued sessions do not establish concurrency or interleaving; actual tool rounds, histories and marker isolation must be inspected from raw events.",
+    "Manual sharing with Agent toggled, unauthorized/revoked/cross-model denials, disconnect/reconnect, followup and real process persistence remain live scenario checks, not unit-test claims.",
+    "Provider source hash covers sources.enc only, not every owner file. Configuration stability outside this scope requires separate evidence.",
+    "Python code hashes and host/process metadata are observed software identity evidence, not hardware attestation. Direct LAN must be supported by both physical hosts and actual endpoint receipts.",
+    "Peer wire captures cap at 2 MiB each and explicitly mark truncation. Semantic judgments and claims outside captured scope are manual-review requirements.",
+    "Legacy infer_stream is deliberately unavailable; production Agent structured chat remains enabled. This does not demonstrate every transport or manual legacy streaming mode.",
+    "No formal model/tool preregistration envelope or activated acceptance grade is emitted."
+  ],
+  "later_revisions": [
+    {
+      "phase": "shared_registry_ice_correction",
+      "preserved_failure": "First physical consumer tasks used production strict transport=p2p with separate file registries; signaling timed out before any consumer upstream inference. Friend HTTP catalog reachability did not establish an inference transport. Original failed tasks and receipts remain unchanged.",
+      "changes": [
+        "Explicit --registry-url config selects production HttpPeerRegistry even with an explicit local network_dir; both physical nodes share the real signaling plane.",
+        "Explicit --stun off uses LAN host ICE candidates. Dynamic UDP remains the default; strict P2P and persistent pooling are not weakened.",
+        "RestrictedAdapter.cancel delegates to the actual immutable inner adapter; initial wrapper omission is preserved as a review finding.",
+        "probe.py now uses production _open_provider_response to bind sender, task, body task, service and terminal state. Initial wrong-sender/wrong-task acceptance was reproduced by independent no-network tests and is not retroactively fixed in old evidence.",
+        "New process_start events and timestamped identity-history files preserve observer changes across restarts."
+      ],
+      "test_command": ".venv/Scripts/python.exe -m pytest docs/acceptance/ryn-agent-delivery/two-host/test_harness.py -q -p no:cacheprovider --tb=short",
+      "test_result": "13 passed in 2.29s; Ruff passed",
+      "independent_review_test_command": ".venv/Scripts/python.exe -m pytest tests/test_two_host_review_boundaries.py -q -p no:cacheprovider --tb=short",
+      "independent_review_test_result": "3 passed in 1.36s; independent test file was not modified",
+      "sha256": {
+        "node.py": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3",
+        "probe.py": "804e18003366e4999d85d61c3cb54025aa5508997e9d76d055d213bfb597e7df",
+        "test_harness.py": "cc0f713a9f6fed651e0e13b41768086376c155e11a40e8e6e8afe346ff71e60c",
+        "registry_node.py": "b4ef191714d03d073639c713c97d0e01dc3a5fe3fb2c777b45563016305f477c"
+      },
+      "runtime_scope": "Parent reported actual phase-2 ice_udp_direct nominated LAN endpoints, no relay and persistent reuse. This implementation record does not replace the parent's raw live receipts. Parent used a separate temporary registry launcher, not the newly supplied registry_node.py.",
+      "negative_probe_scope": "Original private sibling request stopped at personal-space policy and is not proof of exact friend per-model grant binding. A separate friends-policy/no-grant phase is required for that narrower claim."
+    },
+    {
+      "phase": "explicit_extra_scenarios",
+      "files": ["extra_scenarios.py", "test_extra_scenarios.py"],
+      "changes": "Separate operator-triggered provider real Agent history creation, explicit idle-only Agent-off, exact catalog-bound manual peer inference while Agent off, and observed disconnect/reconnect health/catalog helper. No API executed by implementation agent; frozen node and scenario files unchanged.",
+      "test_command": ".venv/Scripts/python.exe -m pytest docs/acceptance/ryn-agent-delivery/two-host/test_extra_scenarios.py -q -p no:cacheprovider --tb=short",
+      "test_result": "7 passed in 0.78s; Ruff import-format finding fixed",
+      "sha256": {"extra_scenarios.py": "02a5b069ce3a533553d3c8ec0f9533c1ba88cadaa88f3f0a03080421db4b619e"},
+      "limitation": "Creating a queued provider task is not completed assistant history. Preserve earlier zero-provider-task phase independently, then verify the new legitimate provider-owned task, disjoint consumer task IDs, and absence of the provider marker from later consumer request transcripts."
+    }
+  ],
+  "initial_frozen_sha256": {
+    "node.py": "3eac963d32c18ce73a78d3e921ef648f1410fac6fb9a5b3825fb2b3903958e0e",
+    "control.py": "86a34fc88b51e96a59eae8fba272823960caa9f2700837d89f715dae4f057841",
+    "scenario.py": "4d0b2ce97c08b7896fd295077deef9124cca03c312f2effac1ccca8139ee8661",
+    "probe.py": "ca155c6b490b1578d1a294f0282e9d0c343a4f8febada1a2c3056d25d9761b95",
+    "validate.py": "384adb915b470041acd87a10dfbb7072debfdf8c27ba9b97d1d0fd043c3d0e7e",
+    "test_harness.py": "6513aa3b182bd00f64e1442490ee71cfe30ce0a60dd7c0d2c73b0110cf38d71c"
+  }
+}

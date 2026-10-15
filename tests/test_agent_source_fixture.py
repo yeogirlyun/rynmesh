@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from test_agent_integrations import node as integration_node
@@ -90,6 +91,7 @@ def test_secure_owner_form_actual_http_probes_and_saved_private_models(node):
         runtime.update_settings({"enabled": True, "model_id": "fixture", "max_steps": 24})
         case = next(c for c in json.loads((Path(__file__).resolve().parents[1] / "docs/acceptance/ryn-agent-delivery/cases-v1.json").read_text(encoding="utf-8"))["cases"] if c["id"] == "C01")
         task = runtime.create({"message": case["prompt"]})
+        expose(runtime, task["id"], ['ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])
         form_results, approvals = [], []
         with TestClient(app) as client:
             for _ in range(30):

@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose_on_create
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
 from rynmesh.agent_runtime.default_model import NAME
@@ -22,6 +23,7 @@ def setup(tmp_path):
     app = SimpleNamespace(state=SimpleNamespace(agent_runtime=runtime))
     tools = RynTools(app, SimpleNamespace(home=tmp_path, peer_id="self"), {}, runtime.catalog)
     runtime.tools = tools
+    expose_on_create(runtime, [NAME, "ryn_connect_local_cli_source", "ryn_test_local_cli_source"])
     return runtime, model, tools, key, rows
 
 
@@ -162,6 +164,7 @@ def test_owner_update_between_preview_and_atomic_commit_wins(tmp_path, interfere
 
 def test_real_worker_finishes_only_after_default_readback_and_separate_checker(tmp_path):
     runtime, model, _, _, _ = setup(tmp_path)
+    runtime.update_settings({"verify_text_responses": True})
     task, _ = waiting(runtime, model)
     approve(runtime, task["id"])
     advance(runtime)

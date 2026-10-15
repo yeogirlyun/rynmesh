@@ -80,6 +80,18 @@ class ResourceWrites:
                 "scope_sha256": hashlib.sha256(encoded(context["resource_grants"])).hexdigest()}
 
     def execute(self, name, args, *, operation_id, context, expected_preview, cancelled):
+        # Acquire before target()/NAS locks; operate() may take a nested lease.
+        # This keeps disable/uninstall from racing a dispatched approved write.
+        try:
+            with self.resources.nas.access():
+                return self._execute(name, args, operation_id=operation_id, context=context,
+                                     expected_preview=expected_preview, cancelled=cancelled)
+        except NasError as exc:
+            if str(exc) in {"plugin_disabled", "plugin_busy", "plugin_not_installed", "craft_build_not_verified"}:
+                reject("agent_resource_permission_changed")
+            raise
+
+    def _execute(self, name, args, *, operation_id, context, expected_preview, cancelled):
         if cancelled():
             reject("agent_cancelled")
         preview = self.preview(name, args, context)

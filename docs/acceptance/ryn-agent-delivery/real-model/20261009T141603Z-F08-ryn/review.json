@@ -1,0 +1,22 @@
+{
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator inspected retained responses, tool events and independent DAV audit; separate Astra review remains pending.",
+  "real_model_calls": 12,
+  "elapsed_seconds": 394.563,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "finding": "Four checkpoints succeeded and the schema cache was released once. The planner then rediscovered the catalog. Summary calls 11 and 12 both returned no usable text with finish_reason=length and reported input_tokens=1123/output_tokens=4096. The single persisted retry was exhausted and the task failed with agent_invalid_model_response. This does not reveal the provider private reasoning or establish why it consumed that completion budget.",
+  "document_access": {
+    "context_compactions": 4,
+    "resource_read_tool_attempts": 0,
+    "resource_search_tool_attempts": 0,
+    "all_http_gets_including_verification": 0
+  },
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "follow_up": "No unchanged rerun to select a success. Small-window reference retention, repeated discovery/summary overhead and model response availability remain unresolved; final same-snapshot repetitions and independent review are pending."
+}

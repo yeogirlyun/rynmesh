@@ -28,7 +28,14 @@ def private_storage_bytes(root: Path) -> int:
     total = 0
     pending = [root]
     while pending:
-        with os.scandir(pending.pop()) as entries:
+        directory = pending.pop()
+        try:
+            entries = os.scandir(directory)
+        except FileNotFoundError:
+            if directory == root:
+                raise  # Losing the private workspace itself is not ordinary churn.
+            continue  # CLI scratch directories can disappear after enumeration.
+        with entries:
             for entry in entries:
                 try:
                     info = entry.stat(follow_symlinks=False)

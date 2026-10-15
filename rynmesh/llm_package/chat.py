@@ -1,6 +1,7 @@
 """Validated, text/tool chat contract shared by local and encrypted inference."""
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import math
@@ -11,6 +12,8 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
+
+from .reasoning import validate_effort
 
 
 def validate_tool_schema(schema):
@@ -42,10 +45,12 @@ def validate_tool_arguments(schema, arguments):
 
 
 def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs"}
+    allowed = {"messages", "max_tokens", "temperature", "top_p", "stop", "tools", "tool_choice", "stream", "enable_thinking", "chat_template_kwargs", "reasoning_effort"}
     if set(value) - allowed:
         raise ValueError("unsupported chat parameters: " + ", ".join(sorted(set(value) - allowed)))
     body = copy.deepcopy(value)
+    if "reasoning_effort" in body:
+        validate_effort(body["reasoning_effort"])
     if "chat_template_kwargs" in body:
         options = body.pop("chat_template_kwargs")
         if not isinstance(options, dict) or set(options) - {"enable_thinking"}:
@@ -69,10 +74,32 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("reasoning_content must be assistant text")
         content = message.get("content")
         if isinstance(content, list):
-            if any(not isinstance(part, dict) or part.get("type") != "text" or not isinstance(part.get("text"), str) for part in content):
-                raise ValueError("only text content is supported")
-            message["content"] = content = "".join(part["text"] for part in content)
-        if content is not None and not isinstance(content, str):
+            images = 0
+            for part in content:
+                if not isinstance(part, dict):
+                    raise ValueError("invalid content part")
+                if part.get("type") == "text" and isinstance(part.get("text"), str) and not set(part) - {"type", "text"}:
+                    continue
+                if part.get("type") != "image_url" or message["role"] != "user" or set(part) - {"type", "image_url"}:
+                    raise ValueError("only user text and inline images are supported")
+                image = part.get("image_url")
+                if not isinstance(image, dict) or set(image) - {"url", "detail"} or not isinstance(image.get("detail", "auto"), str) or image.get("detail", "auto") not in {"auto", "low", "high"}:
+                    raise ValueError("invalid image part")
+                url = image.get("url")
+                if not isinstance(url, str) or len(url) > 180000 or not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", url):
+                    raise ValueError("images must be bounded inline data URLs")
+                try:
+                    raw = base64.b64decode(url.split(",", 1)[1], validate=True)
+                except ValueError:
+                    raise ValueError("invalid image data") from None
+                if not raw or len(raw) > 128 * 1024:
+                    raise ValueError("image size limit exceeded")
+                images += 1
+            if images > 4:
+                raise ValueError("image count limit exceeded")
+            if not images:
+                message["content"] = content = "".join(part["text"] for part in content)
+        if content is not None and not isinstance(content, (str, list)):
             raise ValueError("message content must be text")
         if message["role"] == "tool":
             call_id = message.get("tool_call_id")

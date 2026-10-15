@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 
+from . import projects, reasoning
 from .control import ambiguous, check_version, close_queue, remember_request, request_replayed
 from .store import AgentError
 
@@ -23,7 +24,7 @@ def available(row):
 def resolve(runtime, model_id):
     if not isinstance(model_id, str) or not model_id or len(model_id) > 1024:
         raise AgentError("agent_invalid_model")
-    model = next((item for item in runtime.models() if item["id"] == model_id), None)
+    model = runtime._model_metadata(model_id)
     if model is None or not model.get("available") or model.get("agent_supported") is not True:
         raise AgentError("agent_model_unavailable")
     destination = runtime._bound_destination(model)
@@ -38,7 +39,7 @@ def preview(runtime, task_id, model_id):
     if not available(row):
         raise AgentError("agent_operation_unresolved" if ambiguous(row) or row.get("in_flight") else "agent_invalid_transition")
     model, destination = resolve(runtime, model_id)
-    scope_authorized = bool(row["scope"]["resource_grants"])
+    scope_authorized = bool(row["scope"]["resource_grants"] or row.get("project"))
     if scope_authorized:
         try:
             runtime._validate_context(row)
@@ -49,6 +50,7 @@ def preview(runtime, task_id, model_id):
             "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
             "current_scope_selection": copy.deepcopy(row["scope"].get("selection", {"resources": [], "allow_model_data": False})),
             "current_scope_authorized": scope_authorized,
+            "current_project": ({key: row["project"][key] for key in ("id", "name", "path")} if row.get("project") else None),
             "data_policy": copy.deepcopy(DATA_POLICY), "confirmation_required": True}
 
 
@@ -67,18 +69,19 @@ def change(runtime, task_id, value):
     check_version(selected, value)
     if not available(selected):
         raise AgentError("agent_operation_unresolved" if ambiguous(selected) or selected.get("in_flight") else "agent_invalid_transition")
-    _, destination = resolve(runtime, value["model_id"])
+    model, destination = resolve(runtime, value["model_id"])
     if value["expected_destination"] != destination:
         raise AgentError("agent_model_destination_changed")
     selection = copy.deepcopy(selected["scope"].get("selection", {"resources": [], "allow_model_data": False}))
     prepared = None
     if value["transfer_resource_scope"]:
-        if not selected["scope"]["resource_grants"] or not selection.get("resources"):
+        if not selected.get("project") and (not selected["scope"]["resource_grants"] or not selection.get("resources")):
             raise AgentError("agent_scope_reselection_required")
         # A stale retained selection is not authority. Validate the actual old
         # grants before constructing fresh grants for the exact new destination.
         runtime._validate_context(selected)
-        prepared = runtime._prepare_scope(selection, destination, destination["destination_revision"])
+        if selected["scope"]["resource_grants"]:
+            prepared = runtime._prepare_scope(selection, destination, destination["destination_revision"])
         runtime._validate_context(selected)
 
     def apply(data):
@@ -90,7 +93,9 @@ def change(runtime, task_id, value):
             raise AgentError("agent_scope_revision_conflict")
         if not available(row):
             raise AgentError("agent_operation_unresolved" if ambiguous(row) or row.get("in_flight") else "agent_invalid_transition")
-        previous = {"model_id": row["model_id"], "destination": copy.deepcopy(row.get("model_destination")),
+        if value["transfer_resource_scope"] and row.get("project"):
+            projects.validate_binding(data, row["project"])
+        previous = {"project": copy.deepcopy(row.get("project")), "model_id": row["model_id"], "destination": copy.deepcopy(row.get("model_destination")),
                     "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0)}
         # Close protocol pairs in the old epoch before retiring that projection.
         close_queue(row, event, "agent_model_changed", keep_flight=False)
@@ -100,6 +105,14 @@ def change(runtime, task_id, value):
                                                             "evidence": copy.deepcopy(row.get("verification_evidence", []))})
         row.update(model_id=value["model_id"], model_destination=copy.deepcopy(destination), model_destination_confirmed=True,
                    status="paused", error=None, pending_approval=None, approved=None, pending_input=None, result="")
+        if "reasoning_effort" in row:
+            try:
+                reasoning.validate(model, row["reasoning_effort"])
+            except AgentError:
+                row.pop("reasoning_effort")
+        if row.get("project") and not value["transfer_resource_scope"]:
+            row.pop("project")
+            row["local_execution"] = {"workspace_root": runtime.store.default_workspace(), "desktop_access": False}
         row["scope_revision"] += 1
         retained_selection = copy.deepcopy(selection)
         if prepared is None:
@@ -119,7 +132,7 @@ def change(runtime, task_id, value):
         row["outcome"] = {"status": "unverified", "goal_revision": row["goal"]["revision"], "criteria_results": [],
                           "summary": "", "evidence_refs": [], "uncertainties": ["Model changed; resume explicitly and reauthorize any resource access."]}
         event(row, "model_changed", previous=previous, destination=destination, data_policy=DATA_POLICY,
-              scope_revision=row["scope_revision"], resource_scope_transferred=prepared is not None)
+              scope_revision=row["scope_revision"], resource_scope_transferred=prepared is not None, project_scope_transferred=bool(row.get("project")))
         remember_request(row, request)
         return public_task(row, settings=data["settings"])
     return runtime.store.transaction(apply)

@@ -1,0 +1,30 @@
+{
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "root",
+  "status": "diagnostic_instrumentation_reviewed_historical_cause_unresolved",
+  "scope": "Safe failure diagnostics in the R02 controller; no process ownership, ACL, retry or worker changes.",
+  "author_tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_consumer_process_proof.py tests/test_agent_sharing_recovery_case.py -q",
+    "passed": 10,
+    "seconds": 34.46,
+    "code_writers_paused_during_run": true
+  },
+  "independent_review": {
+    "kind": "Static review plus focused metadata regression and frozen hash comparison.",
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_consumer_process_proof.py::test_failure_metadata_excludes_exception_text_locals_and_external_paths",
+    "passed": 1,
+    "seconds": 0.95,
+    "notes": [
+      "Closed static stages and error codes; only integer errno/winerror and allowlisted repository function/line metadata.",
+      "PermissionError injection remains a failure with no replacement process; no conversion into a successful ownership refusal.",
+      "Existing process cleanup remains in finally; no ownership bypass or additional retry.",
+      "Independent reviewer did not repeat the full process combination."
+    ]
+  },
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_sharing_recovery.py": "001dc5b3290c777e47d8f6c9a2c9f7aff83ef5f13803b25466449ea751806525",
+    "tests/test_agent_consumer_process_proof.py": "ce245a7a5cd1efb1f86ca63d19f165f5209dfa953f8bc384245f391b56987d5b"
+  },
+  "historical_failure": "Preserved unchanged; the original PermissionError root cause is still unknown.",
+  "formal_executed_trials": 0
+}

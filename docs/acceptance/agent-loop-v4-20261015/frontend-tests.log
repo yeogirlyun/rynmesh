@@ -1,0 +1,13 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run --pool=threads --maxWorkers=1 --fileParallelism=false src/screens/RynAgent.test.tsx src/domain/agentWorkspaceCache.test.ts src/screens/RynAgentProject.test.tsx src/domain/rynAgent.test.ts
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+
+ Test Files  4 passed (4)
+      Tests  72 passed (72)
+   Start at  10:25:25
+   Duration  46.45s (transform 872ms, setup 4.10s, import 2.10s, tests 26.36s, environment 12.77s)
+

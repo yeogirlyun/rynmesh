@@ -18,7 +18,7 @@ def text_content(value: Any) -> str:
 
 def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
     common = {"model", "stream", "temperature", "top_p", "tools", "tool_choice"}
-    allowed = common | ({"messages", "max_tokens", "max_completion_tokens", "stop", "stream_options", "n", "enable_thinking", "chat_template_kwargs"} if protocol == "chat" else
+    allowed = common | ({"messages", "max_tokens", "max_completion_tokens", "stop", "stream_options", "n", "enable_thinking", "chat_template_kwargs", "reasoning_effort"} if protocol == "chat" else
                         {"input", "instructions", "max_output_tokens", "store", "previous_response_id"} if protocol == "responses" else
                         {"messages", "system", "max_tokens", "stop_sequences"})
     if set(body) - allowed:
@@ -31,7 +31,7 @@ def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
             raise ValueError("unsupported stream_options")
         if "max_tokens" in body and "max_completion_tokens" in body:
             raise ValueError("use only one maximum token parameter")
-        result.update({key: body[key] for key in ("messages", "tools", "stop", "enable_thinking", "chat_template_kwargs") if key in body})
+        result.update({key: body[key] for key in ("messages", "tools", "stop", "enable_thinking", "chat_template_kwargs", "reasoning_effort") if key in body})
         result["max_tokens"] = body.get("max_completion_tokens", body.get("max_tokens", 512))
     elif protocol == "responses":
         if body.get("store") or body.get("previous_response_id"):

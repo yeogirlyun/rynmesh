@@ -1,3 +1,4 @@
+import { modelSelectableCLI } from "../domain/cliModels";
 import UnifiedAIHistory from "../components/UnifiedAIHistory";
 import { useNavigate } from "react-router-dom";
 import { tr, useUILanguage, uiLocale } from "../uiI18n";
@@ -39,6 +40,7 @@ import {
   type LLMConversation,
 } from "../domain/llmConversationStore";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
+import { isServiceUsable } from "../domain/llmOrders";
 import { readChatServices, writeChatServices } from "../domain/llmServiceCache";
 import { useLLMStream } from "../domain/useLLMStream";
 import styles from "./PrivateAIChat.module.css";
@@ -212,21 +214,24 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
     null;
   const lastReply = [...(selectedConversation?.messages ?? [])].reverse().find(message => message.role === "assistant");
   const isChatGPT = selectedService?.service.adapter === "codex_cli";
-  const localCodex = Boolean(selectedService?.local_only && selectedService.service.adapter === "codex_cli");
-  const cliModel = selectedConversation?.cliModel || cliModels.find(item => item.default)?.id || cliModels[0]?.id || "";
+  const localModelCLI = selectedService && (selectedService.local_only || selectedService.cli_models?.length) ? modelSelectableCLI(selectedService.service.adapter) : null;
+  const advertisedCLIModels = JSON.stringify(selectedService?.cli_models ?? []);
+  const isLocalCLI = Boolean(selectedService?.local_only);
+  const cliModel = selectedConversation?.cliModel ?? (cliModels.find(item => item.default)?.id ?? cliModels[0]?.id ?? "");
   useEffect(() => {
     let active = true;
     setCLIModels([]);
     setCLIModelsError("");
-    if (localCodex) {
-      void client.getCLIModels("codex_cli").then(result => {
+    if (localModelCLI && !isLocalCLI) setCLIModels(JSON.parse(advertisedCLIModels));
+    else if (localModelCLI) {
+      void client.getCLIModels(localModelCLI).then(result => {
         if (active) setCLIModels(result.models);
       }).catch(reason => {
-        if (active) setCLIModelsError(reason instanceof Error ? reason.message : tr("无法读取 Codex 模型"));
+        if (active) setCLIModelsError(reason instanceof Error ? reason.message : tr("无法读取 CLI 模型"));
       });
     }
     return () => { active = false; };
-  }, [client, localCodex]);
+  }, [client, localModelCLI, isLocalCLI, advertisedCLIModels]);
 
   useEffect(() => {
     let active = true;
@@ -245,7 +250,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
     const cached = readChatServices(cacheScope, requestedNetwork);
     const selectService = (items: LLMServiceRecord[]) => requestedPeer || requestedService
       ? items.find(item => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
-      : items.find(item => item.online) ?? items[0] ?? null;
+      : items.find(isServiceUsable) ?? items[0] ?? null;
 
     const showService = async (selected: LLMServiceRecord, network: string) => {
       // Refresh metadata without replacing an edited/new/deleted conversation
@@ -416,7 +421,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
 
   const runPrompt = async (promptText: string, attachDocument = true) => {
     let text = promptText.trim();
-    if (!text || !selectedService || !selectedService.online || sending || (localCodex && !cliModels.some(item => item.id === cliModel))) return;
+    if (!text || !selectedService || !isServiceUsable(selectedService) || sending || (Boolean(localModelCLI) && !cliModels.some(item => item.id === cliModel))) return;
     if (nasFile) {
       setSending(true);
       try {
@@ -445,7 +450,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
     };
     const withUser: LLMConversation = {
       ...conversation,
-      ...(localCodex ? { cliModel } : {}),
+      ...(localModelCLI ? { cliModel } : {}),
       title: conversation.messages.length
         ? conversation.title
         : titleFromPrompt(text),
@@ -465,10 +470,10 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
         provider_peer_id: selectedService.peer_id,
         service_id: selectedService.service.package_id,
         prompt: buildConversationPrompt(withUser.messages),
-        ...(localCodex ? { cli_model: cliModel } : {}),
+        ...(localModelCLI ? { cli_model: cliModel } : {}),
         max_tokens: Math.min(
           selectedService.service.max_output_tokens || 4096,
-          localCodex ? 256 : 4096,
+          localModelCLI === "codex_cli" ? 256 : 4096,
         ),
         transport: "auto",
         response_mode: "stream-v1",
@@ -645,16 +650,16 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
         <WorkspaceSelect grow caption={tr("运行设备")} label={tr("Processing device")} value={selectedService.peer_id}
           disabled={sending} icon={<DeviceArt kind={providerKind} small />}
           options={[selectedService, ...services].filter((item, index, all) => all.findIndex(other => other.peer_id === item.peer_id) === index)
-            .map(item => ({ value: item.peer_id, label: (personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id) + (item.local_only ? tr(" · 本机") : ""), detail: item.online ? tr("在线") : tr("离线") }))}
+            .map(item => ({ value: item.peer_id, label: (personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id) + (item.local_only ? tr(" · 本机") : ""), detail: isServiceUsable(item) ? tr("在线") : item.availability?.state === "needs_connection" ? tr("Not connected") : tr("离线") }))}
           onChange={value => { const next = services.find(item => item.peer_id === value); if (next) changeService(serviceKey(next)); }} />
-        <WorkspaceSelect caption={tr("AI 服务")} label={localCodex ? tr("AI 服务") : tr("Model")} value={serviceKey(selectedService)}
+        <WorkspaceSelect caption={tr("AI 服务")} label={localModelCLI ? tr("AI 服务") : tr("Model")} value={serviceKey(selectedService)}
           disabled={sending} icon={isChatGPT ? <ChatGPTIcon /> : <Sparkles size={23} />}
           options={[selectedService, ...services].filter((item, index, all) => item.peer_id === selectedService.peer_id && all.findIndex(other => serviceKey(other) === serviceKey(item)) === index)
             .map(item => ({ value: serviceKey(item), label: serviceName(item), icon: item.service.adapter === "codex_cli" ? <ChatGPTIcon /> : <Sparkles size={20} /> }))}
           onChange={changeService} />
-        {localCodex && <WorkspaceSelect caption={tr("模型")} label={tr("Codex 模型")} value={cliModel}
+        {localModelCLI && <WorkspaceSelect caption={tr("模型")} label={localModelCLI === "codex_cli" ? tr("Codex 模型") : tr("Antigravity 模型")} value={cliModel}
           disabled={sending || !cliModels.length} placeholder={cliModelsError ? tr("模型读取失败") : tr("正在读取模型…")}
-          options={cliModels.map(model => ({ value: model.id, label: model.name, detail: model.default ? tr("默认模型") : undefined }))}
+          options={cliModels.map(model => ({ value: model.id, label: model.id === "" ? tr("CLI 默认") : model.name, detail: model.default ? tr("默认模型") : undefined }))}
           onChange={value => { if (selectedConversation) void replaceConversation({ ...selectedConversation, cliModel: value }); }} />}
         <Link
           className={styles.apiLink}
@@ -666,6 +671,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
           <Code2 size={16} /> {tr("API 接入")}
         </Link>
         {cliModelsError && <div role="alert" className={styles.codexSession}>{cliModelsError}</div>}
+        {localModelCLI && cliModels.length > 0 && !cliModels.some(model => model.id === cliModel) && <p role="alert">{tr("保存的模型已不可用，请重新选择模型。")}</p>}
       </div>
       {unified ? <UnifiedAIHistory selectedId={selectedConversation?.id} storage="browser" rows={conversations} serviceScope={{ key: serviceKey(selectedService), network: networkId }} onNew={() => navigate(`/ask?${new URLSearchParams({ peer: selectedService.peer_id, service: selectedService.service.package_id, network: networkId, new: "1" })}`)} /> : <aside className={styles.history} aria-label={tr("AI conversations")}>
         <button
@@ -733,7 +739,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
           <div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title && selectedConversation.title !== "New conversation" ? selectedConversation.title : tr("开启一段新对话")}</strong></div>
           <span className={styles.connectionBadge} data-failed={!sending && lastReply?.status === "failed"}>
             {!sending && lastReply?.status === "failed" ? <CircleAlert size={13} /> : <CircleCheck size={13} />}
-            {sending ? tr("Request in progress") : checkingService ? tr("Refreshing service status…") : lastReply?.status === "failed" ? tr("Request failed") : lastReply?.status === "cancelled" ? tr("Request cancelled") : selectedService.online ? tr("Service available") : tr("离线")}
+            {sending ? tr("Request in progress") : checkingService ? tr("Refreshing service status…") : lastReply?.status === "failed" ? tr("Request failed") : lastReply?.status === "cancelled" ? tr("Request cancelled") : isServiceUsable(selectedService) ? tr("Service available") : selectedService.availability?.state === "needs_connection" ? tr("Not connected") : tr("离线")}
           </span>
         </div>
         <div className={styles.messages} ref={messageScrollRef}>
@@ -880,7 +886,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
               }}
             />
             <div className={styles.composerControls}>
-              <span className={styles.composerModel}>{isChatGPT ? <ChatGPTIcon /> : <Sparkles size={14} />}{localCodex ? cliModels.find(model => model.id === cliModel)?.name || "ChatGPT" : serviceName(selectedService)}</span>
+              <span className={styles.composerModel}>{isChatGPT ? <ChatGPTIcon /> : <Sparkles size={14} />}{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) || serviceName(selectedService) : serviceName(selectedService)}</span>
               <span className={styles.keyboardHint}>{tr("Enter 发送 · Shift + Enter 换行")}</span>
             {sending ? (
               <button
@@ -896,7 +902,7 @@ export default function PrivateAIChat({ unified = false }: { unified?: boolean }
                 className={styles.sendButton}
                 type="button"
                 aria-label={tr("Send message")}
-                  disabled={!input.trim() || !selectedService.online || (localCodex && !cliModels.some(item => item.id === cliModel))}
+                  disabled={!input.trim() || !isServiceUsable(selectedService) || (Boolean(localModelCLI) && !cliModels.some(item => item.id === cliModel))}
                 onClick={() => void runPrompt(input)}
               >
                 <ArrowUp size={19} />

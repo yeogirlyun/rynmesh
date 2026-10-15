@@ -1,0 +1,21 @@
+{
+  "installed": true,
+  "installer_exit_code": 0,
+  "files": [
+    {
+      "path": "C:\\Users\\\u5b50\u9675\\AppData\\Local\\Ryn\\Ryn.exe",
+      "bytes": 11244032,
+      "sha256": "fa17abbaf73e8a484c457d6f78b33e0990713112e524468bf1579dfbdcbb77c0",
+      "bundle_marker_patch": "Tauri NSIS bundle marker: UNK -> NSS; all other bytes identical"
+    },
+    {
+      "path": "C:\\Users\\\u5b50\u9675\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+      "bytes": 39067014,
+      "sha256": "635ee2932486fad70a0c2c2db81c3b0532589f38a69560f1d4451366f51a6076",
+      "bundle_marker_patch": null
+    }
+  ],
+  "backup": "D:\\code\\rynmesh\\.codex-tmp\\agent-loop-v4-before-install-20261015T030523258",
+  "identity_present": true,
+  "identity_sha256": "f34e62238a11b272f1f19ea2f6be71ea9051f2e867ace3a5460c3790af65e78e"
+}

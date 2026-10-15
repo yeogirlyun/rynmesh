@@ -25,9 +25,11 @@ _STATES = {"queued", "running", "paused", "waiting_input", "waiting_approval", "
 _RUN_STATES = _STATES | {"pausing", "reconciling", "ended"}
 _OUTCOMES = {"unverified", "verified", "partial", "not_achieved", "unknown"}
 _ERROR_GUIDANCE = {
+    "agent_workspace_required": ("choose_workspace", "No working directory is bound to this task. The owner must select a working directory in task settings; a chat answer containing a path does not configure it.", "/agent"),
+    "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),
     "agent_invalid_control_proposal": ("correct_input_request", "Correct the control arguments. Credential requests accept only credential_ref fields; ordinary facts use a separate information/choice request. Never put a key in chat.", "/agent"),
     "agent_model_unavailable": ("review_models", "Review the selected model's availability and explicitly select a usable model.", "/services/sources"),
-    "agent_model_tools_unsupported": ("verify_tools", "Run the model's structured tool verification, then review the result before retrying.", "/services/sources"),
+    "agent_model_tools_unsupported": ("review_models", "This connection does not provide the Agent tool protocol. Select a connected model with Agent tool support.", "/services/sources"),
     "agent_inference_timeout": ("review_connection", "Check the source connection and model timeout; do not assume the model responded.", "/services/sources"),
     "agent_model_connection_failed": ("review_connection", "Check the source connection using its existing test action.", "/services/sources"),
     "agent_model_busy": ("wait_for_capacity", "Wait for model capacity, then start an explicit retry.", "/agent"),

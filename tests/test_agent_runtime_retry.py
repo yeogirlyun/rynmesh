@@ -32,7 +32,7 @@ def failing_model(model, *outcomes):
     model.complete = complete
 
 
-@pytest.mark.parametrize("code", ["agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
+@pytest.mark.parametrize("code", ["agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy", "agent_model_upstream_failed",
                                  "agent_invalid_model_response", "agent_compaction_size_limit"])
 def test_one_model_retry_is_persisted_and_succeeds(tmp_path, code):
     runtime, model, tools, key = make_runtime(tmp_path)

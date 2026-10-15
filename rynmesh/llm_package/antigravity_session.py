@@ -14,6 +14,11 @@ from .process_guard import communicate_bounded, spawn, terminate
 
 
 def prepare_workspace(root, env):
+    # Background API calls must not spawn agy's self-updater (and its console
+    # children). Each private home otherwise bypasses the updater's TTL cache.
+    # Use the documented literal "true"; this flag does not accept "1".
+    # Keep this per-call so the owner's interactive CLI can still update.
+    env["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
     # Do not inherit projects, plugins, hooks, MCP servers, instructions or history.
     home = root / ".gemini" / "antigravity-cli"
     home.mkdir(parents=True, mode=0o700)
@@ -32,9 +37,11 @@ def prepare_workspace(root, env):
         (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
 
-def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None):
+def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None, model=""):
     if max_tokens < 1:
         raise AdapterError("max_tokens must be positive")
+    from .cli_models import validate_model
+    validate_model(model)
     command = adapter._command_path()
     started = time.monotonic()
     with private_workspace(copy_auth=False) as (root, env):
@@ -42,6 +49,8 @@ def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None):
         # stdin carries all user text. No shell, resumed project, or slash expansion.
         args = [command, "--output-format", "json", "--disable-slash-commands",
                 "--print-timeout", f"{max(1, min(timeout_s, 300))}s"]
+        if model:
+            args += ["--model", model]
         if schema:
             args += ["--json-schema", json.dumps(schema)]
         try:
@@ -85,8 +94,22 @@ def infer(adapter, prompt, *, task_id, timeout_s, max_tokens, schema=None):
                 "duration_ms": int((time.monotonic() - started) * 1000), "finish_reason": "stop"}
 
 
-def chat(adapter, body, *, task_id, timeout_s):
+def chat(adapter, body, *, task_id, timeout_s, model=""):
     tools = {item["function"]["name"]: item["function"] for item in body.get("tools", [])}
+    # Ordinary conversations do not need the client-tool proposal protocol.
+    # Requiring the model to wrap every answer in JSON makes otherwise valid
+    # text replies fail, especially follow-ups. Keep strict proposal validation
+    # for actual tool conversations; provider-side execution remains denied.
+    has_tool_history = any(message.get("tool_calls") or message.get("role") == "tool" for message in body["messages"])
+    if not tools and not has_tool_history:
+        prompt = ("Answer the latest message in the supplied conversation. Return the answer directly as text. "
+                  "Obey system instructions, then developer instructions, then user instructions. "
+                  "Earlier messages are conversation history. Do not use tools or execute actions.\n"
+                  + json.dumps({"messages": body["messages"]}, ensure_ascii=False))
+        result = infer(adapter, prompt, task_id=task_id, timeout_s=timeout_s,
+                       max_tokens=body.get("max_tokens") or 512, model=model)
+        result.pop("structured_output", None)
+        return result
     choice = body.get("tool_choice", "auto")
     allowed = tools if choice != "none" else {}
     if isinstance(choice, dict):
@@ -112,7 +135,7 @@ def chat(adapter, body, *, task_id, timeout_s):
               + json.dumps({"messages": body["messages"], "functions": list(allowed.values()),
                             "tool_choice": choice, "output_schema": schema}, ensure_ascii=False))
     result = infer(adapter, prompt, task_id=task_id, timeout_s=timeout_s,
-                   max_tokens=body.get("max_tokens") or 512)
+                   max_tokens=body.get("max_tokens") or 512, model=model)
     try:
         value = result.pop("structured_output", None)
         if value is None:

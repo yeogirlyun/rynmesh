@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "kind": "native-desktop-backend-observation-with-authorized-cleanup",
+  "target": {
+    "host": "172.16.8.82",
+    "windows_ssh_alias": "personal-windows",
+    "wsl_ssh_alias": "personal-lan",
+    "strict_host_key_checking": true
+  },
+  "native_process_observation": {
+    "timestampUtc": "2026-10-11T06:47:58.5761728Z",
+    "udpEndpoints": [
+      {
+        "LocalAddress": "172.22.96.1",
+        "LocalPort": 57813,
+        "OwningProcess": 15224
+      },
+      {
+        "LocalAddress": "172.16.8.82",
+        "LocalPort": 57812,
+        "OwningProcess": 15224
+      },
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 48791,
+        "OwningProcess": 15224
+      }
+    ],
+    "hostname": "DESKTOP-SQ6VA8I",
+    "homeExists": true,
+    "tcpListeners": [
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 8791,
+        "OwningProcess": 15224
+      }
+    ],
+    "processes": [
+      {
+        "Name": "Ryn.exe",
+        "ProcessId": 12532,
+        "ParentProcessId": 9768,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\Ryn.exe"
+      },
+      {
+        "Name": "rynmesh-peer.exe",
+        "ProcessId": 13484,
+        "ParentProcessId": 12532,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe"
+      },
+      {
+        "Name": "rynmesh-peer.exe",
+        "ProcessId": 15224,
+        "ParentProcessId": 13484,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe"
+      }
+    ],
+    "identitySha256": "A0DBDE819C970F6F9B0CD7545FB2ED022C7D895715E8D1719F674E2AA5789E75"
+  },
+  "local_api_observation": {
+    "checkedAtUtc": "2026-10-11T06:48:29.0466485Z",
+    "baseUrl": "http://127.0.0.1:8791",
+    "requests": {
+      "/health": {
+        "statusCode": 200,
+        "healthStatus": "ok"
+      },
+      "/api/local/agent/settings": {
+        "statusCode": 200,
+        "enabled": false
+      },
+      "/api/local/agent/tasks": {
+        "statusCode": 200,
+        "taskCount": 0
+      },
+      "/api/local/llm/sources": {
+        "statusCode": 200,
+        "sourceCount": 0
+      }
+    }
+  },
+  "wsl_services": {
+    "hostname": "DESKTOP-SQ6VA8I",
+    "command_exit_code": 0,
+    "services": {
+      "personal-api": "active",
+      "mysql": "active",
+      "docker": "active",
+      "frpc-personal": "active",
+      "apache2": "active"
+    }
+  },
+  "boundaries": {
+    "gui_launch_performed_by_this_observer": false,
+    "gui_launch_context": "Main acceptance task launched installed Ryn through the desktop shortcut in existing RDP session 2.",
+    "default_home_context": "Created by the planned first native desktop launch; the isolated upgrade probe home is separate.",
+    "model_calls": 0,
+    "used_read_only_get_requests": true,
+    "settings_response_reduced_to_enabled": true,
+    "task_response_reduced_to_count": true,
+    "source_response_reduced_to_count": true,
+    "credentials_or_tokens_output": false,
+    "identity_contents_output": false,
+    "identity_observed_as_sha256_only": true,
+    "wrote_or_migrated_store": false,
+    "changed_production_services": false,
+    "observation_phase_left_processes_running": true,
+    "explicitly_requested_cleanup_performed_after_observation": true
+  },
+  "cleanup": {
+    "cleanupOutput": "SUCCESS: The process with PID 7372 (child process of PID 12756) has been terminated.\r\nSUCCESS: The process with PID 6920 (child process of PID 12756) has been terminated.\r\nSUCCESS: The process with PID 13528 (child process of PID 12756) has been terminated.\r\nSUCCESS: The process with PID 7172 (child process of PID 12756) has been terminated.\r\nSUCCESS: The process with PID 14932 (child process of PID 12756) has been terminated.\r\nSUCCESS: The process with PID 15312 (child process of PID 13484) has been terminated.\r\nSUCCESS: The process with PID 15224 (child process of PID 13484) has been terminated.\r\nSUCCESS: The process with PID 12756 (child process of PID 12532) has been terminated.\r\nSUCCESS: The process with PID 13484 (child process of PID 12532) has been terminated.\r\nSUCCESS: The process with PID 12532 (child process of PID 9768) has been terminated.",
+    "exitCode": 0,
+    "method": "taskkill /PID 12532 /T /F",
+    "forcedCleanup": true,
+    "remainingOriginalProcesses": [],
+    "remainingOriginalTcpListeners": [],
+    "defaultHomeRetained": true,
+    "checkedAtUtc": "2026-10-11T06:49:22.6856622Z",
+    "preCleanupProcessTree": [
+      {
+        "Name": "Ryn.exe",
+        "ProcessId": 12532,
+        "ParentProcessId": 9768,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\Ryn.exe",
+        "CreationDate": "/Date(1791701083079)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 12756,
+        "ParentProcessId": 12532,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083246)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 7372,
+        "ParentProcessId": 12756,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083269)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 6920,
+        "ParentProcessId": 12756,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083471)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 13528,
+        "ParentProcessId": 12756,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083474)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 7172,
+        "ParentProcessId": 12756,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083501)/"
+      },
+      {
+        "Name": "msedgewebview2.exe",
+        "ProcessId": 14932,
+        "ParentProcessId": 12756,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\154.0.4258.62\\msedgewebview2.exe",
+        "CreationDate": "/Date(1791701083632)/"
+      },
+      {
+        "Name": "rynmesh-peer.exe",
+        "ProcessId": 13484,
+        "ParentProcessId": 12532,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+        "CreationDate": "/Date(1791701084571)/"
+      },
+      {
+        "Name": "conhost.exe",
+        "ProcessId": 15312,
+        "ParentProcessId": 13484,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\WINDOWS\\system32\\conhost.exe",
+        "CreationDate": "/Date(1791701084632)/"
+      },
+      {
+        "Name": "rynmesh-peer.exe",
+        "ProcessId": 15224,
+        "ParentProcessId": 13484,
+        "SessionId": 2,
+        "ExecutablePath": "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+        "CreationDate": "/Date(1791701085127)/"
+      }
+    ],
+    "normalExitVerified": false,
+    "port8791Listeners": [],
+    "preCleanupTcpListeners": [
+      {
+        "LocalAddress": "0.0.0.0",
+        "LocalPort": 8791,
+        "OwningProcess": 15224
+      }
+    ],
+    "authorization_context": "Main acceptance task requested targeted cleanup after computer-use GetCursorPos access was denied (0x80070005); GUI normal Exit command was not successfully exercised.",
+    "guard": "Confirmed root PID12532 path/session2, sidecar parent chain13484->15224, and unchanged root creation time immediately before termination.",
+    "normal_exit_acceptance_pass": false
+  }
+}

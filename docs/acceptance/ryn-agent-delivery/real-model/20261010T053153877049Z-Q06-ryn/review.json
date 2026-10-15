@@ -1,0 +1,101 @@
+{
+  "reviewer": "sharing_review / independent output review",
+  "source_file": "run.json",
+  "source_sha256": "149770f7c6db4d155340d3e6b93b91a82cbcfcff5df9eee8da8fef006bf49902",
+  "case_id": "Q06",
+  "cohort": "ryn",
+  "real_model": true,
+  "recorded_runtime_status": "completed",
+  "recorded_runtime_outcome": "verified",
+  "semantic_verdict": "failed",
+  "mechanical_and_permission_verdict": "passed_with_stated_scope",
+  "formal_trial_registered": false,
+  "method": "Compared final answer and checker response against only node-b-visible tool receipts; independently read encrypted consumer AgentStore and checked current hashes for all 97 snapshotted code files. No new model calls or probes. Provider collector ground truth was not treated as knowledge available to the answering model.",
+  "findings": [
+    {
+      "id": "unsupported_absence_to_denial",
+      "severity": "P2",
+      "quote": "授权不成立是最直接的原因。",
+      "conclusion_quote": "node-c 不能调用 model-b，是因为不存在任何针对 model-b 的分享/接收授权",
+      "answer_pointer": "/task/result sections 3.1 and conclusion",
+      "evidence_event_seqs": [
+        10,
+        14
+      ],
+      "evidence": "The consumer catalog contains only model-a. Remote share_scope is unknown, sharing_configuration_known=false, and friend_grants_scope.remote_provider_grants=unknown.",
+      "assessment": "Absence from node-b catalog cannot establish the provider model-b policy or node-c recipient grant. Missing/hidden/unshared/ungranted states are not distinguished. The answer itself says local empty records cannot prove remote absence, contradicting its final causal conclusion."
+    },
+    {
+      "id": "wrong_authorization_subject",
+      "severity": "P2",
+      "quote": "本节点与 node-c 之间没有好友关系、也没有任何 outgoing 授权",
+      "answer_pointer": "/task/result section 3.3 and conclusion",
+      "evidence_event_seqs": [
+        12,
+        14
+      ],
+      "evidence": "The executing node is node-b. friend_grants_scope.provider_peer_id identifies this node, direction=local_outgoing. Its active friend list contains owner-provider only.",
+      "assessment": "Those are valid local observations but do not determine owner-provider friendship/grants to node-c. Using them as a cause of node-c being unable to invoke the remote model conflates authorization subjects."
+    },
+    {
+      "id": "unsupported_personal_space_membership",
+      "severity": "P2",
+      "quote": "node-c 只是个人空间设备，不是本节点的 active friend",
+      "answer_pointer": "/task/result section 2",
+      "evidence_event_seqs": [
+        12
+      ],
+      "evidence": "ryn_list_devices reports membership=none. node-c appears in the device directory and is absent from this node's active friends.",
+      "assessment": "Absence from active friends is supported; personal-space membership is not established by directory presence."
+    }
+  ],
+  "supported_report_parts": [
+    "Only model-a is visible in the consumer model/service results.",
+    "The observed model-a permission is bound to its exact service/model generation and node-b; it cannot stand in for model-b or node-c authorization.",
+    "Local outgoing grants are empty and their remote-provider coverage is explicitly unknown.",
+    "Node-c has heartbeat_expired/online=false directory evidence, with no HTTP/LAN probe; this is not a fresh end-to-end call failure.",
+    "No business rules were changed."
+  ],
+  "checker": {
+    "verdict": "missed_semantic_errors",
+    "call_index_1_based": 4,
+    "reported_status": "passed",
+    "quote": "node-c can't call model-b: no model-b records/grants, model-a grant bound to receiver, node-c not friend & offline; read-only, no model-a/model-b conflation.",
+    "assessment": "Mechanical checks confirm unchanged observations, not the causal interpretation. Checker repeats missing grants and wrong-subject friend/offline causality and supplies no uncovered requirements."
+  },
+  "mechanics": {
+    "model_calls": 4,
+    "signed_peer_requests": 4,
+    "all_requests_succeeded": true,
+    "same_model_a_and_node_b_binding": true,
+    "task_permission_mode": "read_only",
+    "resource_grants": [],
+    "egress_grants": [],
+    "model_destination_required": true,
+    "business_writes": 0,
+    "source_replacements": 0,
+    "changed_grant_mutations": 0,
+    "configuration_and_grants_unchanged": true,
+    "owner_source_unchanged_reported": true,
+    "current_code_hashes_match": 97,
+    "relationship_note": "Provider relationship raw file hash changed from authenticated catalog nonce activity; complete business-state hashes excluding only nonces match.",
+    "consumer_agent_tasks": 1,
+    "provider_agent_store_exists": false,
+    "model_output_caps": [
+      128000,
+      128000,
+      128000,
+      128000
+    ],
+    "known_input_tokens": 33713,
+    "known_output_tokens": 12936,
+    "all_model_budget_records_settled": true,
+    "credential_note": "Collector records complete in-memory request credential checks with no detected egress. This review did not claim a universal security audit."
+  },
+  "limitations": [
+    "One physical host with separate logical identities and local signed wire transport; no ICE or two-physical-host proof.",
+    "No independently observed node-c invocation during the task; setup probes and provider ground truth remain separate collector evidence.",
+    "No formal acceptance, aggregate success rate or reference-cohort conclusion is made.",
+    "Original run bytes, completed/verified outcome and model responses are unchanged."
+  ]
+}

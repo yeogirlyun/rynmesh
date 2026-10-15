@@ -160,6 +160,8 @@ def test_real_source_bridge_roundtrips_structured_tools_without_provider_context
     (TimeoutError("private-upstream-detail"), "agent_inference_timeout"),
     (ConnectionError("private-upstream-detail"), "agent_model_connection_failed"),
     (AdapterError("private-upstream-detail", code="not-a-trusted-code"), "agent_inference_failed"),
+    (AdapterError("private-upstream-detail", code="upstream_response_invalid", reported_usage={"input_tokens": 10, "output_tokens": 5}, finish_reason="stop"), "agent_invalid_model_response"),
+    (AdapterError("private-upstream-detail", code="upstream_http_failed"), "agent_model_upstream_failed"),
 ])
 def test_bridge_preserves_safe_real_adapter_transport_error_codes(node, monkeypatch, failure, code):
     app, store = node
@@ -174,6 +176,9 @@ def test_bridge_preserves_safe_real_adapter_transport_error_codes(node, monkeypa
         bridge.complete(model_id, [{"role": "user", "content": "Inspect models"}], tools.specs(), lambda: False)
     assert str(caught.value) == code
     assert "private-upstream-detail" not in str(caught.value)
+    if isinstance(failure, AdapterError) and failure.code == "upstream_response_invalid":
+        assert caught.value.usage == {"input_tokens": 10, "output_tokens": 5}
+        assert "No proposed tool was executed" in caught.value.detail
 
 
 def test_bridge_cancellation_takes_precedence_over_transport_error(node, monkeypatch):
@@ -252,6 +257,7 @@ def test_real_bridge_invalid_control_proposal_is_rejected_and_model_can_correct(
                                                      "uncovered_requirements": ["Inspect business state"], "evidence_refs": []})}], json_only=True)
     runtime = AgentRuntime(AgentStore(store.home / "agent-test", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")), model, tools, catalog)
     runtime.update_settings({"enabled": True, "model_id": model_id})
+    runtime.update_settings({"verify_text_responses": True})
     row = runtime.create({"message": "Inspect only, never change permissions"})
     for _ in range(8):
         if runtime.get(row["id"])["status"] not in {"queued", "running"}:
@@ -289,7 +295,8 @@ def test_destination_generation_changes_for_credentials_not_sharing_and_never_re
     record["api_key"] = "replacement-private-key"
     sources.save(record)
     second = catalog.resolve(model_id, require_tools=False)["destination_revision"]
-    assert not catalog.resolve(model_id, require_tools=False)["agent_supported"]
+    assert catalog.resolve(model_id)["agent_supported"]
+    assert catalog.resolve(model_id)["tool_support"] == "unknown"
     assert second != first
     record["api_key"] = old_key
     sources.save(record)
@@ -362,14 +369,15 @@ def test_runtime_real_tools_preview_approval_change_and_verify(node, monkeypatch
     store.personal_space.create("Integration space")
     store.personal_space.set_policy("space")
     model, tools, catalog = build_agent_integrations(app, store, store.home)
-    requests = fake_upstream(monkeypatch, [call("ryn_list_models", call_id="inspect"),
+    requests = fake_upstream(monkeypatch, [call("ryn_discover_tools", json.dumps({"load": ["ryn_list_models", "ryn_set_model_sharing"]}), call_id="load"),
+        call("ryn_list_models", call_id="inspect"),
         call("ryn_set_model_sharing", json.dumps({"model_id": model_id, "enabled": True}), call_id="change"),
         call("ryn_list_models", call_id="verify"), {"role": "assistant", "content": "Verified model-a shared; model-b private."},
         passed_checker], json_only=True)
     runtime = AgentRuntime(AgentStore(store.home / "agent-test", peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")), model, tools, catalog)
-    runtime.update_settings({"enabled": True, "model_id": model_id})
+    runtime.update_settings({"enabled": True, "model_id": model_id, "verify_text_responses": True})
     task = runtime.create({"message": "Inspect and share only model-a"})
-    for _ in range(4):
+    for _ in range(6):
         runtime.run_once()
     waiting = runtime.get(task["id"])
     assert waiting["status"] == "waiting_approval", waiting
@@ -516,14 +524,19 @@ def test_native_service_probe_persists_verified_capability_without_guessing(node
     monkeypatch.setattr(native.adapter, "chat", transport.chat)
     fake_upstream(monkeypatch, [call("ryn_capability_probe", '{"value":"ryn-tool-test"}'), {"role": "assistant", "content": "ryn-tool-test-ok"}])
     _model, _tools, catalog = build_agent_integrations(app, store, store.home)
-    assert not catalog.list_models()[0]["agent_supported"]
+    assert catalog.list_models()[0]["agent_supported"]
+    assert catalog.list_models()[0]["tool_support"] == "unknown"
+    destination = catalog.destination(catalog.list_models()[0])
+    monkeypatch.setattr(native, "rotate_model_binding", lambda: pytest.fail("diagnostics must not rotate model authority"))
     with TestClient(app) as client:
         response = client.post(f"/api/local/llm/services/{native.manifest.package_id}/tools/test")
         assert response.status_code == 200, response.text
         assert response.json()["tool_support"] == "supported"
         assert catalog.list_models()[0]["agent_supported"]
+        assert catalog.destination(catalog.list_models()[0]) == destination
         native.manifest.model = "different-native-model"
-        assert not catalog.list_models()[0]["agent_supported"]
+        assert catalog.list_models()[0]["agent_supported"]
+        assert catalog.list_models()[0]["tool_support"] == "unknown"
 
 
 def test_real_stream_forwards_only_text_not_reasoning_or_tool_arguments(node, monkeypatch):
@@ -560,9 +573,12 @@ def test_capability_probe_is_explicit_verified_and_invalidated_on_edit(node, mon
     record, model_id = add_source(app, support="unknown")
     _model, _tools, catalog = build_agent_integrations(app, store, store.home)
     assert catalog.list_models()[0]["available"]
-    assert not catalog.list_models()[0]["agent_supported"]
+    assert catalog.list_models()[0]["agent_supported"]
+    assert catalog.list_models()[0]["tool_support"] == "unknown"
     requests = fake_upstream(monkeypatch, [call("ryn_capability_probe", '{"value":"ryn-tool-test"}'),
                                            {"role": "assistant", "content": "ryn-tool-test-ok"}])
+    manager = app.state.llm_agent_services["provider_for"](catalog.resolve(model_id)["service_id"])
+    destination = catalog.destination(catalog.resolve(model_id))
     with TestClient(app) as client:
         # Discovery never sends an inference request.
         assert client.get("/api/local/llm/sources").status_code == 200
@@ -572,27 +588,153 @@ def test_capability_probe_is_explicit_verified_and_invalidated_on_edit(node, mon
         assert response.json()["tool_support"] == "supported"
         assert len(requests) == 2
         assert catalog.resolve(model_id)["agent_supported"]
+        assert catalog.destination(catalog.resolve(model_id)) == destination
+        assert app.state.llm_agent_services["provider_for"](manager.manifest.package_id) is manager
         sharing_only = client.put(f"/api/local/llm/sources/{record['id']}", json={"shared_models": []}).json()
         assert sharing_only["status"] == "ready" and sharing_only["tool_support"] == {"model-a": "supported"}
         response = client.put(f"/api/local/llm/sources/{record['id']}", json={"base_url": "https://changed.test/v1", "tool_support": {"model-a": "supported"}})
         assert response.json()["tool_support"] == {}
-        assert not catalog.list_models()[0]["agent_supported"]
+        assert catalog.list_models()[0]["agent_supported"]
+        assert catalog.list_models()[0]["tool_support"] == "unknown"
 
 
-def test_text_only_probe_never_enables_agent(node, monkeypatch):
+def test_failed_optional_probe_does_not_disable_configured_transport(node, monkeypatch):
     app, store = node
     record, _ = add_source(app, support="unknown")
     fake_upstream(monkeypatch, [{"role": "assistant", "content": "I called the tool successfully!"}])
     with TestClient(app) as client:
         result = client.post(f"/api/local/llm/sources/{record['id']}/models/test", json={"model_id": "model-a"})
         assert result.json()["tool_support"] == "unsupported"
-    assert not build_agent_integrations(app, store, store.home)[2].list_models()[0]["agent_supported"]
+    row = build_agent_integrations(app, store, store.home)[2].list_models()[0]
+    assert row["agent_supported"] and row["tool_support"] == "unsupported"
+
+
+@pytest.mark.parametrize("support", ["unknown", "unsupported", "supported"])
+def test_configured_source_contract_publishes_without_inference_or_positive_probe(node, monkeypatch, support):
+    app, store = node
+    record, model_id = add_source(app, support=support)
+    sources = app.state.llm_agent_services["source_store"]
+    adapter_type = type(sources.adapter(record))
+    monkeypatch.setattr(adapter_type, "capabilities", lambda _: pytest.fail("metadata must not probe capabilities"))
+    monkeypatch.setattr(adapter_type, "chat", lambda *args, **kwargs: pytest.fail("metadata must not run inference"))
+    catalog = build_agent_integrations(app, store, store.home)[2]
+    row = catalog.resolve(model_id)
+    assert row["available"] and row["agent_supported"] and row["tool_support"] == support
+    status = app.state.llm_agent_services["provider_for"](row["service_id"]).public_status()
+    assert "client-tools" in status["service"]["capabilities"]
+    assert status["chat_protocol"] == "rynmesh.chat.v1"
+    assert status["tool_support"] == support and status["adapter_capabilities"]["tools"]
+
+
+@pytest.mark.parametrize("code", ["inference_timeout", "runtime_busy", "runtime_connection_failed", "ai_permission_denied"])
+def test_temporary_source_diagnostic_error_is_unknown_and_preserves_destination(node, monkeypatch, code):
+    app, store = node
+    record, model_id = add_source(app)
+    sources = app.state.llm_agent_services["source_store"]
+    catalog = build_agent_integrations(app, store, store.home)[2]
+    before = catalog.resolve(model_id)
+    manager = app.state.llm_agent_services["provider_for"](before["service_id"])
+    def fail(*args):
+        raise AdapterError("temporary test failure", code=code)
+    monkeypatch.setattr(sources, "probe_model_tools", fail)
+    with TestClient(app) as client:
+        result = client.post(f"/api/local/llm/sources/{record['id']}/models/test", json={"model_id": "model-a"})
+        assert result.status_code == 200, result.text
+        assert result.json()["tool_support"] == "unknown"
+        assert result.json()["evidence"]["status"] == "error"
+        assert result.json()["error_code"] == code
+    after = catalog.resolve(model_id)
+    assert after["agent_supported"] and after["tool_support"] == "unknown"
+    assert catalog.destination(after) == catalog.destination(before)
+    assert app.state.llm_agent_services["provider_for"](before["service_id"]) is manager
+
+
+@pytest.mark.parametrize("kind", ["codex_cli", "antigravity_cli", "claude_cli"])
+def test_cli_setup_uses_bridge_contract_without_implicit_tool_probe(node, monkeypatch, kind):
+    from rynmesh.llm_package import cli_models, routes
+    app, store = node
+    manifest = LLMPackageManifest(package_id=kind.replace("_", "-"), mode=kind, adapter=kind,
+        public_model_alias=kind, capabilities=["text-generation"])
+    path = store.home / "llm" / f"{kind}-test.json"
+    path.write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+    monkeypatch.setattr(routes, "connect_cli", lambda **kwargs: {"manifest": str(path)})
+    monkeypatch.setattr(CLIAgentAdapter, "health", lambda _: {"ok": True})
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: sys.executable)
+    monkeypatch.setattr(CLIAgentAdapter, "chat", lambda *args, **kwargs: pytest.fail("setup must not run a tool probe"))
+    monkeypatch.setattr(cli_models, "list_models", lambda *args: [{"id": "untested", "name": "Untested", "default": True}])
+    monkeypatch.setattr(cli_models, "cached_models", cli_models.list_models)
+    with TestClient(app) as client:
+        result = client.post(f"/api/local/llm/cli-services/{kind}/setup")
+        assert result.status_code == 200, result.text
+        assert result.json()["configured"] and result.json()["agent_usable"] == (kind != "claude_cli")
+        assert result.json()["tool_support"] == "unknown"
+    manager = app.state.llm_agent_services["provider_for"](manifest.package_id)
+    if kind == "codex_cli":
+        # Older releases normalized this manifest before generating persistent
+        # CLI bindings. Contract publication must not change that fingerprint.
+        assert manager.manifest.capabilities == ["text-generation", "buffered-streaming"]
+    binding = manager.adapter.binding_for_model("untested") if kind != "claude_cli" else None
+    status = manager.public_status(cached_cli_models=True)
+    assert ("client-tools" in status["service"]["capabilities"]) == (kind != "claude_cli")
+    assert status["tool_support"] == "unknown"
+    if binding is not None:
+        assert manager.adapter.binding_for_model("untested") == binding
+
+
+def test_temporary_managed_diagnostic_does_not_disable_bridge_or_rotate_binding(node, monkeypatch):
+    app, store = node
+    native = app.state.native_model
+    native.config["installed"] = True
+    monkeypatch.setattr(native.adapter, "health", lambda: {"ok": True})
+    monkeypatch.setattr(native, "rotate_model_binding", lambda: pytest.fail("diagnostics must not rotate model authority"))
+    def fail(*args):
+        raise AdapterError("temporary timeout", code="inference_timeout")
+    monkeypatch.setattr(SourceStore, "probe_adapter_tools", fail)
+    catalog = build_agent_integrations(app, store, store.home)[2]
+    before = catalog.list_models()[0]
+    with TestClient(app) as client:
+        response = client.post(f"/api/local/llm/services/{native.manifest.package_id}/tools/test")
+        assert response.status_code == 200, response.text
+        assert response.json()["tool_support"] == "unknown"
+        assert response.json()["error_code"] == "inference_timeout"
+    after = catalog.list_models()[0]
+    assert after["agent_supported"] and after["tool_support"] == "unknown"
+    assert catalog.destination(after) == catalog.destination(before)
+
+
+@pytest.mark.parametrize("adapter", ["codex_cli", "antigravity_cli", "openai_compatible", "ollama"])
+@pytest.mark.parametrize("diagnostic", ["unknown", "unsupported"])
+def test_legacy_peer_contract_admits_without_probe_but_never_fabricates_binding(node, adapter, diagnostic):
+    app, store = node
+    services = dict(app.state.llm_agent_services)
+    services["discover_agent"] = lambda _: [{"peer_id": "legacy-peer", "online": True,
+        "chat_protocol": "rynmesh.chat.v1", "tool_support": diagnostic,
+        "service": {"package_id": "legacy", "model_alias": "Legacy", "adapter": adapter, "capabilities": []},
+        "cli_models": [{"id": "legacy-model", "name": "Legacy model", "tool_support": diagnostic}]}]
+    rows = ModelCatalog(services, store).list_models()
+    assert rows
+    for row in rows:
+        assert row["agent_supported"] and row["tool_support"] == diagnostic
+        assert row["destination_binding_supported"] is False
+        assert row["expected_model_binding"] is None
+
+
+@pytest.mark.parametrize("capabilities, protocol, expected", [
+    ([], "rynmesh.chat.v1", False), (["client-tools"], "rynmesh.chat.v1", True),
+    (["client-tools"], None, False), (["client-tools", "api-text-only"], "rynmesh.chat.v1", False),
+])
+def test_unknown_peer_adapter_requires_explicit_tools_contract(node, capabilities, protocol, expected):
+    app, store = node
+    services = dict(app.state.llm_agent_services)
+    services["discover_agent"] = lambda _: [{"peer_id": "custom-peer", "online": True, "chat_protocol": protocol,
+        "service": {"package_id": "custom", "model_alias": "Custom", "adapter": "custom", "capabilities": capabilities}}]
+    assert ModelCatalog(services, store).list_models()[0]["agent_supported"] is expected
 
 
 def test_peer_bridge_keeps_tool_history_and_no_retention(node):
     app, store = node
     services = app.state.llm_agent_services
-    services["discover"] = lambda _: [{"peer_id": "peer-other", "node_name": "Remote", "online": True, "ready": True,
+    services["discover_agent"] = lambda _: [{"peer_id": "peer-other", "node_name": "Remote", "online": True, "ready": True,
         "chat_protocol": "rynmesh.chat.v1", "service": {"package_id": "remote-api", "model_alias": "Remote model",
         "adapter": "openai_compatible", "capabilities": ["client-tools"], "context_window": 32768, "max_output_tokens": 4096}}]
     requests = []
@@ -612,25 +754,28 @@ def test_peer_bridge_keeps_tool_history_and_no_retention(node):
     assert requests[0]["transport"] == "p2p"
 
 
-def test_cli_and_peer_capabilities_are_not_guessed(node):
+def test_peer_admission_uses_known_chat_bridge_and_excludes_chat_only(node):
     app, store = node
     services = app.state.llm_agent_services
-    services["discover"] = lambda _: [{"peer_id": "other", "online": True, "ready": True, "chat_protocol": "rynmesh.chat.v1",
+    services["discover_agent"] = lambda _: [{"peer_id": "other", "online": True, "ready": True, "chat_protocol": "rynmesh.chat.v1",
         "tool_support": "supported" if adapter == "codex_cli" else "unknown",
         "service": {"package_id": adapter, "model_alias": adapter, "adapter": adapter, "capabilities": capabilities}}
         for adapter, capabilities in [("claude_cli", ["client-tools"]), ("codex_cli", ["client-tools"]), ("openai_compatible", [])]]
     rows = {row["adapter"]: row for row in ModelCatalog(services, store).list_models()}
     assert not rows["claude_cli"]["agent_supported"]
     assert rows["codex_cli"]["agent_supported"]
-    assert not rows["openai_compatible"]["agent_supported"]
-    discovered = services["discover"]("")
+    assert rows["openai_compatible"]["agent_supported"]
+    discovered = services["discover_agent"]("")
     for value in discovered:
         value.pop("tool_support", None)
-    services["discover"] = lambda _: discovered
+    services["discover_agent"] = lambda _: discovered
+    codex = next(row for row in ModelCatalog(services, store).list_models() if row["adapter"] == "codex_cli")
+    assert codex["agent_supported"] and codex["tool_support"] == "unknown"
+    discovered[1]["chat_protocol"] = None
     assert not next(row for row in ModelCatalog(services, store).list_models() if row["adapter"] == "codex_cli")["agent_supported"]
 
 
-def test_configured_codex_agent_support_requires_actual_two_turn_probe(node, monkeypatch):
+def test_configured_codex_agent_support_precedes_optional_two_turn_probe(node, monkeypatch):
     app, store = node
     root = store.home / "llm" / "codex-test"
     root.mkdir(parents=True)
@@ -643,7 +788,7 @@ def test_configured_codex_agent_support_requires_actual_two_turn_probe(node, mon
     monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: sys.executable)
     _model, _tools, catalog = build_agent_integrations(app, store, store.home)
     row = next(row for row in catalog.list_models() if row["adapter"] == "codex_cli")
-    assert row["available"] and not row["agent_supported"]
+    assert row["available"] and row["agent_supported"] and row["tool_support"] == "unknown"
     calls = []
     def chat(_self, body, **_):
         calls.append(body)

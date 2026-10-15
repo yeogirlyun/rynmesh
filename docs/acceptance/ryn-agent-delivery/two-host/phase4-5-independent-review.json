@@ -1,0 +1,529 @@
+{
+  "schema_version": "rynmesh.independent-development-review.v1",
+  "reviewed_at": "2026-10-10T07:25:48.763323+00:00",
+  "scope": "Read-only independent review of frozen physical two-host phase4/phase5 artifacts; no API, remote operation, owner config/private key read, implementation edit, or new formal trial.",
+  "status": "restart_and_permission_mechanisms_demonstrated_with_unverified_agent_followup",
+  "formal_pass": false,
+  "checks": {
+    "consumer_new_process_same_identity": true,
+    "restart_all_four_public_task_rows_exact": true,
+    "restart_sources_friends_settings_exact": true,
+    "restart_agent_store_identity_and_decrypted_bindings_exact": true,
+    "phase5_no_consumer_task_changes": true,
+    "provider_new_process_same_identity": true,
+    "provider_restart_sources_grants_friends_exact": true,
+    "provider_own_agent_task_preserved_no_consumer_tasks": true,
+    "grant_state_revision_sequence": true,
+    "same_relationship_peer_and_glm_model_settings": true,
+    "revoked_catalog_empty_regranted_catalog_exact_one_current_binding": true,
+    "cross_model_probe_reaches_shared_friends_model_without_own_grant": true,
+    "canary_change_explicit_and_glm_unmodified": true,
+    "same_both_host_code_and_all_234_local_python_files": true,
+    "local_launcher_matches_both_hosts": true,
+    "no_truncated_http_records_in_reviewed_phases": true,
+    "owner_ciphertext_guard_consistent_for_all_phase_dispatches": true,
+    "no_provider_agent_or_tool_execution_in_phases4_5": true
+  },
+  "negative_admission_probes": [
+    {
+      "file": "phase4-cross-model-probe.json",
+      "task_id": "two-host-probe-e7ef0d10d9f64bf39a773a862d0f818b",
+      "service_id": "src-two-host-glm-9c194240bc1b",
+      "at": "2026-10-10T07:09:32.495325+00:00",
+      "permission": {
+        "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+        "revision": 1
+      },
+      "http_status": 200,
+      "decoded_state": "rejected",
+      "decoded_error_code": "ai_permission_denied",
+      "provider_audit_lines": [
+        215
+      ],
+      "checks": {
+        "valid_public_signatures": true,
+        "request_peer_task_binding": true,
+        "response_peer_task_binding": true,
+        "collector_decoded_task_service_denial": true,
+        "one_matching_complete_provider_http_record": true,
+        "zero_corresponding_upstream_dispatch": true,
+        "absent_from_admitted_provider_orders": true
+      }
+    },
+    {
+      "file": "phase5-revoked-probe.json",
+      "task_id": "two-host-probe-eb15de2261d648a489793d90a7d2ef9f",
+      "service_id": "src-two-host-glm-0d8724178b09",
+      "at": "2026-10-10T07:17:36.852601+00:00",
+      "permission": {
+        "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+        "revision": 1
+      },
+      "http_status": 200,
+      "decoded_state": "rejected",
+      "decoded_error_code": "ai_permission_denied",
+      "provider_audit_lines": [
+        275
+      ],
+      "checks": {
+        "valid_public_signatures": true,
+        "request_peer_task_binding": true,
+        "response_peer_task_binding": true,
+        "collector_decoded_task_service_denial": true,
+        "one_matching_complete_provider_http_record": true,
+        "zero_corresponding_upstream_dispatch": true,
+        "absent_from_admitted_provider_orders": true
+      }
+    },
+    {
+      "file": "phase5-stale-after-regrant-probe.json",
+      "task_id": "two-host-probe-9b23ac108e18488691c1da482b1e5116",
+      "service_id": "src-two-host-glm-0d8724178b09",
+      "at": "2026-10-10T07:17:52.071090+00:00",
+      "permission": {
+        "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+        "revision": 1
+      },
+      "http_status": 200,
+      "decoded_state": "rejected",
+      "decoded_error_code": "ai_permission_denied",
+      "provider_audit_lines": [
+        278
+      ],
+      "checks": {
+        "valid_public_signatures": true,
+        "request_peer_task_binding": true,
+        "response_peer_task_binding": true,
+        "collector_decoded_task_service_denial": true,
+        "one_matching_complete_provider_http_record": true,
+        "zero_corresponding_upstream_dispatch": true,
+        "absent_from_admitted_provider_orders": true
+      }
+    }
+  ],
+  "manual_requests": [
+    {
+      "file": "phase4-reconnected-manual.json",
+      "task_id": "two-host-manual-a76b49a972bb4f5486af8d641a8b8c66",
+      "permission_revision": 1,
+      "provider_audit_lines": [
+        223,
+        224
+      ],
+      "reported_usage": {
+        "input_tokens": 49,
+        "output_tokens": 174
+      },
+      "transport_evidence": {
+        "transport": "ice_udp_direct",
+        "relay_used": false,
+        "public_nat_traversal_required": false,
+        "distinct_public_egress_required": false,
+        "peer_public_mapping_nominated": false,
+        "path_kind": "host_direct",
+        "local": {
+          "type": "host",
+          "transport": "udp",
+          "host": "172.16.8.82",
+          "port": 49831
+        },
+        "remote": {
+          "type": "host",
+          "transport": "udp",
+          "host": "172.16.8.191",
+          "port": 63252
+        },
+        "connection_reused": false,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "connection_ms": 3703,
+        "request_bytes": 2083,
+        "first_event_ms": 9703,
+        "total_ms": 9703,
+        "stream_events": 0
+      },
+      "checks": {
+        "one_dispatch_one_response": true,
+        "production_p2p_and_actual_ice_direct": true,
+        "exact_marker_returned": true,
+        "provider_result_message_and_usage_match": true,
+        "messages_match_dispatch": true,
+        "current_permission_revision": true,
+        "consumer_agent_stayed_off_and_all_task_rows_unchanged": true,
+        "durable_provider_order_succeeded": true,
+        "only_authorized_glm_model": true
+      }
+    },
+    {
+      "file": "phase5-regranted-manual.json",
+      "task_id": "two-host-manual-5a2333d358e54110a69a59687a4b7f70",
+      "permission_revision": 3,
+      "provider_audit_lines": [
+        280,
+        282
+      ],
+      "reported_usage": {
+        "input_tokens": 46,
+        "output_tokens": 295
+      },
+      "transport_evidence": {
+        "transport": "ice_udp_direct",
+        "relay_used": false,
+        "public_nat_traversal_required": false,
+        "distinct_public_egress_required": false,
+        "peer_public_mapping_nominated": false,
+        "path_kind": "host_direct",
+        "local": {
+          "type": "host",
+          "transport": "udp",
+          "host": "172.16.8.82",
+          "port": 49831
+        },
+        "remote": {
+          "type": "host",
+          "transport": "udp",
+          "host": "172.16.8.191",
+          "port": 63252
+        },
+        "connection_reused": true,
+        "session_protocol": "rynmesh.ai-session.v1",
+        "connection_ms": 0,
+        "request_bytes": 2083,
+        "first_event_ms": 7297,
+        "total_ms": 7297,
+        "stream_events": 0
+      },
+      "checks": {
+        "one_dispatch_one_response": true,
+        "production_p2p_and_actual_ice_direct": true,
+        "exact_marker_returned": true,
+        "provider_result_message_and_usage_match": true,
+        "messages_match_dispatch": true,
+        "current_permission_revision": true,
+        "consumer_agent_stayed_off_and_all_task_rows_unchanged": true,
+        "durable_provider_order_succeeded": true,
+        "only_authorized_glm_model": true
+      }
+    }
+  ],
+  "restart": {
+    "consumer_pids": [
+      3300,
+      2028
+    ],
+    "provider_pids": [
+      33960,
+      50784
+    ],
+    "public_task_rows_preserved": [
+      {
+        "id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+        "revision": 79
+      },
+      {
+        "id": "agent_8c9f2888762a4600a6790eafe88460dd",
+        "revision": 82
+      },
+      {
+        "id": "agent_00331fb8632d4cd8ada772877499cd2e",
+        "revision": 5
+      },
+      {
+        "id": "agent_48feb549c7c746d0a679c3d69681bfed",
+        "revision": 5
+      }
+    ],
+    "store_ciphertext_hashes": [
+      "2a9cf97fa99888e5b6070e786852c6c372a176fd07bbc0b6a9d2aac65b352242",
+      "121081b2a3ec5067c5cfb88b5b1d7311f9233dc30c0a655ef408abaef9999b22"
+    ],
+    "ciphertext_equal": false,
+    "offline_health": {
+      "error_type": "ConnectError"
+    },
+    "offline_catalog_refresh_status": 409,
+    "offline_manual": {
+      "error_type": "ValueError",
+      "error": "actual_catalog_model_unavailable_or_wrong_source"
+    },
+    "scope": "Exact equality of all four complete returned public task rows, their model destinations, and decrypted binding summaries before/after restart. Ciphertext changed; hidden checkpoint bytes were not independently decrypted or compared. Stop-process records are pre-stop OS process descriptions, supplemented by unreachable health and new PID/process_start records; no independent old-process handle exit witness."
+  },
+  "permissions": {
+    "grant_sequence": [
+      {
+        "allowed": true,
+        "revision": 1
+      },
+      {
+        "allowed": false,
+        "revision": 2
+      },
+      {
+        "allowed": false,
+        "revision": 2
+      },
+      {
+        "allowed": true,
+        "revision": 3
+      }
+    ],
+    "catalog_counts": [
+      0,
+      1
+    ],
+    "stable_model_binding": {
+      "model_generation": "972fe6b54785428381ded874710d7b5a",
+      "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+      "service_id": "src-two-host-glm-0d8724178b09",
+      "version": "ryn.model-binding.v1"
+    },
+    "historical_task_destination_note": "Persisted task model destinations remain historical revision-1 bindings; this does not confer renewed revision-3 authority. The new manual request selected fresh catalog revision 3.",
+    "canary_change": "Phase4 deliberately enabled the isolated canary in friends scope without granting it. Its rule revision changed; GLM configuration and revision-1 grant stayed unchanged. The authenticated cross-model denial is a new sample, not a reclassification of phase2 private-scope HTTP400."
+  },
+  "agent_followup": {
+    "task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+    "revision": 130,
+    "status": "completed",
+    "outcome": {
+      "coverage_method": "independent_model_assessment",
+      "criteria_results": [
+        {
+          "criterion_id": "goal-coverage",
+          "evidence_refs": [],
+          "kind": "semantic",
+          "status": "unknown"
+        },
+        {
+          "criterion_id": "criterion_op_bd673aac412144af8412dfeebf879a74",
+          "evidence_refs": [
+            "evidence_f11c7cdf18f6411c813bee621eb6b0eb"
+          ],
+          "kind": "mechanical",
+          "status": "passed"
+        }
+      ],
+      "evidence_refs": [
+        "evidence_f11c7cdf18f6411c813bee621eb6b0eb"
+      ],
+      "goal_revision": 3,
+      "mechanical_scope": [
+        {
+          "criterion_id": "criterion_op_bd673aac412144af8412dfeebf879a74",
+          "description": "Compare observer-visible catalog facts; no complete remote inventory, policy or invocation proof.",
+          "status": "passed"
+        }
+      ],
+      "semantic_assessment": null,
+      "status": "unverified",
+      "summary": "Verification did not establish the complete goal.",
+      "uncertainties": [
+        "agent_cancelled",
+        "One or more required conditions lack independent evidence."
+      ]
+    },
+    "last_rejection": {
+      "at": "2026-10-10T07:17:07.741753+00:00",
+      "context_epoch": 0,
+      "error": "agent_cancelled",
+      "finish_reason": "unknown",
+      "seq": 129,
+      "stage": "verification_model",
+      "type": "model_response_rejected",
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    },
+    "budget_lifetime": {
+      "model_calls": 12,
+      "tool_calls": 15,
+      "charged_model_calls": 12,
+      "charged_tool_calls": 15,
+      "known_input_tokens": 85258,
+      "known_output_tokens": 14674,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "charged_tokens": 242819,
+      "charged_seconds": 516.435999999987,
+      "active_seconds": 516.435999999987,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": false,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "budget_current_round": {
+      "model_calls": 5,
+      "tool_calls": 3,
+      "charged_model_calls": 5,
+      "charged_tool_calls": 3,
+      "known_input_tokens": 35173,
+      "known_output_tokens": 5603,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "charged_tokens": 183663,
+      "charged_seconds": 311.9689999999973,
+      "active_seconds": 311.9689999999973,
+      "cost": null,
+      "cost_status": "unknown",
+      "usage_complete": false,
+      "legacy_usage_unknown": false,
+      "unsettled_operations": 0
+    },
+    "independent_semantic_observation": "The first unchanged-state claim was rejected by the checker. The final visible answer explicitly withdrew/qualified it and scoped current catalog versus history evidence. Last checker returned agent_cancelled with unknown usage, so complete goal coverage remains unverified; completed is not an overall successful result.",
+    "unknown_usage_retained": true,
+    "provider_last_checker_observation": [
+      {
+        "line": 251,
+        "at": "2026-10-10T07:14:12.439705+00:00",
+        "kind": "upstream_dispatch"
+      },
+      {
+        "line": 257,
+        "at": "2026-10-10T07:14:54.701257+00:00",
+        "kind": "upstream_cancel"
+      }
+    ],
+    "no_causal_claim": "Provider cancellation delivery is observed; its cause and actual cessation of upstream computation are not established by these records."
+  },
+  "code": {
+    "python_manifest_sha256": "dc61e3e1050452a813bf5c01c2db0c01eb0dbbba2a5d6e60514e83214d025ace",
+    "python_files_independently_matched": 234,
+    "node_sha256": "afdb11427b47f38c3fbaa965a359ba9f2e729976f7c8d8cbb90ad30dfbd491c3",
+    "probe_sha256": "804e18003366e4999d85d61c3cb54025aa5508997e9d76d055d213bfb597e7df"
+  },
+  "owner_source": {
+    "original_source_id": "src-7de9fb1d36c44bc8",
+    "original_model_id": "glm-5.3-flash",
+    "recorded_ciphertext_sha256": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "independent_ciphertext_rehash": false,
+    "basis": "Startup mapping, pre/post-dispatch guard implementation previously reviewed, per-dispatch hash logs, and terminal owner_source_unchanged. Reviewer did not read original owner source ciphertext/config."
+  },
+  "limitations": [
+    "All evidence is operator-collected development evidence, not a hardware/remote attestation or registered v2/formal acceptance sample. Original failures and earlier review records are preserved.",
+    "Independent public signatures bind request/response envelopes to the selected peers and task. Decoded inner service/error is the frozen collector output from production response validation; reviewer did not acquire decryption keys. Matching provider wire bytes were independently correlated.",
+    "Offline manual call stopped at actual_catalog_model_unavailable_or_wrong_source before inference dispatch. This demonstrates fail-closed preflight, not a sent inference-order transport failure.",
+    "Provider owns one legitimate Agent task from phase3; its complete task row is unchanged here and no consumer task is present. Provider inference orders, billing/history and private observer transcripts do persist; this is not zero provider persistence.",
+    "No claim of public Internet NAT traversal, relay fallback, simultaneous upstream execution, process-crash atomic transaction recovery, or full semantic success. Actual successful manual transport is LAN host-direct ICE UDP.",
+    "Audit zero-upstream statements are scoped to exact probe task IDs in the supplied complete, untruncated logs; they are not a claim about all possible unobserved external activity."
+  ],
+  "inputs": [
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-after-canary.json",
+      "sha256": "8cdb8a844e3a1e0e3e90103ec3e98579737ab0174d9dee65957bcc37195ce9ac"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-before-canary.json",
+      "sha256": "3610b3dbde887362456e4ff6984a2192192f43c1d4c00ecbc28083ba3b346a9d"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-canary-scope.json",
+      "sha256": "6d645ec99f965bbf6e8cd77bac8cdd84c35ef8932f65c61d830bf438b5359f8c"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-canary-sharing.json",
+      "sha256": "167e72295d15fa3d987bd3b4a8268ba9d7609f59c63716fd7d70460923c96c9f"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-consumer-stop-process.json",
+      "sha256": "a2c7368356f5a653f3c33654846a188a24bc86cc35958b6543e77e7a6913a392"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-consumer-terminal.json",
+      "sha256": "09baee47996865eb809305b95c74e78a063a329f5fd67f3fe50a27bfef3eb1d1"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-cross-model-probe.json",
+      "sha256": "34329d58a86c8b49a0bdc493768a67217eec7150308d72a1c9a8a8bb8cf51cdc"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-offline-manual.json",
+      "sha256": "95e6995fa8ec323a15d78b1e642b25e70beb32938fdf67d90403aeaef1ff3aa8"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-provider-offline-observation.json",
+      "sha256": "f519725d3a4ee45304d314a9f8e19e7c2f03a622c01df23e75a07a83e38ff68a"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-provider-restarted.json",
+      "sha256": "c5d3aebb3e293578ee571200c843b7efb634348cf43d53c8432a45d1261560ae"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-provider-stop-process.json",
+      "sha256": "e086cc2b3b758108d696d7e5a5dd160374b3e4e6c07fb226c773239136a80b7f"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-provider-terminal.json",
+      "sha256": "eedcf8e033eb89bb8d150eec459143a41d3d7bf7512428dcd5cafacf43b438bc"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-reconnected-manual.json",
+      "sha256": "a5be2d530a60c5041e020ad4de412a5e2c9348ef749108faaf6a387e4409c9a8"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase4-reconnected-observation.json",
+      "sha256": "5cfe7624ad19982379ed594721afe2e961588f8ce3bb9b8acce1d228b99b5651"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-after-regrant.json",
+      "sha256": "bbaddbda81ceea1b9501d563f79ada8457981d7cd33eea55716fe197b1f586b5"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-after-revoke.json",
+      "sha256": "f284401e66288a8f7179ed7bafd951276005236d3ccb921922e8e102b4f7a601"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-before-regrant.json",
+      "sha256": "50d9c760a8406e41edd5ad594651f346dbe050f41d2ba542a685caa1d9126fb6"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-before-revoke.json",
+      "sha256": "08c41ee75123a9474ed9340d0c229e3da493e68adabe336cd7e23f6c61f52285"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-consumer-audit.jsonl",
+      "sha256": "ec75999b8821fcc861c0f04dc121eebb832bf938b70fbd129df7497cd5bbc484"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-consumer-terminal.json",
+      "sha256": "e03bf10ef0412da782326c1e10e578271ce3b15641eb098612ea8889e8f68fcc"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-provider-audit.jsonl",
+      "sha256": "59e9ac2379761a878e3359ceed8f9207b0155cabd0d368fd14782cf283c0d454"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-provider-terminal.json",
+      "sha256": "9da99a980c975fb4dcdf764e7a137ab398e46e21a4235a266325bd785765c740"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-regrant.json",
+      "sha256": "e5fda0e0c3f5fbf6208fba4a674041a9f0293aef61bbd3fb1cb2d8b6bbebadd7"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-regranted-catalog.json",
+      "sha256": "7d3d99aa1587424e34a29c4d4ed405e6e722bd5a63f77dd066fa51723cb6d393"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-regranted-manual.json",
+      "sha256": "0de6e0caacfc865b7aee22c8d30bb82c90b9c0ddc8b2f0fef829f84f44ee9a28"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-revoke.json",
+      "sha256": "72b7fedf8efee273fab1ea9ad2d83738f848109d898c6d4c36cfa0fe3b00c513"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-revoked-catalog.json",
+      "sha256": "ac7c97fd7d61cc2a445209e2f28f24a2e02a81864072360ec659b57aa04fa34e"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-revoked-probe.json",
+      "sha256": "d73704295a31ba090078874b73037dce2a8e3c6e67c30bc3be3c1daf3d9e305f"
+    },
+    {
+      "path": ".codex-tmp/two-host-20261010/phase5-stale-after-regrant-probe.json",
+      "sha256": "e120225e6087ba4c0a35f27c08459bdfcd0682feccbfecc61346bb92f0ccc939"
+    }
+  ]
+}

@@ -1,12 +1,17 @@
+import { agentTaskCache, readAgentWorkspace, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
+import RynAgentProgress, { groupAgentMessages } from "./RynAgentProgress";
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useTranslation } from "react-i18next";
-import { ArrowUp, MoreHorizontal, Square, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
-import { AgentAPIError, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
+import { Trans, useTranslation } from "react-i18next";
+import { ArrowUp, LoaderCircle, MoreHorizontal, Square, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
+import { AgentAPIError, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
 import { AgentNavigationContext } from "../personal/agentNavigation";
 import ChatMarkdown from "./ChatMarkdown";
 import RynAgentScope from "./RynAgentScope";
 import RynAgentModel from "./RynAgentModel";
+import RynAgentModelPicker from "./RynAgentModelPicker";
+import RynAgentComposer from "./RynAgentComposer";
+import RynAgentProject from "./RynAgentProject";
 import RynAgentInputCard from "./RynAgentInputCard";
 import RynAgentVerification from "./RynAgentVerification";
 import { PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
@@ -16,12 +21,28 @@ import { TaskArtifacts } from "./RynAgentArtifacts";
 import "./rynAgentText";
 import "./RynAgent.css";
 
+function mutationErrorKey(reason: unknown): string {
+  if (!(reason instanceof AgentAPIError)) return "mutationError";
+  if (reason.code === "agent_model_destination_unverifiable") return "modelDestinationUnavailable";
+  if (reason.code === "agent_model_destination_changed") return "modelDestinationChanged";
+  if (reason.code === "agent_model_unavailable") return "selectedModelUnavailable";
+  if (reason.status === 409 && /(?:revision_conflict|invalid_transition)$/.test(reason.code)) return "conflict";
+  return "mutationError";
+}
+
 const SELECTED_KEY = "ryn.agent.selected";
 const DRAFT_KEY = "ryn.agent.drafts";
 const PENDING_KEY = "ryn.agent.pending-create";
 const CONTROL_KEY = "ryn.agent.pending-control";
 const SCOPE_DRAFT_KEY = "ryn.agent.scope-draft";
-interface PendingControl { task_id: string; route: "messages" | "actions" | "scope"; body: Record<string, unknown>; }
+const PROJECT_KEY = "ryn.agent.project";
+const PENDING_MESSAGE_KEY = "ryn.agent.pending-message";
+interface PendingMessage { requestID: string; taskID: string; draftKey: string; message: string; baseMessageCount: number; phase: "sending" | "uncertain"; }
+function newDraftKey(projectID = "") { return projectID ? `new:${projectID}` : "new"; }
+function readPendingMessage(): PendingMessage | null {
+  try { const value = JSON.parse(saved(PENDING_MESSAGE_KEY)); return typeof value?.message === "string" && typeof value?.draftKey === "string" && typeof value?.taskID === "string" ? { ...value, phase: "uncertain" } : null; } catch { return null; }
+}
+interface PendingControl { task_id: string; route: "messages" | "actions" | "scope" | "workspace"; body: Record<string, unknown>; }
 interface ScopeDraft { scope: AgentScopeSelection; model_id: string; destination_revision: string | null; }
 function readScopeDraft(): ScopeDraft | null { try { const value = JSON.parse(saved(SCOPE_DRAFT_KEY)); return Array.isArray(value?.scope?.resources) ? value : null; } catch { return null; } }
 function saved(key: string): string { try { return sessionStorage.getItem(key) || ""; } catch { return ""; } }
@@ -43,18 +64,20 @@ const outcomeReasons: Record<string, string> = {
 };
 
 export default function RynAgent() {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
   const nav = useContext(AgentNavigationContext);
-  const [settings, setSettings] = useState<AgentSettings | null>(null);
-  const [models, setModels] = useState<AgentModel[]>([]);
-  const [tasks, setTasks] = useState<AgentTaskSummary[]>([]);
+  const taskCache = useRef(agentTaskCache());
+  const [cachedWorkspace] = useState(readAgentWorkspace);
+  const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
+  const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
+  const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => sortAgentTasks([...taskCache.current.values()].filter(item => !item.archived)));
   const [recordsSupported, setRecordsSupported] = useState(false);
   const [recordsRevision, setRecordsRevision] = useState(0);
   const [selected, setSelected] = useState(() => saved(SELECTED_KEY));
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const [task, setTask] = useState<AgentTask | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [task, setTask] = useState<AgentTask | null>(() => taskCache.current.get(selected) || null);
+  const [loading, setLoading] = useState(!cachedWorkspace.settings);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
   const [resourceErrors, setResourceErrors] = useState({ settings: "", models: "", tasks: "", detail: "" });
@@ -63,20 +86,44 @@ export default function RynAgent() {
   const [controlUncertain, setControlUncertain] = useState(() => Boolean(saved(CONTROL_KEY)));
   const [tasksCollapsed, setTasksCollapsed] = useState(() => saved("ryn.agent.tasks") === "closed" || (window.innerWidth <= 760 && saved("ryn.agent.tasks") !== "open"));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [taskModelOpen, setTaskModelOpen] = useState(false);
+  const [taskModelTarget, setTaskModelTarget] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState("");
+  const [projectID, setProjectID] = useState(() => saved(PROJECT_KEY) === "__general__" ? "" : saved(PROJECT_KEY));
+  const [projects, setProjects] = useState<AgentProject[]>([]);
+  const chooseProject = (id: string) => {
+    if (mutationRef.current) return;
+    setProjectID(id); save(PROJECT_KEY, id || "__general__");
+    selectedRef.current = ""; setSelected(""); setTask(null); setDetailLoading(false);
+    input.current?.focus();
+  };
   const [drafts, setDrafts] = useState(readDrafts);
-  const [model, setModel] = useState("");
+  const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(readPendingMessage);
+  const [model, setModel] = useState(cachedWorkspace.model || cachedWorkspace.settings?.model_id || "");
   const [messageIntent, setMessageIntent] = useState<AgentMessageIntent>("steer");
   const [scopeDraft, setScopeDraft] = useState<ScopeDraft | null>(readScopeDraft);
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
-  const defaultModelRef = useRef("");
-  const draft = drafts[selected || "new"] || "";
+  const defaultModelRef = useRef(cachedWorkspace.settings?.model_id || "");
+  const draftKey = selected || newDraftKey(projectID);
+  const draft = drafts[draftKey] || "";
   const input = useRef<HTMLTextAreaElement>(null);
+  const scroll = useRef<HTMLDivElement>(null);
   const mutationRef = useRef(false);
   const deletedTaskIDs = useRef(new Set<string>());
   const refreshRevision = useRef(0);
+  const cachedSettingsRef = useRef(settings);
+  const cachedModelsRef = useRef(models);
+  cachedSettingsRef.current = settings;
+  cachedModelsRef.current = models;
 
   const acceptTask = useCallback((incoming: AgentTask) => {
     if (deletedTaskIDs.current.has(incoming.id)) return;
+    const previous = taskCache.current.get(incoming.id);
+    if (!previous || incoming.revision >= previous.revision) {
+      taskCache.current.delete(incoming.id);
+      taskCache.current.set(incoming.id, incoming);
+      if (taskCache.current.size > 20) taskCache.current.delete(taskCache.current.keys().next().value!);
+    }
     if (incoming.archived !== undefined) setRecordsSupported(true);
     setTasks(current => sortAgentTasks([...(incoming.archived ? [] : [current.find(item => item.id === incoming.id && item.revision > incoming.revision) || incoming]), ...current.filter(item => item.id !== incoming.id)]));
     if (selectedRef.current === incoming.id) setTask(current => current?.id === incoming.id && current.revision > incoming.revision ? current : incoming);
@@ -86,62 +133,83 @@ export default function RynAgent() {
     setTasks(current => sortAgentTasks(incoming.filter(item => !deletedTaskIDs.current.has(item.id)).map(item => current.find(savedTask => savedTask.id === item.id && savedTask.revision > item.revision) || item)));
   }, []);
   const recoverCreate = useCallback((summaries: AgentTaskSummary[]) => {
-    let pendingID = "";
-    try { pendingID = JSON.parse(saved(PENDING_KEY) || "{}").client_request_id || ""; } catch { /* Ignore old or unavailable storage. */ }
+    let pendingID = "", pendingProject = "", submitted = "";
+    try { const pending = JSON.parse(saved(PENDING_KEY) || "{}"); pendingID = pending.client_request_id || ""; pendingProject = pending.project_id || ""; submitted = pending.message || ""; } catch { /* Ignore old or unavailable storage. */ }
     const recovered = summaries.find(item => pendingID && item.client_request_id === pendingID && !deletedTaskIDs.current.has(item.id));
     if (recovered) {
-      selectedRef.current = recovered.id; setSelected(recovered.id);
+      const optimistic = readPendingMessage()?.requestID === pendingID;
+      if (!selectedRef.current) { selectedRef.current = recovered.id; setSelected(recovered.id); }
       save(PENDING_KEY, ""); setUncertain(false);
-      setDrafts(current => ({ ...current, new: "" }));
+      setPendingMessage(current => current?.requestID === pendingID ? null : current);
+      setDrafts(current => {
+        const key = newDraftKey(pendingProject);
+        const nextDraft = current[key] && (optimistic || current[key] !== submitted) ? current[key] : "";
+        return { ...current, [key]: "", ...(nextDraft && !current[recovered.id] ? { [recovered.id]: nextDraft } : {}) };
+      });
     }
   }, []);
   const refresh = useCallback(async () => {
     const refreshID = ++refreshRevision.current;
-    const [nextSettings, nextModels, nextTasks] = await Promise.allSettled([rynAgent.settings(), rynAgent.models(), rynAgent.tasks()]);
-    if (refreshID !== refreshRevision.current) return;
-    setResourceErrors(current => ({ ...current,
-      settings: nextSettings.status === "rejected" ? nextSettings.reason instanceof AgentAPIError && [404, 501].includes(nextSettings.reason.status) ? "unavailable" : "settingsLoadError" : "",
-      models: nextModels.status === "rejected" ? "modelsLoadError" : "",
-      tasks: nextTasks.status === "rejected" ? "historyLoadError" : "",
-    }));
-    if (nextSettings.status === "fulfilled") {
-      const previousDefault = defaultModelRef.current;
-      const nextDefault = nextSettings.value.model_id;
-      defaultModelRef.current = nextDefault;
-      setSettings(nextSettings.value);
-      setModel(current => !current || current === previousDefault ? nextDefault || (nextModels.status === "fulfilled" ? nextModels.value.models.find(canUseAgentModel)?.id : "") || "" : current);
-    }
-    // Do not offer a previously verified model while its current capability cannot be read.
-    setModels(nextModels.status === "fulfilled" ? nextModels.value.models : []);
-    if (nextTasks.status === "fulfilled") {
-      acceptTaskList(nextTasks.value.tasks);
-      recoverCreate(nextTasks.value.tasks);
-    }
-    // Detail remains independently readable even when the model catalog or task index fails.
     const currentID = selectedRef.current;
-    if (currentID) {
-      try {
-        const detail = await rynAgent.task(currentID);
+    // Apply each response independently. A slow catalog must not hold settings,
+    // task history or a cached composer behind a connection check.
+    await Promise.all([
+      rynAgent.settings().then(nextSettings => {
+        if (refreshID !== refreshRevision.current) return;
+        const previousDefault = defaultModelRef.current;
+        const nextDefault = nextSettings.model_id;
+        defaultModelRef.current = nextDefault;
+        cachedSettingsRef.current = nextSettings;
+        setSettings(nextSettings);
+        setModel(current => !current || current === previousDefault ? nextDefault || cachedModelsRef.current.find(canUseAgentModel)?.id || "" : current);
+        setResourceErrors(current => ({ ...current, settings: "" }));
+      }).catch(reason => {
+        if (refreshID !== refreshRevision.current) return;
+        if (!cachedSettingsRef.current) setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
+      }).finally(() => { if (refreshID === refreshRevision.current) setLoading(false); }),
+      rynAgent.models().then(nextModels => {
+        if (refreshID !== refreshRevision.current) return;
+        cachedModelsRef.current = nextModels.models;
+        setModels(nextModels.models);
+        setModel(current => current || cachedSettingsRef.current?.model_id || nextModels.models.find(canUseAgentModel)?.id || "");
+        setResourceErrors(current => ({ ...current, models: "" }));
+      }).catch(() => {
+        if (refreshID === refreshRevision.current && !cachedModelsRef.current.length) setResourceErrors(current => ({ ...current, models: "modelsLoadError" }));
+      }),
+      rynAgent.tasks().then(nextTasks => {
+        if (refreshID !== refreshRevision.current) return;
+        acceptTaskList(nextTasks.tasks); recoverCreate(nextTasks.tasks);
+        setResourceErrors(current => ({ ...current, tasks: "" }));
+      }).catch(() => {
+        if (refreshID === refreshRevision.current) setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
+      }),
+      currentID ? rynAgent.task(currentID).then(detail => {
         if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
         acceptTask(detail); setResourceErrors(current => ({ ...current, detail: "" }));
-      } catch {
+      }).catch(() => {
         if (refreshID === refreshRevision.current && currentID === selectedRef.current) setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
-      }
-    }
+      }) : Promise.resolve(),
+    ]);
   }, [acceptTask, acceptTaskList, recoverCreate]);
 
   const defaultWriteReceipt = task?.events.filter(item => item.type === "tool_result" && item.tool === "ryn_set_default_agent_model").at(-1)?.seq;
+  const refreshedDefaults = useRef(new Set<string>());
   useEffect(() => {
-    if (defaultWriteReceipt !== undefined) void refresh().catch(() => setError("loadError"));
+    if (defaultWriteReceipt === undefined) return;
+    const receipt = `${task?.id}/${defaultWriteReceipt}`;
+    if (refreshedDefaults.current.has(receipt)) return;
+    refreshedDefaults.current.add(receipt);
+    void refresh().catch(() => setError("loadError"));
   }, [task?.id, defaultWriteReceipt, refresh]);
 
   useEffect(() => {
     let active = true;
-    void refresh().then(() => { if (active) setError(""); }).catch(reason => {
+    void refresh().catch(reason => {
       if (active) setError(reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "loadError");
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; refreshRevision.current++; };
   }, [refresh]);
+  useEffect(() => { writeAgentWorkspace(settings, models, model); }, [settings, models, model]);
   useEffect(() => {
     const onFocus = () => { void refresh().catch(() => setError("loadError")); };
     const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
@@ -150,12 +218,15 @@ export default function RynAgent() {
     return () => { window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onVisible); };
   }, [refresh]);
   useEffect(() => { save(DRAFT_KEY, JSON.stringify(drafts)); }, [drafts]);
+  useEffect(() => { save(PENDING_MESSAGE_KEY, pendingMessage ? JSON.stringify(pendingMessage) : ""); }, [pendingMessage]);
   useEffect(() => { save(SCOPE_DRAFT_KEY, scopeDraft ? JSON.stringify(scopeDraft) : ""); }, [scopeDraft]);
   useEffect(() => {
     save(SELECTED_KEY, selected);
-    if (!selected) { setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); return; }
+    if (!selected) { setTask(null); setDetailLoading(false); setResourceErrors(current => ({ ...current, detail: "" })); return; }
     const abort = new AbortController();
-    setDetailLoading(true);
+    const cachedTask = taskCache.current.get(selected);
+    setTask(cachedTask || null);
+    setDetailLoading(!cachedTask);
     void rynAgent.task(selected, abort.signal).then(incoming => { if (!abort.signal.aborted) { acceptTask(incoming); setResourceErrors(current => ({ ...current, detail: "" })); } })
       .catch(() => { if (!abort.signal.aborted) setResourceErrors(current => ({ ...current, detail: "detailLoadError" })); })
       .finally(() => { if (!abort.signal.aborted) setDetailLoading(false); });
@@ -169,7 +240,8 @@ export default function RynAgent() {
     const poll = async () => {
       let activeTasks = false;
       const id = selectedRef.current;
-      const [summary, detail] = await Promise.allSettled([rynAgent.tasks(abort.signal), id ? rynAgent.task(id, abort.signal) : Promise.resolve(null)]);
+      const cached = id ? taskCache.current.get(id) : undefined;
+      const [summary, detail] = await Promise.allSettled([rynAgent.tasks(abort.signal), id ? cached ? rynAgent.taskSince(cached, abort.signal) : rynAgent.task(id, abort.signal) : Promise.resolve(null)]);
       if (stopped) return;
       if (summary.status === "fulfilled") {
         acceptTaskList(summary.value.tasks);
@@ -190,21 +262,30 @@ export default function RynAgent() {
   // Poll server snapshots, never append repeated messages or events.
   }, [loading, selected, acceptTask, acceptTaskList, recoverCreate]);
 
-  const changeDraft = (value: string) => setDrafts(current => ({ ...current, [selected || "new"]: value }));
-  const newTask = async () => {
+  const changeDraft = (value: string) => setDrafts(current => ({ ...current, [draftKey]: value }));
+  const newTask = () => {
     if (mutationRef.current) return;
-    mutationRef.current = true;
-    selectedRef.current = ""; setSelected(""); setTask(null); setBusy(true);
-    try { await refresh(); } catch { setError("loadError"); }
-    finally { mutationRef.current = false; setBusy(false); input.current?.focus(); }
+    if (task?.project) { setProjectID(task.project.id); save(PROJECT_KEY, task.project.id); }
+    selectedRef.current = ""; setSelected(""); setTask(null); setDetailLoading(false);
+    input.current?.focus();
   };
-  const chooseTask = (id: string) => { selectedRef.current = id; setSelected(id); setTask(null); };
+  const chooseTask = (id: string) => {
+    const project = tasks.find(item => item.id === id)?.project;
+    setProjectID(project?.id || ""); save(PROJECT_KEY, project?.id || "__general__");
+    selectedRef.current = id; setSelected(id); setTask(taskCache.current.get(id) || null);
+  };
   const changeRecord = (incoming: AgentTask) => { acceptTask(incoming); setRecordsRevision(current => current + 1); };
   const deleteRecord = (id: string) => {
     deletedTaskIDs.current.add(id);
+    taskCache.current.delete(id);
     setTasks(current => current.filter(item => item.id !== id)); setRecordsRevision(current => current + 1);
     setDrafts(current => { const next = { ...current }; delete next[id]; return next; });
     if (selectedRef.current === id) { selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
+  };
+  const chooseGeneralProject = () => {
+    if (mutationRef.current) return;
+    chooseProject("");
+    void rynAgent.selectProject("").catch(() => setError("projectSelectionError"));
   };
   const reload = async () => {
     setBusy(true);
@@ -236,7 +317,7 @@ export default function RynAgent() {
     mutationRef.current = true; setBusy(true); setError("");
     try { acceptTask(task.allowed_actions && !controlUncertain ? await submitControl({ task_id: task.id, route: "actions", body: agentActionBody(task, kind) }) : await rynAgent.action(task, kind)); }
     catch (reason) {
-      setError(reason instanceof AgentAPIError && reason.status === 409 ? "conflict" : "mutationError");
+      setError(mutationErrorKey(reason));
       await rynAgent.task(task.id).then(acceptTask).catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
@@ -264,37 +345,68 @@ export default function RynAgent() {
     if (selected ? !currentTask || (currentTask.allowed_actions ? !canUseAgentAction(currentTask, effectiveIntent) : !legacyReady || !canContinueAgentTask(currentTask)) : !legacyReady) return;
     mutationRef.current = true; setBusy(true); setError("");
     const submittedMessage = draft.trim();
-    const requestID = crypto.randomUUID();
+    const sending: PendingMessage = { requestID: crypto.randomUUID(), taskID: currentTask?.id || "", draftKey, message: submittedMessage, baseMessageCount: currentTask?.messages.length || 0, phase: "sending" };
+    setPendingMessage(sending);
+    setDrafts(current => ({ ...current, [draftKey]: "" }));
+    const responseLanguage = i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en";
+    const requestID = sending.requestID;
     const newScope = !currentTask && scopeDraft?.scope.resources.length ? scopeDraft.scope : undefined;
     const destinationRevision = newScope ? scopeDraft?.destination_revision || undefined : undefined;
-    if (!currentTask) save(PENDING_KEY, JSON.stringify({ client_request_id: requestID, message: submittedMessage, model_id: model, ...(newScope ? { scope: newScope, expected_destination_revision: destinationRevision } : {}), ...(skillIDs.length ? { skill_ids: skillIDs } : {}), at: Date.now() }));
+    const submittedEffort = selectedModel?.supported_reasoning_efforts?.includes(effectiveEffort) ? effectiveEffort : undefined;
+    if (!currentTask) save(PENDING_KEY, JSON.stringify({ client_request_id: requestID, message: submittedMessage, model_id: model, response_language: responseLanguage, ...(projectID ? { project_id: projectID } : {}), ...(newScope ? { scope: newScope, expected_destination_revision: destinationRevision } : {}), ...(skillIDs.length ? { skill_ids: skillIDs } : {}), ...(submittedEffort ? { reasoning_effort: submittedEffort } : {}), at: Date.now() }));
     try {
-      const next = currentTask ? currentTask.allowed_actions ? await submitControl({ task_id: currentTask.id, route: "messages", body: agentMessageBody(currentTask, submittedMessage, effectiveIntent) }) : await rynAgent.message(currentTask, submittedMessage) : await rynAgent.create(submittedMessage, model, requestID, newScope, destinationRevision, skillIDs);
+      const next = currentTask ? currentTask.allowed_actions ? await submitControl({ task_id: currentTask.id, route: "messages", body: agentMessageBody(currentTask, submittedMessage, effectiveIntent, submittedEffort) }) : await rynAgent.message(currentTask, submittedMessage, effectiveIntent, requestID, submittedEffort) : await rynAgent.create(submittedMessage, model, requestID, newScope, destinationRevision, skillIDs, responseLanguage, projectID || undefined, submittedEffort);
       if (!currentTask && !selectedRef.current) { selectedRef.current = next.id; setSelected(next.id); }
       acceptTask(next);
-      setDrafts(current => current[selected || "new"]?.trim() === submittedMessage ? { ...current, [selected || "new"]: "" } : current);
+      if (!currentTask) setDrafts(current => {
+        // A next draft typed during submission follows its newly created conversation.
+        const nextDraft = current[draftKey];
+        return nextDraft && !current[next.id] ? { ...current, [draftKey]: "", [next.id]: nextDraft } : current;
+      });
+      setPendingMessage(current => current?.requestID === requestID ? null : current);
       save(PENDING_KEY, ""); setUncertain(false);
       if (!currentTask) { setScopeDraft(null); setSkillIDs([]); }
     } catch (reason) {
-      if (!currentTask && (!(reason instanceof AgentAPIError) || reason.status >= 500)) setUncertain(true);
-      else save(PENDING_KEY, "");
-      setError(reason instanceof AgentAPIError && reason.status === 409 ? "conflict" : "mutationError");
-      await refresh().catch(() => undefined);
+      const ambiguous = !(reason instanceof AgentAPIError) || reason.status >= 500;
+      if (!currentTask && ambiguous) setUncertain(true);
+      else if (!currentTask) save(PENDING_KEY, "");
+      if (ambiguous && (!currentTask || currentTask.allowed_actions)) setPendingMessage(current => current?.requestID === requestID ? { ...current, phase: "uncertain" } : current);
+      else {
+        setPendingMessage(current => current?.requestID === requestID ? null : current);
+        setDrafts(current => current[draftKey] ? current : { ...current, [draftKey]: submittedMessage });
+      }
+      setError(mutationErrorKey(reason));
+      void refresh().catch(() => undefined);
     } finally { mutationRef.current = false; setBusy(false); }
   };
   const recoverRequest = async () => {
     if (mutationRef.current) return;
-    let pending: { client_request_id: string; message: string; model_id: string; scope?: AgentScopeSelection; expected_destination_revision?: string; skill_ids?: string[] };
+    let pending: { client_request_id: string; message: string; model_id: string; scope?: AgentScopeSelection; expected_destination_revision?: string; skill_ids?: string[]; project_id?: string; response_language?: "zh-CN" | "en"; reasoning_effort?: string };
     try { pending = JSON.parse(saved(PENDING_KEY)); if (!pending.client_request_id || !pending.message || !pending.model_id) return; }
     catch { return; }
     mutationRef.current = true; setBusy(true);
+    const recoverySelection = selectedRef.current;
+    setPendingMessage(current => current ? { ...current, phase: "sending" } : current);
     try {
-      const next = await rynAgent.create(pending.message, pending.model_id, pending.client_request_id, pending.scope, pending.expected_destination_revision, pending.skill_ids);
-      selectedRef.current = next.id; setSelected(next.id); acceptTask(next);
+      const next = await rynAgent.create(pending.message, pending.model_id, pending.client_request_id, pending.scope, pending.expected_destination_revision, pending.skill_ids, pending.response_language, pending.project_id, pending.reasoning_effort);
+      if (selectedRef.current === recoverySelection) { selectedRef.current = next.id; setSelected(next.id); }
+      acceptTask(next);
       save(PENDING_KEY, ""); setUncertain(false); setError("");
-      setDrafts(current => ({ ...current, new: "" }));
+      setPendingMessage(null);
+      setDrafts(current => {
+        const key = newDraftKey(pending.project_id);
+        const nextDraft = current[key] && (pendingMessage || current[key] !== pending.message) ? current[key] : "";
+        return { ...current, [key]: "", ...(nextDraft && !current[next.id] ? { [next.id]: nextDraft } : {}) };
+      });
       setScopeDraft(null); setSkillIDs([]);
-    } catch { setError("mutationError"); await refresh().catch(() => undefined); }
+    } catch (reason) {
+      if (reason instanceof AgentAPIError && reason.status < 500) {
+        save(PENDING_KEY, ""); setUncertain(false); setPendingMessage(null);
+        const key = newDraftKey(pending.project_id);
+        setDrafts(current => current[key] ? current : { ...current, [key]: pending.message });
+      } else setPendingMessage(current => current ? { ...current, phase: "uncertain" } : current);
+      setError(mutationErrorKey(reason)); await refresh().catch(() => undefined);
+    }
     finally { mutationRef.current = false; setBusy(false); }
   };
   const recoverControl = async () => {
@@ -302,10 +414,20 @@ export default function RynAgent() {
     let pending: PendingControl;
     try { pending = JSON.parse(saved(CONTROL_KEY)); if (!pending.task_id || !["messages", "actions", "scope"].includes(pending.route) || !pending.body?.client_request_id) return; } catch { return; }
     mutationRef.current = true; setBusy(true); setError("");
+    setPendingMessage(current => current?.taskID === pending.task_id ? { ...current, phase: "sending" } : current);
     try {
       acceptTask(await submitControl(pending));
-      if (pending.route === "messages") setDrafts(current => current[pending.task_id]?.trim() === pending.body.message ? { ...current, [pending.task_id]: "" } : current);
-    } catch (reason) { setError(reason instanceof AgentAPIError && reason.status === 409 ? "conflict" : "mutationError"); await refresh().catch(() => undefined); }
+      if (pending.route === "messages") setPendingMessage(current => current?.taskID === pending.task_id ? null : current);
+      if (pending.route === "messages" && !pendingMessage) setDrafts(current => current[pending.task_id]?.trim() === pending.body.message ? { ...current, [pending.task_id]: "" } : current);
+    } catch (reason) {
+      if (reason instanceof AgentAPIError && reason.status < 500) {
+        if (pending.route === "messages") {
+          setPendingMessage(current => current?.taskID === pending.task_id ? null : current);
+          setDrafts(current => current[pending.task_id] ? current : { ...current, [pending.task_id]: String(pending.body.message || "") });
+        }
+      } else setPendingMessage(current => current ? { ...current, phase: "uncertain" } : current);
+      setError(mutationErrorKey(reason)); await refresh().catch(() => undefined);
+    }
     finally { mutationRef.current = false; setBusy(false); }
   };
   const settingsReady = Boolean(settings) && !resourceErrors.settings;
@@ -314,20 +436,35 @@ export default function RynAgent() {
   const effectiveIntent = messageIntents.includes(messageIntent) ? messageIntent : messageIntents[0] || "information";
   const backgroundTasks = tasks.filter(item => item.id !== selected && isAgentActive(agentTaskState(item)));
   const selectedModel = models.find(item => item.id === (task?.model_id || model));
+  const supportedEfforts = selectedModel?.supported_reasoning_efforts || [];
+  const effectiveEffort = supportedEfforts.includes(reasoningEffort) ? reasoningEffort : supportedEfforts.includes(task?.reasoning_effort || "") ? task!.reasoning_effort! : selectedModel?.default_reasoning_effort || "";
+  useEffect(() => { setReasoningEffort(task?.reasoning_effort || ""); setTaskModelOpen(false); }, [task?.id, task?.model_id]);
   const newScopeReady = !scopeDraft?.scope.resources.length || (scopeDraft.scope.allow_model_data && scopeDraft.model_id === model && Boolean(scopeDraft.destination_revision) && scopeDraft.destination_revision === selectedModel?.destination_revision);
   const visibleMessages = task?.messages.filter((message, index, messages) =>
-    (message.role === "user" || message.role === "assistant") && message.content
+    (message.role === "user" || message.role === "assistant") && (message.content || message.tool_calls?.length)
     && !(task.result && index === messages.length - 1 && message.role === "assistant" && message.content === task.result),
   ) || [];
+  const transcript = groupAgentMessages(visibleMessages);
   const legacySend = enabled && selectedModel && canUseAgentModel(selectedModel) && (!selected || (task && canContinueAgentTask(task)));
   const canSend = draft.trim() && !busy && !uncertain && !controlUncertain && (!selected ? newScopeReady : true) && (task?.allowed_actions ? canUseAgentAction(task, effectiveIntent) : legacySend);
   const sendLabel = task?.allowed_actions ? effectiveIntent === "steer" ? "sendSteer" : "sendInformation" : selected ? "followup" : "send";
+  const currentProject = task?.project || (!selected ? projects.find(item => item.id === projectID) : undefined);
+  const generalTasks = tasks.filter(item => !item.project || !projects.some(project => project.id === item.project?.id));
+  const visiblePending = pendingMessage && (pendingMessage.taskID ? pendingMessage.taskID === selected : !selected && pendingMessage.draftKey === draftKey) ? pendingMessage : null;
+  const pendingRecorded = Boolean(visiblePending && task?.messages.slice(visiblePending.baseMessageCount).some(message => message.role === "user" && (message.ui?.text ?? message.content)?.trim() === visiblePending.message));
+  const pendingFeedback = visiblePending && <>
+    {!pendingRecorded && <div className="ra-message ra-user ra-message-pending"><ChatMarkdown>{visiblePending.message}</ChatMarkdown></div>}
+    <div className="ra-execution-progress ra-send-progress" role="status" aria-live="polite">{visiblePending.phase === "sending" ? <LoaderCircle size={16} className="ra-spinner" /> : <CircleAlert size={16} />}<span>{t(visiblePending.phase === "sending" ? "sendingMessage" : "messageReceiptPending")}</span></div>
+  </>;
+  useEffect(() => {
+    if (!visiblePending || !scroll.current) return;
+    scroll.current.scrollTop = scroll.current.scrollHeight;
+  }, [visiblePending?.requestID]);
   useEffect(() => { if (task) setMessageIntent(isAgentActive(agentTaskState(task)) ? "steer" : "information"); }, [task?.id, task ? isAgentActive(agentTaskState(task)) : false]);
-  const modelSelect = (disabled = false) => <select aria-label={t("model")} title={t(task ? "taskModel" : "newTaskModel")} value={task?.model_id || model} disabled={disabled || busy} onChange={event => setModel(event.target.value)}>
-    <option value="">{t("chooseModel")}</option>
-    {(task?.model_id || model) && !models.some(item => item.id === (task?.model_id || model)) && <option value={task?.model_id || model} disabled>{task?.model_id || model}</option>}
-    {models.map(item => <option key={item.id} value={item.id} disabled={!canUseAgentModel(item)}>{item.name} · {t(`source_${item.source}`, { defaultValue: item.source })}{!canUseAgentModel(item) ? ` — ${item.description || t(item.available ? "notSupported" : "notAvailable")}` : ""}</option>)}
-  </select>;
+  const modelSelect = (disabled = false) => <RynAgentModelPicker models={models} value={task?.model_id || model} disabled={disabled || busy} selectionLocked={task ? !canUseAgentAction(task, "model") : false} title={t(task ? "taskModel" : "newTaskModel")} reasoningEfforts={supportedEfforts} effort={effectiveEffort} onEffortChange={setReasoningEffort} onManageTaskModel={task?.allowed_actions?.model ? () => { setTaskModelTarget(""); setTaskModelOpen(true); } : undefined} onChange={id => {
+    if (task) { setTaskModelTarget(id); setTaskModelOpen(true); }
+    else { setModel(id); setReasoningEffort(""); }
+  }} />;
 
   return <section className={`ra-workspace${tasksCollapsed ? " ra-tasks-collapsed" : ""}`} aria-label={t("title")}>
     <header className="ra-header">
@@ -346,11 +483,11 @@ export default function RynAgent() {
             <details className="ra-task-options"><summary><SlidersHorizontal size={14} />{t("taskOptions")}</summary><div className="ra-task-controls">
               <TaskContext task={task} />
               <RynAgentBudget key={`budget/${task.id}`} task={task} busy={busy || controlUncertain} onChange={acceptTask} />
-              <RynAgentModel key={`model/${task.id}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} onChange={acceptTask} />
+              {task.allowed_actions?.model && <button type="button" onClick={() => { setTaskModelTarget(""); setTaskModelOpen(true); }}>{t("taskModel")} · {selectedModel?.name || task.model_id}</button>}
               {task.allowed_actions?.scope && <RynAgentScope key={`scope/${task.id}/${task.scope_revision || 0}/${task.model_id}`} task={task} modelName={selectedModel?.name || task.model_id} busy={busy || controlUncertain} onSave={updateScope} />}
             </div></details>
             <TaskProgress task={task} />
-            <details className="ra-activity"><summary>{t("activity")}</summary>{task.events.filter(event => ["tool_started", "tool_result", "approved", "denied", "approval_requested"].includes(event.type)).map(event => <div className="ra-event" key={event.seq}><strong>{t(event.type === "tool_result" ? event.internal === true ? "internalReceipt" : `receipt_${agentToolResultState(event)}` : event.type)} {event.tool && <span title={event.tool}>{t(`tool_${event.tool}`, { defaultValue: event.tool })}</span>}</strong>{isAgentLateToolResult(event, task.events) && <p>{t("lateReceipt")}</p>}{event.result !== undefined && <details className="ra-event-evidence"><summary>{t("viewEvidence")}</summary><pre aria-label={t("evidence")}>{json(event.result)}</pre></details>}</div>)}</details>            {task.outcome && (task.run_state === "ended" || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) && <section className="ra-result ra-outcome" aria-label={t("outcome")}>
+            <details className="ra-activity"><summary>{t("activity")}</summary>{task.events.filter(event => ["tool_started", "tool_result", "approved", "denied", "approval_requested"].includes(event.type)).map(event => <div className="ra-event" key={event.seq}><strong>{t(event.type === "tool_result" ? event.internal === true ? "internalReceipt" : `receipt_${agentToolResultState(event)}` : event.type)} {event.tool && <span title={event.tool}>{t(`tool_${event.tool}`, { defaultValue: event.tool })}</span>}</strong>{isAgentLateToolResult(event, task.events) && <p>{t("lateReceipt")}</p>}{event.result !== undefined && <details className="ra-event-evidence"><summary>{t("viewEvidence")}</summary><pre aria-label={t("evidence")}>{json(event.result)}</pre></details>}</div>)}</details>            {task.outcome && task.outcome.assessment_requested !== false && (task.run_state === "ended" || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) && <section className="ra-result ra-outcome" aria-label={t("outcome")}>
               <strong>{t("outcome")} · {t(`outcome_${task.outcome.status}`)} · {t("goalRevision", { revision: task.outcome.goal_revision })}</strong>
               <p>{t(task.outcome.status === "verified" ? "outcomeVerifiedHelp" : "outcomeUnverifiedHelp")}</p>
               {task.outcome.summary && task.outcome.summary !== task.result && <ChatMarkdown>{outcomeReasons[task.outcome.summary] ? t(outcomeReasons[task.outcome.summary]) : task.outcome.summary}</ChatMarkdown>}
@@ -365,30 +502,31 @@ export default function RynAgent() {
     {controlUncertain && <div role="alert" className="ra-banner">{t("controlUncertain")}<button disabled={busy} onClick={() => void recoverControl()}>{t("recoverControl")}</button></div>}
     {loading ? <div className="ra-empty" role="status">{t("loading")}</div> : <div className="ra-layout">
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
-        <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button><small>{t("recent")}</small>
-        <div className="ra-task-items">{tasks.length ? tasks.map(item => <button key={item.id} className={`ra-task-item${selected === item.id ? " selected" : ""}`} aria-pressed={selected === item.id} onClick={() => chooseTask(item.id)}><span>{item.title}</span><small>{t(agentTaskState(item))}</small></button>) : <p>{t("emptyTasks")}</p>}</div>
+        <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
+        <div className="ra-task-items"><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} disabled={busy || uncertain || controlUncertain} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!saved(PROJECT_KEY)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} disabled={busy} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => <button key={item.id} className={`ra-task-item${selected === item.id ? " selected" : ""}`} aria-pressed={selected === item.id} onClick={() => chooseTask(item.id)}><span>{item.title}</span><small>{t(agentTaskState(item))}</small></button>) : <p>{t("emptyTasks")}</p>}</div>
         <ArchivedTasks enabled={recordsSupported} selected={selected} onChoose={chooseTask} revision={recordsRevision} />
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
       <div className="ra-chat">
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
-        <div className="ra-scroll" aria-busy={detailLoading}>
+        <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
-          {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread">
-            {visibleMessages.map((message, index) => <div key={`${task.id}-${index}`} className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" && <div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : message.role === "assistant" && Boolean(message.tool_calls?.length) ? <details className="ra-thinking"><summary>{t("thinkingDetails")}</summary><ChatMarkdown>{message.content || ""}</ChatMarkdown></details> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong><ChatMarkdown>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown></>}</div>)}
+          {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task}>
+            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} active={index === transcript.length - 1 && isAgentActive(agentTaskState(task))} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <div key={`${task.id}-${index}`} className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong><ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown></>}</div>; })}
             {pendingAgentText(task) && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><ChatMarkdown>{pendingAgentText(task)}</ChatMarkdown></div>}
-            <ExecutionProgress task={task} />
+            {pendingFeedback}
+            {!visiblePending && <ExecutionProgress task={task} />}
 
             {task.pending_input && (task.pending_input.kind === "credential_ref" ? <RynAgentInputCard key={`${task.id}/${task.pending_input.id}`} task={task} busy={busy || controlUncertain} onSaved={acceptTask} onChangeMethod={() => { changeDraft(t("cliSourceClarification")); setMessageIntent("steer"); input.current?.focus(); }} /> : <InputRequest key={`${task.id}/${task.pending_input.id}`} task={task} busy={busy || controlUncertain} onAnswer={answer} />)}
             {task.pending_approval && <ApprovalCard approval={task.pending_approval} controlled={Boolean(task.allowed_actions)} enabled={canUseAgentAction(task, "approve", Boolean(enabled))} canDeny={canUseAgentAction(task, "deny", !settingsReady || Boolean(enabled))} busy={busy || controlUncertain} waiting={agentTaskState(task) === "waiting_approval"} onAction={action} />}
             {task.status === "interrupted" && <p className="ra-banner">{t(task.error === "agent_node_restarted" ? "restartHelp" : "interruptedHelp")}<code>{task.error}</code></p>}
             {task.status === "cancelled" && <p className="ra-turn-evidence">{t("cancelHelp")}</p>}
-            {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown>{task.result}</ChatMarkdown></section>}
+            {task.result && <section className="ra-result"><strong>{t("result")}</strong><ChatMarkdown fileLinks>{task.result}</ChatMarkdown></section>}
             <TaskResultFiles key={`results/${task.id}`} task={task} />
-            <TaskArtifacts key={`artifacts/${task.id}`} task={task} />
-              {task.error && task.status !== "interrupted" && <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{t("unknownError")}</p><code>{task.error}</code></section>}
-          </div> : !settingsReady ? <div className="ra-empty"><CircleAlert size={32} /><p>{t(resourceErrors.settings || "settingsLoadError")}</p></div> : !enabled ? <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{t("disabledTitle")}</h2><p>{t("disabledHelp")}</p><label className="ra-enable-model">{t("model")}{modelSelect()}</label>{!models.some(canUseAgentModel) && <p>{t("noModel")} <Link to="/services/sources">{t("configureModels")}</Link></p>}<button className="ra-primary" disabled={busy || !selectedModel || !canUseAgentModel(selectedModel)} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button><small>{t("enableHelp")}</small></div> : <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{t("welcome")}</h2><p>{t("welcomeHelp")}</p><div className="ra-suggestions">{([["inspect", ListChecks], ["sharing", Share2], ["devices", Network]] as const).map(([key, Icon]) => <button key={key} onClick={() => { changeDraft(t(`${key}Prompt`)); input.current?.focus(); }}><Icon size={15} />{t(key)}</button>)}</div></div>}
+            </TaskArtifacts>
+              {task.error && task.status !== "interrupted" && <section className="ra-task-error" role="alert"><strong>{t("error")}</strong><p>{t(task.error === "agent_model_destination_unverifiable" ? "taskDestinationUnavailable" : task.error === "agent_model_destination_changed" ? "modelDestinationChanged" : "unknownError")}</p><code>{task.error}</code></section>}
+          </div> : visiblePending ? <div className="ra-thread">{pendingFeedback}</div> : !settingsReady ? <div className="ra-empty"><CircleAlert size={32} /><p>{t(resourceErrors.settings || "settingsLoadError")}</p></div> : !enabled ? <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{t("disabledTitle")}</h2><p>{t("disabledHelp")}</p><label className="ra-enable-model">{t("model")}{modelSelect()}</label>{!models.some(canUseAgentModel) && <p>{t("noModel")} <Link to="/services/sources">{t("configureModels")}</Link></p>}<button className="ra-primary" disabled={busy || !selectedModel || !canUseAgentModel(selectedModel)} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button><small>{t("enableHelp")}</small></div> : <div key="welcome" className="ra-welcome"><Sparkles className="ra-welcome-symbol" size={42} /><h2>{currentProject ? <Trans ns="rynAgent" i18nKey="projectWelcome" values={{ name: currentProject.path }} components={{ project: <span className="ra-welcome-project" /> }} /> : t("welcome")}</h2>{!currentProject && <p>{t("welcomeHelp")}</p>}{!currentProject && <div className="ra-suggestions">{([["inspect", ListChecks], ["sharing", Share2], ["devices", Network]] as const).map(([key, Icon]) => <button key={key} onClick={() => { changeDraft(t(`${key}Prompt`)); input.current?.focus(); }}><Icon size={15} />{t(key)}</button>)}</div>}</div>}
 
         </div>
         {(enabled || task) && !task?.archived && <div className="ra-composer-area">
@@ -396,11 +534,20 @@ export default function RynAgent() {
 
           {!models.some(canUseAgentModel) && <p className="ra-model-help">{t("noModel")} <Link to="/services/sources">{t("models")}</Link></p>}
 
-          <div className="ra-composer"><textarea ref={input} aria-label={t("input")} placeholder={t("placeholder")} value={draft} disabled={(!task?.allowed_actions && !enabled) || detailLoading} onChange={event => changeDraft(event.target.value)} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void send(); } }} /><div className="ra-composer-controls"><div>{modelSelect(Boolean(selected))}<details className="ra-composer-options"><summary><SlidersHorizontal size={14} />{t("composerOptions")}</summary><div className="ra-composer-options-panel">          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}<select aria-label={t("mode")} value={task ? task.permission_mode || "unknown" : settings?.permission_mode || "confirm_changes"} disabled={busy || Boolean(selected)} onChange={event => void updateSettings({ permission_mode: event.target.value as AgentSettings["permission_mode"] })}>{task && !task.permission_mode && <option value="unknown">{t("unknownMode")}</option>}<option value="read_only">{t("readOnly")}</option><option value="confirm_changes">{t("confirmChanges")}</option><option value="automatic">{t("automatic")}</option></select>{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</div></details></div>{task && ["running", "queued"].includes(agentTaskState(task)) && canUseAgentAction(task, "cancel", true) && !draft.trim() ? <button className="ra-primary ra-send" aria-label={t("stop")} disabled={busy || controlUncertain} onClick={() => void action("cancel")}><Square size={14} fill="currentColor" /></button> : <button className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send()}><ArrowUp size={18} /></button>}</div></div>
+          {!selected && selectedModel && !canUseAgentModel(selectedModel) && <p className="ra-model-help" role="status">{selectedModel.name} · {t(!selectedModel.available ? "selectedModelUnavailable" : selectedModel.source === "peer" && selectedModel.destination_binding_supported === false ? "modelDestinationUnavailable" : "notSupported")}</p>}
+          {task?.local_execution && !task.local_execution.workspace_root && (task.pending_input?.fields.some(field => field.id === "workspace_root") || task.events.some(event => event.type === "tool_result" && (event.result as {error?: string} | undefined)?.error === "agent_workspace_required")) && ["failed", "paused", "waiting_input"].includes(task.status) && <WorkspaceSetup initial={settings?.workspace_root || ""} busy={busy || controlUncertain} onBind={async workspace_root => {
+            if (mutationRef.current) return;
+            mutationRef.current = true; setBusy(true); setError("");
+            try { acceptTask(await submitControl({task_id: task.id, route: "workspace", body: {workspace_root, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID()}})); await refresh(); }
+            catch (reason) { setError(mutationErrorKey(reason)); }
+            finally { mutationRef.current = false; setBusy(false); }
+          }} />}
+          <RynAgentComposer project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "workspace"} permissionLocked={Boolean(selected)} onPermission={permission_mode => void updateSettings({ permission_mode })} modelPicker={modelSelect()} options={<>          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={visiblePending?.phase !== "sending" && task && ["running", "queued"].includes(agentTaskState(task)) && canUseAgentAction(task, "cancel", true) && !draft.trim() ? <button className="ra-primary ra-send" aria-label={t("stop")} disabled={busy || controlUncertain} onClick={() => void action("cancel")}><Square size={14} fill="currentColor" /></button> : <button className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send()}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>} />
 
         </div>}
       </div>
     </div>}
+    {taskModelOpen && task && <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) setTaskModelOpen(false); }}><section className="ra-modal ra-model-dialog" role="dialog" aria-modal="true" aria-label={t("taskModel")} onKeyDown={event => { if (event.key === "Escape" && !busy) setTaskModelOpen(false); }}><div className="ra-modal-head"><h2>{t("taskModel")}</h2><button type="button" className="ra-icon" aria-label={t("close")} disabled={busy} onClick={() => setTaskModelOpen(false)}><X size={18} /></button></div><RynAgentModel key={`model/${task.id}/${taskModelTarget}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} expanded initialModelID={taskModelTarget} onChange={next => { acceptTask(next); setTaskModelOpen(false); }} /></section></div>}
     {settingsOpen && settings && <AgentSettingsDialog settings={settings} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
   </section>;
 }
@@ -467,6 +614,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   const friend = approval.tool === "ryn_set_friend_model_access";
   const sourceDraft = approval.tool === "ryn_commit_source_draft";
   const defaultModel = approval.tool === "ryn_set_default_agent_model";
+  const localFile = approval.tool.startsWith("ryn_file_") && typeof preview.path === "string";
   const defaultTarget = record(preview.model);
   const configuration = record(preview.configuration);
   const sourceTest = record(preview.test);
@@ -486,6 +634,11 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   return <section className="ra-approval" aria-label={t("approval")}>
     <div className="ra-result-head"><ListChecks size={18} /><strong>{t(sharing ? "modelSharingChange" : friend ? "friendAccessChange" : sourceDraft ? "sourceConfigChange" : defaultModel ? "defaultModelChange" : "approval")}</strong></div>
     <p>{t("approvalHelp")}</p>
+    {localFile && <dl className="ra-change-summary">
+      <dt>{t("target")}</dt><dd><code>{String(preview.path)}</code>{typeof preview.destination === "string" ? <> → <code>{preview.destination}</code></> : null}</dd>
+      {typeof preview.bytes === "number" && <><dt>{t("fileSize")}</dt><dd>{preview.bytes < 1048576 ? `${(preview.bytes / 1024).toFixed(1)} KiB` : `${(preview.bytes / 1048576).toFixed(1)} MiB`}</dd></>}
+      {typeof preview.added_lines === "number" && <><dt>{t("fileChange")}</dt><dd>{t(preview.before_sha256 ? "fileModify" : "fileCreate")} · +{preview.added_lines} −{typeof preview.removed_lines === "number" ? preview.removed_lines : 0}</dd></>}
+    </dl>}
     {defaultModel && <>
       <dl className="ra-change-summary">
         <dt>{t("before")}</dt><dd><code>{typeof before.model_id === "string" ? before.model_id : t("unknownState")}</code></dd>
@@ -549,8 +702,16 @@ function AgentSettingsDialog({ settings, busy, onClose, onSave }: { settings: Ag
   const [tools, setTools] = useState<AgentTool[] | null>(null);
   const [toolError, setToolError] = useState(false);
   const [allowed, setAllowed] = useState(settings.allowed_write_tools || []);
+  const [workspace, setWorkspace] = useState(settings.workspace_root || "");
+  const [desktopAccess, setDesktopAccess] = useState(settings.desktop_access || false);
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; close.current?.focus(); return () => previous?.focus(); }, []);
   useEffect(() => { let stopped = false; void rynAgent.tools().then(value => { if (!stopped) setTools(value.tools.filter(tool => tool.effect === "write")); }).catch(() => { if (!stopped) setToolError(true); }); return () => { stopped = true; }; }, []);
-  return <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><section className="ra-modal" role="dialog" aria-modal="true" aria-label={t("settings")} onKeyDown={event => { if (event.key === "Escape" && !busy) onClose(); if (event.key === "Tab") { const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')); const first = controls[0], last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } } }}><div className="ra-modal-head"><h2>{t("settings")}</h2><button ref={close} className="ra-icon" disabled={busy} aria-label={t("close")} onClick={onClose}><X size={18} /></button></div><label className="ra-setting"><span>{t("enabledLabel")}<small>{t("enableHelp")}</small></span><input type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} /></label><PreferencesEditor /><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><button className="ra-primary" disabled={busy} onClick={() => void onSave({ enabled, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></section></div>;
+  return <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><section className="ra-modal" role="dialog" aria-modal="true" aria-label={t("settings")} onKeyDown={event => { if (event.key === "Escape" && !busy) onClose(); if (event.key === "Tab") { const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')); const first = controls[0], last = controls.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } } }}><div className="ra-modal-head"><h2>{t("settings")}</h2><button ref={close} className="ra-icon" disabled={busy} aria-label={t("close")} onClick={onClose}><X size={18} /></button></div><label className="ra-setting"><span>{t("enabledLabel")}<small>{t("enableHelp")}</small></span><input type="checkbox" checked={enabled} disabled={busy} onChange={event => setEnabled(event.target.checked)} /></label><label className="ra-setting"><span>{t("workspaceRoot")}<small>{t("workspaceHelp")}</small></span><input aria-label={t("workspaceRoot")} value={workspace} disabled={busy} onChange={event => setWorkspace(event.target.value)} placeholder={t("defaultOutputFolder")} /></label><label className="ra-setting"><span>{t("desktopAccess")}<small>{t("desktopAccessHelp")}</small></span><input type="checkbox" aria-label={t("desktopAccess")} checked={desktopAccess} disabled={busy} onChange={event => setDesktopAccess(event.target.checked)} /></label><PreferencesEditor /><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><button className="ra-primary" disabled={busy} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></section></div>;
+}
+
+function WorkspaceSetup({initial, busy, onBind}: {initial: string; busy: boolean; onBind: (path: string) => Promise<void>}) {
+  const {t} = useTranslation("rynAgent");
+  const [path, setPath] = useState(initial);
+  return <section className="ra-workspace-setup"><label>{t("chooseTaskWorkspace")}<small>{t("chooseTaskWorkspaceHelp")}</small><input aria-label={t("workspaceRoot")} value={path} disabled={busy} onChange={e => setPath(e.target.value)} placeholder={t("workspacePathExample")} /></label><button className="ra-primary" disabled={busy || !path.trim()} onClick={() => void onBind(path.trim())}>{t("bindWorkspaceContinue")}</button></section>;
 }

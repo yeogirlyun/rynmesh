@@ -360,6 +360,14 @@ class ResourceTools:
         return cursor
 
     def execute(self, name, args, *, context, cancelled):
+        plugin = getattr(self.app.state, "nas_plugin", None)
+        try:
+            with plugin.access() if plugin and isinstance(context, dict) and context.get("resource_grants") else nullcontext():
+                return self._execute(name, args, context=context, cancelled=cancelled)
+        except NasError:
+            reject("agent_resource_permission_changed")
+
+    def _execute(self, name, args, *, context, cancelled):
         if cancelled():
             reject("agent_cancelled")
         self.validate_context(context)

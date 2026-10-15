@@ -10,6 +10,13 @@ class NativeSourceFixturePlanner:
         self.case_id = case_id
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_request_input', 'ryn_list_source_configurations', 'ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         def answer(text):
             return {"message": {"role": "assistant", "content": text},
                     "usage": {"input_tokens": 8, "output_tokens": 4}, "finish_reason": "stop"}

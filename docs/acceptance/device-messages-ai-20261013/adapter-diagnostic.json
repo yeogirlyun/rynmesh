@@ -1,0 +1,15 @@
+{
+  "text": "{\"content\": \"37×43等于1591。已记录本次测试暗号“蓝桥”。\", \"tool_calls\": []}\n",
+  "structured": null,
+  "result": {
+    "text": "37×43等于1591。已记录本次测试暗号“蓝桥”。",
+    "message": {
+      "role": "assistant",
+      "content": "37×43等于1591。已记录本次测试暗号“蓝桥”。"
+    },
+    "input_tokens": 12164,
+    "output_tokens": 398,
+    "duration_ms": 14359,
+    "finish_reason": "stop"
+  }
+}

@@ -1,0 +1,2525 @@
+{
+  "recorded_at": "2026-10-10T06:34:44.488178+00:00",
+  "status": "installed_not_two_host_accepted",
+  "authorization": "User explicitly authorized installing and testing Ryn on skill-designated LAN Windows82 host",
+  "local_host": "子陵台式",
+  "local_ip": "172.16.8.191",
+  "remote_ip": "172.16.8.82",
+  "remote_host": "DESKTOP-SQ6VA8I",
+  "remote_root": "C:/Users/ziling/rynmesh-agent-test-20261010",
+  "installation": {
+    "hostname": "DESKTOP-SQ6VA8I",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "C:\\Users\\ziling\\rynmesh-agent-test-20261010\\venv\\Scripts\\python.exe",
+    "installed_package": "C:\\Users\\ziling\\rynmesh-agent-test-20261010\\venv\\Lib\\site-packages\\rynmesh",
+    "wheel_sha256": "b1dfe95d06efce6257435200a6dadcea78e88865d70314db68dec3abb0c7e34a",
+    "file_count": 237,
+    "all_installed_files_match": true,
+    "files": [
+      {
+        "path": "rynmesh/__init__.py",
+        "sha256": "1ba3f20b9e2f848db7d3d407944989413993ecf30f33ff71bb59cb4263b46135",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/atomic_io.py",
+        "sha256": "38be0221a9cf572a8823837115dce2c3eed4e987f90246438fd51d16e4c479ba",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/background_workers.py",
+        "sha256": "f502b3e4df9365a324e9f225946ec9e0c11490d485178f11b5db95ca8ecab090",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/cloud_drives.py",
+        "sha256": "2e2b82a0ad82361a6ed3814c638b108ab593308fbff49bcdc8b8f17ce0381d2c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/credits.py",
+        "sha256": "1a0194af3d21fe354b7788d5b103671c99c3728a0221a246ba731754fd42ca92",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/crypto.py",
+        "sha256": "beb4ea9755368b0065d651d94e2b7498d95dc40c1e2f0833a02559fcbd97d6a8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/drive_cache.py",
+        "sha256": "69fe08d882c911cad5d388ffdd01c9e2ce2ebf624852c2c2d18276eee12c7d72",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/eigentrust.py",
+        "sha256": "b75edfada3d1a9f55cb4dd65c89acaee84212b3ac81ecadb33240a4225245e9a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/file_transactions.py",
+        "sha256": "259a3ac620338428fe9f08297c53152974f4089ce70575d6f18a463a4591c915",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/first_run_routes.py",
+        "sha256": "43f307c7f59d4e2ea4d1c0f48a9cfdbc533c3a9f773a64b8adb88353f6b75ee1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/identity.py",
+        "sha256": "afc5e84f8d9fa1a8043da736dd6bd1a99f1a3fa9e6dd51ad9fcacbc11e1df6bf",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/jobs.py",
+        "sha256": "8f29a5760e6325175ccd95ccadd26f7913b82586e52b64964a1acabefb1fd1a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/lan_discovery.py",
+        "sha256": "8a7809ec8f10b502e969853123e0b141aaf52a72c5580823e4b63a2ce3becfe3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_runtime_server.py",
+        "sha256": "565267d225451219b87835449cbc167e578121d769e23eaa310fe8bad0aeec03",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox.py",
+        "sha256": "e5729a52e26b7b4cdd486429bffe9b87dc7e49d13c975d02063089af858209da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_client.py",
+        "sha256": "c4fe5bd996eb2bf48b807b8f9fd5f711c78c7a96ad5120b6ce0f1b9fce4ab38a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_routes.py",
+        "sha256": "b43d52d4e84338a1fa8690d986e259568982fd7b8297f2513f86ef50e4b76ee4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_store.py",
+        "sha256": "563a48759146a36d74b7b6373a0cdc89fe0742cbc04eaa214ec9aa6006206742",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/manifest.py",
+        "sha256": "865aa78a1550891bb105e4a0be650030e4f8096781aab5b31382551c09b19872",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mcp_server.py",
+        "sha256": "f3ec2012559e21738b32cb4d628417b3b41276083d00a81ce6e4946184f38f14",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/nas.py",
+        "sha256": "740f5f7dd17130566be012af399d87b57f6f6d2ae9cda9f021416dcea02a61eb",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/node.py",
+        "sha256": "69a536e9fa0ece7e85604d3eaa0cd627ae79b26b08735fe2a226cf62ecebfade",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/node_auth.py",
+        "sha256": "0200d43e28cb6f116127b9a22e24ba7ac741e982917f4f6b1b07fb9801862233",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/onedrive.py",
+        "sha256": "bf2baca9b87986ae7727951da81f1cb049acbe761beef18736b4c15d468fe5f0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_http.py",
+        "sha256": "468c7bd17609f18d8f3186355bee0bda5401bfd9661491d81d99482127f7ab57",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_transit.py",
+        "sha256": "9889f48d5bc48b24c08743f31132b0777b288e0f89a0c67049bd248d3d78eca0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_transit_service.py",
+        "sha256": "36b8b230956e0720d71fb7dc34d8a505a6784fdcc1b0708546c6fb7fdb1041f8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/personal_space.py",
+        "sha256": "ba5bf56a480dfa966afc83564f86e52d479111c8ea054009c791998801998c2e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/personal_space_routes.py",
+        "sha256": "eade5a1808941367a60a364dff203e2a5e60549687e1da3ba2a4221347f8c9e0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/private_permissions.py",
+        "sha256": "2042a18460bd9b1527d01bb9773cfa025129bb28f2857706a00740dad7d89661",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/provenance.py",
+        "sha256": "2094d7b1fb2f688f89a97768b0d34f99ec1564ca1ee8c5f07331bc1dc83eff09",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/provider_gateway.py",
+        "sha256": "f0923e80202187d6836eab51ddea926c58fdb5d93d8d3d2a5a1eef76108185cd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_evidence.py",
+        "sha256": "f8cb3c5a18a59f75906be56385f3922e456f7f23d8517bbd5a6d1e588d4544d6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_profile.py",
+        "sha256": "7820ce2b8cac5f55997bace90ba0138824b8fe362ee67f66db4862a03c40cadf",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_service.py",
+        "sha256": "af128e9299fd3f8943bbe538c93553f88ea3c95a5b3f35eec2d50dd4b4baf35c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommender.py",
+        "sha256": "59b1630f8b9470822109161f2152cd4aea5ade05f09358128e0943fa6e2658b8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry.py",
+        "sha256": "043240d64199182e79e15e73dee5af2c2848df9ab2cbbbdf0d6be1444c3b88a3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry_http.py",
+        "sha256": "b382fa72a894266066a9760c3dea6a783d350775657642bf58fea8726eba3ae2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry_resilience.py",
+        "sha256": "2dacc72753cf51639957989c38224699b5e69f13071a4e994904a6cd69d98372",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/relay.py",
+        "sha256": "ff5e714845e6783de2a69c51b7d3d40c92c599dac4fa28e039345b437393b1ca",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/release.py",
+        "sha256": "2706b5f96cb056e6d39925dca9c5df43615cb90fb9fc665704c0ca14c79304a3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/safety.py",
+        "sha256": "5433cb260a196fb09d97613e212d5c57239ffa76ca34678ab3ffbf772f6ba146",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/settings_store.py",
+        "sha256": "186c3bc6a9f15e380e85f7881a44b77bdc19bfb696eece6c5179b39fc3a5eb03",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/signal50_media_ops.py",
+        "sha256": "c04276468d6b67947654fc07ee59e9e7f5965a62bf6bf7183bfeaf66ee85654f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/signal50_service.py",
+        "sha256": "c77a32106171f91ff9141490782178530f326c9d3f974174bd1c26b79d1d56c2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/store.py",
+        "sha256": "f3d5bc47854eeb01bad3d2a47b58e3466a34cecc8591d75afb2579cde2f2b054",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/synthetic_content.py",
+        "sha256": "bfca4c317fee00694622e7726e45de9e7ab527c740e139e2b7f8b6b8e9c1ac8d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/transport.py",
+        "sha256": "dbc3b13b0e2fa967c84d1977993d8d2d82289ceb8630b8eb253e901a6b864f08",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/transport_plugins.py",
+        "sha256": "3d501036298b3c38b8281f2c2c47e0abad1d36dad7fb271a02c99844f8ee5c36",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/types.py",
+        "sha256": "f736f156f0796185d227bd62ee1a4f300d236e1368c838fe4ecc7788f49f1d22",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/update_state.py",
+        "sha256": "5ce77a7d9fdc713c360f98e59a203401acc28bd962c33128179c80e5adfe59a4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/__init__.py",
+        "sha256": "9d7282e519f8cef46b041c7ef2f960da40d187fdbe4ba8e0f94a8e53db74b8db",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/bridge.py",
+        "sha256": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/budget.py",
+        "sha256": "ab63cc42cb4ce1485e14c4ed80afe0697398a5c92a6f0ab2af05ffbac50815b6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/checkpoint_refs.py",
+        "sha256": "dff738813f221cf8bfa5227cd8985f112dc167db462c9d9b825dcecfed453981",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/cloud_resources.py",
+        "sha256": "1272d5fa99d570cea380d6ad47613b92e5e12ead0ecddf41e6c0b9407939d8c7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/control.py",
+        "sha256": "7908c9decc9cb7121ff6eb30e62ac509cd3250c35f5c3bdb80ae40f96e398a3d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/credential_control.py",
+        "sha256": "dbf319e3ddb1990bcfffaa6eb6d04bff8b9bf84830bf1834c0920a0e6522a7b1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/default_model.py",
+        "sha256": "c0d32d400756411e7ddb817fcdeb5444c6497222109967eb4a924430715caa5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/diagnostics.py",
+        "sha256": "eb8978f8bd15e56b9c3b0f1dd2118025ac840bf5b65be1ece3347254fd73ada1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/evidence_semantics.py",
+        "sha256": "cbb44fcfa0e223cc7c154a1d200d068bd9b9cd2d545768154af6da7aec2e443c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/knowledge.py",
+        "sha256": "9ec1499b441e6b791755f5a85d1cbb81462522c38b135d8054483a561563b534",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/lifecycle.py",
+        "sha256": "878e0583d8eb0f0bfe2d08204f1af691030e73d99009849c08485558a7cb3a5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/model_switch.py",
+        "sha256": "918ae0b65605c60eabd0cfa23e33f6999acd6d99fb6f5f65127aaab9fca5f103",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/models.py",
+        "sha256": "4efd69901c1d162d73f0bc554e947d4a7b649b6bf6c0075d30001087ffb339b4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/observation_transitions.py",
+        "sha256": "880cdf04ae73928a4eef904295eeff1165dfdb2b85897c0323008f1b9e231023",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/operation_ledger.py",
+        "sha256": "43541b405cdd0c109515e486973cf370921c09269c5f3054687269e0cb4133c0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/operation_permissions.py",
+        "sha256": "295835e2a7405f06566c7f9f5bcf53366bd3d87a8ebcb8790af55c99c84a4460",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/output_policy.py",
+        "sha256": "fda6319d3e5fa1aeae3f1b4b6840f3a0ab61d14db02b94328dc260b6dfa1620c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/prompt.py",
+        "sha256": "be76a77923418637ba6897f533adda509baaebd6c70b277f73e43d32760efad2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/read_verification.py",
+        "sha256": "50b357c1509deaa97aa997f14eee6769862df83bfe601925b049cfe874047eb9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resource_documents.py",
+        "sha256": "23a1b4fa5b04c706daa6106bee6b97688b312315d536bfcec835a177b5d9d65c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resource_writes.py",
+        "sha256": "df558d4bf180962a9e9f8bf9a998e0071bdea25f7cb705a06d99ac2777f0b452",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resources.py",
+        "sha256": "b3f1766259b432645e007502f7c17e960b312fe9cf2313dbd6b9536080d70b95",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/results.py",
+        "sha256": "1be1e25bedf929b77c2212531d88e34ede498c9d75a41603053584c1f1afdfd5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/routes.py",
+        "sha256": "bc1a1c33983faddc01741166e336cae7c8550dba48df3b3f13f1be586dde618f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/runtime.py",
+        "sha256": "af0bf85149cd5afd8262a295476a32196d746b99e13f2b3de20bce82f47a0612",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/sharing.py",
+        "sha256": "16169cc3a99544156415ca758634cef088bf24119d65e3c1da0ab3debf5bc5ad",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/source_drafts.py",
+        "sha256": "ec073c0acb2fdb7b2a733c713af42d09209a709f6021c320b94c75bd529f9b94",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/state.py",
+        "sha256": "a7db623a18e4b074d8acb685d89e5fb8c00b3098e53371b8ab6721d47e5788a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/store.py",
+        "sha256": "77968d51d12309db2965c78ee50382e4294fa7f980c80fda31c6972ab72f81c6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/tool_menu.py",
+        "sha256": "57ac3f1b8f23171de94a0795efbaa6871c6f805bd7fea92eb0866fc1602e3a7d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/tools.py",
+        "sha256": "505368f9c7a10d461942c4ce522c3176ce1d4074519717cf9993955c69803668",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/verification.py",
+        "sha256": "e529df17c19113ca52c670fc947c568c246e72b8e1609afc19d9b4001f8d02c8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/__init__.py",
+        "sha256": "6de3725eb9f24513fa6d770e5cdeddf8e49240b96c440b64068d93776a923bb7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/catalog.py",
+        "sha256": "cc29f2be5411c241904a5040b0fb61839c03a114cabaae06ca34b0c1594e2247",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/routes.py",
+        "sha256": "a1f9824f153b16ec234a4cb459420cd809f29ece27675a17714310f030f49697",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/store.py",
+        "sha256": "ca067be85d368da812c5a5692e859d188a7de4841b1179c2b3c69038f3d63637",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/__init__.py",
+        "sha256": "6fb0b0e4bd74b38b067b9f4edd66e202ca6ca2b8e93d3bb0d708fd05b30fe152",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/cleanup.py",
+        "sha256": "0316ea530188814fd18c0d618ebbb51a88e04c405f1e5a99c5e2284977f66e8d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/cleanup_routes.py",
+        "sha256": "3da631d2067ef0fca1420679c39ac5a6e754e9ceea93a633ea11e32924c68854",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/context.py",
+        "sha256": "a1bbfa40f17dc3f85c88974f49edd266b6f2aee9c267bb22e89e20ff83b92a6d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/privacy.py",
+        "sha256": "fcce454392e1322b6a94ba2aaadc7b964a9276dcc14ce7f6f2d84ab54241e121",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/routes.py",
+        "sha256": "c3ede0d6d07c3a698d0b8b2b1454382c27418446707e4aa74532829f3935c731",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/runs.py",
+        "sha256": "9604bb1cdd65e24f364d41fe2b4e1c1a6722f1242520ed82e3a19ae1b7fb2cbc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/store.py",
+        "sha256": "6760632fde78b6929d5e37bb272ce1c20810c15e6dde01f056b2a18a49ff3d42",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/__init__.py",
+        "sha256": "a864651f31631dd2a94eef3ae713b96eb08aa6bbfccefb3ff2cc488c06307b62",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/adapters.py",
+        "sha256": "65599a2c8e8b06a12f31e381b6d9096a0a15ccc6388e4aac3de3a7db22cfc3fc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/routes.py",
+        "sha256": "3d6e04033a5d76ed065c729667dfa035e33fb9f661e43c493dd731f4e82d7e58",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/service.py",
+        "sha256": "1b420a77d02e6276c1f15a2a9c6d73caa33bdf2f0bd27eab9be2559276ce272d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/store.py",
+        "sha256": "f867fdbc5bac059ab4ee41af2b741f195053ad8ca00fbcbc81cb5d8b542bf49f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/__init__.py",
+        "sha256": "67e0e9ee0c2a2bacefb4c79b86c172b56f785fb1005dd399ae5e22aa2c2caa65",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/conversation_bridge.py",
+        "sha256": "683e6cc302cdfbf7655cf08bc6e50c5bc9e64808673a371c60915de80792a24b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/conversations.py",
+        "sha256": "5e3d21ab77c2ca83c76dc592bbd6b5b43d3f0ab9de67e076b61f37b065ab12dd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/diagnostic_budget.py",
+        "sha256": "9fab215ca7f5d05de0b5e9f0347268b76ba9eee00ca63d01289d3abfccb1e343",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pair_crypto.py",
+        "sha256": "81711e878da3c23eabb8da92022464ef86c96736c6ebcdf602c52411b70fd577",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pair_store.py",
+        "sha256": "3d7e7c8752b688b9f8b3806a92dad31848f9d84a63930bc5c70416aa56263e9d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pairing.py",
+        "sha256": "90e9314e811c1af5539a7bad3a32525369d6d497d0fbbf279af3c2ea09a7fe7f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/reading.py",
+        "sha256": "77630e193991c6eb1bf15f24a39eb985f0c53d1b4f8c424c966e8b7e7968bee2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/reading_bridge.py",
+        "sha256": "2e2fcd5677fee1dcfec09bc5c934f326663ca18f27af8220aa1324246e88d2ef",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/records.py",
+        "sha256": "84e27ccb9f7a72d86a021b467aa50f944737e1410db2b7b3659df281fdfe0b5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/routes.py",
+        "sha256": "b96e2be80993ef5b03019417ae2732ebaa61aa1a873903ae115dec3a5655c8c9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/store.py",
+        "sha256": "1270b331cd7acd5211d051b72422038a4a3d6b3f520a7ff79d76ebe120baf5da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/transfer.py",
+        "sha256": "8cad3d66dbd24908461d650e6e7624c4963fcf048d3ae21588c8f7deb57182e7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/__init__.py",
+        "sha256": "d557066ba66f348a7501175d86392f0453306a87aca3dd4478ce0a0e0f69cf8b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/cli.py",
+        "sha256": "66e61c2516c606443a91c0602c138333afb7f38c718862df4fa5811978d2e99b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/ledger.py",
+        "sha256": "39d9c734ad065ec409688355f98e1215c8dc312ab1f59987eac3e895848462fe",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/legacy_v1.py",
+        "sha256": "b2fcceb1fae92daaa373e951bb5fbf8b0efda31074bb9af625b4cba08523e131",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/protocol.py",
+        "sha256": "9ff4f280c5e6a55d43be5c92237d70063a3890aee024f587a822b94a122389d2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/routes.py",
+        "sha256": "f7d4857a201a2f3c7da338e9ced22a01e4db84e0933322212bceb43ebea8b4ba",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/service.py",
+        "sha256": "2b3dc6f0e0ce9e7856e9721426c46beeb422237e25169b125c5019eeaebc194f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/__init__.py",
+        "sha256": "658384fde93972a007bbe46da58979c1782cfa454ecc5597e0dfea23d61df33b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/cleanup.py",
+        "sha256": "d93f06742f2cb0e6c9158c731bd02b76a11ed8fe214aacf0b09549c38947a508",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/routes.py",
+        "sha256": "6ccedcb0d5f3f76e29ec304e877208132f600a86ce1df24826a4256488bc24d3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/service.py",
+        "sha256": "85b8665ff9513522447c97a3f466575bfa15e2b4981854df8c5fcaf399392d4d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/store.py",
+        "sha256": "5c04afa0d935fc82a72eab10c097c81346008421cfe4da9c6bfa519e9470d3a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/weekly.py",
+        "sha256": "8356a7bb57583e8f0f5dfc12a532f3150b2b8c84a667b6431249f3c595769185",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/__init__.py",
+        "sha256": "2952b9cb769ecad85c4237c8381eb51f6b08d6f277abae6a3196eae08cf7f207",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/card_cleanup.py",
+        "sha256": "0d3de9d7c35919e218c2437989710dc7d454ff31c0ee8753e0c965546655da75",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/content.py",
+        "sha256": "02c29ebbd182567209a3c2854c0167b36963fb224151a64deaa040131b395fc4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/crypto.py",
+        "sha256": "ae50f00c3bdc392501c536cbe26b517d47a0f98be79abf9d82d1dcb15bed943e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/diagnostics.py",
+        "sha256": "d455426896378e500b0a30ae06cf855cb6b133d9680ec84e2ad0a65d3714d6d1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/mailbox.py",
+        "sha256": "389b2aaddb1104d086f2ebd75fdc7dcee619465a4d9e2adbd9f43d5fdbbd1868",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/routes.py",
+        "sha256": "61f2bcadafdf41922e3b1bcd3ec280685e8409a66bd4089b293c9ef3bfb0c2c1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/service.py",
+        "sha256": "a45dafcb1ff81d7c72eeff36d197a668b1abefabd4cc9c7970885994cba30e7a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/store.py",
+        "sha256": "ad555307dd972594c82c9b79e6dbc45f8daeea61ecae55bec900c77f6d593d04",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/__init__.py",
+        "sha256": "5f48fff57b1b23e343c018790954cc663d85b4071bd005f48fa619176b8eff7a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/adapters.py",
+        "sha256": "0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/api.py",
+        "sha256": "9c8342e83764a33f41b2b676cd2c2bc86e27e5e044076ce3c2f304be9835543c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/api_formats.py",
+        "sha256": "ef7c3db7f16fe30cedfae36f329e49b21eef73b3f8e61299da1c35023fe70a0f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/catalog.py",
+        "sha256": "b99ffca4e736cdfb1158d377bb36bd8aa2208b81f851de20084e7a8b54b0023b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/chat.py",
+        "sha256": "1a9b6bed715727555b05bc354a7016c41286f0e7fa72a11ac956404de5aebbab",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/chat_prompt.py",
+        "sha256": "f76f1c4a111540a7fa97997862926a6518946f0506651bea0aa34941c2efbd5b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/cli.py",
+        "sha256": "bef2c3b9d31c9edd2461c7f8ffbfc8ff5204bcf390f9ac5f801446f3e3f103b5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/cli_adapter.py",
+        "sha256": "916cc3af333df8b09f1befc1149b8d24b51274b063e45d6c40bfbf8860ec5145",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/codex_session.py",
+        "sha256": "aee110117df3a1e937f19e7483c54163fcc7183abfb0ad822e413b6833ce9d2f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/connectivity.py",
+        "sha256": "322077d5fc2c8f4d321adc6b9c01778d8f38f4574900a8695c3ba50af91e3422",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/consumer_commands.py",
+        "sha256": "81ad060b4cb1c7f5e95093c6d5b69738bfa40099af161e91b1996316254acd87",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/errors.py",
+        "sha256": "86e340764ffbd4045aeebfb7e04e3038a8b1b2b018288efc04b18fb65469b1c7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/gguf_import.py",
+        "sha256": "96f83741203b27b417979a9c0b32523e8d3c06f65e31166082037e5b3e03106a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/hardware.py",
+        "sha256": "bab06989987d85899f064070a8fa6c3730556e156b7bf1feedc21fdaaaa1f835",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/https_only.py",
+        "sha256": "1d85983508d518e6517c526bbd3801d1a303c4c37cfa4c360ceb75ff19f31e0b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/lifecycle.py",
+        "sha256": "9ca50d2273846e7dcfc31cfb9a06686b4cdc8b9f8c694d5643f5c628fa7f7536",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/manifest.py",
+        "sha256": "c69839b1e745031c3b3c2a5c1efaebe429454f0acc739cf0b66f9b700df6263e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_dispatch.py",
+        "sha256": "69d6817e5c094523b0970745787a249fca3bbb91515187b8f8540b9c3a2dd8b4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_download.py",
+        "sha256": "4f2dc673200673e880e2e015147e36ed6a10277c8194b8d352dc3576dc6199a1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_settings.py",
+        "sha256": "09fedeced91651edc6b25876d76a286cf6ba1a1bad9c4d483d8902046f2ff73f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_model.py",
+        "sha256": "20573370473ec8c684b18963de939e2475e78d02675e7196fc338310b3f24cf5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_policy.py",
+        "sha256": "c7517d4f38b1b856b54e4a32db29ea527d641ab48d450638eaf2887647369053",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_worker.py",
+        "sha256": "a15fe1138c17598ea5d5b70d175605660e923fa6b62da71c6cf12c585d77ee90",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/p2p.py",
+        "sha256": "09bce3ff3445b740c20f9b83546aa580ba1707d92f92616c9137763aef8e58fa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/p2p_session.py",
+        "sha256": "109384737f448ff4fd832bd4fb95dafcffcb7d19885372c06a000de2bcb792d1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/peer_binding.py",
+        "sha256": "6546519d104d18ae75181320ae05c2efc3d5ae8f4a62281a45185474a2ea4f66",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/privacy.py",
+        "sha256": "deab7334961c888cd703c5f199ad876073752fd05edcdd84c637ef1ac4cd1e5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/process_guard.py",
+        "sha256": "231d67d98ffa5e177cfb32eb7ad2f281e2a99b85e8793b6760de5a50543f733e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/routes.py",
+        "sha256": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_docker.py",
+        "sha256": "19ac5555597da3636ffbeb1b195f22620a4c868058b11a9c11b7628cf5abfd95",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_native.py",
+        "sha256": "f82cef8cd994c6595f687bd62a4d652496abb698cf0567fa7aa60c3d96d7a015",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_native_install.py",
+        "sha256": "eb637a12ce21330c16ae391a46f335b21c85e52fdc962aa64cd048e6e180bc6d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/safety.py",
+        "sha256": "58b32e3bec845aaf1a43b570b815f9a5ba26a1d25b93ec85612cc412d80f9246",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/setup_recovery.py",
+        "sha256": "82aac75d9e66af71edd506ab0d8dab9fbb35c70b852f112f64d3e33c2ec81a38",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/sources.py",
+        "sha256": "01e4f481d93c33e1d54d832fcf4b8cb088a2a514384bce20275d098086432efc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/space_catalog.py",
+        "sha256": "95ba0a55aa087722b1ca0722bd8441a1377f1fbf1e4590e90e0688ab20daebd5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/stream_protocol.py",
+        "sha256": "39d9fb6ae026381afefc4fc6356d8aa890a2f013b353ad66c2691ae07b94f197",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/streaming.py",
+        "sha256": "2ebacdfcff3777cd1affecc2f35c76f91f1d57c3428461671786d87e415a18de",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/task_balance.py",
+        "sha256": "169c5036dfebce02cf2145e27cc6f9cd75e3cc651557c99ecaafe6f798422f14",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/task_protocol.py",
+        "sha256": "570f6cdd19501372f9c8eded98c1d8c5fe70f87514b19a1866f15e4fd22bf0fb",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/test_adapter.py",
+        "sha256": "cc8f3c93b030f55beff3b5e976bde4eaab33fee4d302d0fd98ecc6473ccbdb8a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/tool_capabilities.py",
+        "sha256": "278a2ce30eddd79145ea2df6ebd62e817e0d714bdb84d78b292f96aafdee332b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/__init__.py",
+        "sha256": "222625beb90bb0414a57d973568068795505860cf3cffd2e91325f12d7b99992",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/index.py",
+        "sha256": "7f3c809bbcb96543d76687a9e4a2469f8ad7dbdee53ae8f807e45269cf1c26ad",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/routes.py",
+        "sha256": "e2791be92bc5c058003f633fc3f27e8acdd0f7cbaec4e4795ddf17d43c19f229",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/sources.py",
+        "sha256": "b575a7541e6b6d4cf256d2ce980e4589f09ee942ba79ebf52ef4c1fa7a48825b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/locales/cloud_drives.en.json",
+        "sha256": "5666f7d75b6551330336960585e5778b757d034c2e464d13058bc61c72e6da01",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/locales/cloud_drives.zh-CN.json",
+        "sha256": "d31ab7fe851bb93f49e3ef4bcdc29df2545e31364dee6fe22115994b7eefd375",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/__init__.py",
+        "sha256": "5bc5b63fe19361534bfa846360c1d10656f0cb439e00ca826efa8c8e4463c3da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/cleanup.py",
+        "sha256": "380682e4445d12c3b0da0c31ee3810540f3705362d12cdda3dbd4e3d3548e372",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/fetch.py",
+        "sha256": "11278f684e367f16a8df4a67f5658d601a5a3b1ecf4e2cab78ac7d2c7c7b2de8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/routes.py",
+        "sha256": "6c7c48b3bde55cb742928866b3bb72ff6cb8074ddc8ee656b5280247e92601aa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/service.py",
+        "sha256": "7952725f88b0e7c9f686f06bffa5a2b2030dcce20d2e877cafa4244a8b07bfc6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/store.py",
+        "sha256": "dd4f14b93e1f0a61caf9ae2a94611390f1a9866baca60daefa500a4198ecc74b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/__init__.py",
+        "sha256": "8f7f7a9eccb0f7795f54de2401c3bf768ca0169d22d0a8b937ea772af8d6ee3a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/archive.py",
+        "sha256": "76cece5e2caa0298721544a7a90b124ad268e490366665b858615615656255ae",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/routes.py",
+        "sha256": "7b40d18a8bb599fc8e88c1abd3f22e11f494c1f261eadcb3a8949f89249f6d7d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/sources.py",
+        "sha256": "44180dd66268518a8a0fa636f4a15cae744e7678abb39bab814d963bad5769f2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/__init__.py",
+        "sha256": "189ef974b75db21d5bfc808c65b7022f20da8cf520d18ab8fab099441ded011e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/_base.py",
+        "sha256": "1e1925a848e498e10c15cdadf81c86372c2d93ac76ae0bf4f9d863614ae05b0b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/ask.py",
+        "sha256": "21351f94063a36437adce8046591399552124ed13e2fc828656b5e9290829660",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/assistant_audit.py",
+        "sha256": "4a9bc9d226f4595ecb95844da92aa7025c3611d82d471074839eab69dc71a408",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/client.py",
+        "sha256": "a62fb79164188faad7023731ff61219dca67a63232ae89672108a9d8ccfc4882",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/consumption.py",
+        "sha256": "2a5c16a8bd8d342a37ddb9dbad1b5eddda704335e2b32a9a403d03d78f078a45",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/digest.py",
+        "sha256": "9390c91fd98d25079ec9efd0273508bafa2b4226514e3cedf43370887ddbf0f3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/document_extract.py",
+        "sha256": "d161484c69ab439bdb5bf88c92a915c93523bafef5175b47482023fd343c0cfe",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/document_extract_child.py",
+        "sha256": "3189d8303a8c828a17f36fbb032a35d3d3d3b29255cf49a917847aac8c59b926",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/egress_control.py",
+        "sha256": "5b8763c7f8a5eae46bb1e6066ccb60569a62e68abb7c66a1b70c6e3dbac8b3b5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/embeddings.py",
+        "sha256": "54710086b1a39dc02f357dc52adc6c7554bc2ff5b0428edef75b2c83a5ebabb8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/first_success.py",
+        "sha256": "9fcc71ec93d66eae6e8d79b53365fdb70d7480bdc560a0125cf08ea18f03b2ab",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/image.py",
+        "sha256": "fe648bf55268a4e492b15a2d507e1ad1fe0fc0d6d174ddfd53834604aabdcfb8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_cleanup.py",
+        "sha256": "35a3337e8214d49956fc8373ba459ce336efbd56809f0937f74917dc45e9c9f4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_cleanup_routes.py",
+        "sha256": "23c8f57e39b7488dadb36467e16ebb30fbf29f983f1826c5033ee6db8820b145",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_imports.py",
+        "sha256": "7c80731d0aa7337f41501a65ed3f70881972ad972c7a2536205df810da43493d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/llm.py",
+        "sha256": "dce70abd95449a90565b50a612c3543696c6286a1b36e9df6fc2aa3573f974c1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/messaging_store.py",
+        "sha256": "0c9d6c1210f0551cbe8e4e957d2ffb8b0de3323a666281beee3f4fe8b3cac7d6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/model_provider.py",
+        "sha256": "5edb49293dcbbe0c73136ad9a08aaeb46fa429fc092e9172ccde1df8168ed1d7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/net_egress.py",
+        "sha256": "d451b9cdda5b12ce35a67443b1e2ac5709633d0c261ecdc5312f33cb97f872d2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/net_egress_client.py",
+        "sha256": "72ccf1aef21187f159a9c8d57d726aa0fea22e0b95f36e93c7e1dbd7a3c2d2dd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_box.py",
+        "sha256": "2e55aaab786b8769efc41d4db9be3cefac724cd52213a6286f1f7fe9622644e9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_health.py",
+        "sha256": "df13150d17ca51633b8b90d50c6c5fb3408a6397d85db4b8420140f4554ddfc5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_messenger.py",
+        "sha256": "66cc1a00f5e1ff0907cb6b877695c72d0de92251ef2116bbd7fe97fa67c013e9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reader.py",
+        "sha256": "0787f1ffcf6d662ea8e33f8a2eda989976969b9b0546a661ecd6db0482c251a7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_cleanup.py",
+        "sha256": "7e30dfc3032c63d675cc3072b425ae452b7d988f43cedb34ac4615b6fb500b43",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_cleanup_routes.py",
+        "sha256": "5bda580f8c8cbdb321964a0e4ee884fc5230bc851ececa0f2865d854e0918bb0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_privacy.py",
+        "sha256": "148fca026287019f7d8cdf941fbea32f57a55cdbdc376ed8963824f1ac16e0b0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/recap.py",
+        "sha256": "8fa9db66e3f5ce05a6b7cc2712b5a11c920049e3fb9ad59cc6880a652d7910e5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/rynmesh-vpn",
+        "sha256": "f41cdff54ce358fcef15cefd48f259141175a956f0b05da21a4e7b21d6e384b3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/updater.py",
+        "sha256": "d8374ee94410c975151d3a8f9e50d282f986d3c074a9457dea4c9a3d62d3adf9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/vpn_cli.py",
+        "sha256": "1c61551c693e43a52bef3c5d6c61d0e7bebea6acd412c2d3107fc0561b1940db",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/__init__.py",
+        "sha256": "e74e91e9921cd2499f673d6dfbfdab20980908656fc3c927b730e163e7ef6352",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/routes.py",
+        "sha256": "77d6ea88818fb5301f8eb075d82fd2d292b55ed442c6ccff65373a36800378a9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/service.py",
+        "sha256": "83b92418fba19e97ab777334cefefff956ef49f1c21d2782f474be0795da3e74",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/store.py",
+        "sha256": "6aa5b614f09f37249b49484b4d94dfd766f30911b723cfb06a47a289e5e8eeaa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/tools/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/tools/publish_release.py",
+        "sha256": "cbb7c16d6cbb8b26a7c068505816e87b5729f12dc173d80224e755dcaec82c49",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/__init__.py",
+        "sha256": "3509d26a45ae4e2b543f533ec2790d438ef8080ff8d789cb94e5f8395e6d5eaa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/backend.py",
+        "sha256": "25f100c9a42d95691701b03cf2f77f3307fbff05b39699453b1461f7f24ae53d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/cli.py",
+        "sha256": "203eb436543d413abd54f40dec3034b251bf8702873075de4a811c086d6e082b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/service.py",
+        "sha256": "326930949b72caa6c5dd6554d038d66f4fa5e49aff48ea5f06da771b640d028f",
+        "matches_wheel": true
+      }
+    ],
+    "dependencies": [
+      "PyYAML==6.0.3",
+      "aioice==0.10.2",
+      "annotated-doc==0.0.5",
+      "annotated-types==0.8.0",
+      "anyio==4.14.2",
+      "attrs==26.1.0",
+      "certifi==2026.7.22",
+      "cffi==2.1.1",
+      "click==8.4.2",
+      "colorama==0.4.6",
+      "cryptography==50.0.0",
+      "dnspython==2.8.0",
+      "fastapi==0.141.1",
+      "h11==0.16.0",
+      "httpcore==1.0.9",
+      "httptools==0.8.0",
+      "httpx==0.28.1",
+      "idna==3.18",
+      "ifaddr==0.2.0",
+      "jsonschema-specifications==2025.9.1",
+      "jsonschema==4.26.0",
+      "pillow==12.3.0",
+      "pip==25.0.1",
+      "pycparser==3.0",
+      "pydantic==2.13.4",
+      "pydantic_core==2.46.4",
+      "pyspnego==0.12.2",
+      "python-dotenv==1.2.3",
+      "referencing==0.37.0",
+      "rpds-py==2026.6.3",
+      "rynmesh==0.7.0",
+      "smbprotocol==1.17.0",
+      "sspilib==0.6.0",
+      "starlette==1.6.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "uvicorn==0.52.3",
+      "watchfiles==1.2.0",
+      "websockets==17.0.1"
+    ]
+  },
+  "python_installer_sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
+  "python_signer": "Python Software Foundation; Authenticode Valid both hosts",
+  "existing_wsl_services_before": {
+    "personal-api": "active",
+    "mysql": "active",
+    "docker": "active",
+    "frpc-personal": "active",
+    "apache2": "active"
+  },
+  "remote_firewall_rule": {
+    "name": "RynAgentAcceptance20261010-Consumer18782",
+    "tcp": 18782,
+    "local": "172.16.8.82",
+    "remote": "172.16.8.191"
+  },
+  "local_firewall": "All profiles were already disabled; unchanged. No claim that local firewall restricts incoming connections.",
+  "notes": [
+    "First async installer process did not persist after SSH session ended; synchronous installer exited0/no restart.",
+    "Ryn wheel installed offline, pip check passed; includes no desktop/frontend build.",
+    "237 installed package files match wheel and current workspace snapshot; future edits need new snapshot.",
+    "A shell-quoted print smoke command produced NameError after imports; installation file verification independently passed.",
+    "No owner source, key or API credential copied to remote.",
+    "No real two-host model invocation yet; formal trial count remains0."
+  ],
+  "local_installed_verification": {
+    "hostname": "子陵台式",
+    "platform": "Windows-11-10.0.28120-SP0",
+    "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\venv\\Scripts\\python.exe",
+    "installed_package": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\venv\\Lib\\site-packages\\rynmesh",
+    "wheel_sha256": "b1dfe95d06efce6257435200a6dadcea78e88865d70314db68dec3abb0c7e34a",
+    "file_count": 237,
+    "all_installed_files_match": true,
+    "files": [
+      {
+        "path": "rynmesh/__init__.py",
+        "sha256": "1ba3f20b9e2f848db7d3d407944989413993ecf30f33ff71bb59cb4263b46135",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/atomic_io.py",
+        "sha256": "38be0221a9cf572a8823837115dce2c3eed4e987f90246438fd51d16e4c479ba",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/background_workers.py",
+        "sha256": "f502b3e4df9365a324e9f225946ec9e0c11490d485178f11b5db95ca8ecab090",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/cloud_drives.py",
+        "sha256": "2e2b82a0ad82361a6ed3814c638b108ab593308fbff49bcdc8b8f17ce0381d2c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/credits.py",
+        "sha256": "1a0194af3d21fe354b7788d5b103671c99c3728a0221a246ba731754fd42ca92",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/crypto.py",
+        "sha256": "beb4ea9755368b0065d651d94e2b7498d95dc40c1e2f0833a02559fcbd97d6a8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/drive_cache.py",
+        "sha256": "69fe08d882c911cad5d388ffdd01c9e2ce2ebf624852c2c2d18276eee12c7d72",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/eigentrust.py",
+        "sha256": "b75edfada3d1a9f55cb4dd65c89acaee84212b3ac81ecadb33240a4225245e9a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/file_transactions.py",
+        "sha256": "259a3ac620338428fe9f08297c53152974f4089ce70575d6f18a463a4591c915",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/first_run_routes.py",
+        "sha256": "43f307c7f59d4e2ea4d1c0f48a9cfdbc533c3a9f773a64b8adb88353f6b75ee1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/identity.py",
+        "sha256": "afc5e84f8d9fa1a8043da736dd6bd1a99f1a3fa9e6dd51ad9fcacbc11e1df6bf",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/jobs.py",
+        "sha256": "8f29a5760e6325175ccd95ccadd26f7913b82586e52b64964a1acabefb1fd1a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/lan_discovery.py",
+        "sha256": "8a7809ec8f10b502e969853123e0b141aaf52a72c5580823e4b63a2ce3becfe3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_runtime_server.py",
+        "sha256": "565267d225451219b87835449cbc167e578121d769e23eaa310fe8bad0aeec03",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox.py",
+        "sha256": "e5729a52e26b7b4cdd486429bffe9b87dc7e49d13c975d02063089af858209da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_client.py",
+        "sha256": "c4fe5bd996eb2bf48b807b8f9fd5f711c78c7a96ad5120b6ce0f1b9fce4ab38a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_routes.py",
+        "sha256": "b43d52d4e84338a1fa8690d986e259568982fd7b8297f2513f86ef50e4b76ee4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mailbox_store.py",
+        "sha256": "563a48759146a36d74b7b6373a0cdc89fe0742cbc04eaa214ec9aa6006206742",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/manifest.py",
+        "sha256": "865aa78a1550891bb105e4a0be650030e4f8096781aab5b31382551c09b19872",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/mcp_server.py",
+        "sha256": "f3ec2012559e21738b32cb4d628417b3b41276083d00a81ce6e4946184f38f14",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/nas.py",
+        "sha256": "740f5f7dd17130566be012af399d87b57f6f6d2ae9cda9f021416dcea02a61eb",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/node.py",
+        "sha256": "69a536e9fa0ece7e85604d3eaa0cd627ae79b26b08735fe2a226cf62ecebfade",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/node_auth.py",
+        "sha256": "0200d43e28cb6f116127b9a22e24ba7ac741e982917f4f6b1b07fb9801862233",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/onedrive.py",
+        "sha256": "bf2baca9b87986ae7727951da81f1cb049acbe761beef18736b4c15d468fe5f0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_http.py",
+        "sha256": "468c7bd17609f18d8f3186355bee0bda5401bfd9661491d81d99482127f7ab57",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_transit.py",
+        "sha256": "9889f48d5bc48b24c08743f31132b0777b288e0f89a0c67049bd248d3d78eca0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/peer_transit_service.py",
+        "sha256": "36b8b230956e0720d71fb7dc34d8a505a6784fdcc1b0708546c6fb7fdb1041f8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/personal_space.py",
+        "sha256": "ba5bf56a480dfa966afc83564f86e52d479111c8ea054009c791998801998c2e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/personal_space_routes.py",
+        "sha256": "eade5a1808941367a60a364dff203e2a5e60549687e1da3ba2a4221347f8c9e0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/private_permissions.py",
+        "sha256": "2042a18460bd9b1527d01bb9773cfa025129bb28f2857706a00740dad7d89661",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/provenance.py",
+        "sha256": "2094d7b1fb2f688f89a97768b0d34f99ec1564ca1ee8c5f07331bc1dc83eff09",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/provider_gateway.py",
+        "sha256": "f0923e80202187d6836eab51ddea926c58fdb5d93d8d3d2a5a1eef76108185cd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_evidence.py",
+        "sha256": "f8cb3c5a18a59f75906be56385f3922e456f7f23d8517bbd5a6d1e588d4544d6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_profile.py",
+        "sha256": "7820ce2b8cac5f55997bace90ba0138824b8fe362ee67f66db4862a03c40cadf",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommendation_service.py",
+        "sha256": "af128e9299fd3f8943bbe538c93553f88ea3c95a5b3f35eec2d50dd4b4baf35c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/recommender.py",
+        "sha256": "59b1630f8b9470822109161f2152cd4aea5ade05f09358128e0943fa6e2658b8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry.py",
+        "sha256": "043240d64199182e79e15e73dee5af2c2848df9ab2cbbbdf0d6be1444c3b88a3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry_http.py",
+        "sha256": "b382fa72a894266066a9760c3dea6a783d350775657642bf58fea8726eba3ae2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/registry_resilience.py",
+        "sha256": "2dacc72753cf51639957989c38224699b5e69f13071a4e994904a6cd69d98372",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/relay.py",
+        "sha256": "ff5e714845e6783de2a69c51b7d3d40c92c599dac4fa28e039345b437393b1ca",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/release.py",
+        "sha256": "2706b5f96cb056e6d39925dca9c5df43615cb90fb9fc665704c0ca14c79304a3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/safety.py",
+        "sha256": "5433cb260a196fb09d97613e212d5c57239ffa76ca34678ab3ffbf772f6ba146",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/settings_store.py",
+        "sha256": "186c3bc6a9f15e380e85f7881a44b77bdc19bfb696eece6c5179b39fc3a5eb03",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/signal50_media_ops.py",
+        "sha256": "c04276468d6b67947654fc07ee59e9e7f5965a62bf6bf7183bfeaf66ee85654f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/signal50_service.py",
+        "sha256": "c77a32106171f91ff9141490782178530f326c9d3f974174bd1c26b79d1d56c2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/store.py",
+        "sha256": "f3d5bc47854eeb01bad3d2a47b58e3466a34cecc8591d75afb2579cde2f2b054",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/synthetic_content.py",
+        "sha256": "bfca4c317fee00694622e7726e45de9e7ab527c740e139e2b7f8b6b8e9c1ac8d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/transport.py",
+        "sha256": "dbc3b13b0e2fa967c84d1977993d8d2d82289ceb8630b8eb253e901a6b864f08",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/transport_plugins.py",
+        "sha256": "3d501036298b3c38b8281f2c2c47e0abad1d36dad7fb271a02c99844f8ee5c36",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/types.py",
+        "sha256": "f736f156f0796185d227bd62ee1a4f300d236e1368c838fe4ecc7788f49f1d22",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/update_state.py",
+        "sha256": "5ce77a7d9fdc713c360f98e59a203401acc28bd962c33128179c80e5adfe59a4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/__init__.py",
+        "sha256": "9d7282e519f8cef46b041c7ef2f960da40d187fdbe4ba8e0f94a8e53db74b8db",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/bridge.py",
+        "sha256": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/budget.py",
+        "sha256": "ab63cc42cb4ce1485e14c4ed80afe0697398a5c92a6f0ab2af05ffbac50815b6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/checkpoint_refs.py",
+        "sha256": "dff738813f221cf8bfa5227cd8985f112dc167db462c9d9b825dcecfed453981",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/cloud_resources.py",
+        "sha256": "1272d5fa99d570cea380d6ad47613b92e5e12ead0ecddf41e6c0b9407939d8c7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/control.py",
+        "sha256": "7908c9decc9cb7121ff6eb30e62ac509cd3250c35f5c3bdb80ae40f96e398a3d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/credential_control.py",
+        "sha256": "dbf319e3ddb1990bcfffaa6eb6d04bff8b9bf84830bf1834c0920a0e6522a7b1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/default_model.py",
+        "sha256": "c0d32d400756411e7ddb817fcdeb5444c6497222109967eb4a924430715caa5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/diagnostics.py",
+        "sha256": "eb8978f8bd15e56b9c3b0f1dd2118025ac840bf5b65be1ece3347254fd73ada1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/evidence_semantics.py",
+        "sha256": "cbb44fcfa0e223cc7c154a1d200d068bd9b9cd2d545768154af6da7aec2e443c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/knowledge.py",
+        "sha256": "9ec1499b441e6b791755f5a85d1cbb81462522c38b135d8054483a561563b534",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/lifecycle.py",
+        "sha256": "878e0583d8eb0f0bfe2d08204f1af691030e73d99009849c08485558a7cb3a5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/model_switch.py",
+        "sha256": "918ae0b65605c60eabd0cfa23e33f6999acd6d99fb6f5f65127aaab9fca5f103",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/models.py",
+        "sha256": "4efd69901c1d162d73f0bc554e947d4a7b649b6bf6c0075d30001087ffb339b4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/observation_transitions.py",
+        "sha256": "880cdf04ae73928a4eef904295eeff1165dfdb2b85897c0323008f1b9e231023",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/operation_ledger.py",
+        "sha256": "43541b405cdd0c109515e486973cf370921c09269c5f3054687269e0cb4133c0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/operation_permissions.py",
+        "sha256": "295835e2a7405f06566c7f9f5bcf53366bd3d87a8ebcb8790af55c99c84a4460",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/output_policy.py",
+        "sha256": "fda6319d3e5fa1aeae3f1b4b6840f3a0ab61d14db02b94328dc260b6dfa1620c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/prompt.py",
+        "sha256": "be76a77923418637ba6897f533adda509baaebd6c70b277f73e43d32760efad2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/read_verification.py",
+        "sha256": "50b357c1509deaa97aa997f14eee6769862df83bfe601925b049cfe874047eb9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resource_documents.py",
+        "sha256": "23a1b4fa5b04c706daa6106bee6b97688b312315d536bfcec835a177b5d9d65c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resource_writes.py",
+        "sha256": "df558d4bf180962a9e9f8bf9a998e0071bdea25f7cb705a06d99ac2777f0b452",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/resources.py",
+        "sha256": "b3f1766259b432645e007502f7c17e960b312fe9cf2313dbd6b9536080d70b95",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/results.py",
+        "sha256": "1be1e25bedf929b77c2212531d88e34ede498c9d75a41603053584c1f1afdfd5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/routes.py",
+        "sha256": "bc1a1c33983faddc01741166e336cae7c8550dba48df3b3f13f1be586dde618f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/runtime.py",
+        "sha256": "af0bf85149cd5afd8262a295476a32196d746b99e13f2b3de20bce82f47a0612",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/sharing.py",
+        "sha256": "16169cc3a99544156415ca758634cef088bf24119d65e3c1da0ab3debf5bc5ad",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/source_drafts.py",
+        "sha256": "ec073c0acb2fdb7b2a733c713af42d09209a709f6021c320b94c75bd529f9b94",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/state.py",
+        "sha256": "a7db623a18e4b074d8acb685d89e5fb8c00b3098e53371b8ab6721d47e5788a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/store.py",
+        "sha256": "77968d51d12309db2965c78ee50382e4294fa7f980c80fda31c6972ab72f81c6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/tool_menu.py",
+        "sha256": "57ac3f1b8f23171de94a0795efbaa6871c6f805bd7fea92eb0866fc1602e3a7d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/tools.py",
+        "sha256": "505368f9c7a10d461942c4ce522c3176ce1d4074519717cf9993955c69803668",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/agent_runtime/verification.py",
+        "sha256": "e529df17c19113ca52c670fc947c568c246e72b8e1609afc19d9b4001f8d02c8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/__init__.py",
+        "sha256": "6de3725eb9f24513fa6d770e5cdeddf8e49240b96c440b64068d93776a923bb7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/catalog.py",
+        "sha256": "cc29f2be5411c241904a5040b0fb61839c03a114cabaae06ca34b0c1594e2247",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/routes.py",
+        "sha256": "a1f9824f153b16ec234a4cb459420cd809f29ece27675a17714310f030f49697",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ai_access/store.py",
+        "sha256": "ca067be85d368da812c5a5692e859d188a7de4841b1179c2b3c69038f3d63637",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/__init__.py",
+        "sha256": "6fb0b0e4bd74b38b067b9f4edd66e202ca6ca2b8e93d3bb0d708fd05b30fe152",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/cleanup.py",
+        "sha256": "0316ea530188814fd18c0d618ebbb51a88e04c405f1e5a99c5e2284977f66e8d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/cleanup_routes.py",
+        "sha256": "3da631d2067ef0fca1420679c39ac5a6e754e9ceea93a633ea11e32924c68854",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/context.py",
+        "sha256": "a1bbfa40f17dc3f85c88974f49edd266b6f2aee9c267bb22e89e20ff83b92a6d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/privacy.py",
+        "sha256": "fcce454392e1322b6a94ba2aaadc7b964a9276dcc14ce7f6f2d84ab54241e121",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/routes.py",
+        "sha256": "c3ede0d6d07c3a698d0b8b2b1454382c27418446707e4aa74532829f3935c731",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/runs.py",
+        "sha256": "9604bb1cdd65e24f364d41fe2b4e1c1a6722f1242520ed82e3a19ae1b7fb2cbc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/ask_ryn/store.py",
+        "sha256": "6760632fde78b6929d5e37bb272ce1c20810c15e6dde01f056b2a18a49ff3d42",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/__init__.py",
+        "sha256": "a864651f31631dd2a94eef3ae713b96eb08aa6bbfccefb3ff2cc488c06307b62",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/adapters.py",
+        "sha256": "65599a2c8e8b06a12f31e381b6d9096a0a15ccc6388e4aac3de3a7db22cfc3fc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/routes.py",
+        "sha256": "3d6e04033a5d76ed065c729667dfa035e33fb9f661e43c493dd731f4e82d7e58",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/service.py",
+        "sha256": "1b420a77d02e6276c1f15a2a9c6d73caa33bdf2f0bd27eab9be2559276ce272d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_erasure/store.py",
+        "sha256": "f867fdbc5bac059ab4ee41af2b741f195053ad8ca00fbcbc81cb5d8b542bf49f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/__init__.py",
+        "sha256": "67e0e9ee0c2a2bacefb4c79b86c172b56f785fb1005dd399ae5e22aa2c2caa65",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/conversation_bridge.py",
+        "sha256": "683e6cc302cdfbf7655cf08bc6e50c5bc9e64808673a371c60915de80792a24b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/conversations.py",
+        "sha256": "5e3d21ab77c2ca83c76dc592bbd6b5b43d3f0ab9de67e076b61f37b065ab12dd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/diagnostic_budget.py",
+        "sha256": "9fab215ca7f5d05de0b5e9f0347268b76ba9eee00ca63d01289d3abfccb1e343",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pair_crypto.py",
+        "sha256": "81711e878da3c23eabb8da92022464ef86c96736c6ebcdf602c52411b70fd577",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pair_store.py",
+        "sha256": "3d7e7c8752b688b9f8b3806a92dad31848f9d84a63930bc5c70416aa56263e9d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/pairing.py",
+        "sha256": "90e9314e811c1af5539a7bad3a32525369d6d497d0fbbf279af3c2ea09a7fe7f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/reading.py",
+        "sha256": "77630e193991c6eb1bf15f24a39eb985f0c53d1b4f8c424c966e8b7e7968bee2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/reading_bridge.py",
+        "sha256": "2e2fcd5677fee1dcfec09bc5c934f326663ca18f27af8220aa1324246e88d2ef",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/records.py",
+        "sha256": "84e27ccb9f7a72d86a021b467aa50f944737e1410db2b7b3659df281fdfe0b5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/routes.py",
+        "sha256": "b96e2be80993ef5b03019417ae2732ebaa61aa1a873903ae115dec3a5655c8c9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/store.py",
+        "sha256": "1270b331cd7acd5211d051b72422038a4a3d6b3f520a7ff79d76ebe120baf5da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/device_sync/transfer.py",
+        "sha256": "8cad3d66dbd24908461d650e6e7624c4963fcf048d3ae21588c8f7deb57182e7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/__init__.py",
+        "sha256": "d557066ba66f348a7501175d86392f0453306a87aca3dd4478ce0a0e0f69cf8b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/cli.py",
+        "sha256": "66e61c2516c606443a91c0602c138333afb7f38c718862df4fa5811978d2e99b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/ledger.py",
+        "sha256": "39d9c734ad065ec409688355f98e1215c8dc312ab1f59987eac3e895848462fe",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/legacy_v1.py",
+        "sha256": "b2fcceb1fae92daaa373e951bb5fbf8b0efda31074bb9af625b4cba08523e131",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/protocol.py",
+        "sha256": "9ff4f280c5e6a55d43be5c92237d70063a3890aee024f587a822b94a122389d2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/routes.py",
+        "sha256": "f7d4857a201a2f3c7da338e9ced22a01e4db84e0933322212bceb43ebea8b4ba",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/exchange/service.py",
+        "sha256": "2b3dc6f0e0ce9e7856e9721426c46beeb422237e25169b125c5019eeaebc194f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/__init__.py",
+        "sha256": "658384fde93972a007bbe46da58979c1782cfa454ecc5597e0dfea23d61df33b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/cleanup.py",
+        "sha256": "d93f06742f2cb0e6c9158c731bd02b76a11ed8fe214aacf0b09549c38947a508",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/routes.py",
+        "sha256": "6ccedcb0d5f3f76e29ec304e877208132f600a86ce1df24826a4256488bc24d3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/service.py",
+        "sha256": "85b8665ff9513522447c97a3f466575bfa15e2b4981854df8c5fcaf399392d4d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/store.py",
+        "sha256": "5c04afa0d935fc82a72eab10c097c81346008421cfe4da9c6bfa519e9470d3a6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friend_feed/weekly.py",
+        "sha256": "8356a7bb57583e8f0f5dfc12a532f3150b2b8c84a667b6431249f3c595769185",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/__init__.py",
+        "sha256": "2952b9cb769ecad85c4237c8381eb51f6b08d6f277abae6a3196eae08cf7f207",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/card_cleanup.py",
+        "sha256": "0d3de9d7c35919e218c2437989710dc7d454ff31c0ee8753e0c965546655da75",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/content.py",
+        "sha256": "02c29ebbd182567209a3c2854c0167b36963fb224151a64deaa040131b395fc4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/crypto.py",
+        "sha256": "ae50f00c3bdc392501c536cbe26b517d47a0f98be79abf9d82d1dcb15bed943e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/diagnostics.py",
+        "sha256": "d455426896378e500b0a30ae06cf855cb6b133d9680ec84e2ad0a65d3714d6d1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/mailbox.py",
+        "sha256": "389b2aaddb1104d086f2ebd75fdc7dcee619465a4d9e2adbd9f43d5fdbbd1868",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/routes.py",
+        "sha256": "61f2bcadafdf41922e3b1bcd3ec280685e8409a66bd4089b293c9ef3bfb0c2c1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/service.py",
+        "sha256": "a45dafcb1ff81d7c72eeff36d197a668b1abefabd4cc9c7970885994cba30e7a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/friends/store.py",
+        "sha256": "ad555307dd972594c82c9b79e6dbc45f8daeea61ecae55bec900c77f6d593d04",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/__init__.py",
+        "sha256": "5f48fff57b1b23e343c018790954cc663d85b4071bd005f48fa619176b8eff7a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/adapters.py",
+        "sha256": "0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/api.py",
+        "sha256": "9c8342e83764a33f41b2b676cd2c2bc86e27e5e044076ce3c2f304be9835543c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/api_formats.py",
+        "sha256": "ef7c3db7f16fe30cedfae36f329e49b21eef73b3f8e61299da1c35023fe70a0f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/catalog.py",
+        "sha256": "b99ffca4e736cdfb1158d377bb36bd8aa2208b81f851de20084e7a8b54b0023b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/chat.py",
+        "sha256": "1a9b6bed715727555b05bc354a7016c41286f0e7fa72a11ac956404de5aebbab",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/chat_prompt.py",
+        "sha256": "f76f1c4a111540a7fa97997862926a6518946f0506651bea0aa34941c2efbd5b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/cli.py",
+        "sha256": "bef2c3b9d31c9edd2461c7f8ffbfc8ff5204bcf390f9ac5f801446f3e3f103b5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/cli_adapter.py",
+        "sha256": "916cc3af333df8b09f1befc1149b8d24b51274b063e45d6c40bfbf8860ec5145",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/codex_session.py",
+        "sha256": "aee110117df3a1e937f19e7483c54163fcc7183abfb0ad822e413b6833ce9d2f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/connectivity.py",
+        "sha256": "322077d5fc2c8f4d321adc6b9c01778d8f38f4574900a8695c3ba50af91e3422",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/consumer_commands.py",
+        "sha256": "81ad060b4cb1c7f5e95093c6d5b69738bfa40099af161e91b1996316254acd87",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/errors.py",
+        "sha256": "86e340764ffbd4045aeebfb7e04e3038a8b1b2b018288efc04b18fb65469b1c7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/gguf_import.py",
+        "sha256": "96f83741203b27b417979a9c0b32523e8d3c06f65e31166082037e5b3e03106a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/hardware.py",
+        "sha256": "bab06989987d85899f064070a8fa6c3730556e156b7bf1feedc21fdaaaa1f835",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/https_only.py",
+        "sha256": "1d85983508d518e6517c526bbd3801d1a303c4c37cfa4c360ceb75ff19f31e0b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/lifecycle.py",
+        "sha256": "9ca50d2273846e7dcfc31cfb9a06686b4cdc8b9f8c694d5643f5c628fa7f7536",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/manifest.py",
+        "sha256": "c69839b1e745031c3b3c2a5c1efaebe429454f0acc739cf0b66f9b700df6263e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_dispatch.py",
+        "sha256": "69d6817e5c094523b0970745787a249fca3bbb91515187b8f8540b9c3a2dd8b4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_download.py",
+        "sha256": "4f2dc673200673e880e2e015147e36ed6a10277c8194b8d352dc3576dc6199a1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/model_settings.py",
+        "sha256": "09fedeced91651edc6b25876d76a286cf6ba1a1bad9c4d483d8902046f2ff73f",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_model.py",
+        "sha256": "20573370473ec8c684b18963de939e2475e78d02675e7196fc338310b3f24cf5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_policy.py",
+        "sha256": "c7517d4f38b1b856b54e4a32db29ea527d641ab48d450638eaf2887647369053",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/native_worker.py",
+        "sha256": "a15fe1138c17598ea5d5b70d175605660e923fa6b62da71c6cf12c585d77ee90",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/p2p.py",
+        "sha256": "09bce3ff3445b740c20f9b83546aa580ba1707d92f92616c9137763aef8e58fa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/p2p_session.py",
+        "sha256": "109384737f448ff4fd832bd4fb95dafcffcb7d19885372c06a000de2bcb792d1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/peer_binding.py",
+        "sha256": "6546519d104d18ae75181320ae05c2efc3d5ae8f4a62281a45185474a2ea4f66",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/privacy.py",
+        "sha256": "deab7334961c888cd703c5f199ad876073752fd05edcdd84c637ef1ac4cd1e5c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/process_guard.py",
+        "sha256": "231d67d98ffa5e177cfb32eb7ad2f281e2a99b85e8793b6760de5a50543f733e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/routes.py",
+        "sha256": "1ca077341fffbe8e5cdc40fc6019983a6c1d2aac7c9a97530cac1d0e0955ae8c",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_docker.py",
+        "sha256": "19ac5555597da3636ffbeb1b195f22620a4c868058b11a9c11b7628cf5abfd95",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_native.py",
+        "sha256": "f82cef8cd994c6595f687bd62a4d652496abb698cf0567fa7aa60c3d96d7a015",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/runtime_native_install.py",
+        "sha256": "eb637a12ce21330c16ae391a46f335b21c85e52fdc962aa64cd048e6e180bc6d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/safety.py",
+        "sha256": "58b32e3bec845aaf1a43b570b815f9a5ba26a1d25b93ec85612cc412d80f9246",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/setup_recovery.py",
+        "sha256": "82aac75d9e66af71edd506ab0d8dab9fbb35c70b852f112f64d3e33c2ec81a38",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/sources.py",
+        "sha256": "01e4f481d93c33e1d54d832fcf4b8cb088a2a514384bce20275d098086432efc",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/space_catalog.py",
+        "sha256": "95ba0a55aa087722b1ca0722bd8441a1377f1fbf1e4590e90e0688ab20daebd5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/stream_protocol.py",
+        "sha256": "39d9fb6ae026381afefc4fc6356d8aa890a2f013b353ad66c2691ae07b94f197",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/streaming.py",
+        "sha256": "2ebacdfcff3777cd1affecc2f35c76f91f1d57c3428461671786d87e415a18de",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/task_balance.py",
+        "sha256": "169c5036dfebce02cf2145e27cc6f9cd75e3cc651557c99ecaafe6f798422f14",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/task_protocol.py",
+        "sha256": "570f6cdd19501372f9c8eded98c1d8c5fe70f87514b19a1866f15e4fd22bf0fb",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/test_adapter.py",
+        "sha256": "cc8f3c93b030f55beff3b5e976bde4eaab33fee4d302d0fd98ecc6473ccbdb8a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/llm_package/tool_capabilities.py",
+        "sha256": "278a2ce30eddd79145ea2df6ebd62e817e0d714bdb84d78b292f96aafdee332b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/__init__.py",
+        "sha256": "222625beb90bb0414a57d973568068795505860cf3cffd2e91325f12d7b99992",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/index.py",
+        "sha256": "7f3c809bbcb96543d76687a9e4a2469f8ad7dbdee53ae8f807e45269cf1c26ad",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/routes.py",
+        "sha256": "e2791be92bc5c058003f633fc3f27e8acdd0f7cbaec4e4795ddf17d43c19f229",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/local_search/sources.py",
+        "sha256": "b575a7541e6b6d4cf256d2ce980e4589f09ee942ba79ebf52ef4c1fa7a48825b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/locales/cloud_drives.en.json",
+        "sha256": "5666f7d75b6551330336960585e5778b757d034c2e464d13058bc61c72e6da01",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/locales/cloud_drives.zh-CN.json",
+        "sha256": "d31ab7fe851bb93f49e3ef4bcdc29df2545e31364dee6fe22115994b7eefd375",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/__init__.py",
+        "sha256": "5bc5b63fe19361534bfa846360c1d10656f0cb439e00ca826efa8c8e4463c3da",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/cleanup.py",
+        "sha256": "380682e4445d12c3b0da0c31ee3810540f3705362d12cdda3dbd4e3d3548e372",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/fetch.py",
+        "sha256": "11278f684e367f16a8df4a67f5658d601a5a3b1ecf4e2cab78ac7d2c7c7b2de8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/routes.py",
+        "sha256": "6c7c48b3bde55cb742928866b3bb72ff6cb8074ddc8ee656b5280247e92601aa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/service.py",
+        "sha256": "7952725f88b0e7c9f686f06bffa5a2b2030dcce20d2e877cafa4244a8b07bfc6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/offline_reading/store.py",
+        "sha256": "dd4f14b93e1f0a61caf9ae2a94611390f1a9866baca60daefa500a4198ecc74b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/__init__.py",
+        "sha256": "8f7f7a9eccb0f7795f54de2401c3bf768ca0169d22d0a8b937ea772af8d6ee3a",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/archive.py",
+        "sha256": "76cece5e2caa0298721544a7a90b124ad268e490366665b858615615656255ae",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/routes.py",
+        "sha256": "7b40d18a8bb599fc8e88c1abd3f22e11f494c1f261eadcb3a8949f89249f6d7d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/privacy_export/sources.py",
+        "sha256": "44180dd66268518a8a0fa636f4a15cae744e7678abb39bab814d963bad5769f2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/__init__.py",
+        "sha256": "189ef974b75db21d5bfc808c65b7022f20da8cf520d18ab8fab099441ded011e",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/_base.py",
+        "sha256": "1e1925a848e498e10c15cdadf81c86372c2d93ac76ae0bf4f9d863614ae05b0b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/ask.py",
+        "sha256": "21351f94063a36437adce8046591399552124ed13e2fc828656b5e9290829660",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/assistant_audit.py",
+        "sha256": "4a9bc9d226f4595ecb95844da92aa7025c3611d82d471074839eab69dc71a408",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/client.py",
+        "sha256": "a62fb79164188faad7023731ff61219dca67a63232ae89672108a9d8ccfc4882",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/consumption.py",
+        "sha256": "2a5c16a8bd8d342a37ddb9dbad1b5eddda704335e2b32a9a403d03d78f078a45",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/digest.py",
+        "sha256": "9390c91fd98d25079ec9efd0273508bafa2b4226514e3cedf43370887ddbf0f3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/document_extract.py",
+        "sha256": "d161484c69ab439bdb5bf88c92a915c93523bafef5175b47482023fd343c0cfe",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/document_extract_child.py",
+        "sha256": "3189d8303a8c828a17f36fbb032a35d3d3d3b29255cf49a917847aac8c59b926",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/egress_control.py",
+        "sha256": "5b8763c7f8a5eae46bb1e6066ccb60569a62e68abb7c66a1b70c6e3dbac8b3b5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/embeddings.py",
+        "sha256": "54710086b1a39dc02f357dc52adc6c7554bc2ff5b0428edef75b2c83a5ebabb8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/first_success.py",
+        "sha256": "9fcc71ec93d66eae6e8d79b53365fdb70d7480bdc560a0125cf08ea18f03b2ab",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/image.py",
+        "sha256": "fe648bf55268a4e492b15a2d507e1ad1fe0fc0d6d174ddfd53834604aabdcfb8",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_cleanup.py",
+        "sha256": "35a3337e8214d49956fc8373ba459ce336efbd56809f0937f74917dc45e9c9f4",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_cleanup_routes.py",
+        "sha256": "23c8f57e39b7488dadb36467e16ebb30fbf29f983f1826c5033ee6db8820b145",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/library_imports.py",
+        "sha256": "7c80731d0aa7337f41501a65ed3f70881972ad972c7a2536205df810da43493d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/llm.py",
+        "sha256": "dce70abd95449a90565b50a612c3543696c6286a1b36e9df6fc2aa3573f974c1",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/messaging_store.py",
+        "sha256": "0c9d6c1210f0551cbe8e4e957d2ffb8b0de3323a666281beee3f4fe8b3cac7d6",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/model_provider.py",
+        "sha256": "5edb49293dcbbe0c73136ad9a08aaeb46fa429fc092e9172ccde1df8168ed1d7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/net_egress.py",
+        "sha256": "d451b9cdda5b12ce35a67443b1e2ac5709633d0c261ecdc5312f33cb97f872d2",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/net_egress_client.py",
+        "sha256": "72ccf1aef21187f159a9c8d57d726aa0fea22e0b95f36e93c7e1dbd7a3c2d2dd",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_box.py",
+        "sha256": "2e55aaab786b8769efc41d4db9be3cefac724cd52213a6286f1f7fe9622644e9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_health.py",
+        "sha256": "df13150d17ca51633b8b90d50c6c5fb3408a6397d85db4b8420140f4554ddfc5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/peer_messenger.py",
+        "sha256": "66cc1a00f5e1ff0907cb6b877695c72d0de92251ef2116bbd7fe97fa67c013e9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reader.py",
+        "sha256": "0787f1ffcf6d662ea8e33f8a2eda989976969b9b0546a661ecd6db0482c251a7",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_cleanup.py",
+        "sha256": "7e30dfc3032c63d675cc3072b425ae452b7d988f43cedb34ac4615b6fb500b43",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_cleanup_routes.py",
+        "sha256": "5bda580f8c8cbdb321964a0e4ee884fc5230bc851ececa0f2865d854e0918bb0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/reading_privacy.py",
+        "sha256": "148fca026287019f7d8cdf941fbea32f57a55cdbdc376ed8963824f1ac16e0b0",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/recap.py",
+        "sha256": "8fa9db66e3f5ce05a6b7cc2712b5a11c920049e3fb9ad59cc6880a652d7910e5",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/rynmesh-vpn",
+        "sha256": "f41cdff54ce358fcef15cefd48f259141175a956f0b05da21a4e7b21d6e384b3",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/updater.py",
+        "sha256": "d8374ee94410c975151d3a8f9e50d282f986d3c074a9457dea4c9a3d62d3adf9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/services/vpn_cli.py",
+        "sha256": "1c61551c693e43a52bef3c5d6c61d0e7bebea6acd412c2d3107fc0561b1940db",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/__init__.py",
+        "sha256": "e74e91e9921cd2499f673d6dfbfdab20980908656fc3c927b730e163e7ef6352",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/routes.py",
+        "sha256": "77d6ea88818fb5301f8eb075d82fd2d292b55ed442c6ccff65373a36800378a9",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/service.py",
+        "sha256": "83b92418fba19e97ab777334cefefff956ef49f1c21d2782f474be0795da3e74",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/shared_reading/store.py",
+        "sha256": "6aa5b614f09f37249b49484b4d94dfd766f30911b723cfb06a47a289e5e8eeaa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/tools/__init__.py",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/tools/publish_release.py",
+        "sha256": "cbb7c16d6cbb8b26a7c068505816e87b5729f12dc173d80224e755dcaec82c49",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/__init__.py",
+        "sha256": "3509d26a45ae4e2b543f533ec2790d438ef8080ff8d789cb94e5f8395e6d5eaa",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/backend.py",
+        "sha256": "25f100c9a42d95691701b03cf2f77f3307fbff05b39699453b1461f7f24ae53d",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/cli.py",
+        "sha256": "203eb436543d413abd54f40dec3034b251bf8702873075de4a811c086d6e082b",
+        "matches_wheel": true
+      },
+      {
+        "path": "rynmesh/video_package/service.py",
+        "sha256": "326930949b72caa6c5dd6554d038d66f4fa5e49aff48ea5f06da771b640d028f",
+        "matches_wheel": true
+      }
+    ],
+    "dependencies": [
+      "PyYAML==6.0.3",
+      "aioice==0.10.2",
+      "annotated-doc==0.0.5",
+      "annotated-types==0.8.0",
+      "anyio==4.14.2",
+      "attrs==26.1.0",
+      "certifi==2026.7.22",
+      "cffi==2.1.1",
+      "click==8.4.2",
+      "colorama==0.4.6",
+      "cryptography==50.0.0",
+      "dnspython==2.8.0",
+      "fastapi==0.141.1",
+      "h11==0.16.0",
+      "httpcore==1.0.9",
+      "httptools==0.8.0",
+      "httpx==0.28.1",
+      "idna==3.18",
+      "ifaddr==0.2.0",
+      "jsonschema-specifications==2025.9.1",
+      "jsonschema==4.26.0",
+      "pillow==12.3.0",
+      "pip==25.0.1",
+      "pycparser==3.0",
+      "pydantic==2.13.4",
+      "pydantic_core==2.46.4",
+      "pyspnego==0.12.2",
+      "python-dotenv==1.2.3",
+      "referencing==0.37.0",
+      "rpds-py==2026.6.3",
+      "rynmesh==0.7.0",
+      "smbprotocol==1.17.0",
+      "sspilib==0.6.0",
+      "starlette==1.6.0",
+      "typing-inspection==0.4.4",
+      "typing_extensions==4.16.0",
+      "uvicorn==0.52.3",
+      "watchfiles==1.2.0",
+      "websockets==17.0.1"
+    ]
+  },
+  "existing_wsl_services_after_install_and_tests_start": {
+    "personal-api": "active",
+    "mysql": "active",
+    "docker": "active",
+    "frpc-personal": "active",
+    "apache2": "active"
+  },
+  "additional_udp_rule": {
+    "name": "RynAgentAcceptance20261010-ConsumerUDP",
+    "program": "C:/Users/ziling/rynmesh-agent-test-20261010/python312/python.exe",
+    "protocol": "UDP",
+    "local_address": "172.16.8.82",
+    "remote_address": "172.16.8.191",
+    "note": "forward-slash Program input initially rejected; resolved Windows absolute path succeeded"
+  }
+}

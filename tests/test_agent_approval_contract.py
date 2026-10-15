@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose_on_create
 from test_agent_atomic_sharing import seed
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
@@ -16,6 +17,7 @@ def sharing_runtime(tmp_path, monkeypatch):
     sources, access, sharing, _, args = seed(tmp_path / "node")
     tools = RynTools(sharing.app, SimpleNamespace(home=tmp_path / "node"), sharing.services, runtime.catalog)
     runtime.tools = tools
+    expose_on_create(runtime, [NAME])
     writes = []
     original = sources._write
 
@@ -49,8 +51,8 @@ def test_write_proposal_exposes_contract_stages_exact_approval_and_cannot_run_ea
     # Assert the contract actually reaches the provider, not merely a constant
     # that could be omitted from the transmitted system/tool descriptions.
     system = model.calls[0][1][0]["content"]
-    assert PROMPT_VERSION in system and "waiting_approval" in system
-    assert "no write executes before owner approval" in system
+    assert PROMPT_VERSION in system and "confirm_changes is the user's strict mode" in system
+    assert "External configuration/access changes retain their host approval boundary" in system
     input_tool = next(spec["function"] for spec in model.calls[0][2] if spec["function"]["name"] == "ryn_request_input")
     assert "answers never authorize writes" in input_tool["description"]
     advance(runtime, 2)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
+import { useTranslation } from "react-i18next";
 import {
   nodeApps,
   type Field,
@@ -193,13 +194,17 @@ export default function NodeApps({
   standalone?: boolean;
 }) {
   useUILanguage();
+  const { t } = useTranslation();
+  const [params] = useSearchParams();
+  const requested = params.get("app");
+  const initialApp = requested && ["resume", "recruit", "desk"].includes(requested) ? requested : "resume";
   const { client } = useAppContext();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [peer, setPeer] = useState("");
   const [apps, setApps] = useState<NodeApp[]>([]);
-  const [selected, setSelected] = useState("resume");
+  const [selected, setSelected] = useState(initialApp);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [action, setAction] = useState("create_resume");
+  const [action, setAction] = useState(initialApp === "recruit" ? "create_job" : initialApp === "desk" ? "create_ticket" : "create_resume");
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [review, setReview] = useState<Preview | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
@@ -393,7 +398,7 @@ export default function NodeApps({
           )}
         </p>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{error === "apps_plugin_disabled" ? t("craft.errors.plugin_disabled") : error === "apps_plugin_unavailable" ? t("craft.errors.plugin_unavailable") : error}</p>}
       {(intent || pending.length > 0) && (
         <aside>
           <strong>{tr("Saved operation awaiting confirmation")}</strong>

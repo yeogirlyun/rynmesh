@@ -33,3 +33,10 @@ deploy/env/*.env
 
 # built webapp folded into the package at release time
 rynmesh/webui/
+
+# Rust build output of the native P2P transport
+native/ryn_transport/target/
+
+# Local delivery packages, source snapshots, caches and runtime identities.
+# Acceptance evidence intended for version control lives in docs/acceptance/.
+/output/

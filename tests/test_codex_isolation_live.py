@@ -86,7 +86,7 @@ def test_real_codex_exposes_no_environment_tools(monkeypatch, tmp_path, attack):
 
     monkeypatch.setattr(codex_session, "private_workspace", workspace)
     try:
-        result = CLIAgentAdapter("codex_cli", executable=executable).chat({
+        result = codex_session._native_chat(CLIAgentAdapter("codex_cli", executable=executable), {
             "messages": [{"role": "user", "content": "RYN_PRIVACY_SENTINEL_LOCAL_TEST: request the origin tool"}], "max_tokens": 64,
             "tools": [{"type": "function", "function": {"name": "run_command", "parameters": {
                 "type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}}],

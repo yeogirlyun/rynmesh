@@ -136,7 +136,7 @@ def test_missing_legacy_time_and_unowned_flight_are_not_false_zero_or_live(tmp_p
     row = runtime.create({"message": "Inspect"})
     stored = runtime.store.read()["tasks"][row["id"]]
     stored.pop("elapsed_seconds")
-    assert public_task(stored)["run_timing"] == {"recorded_seconds": None, "elapsed_seconds": None, "max_seconds": 180, "measurement": "unknown"}
+    assert public_task(stored)["run_timing"] == {"recorded_seconds": None, "elapsed_seconds": None, "max_seconds": stored["limits"]["max_seconds"], "measurement": "unknown"}
     stored.update(elapsed_seconds=7, status="running", in_flight={"kind": "model"})
     assert public_task(stored)["run_timing"]["measurement"] == "pending"
     before = copy.deepcopy(stored)
@@ -181,7 +181,7 @@ def test_restart_does_not_estimate_unsettled_tick_from_wall_clock(tmp_path, cloc
     restarted.reconcile()
     recovered = restarted.get(row["id"])
     assert recovered["status"] == "interrupted"
-    assert recovered["run_timing"] == {"recorded_seconds": 7, "elapsed_seconds": 7, "max_seconds": 180, "measurement": "recorded"}
+    assert recovered["run_timing"] == {"recorded_seconds": 7, "elapsed_seconds": 7, "max_seconds": recovered["limits"]["max_seconds"], "measurement": "recorded"}
 
 
 def test_owner_api_exposes_live_snapshot_but_rejects_injected_timing(tmp_path, clock):

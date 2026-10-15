@@ -1,0 +1,28 @@
+{
+  "searchInstalled": 1,
+  "discoverCount": 12,
+  "designCount": 6,
+  "svgSearchNames": [
+    "界面设计",
+    "矢量绘图"
+  ],
+  "filmInstallButtons": 0,
+  "filmDetails": true,
+  "disabledOpenBlocked": true,
+  "mobileOverflow": false,
+  "typeStyles": {
+    "font": "32px",
+    "weight": "630"
+  },
+  "searchBackground": "rgba(0, 0, 0, 0)",
+  "reviewSelected": [
+    "cadcraft"
+  ],
+  "englishMobileOverflow": false,
+  "javascriptErrors": [],
+  "backend": "Actual temporary local plugin manager; fixture navigation shell",
+  "tests": {
+    "frontendFocused": 16,
+    "productionBuild": "passed"
+  }
+}

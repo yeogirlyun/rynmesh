@@ -27,7 +27,11 @@ async def body(request, limit=65536):
 
 
 def install_node_apps(app, *, home, messaging_key, peer_id, friends, local_control):
-    service = NodeApps(AppStore(home, messaging_key), peer_id, friends)
+    from .plugins import install_plugin_routes
+
+    manager = install_plugin_routes(app, home=home, peer_id=peer_id, local_control=local_control)
+    service = NodeApps(AppStore(home, messaging_key), peer_id, friends, plugins=manager)
+    manager.adopt_legacy(service)
     app.state.node_apps = service
 
     async def call(request, fn, *args):

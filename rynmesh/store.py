@@ -598,13 +598,18 @@ class RynmeshStore:
         capability: str = "",
         status: str = "open",
         max_age_hours: float | None = None,
+        wait_s: float = 0.0,
     ) -> dict[str, Any]:
+        """``wait_s`` long-polls when the registry supports it (``waited`` in the
+        result); otherwise the call returns at once and the caller keeps pacing."""
+        waited = bool(wait_s and wait_s > 0 and getattr(self.registry, "supports_order_wait", False))
         signed_orders = self.registry.list_work_orders(
             network_id=network_id,
             provider_peer_id=self.peer_id,
             capability=capability,
             status=status,
             max_age_hours=max_age_hours,
+            **({"wait_s": float(wait_s)} if waited else {}),
         )
         orders = []
         for signed in signed_orders:
@@ -614,7 +619,7 @@ class RynmeshStore:
             payload["signature"] = signed.signature
             orders.append(payload)
         orders.sort(key=lambda item: (item.get("created_at", ""), item.get("work_order_id", "")))
-        return {"network_id": network_id, "work_orders": orders}
+        return {"network_id": network_id, "work_orders": orders, "waited": waited}
 
     def publish_work_result(
         self,

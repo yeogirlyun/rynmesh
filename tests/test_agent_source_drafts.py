@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose
 from test_agent_integrations import add_source
 from test_agent_integrations import node as integration_node
 from test_agent_runtime import assistant
@@ -298,6 +299,7 @@ def test_real_runtime_source_workflow_approvals_and_registered_verifiers(setup, 
     runtime.update_settings({"enabled": True, "model_id": "fixture"})
     task = runtime.create({"message": "Configure and test this source with both models; keep them private.",
                            "budget_limits": {"max_total_model_calls": model_budget}})
+    expose(runtime, task["id"], ['ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])
     context = {**initial_context, "task_id": task["id"]}
     credential(tools, context, config)
     approvals = []

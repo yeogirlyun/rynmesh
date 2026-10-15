@@ -1,0 +1,26 @@
+{
+  "agent": {},
+  "models": {
+    "model-a": {
+      "share_scope": "personal_space",
+      "sharing": true
+    },
+    "model-b": {
+      "receivers": [
+        "node-b"
+      ],
+      "share_scope": "friends",
+      "sharing": true
+    },
+    "model-c": {
+      "receivers": [],
+      "share_scope": "personal_space",
+      "sharing": false
+    },
+    "model-d": {
+      "receivers": [],
+      "share_scope": "personal_space",
+      "sharing": false
+    }
+  }
+}
