@@ -1,0 +1,11 @@
+{
+  "review_scope": "Final report against ordered real tool receipts and independent harness state. Original records retained unchanged.",
+  "runs": [
+    {"index": 1, "passed": false, "business_state_verified": true, "issues": ["Device output treated self-process presence as HTTP reachability; no HTTP listener/probe existed in this isolated service stack.", "Final prose says four reads; actual trace has three model-list and three service-inspection calls."]},
+    {"index": 2, "passed": false, "business_state_verified": true, "issues": ["Final prose explicitly claims HTTP reachable and server probing from evidence_source=self. The shared health helper's self shortcut did not make an HTTP request."]},
+    {"index": 3, "passed": false, "business_state_verified": true, "issues": ["Final report repeats http_reachable=true from a self shortcut; tool evidence does not establish HTTP reachability."]}
+  ],
+  "root_cause": "Agent tool evidence semantics and ambiguous model_id parameter documentation; all three corrected raw-ID rejection autonomously before approved writes.",
+  "privacy_scan": {"all_four_original_json_files_checked": true, "configured_credential_absent": true, "private_reasoning_absent": true},
+  "code_snapshot": "Original pre-fix implementation. This first harness did not capture code hashes; no post-fix hash is attributed to these runs."
+}

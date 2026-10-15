@@ -1,0 +1,132 @@
+{
+  "checkedAt": "2026-10-13T08:23:11.357Z",
+  "errors": [],
+  "layout": [
+    {
+      "requestedViewportWidth": 1440,
+      "tab": "devices",
+      "width": 1408,
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "requestedViewportWidth": 1440,
+      "tab": "chat",
+      "width": 1408,
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "requestedViewportWidth": 1440,
+      "tab": "transfers",
+      "width": 1408,
+      "scroll": 1408,
+      "body": 1408,
+      "viewport": 1408
+    },
+    {
+      "requestedViewportWidth": 1056,
+      "tab": "devices",
+      "width": 1024,
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "requestedViewportWidth": 1056,
+      "tab": "chat",
+      "width": 1024,
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "requestedViewportWidth": 1056,
+      "tab": "transfers",
+      "width": 1024,
+      "scroll": 1024,
+      "body": 1024,
+      "viewport": 1024
+    },
+    {
+      "requestedViewportWidth": 768,
+      "tab": "devices",
+      "width": 736,
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "requestedViewportWidth": 768,
+      "tab": "chat",
+      "width": 736,
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "requestedViewportWidth": 768,
+      "tab": "transfers",
+      "width": 736,
+      "scroll": 736,
+      "body": 736,
+      "viewport": 736
+    },
+    {
+      "requestedViewportWidth": 422,
+      "tab": "devices",
+      "width": 390,
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "requestedViewportWidth": 422,
+      "tab": "chat",
+      "width": 390,
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "requestedViewportWidth": 422,
+      "tab": "transfers",
+      "width": 390,
+      "scroll": 390,
+      "body": 390,
+      "viewport": 390
+    },
+    {
+      "requestedViewportWidth": 352,
+      "tab": "devices",
+      "width": 320,
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    },
+    {
+      "requestedViewportWidth": 352,
+      "tab": "chat",
+      "width": 320,
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    },
+    {
+      "requestedViewportWidth": 352,
+      "tab": "transfers",
+      "width": 320,
+      "scroll": 320,
+      "body": 320,
+      "viewport": 320
+    }
+  ],
+  "contextMenuChecks": [
+    "Right click NAS opens the correct device menu",
+    "Escape closes context menu",
+    "Shift+F10 on MacBook opens its device menu"
+  ],
+  "scope": "Interactive mockup only. No production protocol or backend testing; does not establish 100 GB or public internet transfer support."
+}

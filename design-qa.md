@@ -1,63 +1,42 @@
-# NAS design QA — 2026-09-23
+# Agent conversation and CLI capability QA — 2026-10-13
 
-final result: blocked
+Scope: correct the repeated progress disclosures highlighted in the supplied Ryn screenshots and verify local CLI assistant readiness. This is not a pixel fidelity certification against Codex: no screenshot of the requested Codex reference state was supplied.
 
-Web visual checks passed. The remaining blocker is native Windows visual verification: Windows rejects cursor access and monitor capture. The rebuilt client and its file APIs work; this does not substitute for a native-window screenshot. No claim of completed Windows visual acceptance is made.
+Reference: supplied screenshot 1, reproduced as docs/acceptance/antigravity-agent-20261013/before.jpg. Implementation: after.jpg. Both are 1065 x 766 CSS pixels, same task, light theme, navigation collapsed, top of transcript. comparison.jpg places both captures together.
 
-## Visual truth and evidence
+Findings fixed:
+- P1: five separate disclosures consumed roughly 280 pixels before the answer. One 26-pixel activity row now represents seven underlying calls, including calls without commentary. The result remains directly visible, and complete commentary and tool labels are available on expansion.
+- P1: CLI installation and ordinary chat readiness were mistaken for assistant readiness. Antigravity now has a current passing two-turn capability record. Codex uses constrained structured proposals validated against allowed tool names and argument schemas; provider environments remain empty and host execution requests are rejected. The new running node reports both as available, agent_supported=true, tool_support=supported.
+- P2: verbose capability errors were embedded in dropdown options. Options now show the model name and a short status when necessary. Both model options were verified enabled in the rendered new-task page.
+- P2: Antigravity service was labeled API. It now uses the local CLI label.
 
-- Source: `C:/Users/子陵/.codex/generated_images/01a0c921-937f-7c01-be86-3b9cc7509fad/exec-689b35bb-8225-4a20-837b-8280b0ec291f.png` (1586 × 992 raster mock).
-- User's explicit override: remove the NAS device illustration, foliage and decorative hero; retain the file preview design, color accents and implement both appearances on Web and Windows.
-- Implementation: `http://127.0.0.1:18841/nas`, actual fnOS SMB files in `RynAcceptance/预览体验`.
-- Dark: `D:/code/rynmesh/build/nas-test/nas-web-dark-image.png` (1280 × 800).
-- Light: `D:/code/rynmesh/build/nas-test/nas-web-light-image.png` (1265 × 791 browser screenshot).
-- Text: `D:/code/rynmesh/build/nas-test/nas-web-light-text.png`.
-- CSS viewport 1280 × 800, devicePixelRatio 1. The light capture is scaled by the browser capture surface to 1265 pixels; compare proportionally, not as a pixel-perfect font raster comparison. Source art is proportionally larger; original sidebar maps from ~278 to the existing 224 CSS px.
-- Source, final dark and final light captures were opened together in one comparison input. File names, thumbnail, selected row, preview heading and controls are readable in these full-resolution captures; a separate region crop was unnecessary for this scoped comparison.
-- Temporary 960 × 700 and 800 × 700 viewport tests: no horizontal overflow; at 800 the preview moves below the list. Viewport override reset after testing.
+Typography, spacing, colors, images, and copy: existing product typography/color tokens and supplied assets were preserved; activity uses muted 13px text, a 14px library chevron, and a single compact row. No raster assets were added. This checks the requested scoped correction, not the unavailable Codex visual source.
 
-## Findings and iteration history
+Validation: 70 relevant backend tests and 62 frontend tests passed; production frontend and Windows desktop builds passed. Real Codex and Antigravity tool probes passed; no ordinary user conversation was submitted during browser QA.
 
-1. [P2, fixed] Duplicate connection heading consumed a full row and pushed preview controls too low. Removed the repeated workspace title and moved ready/refresh/details next to sorting. Final dark screenshot shows the resulting compact toolbar and visible image controls.
-2. [P2, fixed] Focus styling overrode the mint selection background. Raised selected-row specificity to include tbody; final light text screenshot shows a mint selected row with a mint edge.
-3. [Evidence issue, resolved] Browser fullPage screenshot export produced an invalid narrow rendering. Discarded that evidence by replacing files with current-viewport getScreenshot captures, inspected afterward. This was capture behavior, not accepted UI evidence.
-4. [Verification blocker] Native Windows screenshot/input unavailable (`GetCursorPos` access denied; monitor capture unavailable). Read-only accessibility confirms the running Ryn client, existing device identity and NAS entry. Await desktop access to verify dark/light, photo and text in the actual client.
+final result: passed (scoped corrections)
+Codex pixel-for-pixel comparison: blocked pending a screenshot of the corresponding Codex state.
 
-## Required fidelity surfaces
+## Codex composer and model selection — 2026-10-15
 
-- Typography: retained Ryn's Segoe UI/Microsoft Chinese fallback, 13 px filenames, 14 px preview heading and clear secondary metadata. Intentional use of existing app typography instead of a new global font. Chinese filenames remain readable; long names truncate and retain titles.
-- Layout: source selector above one continuous file workspace; equal list/preview columns at desktop size, bounded scroll for long lists, compact controls. Extra source selector is required for real multi-NAS support. No hero artwork. Modified/type columns collapse when space is limited.
-- Colors: mint primary actions, mint selected rows, lavender documents, amber folders, blue image icons. Dark uses lighter mint on navy; light uses a darker green primary for white-label contrast. Global app chrome retained, NAS active navigation coordinated.
-- Imagery: actual NAS file thumbnails and decoded previews, preserving aspect ratio with contain; thumbnails crop intentionally. Sample sunset was generated with built-in ImageGen, stored on the local fnOS test share, and retrieved through the real file API. Standard icons use the existing Lucide library. No replacement decorative NAS illustration.
-- Copy/content: actual source names, filenames, image dimensions and sizes. No invented disk capacity, synchronization or remote-connection metrics. Original-download action distinguished from bounded preview. Image AI is not implied.
+Scope: the user's supplied Codex screenshot and Ryn input-area complaint. Preserve the Ryn application navigation and brand; match the project welcome, external context strip, input card, and compact model control. The old section above describes an earlier request and is retained as history.
 
-## Functional validation
+Source: `C:/Users/子陵/AppData/Local/Temp/codex-clipboard-0868a8f5-b7b8-4831-9c97-83248bd0216d.png` (1378 × 807), and `codex-clipboard-96712708-cd75-45f1-a8a1-853d5285731f.png` for the reported nested focus borders. Current evidence: `output/agent-codex-composer-20261015/`.
 
-- 69 frontend tests / 14 files pass; 20 NAS backend tests pass; TypeScript/Vite production build and Ruff pass.
-- Web: select image/text, thumbnail load, 125% zoom, fit, large modal, close, both themes, responsive layout. Final console error list empty.
-- Backend: JPEG/PNG/WebP decoding, dimensions/pixel/byte bounds, corrupt/active input rejection, metadata removal, retained original bytes and plugin disable gate covered.
-- Actual fnOS: image 1536 × 1024; thumbnail 160 × 107; original 2,671,505 bytes. Web and Windows node API calls succeeded. Download hash equals local source. Desktop-origin CORS exposes dimensions.
-- Windows: Ryn.exe, bundled backend and NSIS installer rebuilt; latest client restarted. Native dark/light visual confirmation remains pending.
+Comparison history:
+- `comparison.png` contains source and implementation together, cropped to the approximately 740 CSS pixel composer. Both page viewports were 1378 × 807, DPR 1. The source contains an attachment and multiple text lines; the implementation uses a short draft without an attachment. Compare the context strip and toolbar, rather than treating the different body height as a mismatch. IAB's overridden viewport capture is resampled; it is suitable for layout inspection, not a pixel-error score.
+- `final-composer.png` and `final-model-menu.png` are sharp production-build captures at the browser's actual 616 × 687 viewport, DPR 1, connected to the newly installed native backend. No horizontal overflow (document scroll width 616). `final-composer-detail.png` is the corresponding 588-pixel input area crop. The 390-pixel responsive layout was checked by DOM geometry (composer width 362); its resampled screenshot is not used for fidelity claims.
 
-## Implementation checklist
+Findings and resolutions:
+- P1 fixed: global focus styles produced a second blue textarea border/shadow. The textarea now has zero border, no outline and no box shadow, including focused state. The single outer card retains its neutral border.
+- P1 fixed: project details were inside the editable card and repeated the folder name. A separate gray 39-pixel context strip now shows the path once, followed by the device and settings controls.
+- P1 fixed: a wide native model select conflicted with the reference. The compact trigger now shows the model and actual reasoning level, with a bounded custom model list, selected check, source groups, and only supported reasoning choices.
+- P1 fixed during actual browser acceptance: clicking a visible reasoning label blurred the trigger and closed the menu before the native radio change. Preventing the label's mouse-down focus change preserves selection; both mouse selection and keyboard Space were verified. Added regression checks for callback, closure, focus restoration and selected value.
+- P2 fixed: inherited order placed the plus button after permissions; inherited size made send 34 pixels. Scoped styles restore plus then permissions and a 30 × 30 circular send control.
+- Welcome typography now uses a regular-weight project question and underlined path, with muted Ryn brand icon and no extra project suggestions. Input typography, neutral surface, 23-pixel card radius and toolbar spacing follow the source. Ryn's existing icon library supplies folder, computer, settings, microphone and arrow icons; no new raster assets were needed.
 
-- [x] Remove decorative header; shared Web/Windows design and both palettes.
-- [x] Real image thumbnails, preview, zoom, large view and text side preview.
-- [x] Tests, actual fnOS reads/downloads and desktop packaging.
-- [x] Web visual evidence and responsive checks.
-- [ ] Native Windows dark/light UI verification after desktop access returns.
+Functional evidence: 140 frontend and 226 backend tests pass. Production frontend and Windows NSIS builds pass. The real installed CLI exposes low, medium, high, xhigh, max and ultra, default low. A production browser conversation selected high by mouse, submitted `reasoning_effort=high` to the installed backend, completed, and displayed “对话界面和模型强度验证通过。” (`conversation-verification.json`). Original 12 task IDs, both saved projects and identity were preserved; the additional acceptance conversation is retained. Unsupported models have no invented reasoning options. Existing task model changes retain the guarded server flow.
 
-## Generated test image provenance
-
-- Local file: `D:/code/rynmesh/build/nas-test/海边日落.png`.
-- Built-in ImageGen, no API CLI. Prompt: “Create one photographic landscape image, 1536x1024, no UI, no text, no frame: a quiet ocean beach at sunset, gentle turquoise surf and reflective wet sand, golden sun near horizon, peach and lavender cloud sky, distant dark headland on the right. Natural realistic travel photograph with beautiful warm colors. This is a sample photo file for testing a NAS image preview, not a hero illustration or interface mockup.”
-
-## Separate AI workbench polish — 2026-09-23
-
-The shared frontend polish passed scoped visual and functional checks. See [workbench polish QA](docs/design/agent-api-sharing-v1/workbench-polish-qa.md). This result does not supersede the NAS native-window verification limitation above.
-
-## Service navigation and AI sources — 2026-09-24
+Independent visual review found no remaining P0–P2 overlap, clipping, hierarchy or overflow issue in the scoped regions. The supplied source shows the model selector closed; expanded-menu behavior was verified, but its pixel equivalence to an unavailable Codex expanded state is not claimed. Native installation is verified by process identity, executable hashes and real backend response; production browser screenshots are labeled as browser evidence, not native-window captures.
 
 final result: passed
-
-Scoped acceptance of the user's selected second navigation design. Full source/implementation evidence, viewport normalization, fixed visual findings, functional preservation inventory and test results are recorded in [service navigation design QA](docs/acceptance/service-navigation/design-qa.md). All existing routes and service handlers were retained; 60 related tests and the production build passed. This separate result does not change the earlier NAS native-window limitation.

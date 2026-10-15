@@ -1,0 +1,35 @@
+{
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "sharing_review / gpt-6-astra high",
+  "status": "inherited_owner_drift_p2_closed_at_reviewed_snapshot",
+  "scope": "Shared query live planner dispatch guard; not engine effectiveness or Q06 acceptance.",
+  "author_tests": {
+    "passed": 19,
+    "seconds": 21.09
+  },
+  "independent_tests": {
+    "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_agent_query_planner_guard.py tests/test_agent_planner_policy.py",
+    "passed": 19,
+    "seconds": 20.72,
+    "extra_checks": [
+      "PermissionError after one normal dispatch rejects the next entry and inner call count remains one.",
+      "Owner unreadable through CLI final collection preserves complete run.json, a fixed error code, and zero inner dispatch."
+    ]
+  },
+  "verified": [
+    "Each provider_for entry validates owner bytes before installing the actual inner adapter; changed, missing or unreadable owner snapshot fails.",
+    "Original ModelDispatchAdapter and fixture mapping remain.",
+    "Only two closed error codes are exported; no raw exception messages or credentials.",
+    "Final owner read failure sets owner_source_unchanged=false without suppressing evidence."
+  ],
+  "limitations": [
+    "Entry-time guard is not an atomic revocation lock spanning a remote request.",
+    "Tests exercise extracted shared functions, real outer gate and synthetic CLI orchestration; no live engine or model call.",
+    "Subsequent Q06 consumer integration must preserve this behavior and has its own snapshot/review."
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "cdf3e2361e69ceb21f1067814ba902923b72662214598dd16de38a0228f05f89",
+    "tests/test_agent_query_planner_guard.py": "7330e4880c589ccbcf15da9982bf70a3c922e6abe1b5ae316a65fa381b32bdba"
+  },
+  "formal_executed_trials": 0
+}

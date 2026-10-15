@@ -1,0 +1,155 @@
+{
+  "review_version": "q06-consumer-semantic-independent-v1",
+  "reviewer": "sharing_review (non-author of reference engine and this real run)",
+  "reviewed_at": "2026-10-10T05:42:27.202538+00:00",
+  "source_run": "docs/acceptance/ryn-agent-delivery/real-model/20261010T053610549001Z-Q06-reference/run.json",
+  "source_sha256": "e72b3adc2d146dff7459d8a30d93bf6197543d2528056c4acc76a6d9dc350abd",
+  "method": "Read raw main answer, all four model-call responses, all seven returned consumer tool events, signed-wire audit, snapshots, generation policy, recorded budget, and reference-session SQLite table inventory in read-only mode. No new inference/probe, no source or raw-run edits, no held-out access. Provider collector truth was not treated as model-visible evidence.",
+  "verdict": {
+    "semantic": "failed",
+    "mechanical_permission_boundary": "passed_with_stated_scope",
+    "formal_acceptance": "not_assessed",
+    "original_outcome_preserved": {
+      "upstream_target_status": "complete",
+      "upstream_target_verification": true,
+      "reference_accounting_task_status": "queued"
+    }
+  },
+  "findings": [
+    {
+      "id": "Q06-REF-SEM-1",
+      "severity": "P2",
+      "claim": "model-b 本身没有任何分享记录，而 node-c 也没有任何接收授权",
+      "additional_quote": "因此对任何节点都不可调用",
+      "evidence": [
+        "tool_events[0].result.models contains only authenticated model-a advertisement to the executing node-b receiver; sharing_configuration_known=false and share_scope=unknown",
+        "tool_events[3].result.sources=[] describes the consumer local store, not remote provider configuration"
+      ],
+      "assessment": "Model-b absence from one recipient catalogue cannot establish no provider grants, absence of authorization rather than another denial cause, or uncallability for every node. The final caveat acknowledges remote authorization is unknown but does not limit these affirmative causal claims."
+    },
+    {
+      "id": "Q06-REF-SEM-2",
+      "severity": "P2",
+      "claim": "没有任何指向 node-c 的授权。",
+      "additional_quote": "但就 node-c 一侧而言，可核对范围内不存在它的任何好友关系或模型授权，这是明确的。",
+      "evidence": [
+        "tool_events[2].result.friend_grants_scope.direction=local_outgoing",
+        "tool_events[2].result.friend_grants_scope.provider_peer_id equals node-b receiver, not owner-provider",
+        "tool_events[2].result.friend_grants_scope.remote_provider_grants=unknown",
+        "tool_events[1].result.friends is the executing node-b friend list"
+      ],
+      "assessment": "The answer uses node-b outgoing grants and node-b friendships to infer owner-provider to node-c authorization, then describes the observation as node-c-side evidence. It is the wrong authorization subject. Collector-only ground truth happens to show model-b private and no grant, but cannot retroactively justify model knowledge."
+    },
+    {
+      "id": "Q06-REF-SEM-3",
+      "severity": "P2",
+      "claim": "即没有给任何节点授过任何模型的访问权",
+      "evidence": [
+        "tool_events[2].result.friend_grants=[] is a present local outgoing snapshot, not an authorization history"
+      ],
+      "assessment": "Empty current grants do not establish that no node was ever granted any model access. This historical claim is unsupported independently of the wrong-subject finding."
+    },
+    {
+      "id": "Q06-REF-SEM-4",
+      "severity": "P2",
+      "claim": "node-c 当前离线",
+      "evidence": [
+        "tool_events[1] and [5] report node-c online=false based on heartbeat_expired, checked_at=2026-10-09T08:00:00+00:00",
+        "HTTP/LAN probe_performed=false and reachability=null; diagnostic note explicitly says untested is not connectivity proof"
+      ],
+      "assessment": "Reporting a historical expired-heartbeat observation is supported. Calling it a currently established second invocation obstacle and node inaccessibility goes further than these untested reachability observations. No successful probe record does not mean a failed probe or proven unreachability."
+    },
+    {
+      "id": "Q06-REF-SEM-5",
+      "severity": "P2",
+      "claim": "连 model-a 自己的实际可调用性都未经调用验证",
+      "evidence": [
+        "tool_events[0].result.models[0].recipient_access.basis=authenticated_catalog_observation, current_access=unknown, invocation_verified=false",
+        "tool_events[4] and [5] explicitly describe configuration/capability observations rather than a fresh invocation test"
+      ],
+      "assessment": "The limited statement that this observation does not verify invocation would be supported. The unqualified model-level negative exceeds that scope. Collector separately records a successful setup signed model-a invocation and four successful task planner invocations, but those private collector records are not credited as model-visible knowledge; the issue is the unsupported generalization from observation metadata."
+    }
+  ],
+  "supported_answer_components": [
+    "Only model-a is visible in the authenticated consumer catalogue.",
+    "The observed model-a binding is specific to its service/model generation, receiver and friendship, and does not grant model-b or node-c access.",
+    "All observed task tools are read-only and no configuration or authorization mutation is recorded.",
+    "The remote provider grant/configuration state is not fully visible from these tools; the final paragraph states this limitation but contradicts the opening."
+  ],
+  "checker_assessment": {
+    "verdict": "false_positive",
+    "original_passed": true,
+    "basis": "Fourth model response explicitly repeats catalogue absence as no model-b sharing and the consumer friend list/local empty outgoing grants as no node-c authorization; it accepts completion without resolving these evidence-scope errors."
+  },
+  "mechanics": {
+    "model_calls": 4,
+    "tool_events": 7,
+    "signed_wire_calls": 4,
+    "signed_wire_states": [
+      "succeeded",
+      "succeeded",
+      "succeeded",
+      "succeeded"
+    ],
+    "all_signed_calls_bound_to_same_model_a_and_node_b": true,
+    "business_writes": 0,
+    "source_replacements": [],
+    "grant_changes": [],
+    "configuration_and_grants_unchanged": true,
+    "relationship_business_hashes_equal": true,
+    "relationship_raw_hash_note": "Owner raw friend-state hash differs because authenticated catalogue anti-replay nonces advanced 2 to 14; only nonces are excluded from equal business-state hashes. This is not a claim of byte-identical friend stores.",
+    "owner_source_unchanged_reported": true,
+    "code_unchanged_reported": true,
+    "current_snapshot_hashes_independently_matched": true,
+    "snapshot_file_count": 108,
+    "credential_observation": "All four complete-in-memory request scans record credential_egress_detected=false. This review does not independently certify all process memory or possible secret paths.",
+    "setup_vs_task": "Setup signed admission probes and provider source readback are collector-only evidence. The task made no new node-c admission probe. Initialization/setup writes are excluded from task business-write count."
+  },
+  "comparison": {
+    "candidate_run": "docs/acceptance/ryn-agent-delivery/real-model/20261010T053153877049Z-Q06-ryn/run.json",
+    "candidate_sha256": "149770f7c6db4d155340d3e6b93b91a82cbcfcff5df9eee8da8fef006bf49902",
+    "common_snapshot_files": 97,
+    "common_snapshot_hashes_equal": true,
+    "reference_extra_snapshot_files": 11,
+    "planner_policy_equal": true,
+    "planner_policy_sha256": "79a4485259114557142d10bd4ab88c90dbe5c1e2cfcb3101f3a930d0a80b1754",
+    "configured_and_effective_output_caps": [
+      128000,
+      128000,
+      128000,
+      128000
+    ],
+    "generation": {
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "request_defaults": {
+        "thinking": {
+          "type": "enabled"
+        },
+        "reasoning_effort": "max"
+      }
+    },
+    "scope": "One original Q06 real run per cohort; both independently fail semantic evidence grounding despite their engines accepting completion. No statistical quality, relative win rate, 80 percent, or formal acceptance conclusion."
+  },
+  "reference_engine": {
+    "recorded_and_current_upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e",
+    "persistent_session_recorded": true,
+    "extra_host_tools_recorded": false,
+    "native_sqlite_observed": "receiver/reference-session.sqlite, read-only table inventory includes session/message/part/session_target/model_usage/turn_usage",
+    "agent_state_isolation_scope": "consumer AgentStore contains one accounting task with one message and provider AgentStore is absent as recorded. This is not proof of the complete reference conversation; actual engine state is in native SQLite. Full SQLite session/content isolation audit was not performed."
+  },
+  "accounting_summary": {
+    "elapsed_seconds": 145.0,
+    "known_input_tokens": 25067,
+    "known_output_tokens": 6237,
+    "usage_complete_recorded": true,
+    "unsettled_operations_recorded": 0,
+    "cost": "unknown",
+    "detail_scope": "Top-level reference_budget and four calls inspected; separate accounting reviewer is checking durable ledger in detail. upstream_last_turn_usage covers only the three main-turn calls, not all four including verifier."
+  },
+  "limits": [
+    "Development comparison on one physical host with production signed protocol over a local fixture wire; no physical two-host/ICE claim.",
+    "No security, dependency, formal-case or broad-suite acceptance inferred.",
+    "Original raw complete/verifier-true record is retained; this review adds an independent semantic-failed judgment."
+  ]
+}

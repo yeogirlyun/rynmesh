@@ -1,0 +1,623 @@
+{"kind":"deck","id":"pr/qvktwk","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/y90nupkv","slide":1,"title":"RYNMESH · PROJECT PLAN","textShapes":5}
+{"kind":"textbox","id":"sh/vmdcj2xw","slide":1,"text":"RYNMESH · PROJECT PLAN","textPreview":"RYNMESH · PROJECT PLAN","textChars":22,"textLines":1,"bbox":[58,52,520,30]}
+{"kind":"textbox","id":"sh/547294r6","slide":1,"name":"deck-title","text":"Rynmesh 项目规划\n与服务网络","textPreview":"Rynmesh 项目规划 | 与服务网络","textChars":18,"textLines":2,"bbox":[58,165,720,180]}
+{"kind":"textbox","id":"sh/k3yl0zql","slide":1,"text":"节点、官方、用户、服务包与结算","textPreview":"节点、官方、用户、服务包与结算","textChars":15,"textLines":1,"bbox":[62,380,660,46]}
+{"kind":"textbox","id":"sh/7qp4be9c","slide":1,"text":"当前状态 · 服务计划 · 下一步路线","textPreview":"当前状态 · 服务计划 · 下一步路线","textChars":19,"textLines":1,"bbox":[62,448,600,34]}
+{"kind":"shape","id":"sh/65g3298r","slide":1,"bbox":[850,185,180,0]}
+{"kind":"shape","id":"sh/ts7md4r2","slide":1,"bbox":[910,280,190,0]}
+{"kind":"shape","id":"sh/sryl4zqx","slide":1,"bbox":[820,390,210,0]}
+{"kind":"shape","id":"sh/fu94fe98","slide":1,"bbox":[807,170,46,46]}
+{"kind":"shape","id":"sh/utg3698n","slide":1,"bbox":[1080,258,52,52]}
+{"kind":"shape","id":"sh/wn6dc7eh","slide":1,"bbox":[1008,370,58,58]}
+{"kind":"shape","id":"sh/hofulsf2","slide":1,"bbox":[1140,438,34,34]}
+{"kind":"textbox","id":"sh/ul4vaxgb","slide":1,"text":"2026.08","textPreview":"2026.08","textChars":7,"textLines":1,"bbox":[58,640,200,28]}
+{"kind":"notes","id":"nt/y90nupkv","slide":1,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_VISION.md\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md"}
+{"kind":"slide","id":"sl/hwbqtkby","slide":2,"title":"一句话：把分散设备变成可交付的服务网络","textShapes":14}
+{"kind":"textbox","id":"sh/bip8jmho","slide":2,"name":"slide-title","text":"一句话：把分散设备变成可交付的服务网络","textPreview":"一句话：把分散设备变成可交付的服务网络","textChars":19,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/9072xkry","slide":2,"bbox":[56,138,1168,0]}
+{"kind":"textbox","id":"sh/ozy1ofad","slide":2,"text":"用户不需要懂 GPU、容器或节点。\n只要提出结果，Rynmesh 负责匹配和交付。","textPreview":"用户不需要懂 GPU、容器或节点。 | 只要提出结果，Rynmesh 负责匹配和交付。","textChars":41,"textLines":2,"bbox":[70,180,650,130]}
+{"kind":"textbox","id":"sh/b29kza94","slide":2,"text":"节点贡献闲置的算力、存储、带宽和网络位置；服务按可验证结果结算。","textPreview":"节点贡献闲置的算力、存储、带宽和网络位置；服务按可验证结果结算。","textChars":32,"textLines":1,"bbox":[72,335,660,76]}
+{"kind":"shape","id":"sh/a10jqpsj","slide":2,"bbox":[800,175,380,300]}
+{"kind":"textbox","id":"sh/x4r21kru","slide":2,"text":"看","textPreview":"看","textChars":1,"textLines":1,"bbox":[832,198,70,42]}
+{"kind":"textbox","id":"sh/w3i1sfa9","slide":2,"text":"监控与检测","textPreview":"监控与检测","textChars":5,"textLines":1,"bbox":[915,200,225,38]}
+{"kind":"textbox","id":"sh/r65knqtk","slide":2,"text":"取","textPreview":"取","textChars":1,"textLines":1,"bbox":[832,262,70,42]}
+{"kind":"textbox","id":"sh/q5wjelsz","slide":2,"text":"抓取与中转","textPreview":"抓取与中转","textChars":5,"textLines":1,"bbox":[915,264,225,38]}
+{"kind":"textbox","id":"sh/ove9o7yd","slide":2,"text":"处理","textPreview":"处理","textChars":2,"textLines":1,"bbox":[832,326,70,42]}
+{"kind":"textbox","id":"sh/9wnqhczy","slide":2,"text":"AI 与媒体任务","textPreview":"AI 与媒体任务","textChars":8,"textLines":1,"bbox":[915,328,225,38]}
+{"kind":"textbox","id":"sh/mtwrmxg7","slide":2,"text":"存","textPreview":"存","textChars":1,"textLines":1,"bbox":[832,390,70,42]}
+{"kind":"textbox","id":"sh/nu58f2hs","slide":2,"text":"加密存储与备份","textPreview":"加密存储与备份","textChars":7,"textLines":1,"bbox":[915,392,225,38]}
+{"kind":"textbox","id":"sh/wjy9sry9","slide":2,"text":"价值不是“在线多少小时”，而是“完成了什么”。","textPreview":"价值不是“在线多少小时”，而是“完成了什么”。","textChars":23,"textLines":1,"bbox":[72,520,1100,58]}
+{"kind":"textbox","id":"sh/xk7qlczu","slide":2,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/ahwrqhgj","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/hwbqtkby","slide":2,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:7\n- D:/code/rynmesh/docs/RYNMESH_VISION.md:175"}
+{"kind":"slide","id":"sl/ofy9wn61","slide":3,"title":"五个角色，共同完成一次服务交付","textShapes":14}
+{"kind":"textbox","id":"sh/tgry9ofu","slide":3,"name":"slide-title","text":"五个角色，共同完成一次服务交付","textPreview":"五个角色，共同完成一次服务交付","textChars":15,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"textbox","id":"sh/cza94vmx","slide":3,"text":"官方制定标准；节点提供资源；用户购买结果；网络负责协调。 ","textPreview":"官方制定标准；节点提供资源；用户购买结果；网络负责协调。","textChars":29,"textLines":1,"bbox":[58,104,1110,40]}
+{"kind":"shape","id":"sh/d0jax03i","slide":3,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/298ryl4v","slide":3,"bbox":[380,238,95,0]}
+{"kind":"shape","id":"sh/3ah8rqlg","slide":3,"bbox":[805,238,95,0]}
+{"kind":"shape","id":"sh/obq90bml","slide":3,"bbox":[380,520,95,0]}
+{"kind":"shape","id":"sh/pcjqtg36","slide":3,"bbox":[805,520,95,0]}
+{"kind":"shape","id":"sh/m5cra54z","slide":3,"bbox":[640,385,0,70]}
+{"kind":"shape","id":"sh/n6ls3alk","slide":3,"bbox":[230,455,820,0]}
+{"kind":"shape","id":"sh/n2l4fq98","slide":3,"bbox":[475,235,330,150]}
+{"kind":"textbox","id":"sh/m1c3mlsn","slide":3,"text":"Rynmesh 网络","textPreview":"Rynmesh 网络","textChars":10,"textLines":1,"bbox":[510,268,260,38]}
+{"kind":"textbox","id":"sh/943mhgre","slide":3,"text":"发现 · 调度 · 中转\n验证 · 信誉 · 结算","textPreview":"发现 · 调度 · 中转 | 验证 · 信誉 · 结算","textChars":25,"textLines":2,"bbox":[510,318,260,60]}
+{"kind":"shape","id":"sh/83ulovat","slide":3,"bbox":[80,170,300,135]}
+{"kind":"textbox","id":"sh/v6l4jq94","slide":3,"text":"官方","textPreview":"官方","textChars":2,"textLines":1,"bbox":[104,190,252,36]}
+{"kind":"textbox","id":"sh/a5c3ql8z","slide":3,"text":"标准、审核、签名\n官方节点兜底","textPreview":"标准、审核、签名 | 官方节点兜底","textChars":15,"textLines":2,"bbox":[104,233,252,55]}
+{"kind":"shape","id":"sh/x8nml0ra","slide":3,"bbox":[900,170,300,135]}
+{"kind":"textbox","id":"sh/w7ulsvqp","slide":3,"text":"服务开发者","textPreview":"服务开发者","textChars":5,"textLines":1,"bbox":[924,190,252,36]}
+{"kind":"textbox","id":"sh/ja54na9g","slide":3,"text":"开发服务包\n提交审核与更新","textPreview":"开发服务包 | 提交审核与更新","textChars":13,"textLines":2,"bbox":[924,233,252,55]}
+{"kind":"shape","id":"sh/i9w3u58v","slide":3,"bbox":[80,455,300,135]}
+{"kind":"textbox","id":"sh/e10f2twf","slide":3,"text":"节点提供者","textPreview":"节点提供者","textChars":5,"textLines":1,"bbox":[104,475,252,36]}
+{"kind":"textbox","id":"sh/f29gbyx0","slide":3,"text":"授权设备资源\n发布服务报价","textPreview":"授权设备资源 | 发布服务报价","textChars":13,"textLines":2,"bbox":[104,518,252,55]}
+{"kind":"shape","id":"sh/03ix43e5","slide":3,"bbox":[900,455,300,135]}
+{"kind":"textbox","id":"sh/14ryd8fq","slide":3,"text":"服务用户","textPreview":"服务用户","textChars":4,"textLines":1,"bbox":[924,475,252,36]}
+{"kind":"textbox","id":"sh/6d0fytg3","slide":3,"text":"选择服务\n下单、验收结果","textPreview":"选择服务 | 下单、验收结果","textChars":12,"textLines":2,"bbox":[924,518,252,55]}
+{"kind":"textbox","id":"sh/re9g7yxo","slide":3,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/sfix03y9","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/ofy9wn61","slide":3,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_VISION.md:103\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:109"}
+{"kind":"slide","id":"sl/jyx0ra1s","slide":4,"title":"服务包、服务报价、工作订单是三件不同的事","textShapes":16}
+{"kind":"textbox","id":"sh/2xkrih8b","slide":4,"name":"slide-title","text":"服务包、服务报价、工作订单是三件不同的事","textPreview":"服务包、服务报价、工作订单是三件不同的事","textChars":20,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/1cj2d8b6","slide":4,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/0ba143al","slide":4,"bbox":[405,300,52,24]}
+{"kind":"shape","id":"sh/rm1k7yt4","slide":4,"bbox":[822,300,52,24]}
+{"kind":"shape","id":"sh/ql8jytsj","slide":4,"bbox":[64,210,340,250]}
+{"kind":"textbox","id":"sh/doj29oba","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[88,232,56,34]}
+{"kind":"textbox","id":"sh/sna103ap","slide":4,"text":"服务包","textPreview":"服务包","textChars":3,"textLines":1,"bbox":[88,280,200,42]}
+{"kind":"textbox","id":"sh/3ihk3et8","slide":4,"text":"ServicePackage","textPreview":"ServicePackage","textChars":14,"textLines":1,"bbox":[88,330,250,26]}
+{"kind":"textbox","id":"sh/ih8ju9sn","slide":4,"text":"代码 + 运行环境 + 权限\n由官方或开发者制作","textPreview":"代码 + 运行环境 + 权限 | 由官方或开发者制作","textChars":24,"textLines":2,"bbox":[88,382,285,64]}
+{"kind":"shape","id":"sh/kbm987y5","slide":4,"bbox":[478,210,340,250]}
+{"kind":"textbox","id":"sh/5cva1cfq","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[502,232,56,34]}
+{"kind":"textbox","id":"sh/i94r6xgz","slide":4,"text":"服务报价","textPreview":"服务报价","textChars":4,"textLines":1,"bbox":[502,280,200,42]}
+{"kind":"textbox","id":"sh/jadsz2xk","slide":4,"text":"ServiceOffer","textPreview":"ServiceOffer","textChars":12,"textLines":1,"bbox":[502,330,250,26]}
+{"kind":"textbox","id":"sh/w72947yt","slide":4,"text":"节点 + 设备 + 价格 + 时间\n由节点用户签名发布","textPreview":"节点 + 设备 + 价格 + 时间 | 由节点用户签名发布","textChars":27,"textLines":2,"bbox":[502,382,285,64]}
+{"kind":"shape","id":"sh/x8vaxsfe","slide":4,"bbox":[892,210,340,250]}
+{"kind":"textbox","id":"sh/a5kr2xg3","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[916,232,56,34]}
+{"kind":"textbox","id":"sh/v6tsv2xo","slide":4,"text":"工作订单","textPreview":"工作订单","textChars":4,"textLines":1,"bbox":[916,280,200,42]}
+{"kind":"textbox","id":"sh/g36tgryd","slide":4,"text":"WorkOrder","textPreview":"WorkOrder","textChars":9,"textLines":1,"bbox":[916,330,250,26]}
+{"kind":"textbox","id":"sh/h4fa9wfy","slide":4,"text":"一次任务 + 输入 + 预算\n由服务用户提交","textPreview":"一次任务 + 输入 + 预算 | 由服务用户提交","textChars":22,"textLines":2,"bbox":[916,382,285,64]}
+{"kind":"textbox","id":"sh/p0batw72","slide":4,"text":"网络发布的是“我能提供什么”，用户购买的是“一次执行结果”。","textPreview":"网络发布的是“我能提供什么”，用户购买的是“一次执行结果”。","textChars":30,"textLines":1,"bbox":[64,515,1152,55]}
+{"kind":"textbox","id":"sh/oz29krqh","slide":4,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/3ytsrmpw","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/jyx0ra1s","slide":4,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_VISION.md:175\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:70\n- D:/code/rynmesh/rynmesh/jobs.py"}
+{"kind":"slide","id":"sl/mhribx","slide":5,"title":"前端可以有很多服务，底层只维护六个官方服务包","textShapes":56}
+{"kind":"textbox","id":"sh/ypgzehgb","slide":5,"name":"slide-title","text":"前端可以有很多服务，底层只维护六个官方服务包","textPreview":"前端可以有很多服务，底层只维护六个官方服务包","textChars":22,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/3ihknu1g","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/2h8jupkv","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/x8j2t4ji","slide":5,"text":"Browser Tools","textPreview":"Browser Tools","textChars":13,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/c7al0z2x","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/b61kru1s","slide":5,"text":"网页监控 · 截图/PDF · 多地区检测 · 内容采集","textPreview":"网页监控 · 截图/PDF · 多地区检测 · 内容采集","textChars":28,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/q5s3ypk7","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/lc32xoju","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/kbal4j29","slide":5,"text":"Media Tools","textPreview":"Media Tools","textChars":11,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/ad8natkv","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/behojylg","slide":5,"text":"视频转码 · 压缩 · 字幕 · 缩略图 · 音频提取","textPreview":"视频转码 · 压缩 · 字幕 · 缩略图 · 音频提取","textChars":27,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/cfq5c321","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/xgz6lo3m","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/yh8netk7","slide":5,"text":"Storage Tools","textPreview":"Storage Tools","textChars":13,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/zihonyls","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/kjq5g32d","slide":5,"text":"文件快传 · 临时存储 · 加密备份 · 任务结果中转","textPreview":"文件快传 · 临时存储 · 加密备份 · 任务结果中转","textChars":27,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/l4z6p83i","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/el4n29k3","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/fmx4bel8","slide":5,"text":"GPU Compute","textPreview":"GPU Compute","textChars":11,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/jqtkja10","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/ipkja50v","slide":5,"text":"视频生成 · 图片增强 · 视频增强 · Blender渲染","textPreview":"视频生成 · 图片增强 · 视频增强 · Blender渲染","textChars":30,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/5sb2lkj6","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/4r2lcfil","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/vm9kfq14","slide":5,"text":"Network Tools","textPreview":"Network Tools","textChars":13,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/ul0j6l0j","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/hob2h0ja","slide":5,"text":"网络出口 · 文件代取 · 地区探测 · 网络测量","textPreview":"网络出口 · 文件代取 · 地区探测 · 网络测量","textChars":25,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/wn218vip","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/fidkru18","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/eh43ip0n","slide":5,"text":"AI / Data Tools","textPreview":"AI / Data Tools","textChars":15,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/c3ehcry5","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/x47ilwzq","slide":5,"text":"本地LLM · Embedding · OCR · 数据批处理","textPreview":"本地LLM · Embedding · OCR · 数据批处理","textChars":31,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/a1wzahgf","slide":5,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/b25gjmh0","slide":5,"text":"服务包负责安全边界；一个包可以公开多个固定 Capability。","textPreview":"服务包负责安全边界；一个包可以公开多个固定 Capability。","textChars":33,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/kryhgryh","slide":5,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/ls7i9wz2","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/zqp0nmhw","slide":5,"name":"flowchart-white-canvas","bbox":[0,0,960,540]}
+{"kind":"textbox","id":"sh/8vihkbyd","slide":5,"name":"slide-title","text":"完整业务流程：从服务包开发到节点结算","textPreview":"完整业务流程：从服务包开发到节点结算","textChars":18,"textLines":1,"bbox":[42,28,876,44]}
+{"kind":"textbox","id":"sh/9wridgzy","slide":5,"name":"slide-subtitle","text":"四个角色、六个阶段，一张图看懂项目如何形成交易闭环","textPreview":"四个角色、六个阶段，一张图看懂项目如何形成交易闭环","textChars":25,"textLines":1,"bbox":[42,73,876,22]}
+{"kind":"shape","id":"sh/tszqdcz2","slide":5,"name":"title-rule","bbox":[42,101,876,0]}
+{"kind":"textbox","id":"sh/8r6947yh","slide":5,"name":"stage-1","text":"1  服务准备","textPreview":"1  服务准备","textChars":7,"textLines":1,"bbox":[141,119,111,31]}
+{"kind":"textbox","id":"sh/7qx8b2hw","slide":5,"name":"stage-2","text":"2  上线发现","textPreview":"2  上线发现","textChars":7,"textLines":1,"bbox":[268,119,111,31]}
+{"kind":"textbox","id":"sh/6porixgb","slide":5,"name":"stage-3","text":"3  下单匹配","textPreview":"3  下单匹配","textChars":7,"textLines":1,"bbox":[395,119,111,31]}
+{"kind":"textbox","id":"sh/lofq9szq","slide":5,"name":"stage-4","text":"4  执行交付","textPreview":"4  执行交付","textChars":7,"textLines":1,"bbox":[522,119,111,31]}
+{"kind":"textbox","id":"sh/kn69gnyl","slide":5,"name":"stage-5","text":"5  验收清理","textPreview":"5  验收清理","textChars":7,"textLines":1,"bbox":[649,119,111,31]}
+{"kind":"textbox","id":"sh/jmx87ih0","slide":5,"name":"stage-6","text":"6  结算信誉","textPreview":"6  结算信誉","textChars":7,"textLines":1,"bbox":[776,119,111,31]}
+{"kind":"shape","id":"sh/yloredgf","slide":5,"name":"lane-bg-1","bbox":[42,163,876,62]}
+{"kind":"textbox","id":"sh/5kjalwza","slide":5,"name":"lane-label-1","text":"官方 / 开发者","textPreview":"官方 / 开发者","textChars":8,"textLines":1,"bbox":[51,170,80,48]}
+{"kind":"textbox","id":"sh/4ja9cryp","slide":5,"name":"lane-1-step-1","text":"开发服务包","textPreview":"开发服务包","textChars":5,"textLines":1,"bbox":[141,170,111,48]}
+{"kind":"textbox","id":"sh/25kn69w7","slide":5,"name":"lane-1-step-2","text":"审核 / 签名","textPreview":"审核 / 签名","textChars":7,"textLines":1,"bbox":[268,170,111,48]}
+{"kind":"textbox","id":"sh/n6tofexs","slide":5,"name":"lane-1-step-3","text":"发布服务目录","textPreview":"发布服务目录","textChars":6,"textLines":1,"bbox":[395,170,111,48]}
+{"kind":"textbox","id":"sh/or258jed","slide":5,"name":"lane-1-step-4","text":"提供协议规则","textPreview":"提供协议规则","textChars":6,"textLines":1,"bbox":[522,170,111,48]}
+{"kind":"textbox","id":"sh/9sb6hofi","slide":5,"name":"lane-1-step-5","text":"处理申诉","textPreview":"处理申诉","textChars":4,"textLines":1,"bbox":[649,170,111,48]}
+{"kind":"textbox","id":"sh/e1kn29wv","slide":5,"name":"lane-1-step-6","text":"维护治理","textPreview":"维护治理","textChars":4,"textLines":1,"bbox":[776,170,111,48]}
+{"kind":"shape","id":"sh/f2tobexg","slide":5,"name":"lane-bg-2","bbox":[42,235,876,62]}
+{"kind":"textbox","id":"sh/03254je1","slide":5,"name":"lane-label-2","text":"Rynmesh 网络","textPreview":"Rynmesh 网络","textChars":10,"textLines":1,"bbox":[51,242,80,48]}
+{"kind":"textbox","id":"sh/14b6dofm","slide":5,"name":"lane-2-step-1","text":"登记包索引","textPreview":"登记包索引","textChars":5,"textLines":1,"bbox":[141,242,111,48]}
+{"kind":"textbox","id":"sh/yx47etwf","slide":5,"name":"lane-2-step-2","text":"服务发现","textPreview":"服务发现","textChars":4,"textLines":1,"bbox":[268,242,111,48]}
+{"kind":"textbox","id":"sh/jydonyx0","slide":5,"name":"lane-2-step-3","text":"锁单 / 租约","textPreview":"锁单 / 租约","textChars":7,"textLines":1,"bbox":[395,242,111,48]}
+{"kind":"textbox","id":"sh/v2pkfqdc","slide":5,"name":"lane-2-step-4","text":"密文中转","textPreview":"密文中转","textChars":4,"textLines":1,"bbox":[522,242,111,48]}
+{"kind":"textbox","id":"sh/u1w365cr","slide":5,"name":"lane-2-step-5","text":"验收记录","textPreview":"验收记录","textChars":4,"textLines":1,"bbox":[649,242,111,48]}
+{"kind":"textbox","id":"sh/h472h0v2","slide":5,"name":"lane-2-step-6","text":"Credits 账本","textPreview":"Credits 账本","textChars":10,"textLines":1,"bbox":[776,242,111,48]}
+{"kind":"shape","id":"sh/g3yl8vux","slide":5,"name":"lane-bg-3","bbox":[42,307,876,62]}
+{"kind":"textbox","id":"sh/36pkjad8","slide":5,"name":"lane-label-3","text":"节点提供者","textPreview":"节点提供者","textChars":5,"textLines":1,"bbox":[51,314,80,48]}
+{"kind":"textbox","id":"sh/i5g3a5cn","slide":5,"name":"lane-3-step-1","text":"安装服务包","textPreview":"安装服务包","textChars":5,"textLines":1,"bbox":[141,314,111,48]}
+{"kind":"textbox","id":"sh/587mlkve","slide":5,"name":"lane-3-step-2","text":"授权资源 / 报价","textPreview":"授权资源 / 报价","textChars":9,"textLines":1,"bbox":[268,314,111,48]}
+{"kind":"textbox","id":"sh/47ylcfut","slide":5,"name":"lane-3-step-3","text":"领取订单","textPreview":"领取订单","textChars":4,"textLines":1,"bbox":[395,314,111,48]}
+{"kind":"textbox","id":"sh/ra94nadk","slide":5,"name":"lane-3-step-4","text":"隔离执行","textPreview":"隔离执行","textChars":4,"textLines":1,"bbox":[522,314,111,48]}
+{"kind":"textbox","id":"sh/q9g3epcz","slide":5,"name":"lane-3-step-5","text":"加密输出 / 销毁","textPreview":"加密输出 / 销毁","textChars":9,"textLines":1,"bbox":[649,314,111,48]}
+{"kind":"textbox","id":"sh/ozi14fax","slide":5,"name":"lane-3-step-6","text":"收益 + 信誉","textPreview":"收益 + 信誉","textChars":7,"textLines":1,"bbox":[776,314,111,48]}
+{"kind":"shape","id":"sh/p0r2xkbi","slide":5,"name":"lane-bg-4","bbox":[42,379,876,62]}
+{"kind":"textbox","id":"sh/2d0j2ps7","slide":5,"name":"lane-label-4","text":"服务用户","textPreview":"服务用户","textChars":4,"textLines":1,"bbox":[51,386,80,48]}
+{"kind":"textbox","id":"sh/ne9kvutc","slide":5,"name":"lane-4-step-1","text":"浏览服务","textPreview":"浏览服务","textChars":4,"textLines":1,"bbox":[141,386,111,48]}
+{"kind":"textbox","id":"sh/0bi10fa1","slide":5,"name":"lane-4-step-2","text":"选择节点类型","textPreview":"选择节点类型","textChars":6,"textLines":1,"bbox":[268,386,111,48]}
+{"kind":"textbox","id":"sh/1cr2tkbm","slide":5,"name":"lane-4-step-3","text":"本地加密 / 下单","textPreview":"本地加密 / 下单","textChars":9,"textLines":1,"bbox":[395,386,111,48]}
+{"kind":"textbox","id":"sh/e90jy5sv","slide":5,"name":"lane-4-step-4","text":"等待结果","textPreview":"等待结果","textChars":4,"textLines":1,"bbox":[522,386,111,48]}
+{"kind":"textbox","id":"sh/fa9kratg","slide":5,"name":"lane-4-step-5","text":"解密验收 / 申诉","textPreview":"解密验收 / 申诉","textChars":9,"textLines":1,"bbox":[649,386,111,48]}
+{"kind":"textbox","id":"sh/s7y1wvap","slide":5,"name":"lane-4-step-6","text":"回执 / 记录","textPreview":"回执 / 记录","textChars":7,"textLines":1,"bbox":[776,386,111,48]}
+{"kind":"shape","id":"sh/d872p0ba","slide":5,"name":"lane-1-arrow-1","bbox":[253,189,13,10]}
+{"kind":"shape","id":"sh/54ba9sby","slide":5,"name":"lane-1-arrow-2","bbox":[380,189,13,10]}
+{"kind":"shape","id":"sh/kj29gnud","slide":5,"name":"lane-1-arrow-3","bbox":[507,189,13,10]}
+{"kind":"shape","id":"sh/jits7its","slide":5,"name":"lane-1-arrow-4","bbox":[634,189,13,10]}
+{"kind":"shape","id":"sh/ihkrexcn","slide":5,"name":"lane-1-arrow-5","bbox":[761,189,13,10]}
+{"kind":"shape","id":"sh/t8vadcba","slide":5,"name":"lane-2-arrow-1","bbox":[253,261,13,10]}
+{"kind":"shape","id":"sh/s7m9k7up","slide":5,"name":"lane-2-arrow-2","bbox":[380,261,13,10]}
+{"kind":"shape","id":"sh/76tsb2t4","slide":5,"name":"lane-2-arrow-3","bbox":[507,261,13,10]}
+{"kind":"shape","id":"sh/65krixcj","slide":5,"name":"lane-2-arrow-4","bbox":[634,261,13,10]}
+{"kind":"shape","id":"sh/hcvahcb6","slide":5,"name":"lane-2-arrow-5","bbox":[761,261,13,10]}
+{"kind":"shape","id":"sh/gbm9o7al","slide":5,"name":"lane-3-arrow-1","bbox":[253,333,13,10]}
+{"kind":"shape","id":"sh/ehg729s3","slide":5,"name":"lane-3-arrow-2","bbox":[380,333,13,10]}
+{"kind":"shape","id":"sh/zipobe9o","slide":5,"name":"lane-3-arrow-3","bbox":[507,333,13,10]}
+{"kind":"shape","id":"sh/0jyp4ja9","slide":5,"name":"lane-3-arrow-4","bbox":[634,333,13,10]}
+{"kind":"shape","id":"sh/1k76doru","slide":5,"name":"lane-3-arrow-5","bbox":[761,333,13,10]}
+{"kind":"shape","id":"sh/mlg76tsf","slide":5,"name":"lane-4-arrow-1","bbox":[253,405,13,10]}
+{"kind":"shape","id":"sh/nmpofy9k","slide":5,"name":"lane-4-arrow-2","bbox":[380,405,13,10]}
+{"kind":"shape","id":"sh/8nyp8ja5","slide":5,"name":"lane-4-arrow-3","bbox":[507,405,13,10]}
+{"kind":"shape","id":"sh/9or6horq","slide":5,"name":"lane-4-arrow-4","bbox":[634,405,13,10]}
+{"kind":"shape","id":"sh/ap07atsb","slide":5,"name":"lane-4-arrow-5","bbox":[761,405,13,10]}
+{"kind":"shape","id":"sh/va98jy9w","slide":5,"name":"handoff-publish","bbox":[444,220,13,18]}
+{"kind":"shape","id":"sh/ovapgb2d","slide":5,"name":"handoff-dispatch","bbox":[444,292,13,18]}
+{"kind":"shape","id":"sh/pwjqpg3y","slide":5,"name":"handoff-request","bbox":[462,364,13,18]}
+{"kind":"shape","id":"sh/29s7elkn","slide":5,"name":"handoff-result","bbox":[698,364,13,18]}
+{"kind":"textbox","id":"sh/na18n6l8","slide":5,"name":"flow-note","text":"关键原则：网络只负责协调与记账；节点负责执行；明文只在用户端与隔离任务内短暂存在。","textPreview":"关键原则：网络只负责协调与记账；节点负责执行；明文只在用户端与隔离任务内短暂存在。","textChars":41,"textLines":1,"bbox":[42,468,810,28]}
+{"kind":"textbox","id":"sh/czupkv2p","slide":5,"name":"flow-legend-solid","text":"实线 = 服务 / 结果流","textPreview":"实线 = 服务 / 结果流","textChars":13,"textLines":1,"bbox":[42,505,150,22]}
+{"kind":"textbox","id":"sh/x03qt03a","slide":5,"name":"flow-legend-dash","text":"虚线 = 控制 / 验收流","textPreview":"虚线 = 控制 / 验收流","textChars":13,"textLines":1,"bbox":[202,505,150,22]}
+{"kind":"textbox","id":"sh/axs7ilkj","slide":5,"name":"page-number","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[885,505,32,20]}
+{"kind":"notes","id":"nt/mhribx","slide":5,"text":"[Sources]\n- Internal project documentation and planning discussion; no external sources.\n[/Sources]"}
+{"kind":"slide","id":"sl/i107q5of","slide":6,"title":"可信服务包，让节点一键发布服务","textShapes":25}
+{"kind":"textbox","id":"sh/fid07u98","slide":6,"name":"slide-title","text":"可信服务包，让节点一键发布服务","textPreview":"可信服务包，让节点一键发布服务","textChars":15,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/dgbulwnm","slide":6,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/cf2tcr61","slide":6,"bbox":[212,255,36,18]}
+{"kind":"shape","id":"sh/z2tcnm5s","slide":6,"bbox":[414,255,36,18]}
+{"kind":"shape","id":"sh/yhkbe1o7","slide":6,"bbox":[616,255,36,18]}
+{"kind":"shape","id":"sh/l4bupwny","slide":6,"bbox":[818,255,36,18]}
+{"kind":"shape","id":"sh/032tgr6d","slide":6,"bbox":[1020,255,36,18]}
+{"kind":"shape","id":"sh/n6dcr65o","slide":6,"bbox":[58,232,56,56]}
+{"kind":"textbox","id":"sh/m5kbi1oj","slide":6,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[58,244,56,28]}
+{"kind":"textbox","id":"sh/w32dkbuh","slide":6,"text":"开发","textPreview":"开发","textChars":2,"textLines":1,"bbox":[48,310,150,36]}
+{"kind":"textbox","id":"sh/x4vedgvm","slide":6,"text":"清单、代码\n依赖与权限","textPreview":"清单、代码 | 依赖与权限","textChars":11,"textLines":2,"bbox":[48,355,150,56]}
+{"kind":"shape","id":"sh/ahkvi1cb","slide":6,"bbox":[260,232,56,56]}
+{"kind":"textbox","id":"sh/v2twb6dw","slide":6,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[260,244,56,28]}
+{"kind":"textbox","id":"sh/k7mxovud","slide":6,"text":"审核","textPreview":"审核","textChars":2,"textLines":1,"bbox":[250,310,150,36]}
+{"kind":"textbox","id":"sh/58vehgvy","slide":6,"text":"安全扫描\n人工 Review","textPreview":"安全扫描 | 人工 Review","textChars":14,"textLines":2,"bbox":[250,355,150,56]}
+{"kind":"shape","id":"sh/i54fmlc7","slide":6,"bbox":[462,232,56,56]}
+{"kind":"textbox","id":"sh/j6dwfqds","slide":6,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[462,244,56,28]}
+{"kind":"textbox","id":"sh/sb6xsvu9","slide":6,"text":"签名","textPreview":"签名","textChars":2,"textLines":1,"bbox":[452,310,150,36]}
+{"kind":"textbox","id":"sh/tcfel0vu","slide":6,"text":"版本和哈希\n不可静默替换","textPreview":"版本和哈希 | 不可静默替换","textChars":12,"textLines":2,"bbox":[452,355,150,56]}
+{"kind":"shape","id":"sh/hgrmpwj2","slide":6,"bbox":[664,232,56,56]}
+{"kind":"textbox","id":"sh/gfi5grih","slide":6,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[664,244,56,28]}
+{"kind":"textbox","id":"sh/fe94nm1w","slide":6,"text":"安装","textPreview":"安装","textChars":2,"textLines":1,"bbox":[654,310,150,36]}
+{"kind":"textbox","id":"sh/ud0ne10b","slide":6,"text":"节点主动选择\n不默认发布","textPreview":"节点主动选择 | 不默认发布","textChars":12,"textLines":2,"bbox":[654,355,150,56]}
+{"kind":"shape","id":"sh/pkr6tgjy","slide":6,"bbox":[866,232,56,56]}
+{"kind":"textbox","id":"sh/4ji5kbid","slide":6,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[866,244,56,28]}
+{"kind":"textbox","id":"sh/3i94r61s","slide":6,"text":"上线","textPreview":"上线","textChars":2,"textLines":1,"bbox":[856,310,150,36]}
+{"kind":"textbox","id":"sh/2h0ni107","slide":6,"text":"设置资源\n时间与价格","textPreview":"设置资源 | 时间与价格","textChars":10,"textLines":2,"bbox":[856,355,150,56]}
+{"kind":"shape","id":"sh/5o7mhcju","slide":6,"bbox":[1068,232,56,56]}
+{"kind":"textbox","id":"sh/kny587i9","slide":6,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[1068,244,56,28]}
+{"kind":"textbox","id":"sh/atcjidg7","slide":6,"text":"接单","textPreview":"接单","textChars":2,"textLines":1,"bbox":[1058,310,150,36]}
+{"kind":"textbox","id":"sh/vu5kbihc","slide":6,"text":"仅接收定义好的\n参数和文件","textPreview":"仅接收定义好的 | 参数和文件","textChars":13,"textLines":2,"bbox":[1058,355,150,56]}
+{"kind":"shape","id":"sh/wve1knyx","slide":6,"bbox":[70,470,520,98]}
+{"kind":"textbox","id":"sh/xwn2dszi","slide":6,"text":"官方目录","textPreview":"官方目录","textChars":4,"textLines":1,"bbox":[92,488,150,30]}
+{"kind":"textbox","id":"sh/ihw3mxg3","slide":6,"text":"强制审核、官方签名、默认可见、一键启用。","textPreview":"强制审核、官方签名、默认可见、一键启用。","textChars":20,"textLines":1,"bbox":[92,530,460,28]}
+{"kind":"shape","id":"sh/ji5kf2ho","slide":6,"bbox":[650,470,560,98]}
+{"kind":"textbox","id":"sh/kjelony9","slide":6,"text":"社区目录","textPreview":"社区目录","textChars":4,"textLines":1,"bbox":[672,488,150,30]}
+{"kind":"textbox","id":"sh/5kn2hszu","slide":6,"text":"可开放发布，但默认不安装；需要本地明确授权。","textPreview":"可开放发布，但默认不安装；需要本地明确授权。","textChars":22,"textLines":1,"bbox":[672,530,500,28]}
+{"kind":"textbox","id":"sh/e1sjatgz","slide":6,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/zmlk3yhk","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/i107q5of","slide":6,"text":"[Sources]\n- D:/code/rynmesh/CONTRIBUTING.md:107\n- D:/code/rynmesh/CONTRIBUTING.md:155\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:49"}
+{"kind":"slide","id":"sl/x8f69ofe","slide":7,"title":"一次订单：从选择服务到结果结算","textShapes":28}
+{"kind":"textbox","id":"sh/mdof6907","slide":7,"name":"slide-title","text":"一次订单：从选择服务到结果结算","textPreview":"一次订单：从选择服务到结果结算","textChars":15,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"textbox","id":"sh/yhg7epsj","slide":7,"text":"失败可以重试；同一个幂等任务不能重复扣费。 ","textPreview":"失败可以重试；同一个幂等任务不能重复扣费。","textChars":22,"textLines":1,"bbox":[58,104,1110,40]}
+{"kind":"shape","id":"sh/zi98nu94","slide":7,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/87ipkzal","slide":7,"bbox":[320,253,32,18]}
+{"kind":"shape","id":"sh/98rqt4r6","slide":7,"bbox":[620,253,32,18]}
+{"kind":"shape","id":"sh/ml07i9sv","slide":7,"bbox":[920,253,32,18]}
+{"kind":"shape","id":"sh/7m98ru9g","slide":7,"bbox":[1078,352,20,44]}
+{"kind":"shape","id":"sh/oryp8fah","slide":7,"bbox":[320,478,32,18]}
+{"kind":"shape","id":"sh/pc76hkr2","slide":7,"bbox":[620,478,32,18]}
+{"kind":"shape","id":"sh/h4bupgn6","slide":7,"bbox":[920,478,32,18]}
+{"kind":"shape","id":"sh/w32twb6l","slide":7,"bbox":[58,190,260,145]}
+{"kind":"shape","id":"sh/v2tcn650","slide":7,"bbox":[58,190,8,145]}
+{"kind":"textbox","id":"sh/u1kbu1ov","slide":7,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[80,206,38,30]}
+{"kind":"textbox","id":"sh/5svutgni","slide":7,"text":"选择报价","textPreview":"选择报价","textChars":4,"textLines":1,"bbox":[124,204,178,32]}
+{"kind":"textbox","id":"sh/47mt0b6x","slide":7,"text":"比较价格、设备和隐私等级","textPreview":"比较价格、设备和隐私等级","textChars":12,"textLines":1,"bbox":[80,244,218,81]}
+{"kind":"shape","id":"sh/j6dcr65c","slide":7,"bbox":[358,190,260,145]}
+{"kind":"shape","id":"sh/i54bylor","slide":7,"bbox":[358,190,8,145]}
+{"kind":"textbox","id":"sh/twfux0ne","slide":7,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[380,206,38,30]}
+{"kind":"textbox","id":"sh/svmt4v6t","slide":7,"text":"本地加密","textPreview":"本地加密","textChars":4,"textLines":1,"bbox":[424,204,178,32]}
+{"kind":"textbox","id":"sh/cbe5g3ih","slide":7,"text":"提示词和文件先在用户侧加密","textPreview":"提示词和文件先在用户侧加密","textChars":13,"textLines":1,"bbox":[380,244,218,81]}
+{"kind":"shape","id":"sh/dcnm98zm","slide":7,"bbox":[658,190,260,145]}
+{"kind":"shape","id":"sh/qpwnet0b","slide":7,"bbox":[658,190,8,145]}
+{"kind":"textbox","id":"sh/bq547yhw","slide":7,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[680,206,38,30]}
+{"kind":"textbox","id":"sh/0fy5k3id","slide":7,"text":"提交订单","textPreview":"提交订单","textChars":4,"textLines":1,"bbox":[724,204,178,32]}
+{"kind":"textbox","id":"sh/lg76d8zy","slide":7,"text":"Registry只保存签名控制信息","textPreview":"Registry只保存签名控制信息","textChars":17,"textLines":1,"bbox":[680,244,218,81]}
+{"kind":"shape","id":"sh/ydgnit07","slide":7,"bbox":[958,190,260,145]}
+{"kind":"shape","id":"sh/zep4byhs","slide":7,"bbox":[958,190,8,145]}
+{"kind":"textbox","id":"sh/gju58ji9","slide":7,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[980,206,38,30]}
+{"kind":"textbox","id":"sh/1k3mhozu","slide":7,"text":"节点领取","textPreview":"节点领取","textChars":4,"textLines":1,"bbox":[1024,204,178,32]}
+{"kind":"textbox","id":"sh/jet8nm1c","slide":7,"text":"节点获得有时限的任务租约","textPreview":"节点获得有时限的任务租约","textChars":12,"textLines":1,"bbox":[980,244,218,81]}
+{"kind":"shape","id":"sh/idk7ehkr","slide":7,"bbox":[58,420,260,145]}
+{"kind":"shape","id":"sh/50bqpcj2","slide":7,"bbox":[58,420,8,145]}
+{"kind":"textbox","id":"sh/4f2pgr2h","slide":7,"text":"8","textPreview":"8","textChars":1,"textLines":1,"bbox":[80,436,38,30]}
+{"kind":"textbox","id":"sh/va98j210","slide":7,"text":"销毁工作区","textPreview":"销毁工作区","textChars":5,"textLines":1,"bbox":[124,434,178,32]}
+{"kind":"textbox","id":"sh/u907axkf","slide":7,"text":"销毁密钥、容器和临时卷","textPreview":"销毁密钥、容器和临时卷","textChars":11,"textLines":1,"bbox":[80,474,218,81]}
+{"kind":"shape","id":"sh/hcrqlcj6","slide":7,"bbox":[358,420,260,145]}
+{"kind":"shape","id":"sh/wbipc72l","slide":7,"bbox":[358,420,8,145]}
+{"kind":"textbox","id":"sh/7698f214","slide":7,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[380,436,38,30]}
+{"kind":"textbox","id":"sh/m5076xkj","slide":7,"text":"Credits结算","textPreview":"Credits结算","textChars":9,"textLines":1,"bbox":[424,434,178,32]}
+{"kind":"textbox","id":"sh/2dkbalg3","slide":7,"text":"验收成功后只结算一次","textPreview":"验收成功后只结算一次","textChars":10,"textLines":1,"bbox":[380,474,218,81]}
+{"kind":"shape","id":"sh/netcjqxo","slide":7,"bbox":[658,420,260,145]}
+{"kind":"shape","id":"sh/of2tcvy9","slide":7,"bbox":[658,420,8,145]}
+{"kind":"textbox","id":"sh/pgbul0fu","slide":7,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[680,436,38,30]}
+{"kind":"textbox","id":"sh/ep0b6lg7","slide":7,"text":"用户验收","textPreview":"用户验收","textChars":4,"textLines":1,"bbox":[724,434,178,32]}
+{"kind":"textbox","id":"sh/fq9cfqxc","slide":7,"text":"下载、解密、验证后接受或申诉","textPreview":"下载、解密、验证后接受或申诉","textChars":14,"textLines":1,"bbox":[680,474,218,81]}
+{"kind":"shape","id":"sh/0r2t8vyx","slide":7,"bbox":[958,420,260,145]}
+{"kind":"shape","id":"sh/1sbuh0fi","slide":7,"bbox":[958,420,8,145]}
+{"kind":"textbox","id":"sh/ql0b21gv","slide":7,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[980,436,38,30]}
+{"kind":"textbox","id":"sh/rm9sb6xg","slide":7,"text":"返回密文结果","textPreview":"返回密文结果","textChars":6,"textLines":1,"bbox":[1024,434,178,32]}
+{"kind":"textbox","id":"sh/9gfeh4zy","slide":7,"text":"输出先加密，再上传中转","textPreview":"输出先加密，再上传中转","textChars":11,"textLines":1,"bbox":[980,474,218,81]}
+{"kind":"textbox","id":"sh/8f6x8jid","slide":7,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/7exwfehs","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/x8f69ofe","slide":7,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:129\n- D:/code/rynmesh/rynmesh/jobs.py"}
+{"kind":"slide","id":"sl/79oh8d","slide":8,"title":"一次订单：从选择服务到结果结算","textShapes":48}
+{"kind":"textbox","id":"sh/cfahozmh","slide":8,"name":"slide-title","text":"一次订单：从选择服务到结果结算","textPreview":"一次订单：从选择服务到结果结算","textChars":15,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/sripw72x","slide":8,"text":"失败可以重试；同一个幂等任务不能重复扣费。 ","textPreview":"失败可以重试；同一个幂等任务不能重复扣费。","textChars":22,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/tcrq5c3i","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/ed07yhk3","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/fe987m1o","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/gfi9072t","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/1grq9cje","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/2hkr2hkz","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/3it8bm1k","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/z25gju90","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/e1wzqpsf","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/14nyl4rq","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/03ehszal","slide":8,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/ry5gfu9o","slide":8,"text":"选择报价","textPreview":"选择报价","textChars":4,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/qxcfmps3","slide":8,"text":"比较价格、设备和隐私等级","textPreview":"比较价格、设备和隐私等级","textChars":12,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/d0nyhkru","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/czexofa9","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/bupgre98","slide":8,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/atgzy9sn","slide":8,"text":"本地加密","textPreview":"本地加密","textChars":4,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/6pkjqdcv","slide":8,"text":"提示词和文件先在用户侧加密","textPreview":"提示词和文件先在用户侧加密","textChars":13,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/7qtkjitg","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/sr21snul","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/tsb2lsb6","slide":8,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/utkjuxcr","slide":8,"text":"提交订单","textPreview":"提交订单","textChars":4,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/futknitc","slide":8,"text":"Registry只保存签名控制信息","textPreview":"Registry只保存签名控制信息","textChars":17,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/gv21wnux","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/hwv2psbi","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/ax0jitcn","slide":8,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/by90byt8","slide":8,"text":"节点领取","textPreview":"节点领取","textChars":4,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/dcfmxwvq","slide":8,"text":"节点获得有时限的任务租约","textPreview":"节点获得有时限的任务租约","textChars":12,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/cb65ore5","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/rqx4vmdk","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/qpo3m1wz","slide":8,"text":"8","textPreview":"8","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/1gzm1gvm","slide":8,"text":"销毁工作区","textPreview":"销毁工作区","textChars":5,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/0f65sbe1","slide":8,"text":"销毁密钥、容器和临时卷","textPreview":"销毁密钥、容器和临时卷","textChars":11,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/zex4z6dw","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/edonq1wb","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/hkvmpcvi","slide":8,"text":"7","textPreview":"7","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/gjmlg7ex","slide":8,"text":"Credits结算","textPreview":"Credits结算","textChars":9,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/kruhkj2x","slide":8,"text":"验收成功后只结算一次","textPreview":"验收成功后只结算一次","textChars":10,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/5cnydoj2","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/ipcfi9kr","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/jqlgbe1c","slide":8,"text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/wnuxgz2l","slide":8,"text":"用户验收","textPreview":"用户验收","textChars":4,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/xo3y94j6","slide":8,"text":"下载、解密、验证后接受或申诉","textPreview":"下载、解密、验证后接受或申诉","textChars":14,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/alcfepkf","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/vmlg7u10","slide":8,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/8jaxcz2p","slide":8,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/9kjy54ja","slide":8,"text":"返回密文结果","textPreview":"返回密文结果","textChars":6,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/be1gfulw","slide":8,"text":"输出先加密，再上传中转","textPreview":"输出先加密，再上传中转","textChars":11,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/qtszmp4b","slide":8,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"textbox","id":"sh/dgjyhk32","slide":8,"text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[-2400,-2400,1,1]}
+{"kind":"shape","id":"sh/zi10jul8","slide":8,"name":"flowchart-white-canvas","bbox":[0,0,960,540]}
+{"kind":"textbox","id":"sh/yhszqp4n","slide":8,"name":"slide-title","text":"订单状态机：失败可重试，成功只结算一次","textPreview":"订单状态机：失败可重试，成功只结算一次","textChars":19,"textLines":1,"bbox":[42,28,876,44]}
+{"kind":"textbox","id":"sh/lkjil43y","slide":8,"name":"slide-subtitle","text":"把超时、节点离线、验收争议和隐私清理纳入同一套订单规则","textPreview":"把超时、节点离线、验收争议和隐私清理纳入同一套订单规则","textChars":27,"textLines":1,"bbox":[42,73,876,22]}
+{"kind":"shape","id":"sh/0jahszmd","slide":8,"name":"title-rule","bbox":[42,101,876,0]}
+{"kind":"textbox","id":"sh/nml0nel4","slide":8,"name":"state-main-1","text":"创建订单","textPreview":"创建订单","textChars":4,"textLines":1,"bbox":[42,170,105,58]}
+{"kind":"textbox","id":"sh/mlczu94j","slide":8,"name":"state-main-2","text":"等待匹配","textPreview":"等待匹配","textChars":4,"textLines":1,"bbox":[171,170,105,58]}
+{"kind":"textbox","id":"sh/ihwjmdor","slide":8,"name":"state-main-3","text":"节点接单\n租约锁定","textPreview":"节点接单 | 租约锁定","textChars":9,"textLines":2,"bbox":[300,170,105,58]}
+{"kind":"textbox","id":"sh/ji5kfi5c","slide":8,"name":"state-main-4","text":"隔离执行","textPreview":"隔离执行","textChars":4,"textLines":1,"bbox":[429,170,105,58]}
+{"kind":"textbox","id":"sh/kje1o36x","slide":8,"name":"state-main-5","text":"上传密文结果","textPreview":"上传密文结果","textChars":6,"textLines":1,"bbox":[558,170,105,58]}
+{"kind":"textbox","id":"sh/5472h8ni","slide":8,"name":"state-main-6","text":"用户验收","textPreview":"用户验收","textChars":4,"textLines":1,"bbox":[687,170,105,58]}
+{"kind":"textbox","id":"sh/adwjitov","slide":8,"name":"state-main-7","text":"清理工作区\n结算关闭","textPreview":"清理工作区 | 结算关闭","textChars":10,"textLines":2,"bbox":[816,170,105,58]}
+{"kind":"shape","id":"sh/ve5kby5g","slide":8,"name":"state-main-arrow-1","bbox":[151,193,16,12]}
+{"kind":"shape","id":"sh/wfe1k36l","slide":8,"name":"state-main-arrow-2","bbox":[280,193,16,12]}
+{"kind":"shape","id":"sh/xgn2d8n6","slide":8,"name":"state-main-arrow-3","bbox":[409,193,16,12]}
+{"kind":"shape","id":"sh/e9g3uxoz","slide":8,"name":"state-main-arrow-4","bbox":[538,193,16,12]}
+{"kind":"shape","id":"sh/fapkn25k","slide":8,"name":"state-main-arrow-5","bbox":[667,193,16,12]}
+{"kind":"shape","id":"sh/p4bmtw7m","slide":8,"name":"state-main-arrow-6","bbox":[796,193,16,12]}
+{"kind":"textbox","id":"sh/o325krq1","slide":8,"name":"state-timeout","text":"匹配超时","textPreview":"匹配超时","textChars":4,"textLines":1,"bbox":[171,294,105,46]}
+{"kind":"textbox","id":"sh/3294rmpg","slide":8,"name":"state-retry","text":"重新匹配","textPreview":"重新匹配","textChars":4,"textLines":1,"bbox":[300,294,105,46]}
+{"kind":"textbox","id":"sh/210nih8b","slide":8,"name":"state-cancel","text":"用户取消\n不扣费","textPreview":"用户取消 | 不扣费","textChars":8,"textLines":2,"bbox":[171,386,105,52]}
+{"kind":"textbox","id":"sh/10rmpc7q","slide":8,"name":"state-failed","text":"执行失败 /\n节点离线","textPreview":"执行失败 / | 节点离线","textChars":11,"textLines":2,"bbox":[429,294,105,46]}
+{"kind":"textbox","id":"sh/gzi5g7q5","slide":8,"name":"state-requeue","text":"保留输入密文\n重新排队","textPreview":"保留输入密文 | 重新排队","textChars":11,"textLines":2,"bbox":[558,294,105,46]}
+{"kind":"textbox","id":"sh/fy94nmpk","slide":8,"name":"state-disputed","text":"验收失败\n进入争议","textPreview":"验收失败 | 进入争议","textChars":9,"textLines":2,"bbox":[687,294,105,46]}
+{"kind":"textbox","id":"sh/ed0neh8z","slide":8,"name":"state-decision","text":"复核：退款或放款","textPreview":"复核：退款或放款","textChars":8,"textLines":1,"bbox":[816,294,102,46]}
+{"kind":"shape","id":"sh/lwv61g7u","slide":8,"name":"state-wait-timeout","bbox":[216,235,15,51]}
+{"kind":"shape","id":"sh/0vm5sbq9","slide":8,"name":"state-timeout-retry","bbox":[280,311,16,12]}
+{"kind":"shape","id":"sh/wr6pkfah","slide":8,"name":"state-retry-up","bbox":[345,235,15,51]}
+{"kind":"shape","id":"sh/xsfqtkr2","slide":8,"name":"state-timeout-cancel","bbox":[216,347,15,32]}
+{"kind":"shape","id":"sh/apo7i5sb","slide":8,"name":"state-run-failed","bbox":[474,235,15,51]}
+{"kind":"shape","id":"sh/vqx8ra9w","slide":8,"name":"state-failed-requeue","bbox":[538,311,16,12]}
+{"kind":"shape","id":"sh/kvq9ofat","slide":8,"name":"state-requeue-return","bbox":[300,352,360,13]}
+{"kind":"textbox","id":"sh/5wzqxkry","slide":8,"name":"state-return-label","text":"失败后回到“等待匹配”","textPreview":"失败后回到“等待匹配”","textChars":11,"textLines":1,"bbox":[395,364,170,18]}
+{"kind":"shape","id":"sh/ito7mpsn","slide":8,"name":"state-accept-dispute","bbox":[732,235,15,51]}
+{"kind":"shape","id":"sh/juh8va98","slide":8,"name":"state-dispute-decision","bbox":[796,311,16,12]}
+{"kind":"textbox","id":"sh/0zmpcva9","slide":8,"name":"idempotency-callout","text":"幂等键 + 结算锁：同一订单无论重试多少次，只能成功扣费和放款一次","textPreview":"幂等键 + 结算锁：同一订单无论重试多少次，只能成功扣费和放款一次","textChars":33,"textLines":1,"bbox":[300,386,363,52]}
+{"kind":"textbox","id":"sh/l0vql0ru","slide":8,"name":"state-note","text":"隐私边界：平台保存订单状态、签名和密文引用；节点任务目录在结果确认或超时后执行可验证清理。","textPreview":"隐私边界：平台保存订单状态、签名和密文引用；节点任务目录在结果确认或超时后执行可验证清理。","textChars":45,"textLines":1,"bbox":[42,468,810,28]}
+{"kind":"textbox","id":"sh/nqlk7ixo","slide":8,"name":"page-number","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[885,505,32,20]}
+{"kind":"notes","id":"nt/79oh8d","slide":8,"text":"[Sources]\n- Internal project documentation and planning discussion; no external sources.\n[/Sources]"}
+{"kind":"slide","id":"sl/gnmp4jqx","slide":9,"title":"节点用户不写代码，只选择愿意提供的服务","textShapes":26}
+{"kind":"textbox","id":"sh/kra50jqh","slide":9,"name":"slide-title","text":"节点用户不写代码，只选择愿意提供的服务","textPreview":"节点用户不写代码，只选择愿意提供的服务","textChars":19,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/cb2tkvap","slide":9,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/dcbud0ra","slide":9,"bbox":[58,172,570,420]}
+{"kind":"textbox","id":"sh/ydkbm5sv","slide":9,"text":"节点端操作","textPreview":"节点端操作","textChars":5,"textLines":1,"bbox":[88,198,260,36]}
+{"kind":"shape","id":"sh/zedcfa9g","slide":9,"bbox":[92,260,28,28]}
+{"kind":"textbox","id":"sh/kzmdova1","slide":9,"text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[92,265,28,18]}
+{"kind":"textbox","id":"sh/l0vuh0rm","slide":9,"text":"系统检测 CPU / GPU / 磁盘 / 网络","textPreview":"系统检测 CPU / GPU / 磁盘 / 网络","textChars":24,"textLines":1,"bbox":[136,257,440,32]}
+{"kind":"shape","id":"sh/eh0ba1sr","slide":9,"bbox":[92,318,28,28]}
+{"kind":"textbox","id":"sh/fi9c369c","slide":9,"text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[92,323,28,18]}
+{"kind":"textbox","id":"sh/baxkjqlk","slide":9,"text":"显示可以运行的官方服务包","textPreview":"显示可以运行的官方服务包","textChars":12,"textLines":1,"bbox":[136,315,440,32]}
+{"kind":"shape","id":"sh/a9ojq5kz","slide":9,"bbox":[92,376,28,28]}
+{"kind":"textbox","id":"sh/xcz2l03q","slide":9,"text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[92,381,28,18]}
+{"kind":"textbox","id":"sh/cbq1sv25","slide":9,"text":"用户勾选服务并设置时间与价格","textPreview":"用户勾选服务并设置时间与价格","textChars":14,"textLines":1,"bbox":[136,373,440,32]}
+{"kind":"shape","id":"sh/n6x0fqlo","slide":9,"bbox":[92,434,28,28]}
+{"kind":"textbox","id":"sh/25ojml43","slide":9,"text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[92,439,28,18]}
+{"kind":"textbox","id":"sh/p8fih03e","slide":9,"text":"节点发布签名 ServiceOffer","textPreview":"节点发布签名 ServiceOffer","textChars":19,"textLines":1,"bbox":[136,431,440,32]}
+{"kind":"shape","id":"sh/o761ov2t","slide":9,"bbox":[92,492,28,28]}
+{"kind":"textbox","id":"sh/f2d0b6lc","slide":9,"text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[92,497,28,18]}
+{"kind":"textbox","id":"sh/eh4jil4r","slide":9,"text":"资源不足或用户占用时自动暂停","textPreview":"资源不足或用户占用时自动暂停","textChars":14,"textLines":1,"bbox":[136,489,440,32]}
+{"kind":"textbox","id":"sh/id4ju1oz","slide":9,"text":"节点拥有者始终可以停用服务。","textPreview":"节点拥有者始终可以停用服务。","textChars":14,"textLines":1,"bbox":[88,548,460,30]}
+{"kind":"textbox","id":"sh/jedkn654","slide":9,"text":"默认护栏","textPreview":"默认护栏","textChars":4,"textLines":1,"bbox":[700,198,260,36]}
+{"kind":"textbox","id":"sh/4fm1wb6p","slide":9,"text":"资源","textPreview":"资源","textChars":2,"textLines":1,"bbox":[700,265,100,30]}
+{"kind":"textbox","id":"sh/50v2pgna","slide":9,"text":"限 CPU / RAM / VRAM / 磁盘 / 时间","textPreview":"限 CPU / RAM / VRAM / 磁盘 / 时间","textChars":28,"textLines":1,"bbox":[815,265,390,48]}
+{"kind":"shape","id":"sh/q143ylov","slide":9,"bbox":[700,309,505,0]}
+{"kind":"textbox","id":"sh/r2dkrq5g","slide":9,"text":"隔离","textPreview":"隔离","textChars":2,"textLines":1,"bbox":[700,328,100,30]}
+{"kind":"textbox","id":"sh/s3ml0v61","slide":9,"text":"一单一容器；模型只读；不挂载用户目录","textPreview":"一单一容器；模型只读；不挂载用户目录","textChars":18,"textLines":1,"bbox":[815,328,390,48]}
+{"kind":"shape","id":"sh/d4f2t0nm","slide":9,"bbox":[700,372,505,0]}
+{"kind":"textbox","id":"sh/e5o32lor","slide":9,"text":"网络","textPreview":"网络","textChars":2,"textLines":1,"bbox":[700,391,100,30]}
+{"kind":"textbox","id":"sh/f6xkvq5c","slide":9,"text":"默认禁止通用出网；中转由 Supervisor 处理","textPreview":"默认禁止通用出网；中转由 Supervisor 处理","textChars":26,"textLines":1,"bbox":[815,391,390,48]}
+{"kind":"shape","id":"sh/p0zmlk7u","slide":9,"bbox":[700,435,505,0]}
+{"kind":"textbox","id":"sh/ozq5szq9","slide":9,"text":"更新","textPreview":"更新","textChars":2,"textLines":1,"bbox":[700,454,100,30]}
+{"kind":"textbox","id":"sh/nyh4jupo","slide":9,"text":"新版本必须验证签名和镜像哈希","textPreview":"新版本必须验证签名和镜像哈希","textChars":14,"textLines":1,"bbox":[815,454,390,48]}
+{"kind":"shape","id":"sh/2x8nqp83","slide":9,"bbox":[700,498,505,0]}
+{"kind":"textbox","id":"sh/x4j6p47q","slide":9,"text":"日志","textPreview":"日志","textChars":2,"textLines":1,"bbox":[700,517,100,30]}
+{"kind":"textbox","id":"sh/c3a5wzq5","slide":9,"text":"不记录提示词、文件内容和解密结果","textPreview":"不记录提示词、文件内容和解密结果","textChars":16,"textLines":1,"bbox":[815,517,390,48]}
+{"kind":"shape","id":"sh/b2h4nupk","slide":9,"bbox":[700,561,505,0]}
+{"kind":"textbox","id":"sh/a18nup8z","slide":9,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/lsj6t47m","slide":9,"text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/gnmp4jqx","slide":9,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:53\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:114"}
+{"kind":"slide","id":"sl/fu1gfa1s","slide":10,"title":"隐私能做到很强，但普通4090不是机密计算","textShapes":8}
+{"kind":"textbox","id":"sh/m5gvmhwn","slide":10,"name":"slide-title","text":"隐私能做到很强，但普通4090不是机密计算","textPreview":"隐私能做到很强，但普通4090不是机密计算","textChars":21,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/18byd4zy","slide":10,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/g72x4zyd","slide":10,"bbox":[58,180,540,330]}
+{"kind":"textbox","id":"sh/ri9g7uhw","slide":10,"text":"可以保证","textPreview":"可以保证","textChars":4,"textLines":1,"bbox":[88,205,220,38]}
+{"kind":"textbox","id":"sh/6h0fypgb","slide":10,"text":"• Registry 不保存明文提示词\n• Relay 只保存密文结果\n• 输出只对用户公钥加密\n• 临时卷使用内存密钥\n• 完成后销毁密钥和容器","textPreview":"• Registry 不保存明文提示词 | • Relay 只保存密文结果 | • 输出只对用户公钥加密 | • 临时卷使用内存密钥 | • 完成后销毁密钥和容器","textChars":73,"textLines":5,"bbox":[88,265,450,190]}
+{"kind":"shape","id":"sh/tkby9kzm","slide":10,"bbox":[650,180,572,330]}
+{"kind":"textbox","id":"sh/sjix0zy1","slide":10,"text":"不能绝对保证","textPreview":"不能绝对保证","textChars":6,"textLines":1,"bbox":[680,205,260,38]}
+{"kind":"textbox","id":"sh/je9g3ahk","slide":10,"text":"• 4090执行时必须在内存/显存解密\n• 拥有宿主机管理员权限的机主理论上可查看\n• “删除回执”不能证明机主从未复制\n• 敏感任务应使用本机、可信或官方节点","textPreview":"• 4090执行时必须在内存/显存解密 | • 拥有宿主机管理员权限的机主理论上可查看 | • “删除回执”不能证明机主从未复制 | • 敏感任务应使用本机、可信或官方节点","textChars":80,"textLines":4,"bbox":[680,265,485,180]}
+{"kind":"textbox","id":"sh/id0fu50z","slide":10,"text":"对外准确表述：社区节点提供端到端加密交付和自动清理，不等于节点所有者不可见。","textPreview":"对外准确表述：社区节点提供端到端加密交付和自动清理，不等于节点所有者不可见。","textChars":38,"textLines":1,"bbox":[70,550,1130,54]}
+{"kind":"textbox","id":"sh/o7ydoret","slide":10,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/98rehwve","slide":10,"text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/fu1gfa1s","slide":10,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:154\n- D:/code/rynmesh/SECURITY.md:19"}
+{"kind":"slide","id":"sl/udsvah03","slide":11,"title":"当前用 Credits 验证经济闭环，现金结算放到后期","textShapes":13}
+{"kind":"textbox","id":"sh/76h0zup8","slide":11,"name":"slide-title","text":"当前用 Credits 验证经济闭环，现金结算放到后期","textPreview":"当前用 Credits 验证经济闭环，现金结算放到后期","textChars":27,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/1cfmhgne","slide":11,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/0b65obm9","slide":11,"bbox":[380,290,48,24]}
+{"kind":"shape","id":"sh/nex4jq5k","slide":11,"bbox":[830,290,48,24]}
+{"kind":"shape","id":"sh/mdonql4z","slide":11,"bbox":[72,220,320,210]}
+{"kind":"textbox","id":"sh/9gzml0nq","slide":11,"text":"用户预算","textPreview":"用户预算","textChars":4,"textLines":1,"bbox":[100,250,265,38]}
+{"kind":"textbox","id":"sh/ofq5svm5","slide":11,"text":"提交最大可支付 Credits\n任务开始时预留","textPreview":"提交最大可支付 Credits | 任务开始时预留","textChars":23,"textLines":2,"bbox":[100,315,265,76]}
+{"kind":"shape","id":"sh/bih4na5w","slide":11,"bbox":[455,220,320,210]}
+{"kind":"textbox","id":"sh/ah8nu54b","slide":11,"text":"验收与争议","textPreview":"验收与争议","textChars":5,"textLines":1,"bbox":[483,250,265,38]}
+{"kind":"textbox","id":"sh/oza1gfyh","slide":11,"text":"成功验收才结算\n失败、超时可重试","textPreview":"成功验收才结算 | 失败、超时可重试","textChars":16,"textLines":2,"bbox":[483,315,265,76]}
+{"kind":"shape","id":"sh/p0ji9kf2","slide":11,"bbox":[888,220,320,210]}
+{"kind":"textbox","id":"sh/2xsjepgb","slide":11,"text":"节点收入","textPreview":"节点收入","textChars":4,"textLines":1,"bbox":[916,250,265,38]}
+{"kind":"textbox","id":"sh/3y107axw","slide":11,"text":"按结果获得 Credits\n形成可靠性和贡献记录","textPreview":"按结果获得 Credits | 形成可靠性和贡献记录","textChars":24,"textLines":2,"bbox":[916,315,265,76]}
+{"kind":"shape","id":"sh/cnu1kzyd","slide":11,"bbox":[72,495,86,30]}
+{"kind":"textbox","id":"sh/do3id4fy","slide":11,"text":"现在","textPreview":"现在","textChars":2,"textLines":1,"bbox":[72,498,86,24]}
+{"kind":"textbox","id":"sh/qlcjipgn","slide":11,"text":"不可转让 Credits：先验证需求、交付、重试、信誉与反作弊。","textPreview":"不可转让 Credits：先验证需求、交付、重试、信誉与反作弊。","textChars":32,"textLines":1,"bbox":[180,497,930,36]}
+{"kind":"shape","id":"sh/bml0buxs","slide":11,"bbox":[72,548,86,30]}
+{"kind":"textbox","id":"sh/0ru1ozyp","slide":11,"text":"以后","textPreview":"以后","textChars":2,"textLines":1,"bbox":[72,551,86,24]}
+{"kind":"textbox","id":"sh/lsn2h4fa","slide":11,"text":"现金、提现、退款、KYC、税务与法律审查属于 P5/P6 之后。","textPreview":"现金、提现、退款、KYC、税务与法律审查属于 P5/P6 之后。","textChars":32,"textLines":1,"bbox":[180,550,930,36]}
+{"kind":"textbox","id":"sh/98ji147e","slide":11,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/87a18zqt","slide":11,"text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/udsvah03","slide":11,"text":"[Sources]\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:109\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:142\n- D:/code/rynmesh/docs/RYNMESH_VISION.md:203"}
+{"kind":"slide","id":"sl/m90b6t0r","slide":12,"title":"项目已经有协议骨架，但服务市场仍未形成","textShapes":10}
+{"kind":"textbox","id":"sh/1cru1g3y","slide":12,"name":"slide-title","text":"项目已经有协议骨架，但服务市场仍未形成","textPreview":"项目已经有协议骨架，但服务市场仍未形成","textChars":19,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/xc3mho32","slide":12,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/cbu58j2h","slide":12,"bbox":[58,185,350,390]}
+{"kind":"textbox","id":"sh/zelojyl8","slide":12,"text":"已经完成","textPreview":"已经完成","textChars":4,"textLines":1,"bbox":[86,215,260,38]}
+{"kind":"textbox","id":"sh/ydcnatkn","slide":12,"text":"节点身份与签名\nRegistry 与 Relay\nWorkOrder / WorkResult\n内容哈希与来源证明\n加密消息\nCredits 基础","textPreview":"节点身份与签名 | Registry 与 Relay | WorkOrder / WorkResult | 内容哈希与来源证明 | 加密消息 | Credits 基础","textChars":73,"textLines":6,"bbox":[86,285,285,240]}
+{"kind":"shape","id":"sh/l036l83y","slide":12,"bbox":[452,185,350,390]}
+{"kind":"textbox","id":"sh/kzu5c32t","slide":12,"text":"已有原型","textPreview":"已有原型","textChars":4,"textLines":1,"bbox":[480,215,260,38]}
+{"kind":"textbox","id":"sh/725onyl4","slide":12,"text":"Signal50 异步任务\nnet.egress MVP\nLLM Stub\n图片 Stub\nEmbedding Stub\nServices 页面骨架","textPreview":"Signal50 异步任务 | net.egress MVP | LLM Stub | 图片 Stub | Embedding Stub | Services 页面骨架","textChars":74,"textLines":6,"bbox":[480,285,285,240]}
+{"kind":"shape","id":"sh/m1cnetkj","slide":12,"bbox":[846,185,350,390]}
+{"kind":"textbox","id":"sh/s7yt4b21","slide":12,"text":"尚未完成","textPreview":"尚未完成","textChars":4,"textLines":1,"bbox":[874,215,260,38]}
+{"kind":"textbox","id":"sh/d87uxg3m","slide":12,"text":"ServicePackage 协议\n审核与包目录\n任务租约与争议\n加密大文件协议\n正式结算闭环\n首个公开可用服务","textPreview":"ServicePackage 协议 | 审核与包目录 | 任务租约与争议 | 加密大文件协议 | 正式结算闭环 | 首个公开可用服务","textChars":56,"textLines":6,"bbox":[874,285,285,240]}
+{"kind":"textbox","id":"sh/q5gb21kb","slide":12,"text":"结论：现在有“服务交易骨架”，还没有“普通用户可稳定购买的正式服务”。","textPreview":"结论：现在有“服务交易骨架”，还没有“普通用户可稳定购买的正式服务”。","textChars":35,"textLines":1,"bbox":[60,610,1150,36]}
+{"kind":"textbox","id":"sh/r6pcv6lw","slide":12,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/0bit8b2d","slide":12,"text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/m90b6t0r","slide":12,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:18\n- D:/code/rynmesh/docs/REQUIREMENTS.md:37\n- D:/code/rynmesh/docs/ARCHITECTURE.md"}
+{"kind":"slide","id":"sl/jetc3ut0","slide":13,"title":"当前服务实现：两个专用MVP，三个协议演示","textShapes":22}
+{"kind":"textbox","id":"sh/ydcfq1kb","slide":13,"name":"slide-title","text":"当前服务实现：两个专用MVP，三个协议演示","textPreview":"当前服务实现：两个专用MVP，三个协议演示","textChars":21,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/xcryxg7y","slide":13,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/wbih4b6d","slide":13,"bbox":[58,175,1164,48]}
+{"kind":"textbox","id":"sh/n69grmpw","slide":13,"text":"Capability","textPreview":"Capability","textChars":10,"textLines":1,"bbox":[78,187,340,24]}
+{"kind":"textbox","id":"sh/250zy18b","slide":13,"text":"状态","textPreview":"状态","textChars":2,"textLines":1,"bbox":[430,187,180,24]}
+{"kind":"textbox","id":"sh/98rytw72","slide":13,"text":"实际含义","textPreview":"实际含义","textChars":4,"textLines":1,"bbox":[650,187,520,24]}
+{"kind":"textbox","id":"sh/o7ih0r6h","slide":13,"text":"signal50.veo_motion.v1","textPreview":"signal50.veo_motion.v1","textChars":22,"textLines":1,"bbox":[78,241,340,28]}
+{"kind":"shape","id":"sh/72t03qp0","slide":13,"bbox":[430,240,150,30]}
+{"kind":"textbox","id":"sh/61kzalof","slide":13,"text":"专用异步原型","textPreview":"专用异步原型","textChars":6,"textLines":1,"bbox":[430,243,150,24]}
+{"kind":"textbox","id":"sh/ofqtgnyt","slide":13,"text":"真实执行，但依赖 Signal50 / 浏览器环境","textPreview":"真实执行，但依赖 Signal50 / 浏览器环境","textChars":25,"textLines":1,"bbox":[650,238,520,34]}
+{"kind":"shape","id":"sh/9gza9sze","slide":13,"bbox":[58,287,1164,0]}
+{"kind":"shape","id":"sh/mdobedg3","slide":13,"bbox":[58,288,1164,65]}
+{"kind":"textbox","id":"sh/nehs7iho","slide":13,"text":"net.egress","textPreview":"net.egress","textChars":10,"textLines":1,"bbox":[78,306,340,28]}
+{"kind":"shape","id":"sh/0b6tc3yx","slide":13,"bbox":[430,305,150,30]}
+{"kind":"textbox","id":"sh/1cfa58zi","slide":13,"text":"功能性 MVP","textPreview":"功能性 MVP","textChars":7,"textLines":1,"bbox":[430,308,150,24]}
+{"kind":"textbox","id":"sh/epobatgr","slide":13,"text":"能开网络出口会话；授权和结算仍简化","textPreview":"能开网络出口会话；授权和结算仍简化","textChars":17,"textLines":1,"bbox":[650,303,520,34]}
+{"kind":"shape","id":"sh/zaxs3yhc","slide":13,"bbox":[58,352,1164,0]}
+{"kind":"textbox","id":"sh/cn6t83y1","slide":13,"text":"rynmesh.llm.complete","textPreview":"rynmesh.llm.complete","textChars":20,"textLines":1,"bbox":[78,371,340,28]}
+{"kind":"shape","id":"sh/dofa18z6","slide":13,"bbox":[430,370,150,30]}
+{"kind":"textbox","id":"sh/tsnip0ny","slide":13,"text":"Stub","textPreview":"Stub","textChars":4,"textLines":1,"bbox":[430,373,150,24]}
+{"kind":"textbox","id":"sh/87ehgv6d","slide":13,"text":"确定性测试文本，不是真模型服务","textPreview":"确定性测试文本，不是真模型服务","textChars":15,"textLines":1,"bbox":[650,368,520,34]}
+{"kind":"shape","id":"sh/7650nq5s","slide":13,"bbox":[58,417,1164,0]}
+{"kind":"shape","id":"sh/65wzelo7","slide":13,"bbox":[58,418,1164,65]}
+{"kind":"textbox","id":"sh/l43ilgn2","slide":13,"text":"rynmesh.image.generate","textPreview":"rynmesh.image.generate","textChars":22,"textLines":1,"bbox":[78,436,340,28]}
+{"kind":"shape","id":"sh/k3uhcb6h","slide":13,"bbox":[430,435,150,30]}
+{"kind":"textbox","id":"sh/j2lgjq5w","slide":13,"text":"Stub","textPreview":"Stub","textChars":4,"textLines":1,"bbox":[430,438,150,24]}
+{"kind":"textbox","id":"sh/y1czalob","slide":13,"text":"生成测试渐变图，不是扩散模型","textPreview":"生成测试渐变图，不是扩散模型","textChars":14,"textLines":1,"bbox":[650,433,520,34]}
+{"kind":"shape","id":"sh/p07ixkn6","slide":13,"bbox":[58,482,1164,0]}
+{"kind":"textbox","id":"sh/4zyhofml","slide":13,"text":"rynmesh.embedding.compute","textPreview":"rynmesh.embedding.compute","textChars":25,"textLines":1,"bbox":[78,501,340,28]}
+{"kind":"shape","id":"sh/m58fih43","slide":13,"bbox":[430,500,150,30]}
+{"kind":"textbox","id":"sh/n61wbmlo","slide":13,"text":"Stub","textPreview":"Stub","textChars":4,"textLines":1,"bbox":[430,503,150,24]}
+{"kind":"textbox","id":"sh/o7axk7m9","slide":13,"text":"生成哈希向量，不是模型 Embedding","textPreview":"生成哈希向量，不是模型 Embedding","textChars":21,"textLines":1,"bbox":[650,498,520,34]}
+{"kind":"shape","id":"sh/98jedc3u","slide":13,"bbox":[58,547,1164,0]}
+{"kind":"shape","id":"sh/eh8fex47","slide":13,"bbox":[58,580,1164,56]}
+{"kind":"textbox","id":"sh/z2hw72lc","slide":13,"text":"2026-08-19实时检查：rynmesh-main 最近24小时 1个节点、0条服务容量记录。","textPreview":"2026-08-19实时检查：rynmesh-main 最近24小时 1个节点、0条服务容量记录。","textChars":49,"textLines":1,"bbox":[78,595,1110,28]}
+{"kind":"textbox","id":"sh/03qxg7mx","slide":13,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/14ze9c3i","slide":13,"text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/jetc3ut0","slide":13,"text":"[Sources]\n- D:/code/rynmesh/rynmesh/signal50_service.py\n- D:/code/rynmesh/rynmesh/services/net_egress.py\n- D:/code/rynmesh/rynmesh/services/llm.py\n- D:/code/rynmesh/rynmesh/services/image.py\n- D:/code/rynmesh/rynmesh/services/embeddings.py\n- https://registry.rynmesh.ai/health\n- https://registry.rynmesh.ai/api/v1/jobs/capacity?network_id=rynmesh-main&max_age_hours=24"}
+{"kind":"slide","id":"sl/8f2psfyx","slide":14,"title":"已经写入计划的服务","textShapes":18}
+{"kind":"textbox","id":"sh/xonutobe","slide":14,"name":"slide-title","text":"已经写入计划的服务","textPreview":"已经写入计划的服务","textChars":9,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"textbox","id":"sh/1gbm9s3a","slide":14,"text":"先完成通用底座，再逐个把服务从原型升级为正式交付。 ","textPreview":"先完成通用底座，再逐个把服务从原型升级为正式交付。","textChars":26,"textLines":1,"bbox":[58,104,1110,40]}
+{"kind":"shape","id":"sh/0f2lgnmp","slide":14,"bbox":[56,138,1168,0]}
+{"kind":"textbox","id":"sh/ra943il8","slide":14,"text":"正式计划","textPreview":"正式计划","textChars":4,"textLines":1,"bbox":[62,175,260,36]}
+{"kind":"shape","id":"sh/q903ad4n","slide":14,"bbox":[70,230,18,18]}
+{"kind":"textbox","id":"sh/dcbm583y","slide":14,"text":"视频转码  · media.transcode.v1","textPreview":"视频转码  · media.transcode.v1","textChars":26,"textLines":1,"bbox":[102,224,500,34]}
+{"kind":"shape","id":"sh/sb2lcnmd","slide":14,"bbox":[70,288,18,18]}
+{"kind":"textbox","id":"sh/b6d4f2lc","slide":14,"text":"4090视频生成  · video.generate.v1","textPreview":"4090视频生成  · video.generate.v1","textChars":29,"textLines":1,"bbox":[102,282,500,34]}
+{"kind":"shape","id":"sh/a543mx4r","slide":14,"bbox":[70,346,18,18]}
+{"kind":"textbox","id":"sh/wvupgz6t","slide":14,"text":"加密临时存储  · artifact.hold.v1","textPreview":"加密临时存储  · artifact.hold.v1","textChars":26,"textLines":1,"bbox":[102,340,500,34]}
+{"kind":"shape","id":"sh/xw3q94ne","slide":14,"bbox":[70,404,18,18]}
+{"kind":"textbox","id":"sh/atc7epon","slide":14,"text":"录音转文字  · audio.transcribe.v1","textPreview":"录音转文字  · audio.transcribe.v1","textChars":28,"textLines":1,"bbox":[102,398,500,34]}
+{"kind":"shape","id":"sh/bulo7u58","slide":14,"bbox":[70,462,18,18]}
+{"kind":"textbox","id":"sh/orapcf6h","slide":14,"text":"Blender渲染  · render.blender.v1","textPreview":"Blender渲染  · render.blender.v1","textChars":30,"textLines":1,"bbox":[102,456,500,34]}
+{"kind":"shape","id":"sh/9sj65kn2","slide":14,"bbox":[70,520,18,18]}
+{"kind":"textbox","id":"sh/mps7a5or","slide":14,"text":"文档OCR  · document.ocr.v1","textPreview":"文档OCR  · document.ocr.v1","textChars":24,"textLines":1,"bbox":[102,514,500,34]}
+{"kind":"shape","id":"sh/nq1o3a5w","slide":14,"bbox":[640,175,0,385]}
+{"kind":"textbox","id":"sh/0nap8f6l","slide":14,"text":"已有方向，待升级","textPreview":"已有方向，待升级","textChars":8,"textLines":1,"bbox":[690,175,330,36]}
+{"kind":"shape","id":"sh/1oj61kn6","slide":14,"bbox":[700,230,18,18]}
+{"kind":"textbox","id":"sh/hkbm5wzu","slide":14,"text":"网络出口  · net.egress","textPreview":"网络出口  · net.egress","textChars":18,"textLines":1,"bbox":[732,224,440,38]}
+{"kind":"shape","id":"sh/gj25cry9","slide":14,"bbox":[700,292,18,18]}
+{"kind":"textbox","id":"sh/fit436ho","slide":14,"text":"本地LLM生成  · llm.complete","textPreview":"本地LLM生成  · llm.complete","textChars":23,"textLines":1,"bbox":[732,286,440,38]}
+{"kind":"shape","id":"sh/uh0na1g3","slide":14,"bbox":[700,354,18,18]}
+{"kind":"textbox","id":"sh/tgrm1wzy","slide":14,"text":"图片生成  · image.generate","textPreview":"图片生成  · image.generate","textChars":22,"textLines":1,"bbox":[732,348,440,38]}
+{"kind":"shape","id":"sh/sfi58ryd","slide":14,"bbox":[700,416,18,18]}
+{"kind":"textbox","id":"sh/7u94zmhs","slide":14,"text":"Embedding批处理  · embedding.compute","textPreview":"Embedding批处理  · embedding.compute","textChars":33,"textLines":1,"bbox":[732,410,440,38]}
+{"kind":"shape","id":"sh/6t0n6hg7","slide":14,"bbox":[700,478,18,18]}
+{"kind":"textbox","id":"sh/dcv6dgz2","slide":14,"text":"Signal50 Veo  · 专用流程保留","textPreview":"Signal50 Veo  · 专用流程保留","textChars":22,"textLines":1,"bbox":[732,472,440,38]}
+{"kind":"shape","id":"sh/cbm5kbyh","slide":14,"bbox":[690,535,490,72]}
+{"kind":"textbox","id":"sh/alwbitsn","slide":14,"text":"这些名称存在，不代表已经可对外售卖。","textPreview":"这些名称存在，不代表已经可对外售卖。","textChars":18,"textLines":1,"bbox":[715,555,440,30]}
+{"kind":"textbox","id":"sh/bm5sryt8","slide":14,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/wnetkjat","slide":14,"text":"14","textPreview":"14","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/8f2psfyx","slide":14,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:219\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:109"}
+{"kind":"slide","id":"sl/hgzapcr6","slide":15,"title":"建议加入计划：先吸引普通用户，再放大节点价值","textShapes":10}
+{"kind":"textbox","id":"sh/876xwfmx","slide":15,"name":"slide-title","text":"建议加入计划：先吸引普通用户，再放大节点价值","textPreview":"建议加入计划：先吸引普通用户，再放大节点价值","textChars":22,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/q50nydsj","slide":15,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/bq9orito","slide":15,"bbox":[58,190,350,350]}
+{"kind":"textbox","id":"sh/o3i5w3ad","slide":15,"text":"首发高频","textPreview":"首发高频","textChars":4,"textLines":1,"bbox":[86,220,280,38]}
+{"kind":"textbox","id":"sh/p4r6p8by","slide":15,"text":"网页变化监控\n网页截图 / PDF\n多地区网站检测\n加密文件快传","textPreview":"网页变化监控 | 网页截图 / PDF | 多地区网站检测 | 加密文件快传","textChars":32,"textLines":4,"bbox":[86,290,285,190]}
+{"kind":"shape","id":"sh/21gnuts7","slide":15,"bbox":[452,190,350,350]}
+{"kind":"textbox","id":"sh/32ponyts","slide":15,"text":"网络增强","textPreview":"网络增强","textChars":4,"textLines":1,"bbox":[480,220,280,38]}
+{"kind":"textbox","id":"sh/gzy5s3a1","slide":15,"text":"加密备份\n公共文件代取\n内容采集\n网络质量测量","textPreview":"加密备份 | 公共文件代取 | 内容采集 | 网络质量测量","textChars":23,"textLines":4,"bbox":[480,290,285,190]}
+{"kind":"shape","id":"sh/1076lobm","slide":15,"bbox":[846,190,350,350]}
+{"kind":"textbox","id":"sh/hcfy9k3u","slide":15,"text":"专业工具","textPreview":"专业工具","textChars":4,"textLines":1,"bbox":[874,220,280,38]}
+{"kind":"textbox","id":"sh/gb6x0zm9","slide":15,"text":"图片增强\n字幕处理\n音频增强\n内容存在性证明","textPreview":"图片增强 | 字幕处理 | 音频增强 | 内容存在性证明","textChars":22,"textLines":4,"bbox":[874,290,285,190]}
+{"kind":"textbox","id":"sh/vaxg7ulo","slide":15,"text":"优先推荐：web.watch + web.capture + site.probe + file.send","textPreview":"优先推荐：web.watch + web.capture + site.probe + file.send","textChars":53,"textLines":1,"bbox":[70,580,1140,38]}
+{"kind":"textbox","id":"sh/u9ofyp43","slide":15,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/t8fy5k3i","slide":15,"text":"15","textPreview":"15","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/hgzapcr6","slide":15,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:219\n- Recommendation developed from the repository's existing Page Watcher, relay, peer, media, and service primitives."}
+{"kind":"slide","id":"sl/6lsnupw7","slide":16,"title":"前端可以有很多服务，底层只维护六个官方服务包","textShapes":16}
+{"kind":"textbox","id":"sh/kzy5on2p","slide":16,"name":"slide-title","text":"前端可以有很多服务，底层只维护六个官方服务包","textPreview":"前端可以有很多服务，底层只维护六个官方服务包","textChars":22,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/xc7eds76","slide":16,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/wbydknq1","slide":16,"bbox":[58,165,240,58]}
+{"kind":"textbox","id":"sh/jepwf2pc","slide":16,"text":"Browser Tools","textPreview":"Browser Tools","textChars":13,"textLines":1,"bbox":[76,178,205,32]}
+{"kind":"shape","id":"sh/idgvmx8r","slide":16,"bbox":[316,185,34,18]}
+{"kind":"textbox","id":"sh/5grehs7i","slide":16,"text":"网页监控 · 截图/PDF · 多地区检测 · 内容采集","textPreview":"网页监控 · 截图/PDF · 多地区检测 · 内容采集","textChars":28,"textLines":1,"bbox":[372,174,850,42]}
+{"kind":"shape","id":"sh/kfidonqx","slide":16,"bbox":[372,221,850,0]}
+{"kind":"shape","id":"sh/zi5c3y98","slide":16,"bbox":[58,235,240,58]}
+{"kind":"textbox","id":"sh/ehwvat8n","slide":16,"text":"Media Tools","textPreview":"Media Tools","textChars":11,"textLines":1,"bbox":[76,248,205,32]}
+{"kind":"shape","id":"sh/c3e1gjyd","slide":16,"bbox":[316,255,34,18]}
+{"kind":"textbox","id":"sh/x4ni9ofy","slide":16,"text":"视频转码 · 压缩 · 字幕 · 缩略图 · 音频提取","textPreview":"视频转码 · 压缩 · 字幕 · 缩略图 · 音频提取","textChars":27,"textLines":1,"bbox":[372,244,850,42]}
+{"kind":"shape","id":"sh/a1wze9g7","slide":16,"bbox":[372,291,850,0]}
+{"kind":"shape","id":"sh/b2507exs","slide":16,"bbox":[58,305,240,58]}
+{"kind":"textbox","id":"sh/kre1k3y9","slide":16,"text":"Storage Tools","textPreview":"Storage Tools","textChars":13,"textLines":1,"bbox":[76,318,205,32]}
+{"kind":"shape","id":"sh/ls7idofu","slide":16,"bbox":[316,325,34,18]}
+{"kind":"textbox","id":"sh/y5wjitgj","slide":16,"text":"文件快传 · 临时存储 · 加密备份 · 任务结果中转","textPreview":"文件快传 · 临时存储 · 加密备份 · 任务结果中转","textChars":27,"textLines":1,"bbox":[372,314,850,42]}
+{"kind":"shape","id":"sh/z650byxo","slide":16,"bbox":[372,361,850,0]}
+{"kind":"shape","id":"sh/0buh8zy5","slide":16,"bbox":[58,375,240,58]}
+{"kind":"textbox","id":"sh/1w3i14fq","slide":16,"text":"GPU Compute","textPreview":"GPU Compute","textChars":11,"textLines":1,"bbox":[76,388,205,32]}
+{"kind":"shape","id":"sh/hsvy50re","slide":16,"bbox":[316,395,34,18]}
+{"kind":"textbox","id":"sh/grmxwvqt","slide":16,"text":"视频生成 · 图片增强 · 视频增强 · Blender渲染","textPreview":"视频生成 · 图片增强 · 视频增强 · Blender渲染","textChars":30,"textLines":1,"bbox":[372,384,850,42]}
+{"kind":"shape","id":"sh/fqdg3q98","slide":16,"bbox":[372,431,850,0]}
+{"kind":"shape","id":"sh/up4fal83","slide":16,"bbox":[58,445,240,58]}
+{"kind":"textbox","id":"sh/pwvy90rq","slide":16,"text":"Network Tools","textPreview":"Network Tools","textChars":13,"textLines":1,"bbox":[76,458,205,32]}
+{"kind":"shape","id":"sh/4vmh0vq5","slide":16,"bbox":[316,465,34,18]}
+{"kind":"textbox","id":"sh/3udg7q9k","slide":16,"text":"网络出口 · 文件代取 · 地区探测 · 网络测量","textPreview":"网络出口 · 文件代取 · 地区探测 · 网络测量","textChars":25,"textLines":1,"bbox":[372,454,850,42]}
+{"kind":"shape","id":"sh/2t4fyl8z","slide":16,"bbox":[372,501,850,0]}
+{"kind":"shape","id":"sh/d0fydk7m","slide":16,"bbox":[58,515,240,58]}
+{"kind":"textbox","id":"sh/cz6h4fq1","slide":16,"text":"AI / Data Tools","textPreview":"AI / Data Tools","textChars":15,"textLines":1,"bbox":[76,528,205,32]}
+{"kind":"shape","id":"sh/atg3idk7","slide":16,"bbox":[316,535,34,18]}
+{"kind":"textbox","id":"sh/bup4rils","slide":16,"text":"本地LLM · Embedding · OCR · 数据批处理","textPreview":"本地LLM · Embedding · OCR · 数据批处理","textChars":31,"textLines":1,"bbox":[372,524,850,42]}
+{"kind":"shape","id":"sh/cvylkn2d","slide":16,"bbox":[372,571,850,0]}
+{"kind":"textbox","id":"sh/xw7mts3y","slide":16,"text":"服务包负责安全边界；一个包可以公开多个固定 Capability。","textPreview":"服务包负责安全边界；一个包可以公开多个固定 Capability。","textChars":33,"textLines":1,"bbox":[60,605,1150,32]}
+{"kind":"textbox","id":"sh/yxgnmxkj","slide":16,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/jyp4fil4","slide":16,"text":"16","textPreview":"16","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/6lsnupw7","slide":16,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:109"}
+{"kind":"slide","id":"sl/vaxsvy10","slide":17,"title":"下一步：先跑通一条完整服务闭环","textShapes":14}
+{"kind":"textbox","id":"sh/p8jyx83q","slide":17,"name":"slide-title","text":"下一步：先跑通一条完整服务闭环","textPreview":"下一步：先跑通一条完整服务闭环","textChars":15,"textLines":1,"bbox":[56,40,1168,62]}
+{"kind":"shape","id":"sh/547mhg3m","slide":17,"bbox":[56,138,1168,0]}
+{"kind":"shape","id":"sh/k3y5ov21","slide":17,"bbox":[326,320,36,20]}
+{"kind":"shape","id":"sh/76p4jqls","slide":17,"bbox":[632,320,36,20]}
+{"kind":"shape","id":"sh/65gnqlk7","slide":17,"bbox":[938,320,36,20]}
+{"kind":"shape","id":"sh/t87ml0ji","slide":17,"bbox":[56,205,270,250]}
+{"kind":"textbox","id":"sh/s7y5sv2x","slide":17,"text":"P0 · 服务底座","textPreview":"P0 · 服务底座","textChars":9,"textLines":1,"bbox":[78,230,230,36]}
+{"kind":"textbox","id":"sh/na5476l8","slide":17,"text":"ServicePackage / 审核 / 签名\nServiceOffer / 租约 / 幂等\n加密文件中转 / Credits验收","textPreview":"ServicePackage / 审核 / 签名 | ServiceOffer / 租约 / 幂等 | 加密文件中转 / Credits验收","textChars":66,"textLines":3,"bbox":[78,298,230,110]}
+{"kind":"shape","id":"sh/m9c3e1kn","slide":17,"bbox":[362,205,270,250]}
+{"kind":"textbox","id":"sh/wrm9kvep","slide":17,"text":"P1 · 首个正式服务","textPreview":"P1 · 首个正式服务","textChars":11,"textLines":1,"bbox":[384,230,230,36]}
+{"kind":"textbox","id":"sh/hsvat0fa","slide":17,"text":"web.watch 或 media.transcode\n官方节点兜底\n两端UI + 失败重试 + 清理","textPreview":"web.watch 或 media.transcode | 官方节点兜底 | 两端UI + 失败重试 + 清理","textChars":51,"textLines":3,"bbox":[384,298,230,110]}
+{"kind":"shape","id":"sh/upkrilwj","slide":17,"bbox":[668,205,270,250]}
+{"kind":"textbox","id":"sh/vqdsrqx4","slide":17,"text":"P2 · 4090旗舰","textPreview":"P2 · 4090旗舰","textChars":11,"textLines":1,"bbox":[690,230,230,36]}
+{"kind":"textbox","id":"sh/4vm9ovel","slide":17,"text":"video.generate.v1\n独占GPU + 固定模型\n加密结果 + 删除回执","textPreview":"video.generate.v1 | 独占GPU + 固定模型 | 加密结果 + 删除回执","textChars":42,"textLines":3,"bbox":[690,298,230,110]}
+{"kind":"shape","id":"sh/5wvax0f6","slide":17,"bbox":[974,205,270,250]}
+{"kind":"textbox","id":"sh/it4rm5wv","slide":17,"text":"P3 · 私有Beta","textPreview":"P3 · 私有Beta","textChars":11,"textLines":1,"bbox":[996,230,230,36]}
+{"kind":"textbox","id":"sh/judsvqxg","slide":17,"text":"朋友 / 企业 / 官方节点\n扩展服务包目录\n可靠性与争议机制","textPreview":"朋友 / 企业 / 官方节点 | 扩展服务包目录 | 可靠性与争议机制","textChars":31,"textLines":3,"bbox":[996,298,230,110]}
+{"kind":"shape","id":"sh/0z29cbyh","slide":17,"bbox":[56,505,1180,92]}
+{"kind":"textbox","id":"sh/l0bqlgf2","slide":17,"text":"建议立即批准","textPreview":"建议立即批准","textChars":6,"textLines":1,"bbox":[84,526,210,34]}
+{"kind":"textbox","id":"sh/1kjyt83e","slide":17,"text":"① 服务包与审核协议   ② 加密订单与中转   ③ 首个可用服务   ④ 4090旗舰验证","textPreview":"① 服务包与审核协议   ② 加密订单与中转   ③ 首个可用服务   ④ 4090旗舰验证","textChars":46,"textLines":1,"bbox":[305,526,880,42]}
+{"kind":"textbox","id":"sh/gjax03m9","slide":17,"text":"目标：让陌生用户第一次完成“选服务 → 下单 → 得到结果 → 验收 → 结算”。","textPreview":"目标：让陌生用户第一次完成“选服务 → 下单 → 得到结果 → 验收 → 结算”。","textChars":41,"textLines":1,"bbox":[84,610,1110,34]}
+{"kind":"textbox","id":"sh/fi1grylo","slide":17,"text":"Rynmesh 项目规划","textPreview":"Rynmesh 项目规划","textChars":12,"textLines":1,"bbox":[56,672,420,24]}
+{"kind":"textbox","id":"sh/ehsfyt43","slide":17,"text":"17","textPreview":"17","textChars":2,"textLines":1,"bbox":[1160,672,64,24]}
+{"kind":"notes","id":"nt/vaxsvy10","slide":17,"text":"[Sources]\n- D:/code/rynmesh/docs/RYNMESH_SERVICES.md:242\n- D:/code/rynmesh/docs/PRODUCT_MILESTONES.md:109\n- D:/code/rynmesh/docs/RYNMESH_VISION.md:565"}

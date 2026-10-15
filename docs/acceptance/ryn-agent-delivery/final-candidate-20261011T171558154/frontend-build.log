@@ -1,0 +1,17 @@
+
+> @rynmesh/webapp@0.7.0 build
+> tsc -b && vite build
+
+vite v8.2.1 building client environment for production...
+[2Ktransforming...✓ 2289 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.84 kB │ gzip:   0.40 kB
+dist/assets/Nas-CP3KXdxK.css        20.63 kB │ gzip:   4.50 kB
+dist/assets/Drives-Ci622sOu.css     26.23 kB │ gzip:   5.20 kB
+dist/assets/index-DQ3lTmcA.css     282.85 kB │ gzip:  55.88 kB
+dist/assets/Nas-D5Wg_fSj.js         21.59 kB │ gzip:   6.62 kB
+dist/assets/Drives-BZiUOonN.js      34.10 kB │ gzip:   8.76 kB
+dist/assets/index-OXGXHDSC.js    1,584.97 kB │ gzip: 476.45 kB
+
+✓ built in 3.28s

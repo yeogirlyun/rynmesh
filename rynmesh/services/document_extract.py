@@ -135,7 +135,31 @@ def classify(path: str | Path) -> str:
     return "unknown"
 
 
-_CHILD_ARGV = [sys.executable, "-m", "rynmesh.services.document_extract_child"]
+def _child_argv() -> list[str]:
+    # A frozen sidecar is an application executable, not a Python interpreter.
+    # Its private worker entry runs only the bounded extractor, never the node.
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--ryn-document-worker"]
+    return [sys.executable, "-m", "rynmesh.services.document_extract_child"]
+
+
+def _spawn_worker(args, **options):
+    if os.name != "nt":
+        return subprocess.Popen(args, **options)
+    from rynmesh.llm_package.process_guard import _windows_job
+
+    # Onefile bootloaders own a second process. Assign the whole tree before
+    # starting it, so a timeout cannot leave the actual parser running.
+    process = subprocess.Popen(args, creationflags=0x4 | subprocess.CREATE_NO_WINDOW, **options)
+    try:
+        process._ryn_job = _windows_job(process, memory_limit=0, cpu_rate=0)
+    except BaseException:
+        process.kill()
+        process.wait(timeout=5)
+        raise
+    return process
+
+
 # A child that answers correctly writes well under a kilobyte per 1000 chars of
 # text; this ceiling only exists so a compromised child cannot stream forever.
 _MAX_CHILD_STDOUT_BYTES = 8 * 1024 * 1024
@@ -149,6 +173,11 @@ def _failure(code: str, kind: str) -> dict[str, Any]:
 def _stop(process: subprocess.Popen) -> None:
     """Terminate, then kill after a grace period. Never raises."""
 
+    if getattr(process, "_ryn_job", None):
+        from rynmesh.llm_package.process_guard import terminate
+
+        terminate(process)
+        return
     if process.poll() is not None:
         return
     try:
@@ -204,10 +233,10 @@ def extract_document(
     child_env["RYNMESH_DOC_EXTRACT_MAX_INPUT_BYTES"] = str(max_input_bytes)
     child_env["RYNMESH_DOC_EXTRACT_MAX_OUTPUT_CHARS"] = str(max_output_chars)
     child_env["RYNMESH_DOC_EXTRACT_MEMORY_BYTES"] = str(memory_bytes)
-    launcher = spawn or subprocess.Popen
+    launcher = spawn or _spawn_worker
     try:
         process = launcher(
-            _CHILD_ARGV,
+            _child_argv(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -249,4 +278,12 @@ def extract_document(
     text = parsed.get("text", "")
     if not isinstance(text, str) or len(text) > max_output_chars:
         return _failure(FAILED_INTERNAL, kind)
-    return {"status": status, "kind": kind, "text": text, "chars": len(text)}
+    coverage = parsed.get("pdf_pages")
+    if coverage is not None:
+        if (kind != "pdf" or not isinstance(coverage, dict) or set(coverage) != {"total", "processed", "failed", "without_text"}
+                or any(type(value) is not int or value < 0 for value in coverage.values())
+                or coverage["processed"] > coverage["total"] or coverage["failed"] + coverage["without_text"] > coverage["processed"]
+                or status == STATUS_PARSED and (coverage["failed"] or coverage["processed"] < coverage["total"])):
+            return _failure(FAILED_INTERNAL, kind)
+    return {"status": status, "kind": kind, "text": text, "chars": len(text),
+            **({"pdf_pages": coverage} if coverage is not None else {})}

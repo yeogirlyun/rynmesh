@@ -1,0 +1,18 @@
+{
+  "result": "passed",
+  "headless": true,
+  "global_input_used": false,
+  "temporary_http_nodes": 2,
+  "flows": [
+    "review before write",
+    "resume create/experience/export",
+    "job/candidate creation",
+    "ticket/comment/closure",
+    "reload",
+    "Chinese UI"
+  ],
+  "browser_errors": [],
+  "plaintext_in_storage": false,
+  "model_calls": 0,
+  "background_workers": false
+}

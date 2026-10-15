@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-09T08:47:58.014717+00:00",
+  "passed": true,
+  "files": [
+    {
+      "file": "cleanup.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "code-snapshot.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "evaluation.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "manifest.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "run-1.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "run-2.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "run-3.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    },
+    {
+      "file": "semantic-review.json",
+      "credential_absent": true,
+      "private_reasoning_field_absent": true
+    }
+  ]
+}

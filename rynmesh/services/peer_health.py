@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +26,40 @@ def _default_probe(url: str, headers: dict[str, str], timeout_s: float) -> bool:
             return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
+
+
+class PeerPresenceCache:
+    """Latest probe observation per peer, shared by every view of the same device.
+
+    The Devices list and the AI Services list must agree on whether a device is
+    reachable, so both read what this node last *observed* here instead of a
+    provider's self-reported flag. Entries expire: stale presence is "unconfirmed",
+    never "online".
+    """
+
+    def __init__(self, *, ttl_s: float = 180.0, clock: Callable[[], float] = time.monotonic) -> None:
+        self._ttl_s = ttl_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._rows: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def update(self, rows: list[dict[str, Any]]) -> None:
+        now = self._clock()
+        with self._lock:
+            for row in rows:
+                peer_id = str(row.get("peerId") or "")
+                if peer_id:
+                    self._rows[peer_id] = (now, dict(row))
+
+    def get(self, peer_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            entry = self._rows.get(peer_id)
+            if entry is None:
+                return None
+            if self._clock() - entry[0] > self._ttl_s:
+                del self._rows[peer_id]
+                return None
+            return dict(entry[1])
 
 
 class PeerHealthProbe:
@@ -108,7 +144,7 @@ class PeerHealthProbe:
                 # modest clock skew; stale cached data cannot prove an outage.
                 if age is not None and -120 <= age <= 120:
                     online, source = True, "heartbeat"
-                elif age is not None and age > 120 and peer.get("discoverySource") == "registry":
+                elif age is not None and age > 120 and peer.get("discoverySource") in {"registry", "capacity"}:
                     online, source = False, "heartbeat_expired"
             output.append({"peerId": peer_id, "online": online, "checkedAt": checked_at,
                            "httpReachable": reachable, "lanReachable": lan_reachable,

@@ -1,11 +1,19 @@
 import { tr } from "../uiI18n";
 import { nodeControlUrl } from "./nodeUrl";
 
+export interface AIModelParameters { context_window: number; max_output_tokens: number; request_defaults: Record<string, unknown>; max_concurrent: number; requests_per_day: number | null; }
+export type ModelShareScope = "personal_space" | "friends";
+export interface AIModelSettings { overrides: Partial<AIModelParameters> & { share_scope?: ModelShareScope }; effective: AIModelParameters & { share_scope?: ModelShareScope }; inherited_fields: Array<keyof AIModelParameters | "share_scope">; rule_revision: string; destination_revision: string; evidence: { connection?: unknown; model_exists?: unknown; tools?: { status: string; checked_at: string | null } }; }
+
 export type AISource = {
   id: string; name: string; kind: "api" | "local"; provider: string; base_url: string;
   models: string[]; context_window: number; max_output_tokens: number;
   request_defaults: Record<string, unknown>; enabled: boolean; sharing: boolean;
   status: string; has_key: boolean; api_key?: string; clear_key?: boolean;
+  shared_models?: string[];
+  source_revision?: string;
+  tool_support?: Record<string, "supported" | "unsupported">;
+  model_settings?: Record<string, AIModelSettings>;
 };
 export const sourcePresets = [
   { id: "zai", name: "Z.ai · GLM", url: "https://api.z.ai/api/paas/v4", model: "glm-5.3-flash" },

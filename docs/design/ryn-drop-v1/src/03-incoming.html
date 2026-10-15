@@ -1,0 +1,96 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+.dim { position: absolute; inset: 0; background: rgba(15, 27, 45, .45); z-index: 20; }
+.bg h1 { margin-bottom: 4px; }
+.bgcards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 24px; }
+.bgcards div { height: 110px; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.modal { position: absolute; left: 50%; top: 22px; transform: translateX(-56%); width: 560px; background: #fff; border-radius: 18px; z-index: 40; box-shadow: 0 30px 80px rgba(0,0,0,.3); overflow: hidden; }
+.mh { padding: 22px 24px 16px; display: flex; gap: 14px; align-items: center; border-bottom: 1px solid var(--line2); }
+.mh .t { font-size: 18px; font-weight: 700; }
+.mb { padding: 18px 24px; }
+.code { background: var(--amber-bg); border: 1px solid #f6d9a6; border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; gap: 16px; }
+.code .emo { font-size: 30px; letter-spacing: 6px; }
+.code .dg { font-family: "Cascadia Mono", Consolas, monospace; font-size: 20px; font-weight: 700; letter-spacing: 3px; color: #7c4a03; }
+.fitem { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line2); }
+.fitem .ficon { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; }
+.fitem .sz { margin-left: auto; color: var(--muted); font-size: 13px; }
+.mf { padding: 14px 24px 20px; display: flex; gap: 10px; align-items: center; border-top: 1px solid var(--line2); background: #fafbfd; }
+.toast { position: absolute; right: 18px; bottom: 18px; width: 380px; background: #fff; border-radius: 14px; z-index: 45; box-shadow: 0 18px 50px rgba(0,0,0,.28); padding: 14px 16px; }
+.toast .h { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.toast .h b { width: 18px; height: 18px; border-radius: 5px; background: var(--navy); color: #fff; display: grid; place-items: center; font-size: 11px; }
+.toast .acts { display: flex; gap: 8px; margin-top: 12px; }
+.toast .acts .btn { flex: 1; justify-content: center; }
+.lbl { position: absolute; z-index: 46; color: #fff; font-weight: 700; font-size: 14px; background: rgba(15,27,45,.7); padding: 5px 12px; border-radius: 8px; }
+</style></head>
+<body class="withlegend"><div class="app">
+<div data-side="devices" data-badge="2"></div>
+<div class="main"><div data-top="<span>设备</span>"></div>
+<div class="content bg">
+  <h1>设备</h1><div class="sub">你的设备、好友的设备和附近的设备。</div>
+  <div class="tabs"><div class="tab on">我的设备</div><div class="tab">好友设备</div><div class="tab">附近</div><div class="tab">传输</div></div>
+  <div class="bgcards"><div></div><div></div><div></div><div></div><div></div><div></div></div>
+  <div class="dim"></div>
+
+  <div class="modal">
+    <div class="mh">
+      <div class="dev laptop"></div>
+      <div class="grow">
+        <div class="t">“办公室-7” 想发给你 3 个项目</div>
+        <div class="row small muted" style="margin-top:4px"><span class="chip near" style="height:21px"><span data-i="radar" class="s14"></span>附近 · 未配对</span>同一网络 192.168.1.57 · Windows</div>
+      </div>
+      <span data-i="x" class="s20 faint"></span>
+    </div>
+    <div class="mb">
+      <div class="code">
+        <span data-i="shield" class="s28" style="color:#b45309"></span>
+        <div class="grow">
+          <div class="b" style="color:#7c4a03">核对校验码</div>
+          <div class="small" style="color:#8a5a12;margin-top:2px">对方屏幕上应显示相同的图案。不一致请拒绝。</div>
+        </div>
+        <div style="text-align:right"><div class="emo">🦊🌵🚀🎈</div><div class="dg">482 913</div></div>
+      </div>
+
+      <div class="between" style="margin-top:16px"><span class="b">选择要接收的内容</span><span class="small" style="color:var(--blue)">全选</span></div>
+      <div class="fitem"><span class="check"><span data-i="check" class="s14"></span></span><div class="ficon" style="background:var(--red-bg);color:var(--red)"><span data-i="file" class="s16"></span></div><div><div class="b">投标方案_终版.pdf</div><div class="small muted">PDF 文档</div></div><span class="sz">12.4 MB</span></div>
+      <div class="fitem"><span class="check"><span data-i="check" class="s14"></span></span><div class="ficon" style="background:var(--amber-bg);color:var(--amber)"><span data-i="folder" class="s16"></span></div><div><div class="b">现场照片/</div><div class="small muted">文件夹 · 128 个文件</div></div><span class="sz">2.06 GB</span></div>
+      <div class="fitem" style="border:0"><span class="check off"></span><div class="ficon" style="background:var(--blue-bg);color:var(--blue)"><span data-i="video" class="s16"></span></div><div><div class="b muted">汇报录像.mp4</div><div class="small muted">视频</div></div><span class="sz">3.8 GB</span></div>
+
+      <div class="row" style="margin-top:12px;gap:12px">
+        <div class="input grow" style="height:36px"><span data-i="folder" class="s16 faint"></span><span class="small">保存到 D:\下载\Ryn</span><span class="grow"></span><span class="small" style="color:var(--blue)">更改</span></div>
+        <span class="small muted">已选 2.07 GB · 剩余空间 312 GB</span>
+      </div>
+    </div>
+    <div class="mf">
+      <span class="btn ghost danger" style="background:transparent;border-color:transparent"><span data-i="ban" class="s16"></span>屏蔽</span>
+      <span class="grow small muted">配对后可以通过公网互发</span>
+      <span class="btn">拒绝</span>
+      <span class="btn pri"><span data-i="download" class="s16"></span>接收 2.07 GB</span>
+    </div>
+  </div>
+
+  <div class="toast">
+    <div class="h"><b>R</b>Ryn · 现在</div>
+    <div class="row" style="margin-top:10px;gap:12px">
+      <div class="avatar" style="background:#7c5cdb">安</div>
+      <div class="grow"><div class="b">安娜 · 工作站 发来 1 个文件</div><div class="small muted" style="margin-top:2px">品牌设计稿_v5.fig · 286 MB</div>
+        <div class="row small" style="margin-top:4px;gap:6px"><span class="chip friend" style="height:20px">好友</span><span class="chip p2p" style="height:20px"><span data-i="globe" class="s14"></span>公网 P2P</span></div></div>
+    </div>
+    <div class="acts"><span class="btn sm">拒绝</span><span class="btn sm">在 Ryn 中查看</span><span class="btn sm blue">接收</span></div>
+  </div>
+
+  <div class="lbl" style="left:120px;top:30px;display:none"></div>
+  <div class="note" style="left:270px;top:40px">1</div>
+  <div class="note" style="left:270px;top:150px">2</div>
+  <div class="note" style="left:270px;top:330px">3</div>
+  <div class="note" style="left:270px;top:518px">4</div>
+  <div class="note" style="left:790px;top:590px">5</div>
+</div></div></div>
+<div class="legend">
+  <div class="k"><i>1</i><b>来源</b><span class="muted">信任级别一眼可见</span></div>
+  <div class="k"><i>2</i><b>校验码</b><span class="muted">未配对设备必须核对</span></div>
+  <div class="k"><i>3</i><b>按项选择</b><span class="muted">只收需要的</span></div>
+  <div class="k"><i>4</i><b>屏蔽 / 拒绝 / 接收</b></div>
+  <div class="k"><i>5</i><b>系统通知</b><span class="muted">好友经公网发来</span></div>
+  <span class="tag">03 接收确认 · 示例数据</span>
+</div>
+<script src="common.js"></script></body></html>

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -50,6 +51,7 @@ class AskContextService:
             if urlparse(source_url).scheme not in {"https", "http"}:
                 source_url = ""
             return {"library_id": library_id, "title": str(origin.get("title") or record["filename"]),
+                    **({"nas": {"source_id": origin["nas_source_id"], "path": origin.get("nas_path", ""), "source_name": origin.get("nas_source_name", "")}} if origin.get("nas_source_id") else {}),
                     "shared_by_peer_id": str(origin.get("peer_id") or ""),
                     "publisher_peer_id": str(origin.get("publisher_peer_id") or ""),
                     "source_url": source_url, "sha256": record["sha256"],
@@ -67,6 +69,9 @@ class AskContextService:
         if not selected:
             raise ConversationError("ask_provider_unavailable")
         manifest = selected.get("service") or {}
+        cli_model = conversation.get("cliModel")
+        if cli_model and ((not selected.get("local_only") and not any(row.get("id") == cli_model for row in selected.get("cli_models", []))) or manifest.get("adapter") not in {"codex_cli", "antigravity_cli"} or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", cli_model)):
+            raise ConversationError("ask_cli_model_unavailable")
         structured = CHAT_FORMAT in manifest.get("capabilities", [])
         context_window, maximum_output = manifest.get("context_window"), manifest.get("max_output_tokens")
         if type(context_window) is not int or type(maximum_output) is not int or maximum_output < 1 or context_window < 1:
@@ -124,6 +129,7 @@ class AskContextService:
         # counts. Reserve extra space for provider prompt framing. The existing
         # order API revalidates the current manifest again at submission.
         return {"conversation_id": conversation["id"], "revision": conversation["revision"],
+                **({"cli_model": cli_model} if cli_model else {}),
                 "provider_peer_id": conversation["providerPeerId"], "service_id": service_id,
                 "prompt": prepared_prompt, "prompt_sha256": hashlib.sha256(prepared_prompt.encode()).hexdigest(),
                 "prompt_format": CHAT_FORMAT if structured else "text",

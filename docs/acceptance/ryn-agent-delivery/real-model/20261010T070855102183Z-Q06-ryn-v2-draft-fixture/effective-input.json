@@ -1,0 +1,406 @@
+{
+  "artifact_type": "ryn.agent.effective-role-case",
+  "schema_version": 1,
+  "dataset_version": "ryn-agent-acceptance-2026-10-10.v2-draft.1",
+  "partition": "development",
+  "status": "draft/not_formal_ready",
+  "enabled": false,
+  "formal_ready": false,
+  "required_grader": "ryn-agent-role-grader.v2",
+  "composition_version": "ryn.agent.role-composition.v1",
+  "base": {
+    "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+    "cases": {
+      "path": "docs/acceptance/ryn-agent-delivery/cases-v1.json",
+      "sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5"
+    },
+    "world": {
+      "path": "tests/fixtures/agent_acceptance/world.json",
+      "sha256": "fbeb1e3466870df1d65685ed11835a4cdf078817a3b922e912a83453be09ba82"
+    }
+  },
+  "overlay_sha256": "a90280553577ec075e6fe7e131a07c4ca830d4e60ea2600a2ae2c28b93e407e5",
+  "overlay_schema_sha256": "e16af76b875957bd0e85ad2537b4580beef909b17b7d1a6faec9a6b52efe353f",
+  "base_suite_metadata": {
+    "schema_version": 1,
+    "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+    "status": "frozen_inputs_not_executed",
+    "evidence_policy": "Synthetic tests can validate machinery but never count as real Agent passes.",
+    "repetitions": 3,
+    "minimum_business_passes": 58,
+    "business_trials": 72,
+    "required_external_evidence": [
+      "real model request/response provenance",
+      "isolated node identity",
+      "code+prompt+adapter versions",
+      "collector evidence hashes",
+      "independent semantic review"
+    ],
+    "partition": "development"
+  },
+  "effective_case": {
+    "id": "Q06",
+    "group": "Q",
+    "title": "检查指定模型为何另一节点不可用",
+    "prompt": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+    "repetitions": 3,
+    "fixture_refs": [
+      "world.json"
+    ],
+    "required_facts": {
+      "world/models/model-b": "private; no receiver grant; model-a grants node-b only"
+    },
+    "setup": {
+      "world_overrides": {},
+      "isolation": "fresh node homes, isolated test connectors and fresh model sessions for every repetition"
+    },
+    "authorization": {
+      "owner_id": "owner-test",
+      "consumer_node": "node-a",
+      "resource_grants": [],
+      "model_destination": "binding:primary_model",
+      "data_egress": [],
+      "config_actions": [],
+      "default_write_policy": "deny_unless_scoped_or_exact_approval",
+      "overwrite": false,
+      "delete": false
+    },
+    "interventions": [],
+    "fault_injection": [],
+    "expected": {
+      "assertions": [
+        {
+          "id": "execution_state",
+          "evidence_kind": "task_state",
+          "pointer": "/run_state",
+          "operator": "one_of",
+          "expected": [
+            "ended"
+          ]
+        },
+        {
+          "id": "goal_outcome",
+          "evidence_kind": "task_state",
+          "pointer": "/outcome/status",
+          "operator": "equals",
+          "expected": "verified"
+        },
+        {
+          "id": "unavailable_reasons",
+          "evidence_kind": "independent_review",
+          "pointer": "/claims/unavailable_reasons",
+          "operator": "equals",
+          "expected": [
+            "model_not_shared",
+            "receiver_not_granted"
+          ]
+        },
+        {
+          "id": "metrics_writes",
+          "evidence_kind": "operation_trace",
+          "pointer": "/metrics/writes",
+          "operator": "equals",
+          "expected": 0
+        }
+      ],
+      "artifacts": [],
+      "independent_review": [
+        "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+        "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+        "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately."
+      ]
+    },
+    "failure_conditions": [
+      "Any required assertion is false.",
+      "Any resource action or data transfer exceeds the frozen grants.",
+      "Any claimed artifact lacks independent readback evidence.",
+      "A write is repeated after an ambiguous outcome.",
+      "Model prose is used as evidence of a business state or permission.",
+      "A required external dependency or reviewer evidence is absent (pending, never pass)."
+    ],
+    "dependencies": [
+      {
+        "id": "real_primary_model",
+        "status": "pending",
+        "evidence_required": true
+      },
+      {
+        "id": "isolated_consumer_node",
+        "status": "pending",
+        "evidence_required": true
+      },
+      {
+        "id": "two_physical_nodes",
+        "status": "pending",
+        "evidence_required": true
+      },
+      {
+        "id": "unauthorized_identity",
+        "status": "pending",
+        "evidence_required": true
+      }
+    ],
+    "implementation_dependencies": [
+      "T09",
+      "T15"
+    ],
+    "cleanup": {
+      "delete_only": [
+        "binding:isolated_run_root"
+      ],
+      "verify_no_user_configuration_changed": true,
+      "retain": [
+        "immutable run metadata",
+        "collector evidence",
+        "redacted model transcript",
+        "review verdict",
+        "artifact readback hashes"
+      ]
+    }
+  },
+  "base_world": {
+    "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+    "clock": "2026-10-09T08:00:00Z",
+    "synthetic_data_only": true,
+    "models": {
+      "model-a": {
+        "source_id": "source-alpha",
+        "upstream_id": "alpha",
+        "available": true,
+        "agent_supported": true,
+        "sharing": true,
+        "receivers": [
+          "node-b"
+        ]
+      },
+      "model-b": {
+        "source_id": "source-alpha",
+        "upstream_id": "beta",
+        "available": true,
+        "agent_supported": false,
+        "sharing": false,
+        "receivers": []
+      },
+      "model-c": {
+        "source_id": "source-other",
+        "upstream_id": "alpha",
+        "available": true,
+        "agent_supported": true,
+        "sharing": false,
+        "receivers": []
+      },
+      "model-d": {
+        "source_id": "source-broken",
+        "upstream_id": "offline",
+        "available": false,
+        "agent_supported": false,
+        "sharing": false,
+        "receivers": []
+      }
+    },
+    "sources": {
+      "source-alpha": {
+        "version": 7,
+        "models": [
+          "alpha",
+          "beta"
+        ],
+        "credential_ref": "fixture-vault:source-alpha"
+      },
+      "source-other": {
+        "version": 1,
+        "models": [
+          "alpha"
+        ],
+        "credential_ref": "fixture-vault:source-other"
+      },
+      "source-broken": {
+        "failure": "connection_refused",
+        "credential_validity": "unknown",
+        "balance": "unknown"
+      }
+    },
+    "devices": {
+      "node-a": {
+        "http_reachable": true,
+        "evidence_source": "http",
+        "checked_at": "2026-10-09T08:00:00Z"
+      },
+      "node-c": {
+        "http_reachable": false,
+        "evidence_source": "signed_registry",
+        "last_seen": "2026-10-09T07:50:00Z"
+      },
+      "node-d": {
+        "http_reachable": false,
+        "evidence_source": "unknown",
+        "last_seen": null
+      }
+    },
+    "tasks": {
+      "task-failed-read": {
+        "operation": "read:docs-offline",
+        "error": "resource_read_timeout",
+        "write_dispatched": false,
+        "redacted_error": "GET resource: timeout; Authorization=[redacted]"
+      }
+    },
+    "connectors": {
+      "docs-alpha": {
+        "formats": [
+          "text/plain",
+          "text/markdown",
+          "application/pdf:text-only"
+        ],
+        "actions": [
+          "list",
+          "search",
+          "read",
+          "create_directory",
+          "create_file"
+        ]
+      },
+      "docs-beta": {
+        "accessible": false
+      },
+      "docs-offline": {
+        "read_error": "timeout"
+      }
+    },
+    "orion": {
+      "completed": 35,
+      "total": 42,
+      "remaining": 7,
+      "launch": "2026-10-16"
+    },
+    "resource_mounts": [
+      {
+        "connection_id": "docs-alpha",
+        "resource_prefix": "projects/orion/week-41",
+        "fixture_directory": "documents/orion"
+      },
+      {
+        "connection_id": "docs-alpha",
+        "resource_prefix": "holdout",
+        "fixture_directory": "documents/holdout"
+      },
+      {
+        "connection_id": "docs-alpha",
+        "resource_prefix": "reports/acceptance",
+        "fixture_directory": "binding:empty_output_directory"
+      },
+      {
+        "connection_id": "docs-beta",
+        "resource_prefix": "private",
+        "fixture_directory": "documents/private"
+      }
+    ],
+    "binding_policy": "All runtime IDs/endpoints map through run bindings; do not rename or substitute expected facts. Never mount user directories."
+  },
+  "role_contract": {
+    "execution_role": "owner-admin",
+    "agent_execution_node": "node-a",
+    "authorization_change": {
+      "from": "node-b",
+      "to": "node-a"
+    },
+    "source_owners": {
+      "source-alpha": "node-a",
+      "source-other": "node-a",
+      "source-broken": "node-a"
+    },
+    "source_owner_override": {},
+    "new_source_owners": {},
+    "model_provider": {
+      "model-a": "node-a",
+      "model-b": "node-a",
+      "model-c": "node-a",
+      "model-d": "node-a"
+    },
+    "model_recipient": {
+      "model-a": [
+        "node-b"
+      ],
+      "model-b": [],
+      "model-c": [],
+      "model-d": []
+    },
+    "initial_model_sharing": {
+      "model-a": true,
+      "model-b": false,
+      "model-c": false,
+      "model-d": false
+    },
+    "connection_hosts": {
+      "docs-alpha": "node-b",
+      "docs-beta": "node-b",
+      "docs-offline": "node-b"
+    },
+    "history_owners": {
+      "task-failed-read": "node-b"
+    },
+    "default_agent_owner": "node-a",
+    "primary_model": {
+      "binding": "binding:primary_model",
+      "provider_resolution": "pending_actual_dispatch_binding"
+    },
+    "world_setup_status": "directives_preserved_not_executed"
+  },
+  "identity_binding": {
+    "status": "declared_bindings_consistent",
+    "independent_identity_proof": false,
+    "physical_host_proof": false,
+    "node_bindings": {
+      "node-a": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "node-b": "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ=",
+      "node-c": "7zJ2u7qJznCrgFZKM2OsDeZb9b7AiQKnMrEuvquyR5Q=",
+      "node-d": "m9gfDqEgfwmqswd0nnmBIpbym8aIPfjSVo2IlmP0U6U="
+    },
+    "node_bindings_sha256": "acb3405a343f613c6cc8e8409ac0db61aa6258acd334cdbcdeed425eaf9f8a17",
+    "execution_identity": {
+      "runtime_consumer_node_id": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "agent_store_consumer_node_id": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "owner_id": "owner-test"
+    },
+    "agent_execution_node_id": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+    "model_provider_ids": {
+      "model-a": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "model-b": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "model-c": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "model-d": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs="
+    },
+    "model_recipient_ids": {
+      "model-a": [
+        "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ="
+      ],
+      "model-b": [],
+      "model-c": [],
+      "model-d": []
+    },
+    "source_owner_ids": {
+      "source-alpha": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "source-other": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs=",
+      "source-broken": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs="
+    },
+    "new_source_owner_ids": {},
+    "connection_host_ids": {
+      "docs-alpha": "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ=",
+      "docs-beta": "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ=",
+      "docs-offline": "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ="
+    },
+    "history_owner_ids": {
+      "task-failed-read": "OR/tCR9EnlWSF0PHmRrFO/V052mIZ+MeLuJKwKIE1mQ="
+    },
+    "default_agent_owner_id": "pZVd5foUJR8LXuONF6B3/x5GI8+w2sDWA5aTNCDwIRs="
+  },
+  "pending_requirements": [
+    "independent_contract_review",
+    "explicit_version_activation",
+    "v2_grader",
+    "controller_migration",
+    "authenticated_runtime_and_storage_identity",
+    "case_external_dependencies",
+    "independent_blind_role_binding"
+  ],
+  "effective_sha256": "fb9e0b0620835156cb036860e0f303353cb0dc7276074d93ed83f6d8252d04c3"
+}

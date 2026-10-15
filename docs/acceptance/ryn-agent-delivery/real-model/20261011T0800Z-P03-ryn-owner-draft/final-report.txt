@@ -1,0 +1,20 @@
+## 状态：已定位对象与接收者，但暂存被服务器拒绝（无任何变更）
+
+**已准备好的精确要素**（来自目录与设备记录）：
+
+| 要素 | 确切标识 |
+|---|---|
+| 分享对象 model-b | 目录 ID `local/src-f97bdf0ac4cb4223-f44e64e75f39`（source-alpha · beta，上游名 `beta`） |
+| 接收者 node-b | `relationship_id=8a3f3e077a294f6cacf02cdb5c09f92d`，peer_id `sIKX7kHRjkqyl1d13xOKOg80pYTjDp75E3F0acmqwx0=`，好友状态 active |
+
+**执行结果**：`ryn_share_model_with_friend` 调用返回 `agent_permission_denied`（`no_mutation: true`，`not_executed: true`）。操作**未暂存、未执行**；model-b 仍为 `share_scope=personal_space`、`sharing=false`，本地无针对该模型的好友授权。诊断未报告任务级错误或下一步建议。
+
+**关于批准的已知事实**：服务器控制状态中存在一条针对 `ryn_share_model_with_friend` 的历史批准记录（`approval_69cf2ee6…`，批准于 2026-10-11T08:00:45Z），但该记录绑定了特定参数与预览哈希，属历史调度决定，不能作为本次新写入的授权依据；我无法自行校验本次参数与其哈希一致，服务器也因此拒绝了本次调用。您的这条消息属于请求，不能代替对该"对象+接收者"确切预览的批准。
+
+**未受影响的现状**（有证据）：
+- 现有唯一本地外发好友授权是另一模型 alpha（`local/src-f97bdf0ac4cb4223-8ed3f6ad685b`）→ node-b（revision 1），与本次 model-b 无关，本次原子操作也只作用于 model-b 自身的授权。
+- model-b 工具支持为 unsupported、agent_supported=false（不必然阻止分享，但接收方使用体验会受限）。
+
+**限制与不确定性**：node-b 的可达性未测（未做 HTTP/LAN 探测，online=unknown）；即使批准后授权成功，接收端连通性仍需单独验证，本次操作不证明其可达。
+
+**下一步**：需要所有者在批准界面（confirm_changes）对"model-b（`local/src-f97bdf0ac4cb4223-f44e64e75f39`）→ node-b（`8a3f3e077a294f6cacf02cdb5c09f92d`）"这一确切预览给予批准。在服务器授予该确切操作的权限之前，我不再重试写入，也不会声称任何成功。

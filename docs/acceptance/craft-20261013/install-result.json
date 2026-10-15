@@ -1,0 +1,77 @@
+{
+  "cache": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013",
+  "results": [
+    {
+      "app": "cadcraft",
+      "version": "v0.6.2",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/cadcraft/v0.6.2/payload/cadcraft-web-0.6.2"
+    },
+    {
+      "app": "deckcraft",
+      "version": "v0.6.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/deckcraft/v0.6.1/payload/deckcraft-web-0.6.1"
+    },
+    {
+      "app": "designcraft",
+      "version": "v0.7.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/designcraft/v0.7.1/payload/designcraft-web-0.7.1"
+    },
+    {
+      "app": "effectcraft",
+      "version": "v0.9.2",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/effectcraft/v0.9.2/payload/effectcraft-web-0.9.2"
+    },
+    {
+      "app": "figcraft",
+      "version": "v0.5.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/figcraft/v0.5.1/payload/figcraft-web-0.5.1"
+    },
+    {
+      "app": "gridcraft",
+      "version": "v0.6.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/gridcraft/v0.6.1/payload/gridcraft-web-0.6.1"
+    },
+    {
+      "app": "lightcraft",
+      "version": "v0.7.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/lightcraft/v0.7.1/payload/lightcraft-web-0.7.1"
+    },
+    {
+      "app": "pdfcraft",
+      "version": "v0.7.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/pdfcraft/v0.7.1/payload/pdfcraft-web-0.7.1"
+    },
+    {
+      "app": "photocraft",
+      "version": "v0.8.2",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/photocraft/v0.8.2/payload/photocraft-web-0.8.2"
+    },
+    {
+      "app": "soundcraft",
+      "version": "v0.6.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/soundcraft/v0.6.1/payload/soundcraft-web-0.6.1"
+    },
+    {
+      "app": "vectorcraft",
+      "version": "v0.10.0",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/vectorcraft/v0.10.0/payload/vectorcraft-web-0.10.0"
+    },
+    {
+      "app": "wordcraft",
+      "version": "v0.6.1",
+      "state": "ready",
+      "web_dir": "/Users/yeogirlyun/Library/Application Support/RynmeshCraft/review-20261013/wordcraft/v0.6.1/payload/wordcraft-web-0.6.1"
+    }
+  ]
+}

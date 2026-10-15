@@ -1,0 +1,14 @@
+﻿[
+    {
+        "sha256":  "A0DBDE819C970F6F9B0CD7545FB2ED022C7D895715E8D1719F674E2AA5789E75",
+        "name":  "identity.ed25519"
+    },
+    {
+        "sha256":  "A826E4997B238EE1B6A17A0A91E1EDE5D88EE5EB2C59E2ED75D39544B0C15514",
+        "name":  "messaging.x25519"
+    },
+    {
+        "sha256":  "CECF0FBF3A91056413CC8BF601B05504FB3432B3D7F1FEF376FB6766C9ABCF86",
+        "name":  "space-messaging.key"
+    }
+]

@@ -1,22 +1,30 @@
+import { modelSelectableCLI } from "../domain/cliModels";
 import {
-  Bot,
+  FileText,
+  ArrowUp,
+  Paperclip,
+  Sparkles,
   Check,
   ChevronDown,
   Copy,
-  LockKeyhole,
-  MessageSquarePlus,
   RotateCcw,
-  Search,
-  SendHorizontal,
   ShieldCheck,
   Square,
   ThumbsUp,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { tr, uiLocale, useUILanguage } from "../uiI18n";
+import { DeviceArt, ServiceArt } from "../personal/components";
+import { PersonalContext, personalHref } from "../personal/model";
+import WorkspaceSelect from "./WorkspaceSelect";
+import ChatMarkdown from "./ChatMarkdown";
+import UnifiedAIHistory from "../components/UnifiedAIHistory";
+import AIWorkspaceMaterials from "../components/AIWorkspaceMaterials";
+import { getNasHandoff, setNasHandoff, nasRequest, type NasStatus } from "../domain/nas";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
-import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
+import { isServiceUsable, LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
@@ -27,7 +35,7 @@ import {
   type LLMChatMessage,
   type LLMConversation,
 } from "../domain/llmConversationStore";
-import { askHistory, AskRequestError, conversationRepository, legacyMigrationNotice, type AskPreview, type AskRunRequest } from "../domain/askHistory";
+import { askHistory, AskRequestError, conversationRepository, type AskPreview, type AskRunRequest } from "../domain/askHistory";
 import AskMaterials, { AskAnswerSources } from "../components/AskMaterials";
 import type { LLMOrderResult, LLMServiceRecord } from "../domain/nodeClient";
 import { useLLMStream } from "../domain/useLLMStream";
@@ -54,19 +62,7 @@ function messageId() {
 
 function formatTime(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function historyBucket(value: string) {
-  const date = new Date(value);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const itemDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const days = Math.round((today.getTime() - itemDay.getTime()) / 86400000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days <= 7) return "Previous 7 days";
-  return "Older";
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 function resultMessage(result: LLMOrderResult) {
@@ -80,6 +76,13 @@ function resultMessage(result: LLMOrderResult) {
 }
 
 export default function PrivateAIChat() {
+  useUILanguage();
+  const personal = useContext(PersonalContext);
+  const [nasHandoff, updateNasHandoff] = useState(getNasHandoff);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
+  const [materialBusy, setMaterialBusy] = useState(false);
+  const [cliModels, setCLIModels] = useState<{ id: string; name: string; default: boolean }[]>([]);
+  const [cliModelsError, setCLIModelsError] = useState("");
   const { client, confirm, notify } = useAppContext();
   const history = useMemo(() => conversationRepository(client.mode), [client.mode]);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -100,8 +103,8 @@ export default function PrivateAIChat() {
   const activeNetworkRef = useRef(networkId);
   activeNetworkRef.current = networkId;
   const [conversations, setConversations] = useState<LLMConversation[]>([]);
+  const [savingModel, setSavingModel] = useState(false);
   const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [historyReady, setHistoryReady] = useState(false);
@@ -111,7 +114,6 @@ export default function PrivateAIChat() {
   const [unconfirmed, setUnconfirmed] = useState<AskRunRequest | null>(null);
   const [error, setError] = useState("");
   const [storageMode, setStorageMode] = useState<"node-encrypted" | "encrypted" | "session-only">("node-encrypted");
-  const [migrationNotice, setMigrationNotice] = useState("");
   const [helpfulMessages, setHelpfulMessages] = useState<Set<string>>(new Set());
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
@@ -136,9 +138,32 @@ export default function PrivateAIChat() {
   const selectedConversation = (selectedId ? conversations.find((conversation) => conversation.id === selectedId) : conversations[0]) ?? null;
   const selectedConversationRef = useRef(selectedConversation?.id);
   selectedConversationRef.current = selectedConversation?.id;
+  const conversationRef = useRef(selectedConversation);
+  conversationRef.current = selectedConversation;
   const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
   const stream = useLLMStream(nodeTask);
+  const localModelCLI = selectedService && (selectedService.local_only || selectedService.cli_models?.length) ? modelSelectableCLI(selectedService.service.adapter) : null;
+  const advertisedCLIModels = JSON.stringify(selectedService?.cli_models ?? []);
+  const isLocalCLI = Boolean(selectedService?.local_only);
+  const cliModel = selectedConversation?.cliModel ?? (cliModels.find(row => row.default)?.id ?? cliModels[0]?.id ?? "");
+  const [nasOrigins, setNasOrigins] = useState<Record<string, NonNullable<import("../domain/askHistory").AskSource["nas"]>>>({});
+  const sourceIds = JSON.stringify([...new Set(selectedConversation?.messages.flatMap(message => message.contextIds ?? []) ?? [])]);
+  useEffect(() => {
+    let active = true;
+    setNasOrigins({});
+    void Promise.all((JSON.parse(sourceIds) as string[]).map(async id => {
+      try { return [id, (await askHistory.context(id)).nas] as const; } catch { return [id, undefined] as const; }
+    })).then(rows => { if (active) setNasOrigins(Object.fromEntries(rows.filter(row => row[1])) as typeof nasOrigins); });
+    return () => { active = false; };
+  }, [sourceIds]);
+  useEffect(() => {
+    let active = true; setCLIModels([]); setCLIModelsError("");
+    if (localModelCLI && !isLocalCLI) setCLIModels(JSON.parse(advertisedCLIModels));
+    else if (localModelCLI) void client.getCLIModels(localModelCLI).then(result => { if (active) setCLIModels(result.models); })
+      .catch(cause => { if (active) setCLIModelsError(cause instanceof Error ? cause.message : tr("无法读取 CLI 模型")); });
+    return () => { active = false; };
+  }, [client, localModelCLI, isLocalCLI, advertisedCLIModels]);
 
 
   const refreshNodeHistory = async () => {
@@ -149,13 +174,13 @@ export default function PrivateAIChat() {
   };
 
   useServiceOrder({ scope: client, key: providerIdentity(networkId, selectedService?.peer_id ?? "", selectedService?.service.package_id ?? ""),
-    enabled: client.mode === "live" && historyReady,
+    enabled: client.mode === "live" && historyReady && Boolean(selectedService),
     intervalMs: serviceDescriptors.privateAI.orderIntervalMs,
     load: async () => {
       const key = selectedService ? serviceKey(selectedService) : "";
       return (await history.list(key)).filter((row) => row.serviceKey === key && row.networkId === networkId);
     },
-    onData: (rows) => { setConversations(rows); setError((value) => value === NODE_UNREACHABLE_ERROR ? "" : value); },
+    onData: (rows) => { setConversations(current => rows.map(row => { const prior = current.find(item => item.id === row.id); return prior && (prior.revision ?? 0) > (row.revision ?? 0) ? prior : row; })); setError((value) => value === NODE_UNREACHABLE_ERROR ? "" : value); },
     onError: () => setError(NODE_UNREACHABLE_ERROR),
   });
 
@@ -173,34 +198,40 @@ export default function PrivateAIChat() {
       const discovered = await discovery.refresh() ?? [];
       if (!active) return;
       setNetworkId(network);
-      const requestedPeer = searchParams.get("peer");
-      const requestedService = searchParams.get("service");
+      const requestedId = searchParams.get("conversation");
+      const requestedRow = requestedId ? (await history.list()).find(row => row.id === requestedId) : null;
+      if (!active) return;
+      const requestedPeer = searchParams.get("peer") || requestedRow?.providerPeerId;
+      const requestedService = searchParams.get("service") || (requestedRow ? requestedRow.serviceKey.slice(requestedRow.providerPeerId.length + 2) : null);
       const selected = requestedPeer && requestedService
         ? discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
-        : discovered.find((item) => item.online) ?? discovered[0] ?? null;
+        : discovered.find(isServiceUsable) ?? discovered[0] ?? null;
       setSelectedService(selected);
       setStorageMode(await history.storageMode());
+      if (!selected && requestedRow) { setConversations([requestedRow]); setSelectedId(requestedRow.id); setInput(requestedRow.draft ?? ""); }
       if (selected) {
         const key = serviceKey(selected);
         let stored = (await history.list(key)).filter((row) => row.networkId === network);
-        const requestedId = searchParams.get("conversation");
         if (requestedId && !stored.some((row) => row.id === requestedId)) throw new Error("This conversation is unavailable for this provider and network. It has not been replaced by another history.");
-        if (!stored.length && !requestedId) {
+        if ((!stored.length && !requestedId) || searchParams.get("new") === "1" || (!requestedId && (nasHandoff || searchParams.get("material")))) {
+          const material = searchParams.get("material");
+          if (material && client.mode === "live") await askHistory.context(material);
           const fresh = createConversation({
             serviceKey: key,
             serviceName: selected.service.model_alias,
             providerPeerId: selected.peer_id,
             networkId: network,
           });
-          stored = [await history.save(fresh)];
+          if (material) fresh.contextIds = [material];
+          stored = [await history.save(fresh), ...stored];
         }
         if (active) {
           setConversations(stored);
-          const opened = stored.find((row) => row.id === requestedId) ?? stored[0];
+          const opened = searchParams.get("new") === "1" ? stored[0] : stored.find((row) => row.id === requestedId) ?? stored[0];
           setSelectedId(opened.id);
           setInput(opened.draft ?? "");
           setHistoryReady(true);
-          if (!requestedId) { redirecting = true; setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", opened.id); return next; }, { replace: true }); }
+          if (!requestedId || searchParams.get("new") === "1") { redirecting = true; setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", opened.id); next.delete("new"); next.delete("material"); return next; }, { replace: true }); }
         }
       }
       } catch (cause) {
@@ -215,16 +246,6 @@ export default function PrivateAIChat() {
     if (element) element.scrollTop = element.scrollHeight;
   }, [selectedConversation?.messages.length, sending, stream.text]);
 
-  const grouped = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const visible = conversations.filter((conversation) => !needle || conversation.title.toLowerCase().includes(needle));
-    return visible.reduce<Record<string, LLMConversation[]>>((groups, conversation) => {
-      const bucket = historyBucket(conversation.updatedAt);
-      (groups[bucket] ??= []).push(conversation);
-      return groups;
-    }, {});
-  }, [conversations, query]);
-
   const replaceConversation = async (conversation: LLMConversation, select = true) => {
     const saved = await history.save(conversation);
     if (saved.serviceKey !== selectedServiceKeyRef.current || saved.networkId !== activeNetworkRef.current) return saved;
@@ -237,6 +258,42 @@ export default function PrivateAIChat() {
       if (searchParams.get("conversation") !== conversation.id) setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", conversation.id); return next; });
     }
     return saved;
+  };
+
+  const attachSource = async (source: import("../domain/askHistory").AskSource) => {
+    if (!selectedConversation || isSending || unconfirmed) throw new Error(tr("Wait for the current task before adding materials."));
+    const ids = selectedConversation.contextIds ?? [];
+    if (!ids.includes(source.library_id) && ids.length >= 8) throw new Error(tr("You can attach up to eight materials."));
+    await replaceConversation({ ...selectedConversation, contextIds: [...new Set([...ids, source.library_id])], updatedAt: new Date().toISOString() }, false);
+  };
+  const reviewNasHandoff = () => {
+    const file = nasHandoff;
+    if (!file || !selectedConversation || materialBusy) return;
+    confirm({ title: tr("Add this NAS document?"), risk: "low", confirmLabel: tr("Add materials"),
+      body: tr("Adding saves a source copy on this node for history and citations. Nothing is sent to AI until you review and confirm."),
+      details: [{ label: tr("NAS files"), value: `${file.sourceName} / ${file.path}` }],
+      onConfirm: async () => {
+        setMaterialBusy(true);
+        try { await attachSource(await askHistory.prepareNas(file.sourceId, file.path)); updateNasHandoff(null); setNasHandoff(null); setInput(tr("Summarize this document.")); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : tr("Could not attach this material.")); }
+        finally { setMaterialBusy(false); }
+      } });
+  };
+  const saveToNas = async (message: LLMChatMessage) => {
+    try {
+      const id = message.contextIds?.find(sourceId => nasOrigins[sourceId]);
+      if (!id) return;
+      const origin = (await askHistory.context(id)).nas;
+      if (!origin) { setError(tr("This source is not a NAS document.")); return; }
+      const status = await (await nasRequest()).json() as NasStatus;
+      const connection = status.sources.find(row => row.id === origin.source_id);
+      if (!status.enabled || !connection?.writable) { setError(tr("This NAS connection is unavailable or read-only.")); return; }
+      const folder = origin.path.split("/").slice(0, -1).join("/");
+      const path = `${folder ? folder + "/" : ""}ryn-response-${crypto.randomUUID()}.txt`;
+      confirm({ title: tr("Save response to NAS?"), risk: "low", confirmLabel: tr("Save"),
+        body: `${connection.name} / ${path}`,
+        onConfirm: async () => { await nasRequest(`/sources/${encodeURIComponent(origin.source_id)}/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: message.content }); notify("ok", tr("Response saved to NAS")); } });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : tr("Could not save response to NAS.")); }
   };
 
   const newConversation = async () => {
@@ -322,7 +379,7 @@ export default function PrivateAIChat() {
   const runPrompt = async (promptText: string, preview?: AskPreview) => {
     const text = promptText.trim();
     if (!text || !selectedService || isSending || unconfirmed || !historyReady) return;
-    let conversation = selectedConversation;
+    let conversation = conversationRef.current;
     if (client.mode === "live" && (!preview || preview.conversation_id !== selectedConversationRef.current || preview.provider_peer_id + "::" + preview.service_id !== selectedServiceKeyRef.current || preview.revision !== conversation?.revision)) {
       setError("This send review is out of date. Review the current conversation before sending.");
       return;
@@ -363,6 +420,7 @@ export default function PrivateAIChat() {
       userSaved = true;
       setInput("");
       let result = await client.submitLLMOrder({
+        ...(localModelCLI ? { cli_model: cliModel } : {}),
         task_id: taskId, idempotency_key: taskId,
         network_id: networkId,
         provider_peer_id: selectedService.peer_id,
@@ -504,183 +562,95 @@ export default function PrivateAIChat() {
   };
 
   const reviewAndSend = async () => {
-    if (!selectedConversation || !selectedService || !input.trim() || isSending || unconfirmed || reviewing || !historyReady) return;
+    if (!selectedConversation || !selectedService || !input.trim() || isSending || unconfirmed || reviewing || !historyReady || materialBusy || savingModel) return;
+    if (Boolean(localModelCLI) && !cliModels.some(row => row.id === cliModel)) { setError(tr("Choose an available CLI model before sending.")); return; }
     if (client.mode !== "live") return runPrompt(input);
     const question = input.trim();
     setReviewing(true); setError("");
     try {
-      const preview = await askHistory.preview(selectedConversation, question);
-      confirm({ title: `Send to ${selectedService.service.model_alias}?`, risk: "medium", confirmLabel: "Send reviewed question",
-        body: `Recipient: ${preview.provider_peer_id}. Conservative input estimate ${preview.input_token_upper_estimate}, framing reserve ${preview.framing_reserve}, output reserve ${preview.max_output_tokens}, context window ${preview.context_window}. ${preview.history_messages_omitted} older history messages omitted.${preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."}`,
-        details: [{ label: "Question", value: question }, ...preview.sources.map((source) => ({ label: `Source ${source.source_number}: ${source.title}`, value: `${source.source_url || "Private local document"} · ${source.included_bytes}/${source.text_bytes} bytes${source.budget_truncated || source.extraction_truncated ? " · TRUNCATED" : ""}` }))],
+      const row = localModelCLI && selectedConversation.cliModel !== cliModel ? await replaceConversation({ ...selectedConversation, cliModel }, false) : selectedConversation;
+      const preview = await askHistory.preview(row, question);
+      if (row.id !== selectedConversationRef.current) return;
+      confirm({ title: tr("Send to {{service}}?", { service: selectedService.service.model_alias }), risk: "medium", confirmLabel: tr("Send reviewed question"),
+        body: tr("Recipient: {{peer}}. Conservative input estimate {{input}}, framing reserve {{framing}}, output reserve {{output}}, context window {{window}}. {{omitted}} older history messages omitted.", { peer: preview.provider_peer_id, input: preview.input_token_upper_estimate, framing: preview.framing_reserve, output: preview.max_output_tokens, window: preview.context_window, omitted: preview.history_messages_omitted }) + tr(preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."),
+        details: [{ label: tr("Question"), value: question }, ...(preview.cli_model ? [{ label: tr("模型"), value: preview.cli_model }] : []), ...preview.sources.map((source) => ({ label: tr("Source {{number}}: {{title}}", { number: source.source_number, title: source.title }), value: `${source.nas ? `${source.nas.source_name} / ${source.nas.path}` : source.source_url || tr("Private local document")} · ${source.included_bytes}/${source.text_bytes} ${tr("bytes")}${source.budget_truncated || source.extraction_truncated ? ` · ${tr("TRUNCATED")}` : ""}` }))],
         onConfirm: () => runPrompt(question, preview),
       });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not prepare the send review."); }
     finally { setReviewing(false); }
   };
 
-  if (loading) return <LoadingPanel label="Opening Private AI" />;
+  const providerName = personal?.resolveName(selectedService?.peer_id ?? "", selectedService?.node_name) || selectedService?.node_name || selectedService?.peer_id || "";
+  const changeService = (service: LLMServiceRecord) => {
+    if (isSending || reviewing || unconfirmed) return;
+    confirm({ title: tr("Start a separate conversation?"), risk: "low", confirmLabel: tr("新建对话"),
+      body: tr("The new conversation starts with this service. Existing messages and materials stay with their original provider."),
+      onConfirm: () => { const next = new URLSearchParams(searchParams); next.set("peer", service.peer_id); next.set("service", service.service.package_id); next.set("new", "1"); next.delete("conversation"); next.delete("material"); setSearchParams(next); } });
+  };
+  const services = discovery.data ?? [];
+  const blocked = isSending || reviewing || Boolean(unconfirmed) || materialBusy || savingModel;
+  const selectedStorage = client.mode === "live" ? "node" : "browser";
+  const toolbar = <header className={styles.pageHeading}>
+    <div className={styles.modelLockup}><ServiceArt kind="ai" /><div><h1>{tr("AI 工作台")}</h1><p>{tr("连接你的设备，与熟悉的 AI 一起工作。")}</p></div></div>
+    <details className={styles.details}><summary className={styles.detailsButton}><ShieldCheck size={15} />{tr("会话详情")}<ChevronDown size={14} /></summary><div className={styles.detailsPanel}>
+      <strong>{providerName}</strong><p>{tr("Requests go to the selected service. Node history and browser originals keep their separate storage locations.")}</p>
+      <Link to={personalHref("/ask/history", client.mode === "fixture")}>{tr("Manage node history")}</Link>
+      {selectedConversation ? <button type="button" onClick={() => confirm({ title: "Delete this conversation?", body: `${selectedConversation.sync ? "Approved devices receive synchronized deletions. " : ""}This removes this node's conversation history. Browser originals and retained orders are separate.`, risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(selectedConversation.id) })} aria-label={`Delete ${selectedConversation.title}`}><Trash2 size={14} />{tr("Delete conversation")}</button> : null}
+    </div></details>
+  </header>;
 
-  if (!selectedService) {
-    return (
-      <div className="empty-state">
-        <Bot size={28} />
-        <h3>The selected provider is unavailable</h3>
-        <p>Your conversation remains bound to its original provider. Choose another service to start a separate conversation.</p>
-        <Link to={searchParams.get("conversation") ? `/ask?conversation=${encodeURIComponent(searchParams.get("conversation")!)}&network=${encodeURIComponent(networkId)}` : "/ask"}>View history and choose a service</Link>
-        <Link to="/services/manage">Set up a local model</Link>
-        {error ? <p role="alert">{error}</p> : null}
-      </div>
-    );
-  }
+  if (loading) return <LoadingPanel label={tr("Opening Private AI")} />;
+  if (!selectedService) return <div className={`${styles.page} ai-unified-workspace`}>{toolbar}
+    <UnifiedAIHistory rows={conversations} selectedId={selectedId} storage={selectedStorage} onNew={() => setSearchParams(new URLSearchParams({ network: networkId, new: "1" }))} />
+    <main className={styles.workspace}><div className={styles.messages}>
+      <h2>{tr("The selected provider is unavailable")}</h2><p>{tr("Your conversation remains bound to its original provider. Choose another service to start a separate conversation.")}</p>
+      <Link to={personalHref("/services/sources", client.mode === "fixture")}>{tr("AI 来源")}</Link>{selectedConversation?.messages.map(message => <div className={styles.messageBlock} key={message.id}><div className={styles.messageBubble}><ChatMarkdown>{message.content}</ChatMarkdown></div>{message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}</div>)}
+      {error ? <p role="alert">{error}</p> : null}
+    </div></main></div>;
 
-  return (
-    <div className={styles.page}>
-      <aside className={styles.history} aria-label="Private AI conversations">
-        <button className={styles.newButton} type="button" onClick={() => void newConversation().catch((cause: Error) => setError(cause.message))}>
-          <MessageSquarePlus size={17} /> New chat
-        </button>
-        <label className={styles.historySearch}>
-          <Search size={16} />
-          <input aria-label="Search conversations" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search conversations" />
-        </label>
-        <div className={styles.historyScroll}>
-          {["Today", "Yesterday", "Previous 7 days", "Older"].map((bucket) => grouped[bucket]?.length ? (
-            <section className={styles.historyGroup} key={bucket}>
-              <h2>{bucket}</h2>
-              {grouped[bucket].map((conversation) => (
-                <div className={`${styles.conversationRow}${selectedConversation?.id === conversation.id ? ` ${styles.conversationRowSelected}` : ""}`} key={conversation.id}>
-                  <button className={styles.conversationButton} type="button" onClick={() => setSearchParams((prior) => { const next = new URLSearchParams(prior); next.set("conversation", conversation.id); return next; })}>
-                    <strong>{conversation.title}</strong>
-                    <small>{formatTime(conversation.updatedAt)}</small>
-                  </button>
-                  <button className={styles.deleteButton} type="button" aria-label={`Delete ${conversation.title}`} onClick={() => confirm({ title: "Delete this conversation?", body: `${conversation.sync ? "Delete this conversation from synchronized history. Approved devices receive the deletion when connected; concurrent replies may remain in recovery. " : "This removes this node's conversation history. "}Running requests and older browser recovery copies are separate.`, risk: "high", confirmLabel: "Delete conversation", onConfirm: () => removeConversation(conversation.id) })}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </section>
-          ) : null)}
-          {!Object.keys(grouped).length ? <div className={styles.historyEmpty}>No matching conversations</div> : null}
-        </div>
-        <button className={styles.clearButton} type="button" onClick={clearHistory}>
-          <Trash2 size={14} /> Clear history
-        </button>
-        {client.mode === "live" ? <button type="button" onClick={() => confirm({ title: "Import older browser conversations?", body: "This reads encrypted history from this browser and saves it on your node. Original provider bindings are retained. Browser originals stay available as recovery copies.", confirmLabel: "Import conversations", risk: "medium", onConfirm: async () => {
-          const result = await askHistory.importLegacy();
-          setMigrationNotice(legacyMigrationNotice(result));
-          setConversations((await history.list(serviceKey(selectedService))).filter((row) => row.networkId === networkId));
-        } })}>Import older browser conversations</button> : null}
-        {migrationNotice ? <p role="status">{migrationNotice}</p> : null}
-      </aside>
-
-      <main className={styles.workspace}>
-        <header className={styles.chatHeader}>
-          <div className={styles.modelLockup}>
-            <span className={styles.modelIcon}><Bot size={24} /></span>
-            <div className={styles.modelCopy}>
-              <h1>Ask Ryn</h1>
-              <Link to="/ask">History and model selection</Link>
-              <span>{selectedService.service.model_alias}</span>
-              <div className={styles.modelStatus}>
-                <span className={styles.statusBadge}>{llmServiceAvailability(selectedService)}</span>
-                {selectedService.access === "self" && !selectedService.online && <Link to="/services/manage">Manage local model</Link>}
-                <span className={styles.statusBadge}><LockKeyhole size={11} /> Encrypted</span>
-              </div>
-            </div>
-          </div>
-          <details className={styles.details}>
-            <summary className={styles.detailsButton}>Details <ChevronDown size={14} /></summary>
-            <div className={styles.detailsPanel}>
-              <dl>
-                <div><dt>Model</dt><dd>{selectedService.service.model_alias}</dd></div>
-                <div><dt>Provider</dt><dd>{selectedService.node_name || selectedService.peer_id}</dd></div>
-                <div><dt>Service</dt><dd>{selectedService.service.package_id}</dd></div>
-                <div><dt>Network</dt><dd>{networkId}</dd></div>
-                <div><dt>Context</dt><dd>{selectedService.service.context_window} tokens</dd></div>
-              </dl>
-              <p className={styles.privacyCopy}>
-                Requests are encrypted in transit. History is saved on your node; its files are encrypted using the node's identity. The selected provider sees plaintext while generating a response.
-              </p>
-            </div>
-          </details>
-        </header>
-
-        {selectedConversation?.sync && (selectedConversation.sync.conflict || selectedConversation.sync.deferred) ? <p role="status">
-          Other-device changes are saved for review. This conversation keeps its current context. <Link to={`/ask?${new URLSearchParams({ conversation: selectedConversation.id, network: selectedConversation.networkId })}`}>Review conversation branches</Link>
-        </p> : null}
-        <div className={styles.messages} ref={messageScrollRef}>
-          {!selectedConversation?.messages.length ? (
-            <div className={styles.welcome}>
-              <span className={styles.welcomeIcon}><Bot size={27} /></span>
-              <h2>Start a private conversation</h2>
-              <p>Your history stays with this provider and service. The provider shown above receives the messages you send.</p>
-              <div className={styles.suggestions}>
-                {SUGGESTIONS.map((suggestion) => <button type="button" key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}
-              </div>
-            </div>
-          ) : selectedConversation.messages.map((message) => (
-            <div className={`${styles.messageRow}${message.role === "user" ? ` ${styles.messageRowUser}` : ""}`} key={message.id}>
-              {message.role === "assistant" ? <span className={styles.assistantAvatar}><Bot size={18} /></span> : null}
-              <div className={styles.messageBlock}>
-                <div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.role === "assistant" && message.taskId === nodeTask && stream.text ? stream.text : message.content}</div>
-                {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={styles.messageMeta} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
-                <span className={styles.messageMeta}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
-                {message.role === "assistant" ? (
-                  <div className={styles.messageActions}>
-                    <button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} /> Copy</button>
-                    <button type="button" onClick={() => setHelpfulMessages((current) => new Set(current).add(message.id))}>
-                      {helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />} {helpfulMessages.has(message.id) ? "Helpful" : "Good response"}
-                    </button>
-                    {message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} /> Check original task</button> : null}
-                  </div>
-                ) : null}
-                {message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}
-              </div>
-            </div>
-          ))}
-          {sending ? (
-            <div className={styles.messageRow}>
-              <span className={styles.assistantAvatar}><Bot size={18} /></span>
-              <div className={styles.thinking} aria-label="Private AI is thinking"><span /><span /><span /></div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className={styles.composerWrap}>
-          {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async (id) => { await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter((value) => value !== id) }, false); }} /> : null}
-          {error ? <div className={styles.error} role="alert">{error}</div> : null}
-          {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
-          {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.
-            <button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button>
-            <button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button>
-          </div> : null}
-          <div className={styles.composer}>
-            <textarea
-              aria-label="Message Private AI"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="Message Private AI"
-              rows={1}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void reviewAndSend();
-                }
-              }}
-            />
-            {isSending ? (
-              <button className={styles.stopButton} type="button" aria-label="Stop generating" onClick={() => void stopGeneration()}><Square size={15} /></button>
-            ) : (
-              <button className={styles.sendButton} type="button" aria-label="Send message" disabled={!input.trim() || !historyReady || reviewing || Boolean(unconfirmed)} onClick={() => void reviewAndSend()}><SendHorizontal size={17} /></button>
-            )}
-          </div>
-          <div className={styles.composerMeta}>
-            <span><ShieldCheck size={12} /> {storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session"}</span>
-            <span>{selectedService.service.pricing?.minimum === undefined ? "Price unavailable" : `Estimated minimum ${selectedService.service.pricing.minimum} credits`}</span>
-          </div>
-        </div>
-      </main>
+  return <div className={`${styles.page} ai-unified-workspace`}>
+    {toolbar}
+    <div className={styles.sourceBar}>
+      <WorkspaceSelect grow caption={tr("运行设备")} label={tr("Processing device")} value={selectedService.peer_id} disabled={blocked} icon={<DeviceArt kind={personal?.devices.find(device => device.id === selectedService.peer_id)?.kind || "desktop"} small />}
+        options={[selectedService, ...services].filter((item, index, all) => all.findIndex(other => other.peer_id === item.peer_id) === index).map(item => ({ value: item.peer_id, label: personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id, detail: tr(item.access === "friend" ? "Friend AI · authorized" : item.local_only ? "This device" : isServiceUsable(item) ? "Online" : item.availability?.state === "needs_connection" ? "Not connected" : "Offline") }))}
+        onChange={value => { const next = services.find(item => item.peer_id === value); if (next) changeService(next); }} />
+      <WorkspaceSelect caption={tr("AI 服务")} label={tr("AI 服务")} value={serviceKey(selectedService)} disabled={blocked} icon={<Sparkles size={23} />}
+        options={[selectedService, ...services].filter((item, index, all) => item.peer_id === selectedService.peer_id && all.findIndex(other => serviceKey(other) === serviceKey(item)) === index).map(item => ({ value: serviceKey(item), label: item.service.adapter === "codex_cli" ? "ChatGPT" : item.service.model_alias }))}
+        onChange={key => { const next = services.find(item => serviceKey(item) === key); if (next) changeService(next); }} />
+      {localModelCLI ? <WorkspaceSelect caption={tr("模型")} label={localModelCLI === "codex_cli" ? tr("Codex 模型") : tr("Antigravity 模型")} value={cliModel} disabled={blocked || !cliModels.length} placeholder={tr("正在读取模型…")} options={cliModels.map(model => ({ value: model.id, label: model.id === "" ? tr("CLI 默认") : model.name }))} onChange={value => { if (!selectedConversation || savingModel) return; setSavingModel(true); void replaceConversation({ ...selectedConversation, cliModel: value }, false).catch((cause: Error) => setError(cause.message)).finally(() => setSavingModel(false)); }} /> : null}
+      <Link className={styles.apiLink} to={personalHref("/services/api", client.mode === "fixture")}>{tr("API 接入")}</Link>
+      {cliModelsError ? <p role="alert">{cliModelsError}</p> : null}
+      {localModelCLI && cliModels.length > 0 && !cliModels.some(model => model.id === cliModel) && <p role="alert">{tr("保存的模型已不可用，请重新选择模型。")}</p>}
     </div>
-  );
+    <UnifiedAIHistory selectedId={selectedConversation?.id} storage={selectedStorage} rows={conversations} serviceScope={{ key: serviceKey(selectedService), network: networkId }} onNew={() => void newConversation().catch((cause: Error) => setError(cause.message))}
+      actions={<button className={styles.clearButton} type="button" onClick={clearHistory}><Trash2 size={14} />{tr("Clear history")}</button>} />
+    <main className={styles.workspace}>
+      <header className={styles.workspaceHeading}><div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title === "New conversation" ? tr("开启一段新对话") : selectedConversation?.title}</strong></div><span className={styles.connectionBadge} data-failed={!isServiceUsable(selectedService)}>{tr(llmServiceAvailability(selectedService))}</span></header>
+      {selectedConversation?.sync && (selectedConversation.sync.conflict || selectedConversation.sync.deferred) ? <p role="status">{tr("Other-device changes are saved for review.")} <Link to={`/ask/history?${new URLSearchParams({ conversation: selectedConversation.id, network: selectedConversation.networkId })}`}>{tr("Review conversation branches")}</Link></p> : null}
+      <div className={styles.messages} ref={messageScrollRef}>
+        {!selectedConversation?.messages.length ? <div className={styles.welcome}><h2>{tr("今天，想一起做些什么？")}</h2><p>{tr("想法、问题，或一段需要打磨的文字，都可以从这里开始。")}</p><div className={styles.suggestions}>{SUGGESTIONS.map(suggestion => <button type="button" key={suggestion} onClick={() => setInput(tr(suggestion))}>{tr(suggestion)}</button>)}</div></div> : selectedConversation.messages.map(message => <div className={`${styles.messageRow}${message.role === "user" ? ` ${styles.messageRowUser}` : ""}`} key={message.id}>
+          {message.role === "assistant" ? <span className={styles.assistantAvatar}><ServiceArt kind="ai" small /></span> : null}
+          <div className={styles.messageBlock}><div className={`${styles.messageBubble}${message.status === "failed" ? ` ${styles.messageFailed}` : ""}`}>{message.role === "assistant" ? <ChatMarkdown>{message.taskId === nodeTask && stream.text ? stream.text : message.content}</ChatMarkdown> : message.content}</div>
+            {message.role === "assistant" && message.taskId === nodeTask && stream.text ? <span className={styles.messageMeta} role="status">{stream.interrupted ? "Live updates paused. This is a partial answer; checking the original task." : "Generating · partial answer"}</span> : null}
+            <span className={styles.messageMeta}>{formatTime(message.createdAt)}{message.cost !== undefined ? ` · ${message.cost} credits` : ""}</span>
+            {message.role === "assistant" ? <div className={styles.messageActions}><button type="button" onClick={() => void navigator.clipboard?.writeText(message.taskId === nodeTask && stream.text ? stream.text : message.content)}><Copy size={12} />{tr("Copy")}</button><button type="button" onClick={() => setHelpfulMessages(current => new Set(current).add(message.id))}>{helpfulMessages.has(message.id) ? <Check size={12} /> : <ThumbsUp size={12} />}{tr(helpfulMessages.has(message.id) ? "Helpful" : "Good response")}</button>{message.status !== "complete" ? <button type="button" onClick={() => message.taskId ? void checkOriginal(message.taskId) : retryLast()}><RotateCcw size={12} />{tr("Check original task")}</button> : null}{message.status === "complete" && message.contextIds?.some(id => nasOrigins[id]) ? <button type="button" onClick={() => void saveToNas(message)}>{tr("Save to NAS")}</button> : null}</div> : null}
+            {message.contextIds?.length ? <AskAnswerSources ids={message.contextIds} byteLimits={message.contextBytes} /> : null}
+          </div>
+        </div>)}
+        {sending ? <div className={styles.messageRow}><span className={styles.assistantAvatar}><ServiceArt kind="ai" small /></span><div className={styles.thinking} aria-label="Private AI is thinking"><span /><span /><span /></div></div> : null}
+      </div>
+      <div className={styles.composerWrap}>
+        {nasHandoff ? <div className="ai-pending-nas"><FileText size={15} /><span>{nasHandoff.sourceName} / {nasHandoff.path}</span><button type="button" disabled={blocked} onClick={reviewNasHandoff}>{tr("Add materials")}</button><button type="button" onClick={() => { updateNasHandoff(null); setNasHandoff(null); }}>{tr("Remove document")}</button></div> : null}
+        {selectedConversation?.contextIds?.length ? <AskMaterials ids={selectedConversation.contextIds} onRemove={async id => { if (blocked) throw new Error(tr("Wait for the current task before adding materials.")); await replaceConversation({ ...selectedConversation, contextIds: selectedConversation.contextIds?.filter(value => value !== id) }, false); }} /> : null}
+        {error ? <div className={styles.error} role="alert">{error}</div> : null}
+        {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
+        {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.<button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button><button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button></div> : null}
+        <div className={styles.composer}><textarea aria-label={tr("Message Private AI")} value={input} onChange={event => setInput(event.target.value)} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
+          <div className={styles.composerControls}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={styles.composerModel}>{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) : selectedService.service.model_alias}</span><span className={styles.keyboardHint}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={styles.stopButton} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={styles.sendButton} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (Boolean(localModelCLI) && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
+        </div>
+        <div className={styles.composerMeta}><span><ShieldCheck size={12} />{tr(storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session")}</span><span>{tr("Processed by {{device}}", { device: providerName })}</span></div>
+      </div>
+    </main>
+    {materialsOpen ? <AIWorkspaceMaterials onSelect={attachSource} onClose={() => setMaterialsOpen(false)} /> : null}
+  </div>;
 }

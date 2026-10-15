@@ -1,0 +1,21 @@
+{
+  "classification": "development failure; not formal score",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator inspecting retained trace, state and independent DAV audit; separate Astra review unavailable during quota interruption.",
+  "real_model_calls": 9,
+  "elapsed_seconds": 307.0,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "finding": "Compact tool loading and continuation-free summary input allowed two checkpoints and actual authorized root/directory discovery. The file was found, but no document content was read. The final two summary attempts both returned no usable text, finish_reason=length and output_tokens=4096, exhausting the bounded retry. No artifact was created.",
+  "rejected_completion_evidence": [
+    {"call": 5, "input_tokens": 578, "output_tokens": 4096, "finish_reason": "length", "subsequent_retry": "usable summary"},
+    {"call": 8, "input_tokens": 1063, "output_tokens": 4096, "finish_reason": "length"},
+    {"call": 9, "input_tokens": 1063, "output_tokens": 4096, "finish_reason": "length"}
+  ],
+  "mechanical_checks": {
+    "exact_artifact_paths": false,
+    "source_files_unchanged": true,
+    "no_unexpected_writes": true
+  },
+  "follow_up": "Do not repeat this unchanged configuration hoping for a pass. Review deterministic retention of opaque resource references outside generated summaries and small-window tool/schema overhead. Any fix must preserve exact owner constraints, resource-origin validation, budget accounting and matched reference conditions before another real trial."
+}

@@ -1,0 +1,242 @@
+[
+  {
+    "name": "short-message",
+    "id": "agent_9644a18e5bf04aadbd4afa715b4ea175",
+    "elapsed_ms": 20564,
+    "status": "completed",
+    "error": null,
+    "result": "你好，请问有什么可以协助您的吗？",
+    "model": "peer/6e61bf46e2d30890e7f02483b3260781a3eb837a5912e59ba12792ddea8b26b5/antigravity-cli/model/gemini-3.8-flash-medium",
+    "events": [
+      {
+        "at": "2026-10-13T17:27:32.826282+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3000,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 4,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:27:51.357630+00:00",
+        "context_epoch": 0,
+        "seq": 5,
+        "step": 1,
+        "text": "你好，请问有什么可以协助您的吗？",
+        "type": "text_delta"
+      }
+    ]
+  },
+  {
+    "name": "followup",
+    "id": "agent_9644a18e5bf04aadbd4afa715b4ea175",
+    "elapsed_ms": 24103,
+    "status": "completed",
+    "error": null,
+    "result": "好的，收到！有需要随时叫我，祝您一切顺利！",
+    "model": "peer/6e61bf46e2d30890e7f02483b3260781a3eb837a5912e59ba12792ddea8b26b5/antigravity-cli/model/gemini-3.8-flash-medium",
+    "events": [
+      {
+        "at": "2026-10-13T17:27:32.826282+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3000,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 4,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:27:51.357630+00:00",
+        "context_epoch": 0,
+        "seq": 5,
+        "step": 1,
+        "text": "你好，请问有什么可以协助您的吗？",
+        "type": "text_delta"
+      },
+      {
+        "at": "2026-10-13T17:27:55.998117+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3053,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 11,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:28:16.811001+00:00",
+        "context_epoch": 0,
+        "seq": 12,
+        "step": 1,
+        "text": "好的，收到！有需要随时叫我，祝您一切顺利！",
+        "type": "text_delta"
+      }
+    ]
+  },
+  {
+    "name": "read-only-tool",
+    "id": "agent_9644a18e5bf04aadbd4afa715b4ea175",
+    "elapsed_ms": 64725,
+    "status": "completed",
+    "error": null,
+    "result": "当前电脑的操作系统是 Windows。",
+    "model": "peer/6e61bf46e2d30890e7f02483b3260781a3eb837a5912e59ba12792ddea8b26b5/antigravity-cli/model/gemini-3.8-flash-medium",
+    "events": [
+      {
+        "at": "2026-10-13T17:27:32.826282+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3000,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 4,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:27:51.357630+00:00",
+        "context_epoch": 0,
+        "seq": 5,
+        "step": 1,
+        "text": "你好，请问有什么可以协助您的吗？",
+        "type": "text_delta"
+      },
+      {
+        "at": "2026-10-13T17:27:55.998117+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3053,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 11,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:28:16.811001+00:00",
+        "context_epoch": 0,
+        "seq": 12,
+        "step": 1,
+        "text": "好的，收到！有需要随时叫我，祝您一切顺利！",
+        "type": "text_delta"
+      },
+      {
+        "at": "2026-10-13T17:28:23.857487+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3118,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 18,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:28:41.073142+00:00",
+        "call_id": "call_3b450c62d36647bfbfe1a615a5728d6a",
+        "context_epoch": 0,
+        "internal": true,
+        "operation_id": "op_9ce8e50fb8cc4a71aba8739562cfc785",
+        "result": {
+          "catalog_revision": "dd5b048e6890a1ef9f2a3b74c68afcbd7efbe8930b124cff2838925728b225d9",
+          "cursor": 0,
+          "loaded_names": [
+            "ryn_local_environment"
+          ],
+          "menu_revision": 4,
+          "next_cursor": null,
+          "permission_granted": false,
+          "tools": [],
+          "total": 41
+        },
+        "seq": 21,
+        "tool": "ryn_discover_tools",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-13T17:28:41.670423+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3447,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 23,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:28:55.503257+00:00",
+        "call_id": "call_2ffa861475be4ad9b37aa7178af599f3",
+        "context_epoch": 0,
+        "operation_id": "op_a84d4830314b4382b328d19690b66b60",
+        "result": {
+          "browser_installed": true,
+          "computer_control_supported": true,
+          "desktop_access": false,
+          "image_observation": "You receive text, never pixels. ryn_render_inspect renders workspace SVG/HTML/image files and measures them (color map, geometry, motion, loop seam); browser and desktop reads return DOM/accessibility text and save screenshots as files only.",
+          "os": "Windows",
+          "shell_scope": "user_account_not_sandboxed",
+          "shells": [
+            "powershell",
+            "cmd"
+          ],
+          "workspace_root": ""
+        },
+        "seq": 26,
+        "tool": "ryn_local_environment",
+        "type": "tool_result"
+      },
+      {
+        "at": "2026-10-13T17:28:57.609370+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 3701,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 28,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:29:07.357869+00:00",
+        "context_epoch": 0,
+        "seq": 29,
+        "step": 3,
+        "text": "当前电脑的操作系统是 Windows。",
+        "type": "text_delta"
+      },
+      {
+        "at": "2026-10-13T17:29:09.123213+00:00",
+        "clamp_reasons": [],
+        "configured_cap": 4096,
+        "context_epoch": 0,
+        "effective_cap": 4096,
+        "estimated_input_tokens": 2061,
+        "policy_sha256": "b16a14e161e7a7d270d8074b53911e6a014403d6d1e5480667c3a31f9b59884a",
+        "seq": 33,
+        "type": "model_output_policy",
+        "version": "configured-output-v1"
+      },
+      {
+        "at": "2026-10-13T17:29:21.888769+00:00",
+        "context_epoch": 0,
+        "outcome": "unverified",
+        "seq": 34,
+        "type": "verification_finished"
+      }
+    ]
+  }
+]

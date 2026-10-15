@@ -1,0 +1,87 @@
+[
+  {
+    "id": "pdfcraft",
+    "caption": "PDF / PdfCraft · v0.7.1 · 新建空白 PDF 页面",
+    "loaded": true
+  },
+  {
+    "id": "wordcraft",
+    "caption": "Word 文档 / WordCraft · v0.6.1 · 空白文档工作区",
+    "loaded": true
+  },
+  {
+    "id": "gridcraft",
+    "caption": "Excel 表格 / GridCraft · v0.6.1 · 空白工作簿",
+    "loaded": true
+  },
+  {
+    "id": "deckcraft",
+    "caption": "PPT 演示 / DeckCraft · v0.6.1 · 上游内置 Northern Lights 示例",
+    "loaded": true
+  },
+  {
+    "id": "cadcraft",
+    "caption": "CAD 制图 / CadCraft · v0.6.2 · 空白图纸工作区",
+    "loaded": true
+  },
+  {
+    "id": "designcraft",
+    "caption": "出版排版 / DesignCraft · v0.7.1 · 新建 A4 排版工作区",
+    "loaded": true
+  },
+  {
+    "id": "figcraft",
+    "caption": "界面设计 / FigCraft · v0.5.1 · 空白设计画布",
+    "loaded": true
+  },
+  {
+    "id": "photocraft",
+    "caption": "图片编辑 / PhotoCraft · v0.8.2 · 新建 1920 × 1080 空白图像",
+    "loaded": true
+  },
+  {
+    "id": "lightcraft",
+    "caption": "照片调色 / LightCraft · v0.7.1 · 上游内置照片示例",
+    "loaded": true
+  },
+  {
+    "id": "vectorcraft",
+    "caption": "矢量绘图 / VectorCraft · v0.10.0 · 新建 A4 矢量画板",
+    "loaded": true
+  },
+  {
+    "id": "effectcraft",
+    "caption": "视频特效 / EffectCraft · v0.9.2 · 上游内置 EffectCraft Intro 合成工程",
+    "loaded": true
+  },
+  {
+    "id": "soundcraft",
+    "caption": "音频编辑 / SoundCraft · v0.6.1 · 上游内置 Midnight Groove 工程",
+    "loaded": true
+  },
+  {
+    "id": "resume",
+    "caption": "简历与求职信 · 1.0.0 · 简历工作区与创建表单",
+    "loaded": true
+  },
+  {
+    "id": "recruit",
+    "caption": "招聘管理 · 1.0.0 · 招聘工作区与创建表单",
+    "loaded": true
+  },
+  {
+    "id": "desk",
+    "caption": "服务工单 · 1.0.0 · 工单工作区与创建表单",
+    "loaded": true
+  },
+  {
+    "id": "nas",
+    "caption": "NAS 存储 · 1.0.0 · 真实空状态，尚未配置 NAS 连接",
+    "loaded": true
+  },
+  {
+    "id": "filmcraft",
+    "caption": "视频剪辑 / FilmCraft · v0.7.2 · 仅原生版本：插件详情与来源",
+    "loaded": true
+  }
+]

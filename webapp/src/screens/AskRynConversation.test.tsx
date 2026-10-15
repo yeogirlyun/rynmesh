@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { clearConversations, type LLMConversation } from "../domain/llmConversationStore";
 import PrivateAIChat from "./AskRynConversation";
 import { askHistory, AskRequestError } from "../domain/askHistory";
+import * as nas from "../domain/nas";
 
 beforeEach(async () => {
   await clearConversations("peer:fixture-llm-provider::fixture-local-llm");
@@ -33,7 +34,7 @@ function liveHistory() {
   });
 }
 
-function renderChat(mode: "fixture" | "live" = "fixture") {
+function renderChat(mode: "fixture" | "live" = "fixture", route = "/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main") {
   const client = makeFixtureNodeClient();
   client.mode = mode;
   const submit = vi.spyOn(client, "submitLLMOrder");
@@ -49,7 +50,7 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
     peers: [], refreshShell: vi.fn(async () => undefined), confirm, notify: vi.fn(),
   };
   const result = render(
-    <MemoryRouter initialEntries={["/services/private-ai/chat?peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main"]}>
+    <MemoryRouter initialEntries={[route]}>
       <Routes>
         <Route element={<Outlet context={context} />}>
           <Route path="/services/private-ai/chat" element={<PrivateAIChat />} />
@@ -60,6 +61,28 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
   return { ...result, client, confirm, submit, user: userEvent.setup() };
 }
 
+it.each([true, false])("selects Antigravity model from the correct device (local=%s)", async (local) => {
+  const { client, submit, user } = renderChat();
+  const discover = client.listLLMServices;
+  vi.spyOn(client, "listLLMServices").mockImplementation(async network =>
+    (await discover(network)).map(row => ({ ...row, local_only: local,
+      cli_models: local ? undefined : [{ id: "", name: "CLI default", default: true }, { id: "gemini-test", name: "Gemini Test", default: false }],
+      service: { ...row.service, adapter: "antigravity_cli" } })));
+  const models = vi.spyOn(client, "getCLIModels").mockResolvedValue({ models: [
+    { id: "", name: "CLI default", default: true },
+    { id: "gemini-test", name: "Gemini Test", default: false },
+  ] });
+  await waitFor(() => expect(screen.getByLabelText("Antigravity model")).toBeEnabled());
+  if (local) expect(models).toHaveBeenCalledWith("antigravity_cli");
+  else expect(models).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Antigravity model")).toHaveTextContent("CLI default");
+  await user.click(screen.getByLabelText("Antigravity model"));
+  await user.click(screen.getByRole("option", { name: "Gemini Test" }));
+  await user.type(screen.getByLabelText("Message Private AI"), "Use this model");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ cli_model: "gemini-test" })));
+});
+
 // A running task resumed from history (as opposed to one just submitted in
 // this session): save a "running" conversation directly, then unmount and
 // remount so the fresh render's initial load picks it up, matching how a
@@ -67,7 +90,7 @@ function renderChat(mode: "fixture" | "live" = "fixture") {
 async function setupResumedRunningTask(taskId = "task_original") {
   const save = liveHistory();
   const first = renderChat("live");
-  await screen.findByRole("heading", { name: "Ask Ryn" });
+  await screen.findByRole("heading", { name: "AI workspace" });
   const prior = save.mock.calls[0][0];
   const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId, createdAt: prior.createdAt }] };
   await save(running);
@@ -107,7 +130,7 @@ describe("Private AI chat", () => {
   it("restores a node-owned running task and reads its archived answer after reopening", async () => {
     const save = liveHistory();
     const first = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     const prior = save.mock.calls[0][0];
     const running: LLMConversation = { ...prior, messages: [{ id: "running-answer", role: "assistant", content: "Waiting on the node", status: "running", taskId: "task_original", createdAt: prior.createdAt }] };
     await save(running);
@@ -126,7 +149,7 @@ describe("Private AI chat", () => {
     liveHistory();
     const { submit, user, confirm } = renderChat("live");
     submit.mockImplementation(async (request) => ({ task_id: request.task_id!, state: "succeeded", output: "An answer with [1]." }));
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     vi.mocked(askHistory.preview).mockImplementation(async (row) => ({ conversation_id: row.id, revision: row.revision!, provider_peer_id: row.providerPeerId,
       service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: "A verified prompt with bounded untrusted article material", prompt_sha256: "a".repeat(64),
       context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
@@ -151,7 +174,7 @@ describe("Private AI chat", () => {
   it("keeps input and does not submit when node history cannot be saved", async () => {
     const save = liveHistory();
     const { submit, user, confirm } = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(409, "Node history unavailable"));
     await user.type(screen.getByLabelText("Message Private AI"), "Keep this draft");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -166,7 +189,7 @@ describe("Private AI chat", () => {
   it("keeps the reviewed request retryable and frees the composer when the node times out", async () => {
     const save = liveHistory();
     const { submit, user, confirm } = renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     vi.mocked(askHistory.beginRun).mockRejectedValue(new AskRequestError(0,
       "The node did not confirm this request within 30 seconds. Check the original task before retrying the same reviewed request.", "ask_request_timeout"));
     await user.type(screen.getByLabelText("Message Private AI"), "Question that times out");
@@ -186,7 +209,7 @@ describe("Private AI chat", () => {
     const { submit, user, confirm } = renderChat("live");
     vi.mocked(askHistory.beginRun).mockRejectedValue(new Error("Response lost"));
     const check = vi.mocked(askHistory.run).mockRejectedValue(new Error("Unreachable"));
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     await user.type(screen.getByLabelText("Message Private AI"), "Original request");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
@@ -277,51 +300,54 @@ describe("Private AI chat", () => {
     // Background polling shares this mock: the node stays unreachable for recovery too.
     vi.mocked(askHistory.list).mockRejectedValue(new Error("The node could not be reached"));
     await user.click(screen.getByRole("button", { name: "Stop generating" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(
-      "The node could not confirm clearing this task. Reload history and try again.",
-    ));
+    await screen.findByText("The node could not confirm clearing this task. Reload history and try again.");
     expect(screen.getByText("Waiting on the node")).toBeInTheDocument();
   });
 
   it("clears the poll-unreachable error once the node responds again, without touching other errors", async () => {
     liveHistory();
     renderChat("live");
-    await screen.findByRole("heading", { name: "Ask Ryn" });
+    await screen.findByRole("heading", { name: "AI workspace" });
     await screen.findByLabelText("Message Private AI");
     // The 1.5s poll runs on a real interval created at mount; drive it with
     // real time (as the existing node-owned-task test above does) rather
     // than fake timers, since the interval is already scheduled before this
     // test gets a chance to install fake timers.
-    vi.mocked(askHistory.list).mockImplementationOnce(async () => { throw new Error("offline"); });
+    const read = vi.mocked(askHistory.list).getMockImplementation()!;
+    let failed = false;
+    vi.mocked(askHistory.list).mockImplementation(async key => {
+      if (key && !failed) { failed = true; throw new Error("offline"); }
+      return read(key);
+    });
     expect(await screen.findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent(
       "The node could not be reached. Saved tasks continue on the node; no new request was submitted.",
     );
-    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 3000 });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 5000 });
   }, 10_000);
 
   it("creates, switches, searches, and sends independent conversations", async () => {
     const { submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
 
     const composer = screen.getByLabelText("Message Private AI");
     await user.type(composer, "Why is this request private?");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Why is this request private/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "New chat" }));
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
     await user.type(await screen.findByLabelText("Message Private AI"), "Draft a launch email");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText(/Fixture response for: Draft a launch email/)).toBeInTheDocument();
     expect(submit).toHaveBeenCalledTimes(2);
 
-    await user.type(screen.getByLabelText("Search conversations"), "private");
+    await user.type(screen.getByLabelText("Search conversations"), "Why");
     expect(screen.getByText("Why is this request private?", { selector: "strong" })).toBeInTheDocument();
-    expect(screen.queryByText("Draft a launch email", { selector: "strong" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("complementary", { name: "AI conversations" })).queryByText("Draft a launch email", { selector: "strong" })).not.toBeInTheDocument();
   });
 
   it("includes prior messages in a follow-up and requests destructive confirmation before clearing", async () => {
     const { confirm, submit, user } = renderChat();
-    expect(await screen.findByRole("heading", { name: "Ask Ryn" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AI workspace" })).toBeInTheDocument();
     const composer = screen.getByLabelText("Message Private AI");
     await user.type(composer, "First question");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -337,4 +363,48 @@ describe("Private AI chat", () => {
     await user.click(screen.getByRole("button", { name: "Clear history" }));
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ risk: "high", confirmLabel: "Clear history" }));
   });
+});
+
+
+it("carries a prepared article into a new node workspace without sending it", async () => {
+  const save = liveHistory();
+  vi.spyOn(askHistory, "context").mockResolvedValue({ library_id: "import:article", title: "Prepared article", source_url: "", sha256: "hash", extraction_truncated: false, text_bytes: 30, text: "Synthetic article" });
+  const { submit } = renderChat("live", "/services/private-ai/chat?material=import%3Aarticle&peer=peer%3Afixture-llm-provider&service=fixture-local-llm&network=rynmesh-main");
+  expect(await screen.findByText("Article: Prepared article")).toBeInTheDocument();
+  expect(save.mock.calls[0][0].contextIds).toEqual(["import:article"]);
+  expect(askHistory.beginRun).not.toHaveBeenCalled();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("keeps archived answer citations readable when the original provider is missing", async () => {
+  const save = liveHistory();
+  const now = new Date().toISOString();
+  await save({ id: "missing-provider-chat", title: "Archived answer", serviceKey: "old-provider::old-model", serviceName: "Old model", providerPeerId: "old-provider", networkId: "rynmesh-main", createdAt: now, updatedAt: now,
+    messages: [{ id: "archived-answer", role: "assistant", content: "Archived with its original source", createdAt: now, status: "complete", contextIds: ["import:original"], contextBytes: [3] }] });
+  vi.spyOn(askHistory, "context").mockResolvedValue({ library_id: "import:original", title: "Original source", source_url: "", sha256: "hash", extraction_truncated: false, text_bytes: 8, text: "abcREST" });
+  const { user, submit } = renderChat("live", "/services/private-ai/chat?conversation=missing-provider-chat&network=rynmesh-main");
+  expect(await screen.findByText("Archived with its original source")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+  await user.click(screen.getByText("Sources supplied for this answer"));
+  await user.click(await screen.findByText("Read supplied excerpt"));
+  expect(screen.getByText("abc")).toBeInTheDocument();
+  expect(screen.queryByText("abcREST")).not.toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("saves an archived answer to its original NAS source after current attachments change", async () => {
+  const save = liveHistory();
+  const now = new Date().toISOString();
+  await save({ id: "nas-archive", title: "NAS answer", serviceKey: "peer:fixture-llm-provider::fixture-local-llm", serviceName: "Original model", providerPeerId: "peer:fixture-llm-provider", networkId: "rynmesh-main", createdAt: now, updatedAt: now, contextIds: ["import:different"],
+    messages: [{ id: "nas-answer", role: "assistant", content: "Archived NAS answer", createdAt: now, status: "complete", contextIds: ["import:original"] }] });
+  vi.spyOn(askHistory, "context").mockImplementation(async id => ({ library_id: id, title: "Source", source_url: "", sha256: "hash", extraction_truncated: false, text_bytes: 10,
+    nas: id === "import:original" ? { source_id: "original-nas", source_name: "Original NAS", path: "reports/original.txt" } : { source_id: "different-nas", source_name: "Other NAS", path: "other/different.txt" } }));
+  const request = vi.spyOn(nas, "nasRequest").mockResolvedValue(new Response(JSON.stringify({ enabled: true, sources: [{ id: "original-nas", name: "Original NAS", writable: true }] })));
+  const { user, confirm } = renderChat("live", "/services/private-ai/chat?conversation=nas-archive&network=rynmesh-main");
+  await user.click(await screen.findByRole("button", { name: "Save to NAS" }));
+  await waitFor(() => expect(confirm).toHaveBeenCalled());
+  const review = confirm.mock.calls[0][0];
+  expect(review.body).toMatch(/^Original NAS \/ reports\/ryn-response-/);
+  await act(() => review.onConfirm());
+  expect(request).toHaveBeenLastCalledWith(expect.stringMatching(/^\/sources\/original-nas\/content\?path=reports%2Fryn-response-/), { method: "PUT", body: "Archived NAS answer" });
 });

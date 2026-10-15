@@ -35,6 +35,9 @@ import {
 import { DesktopPage } from "./personal/Desktop";
 import { isTauriDesktop } from "./domain/nodeUrl";
 import { PersonalShell } from "./personal/Shell";
+import { DropProvider } from "./personal/dropStore";
+import { IncomingTransferDialog } from "./personal/drop/IncomingTransferDialog";
+import { DropNotices } from "./personal/drop/DropNotices";
 import { PersonalSpacePage } from "./personal/Space";
 import {
   PersonalHome,
@@ -47,7 +50,11 @@ import Digest from "./screens/Digest";
 import Explore from "./screens/Explore";
 import ItemDetail from "./screens/ItemDetail";
 import AskRyn from "./screens/AskRyn";
-import PrivateAIChat from "./screens/PrivateAIChat";
+import AIWorkspace from "./screens/AIWorkspace";
+import RynAgent from "./screens/RynAgent";
+import NodeApps from "./screens/NodeApps";
+import CraftApps from "./screens/CraftApps";
+import { craftPlugins } from "./domain/craftPlugins";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
 import Friends from "./screens/Friends";
@@ -68,7 +75,8 @@ import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIW
 import AISources from "./screens/AISources";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
-const PluginsPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.PluginsPage })));
+const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
+const PluginsPage = lazy(() => import("./screens/CraftPlugins"));
 
 // Resolve the local Ryn node control-API base.
 // Precedence: explicit env override > packaged-desktop default > dev default.
@@ -98,10 +106,24 @@ export default function App() {
   const [firstSuccess, setFirstSuccess] = useState<FirstSuccessStatus | null>(null);
   const [firstSuccessOpen, setFirstSuccessOpen] = useState(false);
   const firstSuccessEvaluated = useRef(false);
+  const craftSetupChecked = useRef(false);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const lastUnread = useRef(0);
-  const firstSuccessEnabled = import.meta.env.VITE_RYN_FIRST_SUCCESS_V1_ENABLED !== "0";
+  const firstSuccessEnabled = import.meta.env.VITE_RYN_FIRST_SUCCESS_V1_ENABLED !== "0"
+    && !(client.mode === "fixture" && window.location.pathname === "/drives");
+
+  useEffect(() => {
+    if (!node || !isTauriDesktop() || craftSetupChecked.current) return;
+    craftSetupChecked.current = true;
+    // Installer preferences lead to an explicit setup page; never a startup download.
+    void craftPlugins.catalog().then(data => {
+      if (data.setup_requested && !data.setup_completed && window.location.pathname === "/") {
+        setFirstSuccessOpen(false);
+        navigate("/apps");
+      }
+    }).catch(() => { craftSetupChecked.current = false; });
+  }, [node, navigate]);
 
   const notify = useCallback((tone: ToastMessage["tone"], text: string) => {
     const message = { id: crypto.randomUUID(), tone, text };
@@ -263,10 +285,14 @@ export default function App() {
       peers={peers}
       refreshShell={refreshShell}
     >
+      <DropProvider mode={client.mode} notify={notify}>
       <PersonalShell>
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
       </PersonalShell>
+      <IncomingTransferDialog />
+      <DropNotices />
+      </DropProvider>
       <ConfirmDialog
         request={confirmRequest}
         onCancel={() => setConfirmRequest(null)}
@@ -364,19 +390,24 @@ export function AppRoutes() {
           <Route path="services/api" element={<APIAccessPage />} />
           <Route path="services/model-mapping" element={<ModelMappingPage />} />
           <Route path="services/agent-sharing" element={<AgentSharingPage />} />
-          <Route path="services/private-ai/chat" element={<PrivateAIChat />} />
+          <Route path="services/private-ai/chat" element={<AIWorkspace />} />
           <Route path="services/video-rendering" element={<VideoRendering />} />
           <Route
             path="services/secure-web-access"
             element={<SecureWebAccess />}
           />
-          <Route path="ask" element={<AskRyn />} />
+          <Route path="agent" element={<RynAgent />} />
+          <Route path="apps" element={<CraftApps />} />
+          <Route path="apps/workspaces" element={<NodeApps />} />
+          <Route path="ask" element={<LegacyAgentRedirect />} />
+          <Route path="ask/history" element={<AskRyn />} />
           <Route path="friends" element={<Friends />} />
           <Route path="devices/sync" element={<Devices />} />
           <Route path="exchange" element={<Exchange />} />
           <Route path="chat" element={<Chat />} />
           <Route path="settings" element={<PersonalSettings />} />
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
+          <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
           <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
           <Route path="settings/desktop" element={<DesktopPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
@@ -390,4 +421,11 @@ export function AppRoutes() {
 function LegacyAskRedirect() {
   const location = useLocation();
   return <Navigate replace to={`/ask${location.search}`} />;
+}
+
+export function LegacyAgentRedirect() {
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const manualChat = ["material", "conversation", "peer", "service", "network", "new"].some(key => query.has(key));
+  return <Navigate replace to={`${manualChat ? "/services/private-ai/chat" : "/agent"}${location.search}`} />;
 }

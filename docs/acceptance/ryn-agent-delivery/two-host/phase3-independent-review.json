@@ -1,0 +1,751 @@
+{
+  "kind": "two-host-phase3-independent-read-only-evidence-review",
+  "reviewed_at": "2026-10-10T07:14:14.632681+00:00",
+  "formal_trial_registered": false,
+  "overall_status": "not_passed",
+  "mechanism_scope_status": "passed_with_bounded_observation_scope",
+  "answer_quality_status": "failed_and_partly_unverified",
+  "review_method": "Read-only independent inspection of saved final snapshots and raw event transcripts; exact task-ID, message-body and marker comparisons. No model API, remote command or production edit. Reviewer also authored harness; this is a fresh evidence review, not a claim of independent implementation authorship.",
+  "input_files": {
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-provider-agent-create.json": {
+      "sha256": "efa30302fb5bd8d65adba17859449ee87bc4810ef1b7afefaf3fd6c651317ea3",
+      "bytes": 47057
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-provider-terminal.json": {
+      "sha256": "e0b2ae53676804c6788c49d4b47fd00fc8d6e7031f1ee740c8b8ef82e00704e2",
+      "bytes": 115559
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-provider-audit.jsonl": {
+      "sha256": "e3474428662b1abec8aac9b72160473162fd2d62d81793fbf51846fb5e4e4a4c",
+      "bytes": 1094519
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-consumer-terminal3.json": {
+      "sha256": "3717ad6a3fba75ca4079cf89f292842fe7f78b4a55d93c5617f3a2736a08e1c1",
+      "bytes": 337617
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-consumer-terminal-audit.jsonl": {
+      "sha256": "0e007a44551d518cfbb4787799273fa54e162c96c2005822f9c46bce85eb1aa1",
+      "bytes": 1072598
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-manual-both-agents-off.json": {
+      "sha256": "8a0ca3125d312aab719adb3fa3d97a624bd290b5c42d46649883574c2b391a79",
+      "bytes": 454977
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase3-provider-agent-off.json": {
+      "sha256": "8c344f0f7f8d24fd9eca1407921b84170499129d42fa56ae0539a383be3a6118",
+      "bytes": 153686
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase2-provider-final.json": {
+      "sha256": "eb945db87506f53f42bfe5f6ca1edf1763c23a5ef7076d0d39354d6e3b11bc27",
+      "bytes": 58734
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase2-consumer-final.json": {
+      "sha256": "94a9c105da666250da4d953166ceb7e481bbc62601c036ef4257a19d1aeb9d72",
+      "bytes": 298433
+    },
+    "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\phase2-sessions.json": {
+      "sha256": "e1f2b918d07a01dcbf0febf00939d15922a0c172c30461befc479586d6cd4ee4",
+      "bytes": 21010
+    }
+  },
+  "snapshot_selection": {
+    "provider_final_at": "2026-10-10T07:09:11.553300+00:00",
+    "consumer_final_at": "2026-10-10T07:09:01.624133+00:00",
+    "excluded_as_terminal_proof": [
+      "phase3-consumer-final.json",
+      "phase3-consumer-terminal.json",
+      "phase3-consumer-terminal2.json"
+    ],
+    "supplemental_input": "phase3-provider-agent-off.json is required to place the provider-off observation before the manual request; final provider-off snapshot alone is insufficient."
+  },
+  "checks": {
+    "phase2_zero_provider_agent_baseline": "passed",
+    "provider_only_own_created_agent_task": "passed",
+    "provider_private_history_actually_completed": "passed",
+    "provider_private_marker_in_saved_assistant_answer": "passed",
+    "consumer_task_set_preserved_including_two_prior_failures": "passed",
+    "provider_consumer_task_sets_disjoint": "passed",
+    "distinct_encryption_keys_and_store_paths": "passed",
+    "all_14_consumer_model_requests_exactly_match_provider_upstream_messages": "passed",
+    "all_14_consumer_model_requests_exclude_foreign_markers": "passed",
+    "both_followup_answers_retain_only_own_consumer_marker": "passed",
+    "manual_has_exact_one_upstream_request_response_pair": "passed",
+    "manual_messages_match_exactly": "passed",
+    "manual_contains_only_its_own_marker": "passed",
+    "manual_consumer_off_before_after": "passed",
+    "provider_off_precedes_manual_and_remains_off_at_final_snapshot": "passed",
+    "no_provider_agent_model_event_during_manual": "passed",
+    "manual_adds_no_consumer_agent_task": "passed",
+    "manual_successful_strict_lan_ice_no_relay": "passed",
+    "owner_source_unchanged_at_provider_final": "passed",
+    "all_linked_provider_orders_bind_actual_consumer": "passed",
+    "all_linked_provider_and_consumer_order_terminal_states_match": "passed",
+    "public_and_decrypted_store_task_sets_match": "passed"
+  },
+  "store_binding": {
+    "provider": {
+      "peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+      "path": "D:\\code\\rynmesh\\.codex-tmp\\two-host-20261010\\state-provider\\agent\\sessions.json",
+      "encryption_public_key": "kOfvb+sflLuxqGHCe/nb+vVD2H3OXRwXWmAoxwc6cyA=",
+      "task_ids": [
+        "agent_2528696f8fae4216a75910d049fd600d"
+      ],
+      "decrypted_task_ids": [
+        "agent_2528696f8fae4216a75910d049fd600d"
+      ]
+    },
+    "consumer": {
+      "peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "path": "C:\\Users\\ziling\\rynmesh-agent-test-20261010\\state-consumer\\agent\\sessions.json",
+      "encryption_public_key": "drMwcKCHA5XGbkrewdv43fEYx7LI5rREejk9Quir1CQ=",
+      "task_ids": [
+        "agent_c2efe14a34684656beedf9ae3ff1defa",
+        "agent_8c9f2888762a4600a6790eafe88460dd",
+        "agent_00331fb8632d4cd8ada772877499cd2e",
+        "agent_48feb549c7c746d0a679c3d69681bfed"
+      ],
+      "decrypted_task_ids": [
+        "agent_00331fb8632d4cd8ada772877499cd2e",
+        "agent_48feb549c7c746d0a679c3d69681bfed",
+        "agent_8c9f2888762a4600a6790eafe88460dd",
+        "agent_c2efe14a34684656beedf9ae3ff1defa"
+      ]
+    },
+    "provider_phase2_task_ids": []
+  },
+  "provider_private_history": {
+    "task_id": "agent_2528696f8fae4216a75910d049fd600d",
+    "marker": "PROVIDER_AGENT_PRIVATE_778f5a5839074ef7adbc9ad79a798aed",
+    "created_at": "2026-10-10T06:57:30.145811+00:00",
+    "completed_at": "2026-10-10T06:58:42.014829+00:00",
+    "status": "completed",
+    "product_outcome": "verified",
+    "own_agent_model_request_count": 3,
+    "upstream_requests_containing_private_marker": [
+      {
+        "task_id": "agent_3fc4f58301c64c6fa8f7c47a59a8c7b9",
+        "at": "2026-10-10T06:57:31.199119+00:00"
+      },
+      {
+        "task_id": "agent_b2046c69f4c74794910bad8987a31172",
+        "at": "2026-10-10T06:57:46.392130+00:00"
+      },
+      {
+        "task_id": "agent_a2bbc982084a4d3d9a06c5c61c78e6dd",
+        "at": "2026-10-10T06:58:03.547073+00:00"
+      }
+    ],
+    "interpretation": "Provider owns exactly one legitimate local Agent task; these three own-task requests may contain its marker. Consumer requests must not."
+  },
+  "consumer_request_linkage": [
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_116ad2d344e34df39c95cecc2eebf962",
+      "request_at": "2026-10-10T06:51:41.996823+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_4bbd25061333421bbcc3b0085f04ffb1",
+      "request_at": "2026-10-10T06:51:59.157015+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_511430b12a1f472a839c637546a09e5d",
+      "request_at": "2026-10-10T06:52:17.197052+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_b8d5a75765bc4aeab626668292b34687",
+      "request_at": "2026-10-10T06:52:39.301361+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_5428f243bf4640beb66ae51eccc8030d",
+      "request_at": "2026-10-10T06:52:57.235341+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_6a01e78cff6e437fbd92f1d352b77857",
+      "request_at": "2026-10-10T06:53:29.320220+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_ae2e35f0236341f6a8c76b25e7c7c24a",
+      "request_at": "2026-10-10T06:54:08.268044+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase2_initial",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_0779b6bcc2cf4847b207ab01073296b8",
+      "request_at": "2026-10-10T06:55:18.019773+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_da399f4980dc418eaca4cbf2da79e9d8",
+      "request_at": "2026-10-10T07:04:02.678491+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_d4e6af293ed6438c83293ca8e29651cf",
+      "request_at": "2026-10-10T07:04:13.473090+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_37fc253728764af5aed37e411c7af2e6",
+      "request_at": "2026-10-10T07:04:24.011482+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_849b5d9eb3f1475ebf4e182985649283",
+      "request_at": "2026-10-10T07:04:37.818947+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_8c9f2888762a4600a6790eafe88460dd",
+      "inference_task_id": "agent_30242497091449daa88623fad5dd2b80",
+      "request_at": "2026-10-10T07:04:54.297439+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 1,
+      "consumer_result_states": [
+        "succeeded"
+      ],
+      "consumer_result_error_codes": [
+        null
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "succeeded",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "succeeded",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    },
+    {
+      "phase": "phase3_followup",
+      "agent_task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "inference_task_id": "agent_12aacd57cd704c7882dc7f4a08f81d2c",
+      "request_at": "2026-10-10T07:05:39.785238+00:00",
+      "upstream_dispatch_count": 1,
+      "upstream_response_count": 0,
+      "consumer_result_states": [
+        "cancelled"
+      ],
+      "consumer_result_error_codes": [
+        "consumer_cancelled"
+      ],
+      "messages_exact_match": true,
+      "own_marker_present": true,
+      "foreign_markers_absent": true,
+      "provider_order_state": "cancelled",
+      "provider_order_consumer": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E=",
+      "consumer_order_state": "cancelled",
+      "transport": "ice_udp_direct",
+      "expected_model_binding": {
+        "model_binding": {
+          "model_generation": "972fe6b54785428381ded874710d7b5a",
+          "rule_revision": "7c632ad1490e4f43ae76d65056c24ab0",
+          "service_id": "src-two-host-glm-0d8724178b09",
+          "version": "ryn.model-binding.v1"
+        },
+        "ai_permission": {
+          "relationship_id": "7b739bd5a8bd4e0fb935f14f6af6660e",
+          "revision": 1
+        },
+        "consumer_peer_id": "uG5ynB1rB06TWedBMnuVqWwmN0SsP2Hg1fJabwwtw4E="
+      }
+    }
+  ],
+  "phase3_followup_summary": {
+    "requests": 6,
+    "successful_upstream_response_pairs": 5,
+    "cancelled_without_upstream_response": 1,
+    "per_task": {
+      "agent_8c9f2888762a4600a6790eafe88460dd": {
+        "marker": "CONSUMER_A_5f164bf968c84dd5b35c34db934270b2",
+        "status": "completed",
+        "outcome": "verified",
+        "goal_revision": 2,
+        "result_sha256": "d6d18f63065fd6754e1b4b8f74ccd25cc21b0b0b27755a0fc1f9b6bbb266cedd"
+      },
+      "agent_c2efe14a34684656beedf9ae3ff1defa": {
+        "marker": "CONSUMER_B_cbf6bd4fba484f899b000aa4ec250173",
+        "status": "completed",
+        "outcome": "unverified",
+        "goal_revision": 2,
+        "result_sha256": "f59b89553822e9f1695f580774abb94d5e9d0798ca40a57f2e7ec86bee05e40c"
+      }
+    }
+  },
+  "manual_agent_optional": {
+    "task_id": "two-host-manual-59014757a139410ebc69a3bdc95242f2",
+    "marker": "MANUAL_WHILE_AGENT_OFF_9770e08967a14086b42f022f0f16ec1c",
+    "provider_off_at": "2026-10-10T06:59:12.905540+00:00",
+    "consumer_before_at": "2026-10-10T06:59:15.619860+00:00",
+    "consumer_after_at": "2026-10-10T06:59:23.692507+00:00",
+    "status": "succeeded",
+    "output_matches_marker": true,
+    "transport_evidence": {
+      "transport": "ice_udp_direct",
+      "relay_used": false,
+      "public_nat_traversal_required": false,
+      "distinct_public_egress_required": false,
+      "peer_public_mapping_nominated": false,
+      "path_kind": "host_direct",
+      "local": {
+        "type": "host",
+        "transport": "udp",
+        "host": "172.16.8.82",
+        "port": 56796
+      },
+      "remote": {
+        "type": "host",
+        "transport": "udp",
+        "host": "172.16.8.191",
+        "port": 59925
+      },
+      "connection_reused": true,
+      "session_protocol": "rynmesh.ai-session.v1",
+      "connection_ms": 0,
+      "request_bytes": 2083,
+      "first_event_ms": 7859,
+      "total_ms": 7859,
+      "stream_events": 0
+    },
+    "provider_order_state": "succeeded",
+    "agent_task_sets_unchanged": true,
+    "limits": "Off settings are observed immediately before/after on consumer and before/final on provider, with no provider Agent model event in the manual interval. This is bounded logged evidence, not continuous hardware attestation."
+  },
+  "quality_findings": [
+    {
+      "id": "P3-Q1",
+      "severity": "P2",
+      "status": "failed",
+      "task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "claim": "RQW2iD...MHM=",
+      "actual_provider_peer_id": "RQW2iD67ISoaH8Q8b/+hhAk0n5EiXYrIdAx1+WwyJHM=",
+      "reason": "The abbreviated identifier has an incorrect MHM= suffix; the real peer ID ends JHM=. It is not a faithful abbreviation."
+    },
+    {
+      "id": "P3-Q2",
+      "severity": "P2",
+      "status": "failed",
+      "task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "claim": "连接/推理探针未执行",
+      "reason": "The unqualified statement conflates probe categories/time scopes. Earlier same-task ryn_list_devices evidence explicitly recorded provider http_probe_performed=true and http_reachable=true. Catalog/source connection_probe_performed=false does not erase that actual HTTP probe. A narrower statement about the latest catalog read or source inference test was needed.",
+      "contradicting_tool_observation_at": "2026-10-10T06:54:03.996409+00:00"
+    },
+    {
+      "id": "P3-Q3",
+      "severity": "P2",
+      "status": "unverified",
+      "task_id": "agent_c2efe14a34684656beedf9ae3ff1defa",
+      "reason": "Final task status completed is not verification success. Product outcome is unverified; semantic assessment is null. Preserve agent_cancelled exactly; elapsed wall time near 180 seconds does not establish a GLM timeout cause.",
+      "raw_events": [
+        {
+          "at": "2026-10-10T07:05:39.698341+00:00",
+          "context_epoch": 0,
+          "seq": 76,
+          "step": 3,
+          "type": "verification_model_started"
+        },
+        {
+          "at": "2026-10-10T07:08:39.262544+00:00",
+          "context_epoch": 0,
+          "error": "agent_cancelled",
+          "finish_reason": "unknown",
+          "seq": 78,
+          "stage": "verification_model",
+          "type": "model_response_rejected",
+          "usage": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "at": "2026-10-10T07:08:39.278198+00:00",
+          "context_epoch": 0,
+          "error": "agent_cancelled",
+          "outcome": "unverified",
+          "seq": 79,
+          "type": "verification_finished"
+        }
+      ],
+      "upstream_cancel_events": [
+        {
+          "at": "2026-10-10T07:08:15.648819+00:00",
+          "kind": "upstream_cancel",
+          "task_id": "agent_12aacd57cd704c7882dc7f4a08f81d2c"
+        }
+      ],
+      "inference_task_id": "agent_12aacd57cd704c7882dc7f4a08f81d2c"
+    }
+  ],
+  "limitations": [
+    "The seven marker checks cover observed test canaries and captured messages, not arbitrary undisclosed data or every historical user conversation.",
+    "WireAudit observes HTTP peer routes, not raw UDP signed envelopes. UDP inference linkage uses consumer order requests/results, provider production order bindings/request hashes, upstream task IDs and exact message equality.",
+    "One B checker request was cancelled and has no successful upstream response; do not manufacture a pair or infer answer verification from its readback evidence.",
+    "Phase1 two failed tasks remain in the consumer store and are not reclassified as successful.",
+    "The final provider now legitimately has one own task. Earlier zero-provider-Agent observation applies only to phase2; no consumer tasks are found in the provider Agent store.",
+    "Snapshots and software logs are not hardware attestation; no formal grading activation or overall acceptance pass is asserted."
+  ]
+}

@@ -1,0 +1,14 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run src/screens/RynAgent.test.tsx src/screens/RynAgentScope.test.tsx --maxWorkers=1 --reporter=dot
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+····················································
+
+ Test Files  2 passed (2)
+      Tests  52 passed (52)
+   Start at  14:19:16
+   Duration  31.93s (transform 808ms, setup 2.17s, import 2.51s, tests 18.63s, environment 7.90s)
+

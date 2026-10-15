@@ -8,6 +8,9 @@ import multiprocessing
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
+    if len(sys.argv) > 1 and sys.argv[1] == "--ryn-document-worker":
+        from rynmesh.services.document_extract_child import main as document_main
+        sys.exit(document_main())
     if len(sys.argv) > 1 and sys.argv[1] == "--ryn-native-worker":
         from rynmesh.llm_package.native_worker import main as native_main
         native_main(sys.argv[2:])

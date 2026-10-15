@@ -1,0 +1,93 @@
+[
+  {
+    "app": "filmcraft",
+    "tag": "v0.7.2",
+    "asset_size": null,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/filmcraft/releases/tags/v0.7.2"
+  },
+  {
+    "app": "soundcraft",
+    "tag": "v0.6.1",
+    "asset_size": 5642429,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/soundcraft/releases/tags/v0.6.1"
+  },
+  {
+    "app": "effectcraft",
+    "tag": "v0.9.2",
+    "asset_size": 18801063,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/effectcraft/releases/tags/v0.9.2"
+  },
+  {
+    "app": "photocraft",
+    "tag": "v0.8.2",
+    "asset_size": 11063686,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/photocraft/releases/tags/v0.8.2"
+  },
+  {
+    "app": "vectorcraft",
+    "tag": "v0.10.0",
+    "asset_size": 23642640,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/vectorcraft/releases/tags/v0.10.0"
+  },
+  {
+    "app": "cadcraft",
+    "tag": "v0.6.2",
+    "asset_size": 7840826,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/cadcraft/releases/tags/v0.6.2"
+  },
+  {
+    "app": "designcraft",
+    "tag": "v0.7.1",
+    "asset_size": 15098404,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/designcraft/releases/tags/v0.7.1"
+  },
+  {
+    "app": "wordcraft",
+    "tag": "v0.6.1",
+    "asset_size": 14811800,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/wordcraft/releases/tags/v0.6.1"
+  },
+  {
+    "app": "gridcraft",
+    "tag": "v0.6.1",
+    "asset_size": 6961445,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/gridcraft/releases/tags/v0.6.1"
+  },
+  {
+    "app": "lightcraft",
+    "tag": "v0.7.1",
+    "asset_size": 66402662,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/lightcraft/releases/tags/v0.7.1"
+  },
+  {
+    "app": "pdfcraft",
+    "tag": "v0.7.1",
+    "asset_size": 14047380,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/pdfcraft/releases/tags/v0.7.1"
+  },
+  {
+    "app": "deckcraft",
+    "tag": "v0.6.1",
+    "asset_size": 8949762,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/deckcraft/releases/tags/v0.6.1"
+  },
+  {
+    "app": "figcraft",
+    "tag": "v0.5.1",
+    "asset_size": 8625525,
+    "sums": true,
+    "url": "https://api.github.com/repos/storytold/figcraft/releases/tags/v0.5.1"
+  }
+]

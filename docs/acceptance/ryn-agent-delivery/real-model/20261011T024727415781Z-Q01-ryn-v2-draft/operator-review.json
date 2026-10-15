@@ -1,0 +1,39 @@
+{
+  "kind": "operator-development-review-not-independent",
+  "at": "2026-10-11T02:52:32.829764+00:00",
+  "formal_pass": false,
+  "eligible_for_formal_score": false,
+  "runtime_outcome": "verified",
+  "semantic_verdict": "failed",
+  "collection_verdict": "partial_interfered_with_nested_read",
+  "findings": [
+    {
+      "id": "Q01-NONDEFAULT-CAPABILITY",
+      "quote": "已验证可做助手：部分。能力记录 agent_supported=true、tool_support=supported，但不是当前默认模型",
+      "reason": "Whether a model is the selected default is separate from its recorded tool capability. model-c is available and agent_supported=true just like model-a; absence of a current live probe applies to both. Downgrading model-c capability because it is not default does not match the requested classification."
+    },
+    {
+      "id": "COLLECTOR-NESTED-READ",
+      "error": "draft_tool_durable_intent_mismatch",
+      "reason": "Collector wrapper observes ryn_get_system_diagnostics -> internal ryn_list_devices as if the internal read were a new top-level model tool. It rejects the legitimate nested read, and diagnostics serializes this as agent_diagnostics_devices_unavailable. Complete capture was correctly refused. This sample is contaminated by instrumentation and cannot establish final production quality."
+    }
+  ],
+  "improvement_observed": "Candidate now distinguishes failed historical offline probe from missing records and explicitly scopes no-new-probe to this read. This single contaminated sample does not prove the change reliably fixes model semantics.",
+  "calls": 3,
+  "seconds": 155.60899999999674,
+  "writes": 0,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "code_unchanged": true,
+  "checker_missed": "Runtime semantic checker passed despite the model-c classification problem. Original runtime verdict remains untouched.",
+  "independent_review": "pending_Astra_usage_limit",
+  "raw_sha256": {
+    "dispatch-audit.json": "e83556d2a32147cd6ab1db11c680831e49ef800f3b97be107df26f1d93e83136",
+    "dispatch-events.jsonl": "abf81aecfefe2a9ffa1d2c18fe367d0a00e80f9344b38815dd519e5f218e64db",
+    "effective-input.json": "5f169676b60e470ca62f7068ae528877444511122bc2b110b09a1f203ac17448",
+    "model-requests.json": "e9c3a5c664f69a317266ced9ae1bd326ac978c8c8395608c9065e175786b4fbb",
+    "registration.json": "205b032bb3d4bbe2edaaf7efdbe9fa83347d571df8896b61970c85c6db42b9bd",
+    "run.json": "3ce1e03a3cf6aed71d8a41ec1d2ab451e4610266a7e3702402404a21500b4f91",
+    "task-binding.json": "eee5a9b2b36e55c783289298ab9516ef8240e23bc057a970bec0ee65e9f04286"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "status": "independent_P2_and_lint_closed_overall_regression_not_all_green",
+  "author": "consumer_process_proof / gpt-6.1-sol high",
+  "reviewer": "sharing_transaction / gpt-6-astra high",
+  "prior_review": "legacy-planner-policy-independent-review.json",
+  "changes": [
+    "Reject model/settings key mismatch, malformed settings and invalid required32-lowercase-hex revision fields before route initialization;no migration/remapping.",
+    "Bind baseline loop sources into provider callback;fix importlint."
+  ],
+  "author_tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_legacy_planner_policy.py -q",
+      "passed": 28,
+      "seconds": 19.99
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_legacy_planner_policy.py tests/test_agent_planner_policy.py tests/test_agent_source_fixture.py tests/test_agent_source_update_fixture.py tests/test_agent_document_cases.py tests/test_agent_diagnostic_fixture.py tests/test_agent_consumer_process_proof.py tests/test_agent_sharing_recovery_case.py -q",
+      "passed": 67,
+      "failed": 1,
+      "seconds": 77.51,
+      "failure": "Unchanged test_controller_rejects_unowned_boundary_before_replacement: PermissionError left no error_code,assertion KeyError;root cause unknown."
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_consumer_process_proof.py::test_controller_rejects_unowned_boundary_before_replacement -q",
+      "passed": 1,
+      "seconds": 7.32,
+      "note": "Only one isolated rerun;does not overwrite prior failure."
+    }
+  ],
+  "independent_tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_legacy_planner_policy.py tests/test_agent_planner_policy.py -q",
+    "passed": 34,
+    "seconds": 27.36,
+    "additional": "Six independent malformed history variants rejected without ciphertext changes;normal preflight+defaultSourceStore initialization preserved bytes;route-before-rejection assertions passed."
+  },
+  "lint": "Seven-file Ruff all passed by author and reviewer.",
+  "failure_evidence": {
+    "path": "evidence-bundles/windows-process-proof-transient-failure-20261010/",
+    "run_sha256": "76961bafc40d4f100a658c4031983657aa03813a1a71df78c100d404ee010e8e",
+    "code_unchanged": true,
+    "elapsed_seconds": 4.86,
+    "owner_source_unchanged": true,
+    "note": "Originalrun/startlog/startworker/approvalmarker copied byte-for-byte;no speculative cause asserted."
+  },
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_baseline.py": "5f0468e936fb1a9e5e0a977397d9486703e1d64135ffeb92015930cef508acb4",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_recovery.py": "bee2a1b62fc3eba6f19d073f916daa124c7bd01590f4ddbe9b5d4b0801f9e423",
+    "tests/test_agent_legacy_planner_policy.py": "88867134cf62d8b1e3b88ab39dc95b38155e0ea7322b306e9a38001c6acdfd23"
+  },
+  "unchanged_files": "Other four controllers and sharedplanner_policy retain prior implementation hashes.",
+  "limitations": [
+    "No realAPI/formaltrial.",
+    "R03 actualworkerhandleproof remains separatepending.",
+    "Final overall regression must resolve or account for retained unexplained process test failure."
+  ]
+}

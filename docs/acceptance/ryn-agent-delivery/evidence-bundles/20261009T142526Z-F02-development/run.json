@@ -1,0 +1,146 @@
+{
+  "artifacts": [
+    {
+      "connection_id": "docs-alpha",
+      "path": "reports/acceptance/week-41.md",
+      "readback_evidence_id": "artifact_readback:552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0"
+    }
+  ],
+  "bindings": {
+    "docs-alpha": "06a219d7459e4fa09b3e647d2ff59560",
+    "isolated_run_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-document-live-d3vccfes",
+    "primary_model": "local/src-2df8c6a2eaee47c8-0d8724178b09"
+  },
+  "case_id": "F02",
+  "code_revision": "workspace-sha256:ccf12c31245933a71d0838f390733b8e3d1980d95feee034aaeb2ac44f267e83",
+  "cohort": "ryn",
+  "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+  "dependencies": [
+    {
+      "evidence_ids": [],
+      "id": "real_primary_model",
+      "status": "pending"
+    },
+    {
+      "evidence_ids": [],
+      "id": "isolated_consumer_node",
+      "status": "pending"
+    }
+  ],
+  "ended_at": "2026-10-09T14:28:07.537306+00:00",
+  "evidence": [
+    {
+      "id": "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3",
+      "kind": "raw_trace",
+      "path": "evidence/raw_trace-86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3.json",
+      "producer": "collector",
+      "sha256": "86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3",
+      "source_ids": []
+    },
+    {
+      "id": "model_exchange:f44a2c462b07e4fb1b8e9a2550c766ab7dae03ad6a81631cf2017f3d81ca32a8",
+      "kind": "model_exchange",
+      "path": "evidence/model_exchange-f44a2c462b07e4fb1b8e9a2550c766ab7dae03ad6a81631cf2017f3d81ca32a8.json",
+      "producer": "collector",
+      "sha256": "f44a2c462b07e4fb1b8e9a2550c766ab7dae03ad6a81631cf2017f3d81ca32a8",
+      "source_ids": [
+        "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3"
+      ]
+    },
+    {
+      "id": "task_state:c26007c762a136c096999ac79e3f6492744806158aabab28e5f7fbf98090103d",
+      "kind": "task_state",
+      "path": "evidence/task_state-c26007c762a136c096999ac79e3f6492744806158aabab28e5f7fbf98090103d.json",
+      "producer": "collector",
+      "sha256": "c26007c762a136c096999ac79e3f6492744806158aabab28e5f7fbf98090103d",
+      "source_ids": [
+        "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3"
+      ]
+    },
+    {
+      "id": "business_state:5c7868f3828a73189ea9aa1a6a84652862a6ac4f0ebb6edfc0cc519c12211fef",
+      "kind": "business_state",
+      "path": "evidence/business_state-5c7868f3828a73189ea9aa1a6a84652862a6ac4f0ebb6edfc0cc519c12211fef.json",
+      "producer": "collector",
+      "sha256": "5c7868f3828a73189ea9aa1a6a84652862a6ac4f0ebb6edfc0cc519c12211fef",
+      "source_ids": [
+        "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3"
+      ]
+    },
+    {
+      "id": "raw_receipt:c0e0ef0b4037d9d7aefb2e753f6d40a34d7b7f3e2b7366c0009bebc26524274b",
+      "kind": "raw_receipt",
+      "path": "evidence/raw_receipt-c0e0ef0b4037d9d7aefb2e753f6d40a34d7b7f3e2b7366c0009bebc26524274b.json",
+      "producer": "collector",
+      "sha256": "c0e0ef0b4037d9d7aefb2e753f6d40a34d7b7f3e2b7366c0009bebc26524274b",
+      "source_ids": [
+        "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3"
+      ]
+    },
+    {
+      "id": "artifact_readback:552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+      "kind": "artifact_readback",
+      "path": "evidence/artifact_readback-552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0.json",
+      "producer": "collector",
+      "sha256": "552fa556e7caf36e128dc4930ba1b974e7fcef4fca05c0f21b6ecc63031e93a0",
+      "source_ids": [
+        "raw_receipt:c0e0ef0b4037d9d7aefb2e753f6d40a34d7b7f3e2b7366c0009bebc26524274b"
+      ]
+    },
+    {
+      "id": "operation_trace:2bd11c2b05fe173600debda1532e0b7474ca8ecd5947f6b64d2f4434796e190b",
+      "kind": "operation_trace",
+      "path": "evidence/operation_trace-2bd11c2b05fe173600debda1532e0b7474ca8ecd5947f6b64d2f4434796e190b.json",
+      "producer": "collector",
+      "sha256": "2bd11c2b05fe173600debda1532e0b7474ca8ecd5947f6b64d2f4434796e190b",
+      "source_ids": [
+        "raw_trace:86a4611c45c25acf236394c826962e74a6018a188560cad735215b99d2909ef3"
+      ]
+    }
+  ],
+  "measurements": {
+    "coaching_interventions": 0,
+    "cost": null,
+    "cost_currency": null,
+    "elapsed_seconds": 161.09399999999732,
+    "explicit_approvals": 1,
+    "input_tokens": 71577,
+    "necessary_inputs": 0,
+    "output_tokens": 7428,
+    "unknown_reason": "Cost/pricing unknown. Missing metadata, universal security audits and reviewer claims are not inferred. Counts cover recorded collector interventions only."
+  },
+  "model": {
+    "adapter_version": "sha256:062ebe023f07106f3952647ba4e47f08b0ea183bdf50fa9bba8303083e095e4b",
+    "id": "glm-5.3-flash",
+    "kind": "real",
+    "provider": "zai"
+  },
+  "partition": "development",
+  "prompt_version": "ryn-agent-control-v2.4",
+  "review": {
+    "checks": [
+      {
+        "criterion": "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+        "id": "review-1",
+        "status": "pending"
+      },
+      {
+        "criterion": "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+        "id": "review-2",
+        "status": "pending"
+      },
+      {
+        "criterion": "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately.",
+        "id": "review-3",
+        "status": "pending"
+      }
+    ],
+    "independent_of_task_model": false,
+    "reviewer_id": "",
+    "source_evidence_ids": []
+  },
+  "schema_version": 1,
+  "started_at": "2026-10-09T14:25:26.447811+00:00",
+  "suite_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "trial": 1
+}

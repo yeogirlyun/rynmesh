@@ -1,0 +1,646 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/auth/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/settings"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/models"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/resources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/resources"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/local/agent/tasks/audit-task"
+  }
+]

@@ -84,6 +84,39 @@ def install_ask_ryn(app: Any, *, store: Any, home: str | Path, workers: Any,
         app.state.ask_ryn.local_control(request)
         return {"conversations": await call("list", service_key)}
 
+    @app.post("/api/local/ask/contexts/nas")
+    async def nas_context(request: Request):
+        value = await body(request)
+        from ..nas import NasError, relative_path
+
+        def prepare():
+            plugin = app.state.nas_plugin
+            imports = app.state.friends.content.imports
+            generation = imports.generation()
+            source_id = value.get("source_id")
+            if not isinstance(source_id, str) or not source_id or len(source_id) > 256:
+                raise NasError("nas_not_found", 404)
+            path = relative_path(value.get("path", ""))
+            # Read through the existing NAS permission/size/UTF-8 checks. Never
+            # trust a browser-supplied body or expose NAS credentials in a copy.
+            with plugin.lock:
+                source = dict(plugin.source(source_id))
+                content = plugin.operate(source_id, "ai", path)
+            filename = path.rsplit("/", 1)[-1]
+            if Path(filename).suffix.lower() not in {".txt", ".md", ".markdown"}:
+                filename += ".txt"
+            record = imports.save(content["text"].encode("utf-8"), filename=filename, mime="text/plain",
+                                  source={"title": content["name"], "nas_source_id": source_id, "nas_path": path, "nas_source_name": source["name"]},
+                                  expected_generation=generation)
+            return app.state.ask_ryn.context.describe("import:" + record["import_id"], include_text=True)
+
+        try:
+            return await asyncio.to_thread(prepare)
+        except NasError as exc:
+            raise HTTPException(exc.status, detail=str(exc)) from None
+        except (OSError, ValueError, KeyError):
+            raise HTTPException(409, detail="ask_context_unavailable") from None
+
     @app.get("/api/local/ask/conversations/{conversation_id}")
     async def conversation(conversation_id: str, request: Request):
         app.state.ask_ryn.local_control(request)

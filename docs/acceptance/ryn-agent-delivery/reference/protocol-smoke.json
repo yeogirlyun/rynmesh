@@ -1,0 +1,38 @@
+{
+  "kind": "deterministic-reference-loop-smoke",
+  "result": {
+    "response": "Read fixture confirmed.",
+    "turn_id": "turn_547732a2-c477-4d0b-bdf5-89e9abb9070d",
+    "usage": {
+      "source": "provider",
+      "modelRequestCount": 2,
+      "inputTokens": 32,
+      "outputTokens": 14,
+      "totalTokens": 46,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "webFetchRequests": 0,
+      "webSearchRequests": 0
+    },
+    "registered_tools": [
+      "ryn_fixture_read"
+    ],
+    "event_count": 15,
+    "extra_host_tools": false,
+    "real_model": false
+  },
+  "read_model_calls": 2,
+  "read_tool_calls": 1,
+  "approvalTrials": [
+    {
+      "approved": true,
+      "dispatches": 1
+    },
+    {
+      "approved": false,
+      "dispatches": 0
+    }
+  ],
+  "real_model": false
+}

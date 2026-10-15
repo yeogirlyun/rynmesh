@@ -92,8 +92,28 @@ class FallbackRegistryChain:
     def submit_work_order(self, signed_order: SignedPayload) -> dict[str, Any]:
         return self._try_all("submit_work_order", signed_order)
 
+    @property
+    def supports_order_wait(self) -> bool:
+        return any(getattr(reg, "supports_order_wait", False) for reg in self.registries)
+
     def list_work_orders(self, **kwargs: Any) -> list[SignedPayload]:
-        return self._try_all("list_work_orders", **kwargs)
+        if "wait_s" not in kwargs:
+            return self._try_all("list_work_orders", **kwargs)
+        wait_s = kwargs.pop("wait_s")
+        last: Exception = RegistryError("no registries configured")
+        for reg in self.registries:
+            fn = getattr(reg, "list_work_orders", None)
+            if fn is None:
+                continue
+            try:
+                if getattr(reg, "supports_order_wait", False):
+                    return fn(wait_s=wait_s, **kwargs)
+                return fn(**kwargs)
+            except RegistryError as exc:
+                log.warning("registry %s.list_work_orders failed: %s; trying next", type(reg).__name__,
+                            type(exc).__name__)
+                last = exc
+        raise last
 
     def publish_work_result(self, signed_result: SignedPayload) -> dict[str, Any]:
         return self._try_all("publish_work_result", signed_result)

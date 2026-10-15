@@ -1,0 +1,53 @@
+{
+  "fixture_only": true,
+  "task_id": "agent_7703804b87c445b6ba5d7425cc710185",
+  "status": "completed",
+  "outcome": "unverified",
+  "skills": [
+    {
+      "id": "system-diagnostics",
+      "version": "1"
+    }
+  ],
+  "result": {
+    "bytes": 26934,
+    "context_epoch": 0,
+    "goal_revision": 1,
+    "id": "result_d3bf33891fd5443ba6becf0e8d716eb8",
+    "operation_id": "op_bb3c5fd7acfb46e9af38be6ae49d7cb4",
+    "scope_revision": 1,
+    "sha256": "6da53de843078796a61ebbe0190ad07ab5009889592338c7e496e96e1dafa155",
+    "task_id": "agent_7703804b87c445b6ba5d7425cc710185",
+    "tool": "ryn_list_models"
+  },
+  "pages": [
+    {
+      "offset": 0,
+      "next_offset": 8192,
+      "characters": 26806,
+      "sha256": "6da53de843078796a61ebbe0190ad07ab5009889592338c7e496e96e1dafa155"
+    },
+    {
+      "offset": 8192,
+      "next_offset": 16384,
+      "characters": 26806,
+      "sha256": "6da53de843078796a61ebbe0190ad07ab5009889592338c7e496e96e1dafa155"
+    },
+    {
+      "offset": 16384,
+      "next_offset": 24576,
+      "characters": 26806,
+      "sha256": "6da53de843078796a61ebbe0190ad07ab5009889592338c7e496e96e1dafa155"
+    },
+    {
+      "offset": 24576,
+      "next_offset": null,
+      "characters": 26806,
+      "sha256": "6da53de843078796a61ebbe0190ad07ab5009889592338c7e496e96e1dafa155"
+    }
+  ],
+  "encrypted_blob": true,
+  "full_result_not_in_transcript": true,
+  "reassembled_sha256_matches": true,
+  "steps": 2
+}

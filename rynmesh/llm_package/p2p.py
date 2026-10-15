@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable
 
 import aioice
@@ -114,39 +114,201 @@ class IceSignal:
     username: str
     password: str
     candidates: tuple[str, ...]
+    session_protocol: str = ""
+    # Native transport info (``rynmesh.native_transport``). An offer may carry
+    # it next to the aioice candidates; an answer that carries it selects the
+    # native data plane and may leave the aioice fields empty.
+    native: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "username": self.username,
             "password": self.password,
             "candidates": list(self.candidates),
+            **({"session_protocol": self.session_protocol} if self.session_protocol else {}),
+            **({"native": self.native} if self.native else {}),
         }
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "IceSignal":
+        from ..native_transport import remote_info
+
         username = str(value.get("username") or "")
         password = str(value.get("password") or "")
         candidates = tuple(str(item) for item in value.get("candidates") or ())
+        native = remote_info(value.get("native"))
+        if native is not None and not (username or password or candidates):
+            protocol = str(value.get("session_protocol") or "")
+            if len(protocol) > 64:
+                raise P2PError("invalid ICE session protocol")
+            return cls(username="", password="", candidates=(), session_protocol=protocol, native=native)
         if not username or not password or not candidates:
             raise P2PError("incomplete ICE signal")
         if len(candidates) > 64 or any(len(item) > 1024 for item in candidates):
             raise P2PError("ICE candidate list exceeds safe limits")
         for candidate in candidates:
             _direct_candidate_from_sdp(candidate)
-        return cls(username=username, password=password, candidates=candidates)
+        protocol = str(value.get("session_protocol") or "")
+        if len(protocol) > 64:
+            raise P2PError("invalid ICE session protocol")
+        return cls(username=username, password=password, candidates=candidates, session_protocol=protocol,
+                   native=native)
+
+
+# Several public STUN servers on different operators: one network blocking a
+# server (or its DNS) must not cost every connection a 5 s gathering timeout
+# and the server-reflexive candidate that public hole punching depends on.
+DEFAULT_STUN_SERVERS = "stun.l.google.com:19302,stun.cloudflare.com:3478,stun.miwifi.com:3478"
+STUN_PROBE_TIMEOUT_S = 1.5
+STUN_CHOICE_TTL_S = 600.0
+# Signaling: how long one registry long poll for P2P offers may wait.
+SIGNAL_LONG_POLL_S = 20.0
+
+
+def stun_servers_from_env() -> list[tuple[str, int]]:
+    value = os.environ.get("RYNMESH_P2P_STUN", DEFAULT_STUN_SERVERS).strip()
+    if not value or value.lower() in {"off", "none", "disabled"}:
+        return []
+    servers: list[tuple[str, int]] = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        host, separator, port = item.rpartition(":")
+        if not separator or not host:
+            raise P2PError("RYNMESH_P2P_STUN must be host:port[,host:port...]")
+        parsed_port = int(port)
+        if parsed_port < 1 or parsed_port > 65535:
+            raise P2PError("RYNMESH_P2P_STUN port is invalid")
+        if (host.strip("[]"), parsed_port) not in servers:
+            servers.append((host.strip("[]"), parsed_port))
+    return servers
+
+
+def _stun_binding_reaches(servers: list[tuple[str, int]], timeout_s: float) -> tuple[str, int] | None:
+    """Send one STUN Binding request to every server; the first answer wins."""
+    import secrets
+    import select
+
+    pending: dict[socket.socket, tuple[tuple[str, int], bytes]] = {}
+    try:
+        for server in servers:
+            try:
+                address = socket.getaddrinfo(server[0], server[1], socket.AF_INET, socket.SOCK_DGRAM)[0][4]
+            except OSError:
+                continue
+            transaction = secrets.token_bytes(12)
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setblocking(False)
+            try:
+                sock.sendto(struct.pack("!HHI", 0x0001, 0, 0x2112A442) + transaction, address)
+            except OSError:
+                sock.close()
+                continue
+            pending[sock] = (server, transaction)
+        deadline = time.monotonic() + timeout_s
+        while pending and time.monotonic() < deadline:
+            readable, _, _ = select.select(list(pending), [], [], max(0.0, deadline - time.monotonic()))
+            for sock in readable:
+                try:
+                    data = sock.recv(2048)
+                except OSError:
+                    # e.g. ICMP port unreachable surfaced on Windows.
+                    pending.pop(sock, None)
+                    sock.close()
+                    continue
+                server, transaction = pending[sock]
+                if len(data) >= 20 and data[:2] == b"\x01\x01" and data[8:20] == transaction:
+                    return server
+        return None
+    finally:
+        for sock in pending:
+            sock.close()
+
+
+class _StunChoice:
+    """Remembers which configured STUN server currently answers fastest."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._servers: tuple[tuple[str, int], ...] = ()
+        self._winner: tuple[str, int] | None = None
+        self._checked_at = 0.0
+        self._refreshing = False
+
+    def _refresh(self, servers: tuple[tuple[str, int], ...]) -> tuple[str, int] | None:
+        winner = _stun_binding_reaches(list(servers), STUN_PROBE_TIMEOUT_S)
+        with self._lock:
+            if self._servers == servers:
+                # Keep the previous choice when nothing answered this round.
+                self._winner = winner or self._winner
+                self._checked_at = time.monotonic()
+            self._refreshing = False
+        return winner
+
+    def pick(self, servers: list[tuple[str, int]]) -> tuple[str, int]:
+        key = tuple(servers)
+        with self._lock:
+            if self._servers != key:
+                self._servers, self._winner, self._checked_at = key, None, 0.0
+            stale = time.monotonic() - self._checked_at > STUN_CHOICE_TTL_S
+            winner, refreshing = self._winner, self._refreshing
+            if stale and not refreshing:
+                self._refreshing = True
+        if winner is not None:
+            if stale and not refreshing:
+                threading.Thread(target=self._refresh, args=(key,), daemon=True, name="ryn-stun-probe").start()
+            return winner
+        if refreshing:
+            return servers[0]
+        # First use with nothing known: a bounded probe beats a 5 s gather miss.
+        return self._refresh(key) or servers[0]
+
+    def warm(self, servers: list[tuple[str, int]]) -> None:
+        key = tuple(servers)
+        with self._lock:
+            if self._refreshing or (self._servers == key and self._winner is not None):
+                return
+            self._servers, self._refreshing = key, True
+        threading.Thread(target=self._refresh, args=(key,), daemon=True, name="ryn-stun-probe").start()
+
+
+_STUN_CHOICE = _StunChoice()
 
 
 def stun_server_from_env() -> tuple[str, int] | None:
-    value = os.environ.get("RYNMESH_P2P_STUN", "stun.l.google.com:19302").strip()
-    if not value or value.lower() in {"off", "none", "disabled"}:
+    servers = stun_servers_from_env()
+    if not servers:
         return None
-    host, separator, port = value.rpartition(":")
-    if not separator or not host:
-        raise P2PError("RYNMESH_P2P_STUN must be host:port")
-    parsed_port = int(port)
-    if parsed_port < 1 or parsed_port > 65535:
-        raise P2PError("RYNMESH_P2P_STUN port is invalid")
-    return host.strip("[]"), parsed_port
+    if len(servers) == 1:
+        return servers[0]
+    return _STUN_CHOICE.pick(servers)
+
+
+def warm_stun_choice() -> None:
+    """Probe the STUN servers in the background so the first connection is fast."""
+    try:
+        servers = stun_servers_from_env()
+    except (P2PError, ValueError):
+        return
+    if len(servers) > 1:
+        _STUN_CHOICE.warm(servers)
+
+
+def signal_poll_idle_max_s(store: Any) -> float:
+    """Longest idle gap between signaling polls.
+
+    A long-polling registry already waited inside the previous call, so the
+    next poll follows at once. Otherwise this gap is the worst-case delay
+    before an idle node sees a P2P offer.
+    """
+    if getattr(getattr(store, "registry", None), "supports_order_wait", False):
+        return 1.0
+    try:
+        value = float(os.environ.get("RYNMESH_P2P_SIGNAL_POLL_MAX_S", "3") or 3)
+    except ValueError:
+        value = 3.0
+    return min(max(value, 0.5), 30.0)
 
 
 def new_connection(*, controlling: bool) -> aioice.Connection:
@@ -199,17 +361,25 @@ class _FixedPortConnection(aioice.Connection):
         self._port_reserved = False
 
     async def close(self) -> None:
+        if getattr(self, "_rynmesh_cleanup_complete", False):
+            return
+        transports = [protocol.transport for protocol in self._protocols]
         try:
             await super().close()
         finally:
             # Even a cancelled close must release every socket before another
-            # session is admitted. Reservations span event loops and threads.
-            for protocol in self._protocols:
-                protocol.transport.close()
-            with _FIXED_PORTS_LOCK:
-                if self._port_reserved:
-                    _FIXED_PORTS.discard(self._rynmesh_bind_port)
-                    self._port_reserved = False
+            # session is admitted. Windows graceful close can retain a socket
+            # with queued datagrams; calling close() again does not release it.
+            try:
+                for transport in transports:
+                    transport.abort()
+                await asyncio.sleep(0)  # run socket-close callbacks before reuse
+                self._rynmesh_cleanup_complete = True
+            finally:
+                with _FIXED_PORTS_LOCK:
+                    if self._port_reserved:
+                        _FIXED_PORTS.discard(self._rynmesh_bind_port)
+                        self._port_reserved = False
 
     async def get_component_candidates(
         self, component: int, addresses: list[str], timeout: int = 5
@@ -275,6 +445,19 @@ class _FixedPortConnection(aioice.Connection):
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
         return candidates
+
+
+def native_sessions_enabled() -> bool:
+    """Whether AI sessions may negotiate the native QUIC transport.
+
+    Not with a fixed provider port (firewall rules name that one UDP port) or
+    in the strict public-NAT acceptance modes, whose evidence is defined for
+    aioice candidates.
+    """
+    from .. import native_transport
+
+    return (native_transport.enabled() and not _bind_port_from_env()
+            and not public_nat_traversal_required() and not distinct_public_egress_required())
 
 
 def public_nat_traversal_required() -> bool:
@@ -389,10 +572,23 @@ def selected_pair(connection: aioice.Connection) -> dict[str, Any]:
 async def _close_connection(connection: aioice.Connection) -> None:
     # aioice waits for its receive/consent task while closing. Do not let a
     # completed request keep the HTTP response open indefinitely on Windows.
+    if getattr(connection, "_rynmesh_cleanup_complete", False):
+        return
+    transports = [protocol.transport for protocol in getattr(connection, "_protocols", ())]
     try:
         await asyncio.wait_for(connection.close(), timeout=2.0)
     except asyncio.TimeoutError:
         return
+    finally:
+        # The exchange has already delivered/ACKed its terminal response or
+        # failed. Force release if graceful shutdown timed out or was cancelled,
+        # including ordinary ephemeral-port aioice connections on Windows.
+        for transport in transports:
+            transport.abort()
+        await asyncio.sleep(0)
+        # aioice's protocol-close future may have been cancelled by the timeout.
+        # The sockets are now gone; repeated cleanup must not await it again.
+        connection._rynmesh_cleanup_complete = True
 
 
 def _encode_frames(payload: bytes) -> tuple[bytes, list[bytes]]:
@@ -444,25 +640,30 @@ async def send_json(
     while time.monotonic() < deadline:
         for frame in frames:
             await connection.send(frame)
-        wait = min(1.5, max(0.05, deadline - time.monotonic()))
-        try:
-            packet = await asyncio.wait_for(connection.recv(), timeout=wait)
-        except asyncio.TimeoutError:
-            continue
-        try:
-            kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
-        except P2PError:
-            continue
-        if kind == _ACK and received_id == message_id:
-            return len(payload)
-        if kind == _DATA and reack_message_id is not None and received_id == reack_message_id:
-            ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
-            for _ in range(3):
-                await connection.send(ack)
-            continue
-        if kind == _DATA and pending_out is not None and received_id != message_id:
-            pending_out.append(packet)
-            return len(payload)
+        # Drain stale ACKs within this retry window. Resending on every unrelated
+        # packet amplifies receive_json's three ACKs into growing DATA bursts.
+        ack_deadline = min(deadline, time.monotonic() + 1.5)
+        while time.monotonic() < ack_deadline:
+            try:
+                packet = await asyncio.wait_for(
+                    connection.recv(), timeout=max(0.001, ack_deadline - time.monotonic()),
+                )
+            except asyncio.TimeoutError:
+                continue  # Windows timers can wake slightly before ack_deadline.
+            try:
+                kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
+            except P2PError:
+                continue
+            if kind == _ACK and received_id == message_id:
+                return len(payload)
+            if kind == _DATA and reack_message_id is not None and received_id == reack_message_id:
+                ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
+                for _ in range(3):
+                    await connection.send(ack)
+                continue
+            if kind == _DATA and pending_out is not None and received_id != message_id:
+                pending_out.append(packet)
+                return len(payload)
     raise P2PError("timed out waiting for P2P message acknowledgement")
 
 
@@ -638,6 +839,53 @@ async def _send_ack(connection: Any, ack: bytes) -> None:
         await sender(ack)
 
 
+async def _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event):
+    pending: list[bytes] = []
+    evidence["request_bytes"] = await send_json(
+        connection, signed_request, timeout_s=timeout_s, pending_out=pending
+    )
+    seen: set[bytes] = set()
+    deadline = time.monotonic() + timeout_s
+    evidence["response_bytes"] = 0
+    while True:
+        response_id: list[bytes] = []
+        response, response_bytes = await receive_json(
+            connection, timeout_s=max(0.01, deadline - time.monotonic()),
+            initial_packets=pending, message_id_out=response_id,
+        )
+        pending = []
+        if response_id and response_id[0] in seen:
+            continue
+        if response_id:
+            seen.add(response_id[0])
+        if len(seen) > 131072 or time.monotonic() > deadline:
+            raise P2PError("stream limit exceeded")
+        evidence["response_bytes"] += response_bytes
+        if response.get("payload", {}).get("kind") not in {"llm_stream", "llm_stream_delta"}:
+            break
+        if on_event is None:
+            raise P2PError("unexpected stream event")
+        await asyncio.to_thread(on_event, response)
+    # Linger briefly re-ACKing response retransmits: if our assembly ACKs
+    # were all lost, the provider is still resending and would otherwise
+    # time out and misrecord the exchange as failed.
+    linger_until = time.monotonic() + 0.5
+    while time.monotonic() < linger_until:
+        try:
+            packet = await asyncio.wait_for(connection.recv(), timeout=0.1)
+        except (asyncio.TimeoutError, Exception):
+            break
+        try:
+            kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
+        except P2PError:
+            continue
+        if kind == _DATA and response_id and received_id == response_id[0]:
+            ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
+            for _ in range(3):
+                await connection.send(ack)
+    return response, evidence
+
+
 async def consumer_exchange(
     *,
     signed_request: dict[str, Any],
@@ -646,7 +894,14 @@ async def consumer_exchange(
     on_event: Any = None,
     connect_timeout_s: float | None = None,
     on_connected: Any = None,
+    session_pool: Any = None,
+    session_key: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if session_pool is not None and session_key and not _bind_port_from_env():
+        return await _pooled_consumer_exchange(
+            session_pool, session_key, signed_request, publish_offer, timeout_s,
+            on_event, connect_timeout_s, on_connected,
+        )
     connection = new_connection(controlling=True)
     try:
         # Waiting for the provider must not consume the time reserved for ICE
@@ -660,50 +915,7 @@ async def consumer_exchange(
         evidence = selected_pair(connection)
         if on_connected is not None:
             on_connected(evidence)
-        pending: list[bytes] = []
-        evidence["request_bytes"] = await send_json(
-            connection, signed_request, timeout_s=timeout_s, pending_out=pending
-        )
-        seen: set[bytes] = set()
-        deadline = time.monotonic() + timeout_s
-        evidence["response_bytes"] = 0
-        while True:
-            response_id: list[bytes] = []
-            response, response_bytes = await receive_json(
-                connection, timeout_s=max(0.01, deadline - time.monotonic()),
-                initial_packets=pending, message_id_out=response_id,
-            )
-            pending = []
-            if response_id and response_id[0] in seen:
-                continue
-            if response_id:
-                seen.add(response_id[0])
-            if len(seen) > 131072 or time.monotonic() > deadline:
-                raise P2PError("stream limit exceeded")
-            evidence["response_bytes"] += response_bytes
-            if response.get("payload", {}).get("kind") != "llm_stream":
-                break
-            if on_event is None:
-                raise P2PError("unexpected stream event")
-            await asyncio.to_thread(on_event, response)
-        # Linger briefly re-ACKing response retransmits: if our assembly ACKs
-        # were all lost, the provider is still resending and would otherwise
-        # time out and misrecord the exchange as failed.
-        linger_until = time.monotonic() + 0.5
-        while time.monotonic() < linger_until:
-            try:
-                packet = await asyncio.wait_for(connection.recv(), timeout=0.1)
-            except (asyncio.TimeoutError, Exception):
-                break
-            try:
-                kind, received_id, _sequence, _total, digest, _body = _decode_header(packet)
-            except P2PError:
-                continue
-            if kind == _DATA and response_id and received_id == response_id[0]:
-                ack = _HEADER.pack(_MAGIC, _ACK, received_id, 0, 0, digest)
-                for _ in range(3):
-                    await connection.send(ack)
-        return response, evidence
+        return await _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event)
     finally:
         await _close_connection(connection)
 
@@ -716,11 +928,27 @@ async def provider_exchange(
     timeout_s: float,
     handle_stream_request: Any = None,
     connect_timeout_s: float | None = None,
+    on_first_complete: Any = None,
+    stop_event: Any = None,
 ) -> dict[str, Any]:
+    from .p2p_session import PROTOCOL
+
+    if offer.native is not None and offer.session_protocol == PROTOCOL and native_sessions_enabled():
+        result = await _native_provider_session(
+            offer, publish_answer, handle_request, timeout_s, handle_stream_request,
+            connect_timeout_s, on_first_complete, stop_event,
+        )
+        if result is not None:
+            return result
     connection = new_connection(controlling=False)
     try:
         phase_timeout = connect_timeout_s or timeout_s
         answer = await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase_timeout)
+        # A fixed-port deployment has one UDP slot shared with other peers and
+        # file transfers. Do not reserve that slot for ten idle minutes.
+        persistent = offer.session_protocol == PROTOCOL and not _bind_port_from_env()
+        if persistent:
+            answer = replace(answer, session_protocol=PROTOCOL)
         await apply_remote_signal(connection, offer)
         async def publish():
             result = publish_answer(answer)
@@ -730,6 +958,12 @@ async def provider_exchange(
         validate_distinct_public_egress(answer, offer)
         await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase_timeout)
         evidence = selected_pair(connection)
+        if persistent:
+            from .p2p_session import SessionChannel
+
+            handler = handle_stream_request or (lambda request, emit: handle_request(request))
+            return await _serve_session(SessionChannel(connection), handler,
+                                        timeout_s, evidence, on_first_complete, stop_event)
         request_id: list[bytes] = []
         request, request_bytes = await receive_json(
             connection, timeout_s=timeout_s, message_id_out=request_id,
@@ -759,3 +993,174 @@ async def provider_exchange(
         return evidence
     finally:
         await _close_connection(connection)
+
+
+async def _pooled_consumer_exchange(pool, key, signed_request, publish_offer,
+                                    timeout_s, on_event, connect_timeout_s, on_connected):
+    from .p2p_session import PROTOCOL, SessionChannel
+    started = time.monotonic()
+
+    async def factory():
+        from .. import native_transport
+
+        connection = new_connection(controlling=True)
+        native_session = None
+        native_gather = (asyncio.ensure_future(native_transport.open_session("client"))
+                         if native_sessions_enabled() and native_transport.allowed_for(key) else None)
+        try:
+            phase = connect_timeout_s or timeout_s
+            offer = replace(await _connection_phase(gather_signal(connection), stage="gathering", timeout_s=phase), session_protocol=PROTOCOL)
+            if native_gather is not None:
+                try:
+                    native_session = await native_gather
+                    offer = replace(offer, native=native_transport.offer(native_session))
+                except Exception:
+                    logging.getLogger(__name__).debug("native gathering failed; offering aioice only", exc_info=True)
+            answer = await _connection_phase(publish_offer(offer), stage="signaling", timeout_s=phase)
+            if answer.native is not None and native_session is not None and answer.session_protocol == PROTOCOL:
+                await _close_connection(connection)
+                try:
+                    native = await _connection_phase(
+                        native_transport.connect(native_session, answer.native, phase), stage="connecting",
+                        timeout_s=phase + 5,
+                    )
+                    channel = await native_transport.NativeSessionChannel.open(native, initiator=True, timeout_s=phase)
+                except BaseException:
+                    # The next session to this provider offers aioice only.
+                    native_transport.note_failure(key)
+                    raise
+                native_transport.note_success(key)
+                return channel, native_transport.evidence(native)
+            if native_session is not None:
+                native_session.close()
+                native_session = None
+            validate_distinct_public_egress(offer, answer)
+            await apply_remote_signal(connection, answer)
+            await _connection_phase(connection.connect(), stage="connecting", timeout_s=phase)
+            evidence = selected_pair(connection)
+            if answer.session_protocol != PROTOCOL:
+                if on_connected:
+                    on_connected(evidence)
+                try:
+                    result = await _legacy_exchange_connected(connection, signed_request, evidence, timeout_s, on_event)
+                    return None, result
+                finally:
+                    await _close_connection(connection)
+            return SessionChannel(connection), evidence
+        except BaseException:
+            if native_gather is not None and not native_gather.done():
+                native_gather.cancel()
+            if native_session is not None:
+                native_session.close()
+            await _close_connection(connection)
+            raise
+
+    async def exchange(channel, evidence):
+        evidence["session_protocol"] = PROTOCOL
+        evidence["connection_ms"] = round((time.monotonic() - started) * 1000)
+        if on_connected:
+            on_connected(evidence)
+        evidence["request_bytes"] = await channel.send(signed_request, timeout_s)
+        deadline = time.monotonic() + timeout_s
+        count = 0
+        first = True
+        while True:
+            response = await channel.receive(max(.01, deadline - time.monotonic()))
+            if first:
+                evidence["first_event_ms"] = round((time.monotonic() - started) * 1000)
+                first = False
+            count += 1
+            if count > 131072:
+                raise P2PError("stream limit exceeded")
+            if response.get("payload", {}).get("kind") not in {"llm_stream", "llm_stream_delta"}:
+                evidence["total_ms"] = round((time.monotonic() - started) * 1000)
+                evidence["stream_events"] = count - 1
+                return response, evidence
+            if on_event is None:
+                raise P2PError("unexpected stream event")
+            await asyncio.to_thread(on_event, response)
+    return await pool.run(key, factory, exchange)
+
+
+async def _serve_session(channel, handler, timeout_s, evidence, on_first_complete, stop_event=None):
+    """Serves requests on an established session channel (aioice or native)."""
+    from .p2p_session import IDLE_SECONDS, PROTOCOL, WINDOW
+    first = True
+    loop = asyncio.get_running_loop()
+    try:
+        while not channel.closed and not (stop_event and stop_event.is_set()):
+            deadline = time.monotonic() + (timeout_s if first else IDLE_SECONDS)
+            request = None
+            while time.monotonic() < deadline and not (stop_event and stop_event.is_set()):
+                try:
+                    request = await channel.receive(min(1, max(.01, deadline - time.monotonic())))
+                    break
+                except asyncio.TimeoutError:
+                    continue
+            if request is None:
+                break
+            pending = deque()
+
+            def emit(value, pending=pending):
+                if stop_event and stop_event.is_set():
+                    raise P2PError("node stopping")
+                pending.append(asyncio.run_coroutine_threadsafe(channel.send(value, min(timeout_s, 15)), loop))
+                if len(pending) >= WINDOW:
+                    pending.popleft().result(timeout=min(timeout_s, 15) + 1)
+
+            def handle(request=request, emit=emit, pending=pending):
+                try:
+                    response = handler(request, emit)
+                    while pending:
+                        pending.popleft().result(timeout=min(timeout_s, 15) + 1)
+                    return response
+                finally:
+                    for future in pending:
+                        future.cancel()
+
+            response = await asyncio.to_thread(handle)
+            await channel.send(response, timeout_s)
+            if first and on_first_complete:
+                await asyncio.to_thread(on_first_complete, dict(evidence, session_protocol=PROTOCOL))
+            first = False
+        return evidence
+    finally:
+        await channel.close()
+
+
+async def _native_provider_session(offer, publish_answer, handle_request, timeout_s, handle_stream_request,
+                                   connect_timeout_s, on_first_complete, stop_event):
+    """Answers a session offer on the native transport; None = fall back to aioice."""
+    from .. import native_transport
+    from .p2p_session import PROTOCOL
+
+    try:
+        session = await native_transport.open_session("server")
+    except Exception:
+        logging.getLogger(__name__).debug("native transport unavailable for this session", exc_info=True)
+        return None
+    phase_timeout = connect_timeout_s or timeout_s
+    channel = None
+    try:
+        answer = IceSignal(username="", password="", candidates=(), session_protocol=PROTOCOL,
+                           native=native_transport.offer(session))
+
+        async def publish():
+            result = publish_answer(answer)
+            if inspect.isawaitable(result):
+                await result
+
+        await _connection_phase(publish(), stage="signaling", timeout_s=phase_timeout)
+        connection = await _connection_phase(
+            native_transport.connect(session, offer.native, phase_timeout), stage="connecting",
+            timeout_s=phase_timeout + 5,
+        )
+        evidence = native_transport.evidence(connection)
+        channel = await native_transport.NativeSessionChannel.open(connection, initiator=False, timeout_s=phase_timeout)
+    except BaseException:
+        session.close()
+        if channel is not None:
+            await channel.close()
+        raise
+    handler = handle_stream_request or (lambda request, emit: handle_request(request))
+    return await _serve_session(channel, handler, timeout_s, evidence, on_first_complete, stop_event)
