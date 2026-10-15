@@ -135,7 +135,10 @@ def stream_controls(request, model_id, *, timeout=240, poll=.1, settle_seconds=3
                 result["resume_receipt"] = resumed
                 result["control"]["resume_accepted"] = resumed["status"] == "queued"
                 resume_cursor, phase = resumed["event_cursor"], "active"
-            elif phase == "active" and dispatches(task, resume_cursor):
+            elif (phase == "active" and dispatches(task, resume_cursor)
+                  and any(e["type"] == "text_delta" and e["seq"] > resume_cursor for e in task["events"])):
+                # A durable model_started intent precedes provider admission.
+                # Observe an actual resumed stream before cancelling it.
                 if task["status"] != "running" or len(dispatches(task, resume_cursor)) != 1:
                     result["unmet_trigger"] = "next_operation_finished_before_observation"
                     break

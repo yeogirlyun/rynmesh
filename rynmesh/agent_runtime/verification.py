@@ -34,6 +34,31 @@ CHECKER_SYSTEM = (
     "This is model semantic assessment, not independent external fact verification."
 )
 
+CHANGE_REVIEW_GUIDANCE = (
+    "change_review is the server's net change of files the agent modified through file tools, compared with their originals "
+    "(shell-made changes are excluded). Judge it against the owner's restrictions: removing or altering pre-existing tests, "
+    "assertions or unrelated behavior that the owner did not ask for is a violation even when every test passes. "
+    "List each violation in uncovered_requirements and do not pass. Check that report claims about unchanged tests or files match it."
+)
+
+
+def compact_change_review(review, max_chars=10000):
+    """Bound the review for a prompt by dropping diffs from the last files first."""
+    review = copy.deepcopy(review)
+    files = review.get("files", [])
+    while len(json.dumps(review, ensure_ascii=False)) > max_chars:
+        for item in reversed(files):
+            if item.get("diff") and item["diff"] != "(diff omitted for size)":
+                item["diff"] = "(diff omitted for size)"
+                break
+        else:
+            review["files"] = files = files[:max(1, len(files) // 2)]
+            review["truncated"] = True
+            if len(files) == 1:
+                break
+    return review
+
+
 UNRESOLVED_READ_GUIDANCE = (
     "unresolved_resource_reads identifies current-scope resource reads whose latest attempt for that target still failed. "
     "Match their receipts to the owner's requested materials. Permission to produce available work and list omissions does not "
@@ -82,6 +107,21 @@ def record(row, call, status, at, *, result=None, flight=None):
         receipt["confirmed_at"] = at
 
 
+def _rejected_before_execution(receipt):
+    """A local workstation attempt refused by its own preconditions did nothing to verify.
+
+    Examples: a stale file hash, an edit text that matched nothing, a shell that is not installed.
+    The model corrects these and retries; keeping each as a required failed criterion made correct
+    work report 'partial'. Owner denials and permission refusals are not in this class, and the
+    semantic checker still receives every receipt.
+    """
+    result = receipt.get("result") or {}
+    error = str(result.get("error", ""))
+    return (receipt.get("effect") == "write" and receipt.get("status") in {"failed", "not_executed"}
+            and result.get("not_executed") is True and result.get("no_mutation") is True
+            and (error.startswith("agent_local_") or error == "agent_shell_unavailable"))
+
+
 def begin(row, specs):
     """Registry defines mechanical checks; model criteria proposals are ignored."""
     registry = {spec["tool_name"]: spec for spec in specs}
@@ -90,6 +130,8 @@ def begin(row, specs):
     for receipt in current:
         spec = registry.get(receipt["tool"])
         if receipt["effect"] != "write" and (not spec or spec.get("effect") != "read" or receipt["status"] != "confirmed"):
+            continue
+        if _rejected_before_execution(receipt):
             continue
         fields = spec.get("target_fields") if spec else None
         target = {key: receipt["arguments"].get(key) for key in fields} if fields is not None else receipt["arguments"]
@@ -145,6 +187,9 @@ def checker_messages(row, *, context_limit=None):
     payload["observation_contracts_omitted"] = len(contracts)
     payload["inference_context"] = inference_projection(row)
     system = CHECKER_SYSTEM + " " + INFERENCE_GUIDANCE
+    if row.get("change_review"):
+        payload["change_review"] = compact_change_review(row["change_review"])
+        system += " " + CHANGE_REVIEW_GUIDANCE
     unresolved = unresolved_resource_reads(receipts, row.get("scope_revision"))
     if unresolved:
         payload["unresolved_resource_reads"] = unresolved

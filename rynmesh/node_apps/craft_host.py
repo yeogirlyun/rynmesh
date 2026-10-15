@@ -99,7 +99,9 @@ def extract(archive_path, destination):
             raise CraftError("craft_extraction_limit")
         seen = set()
         for member in members:
-            name = member.filename
+            # ZipInfo normalizes backslashes on Windows and truncates NULs.
+            # Validate the original archive name before either transformation.
+            name = member.orig_filename
             path = PurePosixPath(name)
             mode = member.external_attr >> 16
             if (

@@ -417,11 +417,12 @@ def test_owner_http_and_reinstalled_worker_use_current_node(tmp_path):
     assert len(current.conversations.get("conversation")["messages"]) == 2
 
 
-def test_reviewed_cli_model_survives_restart_and_cannot_cross_provider(tmp_path):
+@pytest.mark.parametrize("adapter", ["codex_cli", "antigravity_cli"])
+def test_reviewed_cli_model_survives_restart_and_cannot_cross_provider(tmp_path, adapter):
     history, runs, orders, request = setup(tmp_path)
     context = runs.context()
     context.catalog = lambda _: [{"peer_id": "provider", "local_only": True,
-        "service": {"package_id": "model", "adapter": "codex_cli", "context_window": 4096, "max_output_tokens": 256}}]
+        "service": {"package_id": "model", "adapter": adapter, "context_window": 4096, "max_output_tokens": 256}}]
     row = history.get("conversation")
     row = history.save({**row, "cliModel": "gpt-test-review"}, expected_revision=row["revision"])
     request.update(expected_revision=row["revision"], prompt_sha256=context.preview(row, request["question"])["prompt_sha256"])
@@ -435,3 +436,14 @@ def test_reviewed_cli_model_survives_restart_and_cannot_cross_provider(tmp_path)
         context.preview(row, request["question"])
     with pytest.raises(ConversationError, match="ask_invalid_conversation"):
         history.save({**history.get("conversation"), "cliModel": "bad --shell-flag"}, expected_revision=history.get("conversation")["revision"])
+
+
+def test_antigravity_cli_default_survives_save_and_omits_upstream_model(tmp_path):
+    history, runs, orders, request = setup(tmp_path)
+    context = runs.context()
+    context.catalog = lambda _: [{"peer_id": "provider", "local_only": True,
+        "service": {"package_id": "model", "adapter": "antigravity_cli", "context_window": 4096, "max_output_tokens": 256}}]
+    row = history.get("conversation")
+    row = history.save({**row, "cliModel": ""}, expected_revision=row["revision"])
+    assert history.get("conversation")["cliModel"] == ""
+    assert "cli_model" not in context.preview(row, request["question"])

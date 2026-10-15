@@ -1,4 +1,4 @@
-"""Explicit local-model tool probes, invalidated when the model configuration changes."""
+"""Transport contracts and optional model diagnostics, separate from admission."""
 from __future__ import annotations
 
 import hashlib
@@ -7,6 +7,13 @@ from pathlib import Path
 
 from ..atomic_io import atomic_write_json, read_json
 from ..file_transactions import file_transaction
+
+
+def client_tools_contract(adapter, capabilities=()):
+    """Declared bridge support; never run capability discovery or model inference."""
+    return (adapter != "claude_cli" and "api-text-only" not in capabilities
+            and (adapter in {"openai_compatible", "ollama", "llama_cpp", "codex_cli", "antigravity_cli"}
+                 or "client-tools" in capabilities))
 
 
 class ToolCapabilities:
@@ -19,6 +26,8 @@ class ToolCapabilities:
         # Persist a digest only; endpoint credentials/paths never leave this process.
         config = manifest.to_dict()
         config.pop("capabilities", None)
+        if manifest.adapter == "codex_cli":
+            config["client_tool_bridge_revision"] = "structured-proposals-v1"
         if manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"}:
             from .cli_adapter import CLIAgentAdapter
             try:
@@ -36,17 +45,19 @@ class ToolCapabilities:
         except (OSError, ValueError):
             return {}
 
-    def support(self, manifest):
+    def support(self, manifest, model=""):
+        key = manifest.package_id + ("/model/" + model if model else "")
         with file_transaction(self.lock):
-            row = self._read().get(manifest.package_id, {})
+            row = self._read().get(key, {})
         return row.get("tool_support", "unknown") if row.get("fingerprint") == self.fingerprint(manifest) else "unknown"
 
-    def save(self, manifest, support):
-        if support not in {"supported", "unsupported"}:
+    def save(self, manifest, support, model=""):
+        key = manifest.package_id + ("/model/" + model if model else "")
+        if support not in {"supported", "unsupported", "unknown"}:
             raise ValueError("invalid_tool_support")
         with file_transaction(self.lock):
             rows = self._read()
-            rows[manifest.package_id] = {"fingerprint": self.fingerprint(manifest), "tool_support": support}
+            rows[key] = {"fingerprint": self.fingerprint(manifest), "tool_support": support}
             # Local sources keep their own evidence; this file tracks only managed services.
             if len(rows) > 128:
                 rows.pop(next(iter(rows)))

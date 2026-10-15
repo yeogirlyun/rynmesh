@@ -1,0 +1,1590 @@
+{
+  "allowed_actions": {
+    "answer": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "approve": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "archive": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "budget": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "cancel": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "delete": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "deny": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "information": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "model": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "pause": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": false
+    },
+    "reconcile": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "restore": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "resume": {
+      "enabled": false,
+      "reason": "agent_invalid_transition",
+      "requires_control_revision": true
+    },
+    "scope": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "source_credential": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    },
+    "steer": {
+      "enabled": true,
+      "reason": null,
+      "requires_control_revision": true
+    }
+  },
+  "allowed_write_tools": [],
+  "archived": false,
+  "budget": {
+    "current_round": {
+      "active_seconds": 346.37399999999616,
+      "charged_model_calls": 4,
+      "charged_seconds": 346.37399999999616,
+      "charged_tokens": 200362,
+      "charged_tool_calls": 10,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": null,
+      "known_input_tokens": 25167,
+      "known_output_tokens": 7921,
+      "legacy_usage_unknown": false,
+      "model_calls": 4,
+      "output_tokens": null,
+      "tool_calls": 10,
+      "total_tokens": null,
+      "unsettled_operations": 0,
+      "usage_complete": false
+    },
+    "lifetime": {
+      "active_seconds": 346.37399999999616,
+      "charged_model_calls": 4,
+      "charged_seconds": 346.37399999999616,
+      "charged_tokens": 200362,
+      "charged_tool_calls": 10,
+      "cost": null,
+      "cost_status": "unknown",
+      "input_tokens": null,
+      "known_input_tokens": 25167,
+      "known_output_tokens": 7921,
+      "legacy_usage_unknown": false,
+      "model_calls": 4,
+      "output_tokens": null,
+      "tool_calls": 10,
+      "total_tokens": null,
+      "unsettled_operations": 0,
+      "usage_complete": false
+    },
+    "limits": {
+      "max_total_model_calls": 128,
+      "max_total_seconds": 3600,
+      "max_total_tokens": 2000000,
+      "max_total_tool_calls": 256
+    },
+    "reservation_policy": "Unknown model usage retains the conservative dispatch reservation; cost is unknown without trusted pricing.",
+    "round": 1
+  },
+  "client_request_id": null,
+  "control_revision": 1,
+  "created_at": "2026-10-10T06:03:12.967470+00:00",
+  "criteria": [
+    {
+      "description": "Satisfy the owner's complete current goal and constraints.",
+      "evidence_refs": [],
+      "goal_revision": 1,
+      "id": "goal-coverage",
+      "kind": "semantic",
+      "required": true,
+      "source": "user",
+      "source_ref": "agent_7dd7e154a0654b3eadd2d644940d6cfe:owner:0",
+      "status": "unknown",
+      "verifier": null
+    },
+    {
+      "description": "Compare observer-visible catalog facts; no complete remote inventory, policy or invocation proof.",
+      "evidence_refs": [
+        "evidence_029f759fec8a4f8f8ddbf1109772fbbe"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_6d82e57bbf504274ae817c444327e826",
+      "status": "passed",
+      "verifier": "ryn_list_models_facts"
+    },
+    {
+      "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+      "evidence_refs": [
+        "evidence_2adf5dbaaed540a4a12ff301d3837c56"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_db3e4111c623420c885a34adbb3ee92f",
+      "status": "passed",
+      "verifier": "ryn_list_devices_facts"
+    },
+    {
+      "description": "Compare visible catalog and local outgoing grant observations within their provider/recipient scope.",
+      "evidence_refs": [
+        "evidence_b9d37920cac7453295f1068fafacb188"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_1403e4803c054c39bc867ecf59574521",
+      "status": "passed",
+      "verifier": "ryn_inspect_services_facts"
+    },
+    {
+      "description": "Recheck current catalog and device evidence classifications; unknown reachability stays unknown.",
+      "evidence_refs": [
+        "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "status": "passed",
+      "verifier": "ryn_get_system_diagnostics_facts"
+    },
+    {
+      "description": "Re-read the safe source configuration projection, never credentials or inferred connectivity.",
+      "evidence_refs": [
+        "evidence_aaf3bcf3772d4b6486422ac773b927b9"
+      ],
+      "goal_revision": 1,
+      "id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+      "kind": "mechanical",
+      "required": true,
+      "source": "tool",
+      "source_ref": "receipt_op_26a319b551554e8e89c34b4ae530be5f",
+      "status": "passed",
+      "verifier": "ryn_list_source_configurations_facts"
+    }
+  ],
+  "error": null,
+  "event_cursor": 54,
+  "events": [
+    {
+      "at": "2026-10-10T06:03:12.967470+00:00",
+      "context_epoch": 0,
+      "seq": 1,
+      "type": "created"
+    },
+    {
+      "at": "2026-10-10T06:03:13.000472+00:00",
+      "context_epoch": 0,
+      "menu": {
+        "catalog_revision": "78e9b3f83aff15f7c4fae098ecefec3a385370701bec456794c70f98b1a12e91",
+        "context_epoch": 0,
+        "goal_revision": 1,
+        "loaded_names": [],
+        "mode": "full",
+        "revision": 1
+      },
+      "reason": "projection",
+      "seq": 2,
+      "type": "tool_menu_changed"
+    },
+    {
+      "at": "2026-10-10T06:03:13.011471+00:00",
+      "context_epoch": 0,
+      "seq": 3,
+      "step": 1,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:03:13.023195+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 5658,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 4,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:03:22.722561+00:00",
+      "context_epoch": 0,
+      "seq": 5,
+      "step": 1,
+      "text": "我先",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:03:22.871887+00:00",
+      "context_epoch": 0,
+      "seq": 6,
+      "step": 1,
+      "text": "并行查看模型目录、设备/好友关系、本地共享授权与诊断信息，再核对 model-b 与 node-c 的对应授权。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:03:22.878887+00:00",
+      "content": "我先并行查看模型目录、设备/好友关系、本地共享授权与诊断信息，再核对 model-b 与 node-c 的对应授权。",
+      "context_epoch": 0,
+      "seq": 7,
+      "tool_count": 4,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:03:22.905887+00:00",
+      "call_id": "call_31d97af9df694ccfb212f366",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_6d82e57bbf504274ae817c444327e826",
+      "seq": 8,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:22.923887+00:00",
+      "call_id": "call_31d97af9df694ccfb212f366",
+      "context_epoch": 0,
+      "operation_id": "op_6d82e57bbf504274ae817c444327e826",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+            "context_window": 1000000,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "model_binding": {
+                "model_generation": "4886642f59f64c34987446f46171bf6f",
+                "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "fixture_identity": "model-a",
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 9,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:22.951889+00:00",
+      "call_id": "call_2187a0b91cf244bf86572a37",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_db3e4111c623420c885a34adbb3ee92f",
+      "seq": 10,
+      "tool": "ryn_list_devices",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:22.981638+00:00",
+      "call_id": "call_2187a0b91cf244bf86572a37",
+      "context_epoch": 0,
+      "operation_id": "op_db3e4111c623420c885a34adbb3ee92f",
+      "result": {
+        "ai_access": "local",
+        "devices": [
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "node_name": "owner-provider",
+            "online": null,
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "relationship_id": "29ef70f66af64ad3905641442920803e",
+            "status": "active"
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "self",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "receiver",
+            "online": true,
+            "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "http",
+            "http_probe_performed": true,
+            "http_reachable": true,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T08:00:00Z",
+            "name": "node-a",
+            "online": true,
+            "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "heartbeat_expired",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "2026-10-09T07:50:00Z",
+            "name": "node-c",
+            "online": false,
+            "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+          },
+          {
+            "checked_at": "2026-10-09T08:00:00+00:00",
+            "evidence_source": "unknown",
+            "http_probe_performed": false,
+            "http_reachable": null,
+            "lan_probe_performed": false,
+            "lan_reachable": null,
+            "last_seen": "",
+            "name": "node-d",
+            "online": null,
+            "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+          }
+        ],
+        "evidence_note": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.",
+        "friends": [
+          {
+            "node_name": "owner-provider",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "relationship_id": "29ef70f66af64ad3905641442920803e",
+            "status": "active"
+          }
+        ],
+        "membership": "none",
+        "self_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+      },
+      "seq": 11,
+      "tool": "ryn_list_devices",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.009638+00:00",
+      "call_id": "call_fb5e0bccd493460c83736913",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_1403e4803c054c39bc867ecf59574521",
+      "seq": 12,
+      "tool": "ryn_inspect_services",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.031048+00:00",
+      "call_id": "call_fb5e0bccd493460c83736913",
+      "context_epoch": 0,
+      "operation_id": "op_1403e4803c054c39bc867ecf59574521",
+      "result": {
+        "friend_grants": [],
+        "friend_grants_scope": {
+          "direction": "local_outgoing",
+          "provider_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+          "remote_provider_grants": "unknown"
+        },
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+            "context_window": 1000000,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_binding_supported": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "expected_model_binding": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "model_binding": {
+                "model_generation": "4886642f59f64c34987446f46171bf6f",
+                "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                "version": "ryn.model-binding.v1"
+              }
+            },
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "recipient_access": {
+              "ai_permission": {
+                "relationship_id": "29ef70f66af64ad3905641442920803e",
+                "revision": 1
+              },
+              "basis": "authenticated_catalog_observation",
+              "catalog_available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "current_access": "unknown",
+              "invocation_verified": false,
+              "kind": "friend"
+            },
+            "runtime": "external",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "share_scope": "unknown",
+            "sharing": true,
+            "sharing_basis": "remote_catalog_advertisement",
+            "sharing_configuration_known": false,
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "streaming": true,
+            "tool_support": "supported"
+          }
+        ]
+      },
+      "seq": 13,
+      "tool": "ryn_inspect_services",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.060613+00:00",
+      "call_id": "call_d3bf7c7e2274440bb2a717e2",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_4e063d2371c740d9a583f2a1ba0ce168",
+      "seq": 14,
+      "tool": "ryn_get_system_diagnostics",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.104439+00:00",
+      "call_id": "call_d3bf7c7e2274440bb2a717e2",
+      "context_epoch": 0,
+      "operation_id": "op_4e063d2371c740d9a583f2a1ba0ce168",
+      "result": {
+        "devices": {
+          "devices": [
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "owner-provider",
+              "online": null,
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "self",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "receiver",
+              "online": true,
+              "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "http",
+              "http_probe_performed": true,
+              "http_reachable": true,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T08:00:00Z",
+              "name": "node-a",
+              "online": true,
+              "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "heartbeat_expired",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T07:50:00Z",
+              "name": "node-c",
+              "online": false,
+              "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "node-d",
+              "online": null,
+              "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+            }
+          ],
+          "note": "Self presence proves the executing process is alive only. Untested reachability is null; membership or a configured endpoint is not connectivity proof.",
+          "status": "available"
+        },
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+            "evidence": {
+              "connection_probe_performed": false,
+              "inference_probe_performed": false,
+              "kind": "catalog_configuration_and_capability_record",
+              "probe_checked_at": null
+            },
+            "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+            "model_id": "source-alpha · alpha",
+            "name": "source-alpha · alpha",
+            "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+            "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+            "source": "peer",
+            "source_id": "",
+            "source_name": "owner-provider",
+            "tool_support": "supported"
+          }
+        ],
+        "note": "Model records do not measure current connection, inference, quotas, or throughput. Diagnostics is read only and grants no permissions."
+      },
+      "seq": 15,
+      "tool": "ryn_get_system_diagnostics",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:03:23.163025+00:00",
+      "context_epoch": 0,
+      "seq": 16,
+      "step": 2,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:03:23.175534+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 9235,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 17,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:05:38.574599+00:00",
+      "context_epoch": 0,
+      "seq": 18,
+      "step": 2,
+      "text": "四",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:38.758031+00:00",
+      "context_epoch": 0,
+      "seq": 19,
+      "step": 2,
+      "text": "项检查已完成。为了确认 model-b 不存在于本机任何本地来源（而只可能来自对端 owner-provider），我再核对一次本机的来源配置：",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:38.766031+00:00",
+      "content": "四项检查已完成。为了确认 model-b 不存在于本机任何本地来源（而只可能来自对端 owner-provider），我再核对一次本机的来源配置：",
+      "context_epoch": 0,
+      "seq": 20,
+      "tool_count": 1,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:05:38.803276+00:00",
+      "call_id": "call_7fca80faf50f4710b108fa8b",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_26a319b551554e8e89c34b4ae530be5f",
+      "seq": 21,
+      "tool": "ryn_list_source_configurations",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-10T06:05:38.824486+00:00",
+      "call_id": "call_7fca80faf50f4710b108fa8b",
+      "context_epoch": 0,
+      "operation_id": "op_26a319b551554e8e89c34b4ae530be5f",
+      "result": {
+        "sources": []
+      },
+      "seq": 22,
+      "tool": "ryn_list_source_configurations",
+      "type": "tool_result"
+    },
+    {
+      "at": "2026-10-10T06:05:38.886476+00:00",
+      "context_epoch": 0,
+      "seq": 23,
+      "step": 3,
+      "type": "model_started"
+    },
+    {
+      "at": "2026-10-10T06:05:38.900468+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 18768,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 24,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:05:47.068388+00:00",
+      "context_epoch": 0,
+      "seq": 25,
+      "step": 3,
+      "text": "核对",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:47.312901+00:00",
+      "context_epoch": 0,
+      "seq": 26,
+      "step": 3,
+      "text": "完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:48.467684+00:00",
+      "context_epoch": 0,
+      "seq": 27,
+      "step": 3,
+      "text": "model",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:48.716856+00:00",
+      "context_epoch": 0,
+      "seq": 28,
+      "step": 3,
+      "text": "-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:49.731753+00:00",
+      "context_epoch": 0,
+      "seq": 29,
+      "step": 3,
+      "text": " `owner-provider`（peer `FXSackkm…`），",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:49.984773+00:00",
+      "context_epoch": 0,
+      "seq": 30,
+      "step": 3,
+      "text": "服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:50.897381+00:00",
+      "context_epoch": 0,
+      "seq": 31,
+      "step": 3,
+      "text": " model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:51.138906+00:00",
+      "context_epoch": 0,
+      "seq": 32,
+      "step": 3,
+      "text": ": \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:52.349471+00:00",
+      "context_epoch": 0,
+      "seq": 33,
+      "step": 3,
+      "text": "` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:52.592795+00:00",
+      "context_epoch": 0,
+      "seq": 34,
+      "step": 3,
+      "text": " 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n-",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:53.880589+00:00",
+      "context_epoch": 0,
+      "seq": 35,
+      "step": 3,
+      "text": " 该授权是按模型逐条记录的（绑定里含 model_generation `48866",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:54.123100+00:00",
+      "context_epoch": 0,
+      "seq": 36,
+      "step": 3,
+      "text": "42f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:55.454142+00:00",
+      "context_epoch": 0,
+      "seq": 37,
+      "step": 3,
+      "text": "即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:55.702084+00:00",
+      "context_epoch": 0,
+      "seq": 38,
+      "step": 3,
+      "text": "- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:56.633143+00:00",
+      "context_epoch": 0,
+      "seq": 39,
+      "step": 3,
+      "text": ": heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/L",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:56.872678+00:00",
+      "context_epoch": 0,
+      "seq": 40,
+      "step": 3,
+      "text": "AN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:58.195626+00:00",
+      "context_epoch": 0,
+      "seq": 41,
+      "step": 3,
+      "text": ": false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:58.434190+00:00",
+      "context_epoch": 0,
+      "seq": 42,
+      "step": 3,
+      "text": "。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.002188+00:00",
+      "context_epoch": 0,
+      "seq": 43,
+      "step": 3,
+      "text": "也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.181681+00:00",
+      "context_epoch": 0,
+      "seq": 44,
+      "step": 3,
+      "text": "规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+      "type": "text_delta"
+    },
+    {
+      "at": "2026-10-10T06:05:59.190682+00:00",
+      "content": "核对完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；model-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源 `owner-provider`（peer `FXSackkm…`），服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是 model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind: \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n- 该授权是按模型逐条记录的（绑定里含 model_generation `4886642f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source: heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/LAN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known: false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+      "context_epoch": 0,
+      "seq": 45,
+      "tool_count": 0,
+      "type": "assistant"
+    },
+    {
+      "at": "2026-10-10T06:05:59.190682+00:00",
+      "context_epoch": 0,
+      "goal_revision": 1,
+      "seq": 46,
+      "type": "verification_started"
+    },
+    {
+      "at": "2026-10-10T06:05:59.272193+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+      "evidence_id": "evidence_029f759fec8a4f8f8ddbf1109772fbbe",
+      "seq": 47,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.369376+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+      "evidence_id": "evidence_2adf5dbaaed540a4a12ff301d3837c56",
+      "seq": 48,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.451885+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+      "evidence_id": "evidence_b9d37920cac7453295f1068fafacb188",
+      "seq": 49,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.552346+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "evidence_id": "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4",
+      "seq": 50,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.629532+00:00",
+      "context_epoch": 0,
+      "criterion_id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+      "evidence_id": "evidence_aaf3bcf3772d4b6486422ac773b927b9",
+      "seq": 51,
+      "status": "passed",
+      "type": "criterion_checked"
+    },
+    {
+      "at": "2026-10-10T06:05:59.685781+00:00",
+      "context_epoch": 0,
+      "seq": 52,
+      "step": 4,
+      "type": "verification_model_started"
+    },
+    {
+      "at": "2026-10-10T06:05:59.702779+00:00",
+      "clamp_reasons": [],
+      "configured_cap": 128000,
+      "context_epoch": 0,
+      "effective_cap": 128000,
+      "estimated_input_tokens": 12434,
+      "policy_sha256": "4e150b8e67e35207621873fdaf8225561e76fb6d7e32b18f47de77b2d34b1ba6",
+      "seq": 53,
+      "type": "model_output_policy",
+      "version": "configured-output-v1"
+    },
+    {
+      "at": "2026-10-10T06:09:00.181289+00:00",
+      "context_epoch": 0,
+      "error": "agent_inference_failed",
+      "outcome": "unverified",
+      "seq": 54,
+      "type": "verification_finished"
+    }
+  ],
+  "goal": {
+    "constraints": [
+      {
+        "id": "constraint:agent_7dd7e154a0654b3eadd2d644940d6cfe:owner:0",
+        "message_id": "agent_7dd7e154a0654b3eadd2d644940d6cfe:owner:0",
+        "required": true,
+        "source": "user",
+        "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。"
+      }
+    ],
+    "kind": "unclassified",
+    "original_message_id": "agent_7dd7e154a0654b3eadd2d644940d6cfe:owner:0",
+    "revision": 1,
+    "text": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。"
+  },
+  "id": "agent_7dd7e154a0654b3eadd2d644940d6cfe",
+  "limits": {
+    "max_context_chars": 100000,
+    "max_output_chars": 20000,
+    "max_seconds": 600,
+    "max_steps": 24
+  },
+  "messages": [
+    {
+      "content": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+      "message_id": "agent_7dd7e154a0654b3eadd2d644940d6cfe:owner:0",
+      "role": "user"
+    },
+    {
+      "content": "我先并行查看模型目录、设备/好友关系、本地共享授权与诊断信息，再核对 model-b 与 node-c 的对应授权。",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_models"
+          },
+          "id": "call_31d97af9df694ccfb212f366",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_devices"
+          },
+          "id": "call_2187a0b91cf244bf86572a37",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_inspect_services"
+          },
+          "id": "call_fb5e0bccd493460c83736913",
+          "type": "function"
+        },
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_get_system_diagnostics"
+          },
+          "id": "call_d3bf7c7e2274440bb2a717e2",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"available\":true,\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"context_window\":1000000,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b\",\"expected_model_binding\":{\"ai_permission\":{\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"revision\":1},\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"model_binding\":{\"model_generation\":\"4886642f59f64c34987446f46171bf6f\",\"rule_revision\":\"15048ba989714d5fa3cf332f22f91367\",\"service_id\":\"src-585ba285b6f248f5-8ed3f6ad685b\",\"version\":\"ryn.model-binding.v1\"}},\"fixture_identity\":\"model-a\",\"id\":\"peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b\",\"model_id\":\"source-alpha · alpha\",\"name\":\"source-alpha · alpha\",\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\",\"recipient_access\":{\"ai_permission\":{\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"revision\":1},\"basis\":\"authenticated_catalog_observation\",\"catalog_available\":true,\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"current_access\":\"unknown\",\"invocation_verified\":false,\"kind\":\"friend\"},\"runtime\":\"external\",\"service_id\":\"src-585ba285b6f248f5-8ed3f6ad685b\",\"share_scope\":\"unknown\",\"sharing\":true,\"sharing_basis\":\"remote_catalog_advertisement\",\"sharing_configuration_known\":false,\"source\":\"peer\",\"source_id\":\"\",\"source_name\":\"owner-provider\",\"streaming\":true,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_31d97af9df694ccfb212f366"
+    },
+    {
+      "content": "{\"ai_access\":\"local\",\"devices\":[{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"node_name\":\"owner-provider\",\"online\":null,\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\",\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"status\":\"active\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"self\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"receiver\",\"online\":true,\"peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"http\",\"http_probe_performed\":true,\"http_reachable\":true,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T08:00:00Z\",\"name\":\"node-a\",\"online\":true,\"peer_id\":\"0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"heartbeat_expired\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T07:50:00Z\",\"name\":\"node-c\",\"online\":false,\"peer_id\":\"88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"node-d\",\"online\":null,\"peer_id\":\"DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go=\"}],\"evidence_note\":\"online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline.\",\"friends\":[{\"node_name\":\"owner-provider\",\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\",\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"status\":\"active\"}],\"membership\":\"none\",\"self_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\"}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_2187a0b91cf244bf86572a37"
+    },
+    {
+      "content": "{\"friend_grants\":[],\"friend_grants_scope\":{\"direction\":\"local_outgoing\",\"provider_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"remote_provider_grants\":\"unknown\"},\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"available\":true,\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"context_window\":1000000,\"description\":\"可供本机 Agent 使用；工具在本机执行。\",\"destination_binding_supported\":true,\"destination_revision\":\"5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b\",\"expected_model_binding\":{\"ai_permission\":{\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"revision\":1},\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"model_binding\":{\"model_generation\":\"4886642f59f64c34987446f46171bf6f\",\"rule_revision\":\"15048ba989714d5fa3cf332f22f91367\",\"service_id\":\"src-585ba285b6f248f5-8ed3f6ad685b\",\"version\":\"ryn.model-binding.v1\"}},\"id\":\"peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b\",\"model_id\":\"source-alpha · alpha\",\"name\":\"source-alpha · alpha\",\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\",\"recipient_access\":{\"ai_permission\":{\"relationship_id\":\"29ef70f66af64ad3905641442920803e\",\"revision\":1},\"basis\":\"authenticated_catalog_observation\",\"catalog_available\":true,\"consumer_peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\",\"current_access\":\"unknown\",\"invocation_verified\":false,\"kind\":\"friend\"},\"runtime\":\"external\",\"service_id\":\"src-585ba285b6f248f5-8ed3f6ad685b\",\"share_scope\":\"unknown\",\"sharing\":true,\"sharing_basis\":\"remote_catalog_advertisement\",\"sharing_configuration_known\":false,\"source\":\"peer\",\"source_id\":\"\",\"source_name\":\"owner-provider\",\"streaming\":true,\"tool_support\":\"supported\"}]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_fb5e0bccd493460c83736913"
+    },
+    {
+      "content": "{\"devices\":{\"devices\":[{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"node_name\":\"owner-provider\",\"online\":null,\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"self\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"receiver\",\"online\":true,\"peer_id\":\"VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"http\",\"http_probe_performed\":true,\"http_reachable\":true,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T08:00:00Z\",\"name\":\"node-a\",\"online\":true,\"peer_id\":\"0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"heartbeat_expired\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"2026-10-09T07:50:00Z\",\"name\":\"node-c\",\"online\":false,\"peer_id\":\"88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=\"},{\"checked_at\":\"2026-10-09T08:00:00+00:00\",\"evidence_source\":\"unknown\",\"http_probe_performed\":false,\"http_reachable\":null,\"lan_probe_performed\":false,\"lan_reachable\":null,\"last_seen\":\"\",\"name\":\"node-d\",\"online\":null,\"peer_id\":\"DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go=\"}],\"note\":\"Self presence proves the executing process is alive only. Untested reachability is null; membership or a configured endpoint is not connectivity proof.\",\"status\":\"available\"},\"models\":[{\"adapter\":\"openai_compatible\",\"agent_supported\":true,\"available\":true,\"destination_revision\":\"5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b\",\"evidence\":{\"connection_probe_performed\":false,\"inference_probe_performed\":false,\"kind\":\"catalog_configuration_and_capability_record\",\"probe_checked_at\":null},\"id\":\"peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b\",\"model_id\":\"source-alpha · alpha\",\"name\":\"source-alpha · alpha\",\"peer_id\":\"FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=\",\"service_id\":\"src-585ba285b6f248f5-8ed3f6ad685b\",\"source\":\"peer\",\"source_id\":\"\",\"source_name\":\"owner-provider\",\"tool_support\":\"supported\"}],\"note\":\"Model records do not measure current connection, inference, quotas, or throughput. Diagnostics is read only and grants no permissions.\"}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_d3bf7c7e2274440bb2a717e2"
+    },
+    {
+      "content": "四项检查已完成。为了确认 model-b 不存在于本机任何本地来源（而只可能来自对端 owner-provider），我再核对一次本机的来源配置：",
+      "context_epoch": 0,
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "function": {
+            "arguments": "{}",
+            "name": "ryn_list_source_configurations"
+          },
+          "id": "call_7fca80faf50f4710b108fa8b",
+          "type": "function"
+        }
+      ]
+    },
+    {
+      "content": "{\"sources\":[]}",
+      "context_epoch": 0,
+      "role": "tool",
+      "tool_call_id": "call_7fca80faf50f4710b108fa8b"
+    },
+    {
+      "content": "核对完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；model-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源 `owner-provider`（peer `FXSackkm…`），服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是 model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind: \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n- 该授权是按模型逐条记录的（绑定里含 model_generation `4886642f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source: heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/LAN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known: false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+      "context_epoch": 0,
+      "role": "assistant"
+    }
+  ],
+  "model_destination": {
+    "catalog_model_id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+    "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+    "provider_peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+    "source_id": ""
+  },
+  "model_id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+  "outcome": {
+    "coverage_method": "independent_model_assessment",
+    "criteria_results": [
+      {
+        "criterion_id": "goal-coverage",
+        "evidence_refs": [],
+        "kind": "semantic",
+        "status": "unknown"
+      },
+      {
+        "criterion_id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+        "evidence_refs": [
+          "evidence_029f759fec8a4f8f8ddbf1109772fbbe"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+        "evidence_refs": [
+          "evidence_2adf5dbaaed540a4a12ff301d3837c56"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+        "evidence_refs": [
+          "evidence_b9d37920cac7453295f1068fafacb188"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+        "evidence_refs": [
+          "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+        "evidence_refs": [
+          "evidence_aaf3bcf3772d4b6486422ac773b927b9"
+        ],
+        "kind": "mechanical",
+        "status": "passed"
+      }
+    ],
+    "evidence_refs": [
+      "evidence_029f759fec8a4f8f8ddbf1109772fbbe",
+      "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4",
+      "evidence_2adf5dbaaed540a4a12ff301d3837c56",
+      "evidence_aaf3bcf3772d4b6486422ac773b927b9",
+      "evidence_b9d37920cac7453295f1068fafacb188"
+    ],
+    "goal_revision": 1,
+    "mechanical_scope": [
+      {
+        "criterion_id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+        "description": "Compare observer-visible catalog facts; no complete remote inventory, policy or invocation proof.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+        "description": "Recheck device presence evidence; unknown connectivity remains unknown.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+        "description": "Compare visible catalog and local outgoing grant observations within their provider/recipient scope.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+        "description": "Recheck current catalog and device evidence classifications; unknown reachability stays unknown.",
+        "status": "passed"
+      },
+      {
+        "criterion_id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+        "description": "Re-read the safe source configuration projection, never credentials or inferred connectivity.",
+        "status": "passed"
+      }
+    ],
+    "semantic_assessment": null,
+    "status": "unverified",
+    "summary": "Verification did not establish the complete goal.",
+    "uncertainties": [
+      "agent_inference_failed",
+      "One or more required conditions lack independent evidence."
+    ]
+  },
+  "pending_approval": null,
+  "pending_input": null,
+  "permission_mode": "read_only",
+  "plan": {
+    "goal_revision": 1,
+    "revision": 0,
+    "steps": []
+  },
+  "result": "核对完成，未做任何修改（全程只读）。以下是结论与证据。\n\n## 结论\n\n在本节点可核实的全部数据里，**不存在任何 model-b 的分享记录或接收授权**。node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目；model-a 的授权按规则不能、也没有延续到 model-b。\n\n## 核对过程与证据\n\n**1. 模型目录中只有 model-a，没有 model-b**\n- `ryn_list_models` 仅返回一条记录：`source-alpha · alpha`（`fixture_identity: \"model-a\"`），来自对端来源 `owner-provider`（peer `FXSackkm…`），服务 `src-585ba285b6f248f5-8ed3f6ad685b`。\n- 目录中**没有任何 model-b 的行**，因此也没有可附加接收授权的分享条目。\n\n**2. 唯一的 friend 授权是 model-a 的，且授予对象不是 node-c**\n- model-a 的 `recipient_access`：`kind: \"friend\"`，`relationship_id: 29ef70f66af64ad3905641442920803e`，消费者是本节点自身（`consumer_peer_id: VL6DB3FF…`）。\n- `ryn_list_devices` 显示 `29ef70f6…` 是本节点与 **owner-provider** 的好友关系；node-c 的 peer 是 `88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc=`，**没有出现在任何好友关系或授权记录里**——它甚至不是本节点的好友（好友列表里只有 owner-provider 一条）。\n- 该授权是按模型逐条记录的（绑定里含 model_generation `4886642f…` 和 service_id），只属于 model-a，不能当作 model-b 的授权——这正是需要分开核对的原因。\n\n**3. 本节点作为提供方没有任何对外授权**\n- `ryn_inspect_services`：`friend_grants: []`（本机出向授权为空）。即使分享经由本节点，也没有任何 friend 授权可供 node-c 接收。\n- `ryn_list_source_configurations`：本机 `sources: []`，排除 model-b 挂在本机某个本地来源下的可能。\n\n**4. 附带发现：node-c 的连通性状态（与授权无关的另一因素）**\n- `node-c: online=false`，`evidence_source: heartbeat_expired`，last_seen 07:50Z，**未做过 HTTP/LAN 探测**。心跳过期不等于当前不可达，此处只能说\"当前可达性未经验证\"，不能断言它离线。\n\n## 证据边界（如实说明）\n\n- 对端 owner-provider 对 model-b 的**真实分享配置不可见**：`sharing_configuration_known: false`、`share_scope: \"unknown\"`、`remote_provider_grants: \"unknown\"`。本地目录里没有 model-b，与此一致，但**不构成对远端\"未分享\"的证明**——node-c 侧的目录是另一个视图，本节点无法查看。\n- 即便 model-a，`current_access: \"unknown\"`、`invocation_verified: false`，也只是目录观测，不是实时调用验证。\n\n按您的要求，我未修改任何分享规则或授权。如需确认远端 model-b 的分享状态，需要在 owner-provider 侧（或 node-c 侧的目录）核实。",
+  "revision": 54,
+  "run_state": "ended",
+  "schema_version": 2,
+  "scope_revision": 1,
+  "skills": [],
+  "status": "completed",
+  "steps": 4,
+  "title": "说明 model-b 为什么 node-c 不能调用。核对该模型分享与接收授权，不修改规则，也不要把同来源 model-a 的授权当成 model-b 的。",
+  "updated_at": "2026-10-10T06:09:00.181289+00:00",
+  "verification_evidence": [
+    {
+      "checked_at": "2026-10-10T06:05:59.246193+00:00",
+      "criterion_id": "criterion_op_6d82e57bbf504274ae817c444327e826",
+      "evidence": {
+        "checked_facts": {
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "context_window": 1000000,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+              "expected_model_binding": {
+                "ai_permission": {
+                  "relationship_id": "29ef70f66af64ad3905641442920803e",
+                  "revision": 1
+                },
+                "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+                "model_binding": {
+                  "model_generation": "4886642f59f64c34987446f46171bf6f",
+                  "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                  "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                  "version": "ryn.model-binding.v1"
+                }
+              },
+              "fixture_identity": "model-a",
+              "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+              "model_id": "source-alpha · alpha",
+              "name": "source-alpha · alpha",
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+              "recipient_access": {
+                "ai_permission": {
+                  "relationship_id": "29ef70f66af64ad3905641442920803e",
+                  "revision": 1
+                },
+                "basis": "authenticated_catalog_observation",
+                "catalog_available": true,
+                "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+                "current_access": "unknown",
+                "invocation_verified": false,
+                "kind": "friend"
+              },
+              "runtime": "external",
+              "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+              "share_scope": "unknown",
+              "sharing": true,
+              "sharing_basis": "remote_catalog_advertisement",
+              "sharing_configuration_known": false,
+              "source": "peer",
+              "source_id": "",
+              "source_name": "owner-provider",
+              "streaming": true,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Matching observed catalog/config/grants only in provider/recipient scope; no new inference, global absence or causal proof.",
+        "current_state_matches": true,
+        "observation_sha256": "d1bd4dd658989d479384cfb543f490d26b2ae6bf1b9a712483b43271ce591427",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_029f759fec8a4f8f8ddbf1109772fbbe",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_6d82e57bbf504274ae817c444327e826",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T06:05:59.333378+00:00",
+      "criterion_id": "criterion_op_db3e4111c623420c885a34adbb3ee92f",
+      "evidence": {
+        "checked_facts": {
+          "devices": [
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "node_name": "owner-provider",
+              "online": null,
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+              "relationship_id": "29ef70f66af64ad3905641442920803e",
+              "status": "active"
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "self",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "receiver",
+              "online": true,
+              "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "http",
+              "http_probe_performed": true,
+              "http_reachable": true,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T08:00:00Z",
+              "name": "node-a",
+              "online": true,
+              "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "heartbeat_expired",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "2026-10-09T07:50:00Z",
+              "name": "node-c",
+              "online": false,
+              "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+            },
+            {
+              "checked_at": "2026-10-09T08:00:00+00:00",
+              "evidence_source": "unknown",
+              "http_probe_performed": false,
+              "http_reachable": null,
+              "lan_probe_performed": false,
+              "lan_reachable": null,
+              "last_seen": "",
+              "name": "node-d",
+              "online": null,
+              "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+            }
+          ],
+          "membership": "none",
+          "presence_classification_matches": true
+        },
+        "coverage": "online=null means unknown; membership is not proof of connectivity. evidence_source=self proves only the executing process is alive; no HTTP/LAN probe is performed for self. Reachability=null means untested, not failed. HTTP failure alone does not prove offline. A passed check confirms the observed evidence classification, including unknown; it does not prove an unknown device is connected or offline.",
+        "current_state_matches": true,
+        "observation_sha256": "c942fa0f00a76a3f9cc0da93658da6f7858b633fa4a115b7c8f5acc4348c7c2a",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": [
+          {
+            "presence_unknown_for": [
+              "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+              "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+            ]
+          },
+          "Self presence proves only this executing process; unperformed HTTP/LAN probes provide no reachability evidence."
+        ]
+      },
+      "goal_revision": 1,
+      "id": "evidence_2adf5dbaaed540a4a12ff301d3837c56",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_db3e4111c623420c885a34adbb3ee92f",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T06:05:59.426887+00:00",
+      "criterion_id": "criterion_op_1403e4803c054c39bc867ecf59574521",
+      "evidence": {
+        "checked_facts": {
+          "friend_grants": [],
+          "friend_grants_scope": {
+            "direction": "local_outgoing",
+            "provider_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+            "remote_provider_grants": "unknown"
+          },
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "available": true,
+              "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+              "context_window": 1000000,
+              "description": "可供本机 Agent 使用；工具在本机执行。",
+              "destination_binding_supported": true,
+              "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+              "expected_model_binding": {
+                "ai_permission": {
+                  "relationship_id": "29ef70f66af64ad3905641442920803e",
+                  "revision": 1
+                },
+                "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+                "model_binding": {
+                  "model_generation": "4886642f59f64c34987446f46171bf6f",
+                  "rule_revision": "15048ba989714d5fa3cf332f22f91367",
+                  "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+                  "version": "ryn.model-binding.v1"
+                }
+              },
+              "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+              "model_id": "source-alpha · alpha",
+              "name": "source-alpha · alpha",
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+              "recipient_access": {
+                "ai_permission": {
+                  "relationship_id": "29ef70f66af64ad3905641442920803e",
+                  "revision": 1
+                },
+                "basis": "authenticated_catalog_observation",
+                "catalog_available": true,
+                "consumer_peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w=",
+                "current_access": "unknown",
+                "invocation_verified": false,
+                "kind": "friend"
+              },
+              "runtime": "external",
+              "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+              "share_scope": "unknown",
+              "sharing": true,
+              "sharing_basis": "remote_catalog_advertisement",
+              "sharing_configuration_known": false,
+              "source": "peer",
+              "source_id": "",
+              "source_name": "owner-provider",
+              "streaming": true,
+              "tool_support": "supported"
+            }
+          ]
+        },
+        "coverage": "Matching observed catalog/config/grants only in provider/recipient scope; no new inference, global absence or causal proof.",
+        "current_state_matches": true,
+        "observation_sha256": "848487e9ee1254fbd5864856ebc2c93217ad77b2169ae79c4180fc2282c8b258",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_b9d37920cac7453295f1068fafacb188",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_1403e4803c054c39bc867ecf59574521",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T06:05:59.507347+00:00",
+      "criterion_id": "criterion_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "evidence": {
+        "checked_facts": {
+          "devices": {
+            "devices": [
+              {
+                "checked_at": "2026-10-09T08:00:00+00:00",
+                "evidence_source": "unknown",
+                "http_probe_performed": false,
+                "http_reachable": null,
+                "lan_probe_performed": false,
+                "lan_reachable": null,
+                "last_seen": "",
+                "node_name": "owner-provider",
+                "online": null,
+                "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA="
+              },
+              {
+                "checked_at": "2026-10-09T08:00:00+00:00",
+                "evidence_source": "self",
+                "http_probe_performed": false,
+                "http_reachable": null,
+                "lan_probe_performed": false,
+                "lan_reachable": null,
+                "last_seen": "",
+                "name": "receiver",
+                "online": true,
+                "peer_id": "VL6DB3FFCXh+KoPh2urzpELIEX0UofnGRMet5qHKd5w="
+              },
+              {
+                "checked_at": "2026-10-09T08:00:00+00:00",
+                "evidence_source": "http",
+                "http_probe_performed": true,
+                "http_reachable": true,
+                "lan_probe_performed": false,
+                "lan_reachable": null,
+                "last_seen": "2026-10-09T08:00:00Z",
+                "name": "node-a",
+                "online": true,
+                "peer_id": "0l39Ut6u8fRKCAn1VcLQWtE2OjsCdayxI0GxDjQEWLE="
+              },
+              {
+                "checked_at": "2026-10-09T08:00:00+00:00",
+                "evidence_source": "heartbeat_expired",
+                "http_probe_performed": false,
+                "http_reachable": null,
+                "lan_probe_performed": false,
+                "lan_reachable": null,
+                "last_seen": "2026-10-09T07:50:00Z",
+                "name": "node-c",
+                "online": false,
+                "peer_id": "88oLTCBMKFagPJ3gCH1GAGrFd7P07IxVw35UyiwaWSc="
+              },
+              {
+                "checked_at": "2026-10-09T08:00:00+00:00",
+                "evidence_source": "unknown",
+                "http_probe_performed": false,
+                "http_reachable": null,
+                "lan_probe_performed": false,
+                "lan_reachable": null,
+                "last_seen": "",
+                "name": "node-d",
+                "online": null,
+                "peer_id": "DLyyuPbYhuJHDcWkc/1zW+9lC3NVLMrueOdxLCzB6go="
+              }
+            ],
+            "note": "Self presence proves the executing process is alive only. Untested reachability is null; membership or a configured endpoint is not connectivity proof.",
+            "status": "available"
+          },
+          "models": [
+            {
+              "adapter": "openai_compatible",
+              "agent_supported": true,
+              "available": true,
+              "destination_revision": "5c572fb033d43421e76892775502d39be6eaf86dad0e1fcc5af84d7a543a978b",
+              "evidence": {
+                "connection_probe_performed": false,
+                "inference_probe_performed": false,
+                "kind": "catalog_configuration_and_capability_record",
+                "probe_checked_at": null
+              },
+              "id": "peer/0ceaa282dccabd880278e49a3984c2b9634eca2231bddafccea9f818091e6204/src-585ba285b6f248f5-8ed3f6ad685b",
+              "model_id": "source-alpha · alpha",
+              "name": "source-alpha · alpha",
+              "peer_id": "FXSackkm31fQHEzIspCYmC87vAZ7WOFjzKrSFS8STJA=",
+              "service_id": "src-585ba285b6f248f5-8ed3f6ad685b",
+              "source": "peer",
+              "source_id": "",
+              "source_name": "owner-provider",
+              "tool_support": "supported"
+            }
+          ],
+          "note": "Model records do not measure current connection, inference, quotas, or throughput. Diagnostics is read only and grants no permissions."
+        },
+        "coverage": "Current safe diagnostic classifications and registered configuration facts. Live elapsed/step/usage counters are observations, not compared as stable facts. Unknown or untested reachability is not connectivity proof; dispatch is not mutation proof.",
+        "current_state_matches": true,
+        "observation_sha256": "e9addb316212189ad9d15b740504664d58c7249b1ccd425788db8b6fa93b60b6",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_1a6e290cc1d2430f9df50ed56cdcf8e4",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_4e063d2371c740d9a583f2a1ba0ce168",
+      "scope_revision": 1,
+      "status": "passed"
+    },
+    {
+      "checked_at": "2026-10-10T06:05:59.610533+00:00",
+      "criterion_id": "criterion_op_26a319b551554e8e89c34b4ae530be5f",
+      "evidence": {
+        "checked_facts": {
+          "sources": []
+        },
+        "coverage": "Matching observed catalog/config/grants only in provider/recipient scope; no new inference, global absence or causal proof.",
+        "current_state_matches": true,
+        "observation_sha256": "4e60a0deda7ee9d829904e581ebb31ee4b4a9ae1797281044a27ed0f698a9420",
+        "operation_attribution": "read_only_observation",
+        "uncertainties": []
+      },
+      "goal_revision": 1,
+      "id": "evidence_aaf3bcf3772d4b6486422ac773b927b9",
+      "kind": "mechanical",
+      "receipt_id": "receipt_op_26a319b551554e8e89c34b4ae530be5f",
+      "scope_revision": 1,
+      "status": "passed"
+    }
+  ]
+}

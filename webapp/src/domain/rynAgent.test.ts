@@ -1,9 +1,13 @@
 import { expect, it } from "vitest";
-import { agentToolResultState, agentTurnToolCount, canUseAgentAction, canUseAgentModel, isAgentLateToolResult, pendingAgentText, type AgentTask } from "./rynAgent";
+import { agentToolResultState, agentTurnToolCount, canUseAgentAction, canUseAgentModel, isAgentLateToolResult, mergeUnchangedTask, pendingAgentText, type AgentTask } from "./rynAgent";
 
-it("requires explicit verified tool support and current availability before offering a model", () => {
+it("requires a supported assistant protocol and current availability, independently of diagnostic probes", () => {
   const ready = { id: "model", name: "Model", source: "peer", available: true, agent_supported: true };
   expect(canUseAgentModel(ready)).toBe(true);
+  expect(canUseAgentModel({ ...ready, tool_support: "unknown" })).toBe(true);
+  expect(canUseAgentModel({ ...ready, tool_support: "unsupported" })).toBe(true);
+  expect(canUseAgentModel({ ...ready, agent_supported: false, tool_support: "supported" })).toBe(false);
+  expect(canUseAgentModel({ ...ready, destination_binding_supported: false })).toBe(false);
   expect(canUseAgentModel({ ...ready, agent_supported: undefined })).toBe(false);
   expect(canUseAgentModel({ ...ready, available: false })).toBe(false);
 });
@@ -54,4 +58,14 @@ it("excludes proven non-execution receipts and recognizes late receipts from eve
   expect(agentTurnToolCount({ events })).toBe(1);
   expect(isAgentLateToolResult(rejected, events)).toBe(false);
   expect(isAgentLateToolResult(returned, events)).toBe(true);
+});
+
+it("keeps the cached transcript when a poll reports the task unchanged", () => {
+  const cached = { id: "t", revision: 4, status: "running", messages: [{ role: "user", content: "hi" }], events: [] } as unknown as AgentTask;
+  const live = mergeUnchangedTask(cached, { id: "t", revision: 4, unchanged: true, run_state: "running", run_timing: { elapsed_seconds: 9 } as AgentTask["run_timing"] });
+  expect(live.messages).toBe(cached.messages);
+  expect(live.run_timing).toEqual({ elapsed_seconds: 9 });
+  const newer = { ...cached, revision: 5 } as AgentTask;
+  expect(mergeUnchangedTask(cached, newer)).toBe(newer);
+  expect(mergeUnchangedTask(cached, { id: "t", revision: 3, unchanged: true })).toEqual({ id: "t", revision: 3, unchanged: true });
 });

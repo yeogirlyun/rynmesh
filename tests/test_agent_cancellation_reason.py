@@ -59,7 +59,7 @@ def test_bridge_stop_reason_is_safe_and_usage_is_retained(reason, path):
 @pytest.mark.parametrize("stop", ["round", "lifetime", "owner"])
 def test_worker_records_stop_cause_without_verifying_or_repeating(tmp_path, monkeypatch, stage, stop):
     runtime, _, tools, _ = make_runtime(tmp_path)
-    runtime.update_settings({"max_seconds": 60})
+    runtime.update_settings({"max_seconds": 60, "verify_text_responses": stage == "verification"})
     task = runtime.create({"message": "Inspect", "budget_limits": {"max_total_seconds": 30 if stop == "lifetime" else 3600}})
     if stage == "verification":
         runtime.tools = tools = VerifyingTools()

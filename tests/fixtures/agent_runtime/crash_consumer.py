@@ -6,6 +6,7 @@ product or this consumer; recovery must use its encrypted business receipt.
 import json
 import sys
 import threading
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ from rynmesh.services import peer_box  # noqa: E402
 def answer(text="", name=None, arguments=None):
     message = {"role": "assistant", "content": text}
     if name:
-        message["tool_calls"] = [{"id": "call-" + name, "type": "function", "function": {
+        message["tool_calls"] = [{"id": "call-" + uuid.uuid4().hex, "type": "function", "function": {
             "name": name, "arguments": json.dumps(arguments or {})}}]
     return {"message": message}
 
@@ -35,6 +36,10 @@ class SyntheticModel:
             evidence = json.loads(messages[-1]["content"])
             return answer(json.dumps({"status": "passed", "summary": "Synthetic protocol check only.",
                 "uncovered_requirements": [], "evidence_refs": [e["id"] for e in evidence["evidence"]]}))
+        exposed = {spec["function"]["name"] for spec in specs}
+        needed = {"ryn_list_resource_roots", "ryn_create_text_file"}
+        if not needed <= exposed:
+            return answer(name="ryn_discover_tools", arguments={"load": sorted(needed)})
         calls = {call["id"]: call["function"]["name"] for m in messages for call in m.get("tool_calls", [])}
         receipts = [(calls.get(m.get("tool_call_id")), json.loads(m["content"])) for m in messages if m["role"] == "tool"]
         roots = next((value for name, value in receipts if name == "ryn_list_resource_roots"), None)
@@ -63,7 +68,7 @@ def main():
     key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
     runtime = AgentRuntime(AgentStore(home / "agent", key), SyntheticModel(), tools, catalog, consumer_node_id=store.peer_id)
     app.state.agent_runtime = runtime
-    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_seconds": 60})
+    runtime.update_settings({"enabled": True, "model_id": "fixture", "max_seconds": 60, "verify_text_responses": True})
     tasks = runtime.store.read()["tasks"]
     if not tasks:
         current = runtime.create({"message": "Create recovery.md with RECOVERY_ONCE_731 once, without overwriting.",

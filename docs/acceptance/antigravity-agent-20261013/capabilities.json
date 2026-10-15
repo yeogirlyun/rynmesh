@@ -1,0 +1,17 @@
+{
+  "models": [
+    {
+      "id": "local/antigravity-cli",
+      "available": true,
+      "agent_supported": true,
+      "tool_support": "supported"
+    },
+    {
+      "id": "local/codex-cli",
+      "available": true,
+      "agent_supported": true,
+      "tool_support": "supported"
+    }
+  ],
+  "at": "2026-10-13"
+}

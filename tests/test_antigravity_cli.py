@@ -7,6 +7,54 @@ from rynmesh.llm_package.adapters import AdapterError
 from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 
 
+def test_model_list_parses_progress_duplicates_and_preserves_cli_default():
+    from rynmesh.llm_package.cli_models import parse_antigravity_models
+    rows = parse_antigravity_models("Fetching available models...\nmodel-a\tModel A\nmodel-a\tDuplicate\nmodel-b\tModel B\n")
+    assert rows == [{"id": "", "name": "CLI default", "default": True},
+                    {"id": "model-a", "name": "Model A", "default": False},
+                    {"id": "model-b", "name": "Model B", "default": False}]
+
+
+@pytest.mark.parametrize("output", ["Fetching available models...", "--flag\tBad", "model\t"])
+def test_invalid_or_empty_model_list_fails(output):
+    from rynmesh.llm_package.cli_models import parse_antigravity_models
+    with pytest.raises(AdapterError):
+        parse_antigravity_models(output)
+
+
+@pytest.mark.parametrize("model", ["", "gemini-3.8-flash-high"])
+def test_selected_model_reaches_process_arguments(monkeypatch, model):
+    from types import SimpleNamespace
+    commands = []
+    adapter = CLIAgentAdapter("antigravity_cli")
+    monkeypatch.setattr(adapter, "_command_path", lambda: "agy")
+    monkeypatch.setattr(session, "spawn", lambda args, **kwargs: commands.append(args) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(session, "terminate", lambda _: None)
+    monkeypatch.setattr(session, "communicate_bounded", lambda *args, **kwargs: json.dumps({
+        "status": "SUCCESS", "response": "ok", "structured_output": {"content": "ok", "tool_calls": []}}))
+    result = adapter.infer(prompt="hello", max_tokens=32, task_id="test", timeout_s=1, model=model)
+    assert result["text"] == "ok"
+    if model:
+        assert commands[0][commands[0].index("--model") + 1] == model
+    else:
+        assert "--model" not in commands[0]
+
+
+def test_discovery_is_cached_and_returns_independent_rows(monkeypatch):
+    from types import SimpleNamespace
+    from rynmesh.llm_package import cli_models
+    cli_models._cache.clear()
+    commands = []
+    monkeypatch.setattr(cli_models, "spawn", lambda args, **kwargs: commands.append(args) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(cli_models, "terminate", lambda _: None)
+    monkeypatch.setattr(cli_models, "communicate_bounded", lambda *args, **kwargs: b"model-a\tModel A\n")
+    first = cli_models.list_models("antigravity_cli", "fixture-agy")
+    first[1]["id"] = "tampered"
+    assert cli_models.list_models("antigravity_cli", "fixture-agy")[1]["id"] == "model-a"
+    assert commands == [["fixture-agy", "models"]]
+    cli_models._cache.clear()
+
+
 def test_windows_discovery_does_not_require_explorer_path(tmp_path, monkeypatch):
     binary = tmp_path / "agy" / "bin" / "agy.exe"
     binary.parent.mkdir(parents=True)
@@ -58,3 +106,18 @@ def test_client_tool_result_continuation_and_buffered_stream(monkeypatch):
     assert seen[0]["functions"] == []
     assert result["text"] == "ok"
     assert len(events) == 2
+
+
+@pytest.mark.parametrize("answer", ["1591。暗号是蓝桥。", "```json\n{\"answer\": 1600}\n```", "A plain-text follow-up answer."])
+def test_plain_conversations_do_not_require_tool_proposal_json(monkeypatch, answer):
+    seen = []
+    def fake(adapter, prompt, **kwargs):
+        seen.append((json.loads(prompt.split("\n", 1)[1]), kwargs))
+        return {"text": answer, "message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}
+    monkeypatch.setattr(session, "infer", fake)
+    messages = [{"role": "user", "content": "37*43; remember blue bridge"}, {"role": "assistant", "content": "1591"}, {"role": "user", "content": "Add 9"}]
+    result = CLIAgentAdapter("antigravity_cli").chat({"messages": messages}, task_id="plain", timeout_s=1, model="gemini-3.8-flash-medium")
+    assert result["text"] == answer
+    assert seen[0][0]["messages"] == messages
+    assert seen[0][1]["model"] == "gemini-3.8-flash-medium"
+    assert "output_schema" not in seen[0][0]

@@ -3,12 +3,13 @@
 import json
 import re
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 
 from ..crypto import canonical_json, sha256_bytes
 from ..services import peer_box
 from .catalog_data import CATALOG
+from .craft_host import CraftError
 from .engine import AppError, contract, run
 
 PATH = "/api/peer/node-apps"
@@ -40,8 +41,23 @@ def preview_for(context, action, arguments):
 
 
 class NodeApps:
-    def __init__(self, store, peer_id, friends):
+    def __init__(self, store, peer_id, friends, plugins=None):
         self.store, self.peer_id, self.friends = store, peer_id, friends
+        self.plugins = plugins
+
+    @contextmanager
+    def _plugin_lease(self, app):
+        try:
+            with self.plugins.lease(app) if self.plugins else nullcontext():
+                yield
+        except CraftError as exc:
+            raise AppError("apps_plugin_disabled" if str(exc) == "plugin_disabled" else "apps_plugin_unavailable") from None
+
+    def _plugin_generation(self, app):
+        try:
+            return self.plugins.generation(app) if self.plugins else None
+        except CraftError:
+            raise AppError("apps_plugin_disabled") from None
 
     def _slot(self, actor, app):
         require(app in CATALOG)
@@ -63,9 +79,10 @@ class NodeApps:
         require(relation, "apps_friend_inactive")
         return relation
 
-    def _authorize(self, data, actor, app, relationship_id=None):
+    def _authorize(self, data, actor, app, relationship_id=None, *, check_plugin=True):
+        plugin_generation = self._plugin_generation(app) if check_plugin else None
         if actor == self.peer_id:
-            return "owner"
+            return fingerprint(["owner", plugin_generation]) if plugin_generation else "owner"
         relation = self._active(actor, relationship_id)
         grant = data["grants"].get(self._slot(actor, app), {})
         require(
@@ -73,7 +90,7 @@ class NodeApps:
             and grant.get("relationship_id") == relation["relationship_id"],
             "apps_access_denied",
         )
-        return grant["generation"]
+        return fingerprint([grant["generation"], plugin_generation]) if plugin_generation else grant["generation"]
 
     def _context(self, data, actor, app, relationship_id=None):
         generation = self._authorize(data, actor, app, relationship_id)
@@ -90,6 +107,13 @@ class NodeApps:
         }
 
     def _handle(self, actor, operation, value, relationship_id=None):
+        # Historical receipts remain auditable with the original friend grant.
+        # Every new view/preview/invocation must hold an installed-plugin lease.
+        lease = self._plugin_lease(value.get("app")) if operation not in {"catalog", "receipt"} else nullcontext()
+        with lease:
+            return self._handle_active(actor, operation, value, relationship_id)
+
+    def _handle_active(self, actor, operation, value, relationship_id=None):
         gate = self.friends().store._guard() if actor != self.peer_id else nullcontext()
         with gate:
             if operation == "catalog":
@@ -98,13 +122,13 @@ class NodeApps:
                 result = []
                 for app, item in CATALOG.items():
                     try:
-                        self._authorize(data, actor, app, relationship_id)
+                        context = self._context(data, actor, app, relationship_id)
                     except AppError:
                         continue
                     result.append(
                         {
                             **deepcopy(item),
-                            "workspace_context": self._context(data, actor, app, relationship_id),
+                            "workspace_context": context,
                         }
                     )
                 return {"provider_peer": self.peer_id, "apps": result, "price_ryncoin": "0"}
@@ -124,7 +148,7 @@ class NodeApps:
             if operation == "receipt":
                 require(set(value) == {"app", "operation_id"})
                 data = self.store.read()
-                self._authorize(data, actor, app, relationship_id)
+                self._authorize(data, actor, app, relationship_id, check_plugin=False)
                 return deepcopy(
                     data["workspaces"]
                     .get(self._slot(actor, app), {})

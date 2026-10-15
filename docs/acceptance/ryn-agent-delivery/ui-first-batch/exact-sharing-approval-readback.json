@@ -1,0 +1,112 @@
+{
+  "kind": "synthetic_ui_only",
+  "formal_case_score": false,
+  "checks": {
+    "waiting_without_write": true,
+    "exact_recipient": true,
+    "old_inactive_grant_revealed": true,
+    "scope_change": true
+  },
+  "task_id": "agent_a63601e785db41408dbcccfdf5346096",
+  "pending_approval": {
+    "arguments": {
+      "model_id": "local/src-8a05e60b10554480-a3cfb2a53f09",
+      "relationship_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "arguments_sha256": "2500f85ec10c901509758236de0e5f5f94c5a92a83219e3186984a16ca781ba6",
+    "call_id": "exact-share",
+    "control_revision": 2,
+    "goal_revision": 1,
+    "id": "approval_8b8f8c5c3a5e4068af9244e293f75157",
+    "preview": {
+      "after": {
+        "recipients": [
+          {
+            "name": "",
+            "peer_id": "synthetic-node-a",
+            "relationship_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "scope": "friends",
+        "sharing": true
+      },
+      "before": {
+        "friend_grants": [
+          {
+            "allowed": true,
+            "effective": true,
+            "peer_id": "synthetic-node-a",
+            "relationship_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "revision": 1,
+            "service_id": "src-8a05e60b10554480-a3cfb2a53f09"
+          },
+          {
+            "allowed": true,
+            "effective": false,
+            "peer_id": "synthetic-node-b",
+            "relationship_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "revision": 1,
+            "service_id": "src-8a05e60b10554480-a3cfb2a53f09"
+          }
+        ],
+        "personal_space": {
+          "ai_access": "space",
+          "members": [
+            {
+              "name": "ryn-agent-acceptance-wyanc7fa",
+              "node_name": null,
+              "peer_id": "FMkJRZnrwqXLpMIVijmnVxgze9TGQnm33dLAA4bIBdI=",
+              "removed": false,
+              "role": "manager",
+              "status": null
+            }
+          ],
+          "membership": "active",
+          "space_revision": 1
+        },
+        "scope": "personal_space",
+        "sharing": false
+      },
+      "configuration_revision": "e91ffaffe1024e8faa76d12726491e9f",
+      "model": "验收用本机模型 · acceptance-model",
+      "model_id": "local/src-8a05e60b10554480-a3cfb2a53f09",
+      "other_friend_access": "revoke",
+      "relationships": [
+        {
+          "messaging_pub": null,
+          "node_name": null,
+          "peer_id": "synthetic-node-a",
+          "relationship_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "revision": null,
+          "signing_pub": null,
+          "status": "active"
+        },
+        {
+          "messaging_pub": null,
+          "node_name": null,
+          "peer_id": "synthetic-node-b",
+          "relationship_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "revision": null,
+          "signing_pub": null,
+          "status": "inactive"
+        }
+      ],
+      "service_id": "src-8a05e60b10554480-a3cfb2a53f09",
+      "title": "Share this model with exactly one friend",
+      "verification_scope": "persisted configuration and exact friend grants; receiver connectivity requires separate evidence"
+    },
+    "preview_sha256": "57480591146dde991b7ec55210f9f98d2db51a27a9fc7913fa30489af22f8805",
+    "scope_revision": 1,
+    "title": "Share one owned configured model with exactly one active friend in ONE approved transaction. Copy model_id from ryn_list_models id and relationship_id from ryn_list_devices friends. Atomically enables friends-only sharing, grants that recipient and revokes all other friend grants for this model. Preview lists all prior grants and the exact recipient. Use for a request to share a model with a specific friend/device; receiver connectivity is a separate check.",
+    "tool": "ryn_share_model_with_friend"
+  },
+  "screenshots": {
+    "exact-sharing-approval-top.jpg": "3388c76f3a088c9b7a77668150c74734226d74bcfa963445e6ffc204020b1fdb",
+    "exact-sharing-approval-recipients.jpg": "8d747ea6cfe1d2c276ad6c4711033bd80dfc0cf40b9a37ffd8d7e0fa71ec179e"
+  },
+  "limitations": [
+    "Isolated synthetic relationships, no real peer/network exposure.",
+    "Approval not submitted; execution separately tested in real process controller.",
+    "1280x720 viewport requires scrolling; two screenshots retain target and recipient/revocation views."
+  ]
+}

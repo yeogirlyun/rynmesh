@@ -1,0 +1,91 @@
+{
+  "title": "Ryn 设备互传最终设计交付",
+  "approvedDate": "2026-10-13",
+  "timezone": "Asia/Hong_Kong",
+  "entry": "index.html",
+  "requirements": "HANDOFF.md",
+  "prompt": "OPUS_PROMPT.md",
+  "productionImplemented": false,
+  "files": [
+    {
+      "name": "01-devices.png",
+      "bytes": 79377,
+      "sha256": "42f9b5a9af38668b98eaeed2b4c360b61e11077de3b25cce9874dbb63a9ff717"
+    },
+    {
+      "name": "02-send.png",
+      "bytes": 96383,
+      "sha256": "d464c44c697ed162f248006e1a3d57b39592e557364f09d77bba025da95924a7"
+    },
+    {
+      "name": "03-conversation.png",
+      "bytes": 73606,
+      "sha256": "e134fa62ffa302e73e121e1de40f31e071c73562b435250373175af37f51c16a"
+    },
+    {
+      "name": "04-transfers.png",
+      "bytes": 65001,
+      "sha256": "5c19fea6a250d3c75f2ef668e3ead97754f68f4c4ad2461da88b928d3b36da79"
+    },
+    {
+      "name": "05-incoming.png",
+      "bytes": 97327,
+      "sha256": "43bce7ccbd515e08619310697b890d02b6d8726a7f703bcf79b2b215fd9e0fff"
+    },
+    {
+      "name": "06-mobile-chat.png",
+      "bytes": 51614,
+      "sha256": "06d547c3c4621f89a7072533090d1aa06cf3783fedc84d4db242035dd93b362c"
+    },
+    {
+      "name": "07-mobile-devices.png",
+      "bytes": 58998,
+      "sha256": "779f1c2e243b4e2837ec619c54f81c94f60e4640cd5a2ce99f46fb971ba10fa6"
+    },
+    {
+      "name": "08-dark-chat.png",
+      "bytes": 75717,
+      "sha256": "23f0e5e732d1e2ef38608581d997fc6803d56b3720fb3cd4a493db1a3d8290d4"
+    },
+    {
+      "name": "09-context-menu.png",
+      "bytes": 91430,
+      "sha256": "13c369e7219b3b0ff3f046281f1d3e4b0087c6ccb7c98e5c25785c58b355db75"
+    },
+    {
+      "name": "HANDOFF.md",
+      "bytes": 19050,
+      "sha256": "a2264d442295475e59c1cac3f2a9c067f1ce2308371da37bdaa4e479751c2181"
+    },
+    {
+      "name": "index.html",
+      "bytes": 159749,
+      "sha256": "9d52ab4a6d31f69a8668526fe59a1f009ce0f14ad28ea0a053f73a6589946549"
+    },
+    {
+      "name": "OPUS_PROMPT.md",
+      "bytes": 4256,
+      "sha256": "8638ac83155d44e83ed0f29dd520d2155c50379e6715e0315d26e56a96bd9fd7"
+    },
+    {
+      "name": "README.md",
+      "bytes": 2384,
+      "sha256": "90ba6424db4498ebe583093ca063c5db0af4791f8d115dc0b20b528b32dff008"
+    },
+    {
+      "name": "source.html",
+      "bytes": 67859,
+      "sha256": "a1bf55a368c0e276ca4fb93bf7662ca40fe7fcbb61332bd97d5a6317053584bf"
+    },
+    {
+      "name": "verification.json",
+      "bytes": 2755,
+      "sha256": "64a0236d02a3830585fe741199eeb3676b1683662056b6a57e5dccc40579fdbb"
+    },
+    {
+      "name": "verify.mjs",
+      "bytes": 5645,
+      "sha256": "ba12848a4a3ae2eac35909accf0ea6cc516e6c5cc95ae814a6b9458eff7bb3e3"
+    }
+  ]
+}

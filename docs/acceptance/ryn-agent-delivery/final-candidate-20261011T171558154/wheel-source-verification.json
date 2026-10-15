@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "mode": "wheel-source",
+  "python": "D:\\code\\rynmesh\\.venv\\Scripts\\python.exe",
+  "python_version": "3.12.10",
+  "hostname": "子陵台式",
+  "package_root": null,
+  "expected_python_files": 237,
+  "actual_python_files": 237,
+  "missing": [],
+  "extra": [],
+  "changed": [],
+  "imports": [],
+  "services_started": false,
+  "model_calls": 0
+}

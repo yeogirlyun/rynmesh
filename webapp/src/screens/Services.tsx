@@ -14,7 +14,7 @@ import type {
   LLMSetupRequest,
   TaskBalanceSummary,
 } from "../domain/nodeClient";
-import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
+import { isServiceUsable, LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import type { JobCapacity, WorkResult } from "../domain/types";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
@@ -177,7 +177,7 @@ export default function Services() {
     || estimatedAmount <= selectedLlm.service.pricing.maximum_per_task;
   const contextWithinProviderLimit = !selectedLlm || !maxTokensValid
     || estimatedInputTokens + parsedMaxTokens <= selectedLlm.service.context_window;
-  const providerAvailable = Boolean(selectedLlm?.online)
+  const providerAvailable = Boolean(selectedLlm && isServiceUsable(selectedLlm))
     && (selectedLlm?.capacity?.available === undefined || selectedLlm.capacity.available > 0);
   const balanceAvailable = !llmBalance || llmBalance.available >= estimatedAmount;
   const canSubmitLlm = Boolean(selectedLlm && llmPrompt.trim() && maxTokensValid
@@ -851,7 +851,7 @@ export default function Services() {
           </label>
           {selectedLlm ? (
             <div className="service-result">
-              <Chip tone={selectedLlm.online ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</Chip>
+              <Chip tone={isServiceUsable(selectedLlm) ? "ok" : "warn"}>{llmServiceAvailability(selectedLlm)}</Chip>
               <span>
                 {selectedLlm.node_name || shortPeerId(selectedLlm.peer_id)} · {selectedLlm.service.package_id}
                 {tr(" · Context {{v0}} · max output {{v1}}", { v0: selectedLlm.service.context_window, v1: selectedLlm.service.max_output_tokens })}
@@ -893,7 +893,7 @@ export default function Services() {
               {tr("Based on approximately")} {estimatedInputTokens} {tr("input tokens and a")} {Number.isFinite(parsedMaxTokens) ? parsedMaxTokens : 0}{tr("-token output cap. Final settlement uses actual usage; unused reservation is released.")}
             </small>
             {!selectedLlm ? <Chip tone="warn">Choose a Provider</Chip> : null}
-            {selectedLlm && !selectedLlm.online ? <Chip tone="warn">{llmServiceAvailability(selectedLlm)}</Chip> : null}
+            {selectedLlm && !isServiceUsable(selectedLlm) ? <Chip tone="warn">{llmServiceAvailability(selectedLlm)}</Chip> : null}
             {selectedLlm?.capacity?.available === 0 ? <Chip tone="warn">Provider busy</Chip> : null}
             {!maxTokensValid ? <Chip tone="danger">Enter 1–{selectedLlm?.service.max_output_tokens || "provider max"} whole tokens</Chip> : null}
             {!contextWithinProviderLimit ? <Chip tone="danger">Prompt plus output exceeds the Provider context window</Chip> : null}

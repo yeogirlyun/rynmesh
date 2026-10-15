@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-10-09T08:35:26.562435+00:00",
+  "capture_stage": "candidate process started; initial capability probe pending; no source edits since launch",
+  "files": {
+    "rynmesh/agent_runtime/runtime.py": "fbdf1cecd171070c3e229b821a74621ec5dfb4b144c1ff82c6ad102a94a1dc62",
+    "rynmesh/agent_runtime/store.py": "2644264b36de1f21233f2fd086f6ebcaa85b947ab2d5eee6a7c1a2658ecdee81",
+    "rynmesh/agent_runtime/tools.py": "42559fc45660ec109414d386979d3c11c4a10e24ec280b634de7ed460a879d3b",
+    "rynmesh/agent_runtime/bridge.py": "ac0973146df6dd15e5c570c5abc08a46d22307fb671e38df6bf40a194219b64d",
+    "rynmesh/agent_runtime/models.py": "b4188501e833ef9262bcb8d0c78a673fbb7f21452bf49c353dff3c42e2725234",
+    "rynmesh/llm_package/sources.py": "f2ee4d99dca5479de516666a2e1451a71bbd45abe754d34dffe3fa579f92b180",
+    "rynmesh/llm_package/adapters.py": "b53a975d298dea7372f03f8666ca952c7a41e998966786b7642bbcd03ca68f0b",
+    "rynmesh/llm_package/tool_capabilities.py": "278a2ce30eddd79145ea2df6ebd62e817e0d714bdb84d78b292f96aafdee332b",
+    "rynmesh/llm_package/api_formats.py": "ef7c3db7f16fe30cedfae36f329e49b21eef73b3f8e61299da1c35023fe70a0f",
+    "rynmesh/llm_package/chat.py": "1a9b6bed715727555b05bc354a7016c41286f0e7fa72a11ac956404de5aebbab",
+    "rynmesh/llm_package/routes.py": "4441270a208bfa08bf2e13b97ce8481f0d5232be951309b775ebd49ff45ea540",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_baseline.py": "df24db24cac0eff8be078cb35349a931dfd18a9fdada7ebf809f1cb86a6d3cca"
+  },
+  "limits": {
+    "model_calls": 16,
+    "active_seconds": 600,
+    "context_chars": 100000,
+    "output_chars": 20000,
+    "adapter_max_output_tokens": 4096,
+    "runs": 3
+  },
+  "prompt": "identical to original baseline; no user coaching between model turns"
+}

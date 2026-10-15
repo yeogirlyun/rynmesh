@@ -1,0 +1,44 @@
+{
+  "scope": "Two physical Windows hosts; real signed personal-space invitation via UI; no seeded membership",
+  "date": "2026-10-13T12:39:22.874Z",
+  "sender": {
+    "base": "http://127.0.0.1:8791",
+    "lan": "172.16.8.191",
+    "peer": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA="
+  },
+  "receiver": {
+    "base": "http://127.0.0.1:18882",
+    "lan": "172.16.8.82",
+    "peer": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM="
+  },
+  "space": {
+    "id": "1d49828372304f77b87197e2848fac60",
+    "name": "My space"
+  },
+  "members": [
+    {
+      "peer_id": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+      "name": "子陵台式",
+      "removed": false,
+      "role": "manager"
+    },
+    {
+      "peer_id": "oaeosdSDNt267u22Gbk8BPTLNuqSFCxK7bcl0WTbUho=",
+      "name": "周磊的MacBook Air",
+      "removed": false,
+      "role": "device"
+    },
+    {
+      "peer_id": "q0q+vsbyDkkWJ+a+di6voFIxNnVoxXeimyDuQuVAR/s=",
+      "name": "DESKTOP-J31FD3I",
+      "removed": false,
+      "role": "device"
+    },
+    {
+      "peer_id": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+      "name": "LAN Windows 82",
+      "role": "device",
+      "removed": false
+    }
+  ]
+}

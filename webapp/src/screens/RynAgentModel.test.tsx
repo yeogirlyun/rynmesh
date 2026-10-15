@@ -25,7 +25,7 @@ it("requires explicit owner-text destination confirmation and defaults to revoki
   await user.selectOptions(screen.getByRole("combobox", { name: "Switch task model" }), "new");
   await screen.findByText(/previous owner messages/);
   expect(screen.getByText(/Source.*new-source/)).toBeVisible();
-  expect(screen.getByRole("checkbox", { name: /Reauthorize these directories/ })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Reauthorize .*directories/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Save task model and keep paused" })).toBeDisabled();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Save task model and keep paused" }));
@@ -33,18 +33,27 @@ it("requires explicit owner-text destination confirmation and defaults to revoki
   expect(writes).toHaveBeenCalledWith({ model_id: "new", expected_control_revision: 7, expected_scope_revision: 4, expected_destination: preview.destination, confirm_data_destination: true, transfer_resource_scope: false, client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/) });
 });
 
+it.each(["unknown", "unsupported"] as const)("allows a supported model destination with %s diagnostic probe evidence", async tool_support => {
+  const { user, view } = await page();
+  view.rerender(<RynAgentModel task={task} models={models.map(model => ({ ...model, tool_support }))} defaultModelID="old" busy={false} onChange={vi.fn()} />);
+  expect(screen.getByRole("option", { name: /New model/ })).toBeEnabled();
+  expect(screen.getByRole("option", { name: /Offline model/ })).toBeDisabled();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Switch task model" }), "new");
+  expect(await screen.findByRole("checkbox", { name: /I confirm/ })).toBeEnabled();
+});
+
 it("resets destination consent when resource transfer changes and does not revive retained selections", async () => {
   const { user } = await page();
   await user.selectOptions(screen.getByRole("combobox"), "new"); await screen.findByText(/previous owner messages/);
   const consent = screen.getByRole("checkbox", { name: /I confirm/ });
-  await user.click(consent); await user.click(screen.getByRole("checkbox", { name: /Reauthorize these directories/ }));
+  await user.click(consent); await user.click(screen.getByRole("checkbox", { name: /Reauthorize .*directories/ }));
   expect(consent).not.toBeChecked();
 });
 
 it("blocks transfer for an ungranted retained selection while keeping its directories visible", async () => {
   const { user } = await page(task, { ...preview, current_scope_authorized: false });
   await user.selectOptions(screen.getByRole("combobox"), "new");
-  expect(await screen.findByRole("checkbox", { name: /Reauthorize these directories/ })).toBeDisabled();
+  expect(await screen.findByRole("checkbox", { name: /Reauthorize .*directories/ })).toBeDisabled();
   expect(screen.getByText("docs · reports")).toBeVisible();
 });
 
@@ -79,4 +88,15 @@ it("keeps an uncertain full request for explicit retry across changed versions w
   await user.click(screen.getByRole("button", { name: "Check original switch request" }));
   await waitFor(() => expect(received).toHaveBeenCalledTimes(2));
   expect(received.mock.calls[1][0]).toEqual(received.mock.calls[0][0]);
+});
+
+
+it("shows the project when no NAS resources are selected and defaults to revoking its access", async () => {
+  const { user, writes } = await page(task, { ...preview, current_project: { id: "project-1", name: "sample-backend", path: "D:/code/sample-backend" }, current_scope_selection: { resources: [], allow_model_data: false } });
+  await user.selectOptions(screen.getByRole("combobox"), "new");
+  expect(await screen.findByText("D:/code/sample-backend")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: /Reauthorize this project/ })).not.toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Save task model and keep paused" }));
+  await waitFor(() => expect(writes).toHaveBeenCalledWith(expect.objectContaining({ transfer_resource_scope: false })));
 });

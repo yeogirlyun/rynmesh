@@ -151,6 +151,7 @@ class CLISources:
             if existing and existing.get("manifest"):
                 # Never reset an owner's existing sharing/configuration on repeat setup.
                 result = {"configured": True, "kind": kind, "already_configured": True,
+                          "agent_usable": CLIAgentAdapter(kind).capabilities()["tools"],
                           "model_id": "local/" + kind.replace("_", "-"),
                           "publication_enabled": bool(existing.get("publication_enabled")), "chat_probe": "not_run"}
             else:
@@ -163,6 +164,7 @@ class CLISources:
                     return {"ok": True}
                 connected = connect_cli(kind=kind, root=self.path.parent, cancel_check=cancelled, self_test_fn=self_test)
                 result = {"configured": True, "kind": kind, "already_configured": False,
+                          "agent_usable": CLIAgentAdapter(kind).capabilities()["tools"],
                           "model_id": "local/" + kind.replace("_", "-"), "publication_enabled": False, "chat_probe": "passed"}
                 with file_transaction(self.path.with_suffix(".lock")):
                     self.check(context, cancelled)
@@ -181,7 +183,8 @@ class CLISources:
             tested = self.services["probe_service_tools"](manager.manifest.package_id, probe)
             self.check(context, cancelled)
             result = {**tested, "kind": kind, "model_id": "local/" + manager.manifest.package_id,
-                      "agent_usable": tested["tool_support"] == "supported",
+                      "agent_usable": CLIAgentAdapter(kind).capabilities()["tools"],
+                      "probe_passed": tested["tool_support"] == "supported",
                       "snapshot": self.snapshot(kind), "checked_at": datetime.now(timezone.utc).isoformat()}
         ledger.update(operation_id, "confirmed", result=result)
         return result
@@ -223,7 +226,7 @@ class CLISources:
                 match = match and marker.get("result") == result and marker.get("binding", {}).get("operation_id") == receipt["operation_id"]
             match = match and bool(entry.get("publication_enabled")) == result.get("publication_enabled")
         if receipt["tool"] == TEST:
-            match = match and result.get("agent_usable") is True
+            match = match and result.get("tool_support") == "supported"
         return {"status": "passed" if proven and match else "unknown", "checked_at": datetime.now(timezone.utc).isoformat(),
                 "evidence": {"operation_attribution": "durable_cli_receipt" if proven else "not_established",
                              "kind": kind, "configuration_current": match, "scope": "local CLI setup/tool capability; not receiver connectivity"}}

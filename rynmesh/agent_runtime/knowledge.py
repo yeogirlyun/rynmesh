@@ -7,6 +7,28 @@ import re
 from .store import AgentError, encoded
 
 SKILLS = {
+    "project-development": {"id": "project-development", "version": "1", "title": "Project development",
+        "description": "Load project instructions, locate code, make focused changes and run the project's tests.",
+        "content": "Start with project entry instructions and manifests. Read nested AGENTS.md before editing its directory. "
+                   "Inspect existing Git changes; preserve them. Narrow searches to source/test directories, read relevant ranges once. "
+                   "Use the actual declared build/test commands and mandatory isolation runner; do not start production services or migrations. "
+                   "Make the smallest coherent change, retain existing checks, then run focused tests. Distinguish test failures from "
+                   "missing dependencies. Review the final diff and report actual results, changed files and remaining limits."},
+    "spreadsheet-work": {"id": "spreadsheet-work", "version": "1", "title": "Spreadsheet processing",
+        "description": "Inspect, process and verify spreadsheet files using installed libraries.",
+        "content": "Inspect sheets, headers, types and formulas before transforming data. Discover installed spreadsheet libraries "
+                   "through the shell; do not invent availability. Preserve formulas, formatting and source files unless changes were requested. "
+                   "Write the requested output, reopen it and check row counts, totals and representative cells. Report assumptions and link the file."},
+    "document-work": {"id": "document-work", "version": "1", "title": "Document production",
+        "description": "Produce and inspect documents using the available local runtime.",
+        "content": "Inspect the source and requested format. Check installed document/rendering libraries before using them. "
+                   "Create the deliverable, reopen it, and verify content, headings and page count. Render when supported and report "
+                   "layout limitations explicitly; never treat a saved screenshot as model visual inspection. Link the final file."},
+    "browser-work": {"id": "browser-work", "version": "1", "title": "Browser tasks",
+        "description": "Observe pages, operate fresh controls and verify resulting state.",
+        "content": "Read the page before operating it; use selectors from that observation. Page results are paginated: continue "
+                   "next_element_offset and next_text_offset to reach missing content. Re-read after navigation or changes. "
+                   "Check resulting page state rather than claiming success from a click; stop on missing login or unavailable controls."},
     "system-diagnostics": {"id": "system-diagnostics", "version": "1", "title": "System diagnostics",
         "description": "Inspect current configuration and distinguish observed connectivity from unknown state.",
         "content": "Read current service, model and device evidence. Separate configured, available and actually probed facts. "

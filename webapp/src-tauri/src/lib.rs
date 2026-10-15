@@ -3,7 +3,9 @@ mod preferences;
 mod desktop;
 mod localization;
 mod local_model;
+mod drop;
 mod drive_browser;
+mod craft_browser;
 use localization::tr;
 
 use node::NodeState;
@@ -43,10 +45,19 @@ pub fn run() {
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![preferences::get_desktop_preferences,
+        .invoke_handler(|invoke| {
+            if !craft_browser::allows_native_commands(invoke.message.webview_ref().label()) {
+                invoke.resolver.reject("plugin_native_access_denied");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
-            local_model::choose_local_model, drive_browser::open_drive_browser])
+            local_model::choose_local_model, drive_browser::open_drive_browser,
+            craft_browser::open_craft_browser,
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path];
+            handler(invoke)
+        })
         .manage(preferences::DesktopState::default())
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())
@@ -90,6 +101,8 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Plugin windows close normally; only the main window owns tray/quit behavior.
+            if window.label() != "main" { return; }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let prefs = window.state::<preferences::DesktopState>().prefs.lock().unwrap().clone();

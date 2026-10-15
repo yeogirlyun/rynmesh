@@ -61,6 +61,28 @@ function renderChat(mode: "fixture" | "live" = "fixture", route = "/services/pri
   return { ...result, client, confirm, submit, user: userEvent.setup() };
 }
 
+it.each([true, false])("selects Antigravity model from the correct device (local=%s)", async (local) => {
+  const { client, submit, user } = renderChat();
+  const discover = client.listLLMServices;
+  vi.spyOn(client, "listLLMServices").mockImplementation(async network =>
+    (await discover(network)).map(row => ({ ...row, local_only: local,
+      cli_models: local ? undefined : [{ id: "", name: "CLI default", default: true }, { id: "gemini-test", name: "Gemini Test", default: false }],
+      service: { ...row.service, adapter: "antigravity_cli" } })));
+  const models = vi.spyOn(client, "getCLIModels").mockResolvedValue({ models: [
+    { id: "", name: "CLI default", default: true },
+    { id: "gemini-test", name: "Gemini Test", default: false },
+  ] });
+  await waitFor(() => expect(screen.getByLabelText("Antigravity model")).toBeEnabled());
+  if (local) expect(models).toHaveBeenCalledWith("antigravity_cli");
+  else expect(models).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Antigravity model")).toHaveTextContent("CLI default");
+  await user.click(screen.getByLabelText("Antigravity model"));
+  await user.click(screen.getByRole("option", { name: "Gemini Test" }));
+  await user.type(screen.getByLabelText("Message Private AI"), "Use this model");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ cli_model: "gemini-test" })));
+});
+
 // A running task resumed from history (as opposed to one just submitted in
 // this session): save a "running" conversation directly, then unmount and
 // remount so the fresh render's initial load picks it up, matching how a

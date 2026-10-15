@@ -1,0 +1,41 @@
+.ra-workspace .ra-composer-shell { width: 100%; color: #303030; }
+.ra-composer-context { display: flex; align-items: center; gap: 24px; min-height: 39px; margin: 0 14px -1px; padding: 3px 10px 4px 13px; border-radius: 15px 15px 0 0; background: #f5f5f5; font-size: 12px; }
+.ra-workspace .ra-context-project, .ra-workspace .ra-context-settings { display: inline-flex; align-items: center; gap: 7px; border: 0; padding: 4px 0; background: transparent; color: #3b3b3b; font-size: 12px; min-width: 0; }
+.ra-context-project { max-width: 58%; }
+.ra-context-project > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ra-context-project svg, .ra-context-device svg { flex-shrink: 0; }
+.ra-context-device { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.ra-workspace .ra-context-settings { margin-left: auto; color: #929292; padding: 5px; }
+.ra-workspace .ra-composer { padding: 15px 13px 10px; border: 1px solid #e7e7e7; border-radius: 23px; background: #fff; box-shadow: 0 2px 9px #00000006; color: #303030; }
+.ra-workspace .ra-composer:focus-within { border-color: #dedede; }
+.ra-workspace .ra-composer textarea, .ra-workspace .ra-composer textarea:focus, .ra-workspace .ra-composer textarea:focus-visible { display: block; min-height: 66px; max-height: 220px; width: 100%; margin: 0; padding: 0 1px; border: 0; border-radius: 0; outline: none; box-shadow: none; background: transparent; color: #303030; font: 14px/1.55 "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; resize: none; }
+.ra-workspace .ra-composer textarea::placeholder { color: #8c8c8c; }
+.ra-workspace .ra-composer-controls { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.ra-workspace .ra-composer-controls > .ra-composer-left, .ra-workspace .ra-composer-controls > .ra-composer-right { display: flex; align-items: center; flex-wrap: nowrap; flex: 0 1 auto; gap: 8px; min-width: 0; }
+.ra-workspace .ra-composer-controls > .ra-composer-right { margin-left: auto; gap: 9px; }
+.ra-composer-left .ra-composer-options > summary { display: flex; align-items: center; justify-content: center; width: 25px; height: 29px; padding: 0; color: #383838; list-style: none; }
+.ra-composer-left > .ra-composer-options { order: 0; }
+.ra-composer-options > summary::-webkit-details-marker, .ra-composer-permissions > summary::-webkit-details-marker { display: none; }
+.ra-composer-options-panel { color: var(--pf-text); text-align: left; }
+.ra-composer-permissions { position: relative; font-size: 12px; }
+.ra-composer-permissions > summary { display: flex; align-items: center; gap: 5px; height: 29px; padding: 0 2px; list-style: none; cursor: pointer; white-space: nowrap; }
+.ra-composer-permissions > summary.ra-full-access { color: #d96623; }
+.ra-composer-permissions > summary > svg:last-child { opacity: .65; }
+.ra-permissions-menu { position: absolute; bottom: calc(100% + 12px); left: 0; z-index: 30; width: 220px; padding: 5px; border: 1px solid #e5e5e5; border-radius: 12px; background: var(--pf-panel); box-shadow: 0 6px 24px #0002; color: var(--pf-text); }
+.ra-workspace .ra-permissions-menu button { display: flex; justify-content: flex-start; width: 100%; border: 0; background: transparent; padding: 9px 10px; border-radius: 7px; font-size: 12px; }
+.ra-workspace .ra-permissions-menu button:hover, .ra-workspace .ra-permissions-menu button[aria-checked="true"] { background: var(--pf-subtle); }
+.ra-permissions-menu > small { display: block; padding: 6px 10px; color: var(--pf-muted); font-size: 11px; line-height: 1.5; }
+.ra-workspace .ra-voice { flex-shrink: 0; width: 25px; height: 29px; border: 0; border-radius: 5px; padding: 3px; color: #323232; background: transparent; }
+.ra-workspace .ra-voice:disabled { opacity: .42; }
+.ra-workspace .ra-voice.active { color: #e04f3f; background: #fff1ef; }
+.ra-workspace .ra-composer .ra-send { flex-shrink: 0; width: 30px; height: 30px; min-height: 30px; border-radius: 50%; padding: 0; background: #3c83f6; border-color: #3c83f6; color: #fff; }
+.ra-workspace .ra-composer .ra-send:disabled { background: #e5e5e5; border-color: #e5e5e5; color: #a0a0a0; opacity: 1; }
+.ra-voice-error { font-size: 11px; color: var(--pf-muted); margin: 8px 2px 0; }
+[data-theme="dark"] .ra-composer-shell { color: var(--pf-text); }
+[data-theme="dark"] .ra-composer-context { background: #29323d; }
+[data-theme="dark"] .ra-workspace .ra-context-project, [data-theme="dark"] .ra-context-device, [data-theme="dark"] .ra-composer-permissions > summary, [data-theme="dark"] .ra-workspace .ra-voice { color: var(--pf-text); }
+[data-theme="dark"] .ra-workspace .ra-composer { background: var(--pf-panel); border-color: var(--pf-line); color: var(--pf-text); }
+[data-theme="dark"] .ra-workspace .ra-composer:focus-within { border-color: var(--pf-strong); }
+[data-theme="dark"] .ra-workspace .ra-composer textarea { color: var(--pf-text); }
+[data-theme="dark"] .ra-composer-permissions > summary.ra-full-access { color: #f8aa71; }
+@media (max-width: 760px) { .ra-composer-context { gap: 13px; margin-inline: 10px; padding-left: 9px; font-size: 11px; } .ra-workspace .ra-context-project { font-size: 11px; } .ra-workspace .ra-composer { padding-inline: 12px; } .ra-workspace .ra-composer-controls { gap: 5px; } .ra-workspace .ra-composer-controls > .ra-composer-left { gap: 3px; } .ra-workspace .ra-composer-controls > .ra-composer-right { gap: 4px; } .ra-composer-permissions > summary { font-size: 11px; } .ra-permissions-menu { left: -25px; } }

@@ -161,10 +161,10 @@ describe("Private AI chat", () => {
     }
   });
 
-  it("keeps Codex context at the origin without creating a provider conversation", async () => {
+  it.each(["codex_cli", "antigravity_cli"] as const)("keeps %s model selection at the origin across turns", async (adapter) => {
     const service: LLMServiceRecord = {
       peer_id: "local-codex", node_name: "This PC", local_only: true, online: true,
-      service: { package_id: "codex-cli", model_alias: "Codex CLI", adapter: "codex_cli",
+      service: { package_id: "codex-cli", model_alias: "Codex CLI", adapter,
         capabilities: ["text-generation"], context_window: 32768, max_output_tokens: 256,
         pricing: { currency: "DEV_TASK_BALANCE", input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 0 },
         privacy: { compute_node_sees_plaintext: true } },
@@ -175,10 +175,10 @@ describe("Private AI chat", () => {
       { id: "model-a", name: "Model A", default: true }, { id: "model-b", name: "Model B", default: false },
     ] });
     submit.mockResolvedValue({ task_id: "private-task", state: "succeeded", output: "Private answer" });
-    await waitFor(() => expect(screen.getByLabelText("Codex model")).toBeEnabled());
-    await user.click(screen.getByLabelText("Codex model"));
+    await waitFor(() => expect(screen.getByLabelText(adapter === "codex_cli" ? "Codex model" : "Antigravity model")).toBeEnabled());
+    await user.click(screen.getByLabelText(adapter === "codex_cli" ? "Codex model" : "Antigravity model"));
     await user.click(screen.getByRole("option", { name: "Model B" }));
-    expect(screen.getByLabelText("AI service")).toHaveTextContent("ChatGPT");
+    expect(client.getCLIModels).toHaveBeenCalledWith(adapter);
     await user.type(screen.getByLabelText("Message AI chat"), "Remember kumquat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await screen.findByText("Private answer");

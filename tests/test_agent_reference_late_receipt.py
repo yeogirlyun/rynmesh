@@ -35,6 +35,12 @@ def test_native_commit_cancel_original_late_receipt_and_same_session_readback(co
             supports_destination_binding = True
 
             def complete(self, _model, messages, _specs, _cancelled, **_options):
+                from importlib import import_module
+                helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+                discovery = helper.discover(_specs, ["ryn_list_resource_roots", "ryn_create_text_file"])
+                if discovery:
+                    return discovery
+                messages = helper.business_history(messages)
                 calls.append(messages)
                 roots = next((json.loads(m["content"])["roots"] for m in messages
                               if m["role"] == "tool" and "roots" in json.loads(m["content"])), None)

@@ -1,0 +1,4 @@
+
+> @rynmesh/webapp@0.7.0 lint
+> tsc -b --noEmit
+

@@ -221,3 +221,18 @@ def test_nas_source_copy_requires_owner_and_ai_permission_and_survives_source_ch
         assert client.get("/api/local/ask/contexts/" + copy["library_id"], headers=auth).json()["text"] == "Synthetic original source"
         plugin.enable(False)
         assert client.post(route, headers=auth, json=body).status_code == 409
+
+
+@pytest.mark.parametrize("advertised", [True, False])
+def test_remote_cli_review_requires_advertised_concrete_model(tmp_path, advertised):
+    service, conversation, _ = setup(tmp_path)
+    rows = service.catalog("network")
+    rows[0]["service"]["adapter"] = "antigravity_cli"
+    rows[0]["cli_models"] = [{"id": "gemini-3.8-flash-medium"}] if advertised else []
+    service.catalog = lambda _: rows
+    conversation["cliModel"] = "gemini-3.8-flash-medium"
+    if advertised:
+        assert service.preview(conversation, "hello")["cli_model"] == conversation["cliModel"]
+    else:
+        with pytest.raises(ConversationError, match="ask_cli_model_unavailable"):
+            service.preview(conversation, "hello")

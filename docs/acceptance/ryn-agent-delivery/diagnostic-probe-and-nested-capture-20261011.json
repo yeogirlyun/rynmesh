@@ -1,0 +1,48 @@
+{
+  "kind": "development-fix-record",
+  "at": "2026-10-11T06:27:30.565818+00:00",
+  "formal_pass": false,
+  "independent_review": "pending_Astra_usage_limit",
+  "production_change": "Diagnostic model observations distinguish no new probe during this read from saved per-model probe records. Only bounded statuses, timezone-bearing original timestamps and recognized methods are projected; unknown stays unknown. No secrets or arbitrary probe text are forwarded. Default-model selection and tool capability production logic unchanged.",
+  "collector_change": "Explicit synchronous read edge ryn_get_system_diagnostics -> ryn_list_devices binds a fresh child dispatch ID to the already-bound parent. Same native RPC is not duplicated; original arguments/context pass through. Other nested edges, writes and wrong task contexts remain rejected. Parent scope clears on failure.",
+  "evidence_before_fix": {
+    "ryn": "real-model/20261011T024727415781Z-Q01-ryn-v2-draft/operator-review.json",
+    "reference": "real-model/20261011T025022178776Z-Q01-reference-v2-draft/operator-review.json"
+  },
+  "tests": [
+    {
+      "scope": "diagnostics/readback/semantics",
+      "passed": 55,
+      "seconds": 8.69
+    },
+    {
+      "scope": "nested regression before collector fix",
+      "failed": 3,
+      "passed": 2
+    },
+    {
+      "scope": "collector and role regressions (initial five nested tests)",
+      "passed": 43,
+      "seconds": 95.58
+    },
+    {
+      "scope": "final nested tests including actual runtime and mechanical readback",
+      "passed": 6,
+      "seconds": 5.8
+    }
+  ],
+  "intermediate_test_correction": "Actual runtime test initially expected exactly two nested calls; collector also performs a final diagnostic read. Replaced count assumption with one child per actual parent and at least two parent reads. Ruff fixture-name shadowing fixed.",
+  "ruff": "passed",
+  "files": {
+    "rynmesh/agent_runtime/diagnostics.py": "e5ab832f81c193cc394ae69ef63d98f4c1bbd790ff3c4472148fa0e3798ae514",
+    "tests/test_agent_runtime_diagnostics.py": "a3b3484eaa8e2aedfefb6c18de95a77ac5089a27226800e425a9d6d13ad227a9",
+    "docs/acceptance/ryn-agent-delivery/real-model/role_query_world.py": "46c285969430612d86ddd80658ab7fdae1228e73aba9ae76ca05af782d536c66",
+    "tests/test_agent_dispatch_nested_read.py": "877a695cd3901c1d1e7065390af5f8d8870b587470b525a28847e61e4b1fb74f"
+  },
+  "limits": [
+    "Original candidate/reference samples remain partial and cannot count as formal successes.",
+    "No claim that diagnostic metadata alone fixes language-model factual accuracy.",
+    "Earlier independent collector review predates this change and does not approve it.",
+    "正式 executed_trials remains 0; heldout contents not read."
+  ]
+}

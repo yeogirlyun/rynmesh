@@ -125,7 +125,7 @@ def test_inflight_model_admission_survives_rule_rebuild_and_sibling_independent(
         assert flight.result()["text"] == "done"
 
 
-def test_captured_adapter_cannot_start_after_its_tool_capability_changes(node):
+def test_optional_tool_diagnostic_does_not_invalidate_captured_adapter(node):
     app, _ = node
     record, _ = add_source(app, models=["a", "b"])
     sources = app.state.llm_agent_services["source_store"]
@@ -140,13 +140,11 @@ def test_captured_adapter_cannot_start_after_its_tool_capability_changes(node):
     changed["tool_support"]["a"] = "unsupported"
     sources.save(changed)
     assert sources.read()[record["id"]]["model_settings"]["a"]["rule_revision"] == record["model_settings"]["a"]["rule_revision"]
-    with pytest.raises(AdapterError, match="model_configuration_changed"):
-        old_a.chat({}, task_id="stale-capability", timeout_s=1)
-    assert calls == []
+    old_a.chat({}, task_id="existing-task", timeout_s=1)
     sibling_b.chat({}, task_id="unchanged-sibling", timeout_s=1)
     fresh_a = ModelDispatchAdapter(sources, sources.read()[record["id"]], "a", Inner())
-    fresh_a.chat({}, task_id="fresh-chat-only", timeout_s=1)
-    assert calls == ["unchanged-sibling", "fresh-chat-only"]
+    fresh_a.chat({}, task_id="fresh-task", timeout_s=1)
+    assert calls == ["existing-task", "unchanged-sibling", "fresh-task"]
 
 
 def test_separate_evidence_times_and_parameter_invalidation(node, monkeypatch):

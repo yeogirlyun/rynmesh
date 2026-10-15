@@ -1,0 +1,89 @@
+{
+  "kind": "independent-non-author-cancellation-diagnostics-context-review",
+  "at": "2026-10-11T07:40:12.392604+00:00",
+  "reviewer": "pending_independent_review (independent of original author and cancellation_commit_fix author)",
+  "conclusion": {
+    "cancellation_final_result_and_commit": "approved_after_P2_fix",
+    "budget_cancel_reason": "approved",
+    "diagnostic_history_projection_and_nested_capture": "approved",
+    "formal_acceptance": false,
+    "context_serialization_and_summary_projection": "approved"
+  },
+  "findings": [
+    {
+      "priority": "P2",
+      "status": "fixed_and_independently_rechecked",
+      "file": "rynmesh/llm_package/routes.py",
+      "original_lines": "3172-3241",
+      "issue": "Cancellation could commit after the initial cancelled check and after balance settlement but before final transition; POST then returned succeeded/output while cancel receipt and durable order were cancelled.",
+      "independent_before_fix_reproduction": {
+        "cancel_receipt": "cancelled",
+        "post_status": 200,
+        "post_state": "succeeded",
+        "post_has_output": true,
+        "persisted_state": "cancelled",
+        "provider_calls": 1
+      },
+      "minimal_fix_verified": "A shared short terminal_commit_lock serializes cancellation and local final checkpoint/settlement/transition, checks actual committed state, suppresses cancelled response bodies, and leaves remote I/O outside the lock. A completed commit legitimately makes later cancellation return succeeded."
+    }
+  ],
+  "confirmed_properties": [
+    "Round/lifetime budget reasons remain distinct from user cancellation; rejected received usage is charged once and no late model message or tool dispatch is published in the targeted runtime checks.",
+    "Provider slots release in provider/bridge finally after the synchronous adapter exits; historical raw capacity observations remain occupied after consumer cancellation then become available.",
+    "Diagnostic missing history remains unknown/not_established; saved whitelisted status/method/original timezone-bearing timestamp is preserved without a fresh probe or arbitrary probe text.",
+    "Nested collection allows only synchronous ryn_get_system_diagnostics -> ryn_list_devices with empty arguments and read effect, preserves original arguments/context, rejects wrong tasks/other edges, and clears parent scope in finally.",
+    "Context review was limited to the exact 39-addition/16-deletion runtime.py diff against .codex-tmp/runtime-before-context-repair.py plus the new test file; the common preexisting compaction design was not treated as new code.",
+    "Every _complete stage checks encoded(messages)+encoded(specs) before token reservation/model dispatch. Summary admission now measures the actual outer serialized summary messages, including string escaping, instead of the smaller intermediate source.",
+    "Summary-only copies unwrap top-level tool result JSON dict/list and tool-call argument JSON, without recursively parsing business strings or mutating the encrypted transcript. Owner constraints, exact continuation references, write permission enforcement and stored mutation receipts remain intact.",
+    "A 12000-byte context fixture traversed a closed two-call search exchange, compaction, approval, one write and readback; the parallel read-only variant rejected a forged summary claim of write approval."
+  ],
+  "confirmed_limitations": [
+    "Consumer return does not establish upstream compute/billing cancellation; absent vendor usage remains unknown.",
+    "Historical physical-host evidence used the prior wheel; the newly repaired terminal-commit code has local deterministic validation, not renewed physical-host or Windows installer acceptance.",
+    "HTTP/relay blocking I/O interruption, every streaming-delta callback race, and atomic cancellation of arbitrary external callbacks are outside this final-response review.",
+    "Matched query observations remain development-only, with reference answer overclaiming history; no formal comparison, heldout or full acceptance result is inferred.",
+    "The context bound is the existing runtime metric: UTF-8 JSON message projection plus tool specifications, not a tokenizer estimate or the entire vendor HTTP envelope.",
+    "Long exchanges that still exceed the bound after protocol unwrapping fail closed. Offline fixture success does not prove the previously failed F08 real-model task now succeeds."
+  ],
+  "minimal_validation": {
+    "independent_selected_tests_before_commit_fix": {
+      "passed": 15,
+      "seconds": 2.46,
+      "scope": "runtime budget/user stop (6), preserved probe (1), malformed probe (5), rejected nested edges (2), cleanup (1)"
+    },
+    "independent_commit_recheck": {
+      "passed": 5,
+      "seconds": 5.35,
+      "scope": "three independent-thread commit races, cancellation before authenticated late success, cancellation before transport failure"
+    },
+    "historical_evidence_integrity": {
+      "phase6_raw_hashes_matching": 32,
+      "missing": 0,
+      "mismatch": 0,
+      "original_phase6_files_matched_before_repair": 3,
+      "diagnostic_files_matched": 4
+    },
+    "paid_inference_calls": 0,
+    "production_edits_by_reviewer": 0,
+    "heldout_or_build_cases_read": false,
+    "independent_context_recheck": {
+      "passed": 4,
+      "seconds": 1.94,
+      "scope": "exact serialized boundary and reservation exclusion, double-escape overflow rejection, approved long document continuation, read-only summary-injection denial"
+    },
+    "context_baseline_sha256": "305976db0a7f99b4e9d28668e91597b178de972936973e50eb97bb9fdabb0f19"
+  },
+  "reviewed_file_sha256": {
+    "rynmesh/llm_package/consumer_cancellation.py": "17efb891f84a6aa6089fce3f7d78e73375673d8b4f7af4b39f11c7553acc64f9",
+    "rynmesh/llm_package/routes.py": "ac12caab2d8131ab642bcccd4e351e57080f193886a28c2776f997cc725c2fc3",
+    "rynmesh/agent_runtime/store.py": "321cb6c69427b5d93c1ba990778380beb8aae9d2a666db2d854fe5ba7036a8f8",
+    "rynmesh/agent_runtime/bridge.py": "9aec8560cb3b9d07c0340ca0d0606ea24669287730404af956778757f475699e",
+    "rynmesh/agent_runtime/diagnostics.py": "e5ab832f81c193cc394ae69ef63d98f4c1bbd790ff3c4472148fa0e3798ae514",
+    "docs/acceptance/ryn-agent-delivery/real-model/role_query_world.py": "46c285969430612d86ddd80658ab7fdae1228e73aba9ae76ca05af782d536c66",
+    "tests/test_consumer_cancellation.py": "0118d48fdd9e85cb3d5a2289920353c70fa16a4cda7c6a35ee120fd7a3e14dac",
+    "tests/test_agent_cancellation_reason.py": "fae4274985e8d42c5147386561a97aa2c7556f12c71fa520e9117f32acfa9d09",
+    "tests/test_agent_dispatch_nested_read.py": "877a695cd3901c1d1e7065390af5f8d8870b587470b525a28847e61e4b1fb74f",
+    "rynmesh/agent_runtime/runtime.py": "ac669efe83e903f8e057a38680919adbb697d17925fac885a51f418f796ae7f6",
+    "tests/test_agent_context_serialization.py": "9b4a98109a5799f013e7740ca2f147de2af80037b1f757903c3f7333527cd008"
+  }
+}

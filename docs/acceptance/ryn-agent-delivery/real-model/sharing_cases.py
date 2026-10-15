@@ -244,6 +244,13 @@ class SharingFixturePlanner:
         self.cohort = cohort
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_list_models', 'ryn_get_agent_configuration', 'ryn_list_devices', 'ryn_set_default_agent_model', 'ryn_set_model_sharing', 'ryn_set_friend_model_access'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         def answer(text):
             return {"message": {"role": "assistant", "content": text}, "usage": {"input_tokens": 1, "output_tokens": 1}, "finish_reason": "stop"}
         if not specs:

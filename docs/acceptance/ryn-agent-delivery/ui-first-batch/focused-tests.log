@@ -1,0 +1,14 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run src/screens/RynAgent.test.tsx src/screens/ModelPool.test.tsx src/domain/rynAgent.test.ts src/screens/AISources.test.tsx src/App.agentRoutes.test.tsx --maxWorkers=2 --reporter=dot
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+···········································
+
+ Test Files  5 passed (5)
+      Tests  43 passed (43)
+   Start at  16:40:37
+   Duration  35.86s (transform 6.80s, setup 8.21s, import 15.99s, tests 11.88s, environment 21.78s)
+

@@ -65,6 +65,7 @@ def test_cli_connect_uses_approval_private_setup_metered_probe_and_durable_recei
     raw = runtime.store.read()['tasks'][pending['id']]
     receipt = raw['receipts'][-1]
     assert receipt['tool'] == CONNECT and receipt['result']['chat_probe'] == 'passed'
+    assert receipt['result']['agent_usable'] is True
     assert tools.cli_sources.read()['antigravity_cli']['publication_enabled'] is False
     assert runtime.settings() == settings
     assert [c[0] for c in calls] == ['connect', 'chat']
@@ -118,3 +119,23 @@ def test_cli_discovery_is_registered_and_arbitrary_commands_are_rejected(tmp_pat
     with pytest.raises(AgentToolRejected):
         tools._validate(CONNECT, {'kind': 'unknown_cli'})
     assert not calls
+
+
+@pytest.mark.parametrize('support', ['unknown', 'unsupported'])
+def test_optional_cli_diagnostic_does_not_disable_connected_model(tmp_path, monkeypatch, support):
+    runtime, model, tools, _, calls = setup(tmp_path, monkeypatch)
+    tools.cli_sources.path.parent.mkdir(parents=True, exist_ok=True)
+    original = {'manifest': 'existing', 'publication_enabled': True}
+    tools.cli_sources.path.write_text(json.dumps({'antigravity_cli': original}))
+    tools.services['probe_service_tools'] = lambda service_id, proxy: {'service_id': service_id, 'tool_support': support}
+    pending = waiting(runtime, model)
+    approve(runtime, pending['id'])
+    advance(runtime)
+    model.responses.append(assistant(name=TEST, args={'kind': 'antigravity_cli'}))
+    advance(runtime, 2)
+    raw = runtime.store.read()['tasks'][pending['id']]
+    receipt = raw['receipts'][-1]
+    assert receipt['tool'] == TEST and receipt['result']['agent_usable'] is True
+    assert receipt['result']['probe_passed'] is False and receipt['result']['tool_support'] == support
+    assert tools.cli_sources.read()['antigravity_cli'] == original and not calls
+    assert tools.verify(receipt, [{'verifier': 'local_cli_tool_test_state'}], context=runtime._execution_context(raw), cancelled=lambda: False)['status'] == 'unknown'

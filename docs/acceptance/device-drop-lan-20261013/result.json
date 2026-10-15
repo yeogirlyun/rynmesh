@@ -1,0 +1,103 @@
+{
+  "at": "2026-10-13T12:45:49.134694+00:00",
+  "scope": "Two physical Windows hosts with installed production sidecar; real signed invitation; LAN data path",
+  "hosts": [
+    "172.16.8.191",
+    "172.16.8.82"
+  ],
+  "same_personal_space": {
+    "id": "1d49828372304f77b87197e2848fac60",
+    "name": "My space"
+  },
+  "bidirectional_messages": true,
+  "forward": {
+    "bytes": 134217759,
+    "sha256": "697e4202ff4df4a93d8083b2c6d652c293e44158a7a4b4138a0c8df421a4bf9a",
+    "receiver_disk_hash_match": true,
+    "route": "lan"
+  },
+  "reverse": {
+    "bytes": 16777302,
+    "file_count": 3,
+    "all_hashes_match": true,
+    "route": "lan"
+  },
+  "public_internet_tested": false,
+  "100GB_tested": false,
+  "screenshots": "Browser rendering of actual node UI; remote control through SSH loopback tunnel, not native desktop capture",
+  "remote_runtime": "Installed sidecar run through manual scheduled task Ryn-Drop-LAN-20261013; no startup trigger; no firewall or WSL changes",
+  "frontend_followup": "Received/Delivered translations fixed in both locales; 134 static keys audited per locale; 10 existing Drop tests passed; final NSIS installed on both hosts.",
+  "final_installer_sha256": "EE6559E0AB50F9A74AA62AA2279D8569417BB8E0B4797947C170517FF19FA6D9",
+  "same_final_binary_on_both_hosts": true,
+  "identities_preserved": true,
+  "restart_verification": {
+    "at": "2026-10-13T12:49:08.408Z",
+    "space": "1d49828372304f77b87197e2848fac60",
+    "nodes": [
+      {
+        "node": "local",
+        "peer": "fR6oJFpFDez/LqWFSnyxUmOmTEB/f/7teSFY/y/9RSA=",
+        "transfers": [
+          {
+            "id": "c4efe8e037694257b45b5f73b0a53e82",
+            "direction": "in",
+            "status": "completed",
+            "route": "lan",
+            "bytes": 16777302
+          },
+          {
+            "id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+            "direction": "out",
+            "status": "completed",
+            "route": "lan",
+            "bytes": 134217759
+          }
+        ],
+        "conversationItems": 6
+      },
+      {
+        "node": "remote",
+        "peer": "ppw4BE4zoTTDrlGU/EM2wZ3JW7efSfXeuqrrZmCt9aM=",
+        "transfers": [
+          {
+            "id": "c4efe8e037694257b45b5f73b0a53e82",
+            "direction": "out",
+            "status": "completed",
+            "route": "lan",
+            "bytes": 16777302
+          },
+          {
+            "id": "62b5d6754feb47f087d8cdf7f0a9a34d",
+            "direction": "in",
+            "status": "completed",
+            "route": "lan",
+            "bytes": 134217759
+          }
+        ],
+        "conversationItems": 6
+      }
+    ],
+    "translationKeysVisible": false,
+    "assistant": {
+      "settings": {
+        "http": 200,
+        "enabled": true,
+        "hasModel": true
+      },
+      "models": {
+        "http": 200,
+        "count": 20
+      },
+      "tasks": {
+        "http": 200,
+        "count": 5
+      }
+    }
+  },
+  "screenshots_sha256": {
+    "assistant-restored.png": "4732c1b17a779c4805ec3ad25c88b6fe65381fa5ca906d8c83bf0f5ec4f98c81",
+    "local-final-completed.png": "4ed662c787a5e295bd53ea10e4a0fa024f58c57b11f317bd3707c60e37f48fbb",
+    "remote-final-completed.png": "7977c5491d6ff2d568d716b93a3b82fb9514f092e6ca640d7caa5246708fabda",
+    "verified-lan-connection.png": "c38dbced8b9dc9b9ba7218c8f99aeb6fd83c427b25d8c22e9fa6111bac9c9b54"
+  }
+}

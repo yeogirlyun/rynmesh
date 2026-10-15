@@ -38,6 +38,13 @@ class RecoveryFixturePlanner:
     supports_destination_binding = True
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         def answer(content):
             return {"message": {"role": "assistant", "content": content},
                     "usage": {"input_tokens": 1, "output_tokens": 1}, "finish_reason": "stop"}

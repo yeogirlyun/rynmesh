@@ -1,3 +1,4 @@
+import { modelSelectableCLI } from "../domain/cliModels";
 import {
   FileText,
   ArrowUp,
@@ -23,7 +24,7 @@ import AIWorkspaceMaterials from "../components/AIWorkspaceMaterials";
 import { getNasHandoff, setNasHandoff, nasRequest, type NasStatus } from "../domain/nas";
 import { useProviderDiscovery, useServiceOrder } from "../domain/serviceExperience";
 import { providerIdentity, serviceDescriptors } from "../domain/serviceDescriptors";
-import { LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
+import { isServiceUsable, LLM_TERMINAL_STATES, llmServiceAvailability, llmServiceRecordKey } from "../domain/llmOrders";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../appContext";
 import { LoadingPanel } from "../components/ui";
@@ -102,6 +103,7 @@ export default function PrivateAIChat() {
   const activeNetworkRef = useRef(networkId);
   activeNetworkRef.current = networkId;
   const [conversations, setConversations] = useState<LLMConversation[]>([]);
+  const [savingModel, setSavingModel] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
@@ -141,8 +143,10 @@ export default function PrivateAIChat() {
   const nodeTask = client.mode === "live" ? selectedConversation?.messages.find((message) => message.role === "assistant" && RUNNING_MESSAGE_STATUSES.has(message.status))?.taskId : undefined;
   const isSending = sending || Boolean(nodeTask);
   const stream = useLLMStream(nodeTask);
-  const localCodex = Boolean(selectedService?.local_only && selectedService.service.adapter === "codex_cli");
-  const cliModel = selectedConversation?.cliModel || cliModels.find(row => row.default)?.id || cliModels[0]?.id || "";
+  const localModelCLI = selectedService && (selectedService.local_only || selectedService.cli_models?.length) ? modelSelectableCLI(selectedService.service.adapter) : null;
+  const advertisedCLIModels = JSON.stringify(selectedService?.cli_models ?? []);
+  const isLocalCLI = Boolean(selectedService?.local_only);
+  const cliModel = selectedConversation?.cliModel ?? (cliModels.find(row => row.default)?.id ?? cliModels[0]?.id ?? "");
   const [nasOrigins, setNasOrigins] = useState<Record<string, NonNullable<import("../domain/askHistory").AskSource["nas"]>>>({});
   const sourceIds = JSON.stringify([...new Set(selectedConversation?.messages.flatMap(message => message.contextIds ?? []) ?? [])]);
   useEffect(() => {
@@ -155,10 +159,11 @@ export default function PrivateAIChat() {
   }, [sourceIds]);
   useEffect(() => {
     let active = true; setCLIModels([]); setCLIModelsError("");
-    if (localCodex) void client.getCLIModels("codex_cli").then(result => { if (active) setCLIModels(result.models); })
-      .catch(cause => { if (active) setCLIModelsError(cause instanceof Error ? cause.message : tr("无法读取 Codex 模型")); });
+    if (localModelCLI && !isLocalCLI) setCLIModels(JSON.parse(advertisedCLIModels));
+    else if (localModelCLI) void client.getCLIModels(localModelCLI).then(result => { if (active) setCLIModels(result.models); })
+      .catch(cause => { if (active) setCLIModelsError(cause instanceof Error ? cause.message : tr("无法读取 CLI 模型")); });
     return () => { active = false; };
-  }, [client, localCodex]);
+  }, [client, localModelCLI, isLocalCLI, advertisedCLIModels]);
 
 
   const refreshNodeHistory = async () => {
@@ -175,7 +180,7 @@ export default function PrivateAIChat() {
       const key = selectedService ? serviceKey(selectedService) : "";
       return (await history.list(key)).filter((row) => row.serviceKey === key && row.networkId === networkId);
     },
-    onData: (rows) => { setConversations(rows); setError((value) => value === NODE_UNREACHABLE_ERROR ? "" : value); },
+    onData: (rows) => { setConversations(current => rows.map(row => { const prior = current.find(item => item.id === row.id); return prior && (prior.revision ?? 0) > (row.revision ?? 0) ? prior : row; })); setError((value) => value === NODE_UNREACHABLE_ERROR ? "" : value); },
     onError: () => setError(NODE_UNREACHABLE_ERROR),
   });
 
@@ -200,7 +205,7 @@ export default function PrivateAIChat() {
       const requestedService = searchParams.get("service") || (requestedRow ? requestedRow.serviceKey.slice(requestedRow.providerPeerId.length + 2) : null);
       const selected = requestedPeer && requestedService
         ? discovered.find((item) => item.peer_id === requestedPeer && item.service.package_id === requestedService) ?? null
-        : discovered.find((item) => item.online) ?? discovered[0] ?? null;
+        : discovered.find(isServiceUsable) ?? discovered[0] ?? null;
       setSelectedService(selected);
       setStorageMode(await history.storageMode());
       if (!selected && requestedRow) { setConversations([requestedRow]); setSelectedId(requestedRow.id); setInput(requestedRow.draft ?? ""); }
@@ -415,7 +420,7 @@ export default function PrivateAIChat() {
       userSaved = true;
       setInput("");
       let result = await client.submitLLMOrder({
-        ...(localCodex ? { cli_model: cliModel } : {}),
+        ...(localModelCLI ? { cli_model: cliModel } : {}),
         task_id: taskId, idempotency_key: taskId,
         network_id: networkId,
         provider_peer_id: selectedService.peer_id,
@@ -557,13 +562,13 @@ export default function PrivateAIChat() {
   };
 
   const reviewAndSend = async () => {
-    if (!selectedConversation || !selectedService || !input.trim() || isSending || unconfirmed || reviewing || !historyReady || materialBusy) return;
-    if (localCodex && !cliModels.some(row => row.id === cliModel)) { setError(tr("Choose an available CLI model before sending.")); return; }
+    if (!selectedConversation || !selectedService || !input.trim() || isSending || unconfirmed || reviewing || !historyReady || materialBusy || savingModel) return;
+    if (Boolean(localModelCLI) && !cliModels.some(row => row.id === cliModel)) { setError(tr("Choose an available CLI model before sending.")); return; }
     if (client.mode !== "live") return runPrompt(input);
     const question = input.trim();
     setReviewing(true); setError("");
     try {
-      const row = localCodex && selectedConversation.cliModel !== cliModel ? await replaceConversation({ ...selectedConversation, cliModel }, false) : selectedConversation;
+      const row = localModelCLI && selectedConversation.cliModel !== cliModel ? await replaceConversation({ ...selectedConversation, cliModel }, false) : selectedConversation;
       const preview = await askHistory.preview(row, question);
       if (row.id !== selectedConversationRef.current) return;
       confirm({ title: tr("Send to {{service}}?", { service: selectedService.service.model_alias }), risk: "medium", confirmLabel: tr("Send reviewed question"),
@@ -583,7 +588,7 @@ export default function PrivateAIChat() {
       onConfirm: () => { const next = new URLSearchParams(searchParams); next.set("peer", service.peer_id); next.set("service", service.service.package_id); next.set("new", "1"); next.delete("conversation"); next.delete("material"); setSearchParams(next); } });
   };
   const services = discovery.data ?? [];
-  const blocked = isSending || reviewing || Boolean(unconfirmed) || materialBusy;
+  const blocked = isSending || reviewing || Boolean(unconfirmed) || materialBusy || savingModel;
   const selectedStorage = client.mode === "live" ? "node" : "browser";
   const toolbar = <header className={styles.pageHeading}>
     <div className={styles.modelLockup}><ServiceArt kind="ai" /><div><h1>{tr("AI 工作台")}</h1><p>{tr("连接你的设备，与熟悉的 AI 一起工作。")}</p></div></div>
@@ -607,19 +612,20 @@ export default function PrivateAIChat() {
     {toolbar}
     <div className={styles.sourceBar}>
       <WorkspaceSelect grow caption={tr("运行设备")} label={tr("Processing device")} value={selectedService.peer_id} disabled={blocked} icon={<DeviceArt kind={personal?.devices.find(device => device.id === selectedService.peer_id)?.kind || "desktop"} small />}
-        options={[selectedService, ...services].filter((item, index, all) => all.findIndex(other => other.peer_id === item.peer_id) === index).map(item => ({ value: item.peer_id, label: personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id, detail: tr(item.access === "friend" ? "Friend AI · authorized" : item.local_only ? "This device" : item.online ? "Online" : "Offline") }))}
+        options={[selectedService, ...services].filter((item, index, all) => all.findIndex(other => other.peer_id === item.peer_id) === index).map(item => ({ value: item.peer_id, label: personal?.resolveName(item.peer_id, item.node_name) || item.node_name || item.peer_id, detail: tr(item.access === "friend" ? "Friend AI · authorized" : item.local_only ? "This device" : isServiceUsable(item) ? "Online" : item.availability?.state === "needs_connection" ? "Not connected" : "Offline") }))}
         onChange={value => { const next = services.find(item => item.peer_id === value); if (next) changeService(next); }} />
       <WorkspaceSelect caption={tr("AI 服务")} label={tr("AI 服务")} value={serviceKey(selectedService)} disabled={blocked} icon={<Sparkles size={23} />}
         options={[selectedService, ...services].filter((item, index, all) => item.peer_id === selectedService.peer_id && all.findIndex(other => serviceKey(other) === serviceKey(item)) === index).map(item => ({ value: serviceKey(item), label: item.service.adapter === "codex_cli" ? "ChatGPT" : item.service.model_alias }))}
         onChange={key => { const next = services.find(item => serviceKey(item) === key); if (next) changeService(next); }} />
-      {localCodex ? <WorkspaceSelect caption={tr("模型")} label={tr("Codex 模型")} value={cliModel} disabled={blocked || !cliModels.length} placeholder={tr("正在读取模型…")} options={cliModels.map(model => ({ value: model.id, label: model.name }))} onChange={value => { if (selectedConversation) void replaceConversation({ ...selectedConversation, cliModel: value }, false).catch((cause: Error) => setError(cause.message)); }} /> : null}
+      {localModelCLI ? <WorkspaceSelect caption={tr("模型")} label={localModelCLI === "codex_cli" ? tr("Codex 模型") : tr("Antigravity 模型")} value={cliModel} disabled={blocked || !cliModels.length} placeholder={tr("正在读取模型…")} options={cliModels.map(model => ({ value: model.id, label: model.id === "" ? tr("CLI 默认") : model.name }))} onChange={value => { if (!selectedConversation || savingModel) return; setSavingModel(true); void replaceConversation({ ...selectedConversation, cliModel: value }, false).catch((cause: Error) => setError(cause.message)).finally(() => setSavingModel(false)); }} /> : null}
       <Link className={styles.apiLink} to={personalHref("/services/api", client.mode === "fixture")}>{tr("API 接入")}</Link>
       {cliModelsError ? <p role="alert">{cliModelsError}</p> : null}
+      {localModelCLI && cliModels.length > 0 && !cliModels.some(model => model.id === cliModel) && <p role="alert">{tr("保存的模型已不可用，请重新选择模型。")}</p>}
     </div>
     <UnifiedAIHistory selectedId={selectedConversation?.id} storage={selectedStorage} rows={conversations} serviceScope={{ key: serviceKey(selectedService), network: networkId }} onNew={() => void newConversation().catch((cause: Error) => setError(cause.message))}
       actions={<button className={styles.clearButton} type="button" onClick={clearHistory}><Trash2 size={14} />{tr("Clear history")}</button>} />
     <main className={styles.workspace}>
-      <header className={styles.workspaceHeading}><div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title === "New conversation" ? tr("开启一段新对话") : selectedConversation?.title}</strong></div><span className={styles.connectionBadge} data-failed={!selectedService.online}>{tr(llmServiceAvailability(selectedService))}</span></header>
+      <header className={styles.workspaceHeading}><div><span>{tr("当前对话")}</span><strong>{selectedConversation?.title === "New conversation" ? tr("开启一段新对话") : selectedConversation?.title}</strong></div><span className={styles.connectionBadge} data-failed={!isServiceUsable(selectedService)}>{tr(llmServiceAvailability(selectedService))}</span></header>
       {selectedConversation?.sync && (selectedConversation.sync.conflict || selectedConversation.sync.deferred) ? <p role="status">{tr("Other-device changes are saved for review.")} <Link to={`/ask/history?${new URLSearchParams({ conversation: selectedConversation.id, network: selectedConversation.networkId })}`}>{tr("Review conversation branches")}</Link></p> : null}
       <div className={styles.messages} ref={messageScrollRef}>
         {!selectedConversation?.messages.length ? <div className={styles.welcome}><h2>{tr("今天，想一起做些什么？")}</h2><p>{tr("想法、问题，或一段需要打磨的文字，都可以从这里开始。")}</p><div className={styles.suggestions}>{SUGGESTIONS.map(suggestion => <button type="button" key={suggestion} onClick={() => setInput(tr(suggestion))}>{tr(suggestion)}</button>)}</div></div> : selectedConversation.messages.map(message => <div className={`${styles.messageRow}${message.role === "user" ? ` ${styles.messageRowUser}` : ""}`} key={message.id}>
@@ -640,7 +646,7 @@ export default function PrivateAIChat() {
         {historyReady && !selectedConversation ? <div role="alert">This conversation is no longer available. Your input has been kept; open its history or create a new conversation.</div> : null}
         {unconfirmed ? <div role="status">The node has not confirmed this reviewed request for conversation {unconfirmed.conversation_id}.<button type="button" disabled={sending} onClick={() => void checkOriginal(unconfirmed.task_id)}>Check original task</button><button type="button" disabled={sending} onClick={() => void submitReviewed(unconfirmed)}>Retry same reviewed request</button></div> : null}
         <div className={styles.composer}><textarea aria-label={tr("Message Private AI")} value={input} onChange={event => setInput(event.target.value)} placeholder={tr("输入你的问题，让想法继续…")} rows={2} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void reviewAndSend(); } }} />
-          <div className={styles.composerControls}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={styles.composerModel}>{localCodex ? cliModels.find(model => model.id === cliModel)?.name : selectedService.service.model_alias}</span><span className={styles.keyboardHint}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={styles.stopButton} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={styles.sendButton} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (localCodex && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
+          <div className={styles.composerControls}><button className="ai-attach-button" type="button" disabled={blocked || !historyReady || client.mode !== "live"} onClick={() => setMaterialsOpen(true)}><Paperclip size={15} />{tr("Add materials")}</button><span className={styles.composerModel}>{localModelCLI ? (cliModel === "" ? tr("CLI 默认") : cliModels.find(model => model.id === cliModel)?.name) : selectedService.service.model_alias}</span><span className={styles.keyboardHint}>{tr("Enter 发送 · Shift + Enter 换行")}</span>{isSending ? <button className={styles.stopButton} type="button" aria-label={tr("Stop generating")} onClick={() => void stopGeneration()}><Square size={15} /></button> : <button className={styles.sendButton} type="button" aria-label={tr("Send message")} disabled={!input.trim() || !historyReady || blocked || (Boolean(localModelCLI) && !cliModels.some(model => model.id === cliModel))} onClick={() => void reviewAndSend()}><ArrowUp size={19} /></button>}</div>
         </div>
         <div className={styles.composerMeta}><span><ShieldCheck size={12} />{tr(storageMode === "node-encrypted" ? "Encrypted history on your node" : storageMode === "encrypted" ? "Encrypted in this browser" : "History kept for this session")}</span><span>{tr("Processed by {{device}}", { device: providerName })}</span></div>
       </div>

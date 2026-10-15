@@ -1,0 +1,20 @@
+{
+  "kind": "R04_minimal_runner_preparation",
+  "status": "ready_for_one_explicit_GLM_draft_sample_after_root_release",
+  "new_files": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_steer_r04.py": "4824a4569742a8dc30243c0fc9fbd176780270ba3ef2a7d16c42926f0e979018",
+    "tests/test_agent_r04_controller.py": "91ea3e02f81a8c13662081ee0b8bfc6b18f54ada2fcb387e1f5c25bd4ee0b09e"
+  },
+  "reuse": ["SharingWorld isolated sources/friends/readback", "read_planner configured-source allowlist", "assert_mapping generation policy", "ModelDispatchAdapter production gate", "runtime.add_message intent=steer", "runtime.action exact approval binding", "read-only draft role composer"],
+  "controller": "Original R04 prompt and correction; retain initial model-a grant and private model-b; observe real pending exact target write before any approval; send correction with current control/goal revisions; attempt original approval using the NEW control revision; require agent_approval_mismatch, zero write dispatches, unchanged sources/grants, post-correction state read and completed task.",
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_r04_controller.py -q",
+    "result": "2 passed in 8.77s",
+    "ruff": "2 new Python files: all checks passed",
+    "fixture_semantic_outcome": "unverified",
+    "fixture_does_not_read_owner_source": true,
+    "paid_model_calls": 0
+  },
+  "live_command_after_release": ".venv/Scripts/python.exe docs/acceptance/ryn-agent-delivery/real-model/run_steer_r04.py --live --source-id src-7de9fb1d36c44bc8 --output docs/acceptance/ryn-agent-delivery/real-model/20261011-R04-ryn-owner-draft",
+  "boundaries": ["Only new files; production/shared controllers/frozen contracts/role decisions unchanged", "Owner role is draft development only; no formal activation/registration", "One physical host and signed fixture friends; no physical-node or reference-cohort claim", "Unexpected or missing approval barrier is recorded as incomplete; no coaching retry or auto-approved writes", "runtime_candidate_pass is internal only; business_success_seen remains null pending operator and independent review", "AgentError known usage/finish_reason retained; snapshot includes role_query_world and composer actual file", "Existing F07/F08 runs untouched; no live execution during preparation"]
+}

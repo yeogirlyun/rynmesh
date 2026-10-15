@@ -33,6 +33,11 @@ PROTOCOL = "rynmesh.ai-session.v1"
 WINDOW = 8
 MAX_BUFFER = 8 * 1024 * 1024
 IDLE_SECONDS = 600
+# A session that answered this recently is used without a liveness probe.
+FRESH_SECONDS = 2.0
+# Idle sessions are probed this often so a dead path is dropped before the next
+# request has to discover it (and pay up to 1.5 s for the failed probe).
+KEEPALIVE_SECONDS = 15
 _PING, _PONG, _CLOSE = 3, 4, 5
 
 
@@ -41,6 +46,7 @@ class SessionChannel:
         self.connection = connection
         self.closed = False
         self.last_used = time.monotonic()
+        self.last_received = time.monotonic()
         self._send_sequence = 0
         self._receive_sequence = 0
         self._slots = asyncio.Semaphore(WINDOW)
@@ -58,6 +64,7 @@ class SessionChannel:
         try:
             while not self.closed:
                 packet = await self.connection.recv()
+                self.last_received = time.monotonic()
                 if len(packet) == _HEADER.size:
                     magic, control, mid, _, _, digest = _HEADER.unpack(packet)
                     if magic == _MAGIC and control in {_PING, _PONG, _CLOSE}:
@@ -245,11 +252,17 @@ class SessionPool:
 
     async def _reap(self):
         while True:
-            await asyncio.sleep(15)
+            await asyncio.sleep(KEEPALIVE_SECONDS)
             for key, (channel, _) in list(self._sessions.items()):
-                if key not in self._sessions or key not in self._locks:
+                lock = self._locks.get(key)
+                if key not in self._sessions or lock is None or lock.locked():
                     continue
-                if not self._locks[key].locked() and (channel.closed or time.monotonic() - channel.last_used > self.idle_seconds):
+                expired = channel.closed or time.monotonic() - channel.last_used > self.idle_seconds
+                if not expired and time.monotonic() - getattr(channel, "last_received", 0.0) >= KEEPALIVE_SECONDS:
+                    # Holding the lock keeps a request from starting mid-probe.
+                    async with lock:
+                        expired = self._sessions.get(key, (None,))[0] is channel and not await channel.probe()
+                if expired and self._sessions.get(key, (None,))[0] is channel:
                     self._sessions.pop(key, None)
                     await channel.close()
                     if not self._waiting.get(key):
@@ -289,7 +302,9 @@ class SessionPool:
             reused = key in self._sessions
             if reused:
                 channel, evidence = self._sessions[key]
-                if not await channel.probe():
+                heard_at = getattr(channel, "last_received", 0.0)
+                recently_heard = not channel.closed and time.monotonic() - heard_at < FRESH_SECONDS
+                if not recently_heard and not await channel.probe():
                     self._sessions.pop(key, None)
                     await channel.close()
                     reused = False

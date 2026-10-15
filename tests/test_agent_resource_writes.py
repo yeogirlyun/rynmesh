@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from agent_tool_fixtures import expose
 from test_agent_runtime import advance, approve, assistant
 from test_agent_webdav_fixture import FixtureDAV
 
@@ -249,9 +250,10 @@ def test_runtime_restart_queries_business_ledger_without_replaying(confirmed, wr
     key = peer_box.load_or_create_messaging_key(store.home / "messaging.x25519")
     model = BoundModel()
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
-    runtime.update_settings({"enabled": True, "model_id": "fixture"})
+    runtime.update_settings({"enabled": True, "model_id": "fixture", "verify_text_responses": True})
     task = runtime.create({"message": "Create the approved report once", "scope": {"resources": [{"connection_id": source["id"],
         "root_path": "allowed", "actions": ["create_file"]}], "allow_model_data": True}, "expected_destination_revision": "rev1"})
+    expose(runtime, task["id"], ['ryn_create_text_file'])
     private = runtime.store.read()["tasks"][task["id"]]
     args = {**args, "directory_ref": private["scope"]["resource_grants"][0]["root_resource_ref"]}
     model.responses = [assistant(name="ryn_create_text_file", args=args)]

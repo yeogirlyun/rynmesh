@@ -1,0 +1,10 @@
+{
+  "formal_trial_registered": false,
+  "implementation_limitations": [
+    "The collector reports a separate node-b consumer using a local signed wire fixture. Consumer observations and provider ground truth are retained separately. This declaration does not verify deployment, two physical hosts, security or semantic review dependencies."
+  ],
+  "normalizer_sha256": "a4f864ef529ea7be50d6a452e8390f7bbd6be8ad27173433b54d331802c9234d",
+  "note": "Development review bundle only. No reviewer verdict, dependency verification or absent security audit is synthesized.",
+  "source": "D:\\code\\rynmesh\\docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T060309073162Z-Q06-ryn\\run.json",
+  "source_sha256": "99fc23cd41c9c16dd5817527418e1d445ce71524433fb01300e4c6e91eb06a9d"
+}

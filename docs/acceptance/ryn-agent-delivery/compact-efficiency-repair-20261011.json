@@ -1,0 +1,510 @@
+{
+  "kind": "bounded-small-context-compaction-repair",
+  "date": "2026-10-11",
+  "formal_pass": false,
+  "paid_calls_by_this_worker": 0,
+  "failure_budget": {
+    "diagnosis": "one targeted diagnosis",
+    "structural_change": "Actual-byte compaction admission and useful closed-prefix selection",
+    "budget_expansion": false,
+    "acceptance_case_changes": false,
+    "heldout_access": false
+  },
+  "source_evidence": {
+    "directory": "docs/acceptance/ryn-agent-delivery/real-model/20261011T0816Z-R06-recovery",
+    "sha256": {
+      "run.json": "105df4c823971119a21faa991b629dd6ad69c26788f1478ce4be27e3d71d64ae",
+      "model-before.json": "2ed9a4b5287583d35511e9a3b192781c064d4c727d3b80f662d9c4e913a0c25c",
+      "model-after.json": "f7975ba265d905921cebac8ca1ec4c1521e44f01cbd8f36bb329698d60f37157",
+      "independent-review.json": "5c668591111bd9b9e36ca44eed741e97e9ba44be9fb01bcdcaa1f05c14e5fa7e"
+    },
+    "observed": {
+      "model_calls": 12,
+      "main_calls": 6,
+      "summary_calls": 6,
+      "body_reads": 0,
+      "writes": 0,
+      "artifact_exists": false,
+      "known_total_tokens": 43390,
+      "first_summary_source_roles": [
+        "user"
+      ],
+      "actual_schema_bytes_without_business_tools": 3516,
+      "actual_schema_bytes_with_six_business_tools": 6548,
+      "context_epoch_remained": 0,
+      "loaded_schema_resets": "Observed goal revisions 2->3 reset the cache; compaction did not change epoch."
+    }
+  },
+  "diagnosis": [
+    "The old 80 percent compaction trigger charges mandatory tool schemas and pinned authority as if they were reclaimable history. A fitting request may pay for compaction instead of consuming its tool results.",
+    "The first captured paid summary includes only a user message that is retained verbatim anyway, adding checkpoint overhead while leaving the discovery exchange intact.",
+    "With six business schemas loaded, actual schemas consume 6548 of the 12000-byte window; short new observations repeatedly cross the old soft threshold.",
+    "The summary planning floor of 256 bytes rejects valid short checkpoints when exact references and authority occupy most of the context. The existing final serialized-byte guard already enforces the real ceiling."
+  ],
+  "implementation": {
+    "production_files": [
+      "rynmesh/agent_runtime/runtime.py"
+    ],
+    "changes": [
+      "Only invoke paid compaction if the complete serialized messages plus selected schemas exceed the actual context limit.",
+      "Exclude owner-only prefixes, which cannot reclaim pinned owner messages. Retain prior nearest-two-thirds closed-boundary selection so latest exchanges remain verbatim when they fit.",
+      "Prefer closed cuts leaving at least256 bytes for a useful checkpoint. If none fits, use the first positive-byte candidate, with64 bytes reserved for serialization and complete post-response actual-byte validation. This avoids an arbitrary minimum that rejected otherwise fitting brief checkpoints."
+    ],
+    "unchanged": [
+      "12000 byte limit and existing step/time/lifetime budgets",
+      "Full original encrypted transcript and evidence",
+      "Verbatim owner constraints and exact mutation receipts",
+      "Exact opaque continuation reference map",
+      "Schema catalog binding, schema validation and server permission enforcement",
+      "F08 summary-only JSON envelope unwrapping and final actual-byte checks"
+    ]
+  },
+  "verification": {
+    "status": "final_combined_focused_suite_passed",
+    "offline_workflow": {
+      "raw_projection_bytes": [
+        6134,
+        9291,
+        11173,
+        12066,
+        11585,
+        14910,
+        9063,
+        11869,
+        12440,
+        12439,
+        12438,
+        12437,
+        12436
+      ],
+      "request_bytes": [
+        6134,
+        9291,
+        11173,
+        4447,
+        9767,
+        11585,
+        6821,
+        9226,
+        9063,
+        11869
+      ],
+      "main_calls": 8,
+      "summary_calls": 2,
+      "total_calls": 10,
+      "outcome": "unverified",
+      "limitations": [
+        "agent_verification_context_limit",
+        "One or more required conditions lack independent evidence."
+      ],
+      "artifact_total": 89,
+      "source_unchanged": true,
+      "actual_store_restart": true,
+      "business_puts": 1,
+      "goal_revision": 2,
+      "scope_revision": 1,
+      "context_epoch": 0
+    },
+    "offline_model": "Deterministic stand-in observes supplied main/summary messages only; it derives the artifact sum from the actual file-body result, not from local file access or an injected production answer.",
+    "test_files": [
+      "tests/test_agent_compact_efficiency.py",
+      "tests/test_agent_context_serialization.py",
+      "tests/test_agent_tool_menu.py",
+      "tests/test_agent_inference_context.py",
+      "tests/test_agent_runtime_control.py",
+      "tests/test_agent_runtime_capacity.py",
+      "tests/test_agent_runtime_model_switch.py",
+      "tests/test_agent_checkpoint_refs.py",
+      "tests/test_agent_budget_dispatch.py",
+      "tests/test_agent_runtime.py",
+      "tests/test_agent_runtime_results.py",
+      "tests/test_agent_native_scope.py",
+      "tests/test_agent_peer_scope.py"
+    ],
+    "negative_fixture_strengthening": "Escaped-result payload increased from1500 to1700 repetitions and explicit raw messages+schemas >12000 assertion added; shorter mandatory prompt made old payload fit actual dispatch. Same12000 hard ceiling and escaped-summary rejection remain. No acceptance-case fixture changed.",
+    "final_command": ".venv/Scripts/python -m pytest -q tests/test_agent_compact_efficiency.py tests/test_agent_context_serialization.py tests/test_agent_tool_menu.py tests/test_agent_inference_context.py tests/test_agent_runtime.py::test_followup_uses_compacted_projection_instead_of_archived_transcript_size tests/test_agent_runtime.py::test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_history tests/test_agent_checkpoint_refs.py --junitxml=.codex-tmp/compact-efficiency-frozen-20261011.xml -o junit_family=legacy --tb=short",
+    "final_result": {
+      "passed": 31,
+      "failed": 0,
+      "seconds": 8.6,
+      "report": ".codex-tmp/compact-efficiency-frozen-20261011.xml",
+      "report_sha256": "18a7f5081bd193924c13b80094cca58d60e6ca4eda6ac6013e5d4e10c6c7eef4"
+    },
+    "prior_broader_run": {
+      "tests": 118,
+      "passed": 116,
+      "failed": 2,
+      "status": "intermediate; both failures addressed and their exact tests passed in final31",
+      "failures": [
+        "Escaped-summary negative fixture no longer exceeded actual window after prose compression; payload strengthened with explicit >12000 assertion.",
+        "Owner-heavy8000-byte followup exposed mandatory-text overhead and arbitrary minimum checkpoint space; root compacted semantically equivalent mandatory prose, and planner retains positive-byte fallback."
+      ]
+    },
+    "final_8000_fixture": {
+      "result": "passed",
+      "hard_limit_unchanged": 8000,
+      "minimum_full_prefix_empty_checkpoint_bytes": 7838,
+      "note": "Original legal-boundary/latest-exchange policy remains. A brief checkpoint is admitted only within its exact derived maximum; no owner or tool evidence is discarded."
+    }
+  },
+  "limits": [
+    "Offline deterministic model stand-in is not evidence of real-model planning quality or a formal R06 pass.",
+    "Raw original R06 failure remains unchanged.",
+    "An unrelated independent semantic-checker context limit remains visible in the offline resource workflow despite successful source read, exact approval, artifact creation and mechanical readback.",
+    "Root integration includes a separate bounded privacy-facts projection and may perform an authorized retest; this worker makes no paid or remote calls."
+  ],
+  "integration": {
+    "prompt_version": "ryn-agent-control-v2.12",
+    "root_owned_equivalent_text_compression": [
+      "runtime.SYSTEM",
+      "prompt.authority",
+      "inference_context.GUIDANCE"
+    ],
+    "private_inference_facts_and_checker_projection": "separate integrated workstream; same-snapshot tests include new authority bytes",
+    "tool_menu_modified": false
+  },
+  "final_file_sha256": {
+    "rynmesh/agent_runtime/runtime.py": "dfe867f506c72cd31f04a0d523ff11b7aaac822277b5edfa1fea0a70f9dc20f1",
+    "rynmesh/agent_runtime/tool_menu.py": "57ac3f1b8f23171de94a0795efbaa6871c6f805bd7fea92eb0866fc1602e3a7d",
+    "rynmesh/agent_runtime/prompt.py": "5c94babf35accb4e5d999474161963b905edd1ef4c6868a3287da8371a66964e",
+    "rynmesh/agent_runtime/inference_context.py": "46f2419d305115c9d337174ac374cef2f6675f486d3ca34f4376d3602673f370",
+    "rynmesh/agent_runtime/verification.py": "178bc4b780539b1807c6793a89ace8de03492baee9b68b3fd563e87c57968455",
+    "tests/test_agent_compact_efficiency.py": "41c0fdb69e801d341c086dac3a16f0b0212d92fb89ac6107e055e41f19beea6d",
+    "tests/test_agent_context_serialization.py": "6d09aee3d1ca6336c66c22262f95f2b28797f200ac7df577287fe8e65f09a75d"
+  },
+  "followup_after_failed_paid_retest": {
+    "date": "2026-10-11",
+    "formal_pass": false,
+    "paid_calls_by_this_worker": 0,
+    "source_evidence": {
+      "r06": "real-model/20261011-R06-context-repair",
+      "f07": "real-model/20261011T070655Z-F07-ryn/run.json",
+      "r06_run_sha256": "ed8b2b5a129f625a4a9e27867e51dc97df5c749f647ec2b0a863fe724d65744b",
+      "f07_run_sha256": "5f11a4b563d57f2b6d33c3ad74e8a06fb67869a1368c7e77ad8e3ee30ac63506"
+    },
+    "retained_failed_retest": {
+      "total_model_calls": 5,
+      "main_calls": 3,
+      "summary_calls": 2,
+      "business_tools": 0,
+      "artifact_exists": false,
+      "error": "agent_context_limit"
+    },
+    "actual_store_byte_diagnosis": {
+      "method": "Read encrypted retained AgentStore locally, count only serialized bytes; no private continuation or credential content exported.",
+      "continuation_bytes_per_assistant": [
+        3745,
+        4409,
+        10289
+      ],
+      "last_context_bytes": 26312,
+      "last_schema_bytes": 3516,
+      "last_total_bytes": 29828,
+      "pinned_authority_bytes": 2823,
+      "checkpoint_content_bytes": 1034,
+      "last_discovery_result_bytes": [
+        2978,
+        3083,
+        2477
+      ],
+      "trace_limitation": "Published model_request_record and response capture omit reasoning_content and therefore undercount actual protocol bytes."
+    },
+    "diagnosis": [
+      "The last model exchange requests three catalog pages and a rejected plan. Pages repeat the entire tool-name index and long descriptions. The closed batch cannot be split; its summary request plus previous checkpoint exceeds the actual 12000-byte ceiling.",
+      "Tool names disappear from model visibility when the checkpoint omits prior directory pages. Re-discovery consumes model/tool/summary space without exposing useful business schemas.",
+      "Wrong goal revision and invented criterion IDs are correctly rejected. They do not justify relaxing the server goal/criterion authority.",
+      "F07 contains four ryn_read_resource calls with the same arguments/resource reference for the unavailable resource; changing a page cursor must not evade the existing per-resource read maximum."
+    ],
+    "changes": [
+      "Persistent bounded tool-name index reuses discovery load.items.enum when the serialized names fit 1500 bytes; larger registries remain fully reachable through pagination.",
+      "Catalog pages carry at most eight brief descriptions (80 characters), no repeated complete name list, and dynamically stop at capacity/12 bytes (minimum256). The factor reserves room for up to eight discover results in one closed exchange; full authoritative schemas are still loaded unchanged.",
+      "Plan rejection includes current expected_goal_revision and allowed_criterion_ids without accepting any rejected proposal or changing criteria.",
+      "At the existing dispatch authorization boundary, durable actual failed read receipts stop the fourth failed read before tool budget/dispatch. ryn_read_resource groups by resource_ref across cursor changes; other reads group exact arguments. Goal/scope/epoch bind the count; an actual successful same read or new binding resets it. Other resources and writes are not counted together."
+    ],
+    "unchanged": [
+      "12000 actual serialized-byte limit; original 12 total model calls,24steps,600seconds in resource test",
+      "Owner text, permissions, exact approvals, cancellation, unknown write handling, raw encrypted transcript, receipts, opaque reference map, private provider continuation protocol, final actual dispatch byte guard",
+      "Prior F08 serialization repair and nearest-two-thirds closed boundary compaction invariant"
+    ],
+    "offline_verification": {
+      "model": "Deterministic offline model reads supplied real tool results/checkpoints only; no production answer injection or paid model call.",
+      "public_fixture": "tests/fixtures/agent_acceptance/documents/orion/long-notes.txt",
+      "workflow": {
+        "source_bytes": 171456,
+        "raw_projection_bytes": [
+          6666,
+          8808,
+          9701,
+          11519,
+          17660,
+          16628,
+          9899,
+          12984,
+          12056,
+          12055,
+          12054,
+          12053,
+          12052,
+          12051
+        ],
+        "request_bytes": [
+          6666,
+          8808,
+          9701,
+          11519,
+          8524,
+          10280,
+          6307,
+          10318,
+          9899,
+          2918,
+          11329
+        ],
+        "main_calls": 8,
+        "summary_calls": 3,
+        "checker_calls": 0,
+        "search_receipts": 2,
+        "read_receipts": 0,
+        "source_http_gets": 4,
+        "total_calls": 11,
+        "artifact_checkpoints": 12,
+        "artifact_total": 1278,
+        "source_unchanged": true,
+        "actual_store_restart": true,
+        "business_puts": 1,
+        "outcome": "unverified",
+        "limitations": [
+          "agent_verification_context_limit",
+          "One or more required conditions lack independent evidence."
+        ]
+      },
+      "maximum_actual_request_bytes": 11519,
+      "maximum_raw_projection_bytes": 17660,
+      "independent_suite": {
+        "tests": 36,
+        "failures": 0,
+        "reported_seconds": 8.56,
+        "xml": ".codex-tmp/reviews/product_repair_batch2_20261011.xml",
+        "xml_sha256": "d801de63723b8853c68fbae626b88746eaa952407fb61819cb74e8b1a415dc7c"
+      },
+      "additional_author_neighborhood": {
+        "tests": 8,
+        "failures": 0,
+        "seconds": 2.47,
+        "xml": ".codex-tmp/reviews/compact-author-neighborhood-20261011.xml",
+        "covers": "F08 closed search->summary->approved write plus read-only refusal; owner/latest closed exchange preservation; 8k follow-up projection; summary-tool rejection; same reference menu boundary."
+      },
+      "lint": "Ruff passed for both production files and four author test files."
+    },
+    "frozen_sha256": {
+      "rynmesh/agent_runtime/runtime.py": "361116fb52803af157fc03bd2394a8afa011c7c937629636860143df45b0a759",
+      "rynmesh/agent_runtime/tool_menu.py": "115369f758827c35a5829689e8cc6984a2c2deff2695d7c0eb7e367df3b85d03",
+      "tests/test_agent_tool_menu.py": "14cbea307bb01804ff4e300523da614d1f6f45d1e0e3cdf457ad1c23793c82cd",
+      "tests/test_agent_read_retry_limit.py": "06197b64bb045cac3e108db50a13454bed5d46f467a2c892bf179b3f1a0a2f68",
+      "tests/test_agent_long_resource_context.py": "8b9c88db4131118e263209dff08e457c580bae75942c6fefaea7fa14778e2191",
+      "tests/test_agent_compact_efficiency.py": "b26c92081c8cf1fed76bde09a7939c7369c8815d760fb17a761a91f0516f1f3d"
+    },
+    "remaining_limitations": [
+      "Actual paid R06 failed and remains failed; this offline artifact proof does not establish real-model convergence or formal acceptance.",
+      "Long-document task artifact is complete, but outcome remains unverified: semantic checker envelope exceeds 12000 and no checker request is dispatched (checker_calls=0). This repair does not close that separate blocker.",
+      "Search tool performs bounded literal search; its real source GET and match-offset evidence is retained. Test has2search tool receipts,0ryn_read_resource calls,4source GETs including verification, not twelve independent document reads."
+    ]
+  },
+  "bounded_verification_design_measurement": {
+    "at": "2026-10-11T10:35:35.890500+00:00",
+    "status": "product_blocker_not_integrated",
+    "formal_pass": false,
+    "production_runtime_or_verification_changes": false,
+    "unconnected_prototype": "rynmesh/agent_runtime/verification_parts.py",
+    "prototype_warning": "Not independently reviewed, not enabled, no claim that selector presence proves semantic coverage.",
+    "measurement": {
+      "all_original_part_nodes_validated": true,
+      "codec": "existing exact_shared_values_v1 reused unchanged",
+      "early_candidate_answer": "",
+      "final_messages_plus_empty_tools_bytes": 17217,
+      "final_payload_sha256": "e01920ba0f8a80fd1df9d11a68969c1de1b0d3ce1cda5307a00ab3b02b397cd1",
+      "fits_input": false,
+      "input_plus_minimal_response_bytes": 17675,
+      "limit": 12000,
+      "limitations": "Not a universal information-theoretic lower bound. This is the complete approved design payload with exact original matched-line spans; a real selector can require additional context or output. No final checker was dispatched.",
+      "minimal_success_response_bytes": 458,
+      "operand_spans": 12,
+      "original_candidate_answer_retained_in_archive": true,
+      "original_snapshot_sha256": "a2e81238ffc0ce4178f792fa1686862ea32f977bdbc05501c5899a395584c22e",
+      "part_request_bytes": [
+        11902,
+        11957
+      ],
+      "raw_page_fields_and_cursor_chain_preserved": true,
+      "roundtrip_equal": true,
+      "scope": "one final measurement; offline; no production integration; no business pass",
+      "source_pages": 2
+    },
+    "actual_early_opportunity": [
+      {
+        "at": "before post-write compaction, read-only observation",
+        "charged_model_calls": 9,
+        "confirmed_writes": 1,
+        "context_epoch": 0,
+        "goal_revision": 2,
+        "max_total_model_calls": 12,
+        "next_planner_request_bytes": 12984,
+        "queue_empty": true,
+        "remaining_model_calls": 3,
+        "scope_revision": 1,
+        "stages": [
+          "model",
+          "model",
+          "model",
+          "model",
+          "compaction",
+          "compaction",
+          "compaction",
+          "compaction",
+          "model"
+        ]
+      }
+    ],
+    "real_tool_offline_outcome": {
+      "actual_store_restart": true,
+      "artifact_checkpoints": 12,
+      "artifact_total": 1278,
+      "business_puts": 1,
+      "checker_calls": 0,
+      "limitations": [
+        "agent_verification_context_limit",
+        "One or more required conditions lack independent evidence."
+      ],
+      "main_calls": 8,
+      "outcome": "unverified",
+      "raw_projection_bytes": [
+        6666,
+        8808,
+        9701,
+        11519,
+        17660,
+        16628,
+        9899,
+        12984,
+        12056,
+        12055,
+        12054,
+        12053,
+        12052,
+        12051
+      ],
+      "read_receipts": 0,
+      "request_bytes": [
+        6666,
+        8808,
+        9701,
+        11519,
+        8524,
+        10280,
+        6307,
+        10318,
+        9899,
+        2918,
+        11329
+      ],
+      "search_receipts": 2,
+      "source_bytes": 171456,
+      "source_http_gets": 4,
+      "source_unchanged": true,
+      "summary_calls": 3,
+      "total_calls": 11
+    },
+    "evidence_directory": ".codex-tmp/reviews/r06-checker-lossless-20261011",
+    "sha256": {
+      "rynmesh/agent_runtime/runtime.py": "361116fb52803af157fc03bd2394a8afa011c7c937629636860143df45b0a759",
+      "rynmesh/agent_runtime/verification.py": "61454a6a7c7ce7285987795a0a81300580abf843146aefc96563da473bcf7811",
+      "rynmesh/agent_runtime/verification_parts.py": "0a97f1912e4c990234ad473d28d61f10ab6cbe2b09a78bed1cc5167fcb4f1a7a"
+    },
+    "decision": "Stop this bounded implementation attempt. Remaining3 calls are real, but the complete final request is17217 bytes even after unchanged shared_values codec; there is no admitted final checker and no R06 hard-gate pass. Do not change summary duties, budgets, acceptance cases, or prior failed evidence.",
+    "paid_calls": 0,
+    "heldout_access": false,
+    "budget_scope": "The existing offline long-resource fixture declares a12-call lifetime cap from creation. This proves9 charged calls and3 remaining at the observed point; it does not independently exercise the public R06 four-call then plus-eight authorization sequence."
+  },
+  "identity_schema_design_measurement": {
+    "at": "2026-10-11T10:44:47.645280+00:00",
+    "status": "bounded_measurement_failed_no_production_integration",
+    "original_requirements_review": [
+      {
+        "source": "docs/design/ryn-agent-execution-flow.md:70",
+        "requirement": "Layered context, current goal/constraints/environment/model route and necessary evidence."
+      },
+      {
+        "source": "docs/design/ryn-agent-execution-flow.md:72",
+        "requirement": "Large results can be saved as references; server permission enforcement remains authoritative."
+      },
+      {
+        "source": "docs/design/ryn-agent-execution-flow.md:74",
+        "requirement": "Preserve corrections, unfinished actions, resource versions and operation receipts; authorization/evidence persist independently."
+      },
+      {
+        "source": "docs/design/ryn-agent-execution-flow.md:107",
+        "requirement": "Verify execution/business results/content quality, keep unverifiable conditions; every required condition must hold."
+      }
+    ],
+    "extra_constraint_corrected": "The original flow does not require the semantic model to read the literal bytes of opaque capabilities, cryptographic digests, UUIDs, or repeated field names. Reversible server-held references can preserve identity relations without deleting semantic evidence.",
+    "measured_projection": {
+      "identity_mapping": "Only explicitly named opaque metadata leaves; one-to-one task-local references; no business prose/times/amounts/status/limitations changed.",
+      "structure": "Fixed schema-row rule for repeated object key sets; schemas included in provider request; existing shared_values codec reused unchanged.",
+      "restoration": "Canonical bytes after schema restoration, shared_values expansion and server identity expansion equal all original records/nodes.",
+      "system_policy": "Retained complete original normal checker policy plus early/joint rule and presentation guidance; final system content4524B. This is not an information-theoretic lower bound, nor proof that all possible prompt representations fail."
+    },
+    "results": [
+      {
+        "all_original_records_and_nodes_retained": true,
+        "cap": 12000,
+        "fits_input": false,
+        "input_plus_success_response_bytes": 21590,
+        "mapped_unique_metadata_values": {
+          "cap": 4,
+          "hash": 10,
+          "id": 25
+        },
+        "messages_plus_empty_tools_bytes": 21315,
+        "name": "identity-schema-complete-original",
+        "original_sha256": "a2e81238ffc0ce4178f792fa1686862ea32f977bdbc05501c5899a395584c22e",
+        "production_integration": false,
+        "provider_calls": 0,
+        "roundtrip_canonical_bytes_equal": true,
+        "schema_count": 12,
+        "success_response_bytes": 275
+      },
+      {
+        "all_original_records_and_nodes_retained": true,
+        "cap": 12000,
+        "fits_input": false,
+        "input_plus_success_response_bytes": 13636,
+        "mapped_unique_metadata_values": {
+          "cap": 4,
+          "hash": 5,
+          "id": 22
+        },
+        "messages_plus_empty_tools_bytes": 13363,
+        "name": "identity-schema-complete-joint",
+        "original_sha256": "f05e26fe3854a5fc74151035969c69db23a1efc151466ba65c168bfed46a4d67",
+        "production_integration": false,
+        "provider_calls": 0,
+        "roundtrip_canonical_bytes_equal": true,
+        "schema_count": 11,
+        "success_response_bytes": 273
+      }
+    ],
+    "remaining_calls": "Prior real-tool observation:9 charged of12,3 remaining. This fixture does not separately test4 then plus8 budget authorization.",
+    "requirements_before_any_future_integration": [
+      "Immutable snapshot-local dictionary and collision rejection; unknown/stale references reject; tool dispatch never accepts presentation references as grants.",
+      "Same goal/scope/control/context/destination binding and original server authorization/evidence checks; model reference equality is not evidence of validity or execution.",
+      "If exact identity characters become requested business content, preserve those literal values rather than treating them as identity-only metadata.",
+      "Expand allowed assessment evidence IDs through the frozen map before existing strict evidence checks; part responses remain selectors, not completion certificates."
+    ],
+    "decision": "Stop this projection attempt: final joint request13363B plus273B success response still exceeds12000. No final checker dispatched, no R06 pass.",
+    "draft_moved_out_of_production": ".codex-tmp/reviews/r06-checker-lossless-20261011/verification_parts_unconnected_draft.py",
+    "production_runtime_or_verification_changes": false,
+    "paid_calls": 0,
+    "heldout_access": false,
+    "evidence_directory": ".codex-tmp/reviews/r06-checker-lossless-20261011"
+  }
+}

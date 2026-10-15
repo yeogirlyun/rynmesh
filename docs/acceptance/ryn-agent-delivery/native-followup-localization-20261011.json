@@ -1,0 +1,67 @@
+{
+  "kind": "source-localization-followup",
+  "date": "2026-10-11",
+  "scope": "最小前端本地化修复；不是已安装原生包的运行验收。",
+  "problem": {
+    "backend": "rynmesh/agent_runtime/verification.py:235",
+    "current_runtime_verified_summary": "Registered mechanical checks passed within their stated coverage; model semantic assessment found the current goal covered.",
+    "old_ui_match": "Registered mechanical checks passed; independent semantic assessment found the current goal covered.",
+    "ui_render": "webapp/src/screens/RynAgent.tsx:383",
+    "cause": "运行时成功摘要措辞与前端旧的英文全文匹配不同，中文界面因此回退展示英文。"
+  },
+  "changes": [
+    {
+      "path": "webapp/src/screens/RynAgent.tsx",
+      "before_sha256": "0898b4d15c20fdf60adb664058886e6edd0a935129fa58099b67816db2e5aee2",
+      "after_sha256": "b0533fbe286907bce8b3d8b168955e08c86e2990b5d30e56db76c9690bea10ad",
+      "diff": "--- before/webapp/src/screens/RynAgent.tsx\n+++ after/webapp/src/screens/RynAgent.tsx\n@@ -37,1 +37,2 @@\n   \"Registered mechanical checks passed; independent semantic assessment found the current goal covered.\": \"outcomeGoalEstablished\",\n+  \"Registered mechanical checks passed within their stated coverage; model semantic assessment found the current goal covered.\": \"outcomeGoalEstablished\","
+    },
+    {
+      "path": "webapp/src/screens/RynAgent.test.tsx",
+      "before_sha256": "f6a3416d24ec8eedd0f588846836b430c596dcd99db322e2f7f8c0438d1a79ca",
+      "after_sha256": "e3ab2748a2c3e543bac9fc68cb750b874c27125d40e9aeb1c5c9b9ec7b368beb",
+      "diff": "--- before/webapp/src/screens/RynAgent.test.tsx\n+++ after/webapp/src/screens/RynAgent.test.tsx\n@@ -238,1 +238,14 @@\n+it.each([\n+  [\"zh-CN\", \"已登记的检查通过，独立判断认为当前目标已覆盖。\"],\n+  [\"en\", \"Registered checks passed, and an independent assessment found the current goal covered.\"],\n+])(\"localizes the current runtime verified summary in %s\", async (language, expectedSummary) => {\n+  await i18n.changeLanguage(language);\n+  const summary = \"Registered mechanical checks passed within their stated coverage; model semantic assessment found the current goal covered.\";\n+  api(true, [task({ status: \"completed\", run_state: \"ended\", outcome: { status: \"verified\", goal_revision: 1, summary, criteria_results: [], evidence_refs: [], uncertainties: [] } })]);\n+  const user = userEvent.setup(); mount();\n+  await user.click(await screen.findByRole(\"button\", { name: /^Inspect devices/ }));\n+  expect(await screen.findByText(expectedSummary)).toBeVisible();\n+  expect(screen.queryByText(summary)).not.toBeInTheDocument();\n+});\n+\n it(\"uses the stable control version for pause despite stream revisions\", async () => {"
+    }
+  ],
+  "verification": [
+    {
+      "cwd": "D:/code/rynmesh/webapp",
+      "command": "npm test -- src/screens/RynAgent.test.tsx",
+      "exit_code": 0,
+      "result": {
+        "files_passed": 1,
+        "files_total": 1,
+        "tests_passed": 46,
+        "tests_total": 46
+      },
+      "output": "Test Files  1 passed (1)\nTests  46 passed (46)\nStart at  20:34:54\nDuration  19.78s (transform 510ms, setup 941ms, import 1.36s, tests 14.56s, environment 2.65s)",
+      "process_session_id": 44582
+    },
+    {
+      "cwd": "D:/code/rynmesh/webapp",
+      "command": "npm run lint",
+      "expanded_script": "tsc -b --noEmit",
+      "exit_code": 0,
+      "result": "passed",
+      "output": "> @rynmesh/webapp@0.7.0 lint\n> tsc -b --noEmit",
+      "process_session_id": 96496
+    }
+  ],
+  "boundaries": {
+    "legacy_mapping_retained": true,
+    "api_fields_added": false,
+    "runtime_changed": false,
+    "permissions_or_secure_form_changed": false,
+    "build_performed": false,
+    "installed_package_verified": false,
+    "committed": false,
+    "current_native_candidate_installer_sha256": "64a06988bf95960b8d87bbf3572390c6e386c6e4a8ee991d1ecdd41b2f17a903",
+    "native_candidate_contains_this_fix": false,
+    "formal_pass": false
+  },
+  "notes": [
+    "目标源码在当前工作区为untracked；diff相对本次操作前读取内容，SHA256标识精确文件，不是相对Git HEAD的提交差异。",
+    "测试使用MSW组件环境，不会产生真实模型调用。",
+    "本次JSON写入时再次读取修改后SHA256一致；未重复运行测试。"
+  ]
+}

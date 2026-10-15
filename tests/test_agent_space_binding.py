@@ -202,6 +202,60 @@ def test_space_catalog_limits_and_stranger_cannot_read_metadata(space_pair):
     assert not p.traces
 
 
+def test_space_catalog_concurrent_refresh_shares_one_signed_challenge(space_pair):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    p = space_pair
+    entered, release, joined = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+    real = p.consumer.exchange
+    def exchange(peer, wire):
+        calls.append(wire)
+        entered.set()
+        assert release.wait(5)
+        return real(peer, wire)
+    p.consumer.exchange = exchange
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(p.consumer.refresh, p.locator)
+        assert entered.wait(5)
+        future = p.consumer.refreshes[p.locator["peer_id"]][1]
+        result = future.result
+        def waiting(*args, **kwargs):
+            joined.set()
+            return result(*args, **kwargs)
+        future.result = waiting
+        second = pool.submit(p.consumer.refresh, p.locator)
+        try:
+            assert joined.wait(5)
+        finally:
+            release.set()
+        a, b = first.result(5), second.result(5)
+    assert len(calls) == 1 and a == b and a is not b
+    assert p.consumer.records() == a
+    assert not p.consumer.refreshes and not p.traces
+
+
+def test_space_catalog_does_not_launch_unrelated_cli_discovery(space_pair, monkeypatch):
+    p = space_pair
+    from rynmesh.llm_package import cli_models
+    from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
+    from rynmesh.llm_package.manifest import LLMPackageManifest
+    from rynmesh.llm_package.routes import ProviderService
+    manifest = LLMPackageManifest(package_id="codex-cli", mode="codex_cli", adapter="codex_cli",
+                                 runtime="external", public_model_alias="Codex CLI")
+    cli = ProviderService(manifest=manifest, adapter=CLIAgentAdapter("codex_cli"),
+        store=p.root.store, task_store=p.provider.task_store, balance=p.provider.balance, messaging_key=p.keys[0])
+    cli.accepting_orders = True
+    monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: "fixture-cli-no-discovery")
+    def forbidden(*args, **kwargs):
+        raise AssertionError("signed metadata must not launch CLI discovery")
+    monkeypatch.setattr(cli_models, "list_models", forbidden)
+    p.publisher.providers = lambda: [p.provider, cli]
+    with cli_models._lock:  # Another worker may already be probing a CLI.
+        rows = p.consumer.refresh(p.locator)
+    assert any(row["service"]["package_id"] == p.provider.manifest.package_id for row in rows)
+
+
 def test_space_leave_rejoin_cannot_restore_prior_binding(space_pair):
     p = space_pair
     old = p.consumer.refresh(p.locator)[0]

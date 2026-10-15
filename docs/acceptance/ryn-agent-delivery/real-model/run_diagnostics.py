@@ -33,6 +33,13 @@ class FixtureDiagnosis:
     supports_output_token_limit = True
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_diagnose_task'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         if not specs:
             evidence = json.loads(messages[-1]["content"])["evidence"]
             text = json.dumps({"status": "passed", "summary": "Local fixture only; no real-model score.",

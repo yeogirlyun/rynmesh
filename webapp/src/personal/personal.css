@@ -607,6 +607,13 @@
 .pf-service-row small {
   display: block;
 }
+.pf-nearby { margin-top: 18px; padding: 18px; }
+.pf-nearby .pf-section-heading { align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.pf-nearby-list { list-style: none; margin: 0; padding: 0; }
+.pf-nearby-list li { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--pf-line); min-width: 0; }
+.pf-nearby-name { flex: 1; min-width: 0; }
+.pf-nearby-name strong, .pf-nearby-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-nearby-name small { color: var(--pf-muted); }
 .pf-service-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .pf-access-label { font-size: 10px; font-weight: 500; line-height: 1.5; padding: 2px 7px; border: 1px solid var(--pf-line); border-radius: 5px; color: var(--pf-muted); background: var(--pf-subtle); white-space: nowrap; }
 .pf-service-art.branded { background: var(--pf-subtle); color: var(--pf-text); border: 1px solid var(--pf-line); }

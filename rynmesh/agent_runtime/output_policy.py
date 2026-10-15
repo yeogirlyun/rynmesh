@@ -9,6 +9,7 @@ from .store import AgentError, encoded
 VERSION = "configured-output-v1"
 TRANSPORT_MAX_TOKENS = 131072
 MAX_RAW_RESPONSE_BYTES = 256 * 1024
+MAX_TOOL_CALLS = 8
 
 
 def select(model, messages, specs, *, request_cap=None):

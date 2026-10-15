@@ -22,6 +22,7 @@ import {
 import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
 import { AgentNavigationContext } from "./agentNavigation";
+import { DropActivity } from "./drop/DropActivity";
 import "../screens/rynAgentText";
 export function PersonalShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -69,7 +70,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     ? [["/explore", t("nav.library")], ["/digest", t("nav.forYou")], ["/reading", tr("My reading")], ["/offline", tr("Offline reading")], ["/search", tr("Search")], ["/shared-reading", tr("Shared lists")], ["/friend-updates", tr("Friend updates")], ["/publish", t("nav.publish")]]
     : inServices
       ? serviceLinks
-      : (location.pathname === "/peers" || location.pathname.startsWith("/devices"))
+      : (location.pathname === "/peers" || location.pathname.startsWith("/devices/"))
         ? [["/devices", t("nav.myDevices")], ["/devices/sync", tr("Device sync")], ["/peers", t("nav.connectionDetails")]]
         : location.pathname.startsWith("/settings")
           ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/advanced", t("nav.advancedSettings")]]
@@ -177,6 +178,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
             )}
           </div>
           <div className="pf-top-tools">
+            <DropActivity />
             <button
               className="pf-search-trigger"
               aria-label={t("shell.search")}

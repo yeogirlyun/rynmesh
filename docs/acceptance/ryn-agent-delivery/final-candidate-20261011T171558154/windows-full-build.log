@@ -1,0 +1,272 @@
+Processing d:\code\rynmesh
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: pyinstaller==6.22.3 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (6.22.3)
+Requirement already satisfied: altgraph in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (0.17.5)
+Requirement already satisfied: packaging>=22.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (26.3)
+Requirement already satisfied: pefile>=2022.5.30 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (2024.8.26)
+Requirement already satisfied: pyinstaller-hooks-contrib>=2026.7 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (2026.7)
+Requirement already satisfied: pywin32-ctypes>=0.2.1 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (0.2.3)
+Requirement already satisfied: setuptools>=42.0.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyinstaller==6.22.3) (84.0.0)
+Requirement already satisfied: aioice<1.0.0,>=0.10.2 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (0.10.2)
+Requirement already satisfied: ifaddr<1.0.0,>=0.2.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (0.2.0)
+Requirement already satisfied: certifi>=2024.0.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (2026.7.22)
+Requirement already satisfied: cryptography>=48.0.1 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (50.0.1)
+Requirement already satisfied: fastapi>=0.115.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (0.141.1)
+Requirement already satisfied: uvicorn>=0.30.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (0.53.0)
+Requirement already satisfied: httpx<1,>=0.27.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (0.28.1)
+Requirement already satisfied: jsonschema<5,>=4.23 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (4.26.0)
+Requirement already satisfied: smbprotocol<2,>=1.15.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (1.17.0)
+Requirement already satisfied: Pillow<13,>=12.1.1 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (12.3.0)
+Requirement already satisfied: pypdf>=5.0.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from rynmesh==0.7.0) (6.20.0)
+Requirement already satisfied: dnspython>=2.0.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from aioice<1.0.0,>=0.10.2->rynmesh==0.7.0) (2.8.0)
+Requirement already satisfied: cffi>=2.0.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from cryptography>=48.0.1->rynmesh==0.7.0) (2.1.1)
+Requirement already satisfied: starlette>=0.46.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from fastapi>=0.115.0->rynmesh==0.7.0) (1.7.0)
+Requirement already satisfied: pydantic>=2.9.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from fastapi>=0.115.0->rynmesh==0.7.0) (2.13.5)
+Requirement already satisfied: typing-extensions>=4.8.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from fastapi>=0.115.0->rynmesh==0.7.0) (4.16.0)
+Requirement already satisfied: typing-inspection>=0.4.2 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from fastapi>=0.115.0->rynmesh==0.7.0) (0.4.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from fastapi>=0.115.0->rynmesh==0.7.0) (0.0.5)
+Requirement already satisfied: anyio in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from httpx<1,>=0.27.0->rynmesh==0.7.0) (4.15.1)
+Requirement already satisfied: httpcore==1.* in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from httpx<1,>=0.27.0->rynmesh==0.7.0) (1.0.9)
+Requirement already satisfied: idna in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from httpx<1,>=0.27.0->rynmesh==0.7.0) (3.20)
+Requirement already satisfied: h11>=0.16 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from httpcore==1.*->httpx<1,>=0.27.0->rynmesh==0.7.0) (0.16.0)
+Requirement already satisfied: attrs>=22.2.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from jsonschema<5,>=4.23->rynmesh==0.7.0) (26.1.0)
+Requirement already satisfied: jsonschema-specifications>=2023.03.6 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from jsonschema<5,>=4.23->rynmesh==0.7.0) (2025.9.1)
+Requirement already satisfied: referencing>=0.28.4 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from jsonschema<5,>=4.23->rynmesh==0.7.0) (0.37.0)
+Requirement already satisfied: rpds-py>=0.25.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from jsonschema<5,>=4.23->rynmesh==0.7.0) (2026.6.3)
+Requirement already satisfied: pyspnego in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from smbprotocol<2,>=1.15.0->rynmesh==0.7.0) (0.12.2)
+Requirement already satisfied: click>=7.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn>=0.30.0->uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (8.5.0)
+Requirement already satisfied: httptools>=0.8.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (0.8.0)
+Requirement already satisfied: python-dotenv>=0.13 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (1.2.3)
+Requirement already satisfied: pyyaml>=5.1 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (6.0.3)
+Requirement already satisfied: watchfiles>=0.20 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (1.3.0)
+Requirement already satisfied: websockets>=13.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from uvicorn[standard]>=0.30.0->rynmesh==0.7.0) (17.1)
+Requirement already satisfied: pycparser in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from cffi>=2.0.0->cryptography>=48.0.1->rynmesh==0.7.0) (3.0)
+Requirement already satisfied: annotated-types>=0.6.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pydantic>=2.9.0->fastapi>=0.115.0->rynmesh==0.7.0) (0.8.0)
+Requirement already satisfied: pydantic-core==2.46.5 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pydantic>=2.9.0->fastapi>=0.115.0->rynmesh==0.7.0) (2.46.5)
+Requirement already satisfied: sspilib>=0.5.0 in d:\code\rynmesh\.codex-tmp\windows-package\venv\lib\site-packages (from pyspnego->smbprotocol<2,>=1.15.0->rynmesh==0.7.0) (0.6.0)
+Building wheels for collected packages: rynmesh
+  Building wheel for rynmesh (pyproject.toml): started
+  Building wheel for rynmesh (pyproject.toml): finished with status 'done'
+  Created wheel for rynmesh: filename=rynmesh-0.7.0-py3-none-any.whl size=850433 sha256=fa844f3976138f46dae15fb563fde485be588c5a1643a753d15858bfcd5ea062
+  Stored in directory: C:\Users\子陵\AppData\Local\Temp\pip-ephem-wheel-cache-apju5zxu\wheels\22\1c\d0\77a2f815919b05abcf762a79c490ab47a93cbe296fc087a29d
+Successfully built rynmesh
+Installing collected packages: rynmesh
+  Attempting uninstall: rynmesh
+    Found existing installation: rynmesh 0.7.0
+    Uninstalling rynmesh-0.7.0:
+      Successfully uninstalled rynmesh-0.7.0
+Successfully installed rynmesh-0.7.0
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: D:\code\rynmesh\.codex-tmp\windows-package\venv\Scripts\python.exe -m pip install --upgrade pip
+365 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.7
+365 INFO: Python: 3.12.10
+403 INFO: Platform: Windows-11-10.0.28120-SP0
+403 INFO: Python environment: D:\code\rynmesh\.codex-tmp\windows-package\venv
+417 INFO: wrote D:\code\rynmesh\.codex-tmp\windows-package\rynmesh-peer.spec
+425 INFO: Removing temporary files and cleaning cache in C:\Users\子陵\AppData\Local\pyinstaller
+8376 INFO: Module search paths (PYTHONPATH):
+['D:\\code\\rynmesh',
+ 'C:\\Users\\子陵\\AppData\\Local\\Programs\\Python\\Python312\\python312.zip',
+ 'C:\\Users\\子陵\\AppData\\Local\\Programs\\Python\\Python312\\DLLs',
+ 'C:\\Users\\子陵\\AppData\\Local\\Programs\\Python\\Python312\\Lib',
+ 'C:\\Users\\子陵\\AppData\\Local\\Programs\\Python\\Python312',
+ 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv',
+ 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages',
+ 'D:\\code\\rynmesh\\webapp\\src-tauri\\sidecar']
+8835 INFO: Appending 'datas' from .spec
+8842 INFO: checking Analysis
+8843 INFO: Building Analysis because Analysis-00.toc is non existent
+8843 INFO: Looking for Python shared library...
+8843 INFO: Using Python shared library: C:\Users\子陵\AppData\Local\Programs\Python\Python312\python312.dll
+8843 INFO: Running Analysis Analysis-00.toc
+8843 INFO: Target bytecode optimization level: 0
+8843 INFO: Initializing module dependency graph...
+8846 INFO: Initializing module graph hook caches...
+8894 INFO: Analyzing modules for base_library.zip ...
+10387 INFO: Processing standard module hook 'hook-encodings.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+11810 INFO: Processing standard module hook 'hook-math.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+12027 INFO: Processing standard module hook 'hook-pickle.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+13152 INFO: Processing standard module hook 'hook-heapq.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+13597 INFO: Caching module dependency graph...
+13634 INFO: Analyzing D:\code\rynmesh\webapp\src-tauri\sidecar\rynmesh_peer_entry.py
+13667 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+13819 INFO: Processing standard module hook 'hook-xml.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+14063 INFO: Processing standard module hook 'hook-_ctypes.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+14162 INFO: Processing standard module hook 'hook-cryptography.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15851 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+15970 INFO: Processing standard module hook 'hook-platform.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+17058 INFO: Processing standard module hook 'hook-certifi.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+17439 INFO: Processing standard module hook 'hook-anyio.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+18075 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+18104 INFO: SetuptoolsInfo: initializing cached setuptools info...
+21778 INFO: Processing standard module hook 'hook-pydantic.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+23132 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+23202 INFO: Processing standard module hook 'hook-sysconfig.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+25118 INFO: Processing standard module hook 'hook-jsonschema.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+26194 INFO: Processing standard module hook 'hook-jsonschema_specifications.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+26263 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+26614 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+27296 INFO: Processing standard module hook 'hook-spnego.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+30119 INFO: Processing standard module hook 'hook-sspilib.raw.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+32090 INFO: Processing standard module hook 'hook-difflib.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+32266 INFO: Processing standard module hook 'hook-webbrowser.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+32318 INFO: Processing standard module hook 'hook-pygments.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+34699 INFO: Processing standard module hook 'hook-PIL.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+34816 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+35734 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+36464 INFO: Processing standard module hook 'hook-sqlite3.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+38014 INFO: Processing standard module hook 'hook-dns.rdata.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+39839 INFO: Processing standard module hook 'hook-uvicorn.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+41373 INFO: Processing standard module hook 'hook-websockets.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+45125 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+45833 INFO: Analyzing hidden import 'uvicorn.__main__'
+45834 INFO: Analyzing hidden import 'uvicorn.lifespan'
+45835 INFO: Analyzing hidden import 'uvicorn.lifespan.off'
+45837 INFO: Analyzing hidden import 'uvicorn.lifespan.on'
+45842 INFO: Analyzing hidden import 'uvicorn.loops'
+45843 INFO: Analyzing hidden import 'uvicorn.loops.asyncio'
+45859 INFO: Analyzing hidden import 'uvicorn.loops.auto'
+45862 INFO: Analyzing hidden import 'uvicorn.loops.zuvloop'
+45865 INFO: Analyzing hidden import 'uvicorn.protocols.http.auto'
+45866 INFO: Analyzing hidden import 'uvicorn.protocols.websockets.auto'
+45867 INFO: Analyzing hidden import 'uvicorn.workers'
+45872 INFO: Analyzing hidden import 'rynmesh.eigentrust'
+45877 INFO: Analyzing hidden import 'rynmesh.exchange.cli'
+45880 INFO: Analyzing hidden import 'rynmesh.llm_package.cli'
+45885 INFO: Analyzing hidden import 'rynmesh.llm_package.test_adapter'
+45887 INFO: Analyzing hidden import 'rynmesh.llm_runtime_server'
+45908 INFO: Analyzing hidden import 'rynmesh.mcp_server'
+45929 INFO: Analyzing hidden import 'rynmesh.peer_transit'
+45947 INFO: Analyzing hidden import 'rynmesh.peer_transit_service'
+45996 INFO: Analyzing hidden import 'rynmesh.provider_gateway'
+46034 INFO: Analyzing hidden import 'rynmesh.registry_resilience'
+46041 INFO: Analyzing hidden import 'rynmesh.services.client'
+46052 INFO: Analyzing hidden import 'rynmesh.services.llm'
+46054 INFO: Analyzing hidden import 'rynmesh.services.vpn_cli'
+46055 INFO: Analyzing hidden import 'rynmesh.signal50_media_ops'
+46089 INFO: Analyzing hidden import 'rynmesh.synthetic_content'
+46109 INFO: Analyzing hidden import 'rynmesh.tools'
+46110 INFO: Analyzing hidden import 'rynmesh.tools.publish_release'
+46114 INFO: Analyzing hidden import 'rynmesh.video_package.cli'
+46118 INFO: Analyzing hidden import 'anyio._backends'
+46119 INFO: Analyzing hidden import 'anyio._backends._asyncio'
+46257 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+46311 INFO: Analyzing hidden import 'anyio._backends._trio'
+46357 INFO: Analyzing hidden import 'anyio.pytest_plugin'
+46378 INFO: Processing standard module hook 'hook-pytest.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+48242 INFO: Processing standard module hook 'hook-py.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+49834 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49869 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+49890 INFO: Processing standard module hook 'hook-setuptools.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+49930 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49974 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49975 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+49991 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+49991 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+50129 INFO: Processing standard module hook 'hook-_osx_support.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50393 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+50406 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+50406 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+51492 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+51492 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+55093 INFO: Analyzing hidden import 'anyio.streams.file'
+55120 INFO: Analyzing hidden import 'anyio.streams.text'
+55136 INFO: Analyzing hidden import 'pypdf.annotations'
+55203 INFO: Processing module hooks (post-graph stage)...
+56916 WARNING: Hidden import "tzdata" not found!
+57469 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks'
+72882 INFO: Performing binary vs. data reclassification (49 entries)
+73204 INFO: Looking for ctypes DLLs
+73270 INFO: Analyzing run-time hooks ...
+73276 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+73301 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+73315 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+73362 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+73364 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'D:\\code\\rynmesh\\.codex-tmp\\windows-package\\venv\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+73390 INFO: Creating base_library.zip...
+73425 INFO: Looking for dynamic libraries
+79090 INFO: Extra DLL search directories (AddDllDirectory): []
+79090 INFO: Extra DLL search directories (PATH): []
+81458 INFO: Warnings written to D:\code\rynmesh\.codex-tmp\windows-package\work\rynmesh-peer\warn-rynmesh-peer.txt
+81630 INFO: Graph cross-reference written to D:\code\rynmesh\.codex-tmp\windows-package\work\rynmesh-peer\xref-rynmesh-peer.html
+81764 INFO: checking PYZ
+81764 INFO: Building PYZ because PYZ-00.toc is non existent
+81764 INFO: Building PYZ (ZlibArchive) D:\code\rynmesh\.codex-tmp\windows-package\work\rynmesh-peer\PYZ-00.pyz
+88838 INFO: Building PYZ (ZlibArchive) D:\code\rynmesh\.codex-tmp\windows-package\work\rynmesh-peer\PYZ-00.pyz completed successfully.
+88883 INFO: checking PKG
+88884 INFO: Building PKG because PKG-00.toc is non existent
+88884 INFO: Building PKG (CArchive) rynmesh-peer.pkg
+98303 INFO: Building PKG (CArchive) rynmesh-peer.pkg completed successfully.
+98308 INFO: Bootloader D:\code\rynmesh\.codex-tmp\windows-package\venv\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\run.exe
+98308 INFO: checking EXE
+98308 INFO: Building EXE because EXE-00.toc is non existent
+98308 INFO: Building EXE from EXE-00.toc
+98322 INFO: Copying bootloader EXE to D:\code\rynmesh\.codex-tmp\windows-package\dist\rynmesh-peer.exe
+98345 INFO: Copying icon to EXE
+98381 INFO: Copying 0 resources to EXE
+98381 INFO: Embedding manifest in EXE
+98386 INFO: Appending PKG archive to EXE
+98426 INFO: Fixing EXE headers
+98876 INFO: Building EXE from EXE-00.toc completed successfully.
+98884 INFO: Build complete! The results are available in: D:\code\rynmesh\.codex-tmp\windows-package\dist
+
+added 296 packages, and audited 297 packages in 1m
+
+124 packages are looking for funding
+  run `npm fund` for details
+
+1 high severity vulnerability
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+> @rynmesh/webapp@0.7.0 tauri
+> tauri build --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json
+
+        Info Looking up installed tauri packages to check mismatched versions...
+     Running beforeBuildCommand `npm run build`
+
+> @rynmesh/webapp@0.7.0 build
+> tsc -b && vite build
+
+vite v8.2.1 building client environment for production...
+[2Ktransforming...✓ 2289 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                      0.84 kB │ gzip:   0.40 kB
+dist/assets/Nas-CP3KXdxK.css        20.63 kB │ gzip:   4.50 kB
+dist/assets/Drives-Ci622sOu.css     26.23 kB │ gzip:   5.20 kB
+dist/assets/index-DQ3lTmcA.css     282.85 kB │ gzip:  55.88 kB
+dist/assets/Nas-D5Wg_fSj.js         21.59 kB │ gzip:   6.62 kB
+dist/assets/Drives-BZiUOonN.js      34.10 kB │ gzip:   8.76 kB
+dist/assets/index-OXGXHDSC.js    1,584.97 kB │ gzip: 476.45 kB
+
+✓ built in 1.25s
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+   Compiling app v0.7.0 (D:\code\rynmesh\webapp\src-tauri)
+warning: linker stdout: 正在创建库 D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\deps\app_lib.dll.lib 和对象 D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\deps\app_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `app` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1m 50s
+       Built application at: D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\Ryn.exe
+        Info Patching D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\Ryn.exe with bundle type information: nsis
+        Info Target: x64
+     Running makensis to produce D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\Ryn_0.7.0_x64-setup.exe
+    Finished 1 bundle at:
+        D:\code\rynmesh\webapp\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\Ryn_0.7.0_x64-setup.exe
+
+Installer: D:\code\rynmesh\webapp\src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis

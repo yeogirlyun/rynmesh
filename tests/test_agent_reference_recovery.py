@@ -121,6 +121,12 @@ def test_r03_native_commit_before_receipt_restart_keeps_unknown_without_second_p
 
         def complete(self, model_id, messages, specs, cancelled, **options):
             assert specs
+            from importlib import import_module
+            helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+            discovery = helper.discover(specs, ["ryn_list_resource_roots", "ryn_create_text_file"])
+            if discovery:
+                return discovery
+            messages = helper.business_history(messages)
             receipts = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
             if not receipts:
                 name, args = "ryn_list_resource_roots", {}

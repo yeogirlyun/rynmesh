@@ -1,0 +1,257 @@
+{
+  "kind": "source-form-and-model-pool-coverage-audit",
+  "date": "2026-10-11",
+  "scope": "审计来源新增、逐模型参数与验证、Agent默认选择、逐模型分享、Agent安全输入表单的实际用户路径；分别记录静态实现、已有测试、既有真实业务机制与原生操作证据。",
+  "read_only_audit": {
+    "private_or_heldout_read": false,
+    "build_cases_read": false,
+    "owner_config_changed": false,
+    "models_or_product_processes_started": false,
+    "ui_operated_by_this_agent": false
+  },
+  "evidence_basis": "usable-release-20261011.json",
+  "test_evidence_rule": "以下组件/后端测试是本次阅读的现有测试覆盖，不声称本次全部执行通过。本次唯一执行的测试和类型检查详见native-followup-localization-20261011.json。",
+  "paths": [
+    {
+      "id": "new_source_save_and_test",
+      "ui": "模型→添加模型→厂商API→填写来源→保存并测试",
+      "static_support": [
+        "webapp/src/screens/AISources.tsx:67",
+        "webapp/src/screens/AISources.tsx:87",
+        "webapp/src/screens/AISources.tsx:130",
+        "webapp/src/screens/AISources.tsx:163"
+      ],
+      "test_files": [
+        "webapp/src/screens/AISources.test.tsx",
+        "tests/test_ai_sources.py"
+      ],
+      "test_coverage": [
+        "空密码输入、先保存后测试、保存后清空输入",
+        "失败测试仍可编辑且不显示成功",
+        "首次使用三种接入与保留来源编辑入口"
+      ],
+      "native_evidence": "root当前包原生完成现有隔离GLM来源编辑名称、保存、模型池显示、重开回读、恢复原名及保存并测试；fixed_chat一次通过。未输入或显示密钥，仍无新增真实GLM来源闭环。",
+      "native_evidence_reference": "../../../.codex-tmp/usable-desktop-20261011-v2/native-source-form/operator-observation.json",
+      "remaining": [
+        "真实厂商新增来源的原生凭据填写、实际保存、成功或失败测试回读"
+      ]
+    },
+    {
+      "id": "per_model_parameters_and_probes",
+      "ui": "模型行→此模型参数→保存此模型参数→重开→探测连接/核对模型列表/验证工具调用",
+      "static_support": [
+        "webapp/src/screens/ModelPool.tsx:148",
+        "webapp/src/screens/ModelPoolSettings.tsx:26",
+        "webapp/src/screens/ModelPoolSettings.tsx:69",
+        "webapp/src/screens/ModelPoolSettings.tsx:95"
+      ],
+      "test_files": [
+        "webapp/src/screens/ModelPoolSettings.test.tsx",
+        "tests/test_model_pool_policies.py"
+      ],
+      "test_coverage": [
+        "继承/覆盖及精确规则版本保存",
+        "非法有效输出/上下文组合拒绝",
+        "恢复继承、CAS冲突显式重读",
+        "打开不自动探测、失败后最新证据、探测中规则变化不混配旧编辑"
+      ],
+      "native_evidence": "清单既有原生GLM显示1M上下文/128k输出和工具探测通过；不是全部控件修改操作证据。",
+      "remaining": [
+        "原生保存实际模型覆盖并重开回读",
+        "修改导致能力失效后重新验证恢复",
+        "核对同来源其他模型、默认选择和分享不受此编辑影响"
+      ]
+    },
+    {
+      "id": "verify_then_select_agent_model",
+      "ui": "模型行→验证工具调用→用于助手→助手设置回读",
+      "static_support": [
+        "webapp/src/screens/ModelPool.tsx:87",
+        "webapp/src/screens/ModelPool.tsx:92"
+      ],
+      "test_files": [
+        "webapp/src/screens/ModelPool.test.tsx",
+        "webapp/src/screens/RynAgent.test.tsx"
+      ],
+      "test_coverage": [
+        "ready来源不被推断为支持工具",
+        "显式工具验证后刷新能力目录",
+        "修改默认模型不自动启用Agent或修改分享",
+        "源编辑后默认模型仍可重新验证"
+      ],
+      "native_evidence": "原生既有显示GLM启用/默认；未独立证明点击用于助手和设置回读。",
+      "remaining": [
+        "实际点击选择，回读准确catalog model_id",
+        "核对Agent启用与分享状态独立"
+      ]
+    },
+    {
+      "id": "per_model_sharing",
+      "ui": "模型行→分享→保存使用范围/保存分享启停/允许或撤销指定好友",
+      "static_support": [
+        "webapp/src/screens/ModelPoolSharing.tsx:51",
+        "webapp/src/screens/ModelPoolSharing.tsx:60",
+        "webapp/src/screens/ModelPoolSharing.tsx:76",
+        "webapp/src/screens/ModelPoolSharing.tsx:86"
+      ],
+      "test_files": [
+        "webapp/src/screens/ModelPoolSharing.test.tsx",
+        "webapp/src/screens/ModelPool.test.tsx",
+        "tests/test_model_pool_policies.py"
+      ],
+      "test_coverage": [
+        "范围、分享启停、精确好友许可独立版本保存",
+        "已分享需停用后才能改变范围",
+        "CAS支持不由单一revision推断",
+        "冲突/未确认阻断直到重读",
+        "缺稳定服务身份禁止猜测好友grant",
+        "兄弟模型与助手选择保留"
+      ],
+      "native_evidence": "填充模型池和逐模型分享页面已观察；C03配置回读与两物理机真实GLM调用/撤权/重授/重启有机制证据。",
+      "existing_business_evidence": [
+        "real-model/20261010T025929599645Z-C03-ryn/review.json",
+        "two-host/phase3-independent-review.json",
+        "two-host/phase4-5-independent-review.json"
+      ],
+      "remaining": [
+        "原生实际改变分享启停/范围/精确好友许可并回读",
+        "原生控件操作与接收方真实请求的相同配置绑定；跨机机制证据不替代按钮操作"
+      ]
+    },
+    {
+      "id": "agent_secure_form_source_commit",
+      "ui": "Agent任务→安全凭据表单→地址同意→安全保存并继续→草稿测试→精确来源审批→保存回读/后测",
+      "static_support": [
+        "webapp/src/screens/RynAgentCredential.tsx:24",
+        "webapp/src/screens/RynAgentCredential.tsx:61",
+        "webapp/src/screens/RynAgent.tsx:374",
+        "rynmesh/agent_runtime/source_drafts.py:97",
+        "rynmesh/agent_runtime/source_drafts.py:132"
+      ],
+      "test_files": [
+        "webapp/src/screens/RynAgentCredential.test.tsx",
+        "webapp/src/screens/RynAgent.test.tsx",
+        "tests/test_agent_runtime_credentials.py",
+        "tests/test_agent_source_drafts.py"
+      ],
+      "test_coverage": [
+        "密钥仅内存/专用vault端点且成功清空",
+        "同UUID、版本及原请求的未确认重试",
+        "地址同意和当前server grant强制要求",
+        "来源草稿测试/精确审批展示",
+        "复用密钥目的地绑定、来源轮换冲突",
+        "前测/后测、加密、修改失效、预算、取消及精确保存"
+      ],
+      "existing_business_evidence": [
+        "real-model/20261009T121052Z-C01-ryn/review.json",
+        "business-coverage-20261011.json"
+      ],
+      "native_evidence": "C01真实GLM planner+synthetic loopback业务来源已有安全表单机制/审批/私有保存/前后复测；被配置来源不是第二真实厂商。原生安全表单实际填写仍待补验。",
+      "remaining": [
+        "实际原生credential_ref问题出现、表单填写/同意并安全保存",
+        "实际原生来源草稿精确审批与保存回读/后测",
+        "任务终态和业务保存结果分别判断"
+      ]
+    }
+  ],
+  "credential_constraints": {
+    "existing_glm_source_id": "src-7de9fb1d36c44bc8",
+    "model_id": "glm-5.3-flash",
+    "owner_source_file_sha256_from_existing_inventory": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "reuse_binding": [
+      "source_id",
+      "kind",
+      "base_url"
+    ],
+    "reuse_code": "rynmesh/agent_runtime/source_drafts.py:97",
+    "reuse_meaning": "安全表单复用现有密钥只能绑定同来源ID/类型/地址，适合隔离home中的现有来源更新闭环，不等于新增来源。",
+    "manual_new_source_form": "普通AISources新增表单没有现有密钥复用入口。无key可保存needs_key；无key本地loopback可验新增UI流程，但不能认作真实GLM新增闭环或第二厂商。",
+    "secret_handling": "不打开显示密钥、不记录明文输入/响应，不改变用户owner home来源配置；凭据复用与修改仅在授权隔离home操作。"
+  },
+  "minimum_native_sequence": [
+    {
+      "order": 1,
+      "action": "当前包隔离home打开现有GLM，记录来源ID、非敏感地址、有效参数、默认模型、分享状态及包身份。",
+      "calls": "只读，零模型请求"
+    },
+    {
+      "order": 2,
+      "action": "若需补参数修改闭环，原生保存受控逐模型覆盖、重开回读，然后显式验证连接/工具；从目录选择用于助手并回读。",
+      "calls": "只有显式验证产生真实请求；按实际调用数记录"
+    },
+    {
+      "order": 3,
+      "action": "原生分享页保存停用/开启并回读准确模型；若验好友，停用→保存范围→精确好友授权→开启→撤销，各步骤分别确认。",
+      "calls": "配置保存不等于接收方实际可调用；接收方验证另记"
+    },
+    {
+      "order": 4,
+      "action": "原生提交来源更新任务，出现安全表单后填写隔离来源ID/同GLM地址，选择复用现有key并同意目的地；完成草稿前测、精确审批、实际保存回读与后测。",
+      "calls": "planner/草稿测试/后测均须计真实请求；不能冒充新增"
+    },
+    {
+      "order": 5,
+      "action": "新增来源另验：真实厂商完整新增需安全提供key；无需key的needs_key保存或本地loopback仅按实际覆盖范围记录。",
+      "calls": "未安全提供真实凭据就保留真实GLM新增闭环未验"
+    }
+  ],
+  "root_native_followup": {
+    "observed_by": "root native operation with screenshots and independent GET readback; this audit read the operator evidence JSON",
+    "candidate_installer_sha256": "64a06988bf95960b8d87bbf3572390c6e386c6e4a8ee991d1ecdd41b2f17a903",
+    "candidate_desktop_sha256": "7763842ec00d1a83f0e01ea708753c412b2963936f6566f8d3ba783be7de9d09",
+    "candidate_sidecar_sha256": "abbd544cef28f826ddec4fc8a289e7f54cb69a9a202d1ad0e82cbf07b3331408",
+    "isolated_source_id": "src-0d27cf47f6ab499e",
+    "native_actions": [
+      "原生隔离来源改名/保存/池显示/重开回读，改名阶段仅name与source_revision变化",
+      "恢复原名后原生保存并测试，一次真实GLM fixed_chat通过",
+      "独立GET核对模型参数、原工具探针和分享配置不变，连接与模型存在证据刷新",
+      "owner来源、身份、消息密钥、任务和输入输出资料不变",
+      "正常退出，18911与55185不可达"
+    ],
+    "status": "existing_source_edit_save_reopen_restore_and_fixed_chat_probe_passed",
+    "evidence_reference": "../../../.codex-tmp/usable-desktop-20261011-v2/native-source-form/operator-observation.json",
+    "save_and_test_result": "passed_fixed_chat",
+    "owner_triggered_probe_invocations": 1,
+    "chat_requests_per_invocation": 1,
+    "raw_upstream_capture_available": false,
+    "agent_tasks_created": 0,
+    "existing_source_native_scope_passed": true,
+    "formal_pass": false,
+    "limits": [
+      "不能扩称新增来源或密钥输入验收",
+      "Agent安全凭据/草稿/审批原生流程仍未验",
+      "逐模型参数修改和分享按钮未操作",
+      "该原生包不包含随后源码本地化修复"
+    ]
+  },
+  "localization": {
+    "confirmed_gap": "verified运行时句子发生变化而前端全文匹配仍为旧句，中文界面回退英文。",
+    "minimal_source_fix_evidence": "native-followup-localization-20261011.json",
+    "native_candidate_contains_fix": false,
+    "broader_design_deferred": "可将固定runtime summary/reason改为稳定code映射并保留原文证据；本次未引入新字段或重构。",
+    "subsequent_candidate_observation": {
+      "candidate_desktop_sha256": "0df4ff7e4b0a0defd5db2faffdfd4aec95323cdcc8a6c413c250e664ffae2cbe",
+      "native_candidate_contains_fix": true,
+      "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-document/native-observation.json"
+    }
+  },
+  "claims": {
+    "formal_acceptance_pass": false,
+    "existing_source_edit_and_fixed_chat_native_pass": true,
+    "new_real_provider_native_create_pass": false,
+    "complete_source_and_model_pool_native_pass": false,
+    "owner_configuration_mutated": false
+  },
+  "limitations": [
+    "静态实现和测试源码不等于原生真实操作。",
+    "本次audit不读取owner密钥，不启动模型/产品进程，不重复root原生验收。",
+    "较早UI观察和当前包只可按实际前端源码关系有限复用；不能冒充当前候选完整同快照业务验收。"
+  ],
+  "native_model_parameters_followup": {
+    "status": "passed",
+    "evidence": "../../../.codex-tmp/usable-desktop-20261011-v2/native-followup-model-parameters/operator-observation.json",
+    "candidate_desktop_sha256": "0df4ff7e4b0a0defd5db2faffdfd4aec95323cdcc8a6c413c250e664ffae2cbe",
+    "scope": "原生逐模型输出覆盖/重开/GLM工具验证/恢复继承/再次验证/正常退出",
+    "formal_pass": false
+  }
+}

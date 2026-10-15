@@ -1,0 +1,3 @@
+Error: Send disabled
+    at send (D:\code\rynmesh\.codex-tmp\agent-reliability-proof.cjs:24:38)
+    at async D:\code\rynmesh\.codex-tmp\agent-reliability-proof.cjs:49:2

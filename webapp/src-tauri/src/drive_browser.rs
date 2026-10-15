@@ -17,7 +17,7 @@ pub async fn open_drive_browser(url: String) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn launch(url: &str) -> Result<(), String> {
+pub(crate) fn launch(url: &str) -> Result<(), String> {
     #[link(name = "shell32")]
     extern "system" {
         fn ShellExecuteW(window: isize, operation: *const u16, file: *const u16,
@@ -32,7 +32,7 @@ fn launch(url: &str) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn launch(url: &str) -> Result<(), String> {
+pub(crate) fn launch(url: &str) -> Result<(), String> {
     let status = std::process::Command::new(if cfg!(target_os = "macos") { "/usr/bin/open" } else { "xdg-open" })
         .arg(url).status().map_err(|_| "browser_open_failed")?;
     if status.success() { Ok(()) } else { Err("browser_open_failed".into()) }

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "reviewer": "sharing_review (non-author of role proposal/audit)",
+  "reviewed_at": "2026-10-10T05:59:37.985420+00:00",
+  "verdict": "proposal_acceptable_no_material_findings",
+  "activation": "not_authorized_by_this_review; draft remains ineffective",
+  "reviewed_sha256": {
+    "role-contract-v2-proposal.md": "d3ec52189e27fdc0d57973d66661aceb92b1d0a441eca482fc29f150e8c0af9a",
+    "role-contract-audit.json": "8bc64353c5b079539d7b9589bfd4634f68710f7d89d3e94be5fd6b2bf9a7bf26"
+  },
+  "findings": [],
+  "scope": "Read the two proposed artifacts, development cases-v1 prompts/authorizations/assertions/interventions, world.json and cases-protocol.md. Verify audit source hashes. No held-out/generator read, no live API, no production/frozen changes. Implementation/overlay currently being authored is not approved by this proposal review.",
+  "independent_checks": {
+    "development_cases": 30,
+    "classification_entries_total": 30,
+    "classification_unique": 30,
+    "classification_exact_coverage": true,
+    "original_authorization_nodes": [
+      "node-b"
+    ],
+    "original_owner_ids": [
+      "owner-test"
+    ],
+    "source_hashes_checked": 12,
+    "source_hash_mismatches": [],
+    "changed_execution_cases": [
+      "Q01",
+      "Q06",
+      "C02",
+      "C03",
+      "C04",
+      "R02",
+      "R04",
+      "P03"
+    ],
+    "unchanged_execution_cases": 22,
+    "conditional_arithmetic": {
+      "business_cases": 24,
+      "remaining_if_seven_fail": 17,
+      "repetitions": 3,
+      "conditional_maximum": 51,
+      "denominator": 72,
+      "minimum_passes": 58,
+      "status": "conditional_static_bound_not_observed_score"
+    }
+  },
+  "assessments": [
+    {
+      "topic": "Role/authority correction",
+      "assessment": "Eight owner-admin cases explicitly move actual task/runtime/AgentStore/tool execution and effective authorization.consumer_node to A; B remains a distinct original recipient. No shared owner_id or declarative role label is treated as remote management authorization. Q01/Q06 remain read-only. Other 22 stay B."
+    },
+    {
+      "topic": "C03",
+      "assessment": "A default model and Agent enabled state are independent from B recipient visibility/access. The proposal explicitly requires A model-a private and locally usable, B only model-b visible/allowed, model-a denied, B default unaffected. all_models_private does not silently clear existing grants."
+    },
+    {
+      "topic": "C04",
+      "assessment": "World already grants model-a to B; no initial clearing is permitted. First stage is exact idempotent ensure/verification with actual required approval barrier, not invented first grant. All receiver probes, later revoke approval, B denial and model-b invariance remain. If existing runtime cannot reach the barrier, the case remains incomplete rather than skipped."
+    },
+    {
+      "topic": "Fresh world and ownership",
+      "assessment": "Q02 source-broken on B is explicitly a new per-case deployment binding, not a claim about v1 ownership; Q01 retains all four owner models on A. C01 new source/vault belongs to B; Q04 history and resource connectors remain B. No copying private model configurations or history to answer a running task, no A/B/C identity aliasing."
+    },
+    {
+      "topic": "Frozen goals and thresholds",
+      "assessment": "Proposal preserves prompts, expected assertions, all subscenarios, faults, interventions/barriers, repeated runs, budget/permission limits, 58/72 and matched reference 80 percent, P all-pass, core/recovery gates, physical-node/UI/install gates. It identifies static infeasibility assumptions separately from observed failures."
+    },
+    {
+      "topic": "Version and evidence provenance",
+      "assessment": "New hash-bound overlay/effective inputs/new dataset version and deterministic allowlisted diffs are required; old runs and failures cannot become v2 repeats. Aggregation must reject mixed versions/overlay hashes and actual-node mismatches. Existing deployment evidence remains limited to the role actually exercised."
+    },
+    {
+      "topic": "Model knowledge and fairness",
+      "assessment": "Both cohorts use same role, initial business facts, permission/budget/generation mapping and fresh sessions. Provider collector truth cannot enter prompt; real source remains original GLM read migrate=False. No remote-management feature or harness-performed model step is authorized."
+    }
+  ],
+  "pending_before_effective_acceptance": [
+    "Explicit activation decision and exact fixed new dataset version/overlay hash.",
+    "Independent review/tests of schema, deterministic composer and grading/aggregation checks, including immutable fields and actual runtime identity enforcement.",
+    "Controller migrations proving each required barrier and business action under matching effective authorization; no harness substitution.",
+    "New repetitions for both cohorts; no retroactive reuse of v1 samples.",
+    "Isolated held-out version binding remains pending without developer access.",
+    "Two physical hosts, external dependency, security, install/upgrade and same-snapshot UI/regression requirements remain independently pending."
+  ],
+  "notes": [
+    "This approval concerns the coherent proposed contract, not correctness or completed operation of future implementation.",
+    "Unknown consumer-side answers can be honest yet fail frozen exact factual requirements; changing roles must be a new effective dataset, not a post hoc scoring reinterpretation."
+  ]
+}

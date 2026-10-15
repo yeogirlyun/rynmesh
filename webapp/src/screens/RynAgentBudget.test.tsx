@@ -12,6 +12,17 @@ const task: AgentTask = { id: "budget-task", title: "Report", model_id: "model",
   allowed_actions: { budget: { enabled: true, reason: null, requires_control_revision: true } }, budget: { round: 2, lifetime: usage, current_round: { ...usage, model_calls: 1 }, limits: { max_total_model_calls: 128, max_total_tool_calls: 256, max_total_tokens: 10000, max_total_seconds: 3600 } } };
 beforeEach(() => sessionStorage.clear());
 
+it("edits the actual per-run timeout separately from lifetime allowance", async () => {
+  const received = vi.fn(); const user = userEvent.setup();
+  server.use(http.put("*/api/local/agent/tasks/budget-task/budget", async ({ request }) => { received(await request.json()); return HttpResponse.json(task); }));
+  render(<RynAgentBudget task={{ ...task, limits: { max_seconds: 180 } }} busy={false} onChange={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Adjust limits" }));
+  await user.clear(screen.getByLabelText("Run limit (seconds)"));
+  await user.type(screen.getByLabelText("Run limit (seconds)"), "900");
+  await user.click(screen.getByRole("button", { name: "Save limits" }));
+  await waitFor(() => expect(received).toHaveBeenCalledWith(expect.objectContaining({ run_max_seconds: 900, limits: task.budget!.limits, expected_control_revision: 4 })));
+});
+
 it("shows unknown measured usage separately from conservative charges", () => {
   render(<RynAgentBudget task={task} busy={false} onChange={vi.fn()} />);
   expect(screen.getAllByText("Unknown")).toHaveLength(2);
@@ -24,10 +35,10 @@ it("saves the version captured at edit time without resuming execution", async (
   const received = vi.fn(); const changed = vi.fn(); const user = userEvent.setup();
   server.use(http.put("*/api/local/agent/tasks/budget-task/budget", async ({ request }) => { received(await request.json()); return HttpResponse.json({ ...task, control_revision: 5 }); }));
   const view = render(<RynAgentBudget task={task} busy={false} onChange={changed} />);
-  await user.click(screen.getByRole("button", { name: "Adjust lifetime limits" }));
+  await user.click(screen.getByRole("button", { name: "Adjust limits" }));
   await user.clear(screen.getByLabelText("Token")); await user.type(screen.getByLabelText("Token"), "20000");
   view.rerender(<RynAgentBudget task={{ ...task, control_revision: 6 }} busy={false} onChange={changed} />);
-  await user.click(screen.getByRole("button", { name: "Save lifetime limits" }));
+  await user.click(screen.getByRole("button", { name: "Save limits" }));
   await waitFor(() => expect(changed).toHaveBeenCalled());
   expect(received).toHaveBeenCalledWith(expect.objectContaining({ expected_control_revision: 4, limits: expect.objectContaining({ max_total_tokens: 20000 }) }));
   expect(changed.mock.calls[0][0].status).toBe("failed");
@@ -37,8 +48,8 @@ it("retains an uncertain budget request across remount and retries exact body", 
   const received = vi.fn(); const user = userEvent.setup();
   server.use(http.put("*/api/local/agent/tasks/budget-task/budget", async ({ request }) => { received(await request.json()); return received.mock.calls.length === 1 ? HttpResponse.json({}, { status: 503 }) : HttpResponse.json(task); }));
   const view = render(<RynAgentBudget task={task} busy={false} onChange={vi.fn()} />);
-  await user.click(screen.getByRole("button", { name: "Adjust lifetime limits" }));
-  await user.click(screen.getByRole("button", { name: "Save lifetime limits" }));
+  await user.click(screen.getByRole("button", { name: "Adjust limits" }));
+  await user.click(screen.getByRole("button", { name: "Save limits" }));
   await screen.findByRole("alert"); view.unmount();
   render(<RynAgentBudget task={{ ...task, control_revision: 99 }} busy={false} onChange={vi.fn()} />);
   expect(received).toHaveBeenCalledTimes(1);
@@ -50,7 +61,7 @@ it("retains an uncertain budget request across remount and retries exact body", 
 
 it("does not permit adjustments while the server forbids them", () => {
   render(<RynAgentBudget task={{ ...task, allowed_actions: { budget: { enabled: false, reason: "agent_invalid_transition", requires_control_revision: true } } }} busy={false} onChange={vi.fn()} />);
-  expect(screen.getByRole("button", { name: "Adjust lifetime limits" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Adjust limits" })).toBeDisabled();
 });
 
 it("shows incomplete legacy call totals as unknown while retaining known floors", () => {

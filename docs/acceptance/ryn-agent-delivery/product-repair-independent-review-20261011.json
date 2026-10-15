@@ -1,0 +1,263 @@
+{
+  "kind": "bounded-product-repair-independent-review",
+  "reviewed_at": "2026-10-11T08:49:00.205836+00:00",
+  "reviewer": "reference_admission; not author of reviewed production changes",
+  "formal_pass": false,
+  "real_model_calls_by_reviewer": 0,
+  "production_files_changed_by_reviewer": [],
+  "scope": [
+    "runtime._model actual-byte compaction admission and runtime._compact closed-prefix selection",
+    "prompt v2.12 equivalent guidance compression and inference_context main/checker facts",
+    "current-task safe rejected-operation diagnostic projection"
+  ],
+  "verdict": "No actionable finding in the bounded final changes. Technical review supports the already-authorized single R06 development retest; it does not establish business/model quality or formal readiness.",
+  "findings": [],
+  "reviewed_invariants": [
+    "Complete serialized messages plus selected schemas must fit the actual context ceiling before final model reservation/dispatch. The 80 percent heuristic is removed without increasing the hard ceiling.",
+    "Closed-prefix enumeration retains paired tool calls/results. The preferred cut order remains nearest two-thirds with >=256-byte room as before; positive smaller fallback is used only after all ordinary candidates fail. Owner-only prefixes cannot consume a paid summary.",
+    "Latest tool exchange remains verbatim where the preferred closed prefix fits; the unchanged original regression verifies call_b survives the 8000-byte projection. Full closed suffix remains a bounded fallback when needed.",
+    "Original encrypted transcript, verbatim owner constraints, exact mutation receipts and opaque reference map remain retained. Summary source is derived from actual closed history and prior checkpoint; summary has no tools and no authority.",
+    "Unknown historical egress remains not_established. Recorded matching grants do not claim data was previously sent, on-device inference, current validity, or permission to bypass live scope checks.",
+    "Inference facts/guidance enter checker payload/system before base-size calculation. Original candidate answer, receipts, resource bodies and mandatory evidence are not dropped to fit these facts.",
+    "Current-task diagnostics reuse bounded event metadata, preserve null/unknown and actual operation rejection, and explicitly avoid inferring approval-hash mismatch or never-staged approval from agent_permission_denied.",
+    "Independent cancellation/steer during summary return commits no late checkpoint, no late summary and no business dispatch; owner state and settled model accounting are retained."
+  ],
+  "validation": {
+    "initial_selected_suite": {
+      "passed": 35,
+      "failed": 1,
+      "seconds": 8.92,
+      "note": "Ran while compaction author was still revising. The actual resource workflow failed with agent_compaction_size_limit: 642-byte fixture summary against a 105-byte chosen cut. This failure is retained, not counted as a pass."
+    },
+    "final_frozen_followup": {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_compact_efficiency.py tests/test_agent_checkpoint_refs.py tests/test_agent_runtime.py::test_compaction_preserves_owner_constraints_closed_tool_groups_and_original_history tests/test_agent_runtime.py::test_compaction_fails_closed_on_tool_call_from_summary tests/test_agent_context_serialization.py::test_escaped_summary_cannot_use_source_size_as_request_size -q -p no:cacheprovider --tb=short",
+      "passed": 10,
+      "failed": 0,
+      "seconds": 4.03,
+      "runtime_sha256": "dfe867f506c72cd31f04a0d523ff11b7aaac822277b5edfa1fea0a70f9dc20f1",
+      "reason": "Author reverted direct >=64 candidate preference to prior >=256 ordinary preference plus positive fallback. Rechecked only failed workflow and affected checkpoint/summary boundaries after explicit freeze."
+    },
+    "independent_summary_control_probe": {
+      "command": ".venv/Scripts/python.exe .codex-tmp/reviews/product_repair_cancel_summary_20261011.py",
+      "results": [
+        {
+          "action": "cancel",
+          "status": "cancelled",
+          "checkpoint_committed": false,
+          "business_dispatches": 0,
+          "summary_calls": 1
+        },
+        {
+          "action": "steer",
+          "status": "queued",
+          "checkpoint_committed": false,
+          "business_dispatches": 0,
+          "summary_calls": 1
+        }
+      ],
+      "script_and_result_hashes_in_files": true
+    },
+    "other_selected_checks_passed_before_freeze": [
+      "exact serialized boundary admits 12000 and rejects 12001 before reservation",
+      "closed-search read_only summary injection cannot grant writes; exact owner approval required",
+      "actual peer/API/native/legacy requests receive conservative facts",
+      "revoked recorded resource scope prevents dispatch",
+      "scope clearing excludes old plan, summary and tool history",
+      "unknown write blocks new scope/messages",
+      "current operation rejection diagnostics and unknown-write guidance",
+      "main/checker owner cancellation, round/lifetime exhaustion preserve rejection and usage"
+    ]
+  },
+  "files_sha256": {
+    "rynmesh/agent_runtime/runtime.py": "dfe867f506c72cd31f04a0d523ff11b7aaac822277b5edfa1fea0a70f9dc20f1",
+    "rynmesh/agent_runtime/prompt.py": "5c94babf35accb4e5d999474161963b905edd1ef4c6868a3287da8371a66964e",
+    "rynmesh/agent_runtime/inference_context.py": "46f2419d305115c9d337174ac374cef2f6675f486d3ca34f4376d3602673f370",
+    "rynmesh/agent_runtime/verification.py": "178bc4b780539b1807c6793a89ace8de03492baee9b68b3fd563e87c57968455",
+    "rynmesh/agent_runtime/diagnostics.py": "c1e5c9af675039465b092dd9174692064f83b3d5bdf242e38701bab5897b3812",
+    "tests/test_agent_compact_efficiency.py": "41c0fdb69e801d341c086dac3a16f0b0212d92fb89ac6107e055e41f19beea6d",
+    "tests/test_agent_context_serialization.py": "6d09aee3d1ca6336c66c22262f95f2b28797f200ac7df577287fe8e65f09a75d",
+    "tests/test_agent_checkpoint_refs.py": "889e1236580eb4ae5144ae94cdc122d5e554a0957dacfbb05669ac787ce17cf1",
+    "tests/test_agent_inference_context.py": "3e712f297a1e5f3d5ead14a62f20f40444d8d7e4bf39c684a59e5f7fe5546753",
+    "tests/test_agent_runtime_diagnostics.py": "39e85fec8d7d17b605c89be82475b1defbb639323c9dfb8b908ff58368d98979",
+    ".codex-tmp/reviews/product_repair_cancel_summary_20261011.py": "2d465e798853a157594f7d37d99886177ffd36f8e28ef743f347b4fcfb3fdfc2",
+    ".codex-tmp/reviews/product_repair_cancel_summary_20261011.json": "c4883f7fccf020f1fe8894ab5ee2b20a6020fcd25bc2a8131c6dc61c6a02a513"
+  },
+  "limitations": [
+    "The reviewer did not author reviewed production code, but previously authored separate reference C03 host plumbing, which is outside this review.",
+    "No paid call, remote operation, heldout content or build_cases.py access.",
+    "The actual resource workflow creates total 89 once, preserves source and survives encrypted-store restart; semantic checker remains agent_verification_context_limit and outcome unverified.",
+    "The original R06 20261011T0816Z failure remains a failure: 12 calls, 6 summaries, no body read and no artifact. Offline improvements do not establish corrected GLM behavior.",
+    "A git diff was unavailable because these runtime files are untracked in the shared dirty checkout. Review used actual source, original captured prompt/evidence, repair records and exact final file hashes.",
+    "No acceptance limits, formal scores, role activation, blind data or original failure records were changed."
+  ],
+  "additional_batches": [
+    {
+      "batch": "context-directory-read-retry-and-checker-lossless",
+      "reviewed_at": "2026-10-11T09:14:01.600578+00:00",
+      "reviewer": "reference_admission; not author of this batch production changes",
+      "formal_pass": false,
+      "real_model_calls_by_reviewer": 0,
+      "production_files_changed_by_reviewer": [],
+      "verdict": "No actionable finding in the frozen bounded changes. Offline main workflow and safety boundaries pass. Full 12k verification remains blocked; real-model R06/F07/R04/P03 failures are not closed by these tests.",
+      "findings": [],
+      "reviewed_invariants": [
+        "Directory name index remains visible in load.items.enum when small; large indexes remain completely reachable by bounded pagination. Brief catalog pages omit repeated index and full schemas remain available by exact load. Menu visibility does not confer execution authority.",
+        "Final serialized messages plus schemas enforce the same context ceiling before inference reservation. Closed summary source excludes opaque private reasoning only, retains business strings and exact reference mapping, and original encrypted transcript is preserved.",
+        "Read retry denial is before dispatch: only actual failed receipts with not_executed false count; the same resource_ref groups resource pages, other tools use exact arguments. Goal/scope/epoch bind the count, current successful read resets it, other resources remain usable, and rejection neither adds an actual tool charge nor proves observation.",
+        "Plan rejection supplies current goal revision and legal criterion IDs without accepting the rejected plan or changing authority.",
+        "Checker factoring affects only outbound receipts/evidence exact JSON values. Expansion preserves every original field and record, literal marker data, IDs, distinct status/scope/time, owner requirements and answer. Shared values are explicitly not independent observations. Storage is unchanged and no extra inference call is introduced.",
+        "Unresolved resource read/search pointers derive from latest existing READ_SPECS targets in current scope after goal/epoch filtering. They expose missing material to semantic assessment; unrelated/recovered/superseded probes do not mechanically force failure. F07 partial classification is demonstrated only with a scripted failed assessment.",
+        "All mandatory checker facts are retained even when too large. Over-limit complete checker remains unverified and is not dispatched. Denied mutation and unknown execution cannot be promoted by prose or replayed on restart.",
+        "Cancellation and steering during summary return retain owner state and settled accounting, discard late checkpoint, and perform no business dispatch."
+      ],
+      "validation": {
+        "selected_frozen_checks": {
+          "passed": 36,
+          "failed": 0,
+          "seconds": 8.56,
+          "result_xml": ".codex-tmp/reviews/product_repair_batch2_20261011.xml",
+          "warnings": "Five pytest record_property/xunit2 compatibility warnings; properties were present and explicitly parsed. No rerun required.",
+          "selection": [
+            "test_agent_checker_references.py (all 14)",
+            "test_agent_read_retry_limit.py (all 7)",
+            "test_agent_long_resource_context.py (public 171456-byte source)",
+            "tool_menu: bounded eight-page exchange; large-index pagination; exact write approval; unexposed rejection; plan feedback (2 cases)",
+            "context_serialization: exact final boundary and escaped-summary bytes",
+            "checkpoint_refs: exact refs across encrypted restart",
+            "runtime: live permission and ambiguous-write restart",
+            "runtime_verification: denied write cannot pass and superseded receipt IDs cannot verify (2 cases)"
+          ]
+        },
+        "public_capture_lossless_comparisons": [
+          {
+            "case": "20261011T070655Z-F07-ryn",
+            "call": 9,
+            "before": 42519,
+            "after": 32473,
+            "original_sha256": "5f11a4b563d57f2b6d33c3ad74e8a06fb67869a1368c7e77ad8e3ee30ac63506",
+            "model_judgment_tested": false
+          },
+          {
+            "case": "20261011T071807673576Z-R04-ryn-owner-draft",
+            "call": 6,
+            "before": 28653,
+            "after": 19661,
+            "original_sha256": "d723570ee2bd5554392c7719309165114613db8f2bd392c90c17c544fb96387d",
+            "model_judgment_tested": false
+          },
+          {
+            "case": "20261011T071807673576Z-R04-ryn-owner-draft",
+            "call": 11,
+            "before": 49754,
+            "after": 29209,
+            "original_sha256": "d723570ee2bd5554392c7719309165114613db8f2bd392c90c17c544fb96387d",
+            "model_judgment_tested": false
+          },
+          {
+            "case": "20261011T0800Z-P03-ryn-owner-draft",
+            "call": 5,
+            "before": 58361,
+            "after": 35672,
+            "original_sha256": "bc67b10082b2bafbc26d538871e268d334dffdd7fea8735dca7e0f0ec090e391",
+            "model_judgment_tested": false
+          }
+        ],
+        "public_long_document_workflow": {
+          "source_bytes": 171456,
+          "raw_projection_bytes": [
+            6666,
+            8808,
+            9701,
+            11519,
+            17660,
+            16628,
+            9899,
+            12984,
+            12056,
+            12055,
+            12054,
+            12053,
+            12052,
+            12051
+          ],
+          "request_bytes": [
+            6666,
+            8808,
+            9701,
+            11519,
+            8524,
+            10280,
+            6307,
+            10318,
+            9899,
+            2918,
+            11329
+          ],
+          "main_calls": 8,
+          "summary_calls": 3,
+          "checker_calls": 0,
+          "search_receipts": 2,
+          "read_receipts": 0,
+          "source_http_gets": 4,
+          "total_calls": 11,
+          "artifact_checkpoints": 12,
+          "artifact_total": 1278,
+          "source_unchanged": true,
+          "actual_store_restart": true,
+          "business_puts": 1,
+          "outcome": "unverified",
+          "limitations": [
+            "agent_verification_context_limit",
+            "One or more required conditions lack independent evidence."
+          ]
+        },
+        "independent_summary_control_probe": {
+          "command": ".venv/Scripts/python.exe .codex-tmp/reviews/product_repair_cancel_summary_20261011.py",
+          "results": [
+            {
+              "action": "cancel",
+              "status": "cancelled",
+              "checkpoint_committed": false,
+              "business_dispatches": 0,
+              "summary_calls": 1
+            },
+            {
+              "action": "steer",
+              "status": "queued",
+              "checkpoint_committed": false,
+              "business_dispatches": 0,
+              "summary_calls": 1
+            }
+          ]
+        },
+        "frozen_production_hashes_rechecked_after_tests": true
+      },
+      "failure_disposition": {
+        "R06": "Latest five-call real failure 20261011-R06-context-repair retained. New offline real DAV workflow reaches all 12 checkpoints/1278 and approved artifact in 11 total model-stub calls, but zero checker calls and outcome unverified/context limit. This does not close R06.",
+        "F07": "Fourth actual same-resource failed dispatch now prevented durably. Required failed material is represented to checker and scripted incomplete assessment yields partial. Actual model semantic behavior remains untested; original verified F07 failure retained.",
+        "R04_P03": "Original checker request facts roundtrip exactly with smaller payloads. Original timeout/semantic failures retained. No real model evidence that dedup fixes latency or judgment; read successes cannot mechanically turn denied writes into success."
+      },
+      "limitations": [
+        "No paid calls, remote operations, heldout access or build_cases.py reads.",
+        "Public long-document fixture uses deterministic planner/summary/checker stand-ins and owner correction before first model turn; it is not the full timed R06 controller, matched model comparison or formal acceptance.",
+        "Its initial projection can exceed 12000 but every actual request is at most 11519 bytes; final complete checker does not fit and remains undispatched/unverified. Original limits and total-call budget were not raised.",
+        "Lossless source reconstruction proves factual retention, not real-model reference interpretation or semantic quality. Captured checker payloads still exceed 12000 after factoring.",
+        "Source reference adapter work authored by this reviewer is outside this independent product review and is being separately read by compact_efficiency.",
+        "Prior batch results, failures and hashes remain untouched; this batch supplements rather than overwrites them."
+      ],
+      "files_sha256": {
+        "rynmesh/agent_runtime/runtime.py": "361116fb52803af157fc03bd2394a8afa011c7c937629636860143df45b0a759",
+        "rynmesh/agent_runtime/tool_menu.py": "115369f758827c35a5829689e8cc6984a2c2deff2695d7c0eb7e367df3b85d03",
+        "rynmesh/agent_runtime/verification.py": "61454a6a7c7ce7285987795a0a81300580abf843146aefc96563da473bcf7811",
+        "rynmesh/agent_runtime/checker_references.py": "8ed18423a05e200559fb5e21d7f55d8375aa0a94437bb087101bf08dbd44199e",
+        "tests/test_agent_read_retry_limit.py": "06197b64bb045cac3e108db50a13454bed5d46f467a2c892bf179b3f1a0a2f68",
+        "tests/test_agent_long_resource_context.py": "8b9c88db4131118e263209dff08e457c580bae75942c6fefaea7fa14778e2191",
+        "tests/test_agent_tool_menu.py": "14cbea307bb01804ff4e300523da614d1f6f45d1e0e3cdf457ad1c23793c82cd",
+        "tests/test_agent_checker_references.py": "6b17c98c5e23d9d9b002de016109770fca03dbda6890abd95b2f65649957c464",
+        ".codex-tmp/reviews/product_repair_batch2_20261011.xml": "d801de63723b8853c68fbae626b88746eaa952407fb61819cb74e8b1a415dc7c",
+        ".codex-tmp/reviews/product_repair_cancel_summary_20261011.py": "2d465e798853a157594f7d37d99886177ffd36f8e28ef743f347b4fcfb3fdfc2",
+        ".codex-tmp/reviews/product_repair_cancel_summary_20261011.json": "c4883f7fccf020f1fe8894ab5ee2b20a6020fcd25bc2a8131c6dc61c6a02a513"
+      }
+    }
+  ]
+}

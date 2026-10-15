@@ -19,6 +19,7 @@ export interface AgentPlan {
   steps: Array<{ id: string; text: string; criterion_ids: string[]; depends_on: string[]; status: "pending" | "running" | "blocked" | "done" }>;
 }
 export interface AgentOutcome {
+  assessment_requested?: boolean;
   status: "unverified" | "verified" | "partial" | "not_achieved" | "unknown";
   goal_revision: number; criteria_results: unknown[]; summary: string; evidence_refs: string[]; uncertainties: string[];
 }
@@ -42,6 +43,7 @@ export interface AgentModelSwitchPreview {
   model: Pick<AgentModel, "id" | "name" | "source" | "source_name" | "source_id" | "peer_id">;
   current_model_id: string; destination: AgentModelDestination; control_revision: number; scope_revision: number;
   current_scope_selection: AgentScopeSelection; current_scope_authorized?: boolean;
+  current_project?: { id: string; name: string; path: string } | null;
   data_policy: { sent_after_resume: string[]; excluded: string[]; resources_require_explicit_transfer_or_new_authorization: boolean; automatic_resume: boolean };
   confirmation_required: true;
 }
@@ -58,22 +60,32 @@ export interface AgentScopeSnapshot {
 export interface AgentSettings {
   enabled: boolean;
   model_id: string;
-  permission_mode: "read_only" | "confirm_changes" | "automatic";
+  permission_mode: "workspace" | "read_only" | "confirm_changes" | "automatic";
   allowed_write_tools: string[];
+  workspace_root?: string;
+  desktop_access?: boolean;
   max_steps: number;
   max_seconds: number;
   max_context_chars: number;
   max_output_chars: number;
 }
 export interface AgentModel {
+  supported_reasoning_efforts?: string[];
+  default_reasoning_effort?: string;
+  cli_model?: string;
+  cli_source?: string;
+  service_id?: string;
   id: string;
   name: string;
   source: string;
   available: boolean;
+  /** Whether this connection implements the assistant tool protocol; not a probe result. */
   agent_supported?: boolean;
+  /** Historical tool probe result for diagnostics only. */
   tool_support?: "supported" | "unknown" | "unsupported";
   description?: string;
   destination_revision?: string | null;
+  destination_binding_supported?: boolean;
   source_id?: string;
   source_name?: string;
   peer_id?: string;
@@ -104,7 +116,7 @@ export interface AgentMessage {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "steer" | "information" | "message"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean };
+  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean };
 }
 export interface AgentEvent {
   seq: number;
@@ -115,6 +127,9 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 export interface AgentTaskSummary {
+  reasoning_effort?: string;
+  project?: AgentProject;
+  local_execution?: { workspace_root: string; desktop_access?: boolean };
   id: string;
   title: string;
   model_id: string;
@@ -143,13 +158,25 @@ export interface AgentTaskSummary {
   model_destination?: AgentModelDestination;
   archived?: boolean;
   result_refs?: AgentResultRef[];
+  file_artifact_revision?: number;
   budget?: AgentBudget;
   run_timing?: AgentRunTiming;
   skills?: AgentSkill[];
 }
 export interface AgentResultRef { id: string; task_id: string; tool: string; operation_id: string; goal_revision: number; scope_revision: number; context_epoch: number; sha256: string; bytes: number; }
+export interface AgentProject { id: string; name: string; path: string; generation: number; entry_files: string[]; manifests: string[]; directories: string[]; }
 export interface AgentResultPage { id: string; sha256: string; bytes: number; characters: number; offset: number; next_offset: number | null; content: string; }
 export interface AgentArtifact { id: string; name: string; bytes: number; sha256: string; created_at?: string; }
+/** A workspace file proven by this task's own confirmed file operations, re-checked against the disk. */
+export interface AgentFileArtifact {
+  id: string; name: string; path: string; absolute_path?: string; source?: "write" | "command" | "read"; media_type: string; preview: "image" | "text" | "download";
+  role: "deliverable" | "supporting"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
+  bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
+  attribution?: "observed_during_command";
+  goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
+  render_inspected?: { at?: string; findings: number };
+}
+export interface AgentArtifactListing { artifacts: AgentArtifact[]; files?: AgentFileArtifact[]; unbacked_mentions?: string[]; pending_files?: boolean; }
 export type AgentRecordOperation = "archive" | "restore" | "delete";
 export interface AgentDeleteResult { id: string; deleted: true; cleanup_pending: boolean; }
 export interface AgentTask extends AgentTaskSummary {
@@ -162,6 +189,21 @@ export type AgentAction = "pause" | "resume" | "cancel" | "approve" | "deny";
 export class AgentAPIError extends Error {
   constructor(public code: string, public status: number) { super(code); }
 }
+export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing" | "budget" | "allowed_actions" | "run_state">> {
+  id: string;
+  revision: number;
+  unchanged: true;
+}
+
+export function mergeUnchangedTask(cached: AgentTask, value: AgentTask | AgentTaskUnchanged): AgentTask {
+  if (!("unchanged" in value) || value.unchanged !== true || value.id !== cached.id || value.revision !== cached.revision) return value as AgentTask;
+  const merged: AgentTask = { ...cached };
+  for (const key of ["run_timing", "budget", "allowed_actions", "run_state"] as const) {
+    if (value[key] !== undefined) Object.assign(merged, { [key]: value[key] });
+  }
+  return merged;
+}
+
 async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(nodeControlUrl(`/agent${path}`), {
     method, credentials: "include", cache: "no-store", signal,
@@ -175,9 +217,26 @@ async function request<T>(path: string, method = "GET", body?: unknown, signal?:
   }
   return response.json() as Promise<T>;
 }
+export function agentFileUrl(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256">): string {
+  // The version in the URL makes every revision a distinct resource; nothing stale is reused.
+  return nodeControlUrl(`/agent/tasks/${encodeURIComponent(taskID)}/files/${encodeURIComponent(file.id)}?v=${encodeURIComponent(file.sha256 || "")}`);
+}
+async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256" | "media_type">, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new AgentAPIError(typeof data.detail === "string" ? data.detail : "agent_request_failed", response.status);
+  }
+  // The listing's type, not a sniffed one, decides how the bytes are drawn.
+  return new Blob([await response.arrayBuffer()], { type: file.media_type });
+}
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
 export const rynAgent = {
+  projects: (signal?: AbortSignal) => request<{ projects: AgentProject[]; selected_project_id?: string }>("/projects", "GET", undefined, signal),
+  selectProject: (project_id: string) => request<{ selected_project_id: string }>("/projects/selection", "POST", { project_id }),
+  loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
+  removeProject: (id: string) => request<{ removed: boolean }>(`/projects/${encodeURIComponent(id)}`, "DELETE"),
   settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal),
   updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings),
   models: (signal?: AbortSignal) => request<{ models: AgentModel[] }>("/models", "GET", undefined, signal),
@@ -188,14 +247,20 @@ export const rynAgent = {
   result: (taskID: string, resultID: string, offset = 0, signal?: AbortSignal) => request<AgentResultPage>(`/tasks/${encodeURIComponent(taskID)}/results/${encodeURIComponent(resultID)}?offset=${offset}&limit=8192`, "GET", undefined, signal),
   resources: (signal?: AbortSignal) => request<AgentResourceCatalog>("/resources", "GET", undefined, signal),
   scope: (id: string, signal?: AbortSignal) => request<AgentScopeSnapshot>(`/tasks/${encodeURIComponent(id)}/scope`, "GET", undefined, signal),
-  artifacts: (id: string, signal?: AbortSignal) => request<{ artifacts: AgentArtifact[] }>(`/tasks/${encodeURIComponent(id)}/artifacts`, "GET", undefined, signal),
+  artifacts: (id: string, signal?: AbortSignal) => request<AgentArtifactListing>(`/tasks/${encodeURIComponent(id)}/artifacts`, "GET", undefined, signal),
+  fileContent,
+  openFile: (id: string, file: string, action: "open" | "reveal") => request<{ opened: boolean }>(`/tasks/${encodeURIComponent(id)}/files/${encodeURIComponent(file)}/actions`, "POST", { action }),
   artifact: (id: string, operation: string, signal?: AbortSignal) => request<AgentArtifact & { text: string }>(`/tasks/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(operation)}`, "GET", undefined, signal),
   task: (id: string, signal?: AbortSignal) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}`, "GET", undefined, signal),
-  create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[]) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}) }),
-  control: (id: string, route: "messages" | "actions" | "scope", body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/${route}`, route === "scope" ? "PUT" : "POST", body),
-  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id = crypto.randomUUID()) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
-    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id,
-  } : { message, expected_revision: task.revision }),
+  // Polling with a cached copy: an unchanged task returns only its live fields.
+  taskSince: (cached: AgentTask, signal?: AbortSignal) => request<AgentTask | AgentTaskUnchanged>(
+    `/tasks/${encodeURIComponent(cached.id)}?since_revision=${cached.revision}`, "GET", undefined, signal)
+    .then(value => mergeUnchangedTask(cached, value)),
+  create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[], response_language?: "zh-CN" | "en", project_id?: string, reasoning_effort?: string) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(project_id ? { project_id } : {}), ...(response_language ? { response_language } : {}), ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}), ...(reasoning_effort ? { reasoning_effort } : {}) }),
+  control: (id: string, route: "messages" | "actions" | "scope" | "workspace", body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/${route}`, route === "scope" ? "PUT" : "POST", body),
+  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
+    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}),
+  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}) }),
   action: (task: AgentTask, action: AgentAction) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action, ...(task.allowed_actions ? { expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() } : { expected_revision: task.revision }),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}),
@@ -208,13 +273,13 @@ export const rynAgent = {
   skills: () => request<{ skills: AgentSkill[] }>("/skills"),
   preferences: () => request<AgentPreferences>("/preferences"),
   savePreferences: (body: { expected_revision: number; items: AgentPreferences["items"] }) => request<AgentPreferences>("/preferences", "PUT", body),
-  updateBudget: (id: string, body: { limits: AgentBudgetLimits; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
+  updateBudget: (id: string, body: { limits: AgentBudgetLimits; run_max_seconds?: number; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
   previewModel: (id: string, modelID: string, signal?: AbortSignal) => request<AgentModelSwitchPreview>(`/tasks/${encodeURIComponent(id)}/model?model_id=${encodeURIComponent(modelID)}`, "GET", undefined, signal),
   switchModel: (id: string, body: AgentModelSwitchRequest) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/model`, "PUT", body),
 };
 
-export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent): Record<string, unknown> {
-  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() };
+export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string): Record<string, unknown> {
+  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}) };
 }
 export function agentActionBody(task: AgentTask, action: AgentAction): Record<string, unknown> {
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),
@@ -237,7 +302,7 @@ export function isAgentActive(status: AgentStatus): boolean {
 }
 
 export function canUseAgentModel(model: AgentModel): boolean {
-  return model.available && model.agent_supported === true;
+  return model.available && model.agent_supported === true && !(model.source === "peer" && model.destination_binding_supported === false);
 }
 
 export function canResumeAgentTask(task: AgentTaskSummary): boolean {

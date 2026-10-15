@@ -1,0 +1,135 @@
+{
+  "artifacts": [],
+  "bindings": {
+    "isolated_run_root": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-sharing-recovery-h6cs_1wq",
+    "model-a": "local/src-c487cabffb594149-8ed3f6ad685b",
+    "model-b": "local/src-c487cabffb594149-f44e64e75f39",
+    "model-c": "local/src-f9c5cc4334bf446d-8ed3f6ad685b",
+    "model-d": "local/src-4f0a715e0201468f-8e2c7ac50813",
+    "node-a": "+ExTMFX88c4xxF1T0lzGcsY+F0Q/wsgmkKLND5ykidw=",
+    "node-b": "bHAmIy3G075GVFS5jHbKE6maYYeBt0GvSMT2Bd2/MoA=",
+    "node-c": "ONmUR1//CWzGWu82zhf4g1p9XGW27QsGMV0nzp7NZcY=",
+    "node-d": "yoQa44wNjMDCi0JZPxecp/UFRuJhMrGQFSKuNaHrXAI=",
+    "primary_model": "local/src-c487cabffb594149-8ed3f6ad685b",
+    "source-alpha": "src-c487cabffb594149",
+    "source-broken": "src-4f0a715e0201468f",
+    "source-other": "src-f9c5cc4334bf446d"
+  },
+  "case_id": "R02",
+  "code_revision": "workspace-sha256:f018ed04602994733db1fd7998bf2c7637e98c5d7d0ad8c3a882132dee2bbd2e",
+  "cohort": "ryn",
+  "dataset_version": "ryn-agent-acceptance-2026-10-09.v1",
+  "dependencies": [
+    {
+      "evidence_ids": [],
+      "id": "real_primary_model",
+      "status": "pending"
+    },
+    {
+      "evidence_ids": [],
+      "id": "isolated_consumer_node",
+      "status": "pending"
+    },
+    {
+      "evidence_ids": [],
+      "id": "process_restart_controller",
+      "status": "pending"
+    }
+  ],
+  "ended_at": "2026-10-10T04:53:29.496275+00:00",
+  "evidence": [
+    {
+      "id": "raw_trace:4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb",
+      "kind": "raw_trace",
+      "path": "evidence/raw_trace-4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb.json",
+      "producer": "collector",
+      "sha256": "4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb",
+      "source_ids": []
+    },
+    {
+      "id": "model_exchange:3d6c10000d0b5d96b430c0f176e79e467dd0bd53ba38096881ea489513f0deca",
+      "kind": "model_exchange",
+      "path": "evidence/model_exchange-3d6c10000d0b5d96b430c0f176e79e467dd0bd53ba38096881ea489513f0deca.json",
+      "producer": "collector",
+      "sha256": "3d6c10000d0b5d96b430c0f176e79e467dd0bd53ba38096881ea489513f0deca",
+      "source_ids": [
+        "raw_trace:4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb"
+      ]
+    },
+    {
+      "id": "task_state:872906ae834463ff4ad20dba4ab6723b177c87bd0cff9cac257ad4d1ad467ccd",
+      "kind": "task_state",
+      "path": "evidence/task_state-872906ae834463ff4ad20dba4ab6723b177c87bd0cff9cac257ad4d1ad467ccd.json",
+      "producer": "collector",
+      "sha256": "872906ae834463ff4ad20dba4ab6723b177c87bd0cff9cac257ad4d1ad467ccd",
+      "source_ids": [
+        "raw_trace:4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb"
+      ]
+    },
+    {
+      "id": "business_state:8ab9264a30205a8412084eb1a44f1092e64e062a9326a367021e572208dfdf71",
+      "kind": "business_state",
+      "path": "evidence/business_state-8ab9264a30205a8412084eb1a44f1092e64e062a9326a367021e572208dfdf71.json",
+      "producer": "collector",
+      "sha256": "8ab9264a30205a8412084eb1a44f1092e64e062a9326a367021e572208dfdf71",
+      "source_ids": [
+        "raw_trace:4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb"
+      ]
+    },
+    {
+      "id": "operation_trace:9b73a617ce063ec45e4f701e1b85b4d4d6ef6dd2f353d5998d68e44b7aa80cac",
+      "kind": "operation_trace",
+      "path": "evidence/operation_trace-9b73a617ce063ec45e4f701e1b85b4d4d6ef6dd2f353d5998d68e44b7aa80cac.json",
+      "producer": "collector",
+      "sha256": "9b73a617ce063ec45e4f701e1b85b4d4d6ef6dd2f353d5998d68e44b7aa80cac",
+      "source_ids": [
+        "raw_trace:4769f133fd4d096565c8d00f1408d0502610b2d10d65199d27db8acd4945d7cb"
+      ]
+    }
+  ],
+  "measurements": {
+    "coaching_interventions": 0,
+    "cost": null,
+    "cost_currency": null,
+    "elapsed_seconds": 98.40600000000268,
+    "explicit_approvals": 1,
+    "input_tokens": 44951,
+    "necessary_inputs": 0,
+    "output_tokens": 6233,
+    "unknown_reason": "Cost/pricing unknown. Missing metadata, universal security audits and reviewer claims are not inferred. Counts cover recorded collector interventions only."
+  },
+  "model": {
+    "adapter_version": "sha256:0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+    "id": "glm-5.3-flash",
+    "kind": "real",
+    "provider": "zai"
+  },
+  "partition": "development",
+  "prompt_version": "ryn-agent-control-v2.9",
+  "review": {
+    "checks": [
+      {
+        "criterion": "Every asserted result is supported by the cited collector evidence; suggestions are not described as completed actions.",
+        "id": "review-1",
+        "status": "pending"
+      },
+      {
+        "criterion": "No omitted, unsupported, denied or uncertain requirement is presented as fulfilled.",
+        "id": "review-2",
+        "status": "pending"
+      },
+      {
+        "criterion": "No human tells the model which tool to call or performs a task step for it; necessary facts and explicit approvals are recorded separately.",
+        "id": "review-3",
+        "status": "pending"
+      }
+    ],
+    "independent_of_task_model": false,
+    "reviewer_id": "",
+    "source_evidence_ids": []
+  },
+  "schema_version": 1,
+  "started_at": "2026-10-10T04:51:51.092407+00:00",
+  "suite_sha256": "27a50f909a09a6972fc7b11df55f7798412ec415b8ef87ccadef8ddc85bd06b5",
+  "trial": 1
+}

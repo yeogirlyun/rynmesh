@@ -1,0 +1,20 @@
+{
+  "classification": "final adapter snapshot passed native approval-wait mechanism check",
+  "formal_case_score": false,
+  "real_model": false,
+  "reviewer": "Root inspected all host approval/tool events, native request counts and encrypted budget counters.",
+  "checks_passed": true,
+  "code_unchanged": true,
+  "owner_wait_seconds": 21.0,
+  "native_owner_wait_seconds": 21.0046021,
+  "parent_active_wall_seconds": 3.718,
+  "model_requests": 2,
+  "tool_dispatches": 1,
+  "charged_tokens": 24,
+  "unsettled_operations": 0,
+  "finding": "One exact approval preceded the only write; the synthetic final answer followed its real host receipt. Approval waiting exceeded the 10-second active deadline and the parent 10-second grace without consuming execution allowance. Final adapter includes the late-cancellation guard. Operation time is zero at the host clock resolution for these immediate synthetic callbacks; it is not an inference performance measurement.",
+  "limitations": [
+    "Actual pinned worker, synthetic model and fixture tool; no Agent quality score or real inference latency claim.",
+    "No persistent target in this smoke, no crash recovery, no free-form input wait.",
+    "Native overhead and operation-ledger time are separately reported; full comparison readiness remains incomplete."
+  ]

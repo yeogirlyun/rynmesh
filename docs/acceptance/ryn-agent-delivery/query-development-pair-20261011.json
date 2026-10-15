@@ -1,0 +1,24 @@
+{
+  "kind": "matched-development-query-observation-not-formal-comparison",
+  "at": "2026-10-11T06:31:29.672209+00:00",
+  "case": "Q01",
+  "formal_pass": false,
+  "formal_trials_executed": 0,
+  "candidate": "docs/acceptance/ryn-agent-delivery/real-model/20261011T062636487681Z-Q01-ryn-v2-draft",
+  "reference": "docs/acceptance/ryn-agent-delivery/real-model/20261011T062921203867Z-Q01-reference-v2-draft",
+  "common_snapshot_files": 106,
+  "common_snapshot_differences": [],
+  "same_planner_policy": true,
+  "same_effective_case": true,
+  "same_prompt": true,
+  "both_capture_complete": true,
+  "both_owner_sources_unchanged": true,
+  "candidate_observation": "All four classifications correct and unknown history qualified. Minor inaccurate count of read calls retained; runtime verified is not acceptance.",
+  "reference_observation": "Native persistent session complete with matching original RPC readback; answer still overstates absence of successful history from unknown probe fields.",
+  "limitations": [
+    "One sample per cohort after a collector correction. Earlier contaminated runs preserved.",
+    "No formal score, no 80 percent claim, no independent review.",
+    "Logical fixture homes, not physical deployment comparison.",
+    "Full budgets/recovery/compaction alignment for all reference cases remains unfinished."
+  ]
+}

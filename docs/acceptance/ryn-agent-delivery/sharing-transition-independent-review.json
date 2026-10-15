@@ -1,0 +1,41 @@
+{
+  "kind": "independent_non_author_code_review",
+  "reviewer": "sharing_review",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "status": "registered_atomic_sharing_stale_read_finding_resolved",
+  "new_material_findings": [],
+  "original_reproduction": {
+    "atomic_share": "passed",
+    "prewrite_list_models": "passed_with_one_attributable_transition",
+    "postwrite_inspect_services": "passed",
+    "all_criteria_remain_required": true,
+    "original_read_unchanged": true,
+    "upstream_inference_calls": 0
+  },
+  "validation": {
+    "tests": 60,
+    "seconds": 21.85
+  },
+  "scope": "Atomic share to list_models and inspect_services only; not generic mutation supersession.",
+  "safeguards": [
+    "Private bounded co-commit; publicresult cannotauthortransition.",
+    "Passed dependency plus fresh durable attribution/currenttargetverification.",
+    "Strict before-field match; all untouched model fields/grants strict.",
+    "Wrong goal/scope/epoch/order,faileddependency,forgedresult and unrelateddrift rejected.",
+    "Legacy/missing/oversized/overlapping evidence remainsstrict."
+  ],
+  "reviewed_sha256": {
+    "rynmesh/agent_runtime/observation_transitions.py": "880cdf04ae73928a4eef904295eeff1165dfdb2b85897c0323008f1b9e231023",
+    "rynmesh/agent_runtime/sharing.py": "16169cc3a99544156415ca758634cef088bf24119d65e3c1da0ab3debf5bc5ad",
+    "rynmesh/agent_runtime/runtime.py": "914bc655116936ad3b5f3ae9a5dff6d2bd162caee194d9ffccb7d664aa498195",
+    "rynmesh/agent_runtime/verification.py": "162deccd356d10910c21ff4328c6dfe228cf13af381fce016f9388387fa757fb",
+    "rynmesh/agent_runtime/read_verification.py": "920c9ebd244d26c04e3384cccb3e374e3a57b2c7266dd5f7fac1047b3133bd7a",
+    "rynmesh/agent_runtime/operation_permissions.py": "295835e2a7405f06566c7f9f5bcf53366bd3d87a8ebcb8790af55c99c84a4460",
+    "rynmesh/agent_runtime/prompt.py": "35e25ca0e2f947ce906bb48c921e854f7b92dd2f71c58869513bf748ec0498e6"
+  },
+  "limitations": [
+    "No live model calls or heldout access.",
+    "Not real GLM or Windows upgrade acceptance."
+  ]
+}

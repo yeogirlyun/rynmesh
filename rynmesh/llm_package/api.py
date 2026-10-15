@@ -21,9 +21,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from rynmesh.node_auth import is_browser_cross_site, is_forwarded, is_loopback_addr
 
+from . import codex_threads
 from .api_formats import StreamFormat, convert_response, normalize, sse
 from .chat import completion
 from .safety import MAX_OUTPUT, install_body_limit
+from .service_view import is_usable
 from .streaming import events
 
 
@@ -137,7 +139,8 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
         except Exception:
             discovered = []  # local inference remains usable when registry is unavailable
         for item in discovered:
-            if not item.get("online") or item.get("peer_id") == store.peer_id or item.get("chat_protocol") != "rynmesh.chat.v1":
+            # An advertisement is not entitlement: offer only what this node can actually use.
+            if not is_usable(item) or item.get("peer_id") == store.peer_id or item.get("chat_protocol") != "rynmesh.chat.v1":
                 continue
             service = item["service"]
             # A full stable digest avoids ambiguity when models share aliases.
@@ -269,8 +272,11 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
                 if manager:
                     with manager._lock:
                         manager._running += 1
+                    # Each local API key is its own requester; these clients send no window key.
+                    scope = ({"conversation_scope": codex_threads.scope("local-api:" + str(key_id))}
+                             if getattr(manager.adapter, "supports_conversation_scope", False) is True else {})
                     result = await asyncio.to_thread(manager.adapter.chat, chat, task_id=task_id,
-                                                     timeout_s=manager.manifest.timeout_seconds, on_event=emit)
+                                                     timeout_s=manager.manifest.timeout_seconds, on_event=emit, **scope)
                 else:
                     result = await execute_order({"network_id": network, "provider_peer_id": target["provider_peer_id"],
                                                   "service_id": target["service_id"], "chat": chat,

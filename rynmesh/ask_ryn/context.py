@@ -70,7 +70,7 @@ class AskContextService:
             raise ConversationError("ask_provider_unavailable")
         manifest = selected.get("service") or {}
         cli_model = conversation.get("cliModel")
-        if cli_model and (not selected.get("local_only") or manifest.get("adapter") != "codex_cli" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", cli_model)):
+        if cli_model and ((not selected.get("local_only") and not any(row.get("id") == cli_model for row in selected.get("cli_models", []))) or manifest.get("adapter") not in {"codex_cli", "antigravity_cli"} or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", cli_model)):
             raise ConversationError("ask_cli_model_unavailable")
         structured = CHAT_FORMAT in manifest.get("capabilities", [])
         context_window, maximum_output = manifest.get("context_window"), manifest.get("max_output_tokens")

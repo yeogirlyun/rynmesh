@@ -1,0 +1,38 @@
+{
+  "kind": "R06-controller-limited-independent-review",
+  "date": "2026-10-11",
+  "reviewer": "cancellation_commit_fix (not R06 author)",
+  "verdict": "suitable_for_one_bounded_development_execution; no blocking controller defect found in reviewed scope",
+  "formal_pass": false,
+  "paid_model_calls": 0,
+  "production_changes": false,
+  "files": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_r06.py": "96704f97a02648bfe7986030c04a802c496e96a1c6ddbd4c36246903234ffe0d",
+    "tests/test_agent_r06_controller.py": "44b6d4321e3a7d1cf6b116b78a622f8cf82dd675237457b35508266898164bfe"
+  },
+  "validation": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_r06_controller.py -q",
+    "passed": 3,
+    "seconds": 4.79,
+    "ruff": "passed for the two reviewed files"
+  },
+  "reviewed_checks": [
+    "CorrectionBarrier calls the original production _compact and reacts only to a newly committed first context_compacted event. Missing compaction produces unmet_trigger and never manufactures correction or restart.",
+    "The post-correction checkpoint must be queued, without in_flight, queue, pending_control, pending_approval, or approved authority. Parent verifies encrypted persisted state after actual worker termination, before launching a replacement.",
+    "OwnedConsumerProcess binds the reported worker PID to the launched process and records confirmed terminal evidence. The offline subprocess test actually stops two distinct worker processes; restart is not represented by a fabricated PID.",
+    "Replacement uses the same home and messaging identity. The live child requires before/after reconcile checkpoint equality and equality with the parent checkpoint and peer identity. The offline test independently verifies identical persisted checkpoint after restarting on the same home.",
+    "owner_continue requires the persisted failed agent_model_call_budget_exhausted state and exactly four lifetime charged calls. Two scheduler ticks while stopped and two after increasing limit from four to twelve must produce no dispatch events or extra charged model calls before the explicit owner continuation message.",
+    "The original prompt, first-compaction anonymization correction, 12000 context limit, initial four-call budget, and eight-call increment follow the public frozen R06 case. Actual production scope preparation validates the mapped read/create grants.",
+    "Live source access reuses the configured GLM-only read_planner path and checks owner source hash/policy. Recovery verifies existing fixture mapping with migrate=False before route setup; it does not remap the historical source to repair evidence.",
+    "Write approval permits only ryn_create_text_file for reports/acceptance/resumed.md under the prepared scope. Approval binds the pending exact operation; parent independently reads any actual artifact and source hash. No semantic result is fabricated."
+  ],
+  "uncovered_boundaries_and_execution_conditions": [
+    "Offline process tests use scripted inference and DocumentTools while exercising the real runtime compaction, persistence, control, and process termination paths. They do not execute the complete live child bootstrap or prove GLM behavior.",
+    "Real GLM may not reach a committed compaction within four lifetime calls. A missing barrier remains unmet, and must not be relabeled as a completed R06 run.",
+    "No live model, remote host, desktop interaction, or formal repetition was executed by this reviewer. Owner control is exercised through the shared in-process runtime methods, not a native UI interaction.",
+    "Actual output must still be independently checked for all twelve CHECKPOINT values 101 through 112, sum 1278, source citations, latest anonymization requirement, and unchanged source. The offline mechanism test explicitly does not establish these business assertions.",
+    "Controller stores an initial code snapshot but does not itself recompute an end-of-run code_unchanged field. Execution orchestration must keep source files frozen across both child phases and verify hashes externally before using the evidence.",
+    "Live child stdout/stderr are discarded. A child error before writing its result may yield only missing-checkpoint/result and process evidence; detailed bootstrap failure diagnosis is not covered by the successful offline tests.",
+    "Review was limited to the new controller/tests, public R06 contract, and directly used process/recovery/continuation entry points. Unchanged framework was not comprehensively re-reviewed."
+  ]
+}

@@ -22,9 +22,10 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
-function page(entry = "/services/sources?preset=zai", empty = false) {
+function page(entry = "/services/sources?preset=zai", empty = false, configureClient?: (client: ReturnType<typeof makeFixtureNodeClient>) => void) {
   const client = makeFixtureNodeClient();
   if (empty) client.listLLMServices = vi.fn().mockResolvedValue([]);
+  configureClient?.(client);
   const context = { client, confirm: vi.fn(), notify: vi.fn() } as unknown as AppOutletContext;
   render(<MemoryRouter initialEntries={[entry]}><Routes><Route element={<Outlet context={context} />}><Route path="/services/sources" element={<AISources />} /></Route></Routes></MemoryRouter>);
   return userEvent.setup();
@@ -108,4 +109,23 @@ it("shows individual models in one pool and retains source configuration", async
   await user.click(screen.getByRole("button", { name: "添加模型" }));
   const dialog = within(screen.getByRole("dialog", { name: "添加模型" }));
   for (const kind of ["厂商 API", "本地 CLI", "本地模型"]) expect(dialog.getByRole("button", { name: new RegExp(kind) })).toBeEnabled();
+});
+
+it.each([
+  [true, "连接已完成，可直接聊天或用于助手。"],
+  [false, "连接已完成，此接入支持聊天，不支持助手工具。"],
+] as const)("reports CLI connection protocol support without claiming probe verification (%s)", async (agent_usable, expected) => {
+  server.use(http.get("*/api/local/llm/sources", () => HttpResponse.json({ sources: [], peer_id: "self", node_name: "My PC" })));
+  const setup = vi.fn().mockResolvedValue({ configured: true, agent_usable, tool_support: "unknown" });
+  const user = page("/services/sources", true, client => {
+    client.getCLIServices = vi.fn().mockResolvedValue({ services: [{ kind: "codex_cli", title: "Codex CLI", installed: true, configured: false, publication_enabled: false, online: false, api_text_only: true, service_id: "codex-cli" }], personal_space_required: false, personal_space_ready: true });
+    client.setupCLIService = setup;
+  });
+  const welcome = await screen.findByRole("region", { name: "连接你的第一个 AI 来源" });
+  await user.click(within(welcome).getByRole("button", { name: /本地 CLI/ }));
+  const dialog = within(screen.getByRole("dialog", { name: "连接本地 CLI" }));
+  await user.click(dialog.getByRole("button", { name: "配置接入" }));
+  expect(await dialog.findByRole("status")).toHaveTextContent(expected);
+  expect(setup).toHaveBeenCalledExactlyOnceWith("codex_cli");
+  expect(dialog.queryByText(/工具验证|配置并验证|重新验证/)).not.toBeInTheDocument();
 });

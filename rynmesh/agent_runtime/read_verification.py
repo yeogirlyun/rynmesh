@@ -50,14 +50,26 @@ def verify_read(tools, receipt, *, context, cancelled):
         raise AgentToolRejected("agent_cancelled")
     evidence = {"operation_attribution": "read_only_observation", "uncertainties": []}
     if name in DIAGNOSTIC_NAMES:
+        self_diagnostic = name == "ryn_diagnose_current_task" or (
+            name == "ryn_diagnose_task" and args.get("task_id") == (context or {}).get("task_id"))
         def stable(value):
             if isinstance(value, dict):
-                return {k: stable(v) for k, v in value.items() if k not in {"checked_at", "last_seen", "elapsed_seconds", "steps", "usage"}}
+                omitted = {"checked_at", "last_seen", "elapsed_seconds", "steps", "usage"}
+                if self_diagnostic:
+                    # The diagnostic read itself and subsequent verification
+                    # reads change these fields. They are observations, not
+                    # invariants; comparing them makes a valid task fail its
+                    # own check. Keep errors/state and write dispatch facts.
+                    omitted |= {"read_dispatch_count", "read_dispatched", "outcome_status"}
+                return {k: stable([op for op in v if op.get("effect") == "write"] if self_diagnostic and k == "operations" and isinstance(v, list) else v)
+                        for k, v in value.items() if k not in omitted}
             if isinstance(value, list):
                 return [stable(v) for v in value]
             return value
         matches = stable(prior) == stable(fresh)
         evidence.update(checked_facts=fresh, coverage="Current safe diagnostic classifications and registered configuration facts. Live elapsed/step/usage counters are observations, not compared as stable facts. Unknown or untested reachability is not connectivity proof; dispatch is not mutation proof.")
+        if self_diagnostic:
+            evidence["coverage"] += " Self-diagnostic read activity and the changing verification outcome are not invariants. State, error and write-dispatch classifications remain compared; this does not prove complete historical absence of writes."
     elif name == "ryn_search_resource":
         fields = ("matches", "content_version", "total_characters", "search_from_character", "query", "case_sensitive", "extraction_truncated")
         matches = all(prior.get(k) == fresh.get(k) for k in fields)

@@ -49,6 +49,9 @@ def install_runtime(app, store, home, key, integrations, owner_id):
     runtime = install_agent(app, store=store, home=home, workers=app.state.background_workers,
         local_control=local_control, messaging_key=key, integrations=integrations)
     runtime.owner_id = owner_id
+    # This acceptance controller explicitly tests independent outcome assessment;
+    # ordinary v4 agent turns do not request it.
+    runtime.update_settings({"verify_text_responses": True})
     return runtime, token
 
 
@@ -194,6 +197,13 @@ def execute(runtime, world, owner_token):
 class FixturePlanner(R04FixturePlanner):
     """Scripted test choices; no semantic quality claim or real model call."""
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_share_model_with_friend', 'ryn_inspect_services'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         if not specs:
             refs = json.loads(messages[-1]["content"])["evidence"]
             message = {"role": "assistant", "content": json.dumps({"status": "failed",

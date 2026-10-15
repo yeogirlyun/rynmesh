@@ -14,7 +14,7 @@ import re
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 from xml.etree import ElementTree
@@ -307,6 +307,20 @@ class NasPlugin:
     def enable(self, enabled):
         if not isinstance(enabled, bool):
             raise NasError("invalid_enabled")
+        manager = getattr(self, "plugin_manager", None)
+        if manager:
+            from .node_apps.craft_host import CraftError
+
+            try:
+                manager.configure_nas(enabled)
+            except CraftError as exc:
+                raise NasError(str(exc), 409) from None
+            return self.status()
+        return self._enable(enabled)
+
+    def _enable(self, enabled):
+        if not isinstance(enabled, bool):
+            raise NasError("invalid_enabled")
         with self.lock:
             if self.state["enabled"] != enabled:
                 self.state["access_epoch"] = uuid.uuid4().hex
@@ -317,6 +331,18 @@ class NasPlugin:
     def require_enabled(self):
         if not self.state["enabled"]:
             raise NasError("nas_plugin_disabled", 409)
+
+    @contextmanager
+    def access(self):
+        """Acquire lifecycle authority before NAS/source locks, never inside them."""
+        from .node_apps.craft_host import CraftError
+
+        manager = getattr(self, "plugin_manager", None)
+        try:
+            with manager.lease("nas") if manager else nullcontext():
+                yield
+        except CraftError as exc:
+            raise NasError(str(exc), 409) from None
 
     def configure(self, body):
         system = next((s for s in SYSTEMS if s["id"] == body.get("system")), None)
@@ -531,6 +557,10 @@ class NasPlugin:
             return self.public_source(source)
 
     def operate(self, source_id, action, path="", data=b""):
+        with self.access():
+            return self._operate(source_id, action, path, data)
+
+    def _operate(self, source_id, action, path="", data=b""):
         path = relative_path(path)
         with self.lock:
             self.source(source_id)

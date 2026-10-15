@@ -44,8 +44,7 @@ def test_twelve_k_runtime_discovers_then_dispatches_and_restores_menu(tmp_path):
     saved = runtime.store.read()["tasks"][task["id"]]
     assert saved["tool_menu"]["loaded_names"] == ["inspect_service"]
     assert tools.calls == []
-    assert {s["function"]["name"] for s in model.calls[0][2]} == {
-        tool_menu.NAME, "ryn_update_plan", "ryn_request_input", "ryn_read_result"}
+    assert {s["function"]["name"] for s in model.calls[0][2]} == {tool_menu.NAME}
     restored = AgentRuntime(AgentStore(tmp_path, key), model, tools, runtime.catalog)
     advance(restored, 3)
     assert restored.get(task["id"])["status"] == "completed"
@@ -70,6 +69,23 @@ def test_unexposed_tool_cannot_skip_discovery(tmp_path):
     advance(runtime)
     assert runtime.get(task["id"])["error"] == "agent_invalid_tool_call"
     assert not runtime.tools.calls
+
+
+def test_small_window_can_load_structured_input_without_loading_unused_control_schemas(tmp_path):
+    runtime, model, tools, _ = make_runtime(tmp_path,
+        assistant(name=tool_menu.NAME, args={"load": ["ryn_request_input"]}),
+        assistant(name="ryn_request_input", args={"goal_revision": 1, "kind": "information", "prompt": "Which report language?",
+            "fields": [{"id": "language", "label": "Language", "type": "text", "required": True}]}))
+    runtime.tools = ManyTools()
+    runtime.update_settings({"max_context_chars": 12000})
+    task = runtime.create({"message": "Prepare a report; ask for its missing language."})
+    advance(runtime, 4)
+    row = runtime.get(task["id"])
+    assert row["status"] == "waiting_input" and row["pending_input"]["kind"] == "information"
+    assert row["pending_approval"] is None and not tools.calls
+    assert {item["function"]["name"] for item in model.calls[0][2]} == {tool_menu.NAME}
+    assert "ryn_request_input" in {item["function"]["name"] for item in model.calls[1][2]}
+    assert not any(e["type"] == "context_compaction_started" for e in row["events"])
 
 
 def test_loading_write_tool_still_requires_exact_approval(tmp_path):

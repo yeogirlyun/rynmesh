@@ -1,5 +1,5 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -7,6 +7,7 @@ import i18n from "../i18n";
 import { server } from "../test/server";
 import { makeFixtureNodeClient } from "../domain/fixtureNodeClient";
 import { newSource, type AISource } from "../domain/aiSources";
+import { rynAgent, type AgentModel, type AgentSettings } from "../domain/rynAgent";
 import type { AppOutletContext } from "../appContext";
 import ModelPool from "./ModelPool";
 
@@ -15,6 +16,7 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 });
+afterEach(() => vi.restoreAllMocks());
 const source = (): AISource => ({ ...newSource(), id: "src-1", name: "My API", models: ["model-a", "model-b"], has_key: true, sharing: true, shared_models: ["model-a"], status: "ready" });
 function page(value = source()) {
   const context = { client: makeFixtureNodeClient() } as AppOutletContext;
@@ -22,13 +24,92 @@ function page(value = source()) {
   render(<MemoryRouter initialEntries={["/models"]}><Routes><Route element={<Outlet context={context} />}><Route path="/models" element={<ModelPool sources={[value]} cli={null} native={null} peers={[]} loading={false} error="" onRefresh={onRefresh} onEditSource={vi.fn()} onCLI={vi.fn()} onNative={vi.fn()} />} /></Route></Routes></MemoryRouter>);
   return userEvent.setup();
 }
-const catalog = [{ id: "local/a", source_id: "src-1", model_id: "model-a", name: "model-a", source: "local_api", available: true, agent_supported: true }, { id: "local/b", source_id: "src-1", model_id: "model-b", name: "model-b", source: "local_api", available: true, agent_supported: false, tool_support: "unknown" }];
+const catalog: Array<AgentModel & { source_id: string; model_id: string }> = [{ id: "local/a", source_id: "src-1", model_id: "model-a", name: "model-a", source: "local_api", available: true, agent_supported: true }, { id: "local/b", source_id: "src-1", model_id: "model-b", name: "model-b", source: "local_api", available: true, agent_supported: false, tool_support: "unknown" }];
+const enabledSettings = (model_id = "local/a"): AgentSettings => ({ enabled: true, model_id, permission_mode: "confirm_changes", allowed_write_tools: [], max_steps: 16, max_seconds: 180, max_context_chars: 60000, max_output_chars: 20000 });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(accept => { resolve = accept; });
+  return { promise, resolve };
+}
 function endpoints(model_id = "local/a") {
   server.use(
     http.get("*/api/local/agent/models", () => HttpResponse.json({ models: catalog })),
     http.get("*/api/local/agent/settings", () => HttpResponse.json({ enabled: false, model_id, permission_mode: "confirm_changes" })),
   );
 }
+it("applies enabled settings immediately while the initial model catalog is still loading", async () => {
+  const models = deferred<{ models: AgentModel[] }>();
+  vi.spyOn(rynAgent, "models").mockReturnValue(models.promise);
+  vi.spyOn(rynAgent, "settings").mockResolvedValue(enabledSettings());
+  page();
+  expect(await screen.findByText("已启用")).toBeVisible();
+  expect(screen.getAllByText("正在读取助手模型…")).toHaveLength(2);
+  expect(screen.queryByText("助手状态暂不可用")).not.toBeInTheDocument();
+  expect(screen.queryByText("可选功能")).not.toBeInTheDocument();
+  expect(screen.queryByText("尚未选择")).not.toBeInTheDocument();
+  await act(async () => { models.resolve({ models: catalog }); });
+  expect(await screen.findByRole("button", { name: "重新确认用于助手" })).toBeEnabled();
+});
+
+it("shows a loading status instead of disabled copy while the initial settings request is pending", async () => {
+  const settings = deferred<AgentSettings>();
+  vi.spyOn(rynAgent, "models").mockResolvedValue({ models: catalog });
+  vi.spyOn(rynAgent, "settings").mockReturnValue(settings.promise);
+  page();
+  expect(await screen.findByRole("button", { name: "用于助手" })).toBeEnabled();
+  expect(screen.getByText("正在读取助手状态…")).toBeVisible();
+  expect(screen.queryByText("可选功能")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "了解并启用 →" })).not.toBeInTheDocument();
+  await act(async () => { settings.resolve(enabledSettings()); });
+  expect(await screen.findByText("已启用")).toBeVisible();
+});
+
+it("keeps the loaded catalog and enabled settings visible during a refresh", async () => {
+  const models = deferred<{ models: AgentModel[] }>(), settings = deferred<AgentSettings>();
+  vi.spyOn(rynAgent, "models").mockResolvedValueOnce({ models: catalog }).mockReturnValueOnce(models.promise);
+  vi.spyOn(rynAgent, "settings").mockResolvedValueOnce(enabledSettings()).mockReturnValueOnce(settings.promise);
+  const user = page();
+  await screen.findByRole("button", { name: "重新确认用于助手" });
+  await user.click(screen.getByRole("button", { name: "刷新模型" }));
+  expect(screen.getByText("已启用")).toBeVisible();
+  expect(screen.getByText("默认使用 model-a")).toBeVisible();
+  expect(screen.getByRole("button", { name: "重新确认用于助手" })).toBeVisible();
+  expect(screen.queryByText("正在读取助手状态…")).not.toBeInTheDocument();
+  expect(screen.queryByText("助手状态暂不可用")).not.toBeInTheDocument();
+  await act(async () => { models.resolve({ models: catalog }); settings.resolve(enabledSettings()); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "刷新模型" })).toBeEnabled());
+});
+
+it("ignores older catalog and settings responses after a newer refresh completes", async () => {
+  const oldModels = deferred<{ models: AgentModel[] }>(), oldSettings = deferred<AgentSettings>();
+  const models = vi.spyOn(rynAgent, "models").mockReturnValueOnce(oldModels.promise).mockResolvedValueOnce({ models: catalog.map(model => ({ ...model, agent_supported: true })) });
+  const settings = vi.spyOn(rynAgent, "settings").mockReturnValueOnce(oldSettings.promise).mockResolvedValueOnce(enabledSettings("local/b"));
+  const user = page();
+  await waitFor(() => { expect(models).toHaveBeenCalledOnce(); expect(settings).toHaveBeenCalledOnce(); });
+  await user.click(screen.getByRole("button", { name: "刷新模型" }));
+  expect(await screen.findByText("默认使用 model-b")).toBeVisible();
+  await act(async () => { oldModels.resolve({ models: [] }); oldSettings.resolve({ ...enabledSettings(), enabled: false }); });
+  expect(screen.getByText("已启用")).toBeVisible();
+  expect(screen.getByText("默认使用 model-b")).toBeVisible();
+  expect(screen.getByRole("button", { name: "重新确认用于助手" })).toBeEnabled();
+  expect(screen.queryByText("可选功能")).not.toBeInTheDocument();
+  expect(screen.queryByText("助手状态暂不可用")).not.toBeInTheDocument();
+});
+
+it("does not overwrite a newly saved default with an initial settings response arriving later", async () => {
+  const settings = deferred<AgentSettings>();
+  vi.spyOn(rynAgent, "models").mockResolvedValue({ models: catalog });
+  vi.spyOn(rynAgent, "settings").mockReturnValue(settings.promise);
+  const update = vi.spyOn(rynAgent, "updateSettings").mockResolvedValue(enabledSettings());
+  const user = page();
+  await user.click(await screen.findByRole("button", { name: "用于助手" }));
+  expect(await screen.findByText("已启用")).toBeVisible();
+  expect(update).toHaveBeenCalledExactlyOnceWith({ model_id: "local/a" });
+  await act(async () => { settings.resolve({ ...enabledSettings("local/b"), enabled: false }); });
+  expect(screen.getByText("已启用")).toBeVisible();
+  expect(screen.getByText("默认使用 model-a")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "了解并启用 →" })).not.toBeInTheDocument();
+});
 it("shares a single model while the assistant is disabled and preserves its sibling", async () => {
   endpoints(); const writes: unknown[] = []; let settingsWrites = 0;
   server.use(
@@ -50,39 +131,57 @@ it("changes the default without enabling Agent or editing sharing", async () => 
   await screen.findByText("助手默认");
   expect(writes).toEqual([{ model_id: "local/a" }]); expect(screen.getByText("可选功能")).toBeInTheDocument();
 });
-it("does not infer tool support from a ready source and only probes after a click", async () => {
-  endpoints(); let probes = 0;
-  server.use(http.post("*/api/local/llm/sources/src-1/models/test", async ({ request }) => { probes++; expect(await request.json()).toEqual({ model_id: "model-b" }); return HttpResponse.json({ tool_support: "unsupported" }); }));
-  const user = page(); await screen.findByText("助手默认"); expect(probes).toBe(0);
+it("does not infer assistant protocol support from a ready source or offer a manual verification gate", async () => {
+  endpoints(); const probes = vi.fn();
+  server.use(http.post("*/api/local/llm/sources/src-1/models/test", () => { probes(); return HttpResponse.json({ tool_support: "unsupported" }); }));
+  page(); await screen.findByText("助手默认");
   expect(screen.queryByRole("button", { name: "用于助手" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "验证工具调用" }));
-  await screen.findByText("此模型未通过工具调用验证，仍可用于普通推理。"); expect(probes).toBe(1);
+  expect(screen.queryByRole("button", { name: "验证工具调用" })).not.toBeInTheDocument();
+  expect(screen.getByText("不支持助手工具")).toBeVisible();
+  expect(probes).not.toHaveBeenCalled();
 });
+it.each(["unknown", "unsupported"])("uses a configured API model with %s diagnostic evidence directly", async tool_support => {
+  endpoints(); const probes = vi.fn(); const settingsWrites = vi.fn();
+  server.use(
+    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: catalog.map(item => ({ ...item, agent_supported: true, tool_support })) })),
+    http.post("*/api/local/llm/sources/src-1/models/test", () => { probes(); return HttpResponse.json({ tool_support: "unsupported" }); }),
+    http.put("*/api/local/agent/settings", async ({ request }) => { settingsWrites(await request.json()); return HttpResponse.json({ enabled: false, model_id: "local/b" }); }),
+  );
+  const user = page();
+  await user.click(await screen.findByRole("button", { name: "用于助手" }));
+  await screen.findByText("助手默认模型已更新，分享设置保持不变。");
+  expect(settingsWrites).toHaveBeenCalledExactlyOnceWith({ model_id: "local/b" });
+  expect(probes).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "验证工具调用" })).not.toBeInTheDocument();
+});
+
 it("keeps manual model configuration visible when Agent API is unavailable", async () => {
   server.use(http.get("*/api/local/agent/models", () => HttpResponse.json({}, { status: 503 })), http.get("*/api/local/agent/settings", () => HttpResponse.json({}, { status: 503 })));
   page(); await screen.findByText("暂时无法读取助手状态，模型配置和分享仍可使用。");
   expect(screen.getByRole("button", { name: "配置 model-a" })).toBeEnabled(); expect(screen.getByRole("button", { name: "分享 model-b" })).toBeEnabled();
 });
-it("verifies an unverified local service through its own capability endpoint", async () => {
-  endpoints(); let probes = 0;
+it("uses a configured local service directly without calling its diagnostic endpoint", async () => {
+  endpoints(); const probes = vi.fn(); const settingsWrites = vi.fn();
   server.use(
-    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [{ id: "local/native", name: "Local model", source: "local_service", service_id: "native", adapter: "llama_cpp", available: true, agent_supported: false }] })),
-    http.post("*/api/local/llm/services/native/tools/test", () => { probes++; return HttpResponse.json({ tool_support: "supported" }); }),
+    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: [{ id: "local/native", name: "Local model", source: "local_service", service_id: "native", adapter: "llama_cpp", available: true, agent_supported: true, tool_support: "unknown" }] })),
+    http.post("*/api/local/llm/services/native/tools/test", () => { probes(); return HttpResponse.json({ tool_support: "supported" }); }),
+    http.put("*/api/local/agent/settings", async ({ request }) => { settingsWrites(await request.json()); return HttpResponse.json({ enabled: false, model_id: "local/native" }); }),
   );
   const user = page({ ...source(), models: [] });
-  await user.click(await screen.findByRole("button", { name: "验证工具调用" }));
-  await screen.findByText("工具调用验证通过，可选择或重新确认用于助手。");
-  expect(probes).toBe(1);
+  await user.click(await screen.findByRole("button", { name: "用于助手" }));
+  await screen.findByText("助手默认模型已更新，分享设置保持不变。");
+  expect(settingsWrites).toHaveBeenCalledExactlyOnceWith({ model_id: "local/native" });
+  expect(probes).not.toHaveBeenCalled();
 });
 
-it("requires explicit same-model confirmation after saving parameters and re-verifying the default", async () => {
+it("keeps the supported default selectable after saving parameters without re-verifying", async () => {
   endpoints(); const probe = vi.fn(); const parameterWrites = vi.fn(); const settingsWrites = vi.fn(); const otherWrites = vi.fn();
-  let verified = true;
+  let toolSupport = "supported";
   const value: AISource = { ...source(), context_window: 32000, max_output_tokens: 4000, model_settings: { "model-a": { overrides: { max_output_tokens: 2000 }, effective: { context_window: 32000, max_output_tokens: 2000, request_defaults: {}, max_concurrent: 1, requests_per_day: null }, inherited_fields: ["context_window", "request_defaults", "max_concurrent", "requests_per_day"], rule_revision: "rule-1", destination_revision: "dest-1", evidence: {} } } };
   server.use(
-    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: catalog.map(item => item.id === "local/a" ? { ...item, agent_supported: verified, tool_support: verified ? "supported" : "unknown" } : item) })),
-    http.put("*/api/local/llm/sources/src-1/models/config", async ({ request }) => { parameterWrites(await request.json()); verified = false; return HttpResponse.json(value); }),
-    http.post("*/api/local/llm/sources/src-1/models/test", async ({ request }) => { probe(await request.json()); verified = true; return HttpResponse.json({ tool_support: "supported" }); }),
+    http.get("*/api/local/agent/models", () => HttpResponse.json({ models: catalog.map(item => item.id === "local/a" ? { ...item, agent_supported: true, tool_support: toolSupport } : item) })),
+    http.put("*/api/local/llm/sources/src-1/models/config", async ({ request }) => { parameterWrites(await request.json()); toolSupport = "unknown"; return HttpResponse.json(value); }),
+    http.post("*/api/local/llm/sources/src-1/models/test", async ({ request }) => { probe(await request.json()); toolSupport = "supported"; return HttpResponse.json({ tool_support: "supported" }); }),
     http.put("*/api/local/agent/settings", async ({ request }) => { settingsWrites(await request.json()); return HttpResponse.json({ enabled: false, model_id: "local/a", permission_mode: "confirm_changes" }); }),
     http.put("*/api/local/llm/sources/src-1", () => { otherWrites(); return HttpResponse.json(value); }),
     http.all("*/api/local/agent/tasks*", () => { otherWrites(); return HttpResponse.json({}); }),
@@ -96,12 +195,9 @@ it("requires explicit same-model confirmation after saving parameters and re-ver
   await user.click(dialog.getByRole("button", { name: "保存此模型参数" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(parameterWrites).toHaveBeenCalledWith({ model_id: "model-a", expected_rule_revision: "rule-1", configuration: { max_output_tokens: 3000 } });
-  expect(within(row).queryByRole("button", { name: "重新确认用于助手" })).not.toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "重新确认用于助手" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "验证工具调用" })).not.toBeInTheDocument();
   expect(settingsWrites).not.toHaveBeenCalled(); expect(probe).not.toHaveBeenCalled();
-  await user.click(within(row).getByRole("button", { name: "验证工具调用" }));
-  await screen.findByText("工具调用验证通过，可选择或重新确认用于助手。");
-  expect(probe).toHaveBeenCalledWith({ model_id: "model-a" });
-  expect(settingsWrites).not.toHaveBeenCalled();
   await user.click(within(row).getByRole("button", { name: "重新确认用于助手" }));
   await screen.findByText("助手默认模型已更新，分享设置保持不变。");
   expect(settingsWrites).toHaveBeenCalledExactlyOnceWith({ model_id: "local/a" });
@@ -110,7 +206,7 @@ it("requires explicit same-model confirmation after saving parameters and re-ver
   expect(otherWrites).not.toHaveBeenCalled();
 });
 
-it("keeps an unverified default unselectable while another verified model remains selectable", async () => {
+it("keeps a chat-only default unselectable while another supported model remains selectable", async () => {
   endpoints(); const settingsWrites = vi.fn();
   server.use(
     http.get("*/api/local/agent/models", () => HttpResponse.json({ models: catalog.map(item => ({ ...item, agent_supported: item.id === "local/b", tool_support: item.id === "local/b" ? "supported" : "unknown" })) })),
@@ -119,7 +215,7 @@ it("keeps an unverified default unselectable while another verified model remain
   const user = page();
   const defaultRow = (await screen.findByText("助手默认")).closest(".mp-model") as HTMLElement;
   expect(within(defaultRow).queryByRole("button", { name: /用于助手/ })).not.toBeInTheDocument();
-  expect(within(defaultRow).getByRole("button", { name: "验证工具调用" })).toBeEnabled();
+  expect(within(defaultRow).getByText("不支持助手工具")).toBeVisible();
   const otherRow = screen.getByText("model-b").closest(".mp-model") as HTMLElement;
   await user.click(within(otherRow).getByRole("button", { name: "用于助手" }));
   await waitFor(() => expect(within(otherRow).getByText("助手默认")).toBeVisible());

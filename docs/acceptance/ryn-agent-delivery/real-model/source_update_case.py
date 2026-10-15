@@ -22,6 +22,13 @@ class UpdateFixturePlanner:
         self.world, self.count = world, 0
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_request_input', 'ryn_list_source_configurations', 'ryn_prepare_source_draft', 'ryn_test_source_draft', 'ryn_commit_source_draft'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         message = {"role": "assistant", "content": "Requested candidate is unavailable; inspect actual source state."}
         if not specs:
             data = json.loads(messages[-1]["content"])

@@ -138,7 +138,7 @@ def test_real_resource_tools_reach_body_and_approved_artifact_under_pressure(wri
     model = BoundModel()
     runtime = AgentRuntime(AgentStore(store.home / "agent", key), model, tools, catalog, consumer_node_id="local")
     runtime.update_settings({"enabled": True, "model_id": "fixture", "max_context_chars": 12000,
-                             "max_steps": 24, "max_seconds": 600})
+                             "max_steps": 24, "max_seconds": 600, "verify_text_responses": True})
     task = runtime.create({"message": owners[0], "budget_limits": {"max_total_model_calls": 12},
         "scope": {"resources": [{"connection_id": source["id"], "root_path": "allowed",
             "actions": ["list", "read_ai", "create_file"]}], "allow_model_data": True},

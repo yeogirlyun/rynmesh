@@ -50,6 +50,9 @@ class VerifyingTools(Tools):
 
 def verified_runtime(tmp_path, *responses):
     runtime, model, _, key = make_runtime(tmp_path, *responses)
+    # These cases exercise the optional text-answer checker as well as work
+    # verification. Normal conversation now avoids this extra model round trip.
+    runtime.update_settings({"verify_text_responses": True})
     complete = model.complete
     def citing_model(model_id, messages, specs, cancelled, on_event):
         response = complete(model_id, messages, specs, cancelled, on_event)

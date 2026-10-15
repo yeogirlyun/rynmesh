@@ -1,0 +1,17 @@
+{
+  "classification": "development semantic failure with corrected main classification; runtime verified not accepted",
+  "formal_case_score": false,
+  "reviewer": "Root coordinator compared the final answer with both actual device receipts and HTTP health audit.",
+  "real_model_calls": 3,
+  "elapsed_seconds": 70.094,
+  "code_unchanged": true,
+  "owner_source_unchanged": true,
+  "source_configuration_unchanged": true,
+  "improvement": "Main classifications and timestamps are correct. The answer no longer reverses the ten-minute ordering, claims historical nonexistence, or calls the two tool views independent evidence.",
+  "remaining_failures": [
+    "The answer invents membership=active for node-d. Neither actual tool receipt contains that field or establishes personal-space membership for the node.",
+    "The final blanket description says all statuses are passive judgments even though node-a has actual HTTP probe evidence; the audit contains four real health requests including revalidation.",
+    "The semantic checker still returned passed, so the general instruction change has not reliably eliminated unsupported report additions."
+  ],
+  "follow_up": "Retain this failure and the earlier version; do not tune the frozen expected facts or relabel verified as an independent pass. Scope/provenance of narrative claims and correlated checker errors remain a substantive T04 effect-evaluation gap for designated Astra review. No unchanged resampling to select a success."
+}

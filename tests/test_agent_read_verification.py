@@ -1,4 +1,6 @@
 import copy
+import threading
+from types import SimpleNamespace
 
 import pytest
 from test_agent_integrations import add_source
@@ -9,6 +11,24 @@ from rynmesh.agent_runtime.bridge import build_agent_integrations
 
 node = integration_node
 writable = writable_fixture
+
+
+def test_self_diagnostic_does_not_fail_because_verification_added_read_activity():
+    from rynmesh.agent_runtime.read_verification import verify_read
+    prior = {"task_id": "self", "status": "running", "error": None, "steps": 1,
+             "read_dispatch_count": 1, "read_dispatched": True, "write_dispatch_count": 0,
+             "write_dispatched": False, "outcome_status": "unverified", "operations": [{"effect": "read", "tool": "ryn_diagnose_current_task"}]}
+    fresh = {**prior, "steps": 4, "read_dispatch_count": 3, "outcome_status": "not_achieved",
+             "operations": [*prior["operations"], {"effect": "read", "tool": "ryn_file_read"}]}
+    tools = SimpleNamespace(lock=threading.Lock(), completed={}, execute=lambda *args, **kwargs: fresh)
+    receipt = {"tool": "ryn_diagnose_current_task", "arguments": {}, "result": prior, "status": "confirmed"}
+    check = lambda: verify_read(tools, receipt, context={"task_id": "self"}, cancelled=lambda: False)
+    assert check()["status"] == "passed"
+    fresh["write_dispatch_count"] = 1
+    assert check()["status"] == "failed"
+    fresh["write_dispatch_count"] = 0
+    fresh["error"] = "agent_time_limit"
+    assert check()["status"] == "failed"
 
 
 def read(tools, name, args, context=None):

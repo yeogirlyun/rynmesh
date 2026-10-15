@@ -7,6 +7,7 @@ import json
 import threading
 import time
 import uuid
+from concurrent.futures import Future, TimeoutError
 from datetime import datetime, timezone
 
 from ..services import peer_box
@@ -26,6 +27,7 @@ class SpaceModelCatalog:
         self.slots = threading.BoundedSemaphore(2)
         self.outgoing_slots = threading.BoundedSemaphore(2)
         self.last_requests, self.cache, self.tickets = {}, {}, {}
+        self.refreshes = {}
 
     def _local_generation(self, peer):
         permission = self.store.personal_space.model_permission(peer)
@@ -56,9 +58,16 @@ class SpaceModelCatalog:
                 self.last_requests[sender] = now
             rows = []
             for provider in self.providers():
-                if "personal-space-only" not in provider.manifest.capabilities or not provider.accepting_orders:
+                if not provider.accepting_orders:
                     continue
-                status = provider.public_status()
+                # This is a short-lived identity challenge, not CLI discovery.
+                # Publication refreshes the CLI inventory independently; spawning
+                # a CLI here can exceed the peer HTTP timeout for every model.
+                status = provider.public_status(cached_cli_models=True)
+                # CLI services follow the node's current sharing policy. Older
+                # manifests do not carry the API-source personal-space-only flag.
+                if status.get("access_policy") != "personal_space":
+                    continue
                 if valid(status.get("model_binding"), provider.manifest.package_id):
                     rows.append({**status, "network_id": self.network_id()})
             if len(rows) > 100:
@@ -72,6 +81,40 @@ class SpaceModelCatalog:
             self.slots.release()
 
     def refresh(self, advertised):
+        # UI, background discovery and an Agent can need the same signed
+        # challenge at once. Share its result instead of superseding a valid
+        # response with a second request that hits the provider rate limit.
+        peer = advertised["peer_id"]
+        generation = self._local_generation(peer)
+        with self.lock:
+            existing = self.refreshes.get(peer)
+            if existing is None:
+                future = Future()
+                self.refreshes[peer] = (generation, future)
+            else:
+                prior_generation, future = existing
+                if prior_generation != generation:
+                    raise TaskProtocolError("space_catalog_peer_not_allowed")
+        if existing is not None:
+            try:
+                rows = future.result(timeout=20)
+            except TimeoutError:
+                raise TaskProtocolError("space_catalog_refresh_failed") from None
+            if self._local_generation(peer) != generation:
+                raise TaskProtocolError("space_catalog_peer_not_allowed")
+            return copy.deepcopy(rows)
+        try:
+            rows = self._refresh(advertised)
+            future.set_result(copy.deepcopy(rows))
+            return rows
+        except Exception as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            with self.lock:
+                self.refreshes.pop(peer, None)
+
+    def _refresh(self, advertised):
         peer = advertised["peer_id"]
         local_generation = self._local_generation(peer)
         if not self.outgoing_slots.acquire(blocking=False):

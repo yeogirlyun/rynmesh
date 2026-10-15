@@ -24,6 +24,13 @@ class PreparationModel:
     supports_output_token_limit = True
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_list_resource_roots', 'ryn_list_resources', 'ryn_read_resource'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         receipts = [json.loads(message["content"]) for message in messages if message["role"] == "tool"]
         if not receipts:
             name, args = "ryn_list_resource_roots", {}
@@ -54,7 +61,7 @@ def prepare_failed_task(runtime, catalog, nas, connection, dav, selected, *, can
             target["id"] = TARGET_ID
             data["tasks"][TARGET_ID] = target
         runtime.store.transaction(name_fixture)
-        for _ in range(6):
+        for _ in range(8):
             current = runtime.store.read()["tasks"][TARGET_ID]
             if current["queue"] and current["queue"][0]["name"] == "ryn_read_resource":
                 nas.sessions[connection["id"]][1].client.timeout = httpx.Timeout(0.1)

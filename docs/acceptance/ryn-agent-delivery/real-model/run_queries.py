@@ -32,6 +32,13 @@ class FixturePlanner:
         self.case_id, self.cohort = case_id, cohort
 
     def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
+        from importlib import import_module
+        helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+        business_history, discover = helper.business_history, helper.discover
+        discovery = discover(specs, ['ryn_list_models', 'ryn_list_devices', 'ryn_inspect_services'])
+        if discovery:
+            return discovery
+        messages = business_history(messages)
         if not specs:
             if self.cohort == "reference":
                 assert "Verify whether the active session goal" in messages[-1]["content"]
@@ -241,7 +248,7 @@ def main():
                                    consumer_node_id=execution_store.peer_id,
                                    **({"owner_id": controller.case["authorization"]["owner_id"]} if role_mode or args.release_activation else {}))
             execution_app.state.agent_runtime = runtime
-            runtime.update_settings({"enabled": True, "model_id": controller.bindings["model-c"] if args.case == "C03" else selected,
+            runtime.update_settings({"enabled": True, "verify_text_responses": True, "model_id": controller.bindings["model-c"] if args.case == "C03" else selected,
                                      "max_steps": 24, "max_seconds": 600, "max_context_chars": 100000})
             if args.case == "Q06" or role_mode or (args.release_activation and args.case in {"Q02", "Q03"}):
                 runtime.update_settings({"permission_mode": "read_only"})

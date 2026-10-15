@@ -73,10 +73,17 @@ def test_actual_runtime_diagnostics_and_readback_survive_collection(node, tmp_pa
 
     class Planner(runner.FixturePlanner):
         def complete(self, model_id, messages, specs, cancelled, on_event=None, **options):
-            result = super().complete(model_id, messages, specs, cancelled, on_event, **options)
-            for call in result["message"].get("tool_calls", []):
-                call["function"]["name"] = "ryn_get_system_diagnostics"
-            return result
+            from importlib import import_module
+            helper = import_module("docs.acceptance.ryn-agent-delivery.real-model.planner_discovery")
+            discovery = helper.discover(specs, ["ryn_get_system_diagnostics"])
+            if discovery:
+                return discovery
+            messages = helper.business_history(messages)
+            if specs and not any(m["role"] == "tool" for m in messages):
+                from test_agent_runtime import assistant
+                return assistant(name="ryn_get_system_diagnostics")
+            return super().complete(model_id, messages, [], cancelled, on_event, **options) if not specs else {
+                "message": {"role": "assistant", "content": "Collector exercise only. Evidence retained."}}
 
     record = {"case_id": "Q01", "cohort": "ryn", "run_id": "c" * 32, "run_nonce": "d" * 32,
               "dataset_version": module.composer.DATASET_VERSION, "collector_profile": "nested-integration"}
