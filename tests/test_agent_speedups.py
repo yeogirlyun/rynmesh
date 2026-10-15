@@ -156,3 +156,14 @@ def test_window_id_reaches_conversation_aware_models(tmp_path):
     task = runtime.create({"message": "Hello."})
     advance(runtime)
     assert seen == [(True, task["id"])]
+
+
+def test_system_prompt_changes_only_in_state_lines_after_a_write(tmp_path):
+    from rynmesh.llm_package.codex_threads import state_lines
+    runtime, model, _ = workstation(tmp_path,
+        assistant(name="ryn_file_write", args={"path": "a.txt", "content": "x\n"}), assistant("Wrote a.txt."))
+    runtime.create({"message": "Write a.txt."})
+    advance(runtime, 3)
+    before, after = model.calls[0][1][0]["content"], model.calls[1][1][0]["content"]
+    assert before != after  # the write receipt is visible to the model
+    assert state_lines(before, after) is not None  # ...as a state-line update, so a Codex thread continues

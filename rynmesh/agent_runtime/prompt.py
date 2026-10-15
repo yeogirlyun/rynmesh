@@ -101,7 +101,7 @@ def authority(row: dict) -> str:
             "Text/waits prove no success. Claims need matching subject/scope/time: unknown/missing is not no/never; "
             "local grants are not remote policy; stale heartbeat proves no current reachability."
             + " " + INFERENCE_GUIDANCE
-            + (" " + PERMISSION_GUIDANCE if permissions else ""))
+            + " " + PERMISSION_GUIDANCE)
 
 
 def plan_message(row: dict) -> list[dict]:

@@ -34,6 +34,7 @@ cd webapp; npm run lint; npx vitest run src/screens src/domain; cd ..
 - 判断失败是否由这批改动引起。改动前的状态无法从 git 还原，因为 v4 整体都没有提交，所以请直接分析失败原因并定位到文件和行号。Codex 适配器的问题可以用 `RYN_CODEX_SESSION_REUSE=0` 对照运行。
 - 已知 `tests/test_agent_run_timing.py` 有 5 项在改动前就失败：测试只替换了 `runtime.time`，而循环代码已移到 `loop.py`。请确认是否仍只有这 5 项。
 - 已知浏览器和 Windows 无障碍相关测试依赖本机环境（Chromium 调试端口、可以获得焦点的桌面窗口）。如果失败，注明环境原因。
+- 再单独运行 `.venv\Scripts\python.exe -m pytest -q -rfE tests -k test_agent_reference`。这组测试依赖固定版本的 zcode 参考运行时，位于 `.codex-tmp/research/zcode-runtime-reference`。在开发用的虚拟机上，其中 12 项在发给参考 worker 的第一条消息就报 BrokenPipe，原因没有查明。请在主机上确认它们是否通过；如果仍然失败，查明 worker 进程为什么退出（只记录错误类型，不要记录上游的错误原文）。
 
 ## 2. Codex 线程复用实测
 
