@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from ..atomic_io import atomic_write_json
 from ..file_transactions import file_transaction
 from . import builtin_plugins as builtin
-from . import craft_host
+from . import craft_host, craft_native
 from .craft_catalog import CRAFT
 
 DEFAULT_PLUGINS = ("pdfcraft", "wordcraft", "gridcraft", "deckcraft")
@@ -177,6 +177,9 @@ class PluginManager:
                 row = state["plugins"].get(slug, {})
                 present = row.get("version") == spec["tag"] and (self.cache / slug / spec["tag"] / "receipt.json").is_file()
                 enabled = bool(present and row.get("enabled"))
+                automation = craft_native.runtime_status(self.cache, slug)
+                automation_supported = bool(automation.get("supported") and automation.get("platform_supported"))
+                automation_ready = bool(automation_supported and automation.get("installed") and automation.get("verified") and automation.get("state") == "ready")
                 items.append({
                     "id": slug, "name": spec["name"], "version": spec["tag"],
                     "web": spec["web"], "group": GROUPS.get(slug, "media"),
@@ -185,10 +188,11 @@ class PluginManager:
                     "installed": bool(present), "enabled": enabled,
                     "running": slug in self.servers and self.servers[slug][1].is_alive(),
                     "busy": slug in self.mutating or bool(self.active.get(slug)),
-                    # Actual upstream editing APIs have not been integrated. Never
-                    # advertise mockup merge/generation examples as working tools.
-                    "agent_tools": ["editor_info"] if enabled else [],
-                    "editing_supported": False,
+                    "agent_tools": (["editor_info", "ryn_craft_read", "ryn_craft_action"] if automation_ready else ["editor_info"]) if enabled else [],
+                    "editing_supported": bool(enabled and automation_ready),
+                    "automation_supported": automation_supported,
+                    "automation_installed": bool(automation.get("installed")),
+                    **({"automation_error": automation.get("error", "craft_agent_runtime_not_verified")} if automation_supported and automation.get("state") == "unverified" else {}),
                     "warning": WARNINGS.get(slug),
                     "kind": "web_editor", "installable": spec["web"], "launch_path": None,
                 })
@@ -258,6 +262,25 @@ class PluginManager:
             state = self._read()
             state["setup_completed"] = True
             self._write(state)
+        return self.catalog()
+
+    def install_automation(self, slug):
+        """Install a pinned document runtime only after an explicit owner action."""
+        if slug not in DEFAULT_PLUGINS:
+            raise craft_host.CraftError("craft_agent_runtime_unsupported")
+        with self._mutation(slug):
+            with self.lock, file_transaction(self.lock_path):
+                row = self._row(slug)
+                if row.get("version") != self.version(slug):
+                    raise craft_host.CraftError("plugin_not_installed")
+                if not row.get("enabled"):
+                    raise craft_host.CraftError("plugin_disabled")
+                self.verify(slug)
+                status = craft_native.runtime_status(self.cache, slug)
+                if not status.get("supported") or not status.get("platform_supported"):
+                    raise craft_host.CraftError("craft_agent_runtime_unsupported")
+            kwargs = {"download": self.download} if self.download else {}
+            craft_native.install_runtime(self.cache, slug, **kwargs)
         return self.catalog()
 
     def configure_nas(self, enabled):
@@ -459,6 +482,7 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
         value = await body(request, 2048)
         methods = {
             "install": (manager.install, set(), []),
+            "install-automation": (manager.install_automation, set(), []),
             "enable": (manager.set_enabled, {"enabled"}, [value.get("enabled")]),
             "uninstall": (manager.uninstall, {"clear_preferences"}, [value.get("clear_preferences")]),
             "preview-launch": (manager.preview_launch, set(), []),

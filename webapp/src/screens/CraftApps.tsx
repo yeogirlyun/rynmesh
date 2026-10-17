@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, Plus, UsersRound } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, UsersRound } from "lucide-react";
 import { Modal } from "../personal/components";
 import { craftPlugins, openCraftWindow, verifiedCraftUrl, verifiedPluginPath, type CraftCatalog, type CraftPlugin } from "../domain/craftPlugins";
 import { nasChanged, setNasHandoff } from "../domain/nas";
 import CraftPluginLibrary from "./CraftPluginLibrary";
+import AppsLauncher, { type AppsFilter } from "./AppsLauncher";
 import CraftPluginIcon from "./CraftPluginIcon";
+import CraftSystemApp from "./CraftSystemApp";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import "./craftApps.css";
 
 const short: Record<string, string> = { pdfcraft: "PDF", wordcraft: "W", gridcraft: "X", deckcraft: "P", resume: "R", recruit: "H", desk: "D", nas: "N" };
 const isBuiltin = (app: CraftPlugin) => app.kind === "builtin_adapter";
 const canInstall = (app: CraftPlugin) => app.installable ?? app.web;
-const extension: Record<string, string> = { pdfcraft: "PDF", wordcraft: "DOCX", gridcraft: "XLSX", deckcraft: "PPTX" };
 function Mark({ app }: { app: CraftPlugin }) {
   return <CraftPluginIcon app={app} />;
 }
@@ -38,7 +39,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [group, setGroup] = useState("office");
+  const [filter, setFilter] = useState<AppsFilter>("all");
   const [setup, setSetup] = useState<"initial" | "add" | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [installing, setInstalling] = useState("");
@@ -110,12 +111,22 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     setCatalog(value); setReady(null); setModal(null); setNotice(text(modal.kind === "uninstall" ? "uninstalled" : "saved"));
     if (modal.app.id === "nas") { setNasHandoff(null); nasChanged(); }
   });
+  const installAutomation = () => run(async () => {
+    if (!modal || modal.kind !== "agent") return;
+    const id = modal.app.id;
+    const value = await craftPlugins.installAutomation(id);
+    if (mounted.current) {
+      setCatalog(value);
+      setModal(current => current?.app.id === id ? { ...current, app: value.plugins.find(app => app.id === id) || current.app } : current);
+      setNotice(text("automationInstalled"));
+    }
+  });
   const choose = (app: CraftPlugin) => <label className="craft-choice" key={app.id} data-tool={app.id}>
     <Mark app={app} /><span><strong>{name(app)}</strong><small>{app.installed ? text("installed") : !canInstall(app) ? text(isBuiltin(app) ? "unavailable" : "native") : isBuiltin(app) ? text("builtinType") : text(`descriptions.${app.id}`, { defaultValue: app.name })}</small>{app.warning && <small>{warningShortText(app)}</small>}</span>
     <input type="checkbox" checked={selected.includes(app.id) || app.installed} disabled={busy || !canInstall(app) || app.installed} onChange={e => setSelected(current => e.target.checked ? [...current, app.id] : current.filter(id => id !== app.id))} />
   </label>;
   const hasDownloads = selected.some(id => catalog?.plugins.some(app => app.id === id && app.web && !app.installed));
-  return <section className={`craft-center${manage ? " craft-manager" : ""}`} aria-busy={busy}>
+  return <section className={`craft-center${manage ? " craft-manager" : " craft-apps-v2"}`} aria-busy={busy}>
     {error && <div className="craft-error" role="alert"><span>{error}</span>{!catalog && <button onClick={() => void load()}>{text("retry")}</button>}</div>}
     {notice && <p className="craft-notice" role="status"><CheckCircle2 size={17} />{notice}</p>}
     {!catalog && !error && <p role="status">{text("loading")}</p>}
@@ -130,27 +141,24 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
         <footer><div>{text("selected", { count: selected.filter(id => !catalog.plugins.find(p => p.id === id)?.installed).length })}<small>{text(hasDownloads ? "downloadHelp" : "registrationHelp")}</small></div><div className="craft-actions"><button className="craft-button quiet" disabled={busy} onClick={() => void dismissSetup()}>{text(setup === "initial" ? "later" : "back")}</button><button className="craft-button primary" disabled={busy || (setup === "add" && !selected.some(id => !catalog.plugins.find(p => p.id === id)?.installed))} onClick={() => void install()}>{text(busy ? "busy" : selected.length ? hasDownloads ? "download" : "installBuiltin" : "finish")}</button></div></footer>
       </div>
     </div> : <>
-      {!manage && <header className="craft-heading"><div><h1>{text("title")}</h1><p>{text("subtitle")}</p></div><Link className="craft-button quiet" to="/settings/plugins">{text("manage")}<ArrowUpRight size={15} /></Link></header>}
       {manage ? <CraftPluginLibrary catalog={catalog} busy={busy} onAdd={add} onOpen={app => void open(app)}
         onToggle={app => app.enabled ? setModal({ kind: "disable", app }) : void run(async () => { setCatalog(await craftPlugins.enable(app.id, true)); if (app.id === "nas") nasChanged(); setNotice(text("saved")); })}
         onDetails={app => setModal({ kind: "detail", app })} onAgent={app => setModal({ kind: "agent", app })}
-        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <>
-        <nav className="craft-tabs" aria-label={text("title")}>{["office", "workflow", "design", "media", "storage"].map(id => <button key={id} aria-pressed={group === id} onClick={() => setGroup(id)}>{text(id)}</button>)}</nav>
-        <div className="craft-grid">{catalog.plugins.filter(app => app.group === group).map(app => <article className="craft-tool" key={app.id} data-tool={app.id}>
-          <button className="craft-cover" aria-label={`${text(app.installed ? "open" : "install")} ${name(app)}`} disabled={busy || !canInstall(app) || (app.installed && !app.enabled)} onClick={() => app.installed ? void open(app) : add([app.id])}><Paper app={app} /><small>{extension[app.id] || app.name}</small></button>
-          <h3>{name(app)}</h3><p>{!canInstall(app) ? text(isBuiltin(app) ? "unavailable" : "native") : app.installed && !app.enabled ? text("disabled") : text(`descriptions.${app.id}`, { defaultValue: app.name })}</p>{app.warning && <p>{warningShortText(app)}</p>}
-          <div className="craft-tool-actions">{app.installed ? <button disabled={busy || !app.enabled} onClick={() => void open(app)}>{text("open")}<ArrowUpRight size={15} /></button> : <button disabled={busy || !canInstall(app)} onClick={() => add([app.id])}>{text("install")}<Plus size={15} /></button>}
-          <button disabled={!app.enabled || !app.agent_tools.length} onClick={() => setModal({ kind: "agent", app })}>{text("agent")}<ArrowRight size={15} /></button></div>
-        </article>)}</div><p className="craft-note"><Bot size={16} />{text("enableInfo")}</p><p className="craft-foot">{text("retention")}</p>
-        <Link className="craft-legacy" to="/apps/workspaces">{text("legacy")}<ArrowUpRight size={14} /></Link>
-      </>}
+        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <AppsLauncher catalog={catalog} busy={busy} filter={filter} onFilterChange={setFilter} text={text}
+        onOpen={app => void open(app)} onInstall={app => add([app.id])} onAgent={app => setModal({ kind: "agent", app })} />}
       {ready && <div className="craft-ready"><FolderCheck size={18} /><span>{name(ready.app)}</span><a href={ready.url} target="_blank" rel="noopener noreferrer" onClick={e => { if ("__TAURI_INTERNALS__" in window) { e.preventDefault(); void openCraftWindow(ready.app.id, ready.url).catch(failure); } }}>{text("openWindow")}<ArrowUpRight size={15} /></a></div>}
     </>)}
     {modal && <Modal title={modal.kind === "detail" ? name(modal.app) : modal.kind === "agent" ? `${name(modal.app)} · Agent` : text(`${modal.kind}Title`, { name: name(modal.app) })} onClose={() => { if (!busy) setModal(null); }} className="craft-dialog">
-      {modal.kind === "disable" ? <p>{text("disableHelp")}</p> : modal.kind === "uninstall" ? <><p>{text(isBuiltin(modal.app) ? "builtinUninstallHelp" : "uninstallHelp")}</p><div className="craft-dialog-note"><FolderCheck size={17} />{text("uninstallKeep")}</div><label className="craft-clear"><input type="checkbox" disabled={busy} checked={clearPreferences} onChange={e => setClearPreferences(e.target.checked)} />{text("clearPreferences")}</label></> : modal.kind === "agent" ? <><p>{text("enableInfo")}</p><div className="craft-dialog-note"><Bot size={17} />{text(isBuiltin(modal.app) ? modal.app.id === "nas" ? "nasAgentInfo" : "businessAgentInfo" : "agentInfo", { count: modal.app.agent_tools.length })}</div></> : <><dl><div><dt>{text("version")}</dt><dd>{modal.app.name} {modal.app.version}</dd></div><div><dt>{text("source")}</dt><dd>{modal.app.source_url}</dd></div><div><dt>{text("checksum")}</dt><dd><code>{modal.app.sha256}</code></dd></div>{modal.app.formats.length > 0 && <div><dt>{text("formats")}</dt><dd>{modal.app.formats.join(", ")}</dd></div>}<div><dt>{text("tools")}</dt><dd>{modal.app.enabled ? text(isBuiltin(modal.app) ? "builtinCapabilities" : "infoTool", { count: modal.app.agent_tools.length }) : text("disabled")}</dd></div></dl><p>{text(isBuiltin(modal.app) ? "builtinHelp" : "formatsHelp")}</p><p>{text(isBuiltin(modal.app) ? "builtinLicense" : "license")}</p>{modal.app.warning && <p>{warningText(modal.app)}</p>}</>}
+      {modal.kind === "disable" ? <p>{text("disableHelp")}</p> : modal.kind === "uninstall" ? <><p>{text(isBuiltin(modal.app) ? "builtinUninstallHelp" : "uninstallHelp")}</p><div className="craft-dialog-note"><FolderCheck size={17} />{text("uninstallKeep")}</div><label className="craft-clear"><input type="checkbox" disabled={busy} checked={clearPreferences} onChange={e => setClearPreferences(e.target.checked)} />{text("clearPreferences")}</label></> : modal.kind === "agent" ? <><p>{text("enableInfo")}</p><div className="craft-dialog-note"><Bot size={17} />{text(isBuiltin(modal.app) ? modal.app.id === "nas" ? "nasAgentInfo" : "businessAgentInfo" : modal.app.editing_supported ? "automationAgentInfo" : "agentInfo", { count: modal.app.agent_tools.length })}</div>
+        {!isBuiltin(modal.app) && (modal.app.editing_supported ? <><p>{text(`automationCapabilities.${modal.app.id}`)}</p><p>{text("automationFileFlow")}</p><p>{text("automationUnsaved")}</p></> : modal.app.automation_supported ? <p>{text("automationSetupInfo")}</p> : modal.app.group === "office" ? <p>{text("automationUnavailable")}</p> : null)}
+        {modal.app.automation_error && <p role="alert">{text(`errors.${modal.app.automation_error}`, { defaultValue: text("errors.craft_agent_runtime_not_verified") })}</p>}
+      </> : <><dl><div><dt>{text("version")}</dt><dd>{modal.app.name} {modal.app.version}</dd></div><div><dt>{text("source")}</dt><dd>{modal.app.source_url}</dd></div><div><dt>{text("checksum")}</dt><dd><code>{modal.app.sha256}</code></dd></div>{modal.app.formats.length > 0 && <div><dt>{text("formats")}</dt><dd>{modal.app.formats.join(", ")}</dd></div>}<div><dt>{text("tools")}</dt><dd>{modal.app.enabled ? text(isBuiltin(modal.app) ? "builtinCapabilities" : modal.app.editing_supported ? "documentTools" : "infoTool", { count: modal.app.agent_tools.length }) : text("disabled")}</dd></div></dl><CraftSystemApp app={modal.app} text={text} /><p>{text(isBuiltin(modal.app) ? "builtinHelp" : modal.app.editing_supported ? `automationCapabilities.${modal.app.id}` : "formatsHelp")}</p><p>{text(isBuiltin(modal.app) ? "builtinLicense" : "license")}</p>{modal.app.warning && <p>{warningText(modal.app)}</p>}</>}
       {error && <p role="alert" className="craft-error">{error}</p>}
       <div className="craft-dialog-actions"><button className="craft-button" disabled={busy} onClick={() => setModal(null)}>{text(modal.kind === "detail" || modal.kind === "agent" ? "close" : "cancel")}</button>
-        {modal.kind === "agent" ? <button className="craft-button primary" onClick={() => navigate("/agent")}>{text("agent")}<ArrowRight size={15} /></button> : modal.kind !== "detail" && <button className={`craft-button ${modal.kind === "uninstall" ? "danger-fill" : "primary"}`} disabled={busy} onClick={() => void change()}>{text(busy ? "busy" : modal.kind)}</button>}
+        {modal.kind === "agent" ? <>
+          {modal.app.automation_supported && !modal.app.editing_supported && <button className="craft-button primary" disabled={busy || !modal.app.enabled} onClick={() => void installAutomation()}><Download size={15} />{text(busy ? "automationInstalling" : "installAutomation")}</button>}
+          <button className="craft-button primary" disabled={busy} onClick={() => navigate("/agent", { state: { craftPluginID: modal.app.id } })}>{text("agent")}<ArrowRight size={15} /></button>
+        </> : modal.kind !== "detail" && <button className={`craft-button ${modal.kind === "uninstall" ? "danger-fill" : "primary"}`} disabled={busy} onClick={() => void change()}>{text(busy ? "busy" : modal.kind)}</button>}
       </div>
     </Modal>}
   </section>;

@@ -211,7 +211,11 @@ class ModelCatalog:
         return sorted(rows.values(), key=lambda row: (row["source"] == "peer", row["name"], row["id"]))
 
     def get_model(self, model_id):
-        return next((row for row in self.list_models(selected_model_id=model_id) if row["id"] == model_id), None)
+        try:
+            rows = self.list_models(selected_model_id=model_id)
+        except TypeError:
+            rows = self.list_models()
+        return next((row for row in rows if row["id"] == model_id), None)
 
     def refresh_destination(self, model_id):
         """Refresh metadata only; never send task text to repair discovery."""

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +12,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
+from .diagnostic_log import failure
 from .runtime import AgentRuntime
 from .store import AgentError, AgentStore
 
@@ -21,14 +24,28 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         from .bridge import build_agent_integrations
         integrations = build_agent_integrations(app, store, home)
     model, tools, catalog = integrations
+    previous_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(instance):
+        try:
+            async with previous_lifespan(instance) as state:
+                yield state
+        finally:
+            craft = getattr(tools, "craft", None)
+            if craft is not None:
+                await asyncio.to_thread(craft.close)
+
+    app.router.lifespan_context = lifespan
     runtime = AgentRuntime(AgentStore(Path(home) / "agent", messaging_key), model, tools, catalog, consumer_node_id=getattr(store, "peer_id", None))
     startup_error = None
     try:
         runtime.reconcile()
-    except (AgentError, OSError):
+    except (AgentError, OSError) as exc:
         # The optional Agent's damaged encrypted history must not stop model
         # sharing, friends, or the rest of the node from starting.
         startup_error = "agent_state_unreadable"
+        failure("startup_reconcile", exc)
     app.state.agent_runtime = runtime
     app.state.agent_startup_error = startup_error
     workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
@@ -43,20 +60,24 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         return response
 
     async def call(method: str, *args):
+        started = time.monotonic()
         try:
             return await asyncio.to_thread(getattr(runtime, method), *args)
         except AgentError as exc:
+            failure("api_" + method, exc, elapsed_seconds=time.monotonic() - started)
             code = str(exc)
             status = 410 if code == "agent_task_deleted" else 404 if code == "agent_task_not_found" else 400 if code.startswith("agent_invalid_") else 409
             if status == 409 and args and isinstance(args[0], str):
                 try:
                     current = await asyncio.to_thread(runtime.get, args[0])
-                except AgentError:
+                except Exception as current_error:
+                    failure("api_conflict_snapshot", current_error)
                     pass
                 else:
                     return JSONResponse({"detail": code, "current": current}, status_code=409)
             raise HTTPException(status, detail=code) from None
-        except Exception:
+        except Exception as exc:
+            failure("api_" + method, exc, elapsed_seconds=time.monotonic() - started)
             raise HTTPException(503, detail="agent_unavailable") from None
 
     async def body(request: Request) -> dict:
@@ -110,6 +131,10 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         local_control(request)
         return await call("remove_project", project_id)
 
+    @app.patch("/api/local/agent/projects/{project_id}")
+    async def rename_project(project_id: str, request: Request):
+        return await call("rename_project", project_id, await body(request))
+
     @app.get("/api/local/agent/skills")
     async def skills(request: Request):
         local_control(request)
@@ -157,6 +182,10 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.delete("/api/local/agent/tasks/{task_id}")
     async def delete_task(task_id: str, request: Request):
         return await call("lifecycle", task_id, await body(request), "delete")
+
+    @app.patch("/api/local/agent/tasks/{task_id}")
+    async def rename_task(task_id: str, request: Request):
+        return await call("rename_task", task_id, await body(request))
 
     @app.get("/api/local/agent/resources")
     async def scope_catalog(request: Request):

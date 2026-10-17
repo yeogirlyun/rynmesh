@@ -99,7 +99,7 @@ def record(row, call, status, at, *, result=None, flight=None):
         receipts.append(receipt)
     receipt["status"] = status
     if flight:
-        for key in ("authorization", "preview", "permission_record"):
+        for key in ("authorization", "preview", "permission_record", "operation_classification"):
             if key in flight:
                 receipt[key] = copy.deepcopy(flight[key])
     if result is not None:
@@ -119,19 +119,29 @@ def _rejected_before_execution(receipt):
     error = str(result.get("error", ""))
     return (receipt.get("effect") == "write" and receipt.get("status") in {"failed", "not_executed"}
             and result.get("not_executed") is True and result.get("no_mutation") is True
-            and (error.startswith("agent_local_") or error == "agent_shell_unavailable"))
+            and (error.startswith("agent_local_") or error in {
+                "agent_shell_unavailable", "agent_ripgrep_unavailable_use_file_search", "agent_process_start_failed",
+                "agent_process_capacity"}))
 
 
 def begin(row, specs):
     """Registry defines mechanical checks; model criteria proposals are ignored."""
+    from .execution_policy import verified_read_classification
     registry = {spec["tool_name"]: spec for spec in specs}
     latest = {}
+    workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
     current = [r for r in row.get("receipts", []) if r["goal_revision"] == row["goal"]["revision"] and r["context_epoch"] == row.get("context_epoch", 0)]
     for receipt in current:
         spec = registry.get(receipt["tool"])
         if receipt["effect"] != "write" and (not spec or spec.get("effect") != "read" or receipt["status"] != "confirmed"):
             continue
         if _rejected_before_execution(receipt):
+            continue
+        if (
+            receipt.get("status") != "confirmed"
+            and (receipt.get("result") or {}).get("no_mutation") is True
+            and verified_read_classification(receipt, task_id=row["id"], workspace_root=workspace_root)
+        ):
             continue
         fields = spec.get("target_fields") if spec else None
         target = {key: receipt["arguments"].get(key) for key in fields} if fields is not None else receipt["arguments"]

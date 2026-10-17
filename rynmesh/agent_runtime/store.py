@@ -7,6 +7,7 @@ import json
 import pickle
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +16,7 @@ from cryptography.exceptions import InvalidTag
 from ..atomic_io import atomic_write_json, read_json
 from ..file_transactions import file_transaction
 from ..services import peer_box
+from .diagnostic_log import performance
 from .state import migrate
 
 VERSION = "ryn.agent.v1"
@@ -84,6 +86,11 @@ class AgentToolRejected(AgentError):
     Raise only before the mutation boundary; never wrap an uncertain write or
     a post-write publication/verification failure in this exception.
     """
+
+    def __init__(self, code: str, *, correction: str | None = None, details: dict | None = None):
+        super().__init__(code)
+        self.correction = correction if isinstance(correction, str) and correction else None
+        self.details = copy.deepcopy(details) if isinstance(details, dict) and details else None
 
 
 class AgentReadFailure(AgentError):
@@ -307,12 +314,26 @@ class AgentStore:
 
         The view must not modify its argument; only its result is detached.
         """
+        started = time.monotonic()
         with file_transaction(self.lock):
-            return _copy(view(self._read(copy_result=False)))
+            acquired = time.monotonic()
+            result = _copy(view(self._read(copy_result=False)))
+        performance("state_inspect", lock_wait_seconds=acquired - started,
+                    read_view_seconds=time.monotonic() - acquired)
+        return result
 
     def transaction(self, mutate: Callable[[dict], Any]) -> Any:
+        started = time.monotonic()
         with file_transaction(self.lock):
+            acquired = time.monotonic()
             data = self._read()
+            read = time.monotonic()
             result = mutate(data)
+            mutated = time.monotonic()
             self._write(data)
-            return copy.deepcopy(result)
+            written = time.monotonic()
+            result = copy.deepcopy(result)
+        performance("state_transaction", lock_wait_seconds=acquired - started,
+                    read_seconds=read - acquired, mutation_seconds=mutated - read,
+                    write_seconds=written - mutated, copy_seconds=time.monotonic() - written)
+        return result

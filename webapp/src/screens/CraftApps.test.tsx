@@ -24,7 +24,7 @@ function plugin(id: string): CraftPlugin {
     formats: ["pdf"], sha256: "a".repeat(64), source_url: `https://github.com/storytold/${id}`,
     installed: false, enabled: false, running: false, busy: false, agent_tools: [], editing_supported: false, warning: null };
 }
-function Location() { const location = useLocation(); return <output data-testid="location">{location.pathname}{location.search}</output>; }
+function Location() { const location = useLocation(); return <><output data-testid="location">{location.pathname}{location.search}</output><output data-testid="craft-plugin-handoff">{location.state?.craftPluginID}</output></>; }
 function mount(manage = false) { return render(<MemoryRouter><CraftApps manage={manage} /><Location /></MemoryRouter>); }
 function builtin(id: string): CraftPlugin {
   return { ...plugin(id), kind: "builtin_adapter", installable: true, web: false, formats: [],
@@ -50,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(craftPlugins, "catalog").mockImplementation(async () => clone());
   vi.spyOn(craftPlugins, "setup").mockImplementation(async () => { state.setup_completed = true; return clone(); });
   vi.spyOn(craftPlugins, "install").mockImplementation(async id => { const p = state.plugins.find(p => p.id === id)!; p.installed = true; p.enabled = true; p.agent_tools = ["editor_info"]; return clone(); });
+  vi.spyOn(craftPlugins, "installAutomation").mockImplementation(async id => { const p = state.plugins.find(p => p.id === id)!; p.automation_installed = true; p.editing_supported = true; p.agent_tools = ["editor_info", "ryn_craft_read", "ryn_craft_action"]; return clone(); });
   vi.spyOn(craftPlugins, "enable").mockImplementation(async (id, enabled) => { const p = state.plugins.find(p => p.id === id)!; p.enabled = enabled; p.agent_tools = enabled ? ["editor_info"] : []; return clone(); });
   vi.spyOn(craftPlugins, "uninstall").mockImplementation(async id => { const p = state.plugins.find(p => p.id === id)!; p.installed = false; p.enabled = false; p.agent_tools = []; return clone(); });
   vi.spyOn(craftPlugins, "preview").mockImplementation(async id => launchPreview(id));
@@ -112,6 +113,7 @@ it("does not preview, launch or open an editor when the catalog loads", async ()
   await screen.findByRole("button", { name: "Open Word documents" });
   expect(craftPlugins.preview).not.toHaveBeenCalled();
   expect(craftPlugins.launch).not.toHaveBeenCalled();
+  expect(craftPlugins.installAutomation).not.toHaveBeenCalled();
   expect(window.open).not.toHaveBeenCalled();
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -228,6 +230,66 @@ it("does not present information-only Agent tools as document editing", async ()
   await user.click((await screen.findAllByRole("button", { name: "Agent" }))[0]);
   expect(screen.getByRole("dialog")).toHaveTextContent("Document editing tools are not connected yet.");
   expect(craftPlugins.launch).not.toHaveBeenCalled();
+  expect(craftPlugins.installAutomation).not.toHaveBeenCalled();
+});
+
+it("passes the selected app to Agent from the redesigned launcher", async () => {
+  present(); const user = userEvent.setup(); mount();
+  const card = (await screen.findByRole("heading", { name: "Word documents" })).closest("article")!;
+  await user.click(within(card).getByRole("button", { name: "Agent" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Agent" }));
+  expect(screen.getByTestId("location")).toHaveTextContent(/^\/agent$/);
+  expect(screen.getByTestId("craft-plugin-handoff")).toHaveTextContent(/^wordcraft$/);
+  expect(craftPlugins.installAutomation).not.toHaveBeenCalled();
+});
+
+it("installs document support only on an explicit click and updates Agent capabilities in place", async () => {
+  present(); state.plugins[1].automation_supported = true; state.plugins[1].automation_installed = false;
+  const user = userEvent.setup(); mount(true);
+  const card = (await screen.findByRole("heading", { name: "Word documents" })).closest("article")!;
+  await user.click(within(card).getByRole("button", { name: "Set up Agent documents" }));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent("Document editing tools are not connected yet.");
+  expect(craftPlugins.installAutomation).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Install Agent document component" }));
+  await waitFor(() => expect(dialog).toHaveTextContent("Agent can create, read and edit documents"));
+  expect(craftPlugins.installAutomation).toHaveBeenCalledExactlyOnceWith("wordcraft");
+  expect(dialog).toHaveTextContent("DOCX or PDF");
+  expect(dialog).toHaveTextContent("results are saved as new files, preserving the originals");
+  expect(dialog).toHaveTextContent("does not change unsaved work");
+  expect(within(dialog).queryByRole("button", { name: "Install Agent document component" })).not.toBeInTheDocument();
+  expect(craftPlugins.preview).not.toHaveBeenCalled(); expect(craftPlugins.launch).not.toHaveBeenCalled();
+  expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(within(card).getByRole("button", { name: "Read & edit files" })).toBeEnabled();
+  await user.click(within(card).getByLabelText("More actions for Word documents"));
+  await user.click(within(card).getByRole("button", { name: "Plugin details" }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("Read & edit files");
+});
+
+it("keeps document installation retryable after a failed download", async () => {
+  present(); state.plugins[0].automation_supported = true;
+  vi.mocked(craftPlugins.installAutomation).mockRejectedValueOnce(new Error("craft_agent_runtime_checksum_mismatch"));
+  const user = userEvent.setup(); mount();
+  await user.click((await screen.findAllByRole("button", { name: "Agent" }))[0]);
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: "Install Agent document component" }));
+  await waitFor(() => expect(dialog).toHaveTextContent("Document component download verification failed"));
+  expect(state.plugins[0].editing_supported).toBe(false);
+  expect(within(dialog).getByRole("button", { name: "Install Agent document component" })).toBeEnabled();
+  await user.click(within(dialog).getByRole("button", { name: "Install Agent document component" }));
+  await waitFor(() => expect(dialog).toHaveTextContent("Agent can create, read and edit documents"));
+  expect(craftPlugins.installAutomation).toHaveBeenCalledTimes(2);
+});
+
+it("does not offer a document download on an unsupported device", async () => {
+  present(); state.plugins[0].automation_supported = false;
+  const user = userEvent.setup(); mount();
+  await user.click((await screen.findAllByRole("button", { name: "Agent" }))[0]);
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveTextContent("Windows x64");
+  expect(within(dialog).queryByRole("button", { name: "Install Agent document component" })).not.toBeInTheDocument();
+  expect(craftPlugins.installAutomation).not.toHaveBeenCalled();
 });
 
 it("includes complete English and Chinese resources and switches the UI", async () => {

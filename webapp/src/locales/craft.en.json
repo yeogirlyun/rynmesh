@@ -76,7 +76,25 @@
   "confirm": "Confirm",
   "saved": "Plugin state updated.",
   "enableInfo": "Agent is available by default, with implemented tools only.",
-  "agentInfo": "Version, source and format information is available. Document editing tools are not connected yet.",
+  "agentInfo": "Agent currently provides plugin information only (version, source and formats). Document editing tools are not connected yet.",
+  "officeAgentInfo": "Open Agent on an app to see its capabilities and set up document support.",
+  "documentTools": "Read & edit files",
+  "automationSetupLabel": "Set up Agent documents",
+  "installAutomation": "Install Agent document component",
+  "automationInstalling": "Installing document component…",
+  "automationInstalled": "Agent document component installed. No restart needed.",
+  "automationSetupInfo": "Install the Agent document component to create, read, edit and save files with this app. The download starts only when you click Install.",
+  "automationAgentInfo": "Agent can create, read and edit documents through this app's connected file tools.",
+  "automationFileFlow": "Open Agent and describe your task. Add source files to the task workspace; results are saved as new files, preserving the originals.",
+  "automationUnsaved": "Agent works in a separate document session. It does not change unsaved work in an editor window you have open.",
+  "automationUnavailable": "Document components are currently available for PDF, Word, Excel and PPT on Windows x64.",
+  "automationCapabilities": {
+    "wordcraft": "Create or open DOCX and text documents, insert and replace text, inspect document structure, and save as DOCX or PDF.",
+    "gridcraft": "Create or open XLSX and CSV files, read and change cells and ranges, calculate formulas, format data and add charts, and save as XLSX or CSV.",
+    "deckcraft": "Create or open PPTX presentations, add slides, text, shapes and tables, inspect their structure, and save as PPTX or PDF.",
+    "pdfcraft": "Open PDFs, extract text, create documents, rotate, insert, delete or reorder pages, add text and metadata, and save as a new PDF."
+  },
+  "agentQueryDraft": "Check the current enabled status and Agent capabilities of {{name}} ({{app}}) from the Ryn Apps page. Explain which features are connected and any limitations.",
   "retention": "Export documents regularly. Uninstalling a plugin keeps exported files.",
   "storage": "Storage & files",
   "storageHelp": "Large editors download on demand; lightweight adapters ship with Ryn. Registration, packages and user data are stored separately.",
@@ -117,6 +135,11 @@
   "cjkWarningShort": "Limited Chinese font support",
   "fontWarningShort": "Font fallback · Language coverage unverified",
   "errors": {
+    "craft_agent_runtime_unsupported": "This document component is unavailable for this app or device.",
+    "craft_agent_runtime_not_verified": "The document component is missing or failed verification. Install it again.",
+    "craft_agent_runtime_checksum_mismatch": "Document component download verification failed. Retry the installation.",
+    "craft_agent_runtime_unsafe_archive": "The document component package failed validation and was not installed.",
+    "craft_agent_runtime_archive_limit": "The document component package exceeded its allowed size and was not installed.",
     "plugin_busy": "This plugin has an active task. Wait for completion or cancel the task first.",
     "plugin_port_busy": "Another program is using the plugin port. Free the port and retry.",
     "plugin_disabled": "Enable this plugin first.",
@@ -174,5 +197,27 @@
   "discoverMore": "Make room for something useful",
   "discoverHelp": "Design, images, audio and storage. Add only what you need.",
   "libraryFootnote": "Enabled plugins share integrated tools with Agent. Your files stay when uninstalled.",
-  "agentWithPlugin": "Agent disabled with plugin"
+  "agentWithPlugin": "Agent disabled with plugin",
+  "systemApp": {
+    "title": "On this computer",
+    "start_menu": "{{name}} is in the Start menu and opens on its own, without the Ryn window.",
+    "applications": "{{name}} is in Applications and Launchpad and opens on its own, without the Ryn window.",
+    "openWith": "{{name}} is offered under “Open with” for {{types}} files. Your default apps stay as they are.",
+    "settings": "Choose as default…",
+    "direct": "Make default",
+    "settingsOpened": "Windows Settings is open. Choose {{name}} for the file types you want.",
+    "defaultSet": "{{types}} files now open in {{name}}.",
+    "failed": "The default app could not be changed. You can also change it in system settings.",
+    "where": {
+      "start_menu": "the Start menu",
+      "applications": "Applications"
+    },
+    "pending": "Adding {{name}} to {{place}}…",
+    "missing": "{{name}} is not in {{place}} yet.",
+    "notAdded": "{{name}} could not be added to {{place}}.",
+    "error": "Error: {{error}}",
+    "add": "Add to {{place}}",
+    "retry": "Try again",
+    "adding": "Adding…"
+  }
 }

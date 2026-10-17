@@ -52,6 +52,20 @@ pub fn read_status(port: u16) -> Result<RuntimeStatus, String> {
     status.node_online = true;
     Ok(status)
 }
+
+fn watchdog_status(previous: RuntimeStatus, current: Result<RuntimeStatus, String>,
+                   is_alive: impl FnOnce() -> bool) -> RuntimeStatus {
+    match current {
+        Ok(status) => status,
+        Err(error) => {
+            if is_alive() {
+                RuntimeStatus { node_online: true, last_error: Some("node_status_unavailable".into()), ..previous }
+            } else {
+                RuntimeStatus { last_error: Some(error), ..Default::default() }
+            }
+        },
+    }
+}
 #[tauri::command]
 pub fn desktop_status(state: tauri::State<RuntimeState>) -> RuntimeStatus { state.status.lock().unwrap().clone() }
 
@@ -151,10 +165,8 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
             let prefs = app.state::<DesktopState>().prefs.lock().unwrap().clone();
             let runtime = app.state::<RuntimeState>();
             if runtime.reset_recovery.swap(false, Ordering::SeqCst) { recovery = Recovery::default(); }
-            let mut status = match read_status(node.port) {
-                Ok(status) => status,
-                Err(error) => RuntimeStatus { last_error: Some(error), ..Default::default() },
-            };
+            let previous = runtime.status.lock().unwrap().clone();
+            let mut status = watchdog_status(previous, read_status(node.port), || node::health_ok(node.port));
             status.awake_active = awake(prefs.keep_awake && status.node_online && (status.sharing || status.active_tasks > 0 || status.setup_active));
             let should_restart = Instant::now() >= boot_deadline && recovery.check(status.node_online, prefs.auto_recover && !runtime.action_busy.load(Ordering::SeqCst), Instant::now());
             status.recovery_attempts = recovery.attempts;
@@ -178,6 +190,41 @@ pub fn watchdog(app: tauri::AppHandle, status_item: tauri::menu::MenuItem<tauri:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unavailable_metadata_keeps_a_live_node_online_without_recovery() {
+        let previous = RuntimeStatus { node_online: true, configured: true, sharing: true,
+            active_tasks: 2, setup_active: true, ..Default::default() };
+        let now = Instant::now();
+        let mut recovery = Recovery::default();
+        for _ in 0..5 {
+            let status = watchdog_status(previous.clone(), Err("node_unavailable".into()), || true);
+            assert!(status.node_online && status.configured && status.sharing && status.setup_active);
+            assert_eq!(status.active_tasks, 2);
+            assert_eq!(status.last_error.as_deref(), Some("node_status_unavailable"));
+            assert!(!recovery.check(status.node_online, true, now));
+        }
+        assert_eq!(recovery.attempts, 0);
+    }
+
+    #[test]
+    fn failed_liveness_still_uses_the_existing_three_failure_budget() {
+        let mut recovery = Recovery::default();
+        let now = Instant::now();
+        for expected in [false, false, true] {
+            let status = watchdog_status(RuntimeStatus::default(), Err("node_unavailable".into()), || false);
+            assert!(!status.node_online);
+            assert_eq!(recovery.check(status.node_online, true, now), expected);
+        }
+    }
+
+    #[test]
+    fn successful_metadata_does_not_probe_liveness_again() {
+        let current = RuntimeStatus { node_online: true, active_tasks: 3, ..Default::default() };
+        let status = watchdog_status(RuntimeStatus::default(), Ok(current), || panic!("unneeded health probe"));
+        assert!(status.node_online);
+        assert_eq!(status.active_tasks, 3);
+        assert!(status.last_error.is_none());
+    }
     #[test]
     fn backoff_is_bounded_and_short_success_does_not_reset_it() {
         let now = Instant::now(); let mut r = Recovery::default();

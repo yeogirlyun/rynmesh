@@ -79,6 +79,8 @@ def change(store, task_id, value, operation, emit, stamp):
             if len(data["tasks"]) >= 200:
                 raise AgentError("agent_task_limit")
             row["archived"] = False
+            row.setdefault("local_execution", {})["desktop_access"] = bool(data.get("settings", {}).get("desktop_access", False))
+            row.update(approved=None, pending_approval=None)
             emit(row, "restored")
             remember_request(row, keyed)
             data["tasks"][task_id] = row

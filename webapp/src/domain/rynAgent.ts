@@ -147,6 +147,7 @@ export interface AgentTaskSummary {
   schema_version?: number;
   control_revision?: number;
   event_cursor?: number;
+  completion_event_seq?: number;
   run_state?: AgentRunState;
   goal?: AgentGoal;
   criteria?: AgentCriterion[];
@@ -180,6 +181,8 @@ export interface AgentArtifactListing { artifacts: AgentArtifact[]; files?: Agen
 export type AgentRecordOperation = "archive" | "restore" | "delete";
 export interface AgentDeleteResult { id: string; deleted: true; cleanup_pending: boolean; }
 export interface AgentTask extends AgentTaskSummary {
+  /** Live model text is projected from memory independently of durable checkpoints. */
+  streaming?: { step: number; context_epoch: number; text: string } | null;
   messages: AgentMessage[];
   events: AgentEvent[];
   limits: Partial<AgentSettings>;
@@ -189,7 +192,61 @@ export type AgentAction = "pause" | "resume" | "cancel" | "approve" | "deny";
 export class AgentAPIError extends Error {
   constructor(public code: string, public status: number) { super(code); }
 }
-export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing" | "budget" | "allowed_actions" | "run_state">> {
+
+const READ_TIMEOUT_MS = 10000;
+const READ_RETRY_DELAY_MS = 250;
+
+/** Only connection failures and server outages are safe candidates for automatic GET recovery. */
+export function isTransientAgentReadError(reason: unknown): boolean {
+  return reason instanceof AgentAPIError ? reason.status === 0 || reason.status >= 500 && reason.status < 600
+    : reason instanceof TypeError || reason instanceof DOMException && reason.name === "NetworkError";
+}
+
+export function agentReadBackoff(failures: number): number {
+  return Math.min(15000, 1000 * 2 ** Math.min(Math.max(0, failures - 1), 4));
+}
+
+async function readAttempt<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
+  const controller = new AbortController();
+  const cancel = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new AgentAPIError("agent_request_timeout", 0)), READ_TIMEOUT_MS);
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    abort = () => reject(controller.signal.reason);
+    controller.signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    // Bound decoding too: receiving headers does not prove the response body will finish.
+    return await Promise.race([run(controller.signal), interrupted]);
+  } catch (reason) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw reason;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+    controller.signal.removeEventListener("abort", abort);
+  }
+}
+
+async function readWithRecovery<T>(run: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  try {
+    return await readAttempt(run, signal);
+  } catch (reason) {
+    if (signal?.aborted || !isTransientAgentReadError(reason)) throw reason;
+    await new Promise<void>((resolve, reject) => {
+      const finish = () => { signal?.removeEventListener("abort", cancel); resolve(); };
+      const timer = setTimeout(finish, READ_RETRY_DELAY_MS);
+      const cancel = () => { clearTimeout(timer); reject(signal?.reason); };
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
+    });
+    // One bounded retry per read. Mutations never enter this path.
+    return readAttempt(run, signal);
+  }
+}
+export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing" | "budget" | "allowed_actions" | "run_state" | "streaming">> {
   id: string;
   revision: number;
   unchanged: true;
@@ -198,37 +255,58 @@ export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing"
 export function mergeUnchangedTask(cached: AgentTask, value: AgentTask | AgentTaskUnchanged): AgentTask {
   if (!("unchanged" in value) || value.unchanged !== true || value.id !== cached.id || value.revision !== cached.revision) return value as AgentTask;
   const merged: AgentTask = { ...cached };
-  for (const key of ["run_timing", "budget", "allowed_actions", "run_state"] as const) {
+  for (const key of ["run_timing", "budget", "allowed_actions", "run_state", "streaming"] as const) {
     if (value[key] !== undefined) Object.assign(merged, { [key]: value[key] });
   }
   return merged;
 }
 
+/** Focus/selection reads may overlap a live poll at the same durable revision. */
+export function mergeAgentTaskSnapshot(previous: AgentTask | undefined, incoming: AgentTask): AgentTask {
+  if (!previous || previous.id !== incoming.id || previous.revision < incoming.revision) return incoming;
+  if (previous.revision > incoming.revision) return previous;
+  let next = incoming;
+  const before = previous.streaming, after = incoming.streaming;
+  // A completed/retired model step always advances the durable revision. Until
+  // then live text only grows, even if an earlier GET finishes out of order.
+  if (before && (!after || (before.step === after.step && before.context_epoch === after.context_epoch
+      && before.text.startsWith(after.text)))) next = { ...next, streaming: before };
+  const elapsed = previous.run_timing?.elapsed_seconds;
+  if (typeof elapsed === "number" && incoming.run_timing && typeof incoming.run_timing.elapsed_seconds === "number"
+      && elapsed > incoming.run_timing.elapsed_seconds) next = { ...next, run_timing: { ...incoming.run_timing, elapsed_seconds: elapsed } };
+  return next;
+}
+
 async function request<T>(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(nodeControlUrl(`/agent${path}`), {
-    method, credentials: "include", cache: "no-store", signal,
-    headers: { "Content-Type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
-    throw new AgentAPIError(code, response.status);
-  }
-  return response.json() as Promise<T>;
+  const send = async (requestSignal?: AbortSignal): Promise<T> => {
+    const response = await fetch(nodeControlUrl(`/agent${path}`), {
+      method, credentials: "include", cache: "no-store", signal: requestSignal,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const code = typeof data.detail === "string" ? data.detail : typeof data.error === "string" ? data.error : "agent_request_failed";
+      throw new AgentAPIError(code, response.status);
+    }
+    return response.json() as Promise<T>;
+  };
+  return method === "GET" ? readWithRecovery(send, signal) : send(signal);
 }
 export function agentFileUrl(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256">): string {
   // The version in the URL makes every revision a distinct resource; nothing stale is reused.
   return nodeControlUrl(`/agent/tasks/${encodeURIComponent(taskID)}/files/${encodeURIComponent(file.id)}?v=${encodeURIComponent(file.sha256 || "")}`);
 }
 async function fileContent(taskID: string, file: Pick<AgentFileArtifact, "id" | "sha256" | "media_type">, signal?: AbortSignal): Promise<Blob> {
-  const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new AgentAPIError(typeof data.detail === "string" ? data.detail : "agent_request_failed", response.status);
-  }
-  // The listing's type, not a sniffed one, decides how the bytes are drawn.
-  return new Blob([await response.arrayBuffer()], { type: file.media_type });
+  return readWithRecovery(async requestSignal => {
+    const response = await fetch(agentFileUrl(taskID, file), { credentials: "include", cache: "no-store", signal: requestSignal });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new AgentAPIError(typeof data.detail === "string" ? data.detail : "agent_request_failed", response.status);
+    }
+    // The listing's type, not a sniffed one, decides how the bytes are drawn.
+    return new Blob([await response.arrayBuffer()], { type: file.media_type });
+  }, signal);
 }
 
 /** Mutations are sent once. An uncertain response is reconciled by reading server state. */
@@ -236,6 +314,7 @@ export const rynAgent = {
   projects: (signal?: AbortSignal) => request<{ projects: AgentProject[]; selected_project_id?: string }>("/projects", "GET", undefined, signal),
   selectProject: (project_id: string) => request<{ selected_project_id: string }>("/projects/selection", "POST", { project_id }),
   loadProject: (path: string) => request<AgentProject>("/projects", "POST", { path }),
+  renameProject: (id: string, name: string) => request<AgentProject>(`/projects/${encodeURIComponent(id)}`, "PATCH", { name }),
   removeProject: (id: string) => request<{ removed: boolean }>(`/projects/${encodeURIComponent(id)}`, "DELETE"),
   settings: (signal?: AbortSignal) => request<AgentSettings>("/settings", "GET", undefined, signal),
   updateSettings: (settings: Partial<AgentSettings>) => request<AgentSettings>("/settings", "PUT", settings),
@@ -244,6 +323,7 @@ export const rynAgent = {
   tasks: (signal?: AbortSignal) => request<{ tasks: AgentTaskSummary[] }>("/tasks", "GET", undefined, signal),
   archivedTasks: (signal?: AbortSignal) => request<{ tasks: AgentTaskSummary[] }>("/tasks?archived=true", "GET", undefined, signal),
   record: (id: string, operation: AgentRecordOperation, body: Record<string, unknown>) => request<AgentTask | AgentDeleteResult>(`/tasks/${encodeURIComponent(id)}${operation === "delete" ? "" : `/${operation}`}`, operation === "delete" ? "DELETE" : "POST", body),
+  renameTask: (id: string, title: string, expected_control_revision: number, client_request_id: string) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}`, "PATCH", { title, expected_control_revision, client_request_id }),
   result: (taskID: string, resultID: string, offset = 0, signal?: AbortSignal) => request<AgentResultPage>(`/tasks/${encodeURIComponent(taskID)}/results/${encodeURIComponent(resultID)}?offset=${offset}&limit=8192`, "GET", undefined, signal),
   resources: (signal?: AbortSignal) => request<AgentResourceCatalog>("/resources", "GET", undefined, signal),
   scope: (id: string, signal?: AbortSignal) => request<AgentScopeSnapshot>(`/tasks/${encodeURIComponent(id)}/scope`, "GET", undefined, signal),
@@ -328,9 +408,10 @@ export function sortAgentTasks<T extends AgentTaskSummary>(tasks: T[]): T[] {
 }
 
 /** A finalized assistant event replaces its streamed draft; snapshots never append twice. */
-export function pendingAgentText(task: Pick<AgentTask, "events">): string {
+export function pendingAgentText(task: Pick<AgentTask, "events" | "streaming">): string {
   const started = [...task.events].reverse().find(event => event.type === "model_started");
   if (!started || task.events.some(event => event.seq > started.seq && event.type === "assistant")) return "";
+  if (task.streaming && task.streaming.step === started.step && task.streaming.context_epoch === started.context_epoch) return task.streaming.text;
   return task.events.filter(event => event.seq > started.seq && event.type === "text_delta" && typeof event.text === "string").map(event => event.text).join("");
 }
 

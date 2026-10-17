@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, Plus, RefreshCw, SquarePen, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, FolderOpen, LoaderCircle, MoreHorizontal, Pencil, Plus, RefreshCw, SquarePen, Trash2, X } from "lucide-react";
 import { agentTaskState, rynAgent, type AgentProject, type AgentTaskSummary } from "../domain/rynAgent";
 import { canPickPaths, chooseDropDir } from "../domain/dropDesktop";
 import "./rynAgentText";
+import RynAgentContextMenu from "./RynAgentContextMenu";
+import RynAgentTaskIndicator from "./RynAgentTaskIndicator";
 import "./RynAgentProject.css";
 
 export interface RynAgentProjectProps {
@@ -12,16 +15,18 @@ export interface RynAgentProjectProps {
   disabled?: boolean;
   tasks?: AgentTaskSummary[];
   activeTaskID?: string;
+  navigationRevision?: number;
   onSelectTask?: (id: string) => void;
   onNewTask?: (projectID: string) => void;
   onProjectsChange?: (projects: AgentProject[]) => void;
   restoreSelection?: boolean;
+  renderTask?: (task: AgentTaskSummary) => ReactNode;
 }
 
-type ProjectNavigation = Pick<RynAgentProjectProps, "value" | "activeTaskID">;
+type ProjectNavigation = Pick<RynAgentProjectProps, "value" | "activeTaskID" | "navigationRevision">;
 
 /** Saved projects stay visible while their conversations are opened. */
-export default function RynAgentProject({ value, onChange, disabled = false, tasks = [], activeTaskID, onSelectTask, onNewTask, onProjectsChange, restoreSelection = true }: RynAgentProjectProps) {
+export default function RynAgentProject({ value, onChange, disabled = false, tasks = [], activeTaskID, navigationRevision = 0, onSelectTask, onNewTask, onProjectsChange, restoreSelection = true, renderTask }: RynAgentProjectProps) {
   const { t } = useTranslation("rynAgent");
   const [projects, setProjects] = useState<AgentProject[]>(() => [...new Map(tasks.filter(task => task.project).map(task => [task.project!.id, task.project!])).values()]);
   const [path, setPath] = useState("");
@@ -30,19 +35,25 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
   const [busyID, setBusyID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [menu, setMenu] = useState<{ project: AgentProject; anchor: { x: number; y: number } } | null>(null);
+  const [dialog, setDialog] = useState<{ project: AgentProject; kind: "rename" | "remove" } | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [dialogError, setDialogError] = useState("");
+  const removed = useRef(new Set<string>());
   const touched = useRef(false);
   const mounted = useRef(true);
   const projectsRef = useRef(projects);
-  const callbacks = useRef({ onChange, onProjectsChange, activeTaskID, value, restoreSelection });
-  callbacks.current = { onChange, onProjectsChange, activeTaskID, value, restoreSelection };
+  const callbacks = useRef({ onChange, onProjectsChange, activeTaskID, value, navigationRevision, restoreSelection });
+  callbacks.current = { onChange, onProjectsChange, activeTaskID, value, navigationRevision, restoreSelection };
   const blocked = disabled || busyID !== null;
-  const navigation = (): ProjectNavigation => ({ value: callbacks.current.value, activeTaskID: callbacks.current.activeTaskID });
-  const isCurrentNavigation = (snapshot: ProjectNavigation) => snapshot.value === callbacks.current.value && snapshot.activeTaskID === callbacks.current.activeTaskID;
+  const navigation = (): ProjectNavigation => ({ value: callbacks.current.value, activeTaskID: callbacks.current.activeTaskID, navigationRevision: callbacks.current.navigationRevision });
+  const isCurrentNavigation = (snapshot: ProjectNavigation) => snapshot.value === callbacks.current.value && snapshot.activeTaskID === callbacks.current.activeTaskID && snapshot.navigationRevision === callbacks.current.navigationRevision;
 
   const publish = (next: AgentProject[]) => {
-    projectsRef.current = next;
-    setProjects(next);
-    callbacks.current.onProjectsChange?.(next);
+    const visible = next.filter(project => !removed.current.has(project.id));
+    projectsRef.current = visible;
+    setProjects(visible);
+    callbacks.current.onProjectsChange?.(visible);
   };
 
   useEffect(() => {
@@ -106,6 +117,7 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
     try {
       const project = await rynAgent.loadProject(folder.trim());
       if (!mounted.current) return;
+      removed.current.delete(project.id);
       const current = projectsRef.current;
       publish(current.some(item => item.id === project.id) ? current.map(item => item.id === project.id ? project : item) : [...current, project]);
       setCollapsed(current => { const next = new Set(current); next.delete(project.id); return next; });
@@ -126,6 +138,34 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
     if (folder && mounted.current) { setPath(folder); await load(folder, undefined, originalNavigation); }
   };
 
+  const openDialog = (project: AgentProject, kind: "rename" | "remove") => {
+    setDialog({ project, kind }); setProjectName(project.name); setDialogError("");
+  };
+
+  const submitDialog = async () => {
+    if (!dialog || blocked || (dialog.kind === "rename" && !projectName.trim())) return;
+    const originalNavigation = navigation();
+    const { project, kind } = dialog;
+    const wasSelected = (tasks.find(task => task.id === originalNavigation.activeTaskID)?.project?.id || originalNavigation.value) === project.id;
+    touched.current = true;
+    setBusyID(project.id); setDialogError(""); setError("");
+    try {
+      if (kind === "rename") {
+        const updated = await rynAgent.renameProject(project.id, projectName.trim());
+        if (!mounted.current) return;
+        publish(projectsRef.current.map(item => item.id === project.id ? updated : item));
+      } else {
+        await rynAgent.removeProject(project.id);
+        if (!mounted.current) return;
+        removed.current.add(project.id);
+        publish(projectsRef.current.filter(item => item.id !== project.id));
+        if (wasSelected && isCurrentNavigation(originalNavigation)) callbacks.current.onChange("");
+      }
+      setDialog(null);
+    } catch { if (mounted.current) setDialogError(kind === "rename" ? "projectRenameError" : "projectRemoveError"); }
+    finally { if (mounted.current) setBusyID(null); }
+  };
+
   const activeProjectID = tasks.find(task => task.id === activeTaskID)?.project?.id;
   const selectedProjectID = activeProjectID || value;
   return <section className="ra-projects" aria-label={t("projects", { defaultValue: "Projects" })}>
@@ -144,15 +184,51 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
       const expanded = !collapsed.has(project.id);
       const isSelected = project.id === selectedProjectID;
       return <li key={project.id} className={`ra-project-group${isSelected ? " selected" : ""}`}>
-        <div className="ra-project-row">
+        <div className="ra-project-row" onContextMenu={event => {
+          event.preventDefault();
+          if (blocked) return;
+          event.currentTarget.querySelector<HTMLButtonElement>(".ra-project-select")?.focus();
+          setMenu({ project, anchor: { x: event.clientX, y: event.clientY } });
+        }}>
           <button type="button" className="ra-project-chevron" aria-label={t(expanded ? "projectCollapse" : "projectExpand", { name: project.name, defaultValue: `${expanded ? "Hide" : "Show"} tasks in {{name}}` })} aria-expanded={expanded} onClick={() => setCollapsed(current => { const next = new Set(current); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next; })}>{expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
           <button type="button" className="ra-project-select" title={project.path} aria-label={`${project.name} · ${project.path}`} aria-pressed={isSelected} disabled={blocked} onClick={() => void select(project.id)}>{busyID === project.id ? <LoaderCircle size={15} className="ra-project-spinner" /> : isSelected ? <FolderOpen size={15} /> : <Folder size={15} />}<span>{project.name}</span></button>
-          <div className="ra-project-actions"><button type="button" className="ra-project-icon" title={t("projectReload", { name: project.name, defaultValue: "Reload {{name}}" })} aria-label={t("projectReload", { name: project.name, defaultValue: "Reload {{name}}" })} disabled={blocked} onClick={() => void load(project.path, project.id)}><RefreshCw size={13} /></button>{onNewTask && <button type="button" className="ra-project-icon" title={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} aria-label={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} disabled={blocked} onClick={() => void select(project.id, true)}><SquarePen size={14} /></button>}</div>
+          <div className="ra-project-actions">{onNewTask && <button type="button" className="ra-project-icon" title={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} aria-label={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} disabled={blocked} onClick={() => void select(project.id, true)}><SquarePen size={14} /></button>}<button type="button" className="ra-project-icon" aria-label={t("projectMenu", { name: project.name, defaultValue: "Project options for {{name}}" })} aria-haspopup="menu" aria-expanded={menu?.project.id === project.id} disabled={blocked} onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ project, anchor: { x: bounds.right, y: bounds.bottom + 4 } }); }}><MoreHorizontal size={15} /></button></div>
         </div>
-        {expanded && <div className="ra-project-task-list">{projectTasks.map(task => <button type="button" key={task.id} className={`ra-project-task${task.id === activeTaskID ? " selected" : ""}`} aria-pressed={task.id === activeTaskID} disabled={disabled || !onSelectTask} title={`${task.title} · ${t(agentTaskState(task))}`} onClick={() => onSelectTask?.(task.id)}><span>{task.title}</span><small>{t(agentTaskState(task))}</small></button>)}{!projectTasks.length && isSelected && <p className="ra-projects-note">{t("projectTasksEmpty", { defaultValue: "No tasks yet" })}</p>}</div>}
+        {expanded && <div className="ra-project-task-list">{projectTasks.map(task => <Fragment key={task.id}>{renderTask ? renderTask(task) : <button type="button" className={`ra-project-task${task.id === activeTaskID ? " selected" : ""}`} aria-pressed={task.id === activeTaskID} aria-label={task.title} aria-description={t(agentTaskState(task))} disabled={disabled || !onSelectTask} title={`${task.title} · ${t(agentTaskState(task))}`} onClick={() => onSelectTask?.(task.id)}><span className="ra-task-title">{task.title}</span><RynAgentTaskIndicator task={task} /></button>}</Fragment>)}{!projectTasks.length && isSelected && <p className="ra-projects-note">{t("projectTasksEmpty", { defaultValue: "No tasks yet" })}</p>}</div>}
       </li>;
     })}</ul>}
     {!loading && value && !projects.some(project => project.id === value) && <p className="ra-projects-note">{t("projectUnavailable")}</p>}
     {error && <div className="ra-project-error" role="alert"><p>{t(error === "projectListError" ? "projectLoadError" : error)}</p>{error === "projectListError" && <button type="button" disabled={blocked || loading} onClick={() => void retry()}><RefreshCw size={13} />{t("projectListRetry", { defaultValue: "Reload projects" })}</button>}</div>}
+    {menu && <RynAgentContextMenu anchor={menu.anchor} label={t("projectMenu", { name: menu.project.name, defaultValue: "Project options for {{name}}" })} onClose={() => setMenu(null)} items={[
+      ...(onNewTask ? [{ id: "new", label: t("projectNewTask", { name: menu.project.name, defaultValue: "New task in {{name}}" }), icon: <SquarePen size={15} />, disabled: blocked, onSelect: () => void select(menu.project.id, true) }] : []),
+      { id: "reload", label: t("projectReload", { name: menu.project.name, defaultValue: "Reload {{name}}" }), icon: <RefreshCw size={15} />, disabled: blocked, onSelect: () => void load(menu.project.path, menu.project.id) },
+      { id: "rename", label: t("renameProject", { defaultValue: "Rename project" }), icon: <Pencil size={15} />, disabled: blocked, onSelect: () => openDialog(menu.project, "rename") },
+      { id: "remove", label: t("projectRemove", { defaultValue: "Remove project" }), icon: <Trash2 size={15} />, disabled: blocked, danger: true, onSelect: () => openDialog(menu.project, "remove") },
+    ]} />}
+    {dialog && <ProjectDialog title={t(dialog.kind === "rename" ? "renameProject" : "projectRemove", { defaultValue: dialog.kind === "rename" ? "Rename project" : "Remove project" })} busy={busyID !== null} onClose={() => { if (!busyID) setDialog(null); }} onSubmit={() => void submitDialog()}>
+      {dialog.kind === "rename" ? <label className="ra-project-name-field">{t("renameTitle", { defaultValue: "Name" })}<input autoFocus maxLength={160} value={projectName} disabled={busyID !== null} onChange={event => setProjectName(event.target.value)} /></label> : <><strong className="ra-project-remove-name">{dialog.project.name}</strong><p>{t("projectRemoveHelp", { defaultValue: "Remove this project from the sidebar and revoke its folder access. Unfinished project tasks will be paused. Your local folder and conversation records will be kept." })}</p></>}
+      {dialogError && <p className="ra-project-dialog-error" role="alert">{t(dialogError, { defaultValue: dialog.kind === "rename" ? "Could not rename the project. Try again." : "Could not remove the project. Try again." })}</p>}
+      <div className="ra-project-dialog-actions"><button type="button" disabled={busyID !== null} onClick={() => setDialog(null)}>{t("cancelRename", { defaultValue: "Cancel" })}</button><button type="submit" className={dialog.kind === "remove" ? "ra-project-danger" : "ra-project-primary"} disabled={busyID !== null || (dialog.kind === "rename" && !projectName.trim())}>{busyID !== null && <LoaderCircle size={14} className="ra-project-spinner" />}{t(dialog.kind === "rename" ? "saveName" : "projectRemoveConfirm", { defaultValue: dialog.kind === "rename" ? "Save" : "Remove project" })}</button></div>
+    </ProjectDialog>}
   </section>;
+}
+
+function ProjectDialog({ title, busy, onClose, onSubmit, children }: { title: string; busy: boolean; onClose: () => void; onSubmit: () => void; children: ReactNode }) {
+  const heading = useId();
+  const dialog = useRef<HTMLFormElement>(null);
+  useLayoutEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const input = dialog.current?.querySelector<HTMLInputElement>("input");
+    if (input) { input.focus(); input.select(); } else dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => { if (previousFocus?.isConnected) previousFocus.focus(); };
+  }, []);
+  return createPortal(<div className="ra-project-dialog-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) onClose(); }}><form ref={dialog} className="ra-project-dialog" role="dialog" aria-modal="true" aria-labelledby={heading} tabIndex={-1} onSubmit={event => { event.preventDefault(); onSubmit(); }} onKeyDown={event => {
+    if (event.key === "Escape") { event.preventDefault(); if (!busy) onClose(); }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'));
+    if (!controls.length) { event.preventDefault(); event.currentTarget.focus(); return; }
+    const first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }}><h2 id={heading}>{title}</h2>{children}</form></div>, document.body);
 }

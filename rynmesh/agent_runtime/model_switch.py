@@ -33,16 +33,35 @@ def resolve(runtime, model_id):
     return model, destination
 
 
+def _validate_transferable_scope(runtime, row, control_state=None):
+    if row["scope"]["resource_grants"]:
+        runtime._validate_context(row, control_state=control_state)
+        return
+    state = control_state if control_state is not None else runtime.store.read()
+    if row.get("project"):
+        projects.validate_binding(state, row["project"])
+    context = runtime._execution_context(row)
+    if runtime._requires_destination_binding(row, context):
+        if (
+            not context["model_destination"].get("destination_revision")
+            or getattr(runtime.model, "supports_destination_binding", False) is not True
+        ):
+            raise AgentError("agent_model_destination_unverifiable")
+    if hasattr(runtime.tools, "validate_context"):
+        runtime.tools.validate_context(context)
+
+
 def preview(runtime, task_id, model_id):
     from .runtime import task
-    row = task(runtime.store.read(), task_id)
+    state = runtime.store.read()
+    row = task(state, task_id)
     if not available(row):
         raise AgentError("agent_operation_unresolved" if ambiguous(row) or row.get("in_flight") else "agent_invalid_transition")
     model, destination = resolve(runtime, model_id)
     scope_authorized = bool(row["scope"]["resource_grants"] or row.get("project"))
     if scope_authorized:
         try:
-            runtime._validate_context(row)
+            _validate_transferable_scope(runtime, row, control_state=state)
         except AgentError:
             scope_authorized = False
     return {"model": {key: model.get(key) for key in ("id", "name", "source", "source_name", "source_id", "peer_id")},
@@ -79,10 +98,10 @@ def change(runtime, task_id, value):
             raise AgentError("agent_scope_reselection_required")
         # A stale retained selection is not authority. Validate the actual old
         # grants before constructing fresh grants for the exact new destination.
-        runtime._validate_context(selected)
+        _validate_transferable_scope(runtime, selected, control_state=initial)
         if selected["scope"]["resource_grants"]:
             prepared = runtime._prepare_scope(selection, destination, destination["destination_revision"])
-        runtime._validate_context(selected)
+        _validate_transferable_scope(runtime, selected)
 
     def apply(data):
         row = task(data, task_id)

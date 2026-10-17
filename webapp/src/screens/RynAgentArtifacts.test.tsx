@@ -1,15 +1,15 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
-import type { AgentTask } from "../domain/rynAgent";
+import { rynAgent, type AgentTask } from "../domain/rynAgent";
 import { TaskArtifacts } from "./RynAgentArtifacts";
 import ChatMarkdown from "./ChatMarkdown";
 import { findAgentFile } from "./RynAgentFileContext";
 import type { AgentFileArtifact } from "../domain/rynAgent";
 import "./rynAgentText";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const task: AgentTask = { id: "artifact-task", title: "Report", model_id: "model", status: "failed", revision: 3,
   control_revision: 2, scope_revision: 1, created_at: 1, updated_at: 1, pending_approval: null,
@@ -157,6 +157,60 @@ it("recovers a transient failure and keeps collecting files after the model turn
   expect(await screen.findByRole("button", { name: "Open pelican.svg" }, { timeout: 5000 })).toBeVisible();
   expect(calls).toBe(3);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps confirmed file links during a node outage and restores the listing automatically", async () => {
+  let online = true;
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => online
+    ? HttpResponse.json({ artifacts: [artifact] })
+    : HttpResponse.json({ detail: "agent_unavailable" }, { status: 503 })));
+  const view = render(<TaskArtifacts task={done} />);
+  await screen.findByRole("button", { name: "Open report.md" });
+  online = false;
+  view.rerender(<TaskArtifacts task={{ ...done, file_artifact_revision: 1 }} />);
+  await screen.findByText("Could not load created files.");
+  expect(screen.getByRole("button", { name: "Open report.md" })).toBeVisible();
+  online = true;
+  await waitFor(() => expect(screen.queryByText("Could not load created files.")).not.toBeInTheDocument(), { timeout: 3000 });
+  expect(screen.getByRole("button", { name: "Open report.md" })).toBeVisible();
+});
+
+it("backs off unchanged active file listings and refreshes immediately on a file revision", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const listing = vi.spyOn(rynAgent, "artifacts").mockResolvedValue({ artifacts: [], files: [] });
+  const view = render(<TaskArtifacts task={{ ...done, status: "running" }} />);
+  try {
+    await act(async () => {});
+    expect(listing).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(4999));
+    expect(listing).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(listing).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(9999));
+    expect(listing).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(listing).toHaveBeenCalledTimes(3);
+    view.rerender(<TaskArtifacts task={{ ...done, status: "running", file_artifact_revision: 1 }} />);
+    await act(async () => {});
+    expect(listing).toHaveBeenCalledTimes(4);
+  } finally { view.unmount(); }
+});
+
+it("continues collecting pending shell files after the turn ends and stops once they arrive", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const listing = vi.spyOn(rynAgent, "artifacts")
+    .mockResolvedValueOnce({ artifacts: [], files: [], pending_files: true })
+    .mockResolvedValue({ artifacts: [], files: [pelican as AgentFileArtifact], pending_files: false });
+  const view = render(<TaskArtifacts task={done} />);
+  try {
+    await act(async () => {});
+    await act(() => vi.advanceTimersByTimeAsync(1499));
+    expect(listing).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(screen.getByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+    await act(() => vi.advanceTimersByTimeAsync(30000));
+    expect(listing).toHaveBeenCalledTimes(2);
+  } finally { view.unmount(); }
 });
 
 it("recovers file delivery across ten independent task mounts without a manual refresh", async () => {

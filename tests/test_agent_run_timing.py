@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from test_agent_runtime import Catalog, Model, Tools, advance, approve, assistant, make_runtime
 
 from rynmesh.agent_runtime import timing
+from rynmesh.agent_runtime.protocol import event
 from rynmesh.agent_runtime.routes import install_agent
 from rynmesh.agent_runtime.runtime import AgentRuntime, public_task
 from rynmesh.agent_runtime.store import AgentStore
@@ -17,9 +18,13 @@ from rynmesh.background_workers import BackgroundWorkerRegistry
 
 @pytest.fixture
 def clock(monkeypatch):
+    import rynmesh.agent_runtime.loop as loop_module
     import rynmesh.agent_runtime.runtime as runtime_module
     value = [100.0]
-    monkeypatch.setattr(runtime_module, "time", SimpleNamespace(monotonic=lambda: value[0]))
+    # The state controller and the extracted step loop share one deadline clock.
+    frozen = SimpleNamespace(monotonic=lambda: value[0])
+    monkeypatch.setattr(runtime_module, "time", frozen)
+    monkeypatch.setattr(loop_module, "time", frozen)
     return value
 
 
@@ -103,18 +108,53 @@ def test_input_answer_changes_budget_round_but_not_run_limit_clock(tmp_path, clo
     assert answered["run_timing"]["elapsed_seconds"] == 4
 
 
-@pytest.mark.parametrize("action", ["pause", "cancel"])
-def test_stopping_inflight_operation_keeps_counting_until_settled(tmp_path, clock, action):
+def test_new_turn_events_capture_their_own_elapsed_baseline(tmp_path, clock):
     runtime, model, _, _ = make_runtime(tmp_path)
-    row = runtime.create({"message": "Inspect"})
-    observations = []
+    created = runtime.create({"message": "First question"})
+
     def complete(*args):
+        clock[0] += 4
+        return assistant("First answer")
+
+    model.complete = complete
+    advance(runtime)
+    done = runtime.get(created["id"])
+    completed = next(item for item in done["events"] if item["type"] == "completed")
+    assert completed["run_elapsed_seconds"] == 4
+    continued = runtime.add_message(created["id"], {"message": "Next question",
+        "expected_control_revision": done["control_revision"]})
+    added = next(item for item in reversed(continued["events"]) if item["type"] == "message_added")
+    assert added["run_elapsed_seconds"] == 0
+    assert completed in continued["events"]
+
+
+@pytest.mark.parametrize("elapsed", [None, "5", True, -1, float("nan"), float("inf")])
+def test_event_omits_unknown_or_invalid_elapsed_time(elapsed):
+    row = {"event_cursor": 0, "events": [], "revision": 0, "elapsed_seconds": elapsed}
+    event(row, "assistant", content="Observation")
+    assert "run_elapsed_seconds" not in row["events"][0]
+
+
+@pytest.mark.parametrize("action", ["pause", "cancel"])
+@pytest.mark.parametrize("stage", ["model", "tool"])
+def test_stopping_inflight_operation_keeps_counting_until_settled(tmp_path, clock, action, stage):
+    runtime, model, tools, _ = make_runtime(tmp_path,
+        assistant(name="inspect_service", args={"service_id": "A"}))
+    row = runtime.create({"message": "Inspect"})
+    if stage == "tool":
+        advance(runtime)
+    execute = tools.execute
+    observations = []
+    def complete(*args, **kwargs):
         clock[0] += 2
         changed = runtime.action(row["id"], {"action": action})
         clock[0] += 3
         observations.append((changed, runtime.get(row["id"])))
-        return assistant("Late answer")
-    model.complete = complete
+        return assistant("Late answer") if stage == "model" else execute(*args, **kwargs)
+    if stage == "model":
+        model.complete = complete
+    else:
+        tools.execute = complete
     advance(runtime)
     assert len(observations) == 1
     changed, stopping = observations[0]
@@ -127,8 +167,17 @@ def test_stopping_inflight_operation_keeps_counting_until_settled(tmp_path, cloc
     assert stopped["status"] == ("paused" if action == "pause" else "cancelled")
     assert stopped["run_timing"]["measurement"] == "recorded"
     assert stopped["run_timing"]["elapsed_seconds"] == 5
+    settlement = [item for item in stopped["events"] if item["type"] == "run_settled"]
+    assert len(settlement) == 1 and settlement[0]["run_elapsed_seconds"] == 5
+    assert stopped["control_revision"] == changed["control_revision"]
+    assert stopped["completion_event_seq"] == 0
     clock[0] += 1000
     assert runtime.get(row["id"])["run_timing"] == stopped["run_timing"]
+    if action == "pause":
+        next_turn = runtime.add_message(row["id"], {"message": "Next question",
+            "expected_control_revision": stopped["control_revision"]})
+        assert settlement[0] in next_turn["events"]
+        assert next_turn["run_timing"]["elapsed_seconds"] == 0
 
 
 def test_missing_legacy_time_and_unowned_flight_are_not_false_zero_or_live(tmp_path, clock):

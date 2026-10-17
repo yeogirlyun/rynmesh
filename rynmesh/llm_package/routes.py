@@ -2044,6 +2044,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     app.state.llm_shutdown = shutdown_owned_runtimes
     app.router.on_shutdown.append(shutdown_owned_runtimes)
 
+    @app.get("/api/local/desktop/health")
+    async def desktop_health() -> dict[str, bool]:
+        # Liveness must not wait for provider locks, disk reads, or the sync
+        # route threadpool. Tray metadata can be unavailable while the node works.
+        return {"desktop_managed": os.environ.get("RYNMESH_DESKTOP_MODE") == "1"}
+
     @app.get("/api/local/desktop/status")
     def desktop_status() -> dict[str, Any]:
         # No model health probes or Registry requests: the native watchdog must

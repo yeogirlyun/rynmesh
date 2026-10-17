@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -75,6 +75,37 @@ function mount(shell = false) {
   return render(<MemoryRouter initialEntries={["/agent"]}>{shell ? <PersonalShell><RynAgent /></PersonalShell> : <RynAgent />}</MemoryRouter>);
 }
 
+it("renders live text between durable checkpoints without waiting for the old 1.2 second poll", async () => {
+  const current = task({ events: [{ seq: 1, type: "model_started", at: 1, step: 1, context_epoch: 0 }] });
+  api(true, [current]);
+  let liveText = "";
+  server.use(http.get("*/api/local/agent/tasks/task-1", ({ request }) => HttpResponse.json(new URL(request.url).searchParams.has("since_revision")
+    ? { id: current.id, revision: current.revision, unchanged: true, streaming: { step: 1, context_epoch: 0, text: liveText } }
+    : current)));
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByRole("button", { name: "Pause" });
+  liveText = "我先检查磁盘的可用空间。";
+  await screen.findByText(liveText, {}, { timeout: 900 });
+  liveText += "接下来查看大文件。";
+  await screen.findByText(liveText, {}, { timeout: 900 });
+  expect(screen.getAllByText(liveText)).toHaveLength(1);
+});
+
+it("wakes an idle conversation immediately after an accepted follow-up", async () => {
+  const original = controlled({ status: "completed", run_state: "ended", allowed_actions: { information: { enabled: true, reason: null, requires_control_revision: true } } });
+  const backend = api(true, [original]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  const next = controlled({ revision: original.revision + 1, control_revision: 8, messages: [...original.messages, { role: "user", content: "Check again" }], events: [{ seq: 2, type: "model_started", at: 2, step: 1, context_epoch: 0 }] });
+  vi.spyOn(rynAgent, "control").mockImplementationOnce(async () => { backend.setTasks([next]); return next; });
+  await user.type(screen.getByRole("textbox"), "Check again");
+  await user.click(screen.getByRole("button", { name: "Send information" }));
+  await screen.findByRole("button", { name: "Pause" });
+  backend.setTasks([{ ...next, streaming: { step: 1, context_epoch: 0, text: "Follow-up text arrived promptly" } }]);
+  await screen.findByText("Follow-up text arrived promptly", {}, { timeout: 900 });
+});
+
 it("keeps multiple project conversations grouped and restores a separate new draft for each project", async () => {
   const projects: AgentProject[] = ["Alpha", "Beta"].map(name => ({ id: name.toLowerCase(), name, path: `D:\\code\\${name}`, generation: 1, entry_files: [], manifests: [], directories: [] }));
   const alphaTask = task({ id: "alpha-task", title: "Alpha history", project: projects[0], status: "completed", messages: [{ role: "assistant", content: "Existing Alpha conversation" }] });
@@ -96,7 +127,7 @@ it("keeps multiple project conversations grouped and restores a separate new dra
   await user.type(screen.getByRole("textbox"), "Beta draft");
   await user.click(sidebar.getByRole("button", { name: /^Alpha ·/ }));
   await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Alpha draft"));
-  await user.click(sidebar.getByRole("button", { name: /Beta history/ }));
+  await user.click(sidebar.getByRole("button", { name: "Beta history" }));
   await screen.findByText("Existing Beta conversation");
   expect(screen.getByRole("textbox")).toHaveValue("");
   expect(screen.getByRole("button", { name: "D:\\code\\Beta" })).toBeVisible();
@@ -121,7 +152,7 @@ it("submits the selected project ID and retains its task under that project afte
   await user.click(screen.getByRole("button", { name: "Send task" }));
   await waitFor(() => expect(backend.creates).toHaveBeenCalledWith(expect.objectContaining({ project_id: "alpha", message: "Inspect the Alpha project" })));
   const sidebar = within(screen.getByRole("region", { name: "Projects" }));
-  expect(await sidebar.findByRole("button", { name: /New Alpha task/ })).toHaveAttribute("aria-pressed", "true");
+  expect(await sidebar.findByRole("button", { name: "New Alpha task" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("button", { name: "D:\\code\\Alpha" })).toBeVisible();
 });
 
@@ -194,7 +225,7 @@ it("shows a normal completed answer without an independent-assessment warning ca
     messages: [{ role: "assistant", content: "Balance: CNY 123.45" }],
     outcome: { assessment_requested: false, status: "unverified", goal_revision: 1, summary: "Balance: CNY 123.45", criteria_results: [], evidence_refs: [], uncertainties: [] } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(await screen.findByText("Balance: CNY 123.45", { selector: "p" })).toBeVisible();
   await user.click(screen.getByLabelText("Chat actions"));
   expect(screen.queryByRole("region", { name: "Goal outcome" })).not.toBeInTheDocument();
@@ -227,7 +258,7 @@ it("loads settings and task history independently of a pending model catalog", a
   const models = vi.spyOn(rynAgent, "models").mockImplementation(() => new Promise(() => {}));
   try {
     const user = userEvent.setup(); mount();
-    await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
     expect(await screen.findByText("History without waiting for models")).toBeVisible();
     expect(screen.getByRole("textbox")).toBeEnabled();
     await user.type(screen.getByRole("textbox"), "Additional requirements");
@@ -240,7 +271,7 @@ it("starts a new draft and restores a visited conversation without checking mode
   const modelRequests = vi.spyOn(rynAgent, "models");
   const user = userEvent.setup(); mount();
   try {
-    await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+    await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
     await screen.findByText("Cached conversation");
     await user.type(screen.getByRole("textbox"), "Conversation draft");
     const count = modelRequests.mock.calls.length;
@@ -250,7 +281,7 @@ it("starts a new draft and restores a visited conversation without checking mode
     expect(modelRequests).toHaveBeenCalledTimes(count);
     const detail = vi.spyOn(rynAgent, "task").mockImplementation(() => new Promise(() => {}));
     try {
-      await user.click(screen.getByRole("button", { name: /^Inspect devices.*Running$/ }));
+      await user.click(screen.getByRole("button", { name: "Inspect devices" }));
       expect(screen.getByText("Cached conversation")).toBeVisible();
       expect(screen.getByRole("textbox")).toBeEnabled();
       expect(screen.getByRole("textbox")).toHaveValue("Conversation draft");
@@ -264,7 +295,7 @@ it("restores the selected conversation when reopening while all refresh requests
   api(true, [controlled({ messages: [{ role: "assistant", content: "Conversation survives navigation" }] })]);
   const user = userEvent.setup();
   const first = mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Conversation survives navigation");
   await user.type(screen.getByRole("textbox"), "Saved conversation draft");
   first.unmount();
@@ -310,7 +341,7 @@ it("opens a confirmed created file while the task is still running without a fin
     http.get("*/api/local/agent/tasks/task-1/artifacts/confirmed-write", () => HttpResponse.json({ ...artifact, text: "Saved during a run." })),
   );
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(await screen.findByRole("button", { name: "Open report.md" }));
   expect(await screen.findByText("Saved during a run.")).toBeVisible();
 });
@@ -324,7 +355,7 @@ it("refreshes the saved default after a background tool receipt while retaining 
     { id: "replacement-model", name: "Future model", source: "local_api", available: true, agent_supported: true },
   ] })));
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   backend.setSettings({ model_id: "replacement-model" });
   backend.setTasks([{ ...current, revision: 1001, event_cursor: 1001, events: [
     { seq: 1001, type: "tool_result", tool: "ryn_set_default_agent_model", at: 2, result: { ok: true } },
@@ -339,7 +370,7 @@ it("shows the exact future-task default target and keeps the current-task bounda
   await i18n.changeLanguage("zh-CN");
   const backend = api(true, [controlled({ status: "waiting_approval", run_state: "waiting_approval", allowed_actions: { approve: { enabled: true, reason: null, requires_control_revision: true }, deny: { enabled: true, reason: null, requires_control_revision: true } }, pending_approval: { id: "default-approval", tool: "ryn_set_default_agent_model", call_id: "default-call", arguments_sha256: "exact-default-hash", arguments: { model_id: "new-model", expected_settings_revision: 8 }, preview: { before: { model_id: "verified-model" }, after: { model_id: "new-model" }, model: { id: "new-model", name: "新任务模型", source_name: "本机测试来源", peer_id: "provider-1" }, applies_to: "future_tasks_only" } } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*等待确认$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "变更待确认" });
   expect(within(card).getByText("更改新任务默认模型")).toBeVisible();
   expect(within(card).getByText("new-model")).toBeVisible();
@@ -357,7 +388,7 @@ it("shows trusted verification feedback as a collapsed localized system record, 
     { role: "assistant", content: "Server verification feedback: ordinary model text" },
   ] })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*本轮结束$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "核验发现待解决项" });
   expect(within(card).getByText(/当前进展请以最新目标结果为准/)).toBeVisible();
   expect(within(card).getByText(feedback)).not.toBeVisible();
@@ -372,7 +403,7 @@ it("localizes only trusted secure-credential metadata without exposing provider 
   await i18n.changeLanguage("zh-CN");
   api(true, [task({ status: "completed", messages: [{ role: "user", content: "Source endpoint provider wrapper", ui: { kind: "source_credential", endpoint: "http://127.0.0.1:19004/v1", has_credential: true, fields: [{ label: "Credential", value: "Configured in secure storage" }] } }] })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*本轮结束$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "已配置到本机安全存储" });
   expect(within(card).getByText("服务地址")).toBeVisible();
   expect(within(card).getByText("http://127.0.0.1:19004/v1")).toBeVisible();
@@ -383,7 +414,7 @@ it("localizes only trusted secure-credential metadata without exposing provider 
 it("shows exact tested source destination and per-model evidence before approval", async () => {
   api(true, [controlled({ status: "waiting_approval", run_state: "waiting_approval", allowed_actions: { approve: { enabled: true, reason: null, requires_control_revision: true }, deny: { enabled: true, reason: null, requires_control_revision: true } }, pending_approval: { id: "source-approval", call_id: "call-source", tool: "ryn_commit_source_draft", arguments: { draft_id: "draft-source", expected_draft_version: 1 }, arguments_sha256: "source-fingerprint", preview: { source_id: "", has_credential: true, configuration: { name: "Test source", base_url: "http://127.0.0.1:19004/v1", models: ["alpha", "beta"] }, test: { probe_requests: 6, models: [{ model_id: "alpha", chat: "passed", tool_support: "supported" }, { model_id: "beta", chat: "passed", tool_support: "unknown" }] } } } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting approval$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "Change awaiting approval" });
   expect(within(card).getByText("Save tested source")).toBeVisible();
   expect(within(card).getByText("Test source")).toBeVisible();
@@ -400,7 +431,7 @@ it("retains the original model attribution for historical replies after switchin
   const original = controlled({ status: "paused", run_state: "paused", messages: [{ role: "assistant", content: "Reply before switch", context_epoch: 0 }] });
   const backend = api(true, [original]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Paused/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(screen.getByText("Reply before switch").closest(".ra-message")).toHaveTextContent("Verified model");
   backend.setTasks([{ ...original, model_id: "unknown-model", messages: [...original.messages,
     { role: "assistant", content: "Reply after switch", context_epoch: 1 }, { role: "assistant", content: "Legacy reply without epoch" }],
@@ -419,7 +450,7 @@ it("replaces the selected scope panel with exactly one new-task scope panel", as
     http.get("*/api/local/agent/resources", () => HttpResponse.json({ connections: [], supported_formats: [], create_scope_supported: true })),
   );
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(screen.getAllByText("Task data access")).toHaveLength(1);
   await user.click(screen.getAllByRole("button", { name: "New task" })[0]);
   await waitFor(() => expect(screen.getAllByText("Task data access")).toHaveLength(1));
@@ -436,13 +467,14 @@ it("moves an archived task out of active history, keeps its detail readable and 
     http.post("*/api/local/agent/tasks/task-1/restore", () => { record = { ...record, archived: false, revision: record.revision + 1, control_revision: 9, allowed_actions: { archive: { enabled: true, reason: null, requires_control_revision: true }, resume: { enabled: true, reason: null, requires_control_revision: true } } }; return HttpResponse.json(record); }),
   );
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Paused$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(await screen.findByRole("button", { name: /^Archive task$/ }));
   await screen.findByText(/This task is archived/);
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /^Inspect devices.*Paused$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Inspect devices" })).not.toBeInTheDocument();
   await user.click(screen.getByText("Archived tasks"));
-  await screen.findByRole("button", { name: /Inspect devices.*Archived$/ });
+  const archivedRows = within(screen.getByText("Archived tasks").closest("details")!);
+  await archivedRows.findByRole("button", { name: "Inspect devices" });
   await user.click(screen.getByRole("button", { name: "Restore task" }));
   await screen.findByRole("button", { name: "Resume" });
   expect(screen.getByRole("status")).toHaveTextContent("Paused");
@@ -454,7 +486,7 @@ it("presents trusted owner input metadata and translates fixed verification reas
   await i18n.changeLanguage("zh-CN");
   api(true, [task({ status: "completed", run_state: "ended", messages: [{ role: "user", content: "Provider wrapper should stay internal", ui: { kind: "input_answer", prompt: "Which model?", fields: [{ label: "模型", value: "acceptance-model" }] } }], outcome: { status: "unverified", goal_revision: 1, summary: "Verification did not establish the complete goal.", criteria_results: [], evidence_refs: [], uncertainties: ["agent_invalid_verification_response", "Keep actual unknown evidence text"] } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*本轮结束/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(await screen.findByText("已补充信息")).toBeVisible();
   expect(screen.getByText("acceptance-model")).toBeVisible();
   expect(screen.queryByText("Provider wrapper should stay internal")).not.toBeInTheDocument();
@@ -472,7 +504,7 @@ it.each([
   const summary = "Registered mechanical checks passed within their stated coverage; model semantic assessment found the current goal covered.";
   api(true, [task({ status: "completed", run_state: "ended", outcome: { status: "verified", goal_revision: 1, summary, criteria_results: [], evidence_refs: [], uncertainties: [] } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(screen.getByLabelText(language === "zh-CN" ? "聊天操作" : "Chat actions"));
   expect(await screen.findByText(expectedSummary)).toBeVisible();
   expect(screen.queryByText(summary)).not.toBeInTheDocument();
@@ -480,7 +512,7 @@ it.each([
 
 it("uses the stable control version for pause despite stream revisions", async () => {
   const backend = api(true, [controlled()]); const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(await screen.findByRole("button", { name: "Pause" }));
   await waitFor(() => expect(backend.actions).toHaveBeenCalledTimes(1));
   expect(backend.actions).toHaveBeenCalledWith({ action: "pause", expected_control_revision: 7, client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/) });
@@ -489,7 +521,7 @@ it("uses the stable control version for pause despite stream revisions", async (
 it("does not offer new controls without a server grant or a control version", async () => {
   api(true, [controlled({ status: "paused", run_state: "paused", control_revision: undefined, allowed_actions: { resume: { enabled: true, reason: null, requires_control_revision: true } } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Paused/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Inspect devices", { selector: ".ra-message p" });
   expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
@@ -502,7 +534,7 @@ it("submits only the current bound question and requires its mandatory choice", 
     pending_input: { id: "question-2", kind: "choice", prompt: "Which device should I inspect?", goal_revision: 2, control_revision: 6, scope_revision: 1, business_revision: {}, created_at: 1,
       fields: [{ id: "device", label: "Device", type: "choice", required: true, options: [{ value: "desktop", label: "Desktop" }, { value: "phone", label: "Phone" }] }] } });
   const backend = api(true, [pending]); const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting your answer$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = await screen.findByRole("region", { name: "Ryn needs your input" });
   expect(within(card).getByRole("button", { name: "Send answer" })).toBeDisabled();
   await user.selectOptions(within(card).getByRole("combobox"), "desktop");
@@ -515,7 +547,7 @@ it("submits only the current bound question and requires its mandatory choice", 
 it("never collects a credential in an ordinary answer field", async () => {
   api(true, [controlled({ status: "waiting_input", run_state: "waiting_input", allowed_actions: { answer: { enabled: true, reason: null, requires_control_revision: true } },
     pending_input: { id: "secret", kind: "credential_ref", prompt: "Configure a model credential", goal_revision: 2, control_revision: 7, scope_revision: 1, business_revision: {}, created_at: 1, fields: [{ id: "key", label: "API key", type: "credential_ref", required: true }] } })]);
-  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting your answer$/ }));
+  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(screen.queryByRole("region", { name: "Secure credential form" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Enter API connection details" }));
   const card = await screen.findByRole("region", { name: "Secure credential form" });
@@ -534,7 +566,7 @@ it("retains the answer draft on a stale question conflict and never rebinds it a
   const waiting = controlled({ status: "waiting_input", run_state: "waiting_input", allowed_actions: { answer: { enabled: true, reason: null, requires_control_revision: true } }, pending_input: { id: "question", kind: "information", prompt: "Which device?", goal_revision: 2, control_revision: 7, scope_revision: 1, business_revision: {}, created_at: 1, fields: [{ id: "device", label: "Device", type: "text", required: true }] } });
   const backend = api(true, [waiting]); const attempts = vi.fn();
   server.use(http.post("*/api/local/agent/tasks/:id/actions", async ({ request }) => { attempts(await request.json()); backend.setTasks([{ ...waiting, revision: 1001, control_revision: 8 }]); return HttpResponse.json({ detail: "agent_control_revision_conflict" }, { status: 409 }); }));
-  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting your answer$/ }));
+  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = await screen.findByRole("region", { name: "Ryn needs your input" });
   await user.type(within(card).getByRole("textbox", { name: "Device · Required" }), "Desktop");
   await user.click(within(card).getByRole("button", { name: "Send answer" }));
@@ -552,7 +584,7 @@ it("preserves the exact steer request for explicit recovery without another exec
     backend.setTasks([changed]);
     return bodies.length === 1 ? HttpResponse.error() : HttpResponse.json(changed);
   }));
-  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.type(screen.getByRole("textbox"), "Only inspect the desktop");
   await user.click(screen.getByRole("button", { name: "Send requirements update" }));
   const retry = await screen.findByRole("button", { name: "Check original request" });
@@ -569,7 +601,7 @@ it("sends an ended task follow-up as information without rewriting its goal", as
   const ended = controlled({ status: "completed", run_state: "ended", allowed_actions: { information: { enabled: true, reason: null, requires_control_revision: true } } });
   api(true, [ended]); const send = vi.fn();
   server.use(http.post("*/api/local/agent/tasks/:id/messages", async ({ request }) => { send(await request.json()); return HttpResponse.json(ended); }));
-  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.type(screen.getByRole("textbox"), "What does this device state mean?");
   await user.click(screen.getByRole("button", { name: "Send information" }));
   await waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({ intent: "information", expected_goal_revision: 2, expected_control_revision: 7 })));
@@ -578,7 +610,7 @@ it("sends an ended task follow-up as information without rewriting its goal", as
 it("keeps cancellation available while a requirements update has an uncertain receipt", async () => {
   const running = controlled(); const backend = api(true, [running]);
   server.use(http.post("*/api/local/agent/tasks/:id/messages", () => HttpResponse.error()));
-  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  const user = userEvent.setup(); mount(); await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.type(screen.getByRole("textbox"), "Inspect only the desktop");
   await user.click(screen.getByRole("button", { name: "Send requirements update" }));
   await screen.findByRole("button", { name: "Check original request" });
@@ -637,7 +669,7 @@ it("presents server goal and plan without upgrading a finished model reply to ve
     outcome: { status: "unverified", goal_revision: 2, summary: "", criteria_results: [], evidence_refs: [], uncertainties: ["No readback evidence yet"] },
   })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(screen.getByLabelText("Chat actions"));
   const plan = await screen.findByRole("region", { name: "Task plan" });
   expect(within(plan).getByText("Read the current sharing state")).toBeVisible();
@@ -666,7 +698,7 @@ it("keeps model setup available before enabling when no supported model exists",
 it("shows trusted friend sharing scope without inferring personal space from the model text", async () => {
   api(true, [task({ status: "waiting_approval", pending_approval: { id: "friend-share", tool: "ryn_set_model_sharing", call_id: "call", arguments: { model_id: "verified-model", enabled: true }, arguments_sha256: "exact", preview: { model: "Verified model", scope: "friends", before: { sharing: false }, after: { sharing: true }, space: { name: "Irrelevant personal space" } } }, messages: [{ role: "assistant", content: "Share this in personal space" }] })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting approval$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "Change awaiting approval" });
   expect(within(card).getByText("Friend")).toBeVisible();
   expect(within(card).getByText(/Irrelevant personal space/)).not.toBeVisible();
@@ -681,7 +713,7 @@ it("shows the sole recipient and revoked grants for an atomic sharing approval",
     ] }, after: { sharing: true, scope: "friends", recipients: [{ name: "Node B", relationship_id: "friend-b", peer_id: "selected-peer-b" }] } },
   } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting approval/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = await screen.findByRole("region", { name: "Change awaiting approval" });
   expect(within(card).getByText("Only this friend will have access")).toBeVisible();
   expect(within(card).getByText("selected-peer-b")).toBeVisible();
@@ -700,7 +732,7 @@ it("shows all saved friend recipients and the prior scope before enabling sharin
       allowed_friend_grants: [{ relationship_id: "a", peer_id: "node-a", effective: true }, { relationship_id: "b", peer_id: "node-b", effective: false }] },
   } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting approval$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   const card = screen.getByRole("region", { name: "Change awaiting approval" });
   expect(within(card).getByText("Previous scope: Personal space")).toBeVisible();
   expect(within(card).getByText("node-a")).toBeVisible();
@@ -741,7 +773,7 @@ it("pauses, resumes and cancels with the latest task revision", async () => {
   const backend = api(true, [task()]);
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(await screen.findByRole("button", { name: "Pause" }));
   await user.click(await screen.findByRole("button", { name: "Resume" }));
   await user.click(await screen.findByRole("button", { name: "Cancel task" }));
@@ -809,7 +841,7 @@ it("disables Agent without erasing tasks and saves only explicitly opted-in writ
   await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(backend.updates).toHaveBeenCalledWith({ enabled: false, workspace_root: "D:\\RynWorkspace", desktop_access: true, allowed_write_tools: ["set_model_sharing"] });
-  await user.click(screen.getByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  await user.click(screen.getByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Saved evidence");
   expect(screen.getByRole("textbox")).toBeDisabled();
   expect(backend.creates).not.toHaveBeenCalled();
@@ -829,7 +861,7 @@ it("resumes a safe restart interruption and keeps the task's recorded permission
   const backend = api(true, [task({ status: "interrupted", error: "agent_node_restarted", permission_mode: "read_only" })]);
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Interrupted/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText(/The node restarted before this task finished/);
   expect(screen.getByText("Read only", { selector: ".ra-composer-permissions summary span" })).toBeVisible();
   await user.click(screen.getByLabelText("Tool permissions", { selector: "summary" }));
@@ -844,7 +876,7 @@ it("never offers resume when a dispatched write has an unknown outcome", async (
   const backend = api(true, [task({ status: "interrupted", error: "agent_write_outcome_unknown" })]);
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Interrupted/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText(/A change may have started without a confirmed result/);
   expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send follow-up" })).toBeDisabled();
@@ -855,13 +887,13 @@ it("keeps tasks in update-time order when an older task is selected and refreshe
   api(true, [task({ id: "newer", title: "Recent task", updated_at: 10 }), task()]);
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByRole("button", { name: "Pause" });
   const list = within(screen.getByRole("complementary", { name: "Task list" }));
-  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent taskRunning", "Inspect devicesRunning"]);
+  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent task", "Inspect devices"]);
   await user.click(screen.getByRole("button", { name: "Hide task list" }));
   await user.click(screen.getByRole("button", { name: "Show task list" }));
-  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent taskRunning", "Inspect devicesRunning"]);
+  expect(list.getAllByRole("button").filter(button => button.classList.contains("ra-task-item")).map(button => button.textContent)).toEqual(["Recent task", "Inspect devices"]);
 });
 
 
@@ -873,7 +905,7 @@ it("keeps history and draft readable when only the model catalog fails, then ref
     : HttpResponse.json({}, { status: 503 })));
   const user = userEvent.setup(); mount();
   await screen.findByText(/Could not load the model catalog/);
-  await user.click(screen.getByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  await user.click(screen.getByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Saved inspection evidence");
   await user.type(screen.getByRole("textbox"), "Keep my follow-up");
   expect(screen.getByRole("button", { name: "Send follow-up" })).toBeDisabled();
@@ -891,7 +923,7 @@ it("reads history even when settings cannot be read, and disables actions", asyn
   api(true, [task({ status: "completed", result: "Readable history" })]);
   server.use(http.get("*/api/local/agent/settings", () => HttpResponse.json({}, { status: 503 })));
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Readable history");
   expect(screen.getByRole("textbox")).toBeDisabled();
   expect(screen.getByRole("button", { name: "Send follow-up" })).toBeDisabled();
@@ -904,7 +936,7 @@ it("distinguishes rejected calls from execution and explains receipts arriving a
     { seq: 3, type: "tool_result", at: 3, tool: "ryn_set_model_sharing", result: { sharing: true } },
   ] })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Cancelled/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText(/Cancellation stops further work/);
   await user.click(screen.getByLabelText("Chat actions"));
   await user.click(screen.getByText("Execution details"));
@@ -934,7 +966,7 @@ it.each(["pause", "cancel", "deny"] as const)("keeps %s available when only sett
   const backend = api(true, [task(kind === "deny" ? { status: "waiting_approval", pending_approval: approval } : {})]);
   server.use(http.get("*/api/local/agent/settings", () => HttpResponse.json({}, { status: 503 })));
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*(Running|Awaiting approval)/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(await screen.findByRole("button", { name: ({ pause: "Pause", cancel: "Cancel task", deny: "Reject change" })[kind] }));
   await waitFor(() => expect(backend.actions).toHaveBeenCalledWith({ action: kind, expected_revision: 1, ...(kind === "deny" ? { approval_id: "approval-1" } : {}) }));
   expect(backend.updates).not.toHaveBeenCalled();
@@ -943,19 +975,83 @@ it.each(["pause", "cancel", "deny"] as const)("keeps %s available when only sett
 it("polls the selected task independently when the task index fails", async () => {
   const backend = api(true, [task()]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByRole("button", { name: "Pause" });
   server.use(http.get("*/api/local/agent/tasks", () => HttpResponse.json({}, { status: 503 })));
   backend.setTasks([task({ status: "completed", revision: 2, result: "Fresh evidence despite index failure" })]);
   await screen.findByText("Fresh evidence despite index failure", {}, { timeout: 3500 });
-  expect(screen.getByText(/Could not refresh the task list/)).toBeVisible();
+  // The reply now arrives before the independent 1.2 s sidebar poll.
+  expect(await screen.findByText(/Could not refresh the task list/, {}, { timeout: 3500 })).toBeVisible();
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
+});
+
+it("updates the current reply while the task index request remains hung", async () => {
+  const backend = api(true, [task()]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByRole("button", { name: "Pause" });
+  let release!: () => void;
+  let started = false;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get("*/api/local/agent/tasks", async () => {
+    started = true; await pending; return HttpResponse.json({ tasks: [] });
+  }));
+  backend.setTasks([task({ status: "completed", revision: 2, result: "Reply arrived while index is pending" })]);
+  try {
+    await screen.findByText("Reply arrived while index is pending", {}, { timeout: 3500 });
+    await waitFor(() => expect(started).toBe(true));
+  } finally { release(); }
+});
+
+it("updates the task index while the selected detail request remains hung", async () => {
+  const backend = api(true, [task()]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByRole("button", { name: "Pause" });
+  let release!: () => void;
+  let started = false;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get("*/api/local/agent/tasks/:id", async () => {
+    started = true; await pending; return HttpResponse.json(task());
+  }));
+  backend.setTasks([task(), task({ id: "new-task", title: "New task while detail is pending", status: "completed" })]);
+  try {
+    await screen.findByRole("button", { name: "New task while detail is pending" }, { timeout: 3500 });
+    await waitFor(() => expect(started).toBe(true));
+  } finally { release(); }
+});
+
+it("recovers task reads after a node outage without losing the current evidence or draft", async () => {
+  api(true, [task({ status: "completed", result: "Saved evidence before restart" })]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText("Saved evidence before restart");
+  await user.type(screen.getByRole("textbox"), "Keep this draft during restart");
+  let online = false;
+  server.use(
+    http.get("*/api/local/agent/tasks", () => online
+      ? HttpResponse.json({ tasks: [task({ status: "completed", revision: 2 })] })
+      : HttpResponse.json({ detail: "agent_unavailable" }, { status: 503 })),
+    http.get("*/api/local/agent/tasks/:id", () => online
+      ? HttpResponse.json(task({ status: "completed", revision: 2, result: "Current evidence after restart" }))
+      : HttpResponse.json({ detail: "agent_unavailable" }, { status: 503 })),
+  );
+  window.dispatchEvent(new Event("focus"));
+  await screen.findByText(/Could not refresh the task list/);
+  await screen.findByText(/Could not refresh this task/);
+  expect(screen.getByText("Saved evidence before restart")).toBeVisible();
+  expect(screen.getByRole("textbox")).toHaveValue("Keep this draft during restart");
+  online = true;
+  await screen.findByText("Current evidence after restart", {}, { timeout: 4000 });
+  await waitFor(() => expect(screen.queryByText(/Could not refresh the task list/)).not.toBeInTheDocument());
+  expect(screen.queryByText(/Could not refresh this task/)).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toHaveValue("Keep this draft during restart");
 });
 
 it("reports a selected-detail failure on focus without an unhandled rejection or losing evidence", async () => {
   api(true, [task({ status: "completed", result: "Preserved evidence" })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /Inspect devices.*Turn finished/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await screen.findByText("Preserved evidence");
   await user.type(screen.getByRole("textbox"), "Preserved draft");
   server.use(http.get("*/api/local/agent/tasks/:id", () => HttpResponse.json({}, { status: 503 })));
@@ -1002,7 +1098,7 @@ it("shows public progress and keeps technical receipts and interim commentary co
     { role: "assistant", content: "The device is online." },
   ], events: [{ seq: 1, at: 1, type: "tool_started", tool: "inspect_devices" }, { seq: 2, at: 2, type: "tool_result", tool: "inspect_devices", result: { online: true } }] })]);
   const user = userEvent.setup(); const { container } = mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(await screen.findByText("Thinking…")).toBeVisible();
   expect(screen.getByText("The device is online.")).toBeVisible();
   expect(container.querySelector(".ra-thread .ra-activity")).toBeNull();
@@ -1022,7 +1118,7 @@ it("lets an owner clarify a CLI source without submitting credentials or startin
   await i18n.changeLanguage("en");
   const backend = api(true, [controlled({ status: "waiting_input", run_state: "waiting_input", pending_input: { id: "secret", kind: "credential_ref", prompt: "Configure", goal_revision: 2, control_revision: 7, scope_revision: 1, business_revision: null, created_at: 1, fields: [] } })]);
   const user = userEvent.setup(); mount();
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Awaiting your answer$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await user.click(screen.getByRole("button", { name: "I use a local app / CLI" }));
   expect(screen.getByRole("textbox")).toHaveValue("I use a local AI app or CLI. Confirm the application and supported connection method first; do not ask me for an API endpoint or key.");
   expect(backend.actions).not.toHaveBeenCalled();
@@ -1049,9 +1145,89 @@ it("binds a missing workspace through an explicit owner action rather than a cha
   server.use(http.get('*/api/local/agent/tasks/task-1/artifacts',()=>HttpResponse.json({artifacts:[]})),
     http.post('*/api/local/agent/tasks/task-1/workspace',async ({request})=>{const body=await request.json(); binds(body); return HttpResponse.json({...current,status:'queued',local_execution:{workspace_root:'D:\\Drawings'}})}));
   const user=userEvent.setup(); mount();
-  await user.click(await screen.findByRole('button',{name:/^Inspect devices.*Failed$/}));
+  await user.click(await screen.findByRole('button',{name:"Inspect devices"}));
   await user.type(await screen.findByRole('textbox',{name:'Working directory'}),'D:\\Drawings');
   expect(binds).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button',{name:'Use folder and continue'}));
   await waitFor(()=>expect(binds).toHaveBeenCalledWith({workspace_root:'D:\\Drawings',expected_control_revision:7,client_request_id:expect.any(String)}));
+});
+
+it("manages a project conversation from sidebar menus without changing the open conversation", async () => {
+  const project: AgentProject = { id: "alpha", name: "Alpha", path: "D:\\code\\Alpha", generation: 1, entry_files: [], manifests: [], directories: [] };
+  const action = { enabled: true, reason: null, requires_control_revision: true };
+  const current = controlled({ title: "Open conversation", messages: [{ role: "assistant", content: "Keep this conversation open" }] });
+  let record = controlled({ id: "project-history", title: "Project history", project, status: "paused", run_state: "paused", archived: false,
+    allowed_actions: { rename: action, archive: action, delete: action } });
+  let deleted = false;
+  api(true, [current, record]);
+  const writes = vi.fn();
+  server.use(
+    http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project] })),
+    http.get("*/api/local/agent/tasks", ({ request }) => HttpResponse.json({ tasks: new URL(request.url).searchParams.get("archived") === "true" ? !deleted && record.archived ? [record] : [] : [current, ...(!deleted && !record.archived ? [record] : [])] })),
+    http.get("*/api/local/agent/tasks/project-history", () => HttpResponse.json(record)),
+    http.post("*/api/local/agent/tasks/project-history/:operation", async ({ params, request }) => {
+      writes(params.operation, await request.json());
+      record = { ...record, archived: params.operation === "archive", revision: record.revision + 1, control_revision: record.control_revision! + 1,
+        allowed_actions: { rename: action, delete: action, [params.operation === "archive" ? "restore" : "archive"]: action } };
+      return HttpResponse.json(record);
+    }),
+    http.delete("*/api/local/agent/tasks/project-history", async ({ request }) => { writes("delete", await request.json()); deleted = true; return HttpResponse.json({ id: record.id, deleted: true, cleanup_pending: false }); }),
+  );
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Open conversation" }));
+  await screen.findByText("Keep this conversation open");
+  const activeRows = within(screen.getByRole("complementary", { name: "Task list" }).querySelector<HTMLElement>(".ra-task-items")!);
+  const archivedRows = within(screen.getByText("Archived tasks").closest("details")!);
+  const menuForRecord = (archived = false) => {
+    fireEvent.contextMenu((archived ? archivedRows : activeRows).getByRole("button", { name: "Project history" }), { clientX: 170, clientY: 240 });
+    return within(screen.getByRole("menu", { name: "Task actions for Project history" }));
+  };
+  await user.click(menuForRecord().getByRole("menuitem", { name: "Archive task" }));
+  await waitFor(() => expect(activeRows.queryByRole("button", { name: "Project history" })).not.toBeInTheDocument());
+  expect(screen.getByText("Keep this conversation open")).toBeVisible();
+  await user.click(screen.getByText("Archived tasks"));
+  await archivedRows.findByRole("button", { name: "Project history" });
+  await user.click(menuForRecord(true).getByRole("menuitem", { name: "Restore task" }));
+  await activeRows.findByRole("button", { name: "Project history" });
+  await waitFor(() => expect(archivedRows.queryByRole("button", { name: "Project history" })).not.toBeInTheDocument());
+  await user.click(menuForRecord().getByRole("menuitem", { name: "Delete local task record" }));
+  const confirm = await screen.findByRole("alertdialog", { name: "Delete local task record" });
+  expect(confirm).toHaveTextContent("Project history");
+  await user.click(within(confirm).getByRole("button", { name: "Delete local record permanently" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Project history" })).not.toBeInTheDocument());
+  expect(screen.getByText("Keep this conversation open")).toBeVisible();
+  expect(agentTaskCache().has(record.id)).toBe(false);
+  expect(writes.mock.calls.map(call => call[0])).toEqual(["archive", "restore", "delete"]);
+});
+
+it("keeps a restored task visible when an older active-list request omitted it", async () => {
+  const allowed = { enabled: true, reason: null, requires_control_revision: true };
+  const other = controlled({ archived: false });
+  let record = controlled({ id: "archived-history", title: "Restored history", status: "paused", run_state: "paused", archived: true,
+    allowed_actions: { restore: allowed, delete: allowed, rename: allowed } });
+  api(true, [other]);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = vi.fn();
+  let calls = 0;
+  vi.spyOn(rynAgent, "tasks").mockImplementation(async () => {
+    if (++calls === 2) { started(); await gate; return { tasks: [other] }; }
+    return { tasks: [other, ...(!record.archived ? [record] : [])] };
+  });
+  server.use(
+    http.get("*/api/local/agent/tasks", () => HttpResponse.json({ tasks: record.archived ? [record] : [] })),
+    http.get("*/api/local/agent/tasks/archived-history", () => HttpResponse.json(record)),
+    http.post("*/api/local/agent/tasks/archived-history/restore", () => { record = { ...record, archived: false, revision: record.revision + 1, control_revision: 8, allowed_actions: { archive: allowed, delete: allowed, rename: allowed } }; return HttpResponse.json(record); }),
+  );
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByText("Archived tasks"));
+  const archivedRows = within(screen.getByText("Archived tasks").closest("details")!);
+  const activeRows = within(screen.getByRole("complementary", { name: "Task list" }).querySelector<HTMLElement>(".ra-task-items")!);
+  const archived = await archivedRows.findByRole("button", { name: "Restored history" });
+  await waitFor(() => expect(started).toHaveBeenCalled(), { timeout: 2500 });
+  fireEvent.contextMenu(archived, { clientX: 160, clientY: 400 });
+  await user.click(screen.getByRole("menuitem", { name: "Restore task" }));
+  await activeRows.findByRole("button", { name: "Restored history" });
+  await act(async () => { release(); await gate; });
+  expect(activeRows.getByRole("button", { name: "Restored history" })).toBeVisible();
 });

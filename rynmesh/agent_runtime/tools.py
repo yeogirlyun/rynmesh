@@ -20,6 +20,8 @@ from ..node_apps.agent import NAMES as APP_NAMES
 from ..node_apps.agent import SPECS as APP_SPECS
 from ..node_apps.agent import VERIFIER as APP_VERIFIER
 from ..node_apps.agent import AppTools
+from ..node_apps.craft_agent import NAMES as CRAFT_NAMES
+from ..node_apps.craft_agent import CraftTools
 from ..node_apps.plugin_agent import NAMES as PLUGIN_NAMES
 from ..node_apps.plugin_agent import SPECS as PLUGIN_SPECS
 from ..node_apps.plugin_agent import PluginTools
@@ -139,6 +141,7 @@ class RynTools:
         self.cli_sources = CLISources(app, getattr(store, "home", None), services, lambda: self.resource_writes.ledger)
         self.friend_sharing = FriendSharingTool(app, services, personal_space=getattr(store, "personal_space", None))
         self.local = LocalTools(store, lambda: self.resource_writes.ledger)
+        self.craft = CraftTools(app, self.local, lambda: self.resource_writes.ledger)
 
     def _device_evidence(self, cancelled):
         operation_id = "diagnostic-read-" + uuid.uuid4().hex
@@ -158,12 +161,16 @@ class RynTools:
     def collect_command_artifacts(self, task_id):
         return self.local.collect_command_artifacts(task_id)
 
+    def recover_operation(self, task_id, operation_id=None, **kwargs):
+        return self.local.recover_operation(task_id, operation_id, **kwargs)
+
     def forget_task(self, task_id, *, operation_ids):
         try:
             self.resource_writes.forget_task(task_id)
             self.source_drafts.forget_task(task_id)
             self.friend_sharing.forget_task(task_id)
             self.local.forget_baselines(task_id)
+            self.craft.close_task(task_id)
         except Exception:
             raise AgentError("agent_task_cleanup_failed") from None
         with self.lock:
@@ -280,6 +287,8 @@ class RynTools:
         tool, args = operation.get("tool"), operation["arguments"]
         if tool == APP_ACTION:
             return self.node_apps.reconcile(operation_id, context, cancelled)
+        if tool in CRAFT_NAMES:
+            return self.craft.reconcile(operation_id, context)
         if tool in LOCAL_NAMES:
             return self.local.reconcile(operation_id, context)
         if tool == DEFAULT_MODEL_NAME:
@@ -306,9 +315,11 @@ class RynTools:
 
     def specs(self):
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs()
+                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs()
 
     def metadata(self, name):
+        if name in CRAFT_NAMES:
+            return self.craft.metadata(name)
         if name in PLUGIN_NAMES:
             return {"effect": "read", "title": "Plugin information", "risk": "low", "supports_preview": False, "preview_precondition": False}
         if name in APP_NAMES and getattr(self.app.state, "node_apps", None):
@@ -341,15 +352,41 @@ class RynTools:
         return {"effect": effect, "title": description, "risk": risk, "supports_preview": effect == "write",
                 "preview_precondition": effect == "write"}
 
+    @staticmethod
+    def _schema_rejection(name: str, exc: Exception) -> AgentToolRejected:
+        cause = getattr(exc, "__cause__", None) or exc
+        path_parts = [re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())]
+        field_path = "/".join(p for p in path_parts if p) or "<root>"
+        validator = re.sub(r"[^A-Za-z]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
+        return AgentToolRejected(
+            "agent_tool_arguments_invalid",
+            correction=f"Invalid arguments for '{name}' at field '{field_path}' ({validator}). Check the tool parameter schema and retry.",
+            details={"tool": name, "field_path": field_path, "validator": validator},
+        )
+
     def _validate(self, name, arguments):
         self.metadata(name)
-        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > (96 * 1024 if name in LOCAL_NAMES else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192):
-            raise AgentToolRejected("agent_tool_arguments_invalid")
+        max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
+        if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > max_bytes:
+            raise AgentToolRejected(
+                "agent_tool_arguments_invalid",
+                correction=f"Arguments for '{name}' must be a JSON object within {max_bytes} bytes.",
+                details={"tool": name, "field_path": "<root>", "max_bytes": max_bytes},
+            )
+        if name in CRAFT_NAMES:
+            schema = next((item["function"]["parameters"] for item in self.craft.specs() if item["function"]["name"] == name), None)
+            if schema is None:
+                raise AgentToolRejected("agent_craft_tool_not_supported")
+            try:
+                validate_tool_arguments(schema, arguments)
+            except ValueError as exc:
+                raise self._schema_rejection(name, exc) from None
+            return
         try:
             schema = next(s["function"]["parameters"] for s in PLUGIN_SPECS if s["function"]["name"] == name) if name in PLUGIN_NAMES else next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else {**_SPECS, **LOCAL_SPECS}[name][3]
             validate_tool_arguments(schema, arguments)
-        except ValueError:
-            raise AgentToolRejected("agent_tool_arguments_invalid") from None
+        except ValueError as exc:
+            raise self._schema_rejection(name, exc) from None
 
     def _space(self):
         service = getattr(self.store, "personal_space", None)
@@ -386,6 +423,8 @@ class RynTools:
 
     def preview(self, name, arguments, *, context=None):
         self._validate(name, arguments)
+        if name in CRAFT_NAMES:
+            return self.craft.preview(name, arguments, context)
         if name == APP_ACTION:
             return self.node_apps.preview(arguments, context)
         if name in LOCAL_NAMES:
@@ -451,6 +490,9 @@ class RynTools:
         self._validate(name, arguments)
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 256:
             raise AgentToolRejected("agent_operation_id_required")
+        if name in CRAFT_NAMES:
+            return self.craft.execute(name, arguments, operation_id=operation_id, context=context,
+                                      cancelled=cancelled, expected_preview=expected_preview)
         if name in PLUGIN_NAMES:
             return self.craft_plugins.execute(name, arguments, cancelled)
         if name in APP_NAMES:

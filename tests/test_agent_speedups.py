@@ -167,3 +167,37 @@ def test_system_prompt_changes_only_in_state_lines_after_a_write(tmp_path):
     before, after = model.calls[0][1][0]["content"], model.calls[1][1][0]["content"]
     assert before != after  # the write receipt is visible to the model
     assert state_lines(before, after) is not None  # ...as a state-line update, so a Codex thread continues
+
+
+def test_continuous_runner_continues_after_single_no_side_effect_tool_error_and_backs_off_on_repeat(tmp_path):
+    runtime, model, workspace = workstation(
+        tmp_path,
+        assistant(name="ryn_file_read", args={"path": "missing_1.txt"}),
+        assistant(name="ryn_file_read", args={"path": "existing.txt"}),
+        assistant("Recovered after missing file."),
+    )
+    (workspace / "existing.txt").write_text("ok\n", encoding="utf-8")
+    task = runtime.create({"message": "Read the file."})
+    result = runtime.run_continuously()
+    done = runtime.get(task["id"])
+    assert result.activity and done["status"] == "completed"
+    assert done["result"] == "Recovered after missing file."
+    assert len(model.calls) == 3
+
+    # Consecutive identical (tool_name, error_code) errors must NOT continue cleanly without backoff.
+    repeat_dir = tmp_path / "repeat"
+    repeat_dir.mkdir()
+    runtime2, model2, _ = workstation(
+        repeat_dir,
+        assistant(name="ryn_file_read", args={"path": "absent_a.txt"}),
+        assistant(name="ryn_file_read", args={"path": "absent_b.txt"}),
+        assistant("Stopped repeating."),
+    )
+    task2 = runtime2.create({"message": "Try reading absent files."})
+    runtime2.run_continuously()
+    row2 = runtime2.get(task2["id"])
+    assert len(model2.calls) == 2 and row2["status"] == "queued"
+    tool_msgs = [json.loads(m["content"]) for m in runtime2.store.read()["tasks"][task2["id"]]["messages"] if m["role"] == "tool"]
+    assert len(tool_msgs) == 2
+    assert "correction" in tool_msgs[1]
+

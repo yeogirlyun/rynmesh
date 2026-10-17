@@ -20,14 +20,14 @@
 .ra-tasks[hidden] { display: none; }
 .ra-archives { max-height: 35%; overflow: auto; font-size: 12px; }
 .ra-archives summary { cursor: pointer; padding-block: 8px; }
-.ra-archives .ra-task-item { display: block; width: 100%; text-align: left; margin-block: 5px; }
+.ra-archives .ra-task-item { display: flex; width: 100%; text-align: left; margin-block: 5px; }
 .ra-archives .ra-task-item small { display: block; }
 .ra-records { max-width: 960px; margin: 14px auto 6px; font-size: 12px; color: var(--pf-muted); }
 .ra-delete-confirm { margin-top: 10px; padding: 12px; border: 1px solid var(--pf-line); border-radius: 10px; background: var(--pf-subtle); }
 .ra-result-files button { margin: 4px 6px 4px 0; }
 .ra-result-files pre { max-height: 400px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ra-task-items { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.ra-task-items .ra-task-item { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border: 0; background: transparent; width: 100%; padding: 10px 9px; text-align: left; font-size: 12px; }
+.ra-task-items .ra-task-item { display: flex; align-items: center; gap: 7px; border: 0; background: transparent; width: 100%; padding: 10px 9px; text-align: left; font-size: 12px; }
 .ra-task-item > span { overflow-wrap: anywhere; }
 .ra-task-items .ra-task-item.selected { background: var(--pf-selection); }
 .ra-tasks small { font-size: 11px; }
@@ -48,6 +48,9 @@
 .ra-disabled-banner > span, .ra-banner > span { flex: 1; }
 .ra-disabled-banner { margin: 12px 0 0; border: 1px solid var(--pf-line); border-radius: 9px; }
 .ra-banner { color: var(--pf-muted); }
+.ra-unsent-message > details { flex: 1; min-width: 0; }
+.ra-unsent-message summary { cursor: pointer; }
+.ra-unsent-message p { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ra-background { flex-wrap: wrap; max-height: 130px; overflow-y: auto; }
 .ra-background > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .ra-background button { padding: 5px 8px; }

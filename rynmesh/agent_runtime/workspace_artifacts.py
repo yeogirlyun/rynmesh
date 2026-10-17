@@ -86,7 +86,11 @@ def history(row) -> dict:
         if not isinstance(result, dict) or result.get("error") or result.get("result_ref"):
             continue
         tool, arguments = receipt["tool"], receipt.get("arguments") or {}
-        if tool in {"ryn_shell_execute", "ryn_process_read", "ryn_process_stop"}:
+        if tool == "ryn_craft_action" and result.get("ok"):
+            for item in result.get("files", []):
+                if isinstance(item, dict) and item.get("path") and item.get("sha256"):
+                    _touch(files, receipt, item["path"], item["sha256"], True)
+        elif tool in {"ryn_shell_execute", "ryn_process_read", "ryn_process_stop"}:
             for item in result.get("workspace_files", []):
                 if not isinstance(item, dict) or not item.get("path"):
                     continue
