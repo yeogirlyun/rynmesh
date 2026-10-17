@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -64,14 +64,33 @@ it("keeps uncertain requests through reload without replaying automatically", as
   expect(received.mock.calls[1][0]).toEqual(received.mock.calls[0][0]);
 });
 
+it("keeps the original uncertain request in memory when session storage cannot be written", async () => {
+  const received = vi.fn(); const user = userEvent.setup();
+  const storage = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full storage", "QuotaExceededError"); });
+  server.use(http.post("*/api/local/agent/tasks/saved-task/archive", async ({ request }) => { received(await request.json()); return received.mock.calls.length === 1 ? HttpResponse.json({}, { status: 503 }) : HttpResponse.json({ ...task, archived: true }); }));
+  try {
+    const first = render(<TaskRecords task={task} busy={false} onChange={vi.fn()} onDelete={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: /^Archive task$/ }));
+    await screen.findByRole("button", { name: "Check original record request" }); first.unmount();
+    render(<TaskRecords task={{ ...task, control_revision: 999 }} busy={false} onChange={vi.fn()} onDelete={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Check original record request" }));
+    await waitFor(() => expect(received).toHaveBeenCalledTimes(2));
+    expect(received.mock.calls[1][0]).toEqual(received.mock.calls[0][0]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Check original record request" })).not.toBeInTheDocument());
+  } finally { storage.mockRestore(); }
+});
+
 it("loads archived tasks independently without selecting or running them", async () => {
   const selected = vi.fn(); const user = userEvent.setup();
   server.use(http.get("*/api/local/agent/tasks", ({ request }) => new URL(request.url).searchParams.get("archived") === "true" ? HttpResponse.json({ tasks: [{ ...task, archived: true }] }) : HttpResponse.json({}, { status: 500 })));
   render(<ArchivedTasks enabled selected="" onChoose={selected} revision={0} />);
   await user.click(screen.getByText("Archived tasks"));
-  await screen.findByRole("button", { name: /Paused report.*Archived/ });
+  const archive = within(screen.getByText("Archived tasks").closest("details")!);
+  const row = await archive.findByRole("button", { name: "Paused report" });
+  expect(row).toHaveAccessibleDescription("Archived");
+  expect(row).toHaveTextContent(/^Paused report$/);
   expect(selected).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: /Paused report.*Archived/ }));
+  await user.click(archive.getByRole("button", { name: "Paused report" }));
   expect(selected).toHaveBeenCalledWith("saved-task");
 });
 

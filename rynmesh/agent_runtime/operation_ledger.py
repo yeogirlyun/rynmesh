@@ -73,6 +73,20 @@ class OperationLedger:
             row.update(status=status, **copy.deepcopy(values))
             if status in {"confirmed", "not_executed"}:
                 row.pop("receipt_reserve", None)
+            elif (
+                status == "failed"
+                and row.get("no_mutation") is True
+                and row.get("cleanup_confirmed") is True
+            ):
+                from .execution_policy import verified_read_classification
+                binding = row.get("binding") if isinstance(row.get("binding"), dict) else {}
+                if verified_read_classification(
+                    row,
+                    task_id=binding.get("task_id"),
+                    operation_id=operation_id,
+                    tool=binding.get("tool"),
+                ):
+                    row.pop("receipt_reserve", None)
             self._write(records)
 
     def get(self, operation_id):

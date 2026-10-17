@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
 use crate::node::{self, NodeState};
+use crate::system_apps;
 
 const APPS: [&str; 13] = ["cadcraft", "deckcraft", "designcraft", "effectcraft", "figcraft",
     "filmcraft", "gridcraft", "lightcraft", "pdfcraft", "photocraft", "soundcraft", "vectorcraft", "wordcraft"];
@@ -35,15 +38,30 @@ fn profile_key(storage: &str) -> Result<String, String> {
     Ok(key.to_owned())
 }
 
-// Editor content gets no native commands, including commands outside this module.
-pub(crate) fn allows_native_commands(label: &str) -> bool { label == "main" }
+// Downloaded editor content gets no native commands. Built-ins load the exact same
+// bundled, trusted frontend as main and need its node-port and desktop commands.
+pub(crate) fn allows_native_commands(label: &str) -> bool {
+    matches!(label, "main" | "craft-resume" | "craft-recruit" | "craft-desk" | "craft-nas")
+}
 
 // Only the trusted control window may supply a known app ID. URLs, executable
 // paths and commands are never accepted from an editor, friend or model.
 #[tauri::command]
 pub async fn open_craft_browser(app: tauri::AppHandle, state: State<'_, NodeState>, app_id: String) -> Result<(), String> {
+    open_editor(app, state.port, app_id, None).await
+}
+
+#[cfg(test)]
+pub(crate) fn is_editor(app_id: &str) -> bool { editor_url(app_id).is_ok() }
+
+/// A document comes from "Open with" or Finder, by a path the system passed to Ryn.
+pub(crate) const MAX_DOCUMENT: u64 = 128 * 1024 * 1024;
+/// Every document gets a window of its own, so opening one never replaces unsaved work.
+static DOCUMENT_WINDOWS: AtomicU32 = AtomicU32::new(0);
+
+/// Opens the window of a running editor, with `document` in a new window when given.
+pub async fn open_editor(app: tauri::AppHandle, port: u16, app_id: String, document: Option<PathBuf>) -> Result<(), String> {
     let url = editor_url(&app_id)?;
-    let port = state.port;
     let requested = app_id.clone();
     let catalog = tauri::async_runtime::spawn_blocking(move || {
         let catalog = node::request(port, "GET", "/api/local/craft-plugins", "")?;
@@ -54,8 +72,11 @@ pub async fn open_craft_browser(app: tauri::AppHandle, state: State<'_, NodeStat
         Ok(catalog)
     }).await.map_err(|_| "plugin_window_failed".to_string())??;
 
-    let label = format!("craft-{app_id}");
-    if let Some(window) = app.get_webview_window(&label) {
+    let label = match document {
+        Some(_) => format!("craft-{app_id}-{}", DOCUMENT_WINDOWS.fetch_add(1, Ordering::SeqCst) + 1),
+        None => format!("craft-{app_id}"),
+    };
+    if let (None, Some(window)) = (&document, app.get_webview_window(&label)) {
         if !window.url().is_ok_and(|current| allows_navigation(&app_id, &current)) {
             return Err("plugin_launch_rejected".into());
         }
@@ -63,19 +84,27 @@ pub async fn open_craft_browser(app: tauri::AppHandle, state: State<'_, NodeStat
             .map_err(|_| "plugin_window_failed".to_string())?;
         return Ok(()); // Never reload an open document when its app is opened again.
     }
+    // Read before any window exists, so a missing or oversized file opens nothing.
+    let opened = document.as_deref().map(read_document).transpose()?;
 
     let node_key = profile_key(catalog["storage_path"].as_str().ok_or("plugin_launch_rejected")?)?;
-    let profile = app.path().app_local_data_dir().map_err(|_| "plugin_window_failed")?
+    let profile = crate::deployment::native_profile_dir(&app).map_err(|_| "plugin_window_failed")?
         .join("editors").join(node_key).join(&app_id);
     std::fs::create_dir_all(&profile).map_err(|_| "plugin_window_failed")?;
     let navigation_app = app_id.clone();
     let download_app = app_id.clone();
-    let title = format!("{} — Ryn", catalog["plugins"].as_array().unwrap().iter()
-        .find(|row| row["id"].as_str() == Some(app_id.as_str()))
-        .and_then(|row| row["name"].as_str()).unwrap_or(&app_id));
+    let system_app = system_apps::find(&app_id);
+    let app_name = system_app.map(|system_app| system_app.name.to_string()).unwrap_or_else(|| format!("{} — Ryn",
+        catalog["plugins"].as_array().unwrap().iter()
+            .find(|row| row["id"].as_str() == Some(app_id.as_str()))
+            .and_then(|row| row["name"].as_str()).unwrap_or(&app_id)));
+    let title = match &opened { Some((name, _)) => format!("{name} — {app_name}"), None => app_name };
+    // A document saves next to itself unless the user picks another folder.
+    let save_folder = document.as_deref().and_then(Path::parent).map(Path::to_path_buf);
 
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url))
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(url))
         .title(title).inner_size(1280.0, 850.0).min_inner_size(800.0, 560.0)
+        .visible(false) // Shown once it carries the app's taskbar identity.
         .data_directory(profile)
         .disable_drag_drop_handler() // Keep the editor's standard HTML file-drop UI.
         .devtools(false)
@@ -85,20 +114,89 @@ pub async fn open_craft_browser(app: tauri::AppHandle, state: State<'_, NodeStat
             if let DownloadEvent::Requested { url, destination } = event {
                 if !allows_download(&download_app, &url) { return false; }
                 let filename = destination.file_name().and_then(|name| name.to_str()).unwrap_or("document");
-                if let Some(chosen) = rfd::FileDialog::new().set_file_name(filename).save_file() {
+                let mut dialog = rfd::FileDialog::new().set_file_name(filename);
+                if let Some(folder) = &save_folder { dialog = dialog.set_directory(folder); }
+                if let Some(chosen) = dialog.save_file() {
                     *destination = chosen;
                     return true;
                 }
                 return false;
             }
             true
-        })
-        .build().map_err(|error| {
-            log::error!("could not open local editor {app_id}: {error}");
-            "plugin_window_failed".to_string()
-        })?;
-    Ok(())
+        });
+    if let Some(icon) = system_apps::window_icon(&app_id) {
+        builder = builder.icon(icon).map_err(|_| "plugin_window_failed".to_string())?;
+    }
+    if let Some((name, bytes)) = opened {
+        let scripts = Mutex::new(Some(document_scripts(&name, &bytes)));
+        let page_app = app_id.clone();
+        builder = builder.on_page_load(move |window, payload| {
+            if payload.event() != PageLoadEvent::Finished || !allows_navigation(&page_app, payload.url()) { return; }
+            if let Some(scripts) = scripts.lock().unwrap().take() {
+                for script in scripts { let _ = window.eval(&script); }
+            }
+        });
+    }
+    let window = builder.build().map_err(|error| {
+        log::error!("could not open local editor {app_id}: {error}");
+        "plugin_window_failed".to_string()
+    })?;
+    if let Some(system_app) = system_app { system_apps::identify(&window, system_app); }
+    window.show().and_then(|_| window.set_focus()).map_err(|_| "plugin_window_failed".to_string())
 }
+
+fn read_document(path: &Path) -> Result<(String, Vec<u8>), String> {
+    let name = path.file_name().and_then(|name| name.to_str()).ok_or("document_unreadable")?.to_owned();
+    let metadata = std::fs::metadata(path).map_err(|_| "document_unreadable")?;
+    if !metadata.is_file() { return Err("document_unreadable".into()); }
+    if metadata.len() > MAX_DOCUMENT { return Err("document_too_large".into()); }
+    let bytes = std::fs::read(path).map_err(|_| "document_unreadable")?;
+    Ok((name, bytes))
+}
+
+/// Whole base64 quads per script, so each part decodes on its own.
+const DOCUMENT_PART: usize = 3 * 512 * 1024;
+
+/// The editors take files only from their page, as a drop on their canvas; a document from the
+/// system arrives the same way. The parts load first, then one script drops the file once the
+/// editor has started (its canvas is up and its loading notice gone).
+fn document_scripts(name: &str, bytes: &[u8]) -> Vec<String> {
+    use base64::Engine;
+    let mut scripts = vec!["window.__rynDocument = [];".to_string()];
+    for part in bytes.chunks(DOCUMENT_PART) {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(part);
+        scripts.push(format!("window.__rynDocument.push(Uint8Array.from(atob(\"{encoded}\"), (c) => c.charCodeAt(0)));"));
+    }
+    scripts.push(DROP_DOCUMENT.replace("__NAME__", &serde_json::Value::from(name).to_string()));
+    scripts
+}
+
+const DROP_DOCUMENT: &str = r#"(() => {
+  const parts = window.__rynDocument;
+  delete window.__rynDocument;
+  if (!parts) return;
+  const file = new File(parts, __NAME__);
+  const started = Date.now();
+  const editor = () => {
+    const canvas = document.querySelector("canvas");
+    return canvas && !document.querySelector('[id$="_loading"]') ? canvas : null;
+  };
+  const drop = () => {
+    const canvas = editor();
+    if (!canvas) {
+      if (Date.now() - started < 60000) setTimeout(drop, 100);
+      return;
+    }
+    setTimeout(() => {
+      const data = new DataTransfer();
+      data.items.add(file);
+      for (const type of ["dragenter", "dragover", "drop"]) {
+        canvas.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data }));
+      }
+    }, 250);
+  };
+  drop();
+})();"#;
 
 #[cfg(test)]
 mod tests {
@@ -127,6 +225,9 @@ mod tests {
     #[test]
     fn editor_has_no_native_commands_and_profiles_stay_separate() {
         assert!(allows_native_commands("main"));
+        for label in ["craft-resume", "craft-recruit", "craft-desk", "craft-nas"] {
+            assert!(allows_native_commands(label));
+        }
         for label in ["craft-wordcraft", "craft-pdfcraft", "other", ""] {
             assert!(!allows_native_commands(label));
         }
@@ -134,5 +235,35 @@ mod tests {
         for storage in ["/cache/..", "/cache/shared", "/cache/0123456789abcdef0123456Z", ""] {
             assert!(profile_key(storage).is_err());
         }
+    }
+
+    #[test]
+    fn documents_enter_the_editor_as_a_dropped_file() {
+        use base64::Engine;
+        let bytes: Vec<u8> = (0..(DOCUMENT_PART * 2 + 10)).map(|n| (n % 251) as u8).collect();
+        let scripts = document_scripts("Q3 \"final\".xlsx", &bytes);
+        assert_eq!(scripts.len(), 5); // start, three parts, drop
+        let mut decoded = Vec::new();
+        for script in &scripts[1..4] {
+            let encoded = script.split('"').nth(1).unwrap();
+            decoded.extend(base64::engine::general_purpose::STANDARD.decode(encoded).unwrap());
+        }
+        assert_eq!(decoded, bytes);
+        let drop = scripts.last().unwrap();
+        assert!(drop.contains(r#"new File(parts, "Q3 \"final\".xlsx")"#));
+        assert!(!drop.contains("__NAME__"));
+        assert_eq!(document_scripts("empty.csv", &[]).len(), 2);
+    }
+
+    #[test]
+    fn only_regular_files_within_the_limit_are_read() {
+        let folder = std::env::temp_dir().join(format!("ryn-document-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("sheet.csv");
+        std::fs::write(&file, b"a,b\n1,2\n").unwrap();
+        assert_eq!(read_document(&file).unwrap(), ("sheet.csv".to_string(), b"a,b\n1,2\n".to_vec()));
+        assert_eq!(read_document(&folder).unwrap_err(), "document_unreadable");
+        assert_eq!(read_document(&folder.join("missing.csv")).unwrap_err(), "document_unreadable");
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

@@ -9,6 +9,7 @@ from .store import AgentError, encoded
 VERSION = "configured-output-v1"
 TRANSPORT_MAX_TOKENS = 131072
 MAX_RAW_RESPONSE_BYTES = 256 * 1024
+MAX_TOOL_CALL_ARGUMENT_BYTES = 96 * 1024
 MAX_TOOL_CALLS = 8
 
 
@@ -43,8 +44,8 @@ def budgeted(policy, allowed):
 
 
 def visible_message(message):
-    """Only the typed private continuation field is excluded, never unknown data."""
-    return {key: value for key, value in message.items() if key != "reasoning_content"}
+    """Only the typed private continuation and structured tool calls are excluded from visible prose bounds, never unknown data."""
+    return {key: value for key, value in message.items() if key not in {"reasoning_content", "tool_calls"}}
 
 
 def storage_growth(visible_limit):

@@ -37,18 +37,12 @@ import { LanguageSelect } from "./LanguageSelect";
 import { nativeModelRequest, nativeBusy } from "../domain/nativeModel";
 import { tr } from "../uiI18n";
 import { personalHref, usePersonal, type Device, type Service } from "./model";
+import { groupHomeDevices, readHomeView, serviceUrl, writeHomeView, type HomeView } from "./homeModel";
+import { DeviceHero, DeviceRail, HomeServices, HomeStats, NearbyPanel, ViewSwitch } from "./HomeParts";
 
 function useLinks() {
   const { demo } = usePersonal();
   return (path: string) => personalHref(path, demo);
-}
-function serviceUrl(service: Service) {
-  if (service.href) return service.href;
-  const params = new URLSearchParams({
-    peer: service.record?.peer_id || service.deviceId,
-    service: service.record?.service.package_id || "",
-  });
-  return `/services/private-ai/chat?${params}`;
 }
 function ServiceRow({
   service,
@@ -152,29 +146,52 @@ export function PersonalHome() {
   const { t } = useTranslation();
   const { devices, services, loading, error, refresh, demo } = usePersonal();
   const [selectedId, setSelectedId] = useState("");
+  const [view, setView] = useState<HomeView>(readHomeView);
   const [pair, setPair] = useState(false);
   const [edit, setEdit] = useState<Device | null>(null);
   const [share, setShare] = useState(false);
-  const href = useLinks();
   const owned = devices.filter((device) => device.own);
   // Seen on the network (peer record or service advertisement) but not owned: shown here
   // so a device whose services appear in Services is never invisible on Home.
   const nearby = demo ? [] : devices.filter((device) => !device.own && !device.self);
   const selected = owned.find((device) => device.id === selectedId) || owned[0];
-  const offered = services.filter(
-    (service) => service.deviceId === selected?.id,
+  const offered = services.filter((service) => service.deviceId === selected?.id);
+  const groups = groupHomeDevices(owned);
+  const tone = groups.find((group) => group.devices.some((device) => device.id === selected?.id))?.tone ?? "blue";
+  const changeView = (next: HomeView) => {
+    setView(next);
+    writeHomeView(next);
+  };
+  const workspace = (columns: 2 | 3) => (
+    <>
+      <NearbyPanel nearby={nearby} services={services} />
+      {selected && (
+        <>
+          <DeviceHero
+            device={selected}
+            tone={tone}
+            serviceTotal={offered.length}
+            serviceReady={offered.filter((service) => service.online).length}
+            onEdit={() => setEdit(selected)}
+            onShare={() => setShare(true)}
+          />
+          <HomeServices device={selected} offered={offered} loading={loading} columns={columns} />
+        </>
+      )}
+    </>
   );
   return (
-    <div className="pf-page">
+    <div className="pf-page rh-home">
       <PageHeading
         title={t("nav.home")}
         description={t("pages.homeSubtitle")}
       >
-        <button className="pf-button dark" onClick={() => setPair(true)}>
+        <button className="rh-btn primary" onClick={() => setPair(true)}>
           <Plus size={19} />
           {t("personal.addDevice")}
         </button>
       </PageHeading>
+      <HomeStats owned={owned} services={services} />
       {error && (
         <div className="pf-callout">
           {error}
@@ -183,99 +200,40 @@ export function PersonalHome() {
           </button>
         </div>
       )}
-      <DeviceTopology
-        devices={owned}
-        selected={selected}
-        loading={loading}
-        demo={demo}
-        onSelect={setSelectedId}
-        onEdit={setEdit}
-        onShare={() => setShare(true)}
-      />
-      {nearby.length > 0 && (
-        <section
-          className="pf-panel pf-nearby"
-          aria-label={t("personal.discoveredNearbyCount", { count: nearby.length })}
-        >
-          <div className="pf-section-heading">
-            <div>
-              <h2>{t("personal.discoveredNearbyCount", { count: nearby.length })}</h2>
-              <p>{t("personal.discoveredNearbyHint")}</p>
-            </div>
-            <Link className="pf-link" to={href("/devices")}>
-              {t("personal.reviewDiscoveredDevices")}
-            </Link>
-          </div>
-          <ul className="pf-nearby-list">
-            {nearby.slice(0, 5).map((device) => {
-              const advertised = services.filter(
-                (service) => service.deviceId === device.id,
-              ).length;
-              return (
-                <li key={device.id}>
-                  <DeviceArt kind={device.kind} small />
-                  <span className="pf-nearby-name">
-                    <strong>{device.name}</strong>
-                    <small>
-                      {t("personal.notConnected")}
-                      {advertised > 0 &&
-                        ` · ${t("personal.advertisedServiceCount", { count: advertised })}`}
-                    </small>
-                  </span>
-                  <Status online={device.online} />
-                  <Link
-                    className="pf-button"
-                    to={href(`/devices?device=${encodeURIComponent(device.id)}`)}
-                  >
-                    {t("personal.connectDevice")}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
-      {selected && (
-        <div className="pf-home-services">
-          <section>
-            <div className="pf-section-heading">
-              <div>
-                <h2>{t("personal.servicesOnName", { name: selected.name })}</h2>
-                <p>{t("personal.fromYourName", { name: selected.name })}</p>
-              </div>
-            </div>
-            <div className="pf-panel pf-service-stack">
-              {offered.map((service) => (
-                <ServiceRow service={service} compact key={service.id} />
-              ))}
-              {!offered.length && (
-                <Empty
-                  title={
-                    loading ? t("personal.findingServices") : t("personal.noServicesOnThisDevice")
-                  }
-                >
-                  {loading ? (
-                    t("personal.checkingYourConnectedDevices")
-                  ) : (
-                    <Link to={href("/services/manage")}>
-                      {t("personal.setUpAServiceOnThisDevice")}
-                    </Link>
-                  )}
-                </Empty>
-              )}
-              <Link className="pf-browse-row" to={href("/services")}>
-                <Share2 size={29} strokeWidth={1.4} />
-                <div>
-                  <h3>{t("personal.fromOtherDevices")}</h3>
-                  <small>{t("personal.browseServicesFromYourOtherDevices")}</small>
-                </div>
-                <span>
-                  {t("personal.browseServices")} <Arrow />
-                </span>
-              </Link>
-            </div>
-          </section>
+      <div className="rh-head2">
+        <h2>
+          {t("personal.myDevices")} <span>({owned.length})</span>
+        </h2>
+        <ViewSwitch view={view} onChange={changeView} />
+      </div>
+      {view === "list" ? (
+        <div className="rh-bench">
+          <DeviceRail
+            groups={groups}
+            selectedId={selected?.id}
+            loading={loading}
+            onSelect={setSelectedId}
+            onShowMap={() => changeView("map")}
+          />
+          <div className="rh-work">{workspace(2)}</div>
         </div>
+      ) : (
+        <>
+          <div className="rh-map">
+            <DeviceTopology
+              devices={owned}
+              selected={selected}
+              loading={loading}
+              demo={demo}
+              hideHeading
+              hideDetail
+              onSelect={setSelectedId}
+              onEdit={setEdit}
+              onShare={() => setShare(true)}
+            />
+          </div>
+          <div className="rh-work wide">{workspace(3)}</div>
+        </>
       )}
       {pair && <PairDevice onClose={() => setPair(false)} />}{" "}
       {edit && <EditDevice device={edit} onClose={() => setEdit(null)} />}{" "}

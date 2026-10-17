@@ -1770,5 +1770,8 @@
   "连接已完成，此接入支持聊天，不支持助手工具。": "连接已完成，此接入支持聊天，不支持助手工具。",
   "Not connected — connect this device to use its models": "未连接 — 请先连接该设备后再使用其模型",
   "Personal Space AI access is off — turn it on to use this device's models": "个人空间的 AI 访问已关闭 — 开启后才能使用该设备的模型",
-  "Device unreachable — check the connection": "设备无法连接 — 请检查网络连接"
+  "Device unreachable — check the connection": "设备无法连接 — 请检查网络连接",
+  "{{count}} installed": "已安装 {{count}} 个",
+  "Not installed": "未安装",
+  "{{count}} not installed": "未安装 {{count}} 个"
 }

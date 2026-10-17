@@ -36,6 +36,7 @@ def initialize(row: dict, *, legacy: bool = False) -> None:
                           "verifier": None, "status": "pending", "evidence_refs": []}],
                plan={"revision": 0, "goal_revision": 1, "steps": []}, criteria_proposals=[],
                pending_input=None, scope_revision=1, scope={"resource_grants": [], "egress_grants": []},
+               observed_files={},
                outcome={"status": "unverified", "goal_revision": 1, "criteria_results": [],
                         "summary": "", "evidence_refs": [], "uncertainties": ["Independent goal verification is not available."]})
     if legacy:
@@ -76,6 +77,7 @@ def migrate(data: dict) -> dict:
             for required in ("goal", "criteria", "plan", "control_revision", "event_cursor", "pending_input", "outcome", "scope_revision", "scope"):
                 if required not in row:
                     raise ValueError("incomplete Agent task state")
+            row.setdefault("observed_files", {})
             synchronize(row)
     if data.get("context_budget_version", 0) < 1:
         # 120000 was the default ceiling, not an owner choice; a model's declared

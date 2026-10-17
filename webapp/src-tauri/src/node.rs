@@ -314,9 +314,13 @@ pub fn restart(state: &NodeState) -> std::io::Result<()> {
 
 /// Control requests stay on loopback and honor an operator-provided local token.
 pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_json::Value, String> {
+    request_within(port, method, path, body, Duration::from_secs(2))
+}
+/// `request` for slow operations such as starting an editor, which verifies its files first.
+pub fn request_within(port: u16, method: &str, path: &str, body: &str, read_timeout: Duration) -> Result<serde_json::Value, String> {
     let addr = format!("127.0.0.1:{port}").parse().map_err(|_| "invalid_port")?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(600)).map_err(|_| "node_unavailable")?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(read_timeout));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     let token = std::env::var("RYNMESH_LOCAL_TOKEN").unwrap_or_default();
     if token.contains(['\r', '\n']) { return Err("invalid_local_token".into()); }
@@ -326,12 +330,24 @@ pub fn request(port: u16, method: &str, path: &str, body: &str) -> Result<serde_
     let mut buf = String::new();
     stream.take(65536).read_to_string(&mut buf).map_err(|_| "node_unavailable")?;
     let (header, payload) = buf.split_once("\r\n\r\n").ok_or("invalid_response")?;
+    if header.lines().next().unwrap_or("").split_whitespace().nth(1) == Some("404") {
+        return Err("node_endpoint_not_found".into());
+    }
     if !header.lines().next().unwrap_or("").contains(" 200 ") { return Err("node_request_rejected".into()); }
     serde_json::from_str(payload).map_err(|_| "invalid_response".into())
 }
 pub fn health_ok(port: u16) -> bool {
-    request(port, "GET", "/api/local/desktop/status", "")
-        .map(|v| v["desktop_managed"] == true).unwrap_or(false)
+    managed_health(|path| request(port, "GET", path, ""))
+}
+
+fn managed_health(mut read: impl FnMut(&str) -> Result<serde_json::Value, String>) -> bool {
+    let response = match read("/api/local/desktop/health") {
+        // An already-running older managed peer may not have the cheap route.
+        // Timeouts and invalid replies must never fall back to heavy metadata.
+        Err(error) if error == "node_endpoint_not_found" => read("/api/local/desktop/status"),
+        response => response,
+    };
+    response.map(|v| v["desktop_managed"] == true).unwrap_or(false)
 }
 
 /// Bound boot waiting by wall time, including socket timeouts.
@@ -344,4 +360,38 @@ pub fn wait_healthy(port: u16) -> bool {
         std::thread::sleep(Duration::from_millis(150));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn liveness_uses_the_cheap_health_route() {
+        assert!(managed_health(|path| {
+            assert_eq!(path, "/api/local/desktop/health");
+            Ok(serde_json::json!({"desktop_managed": true}))
+        }));
+        assert!(!managed_health(|_| Ok(serde_json::json!({"desktop_managed": false}))));
+    }
+
+    #[test]
+    fn legacy_status_is_only_used_when_health_is_missing() {
+        let mut paths = Vec::new();
+        assert!(managed_health(|path| {
+            paths.push(path.to_owned());
+            if path.ends_with("/health") { Err("node_endpoint_not_found".into()) }
+            else { Ok(serde_json::json!({"desktop_managed": true})) }
+        }));
+        assert_eq!(paths, ["/api/local/desktop/health", "/api/local/desktop/status"]);
+        for error in ["node_unavailable", "invalid_response", "node_request_rejected"] {
+            let mut calls = 0;
+            assert!(!managed_health(|path| {
+                calls += 1;
+                assert_eq!(path, "/api/local/desktop/health");
+                Err(error.into())
+            }));
+            assert_eq!(calls, 1);
+        }
+    }
 }

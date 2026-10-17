@@ -47,7 +47,7 @@ export default function CraftPluginLibrary({ catalog, busy, onAdd, onOpen, onTog
       const label = text(app.id);
       const builtin = app.kind === "builtin_adapter";
       const installable = app.installable ?? app.web;
-      const capability = !app.enabled ? text("agentWithPlugin") : builtin ? app.id === "nas" ? text("scopedFiles") : text("businessOperations", { count: app.agent_tools.length }) : text("infoTool");
+      const capability = !app.enabled ? text("agentWithPlugin") : builtin ? app.id === "nas" ? text("scopedFiles") : text("businessOperations", { count: app.agent_tools.length }) : text(app.editing_supported ? "documentTools" : app.automation_supported ? "automationSetupLabel" : "infoTool");
       return <article className={`craft-library-card ${app.installed && !app.enabled ? "is-disabled" : ""}`} data-tool={app.id} key={app.id}>
         <div className="craft-library-card-heading"><CraftPluginIcon app={app} /><div><h3>{label}</h3><p>{app.name}<span>·</span>{app.version}</p></div><details className="craft-library-menu"><summary aria-label={text("more", { name: label })}><Ellipsis size={19} /></summary><div><button onClick={() => onDetails(app)}><Info size={15} />{text("details")}</button>{app.installed && <button className="danger" disabled={busy || app.busy} onClick={() => onUninstall(app)}><Trash2 size={15} />{text("uninstall")}</button>}</div></details></div>
         <p className="craft-library-description">{text(`descriptions.${app.id}`, { defaultValue: app.name })}</p>

@@ -11,8 +11,10 @@ NAME = "ryn_discover_tools"
 # replace the loaded set, because every kept schema crowds out conversation.
 ADDITIVE_CAPACITY = 48000
 # Exposed on every step while they fit, in priority order when space is tight.
+PLUGIN_DISCOVERY_TOOLS = ("ryn_list_plugins",)
 CORE_TOOLS = ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_apply_patch", "ryn_file_edit",
               "ryn_file_write", "ryn_file_list", "ryn_process_read")
+BROWSER_TOOLS = ("ryn_browser_open", "ryn_browser_read", "ryn_browser_action")
 SPEC = {"type": "function", "function": {"name": NAME,
     "description": "Load exact business-tool schemas by name. load adds tools to those already exposed (small context windows replace them instead); unload removes them; load [] clears loaded tools. Core workstation tools that are already exposed stay available and need no loading. Available names appear in load.items.enum when they fit. Optional cursor browses bounded brief descriptions; next_cursor continues. The least recently loaded schemas may be released for space; reload absent tools. Loading never grants permission.",
     "parameters": {"type": "object", "properties": {
@@ -45,7 +47,7 @@ def release(state):
     """Drop only the reloadable schema cache, never permission or tool data."""
     if state.get("mode") != "directory" or not (state.get("loaded_names") or state.get("pinned_names")):
         return copy.deepcopy(state)
-    # Pinned core tools yield too, until the goal or context epoch changes.
+    # Pinned core tools yield too, until the goal, context epoch or pinned set changes.
     return {**copy.deepcopy(state), "loaded_names": [], "pinned_names": [], "pins_released": True,
             "revision": state["revision"] + 1}
 
@@ -84,20 +86,36 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         raise AgentError("agent_tool_definition_changed")
     if any(name not in by_name for name in loaded):
         raise AgentError("agent_tool_definition_changed")
+    requested_pins = [name for name in dict.fromkeys(pinned_names) if name in by_name]
+    prior_candidates = prior.get("pinned_candidates", prior.get("pinned_names", []))
+    pins_changed = bool(prior.get("mode") == "directory" and prior_candidates != requested_pins)
+    has_browser_pins = any(name in BROWSER_TOOLS for name in requested_pins)
     pinned = []
-    seed_limit = min(limit, max(target, min(16000, max_context_bytes // 3)))
-    # Pins use at most a tenth of the window: in small windows they would
-    # crowd out the conversation and force extra compaction calls.
-    pin_limit = min(seed_limit, max_context_bytes // 10)
-    released = bool(same and prior.get("pins_released"))
+    seed_cap = 20000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 16000
+    pin_floor = 18000 if has_browser_pins else 14000
+    seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
+    if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
+        seed_limit = min(limit, max(seed_limit, pin_floor))
+    # Pins use at most a tenth of the window in small contexts where they would
+    # crowd out conversation; normal additive windows (>= ADDITIVE_CAPACITY)
+    # reserve enough quota to keep PLUGIN_DISCOVERY_TOOLS + CORE_TOOLS (+ BROWSER_TOOLS when enabled) exposed.
+    pin_limit = (
+        min(seed_limit, max(pin_floor, max_context_bytes // 6))
+        if max_context_bytes >= ADDITIVE_CAPACITY
+        else min(seed_limit, max_context_bytes // 10)
+    )
+    released = bool(same and not pins_changed and prior.get("pins_released"))
+    if pins_changed:
+        removed_candidates = set(prior_candidates) - set(requested_pins)
+        loaded = [name for name in loaded if name not in removed_candidates]
     if mode == "directory" and not released:
-        for name in pinned_names:
-            if name in by_name and name not in pinned:
+        for name in requested_pins:
+            if name not in pinned:
                 candidate = [*base, *(by_name[item] for item in [*pinned, name])]
                 if len(encoded(candidate)) <= pin_limit:
                     pinned.append(name)
         loaded = [name for name in loaded if name not in pinned]
-    if mode == "directory" and (not prior.get("mode") or not same):
+    if mode == "directory" and (not prior.get("mode") or not same or (pins_changed and not released)):
         for name in initial_names:
             if name in by_name and name not in loaded and name not in pinned:
                 candidate = [*base, *(by_name[item] for item in [*pinned, *loaded, name])]
@@ -117,6 +135,10 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
                   "revision": prior.get("revision", 0)}
     if pinned or prior.get("pinned_names"):
         next_state["pinned_names"] = pinned
+    if requested_pins != list(CORE_TOOLS) and (requested_pins or prior.get("pinned_candidates")):
+        next_state["pinned_candidates"] = requested_pins
+    elif prior.get("pinned_candidates"):
+        next_state["pinned_candidates"] = requested_pins
     if released:
         next_state["pins_released"] = True
     if any(prior.get(key) != value for key, value in next_state.items() if key != "revision"):

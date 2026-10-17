@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -47,13 +47,13 @@ it("keeps project conversations grouped and can collapse, open and start them", 
   const chooseTask = vi.fn(), newTask = vi.fn(), changed = vi.fn(), user = userEvent.setup();
   server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project, secondProject] })));
   render(<RynAgentProject value={project.id} onChange={changed} tasks={[task("chat-task", "Repair backend", project), task("ryn-task", "Update agent", secondProject), task("general-task", "General question")]} activeTaskID="chat-task" onSelectTask={chooseTask} onNewTask={newTask} />);
-  expect(await screen.findByRole("button", { name: /Repair backend/ })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: /Update agent/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /General question/ })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Repair backend" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Update agent" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "General question" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Hide tasks in chat-backend" }));
-  expect(screen.queryByRole("button", { name: /Repair backend/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Repair backend" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Show tasks in chat-backend" }));
-  await user.click(screen.getByRole("button", { name: /Repair backend/ }));
+  await user.click(screen.getByRole("button", { name: "Repair backend" }));
   expect(chooseTask).toHaveBeenCalledWith("chat-task");
   await user.click(screen.getByRole("button", { name: "New task in chat-backend" }));
   expect(newTask).toHaveBeenCalledOnce();
@@ -97,10 +97,112 @@ it("adds another project and reloads it without duplicating or removing saved ro
   await user.click(screen.getAllByRole("button", { name: "Load project" })[1]);
   await screen.findByRole("button", { name: /rynmesh ·/ });
   expect(projectsChanged).toHaveBeenLastCalledWith([project, secondProject]);
-  await user.click(screen.getByRole("button", { name: "Reload rynmesh" }));
+  await user.click(screen.getByRole("button", { name: "Project actions for rynmesh" }));
+  await user.click(screen.getByRole("menuitem", { name: "Reload rynmesh" }));
   await waitFor(() => expect(changed).toHaveBeenCalledTimes(2));
   expect(screen.getAllByRole("button", { name: /rynmesh ·/ })).toHaveLength(1);
   expect(screen.getByRole("button", { name: /chat-backend ·/ })).toBeInTheDocument();
+});
+
+it("opens project actions with right click and renames only the project label", async () => {
+  const changed = vi.fn(), projectsChanged = vi.fn(), requested = vi.fn(), user = userEvent.setup();
+  const renamed = { ...project, name: "Backend services" };
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project, secondProject] })),
+    http.patch("*/api/local/agent/projects/:id", async ({ request, params }) => { requested(params.id, await request.json()); return HttpResponse.json(renamed); }));
+  render(<RynAgentProject value={project.id} onChange={changed} onProjectsChange={projectsChanged} />);
+  fireEvent.contextMenu(await screen.findByRole("button", { name: /chat-backend ·/ }), { clientX: 42, clientY: 86 });
+  const menu = screen.getByRole("menu", { name: "Project actions for chat-backend" });
+  await user.click(within(menu).getByRole("menuitem", { name: "Rename project" }));
+  const dialog = screen.getByRole("dialog", { name: "Rename project" });
+  const name = within(dialog).getByRole("textbox", { name: "Name" });
+  expect(name).toHaveValue(project.name);
+  expect(name).toHaveFocus();
+  await user.clear(name); await user.type(name, "  Backend services  ");
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("button", { name: /Backend services ·/ })).toHaveAttribute("title", project.path);
+  expect(requested).toHaveBeenCalledWith(project.id, { name: "Backend services" });
+  expect(projectsChanged).toHaveBeenLastCalledWith([renamed, secondProject]);
+  expect(changed).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("confirms project removal, keeps other projects and clears the unchanged selection", async () => {
+  const changed = vi.fn(), projectsChanged = vi.fn(), requested = vi.fn(), user = userEvent.setup();
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project, secondProject] })),
+    http.delete("*/api/local/agent/projects/:id", ({ params }) => { requested(params.id); return HttpResponse.json({ removed: true }); }));
+  render(<RynAgentProject value={project.id} onChange={changed} onProjectsChange={projectsChanged} />);
+  await user.click(await screen.findByRole("button", { name: "Project actions for chat-backend" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+  const dialog = screen.getByRole("dialog", { name: "Remove project" });
+  expect(dialog).toHaveTextContent("Its folder and conversations will be kept");
+  expect(dialog).toHaveTextContent("Unfinished tasks in this project will be paused");
+  expect(requested).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Remove project" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /chat-backend ·/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /rynmesh ·/ })).toBeInTheDocument();
+  expect(requested).toHaveBeenCalledWith(project.id);
+  expect(projectsChanged).toHaveBeenLastCalledWith([secondProject]);
+  expect(changed).toHaveBeenCalledWith("");
+});
+
+it("retains a project and its removal dialog after the server rejects removal", async () => {
+  const changed = vi.fn(), user = userEvent.setup();
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project] })),
+    http.delete("*/api/local/agent/projects/:id", () => HttpResponse.json({}, { status: 503 })));
+  render(<RynAgentProject value={project.id} onChange={changed} />);
+  await user.click(await screen.findByRole("button", { name: "Project actions for chat-backend" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove project" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not remove the project");
+  expect(screen.getByRole("button", { name: /chat-backend ·/ })).toBeInTheDocument();
+  expect(changed).not.toHaveBeenCalled();
+});
+
+it("publishes a deferred removal without replacing a newer selected conversation", async () => {
+  const changed = vi.fn(), projectsChanged = vi.fn(), requested = vi.fn(), user = userEvent.setup();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project, secondProject] })),
+    http.delete("*/api/local/agent/projects/:id", async () => { requested(); await gate; return HttpResponse.json({ removed: true }); }));
+  const props = { onChange: changed, onProjectsChange: projectsChanged, tasks: [task("newer", "Newer task", secondProject)], onSelectTask: vi.fn() };
+  const view = render(<RynAgentProject {...props} value={project.id} />);
+  await user.click(await screen.findByRole("button", { name: "Project actions for chat-backend" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove project" }));
+  await waitFor(() => expect(requested).toHaveBeenCalledOnce());
+  view.rerender(<RynAgentProject {...props} value={secondProject.id} activeTaskID="newer" />);
+  await act(async () => { release(); await gate; });
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(projectsChanged).toHaveBeenLastCalledWith([secondProject]);
+  expect(changed).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /Newer task/ })).toHaveAttribute("aria-pressed", "true");
+});
+
+it("does not let a stale initial list restore a project removed from cached conversations", async () => {
+  const changed = vi.fn(), projectsChanged = vi.fn(), user = userEvent.setup();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get("*/api/local/agent/projects", async () => { await gate; return HttpResponse.json({ projects: [project, secondProject], selected_project_id: project.id }); }),
+    http.delete("*/api/local/agent/projects/:id", () => HttpResponse.json({ removed: true })));
+  render(<RynAgentProject value={project.id} onChange={changed} onProjectsChange={projectsChanged} tasks={[task("old", "Cached task", project)]} />);
+  await user.click(screen.getByRole("button", { name: "Project actions for chat-backend" }));
+  await user.click(screen.getByRole("menuitem", { name: "Remove project" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove project" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  await act(async () => { release(); await gate; });
+  await screen.findByRole("button", { name: /rynmesh ·/ });
+  expect(screen.queryByRole("button", { name: /chat-backend ·/ })).not.toBeInTheDocument();
+  expect(projectsChanged).toHaveBeenLastCalledWith([secondProject]);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledWith("");
+});
+
+it("uses the supplied conversation row renderer for project tasks", async () => {
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project] })));
+  render(<RynAgentProject value={project.id} onChange={vi.fn()} tasks={[task("one", "Project conversation", project), { ...task("two", "Archived conversation", project), archived: true }]} renderTask={entry => <button aria-label={`Actions for ${entry.title}`}>{entry.title}</button>} />);
+  expect(await screen.findByRole("button", { name: "Actions for Project conversation" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Archived conversation" })).not.toBeInTheDocument();
 });
 
 it("uses the desktop folder picker to load a project by its absolute path", async () => {
@@ -196,6 +298,25 @@ it.each(["select", "new task"])("does not replace a newer conversation when a de
   expect(changed).not.toHaveBeenCalled();
   expect(newTask).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: /Newer task/ })).toHaveAttribute("aria-pressed", "true");
+});
+
+it.each(["select", "new task"])("keeps a newer empty draft in the same project when a deferred project %s completes", async action => {
+  const changed = vi.fn(), newTask = vi.fn(), requested = vi.fn(), user = userEvent.setup();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  server.use(http.get("*/api/local/agent/projects", () => HttpResponse.json({ projects: [project, secondProject] })),
+    http.post("*/api/local/agent/projects/selection", async () => { requested(); await gate; return HttpResponse.json({ selected_project_id: secondProject.id }); }));
+  const props = { value: project.id, activeTaskID: "", onChange: changed, onNewTask: newTask };
+  const view = render(<RynAgentProject {...props} navigationRevision={4} />);
+  await user.click(await screen.findByRole("button", { name: action === "select" ? /rynmesh ·/ : "New task in rynmesh" }));
+  await waitFor(() => expect(requested).toHaveBeenCalledOnce());
+  // A fresh draft can have the same project and empty task ID as the previous page.
+  view.rerender(<RynAgentProject {...props} navigationRevision={5} />);
+  await act(async () => { release(); await gate; });
+  await waitFor(() => expect(screen.getByRole("button", { name: /rynmesh ·/ })).toBeEnabled());
+  expect(changed).not.toHaveBeenCalled();
+  expect(newTask).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /chat-backend ·/ })).toHaveAttribute("aria-pressed", "true");
 });
 
 it("publishes a deferred project load without leaving a newer selected conversation", async () => {

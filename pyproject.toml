@@ -116,7 +116,7 @@ include = ["rynmesh*"]
 "rynmesh.services" = ["rynmesh-vpn"]
 # Built webapp, folded in by scripts/build_release.zsh so the node serves its
 # own UI. Absent in a source checkout — the daemon simply skips the mount.
-"rynmesh" = ["webui/**/*", "locales/*.json"]
+"rynmesh" = ["webui/**/*", "locales/*.json", "bin/*"]
 
 [tool.ruff]
 line-length = 100

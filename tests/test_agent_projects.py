@@ -338,3 +338,73 @@ def test_larger_owner_context_budget_still_respects_selected_model_window(tmp_pa
     runtime.catalog.list_models = lambda: [{**base, "context_window": 32768, "max_output_tokens": 4096}]
     assert runtime._context_limit(row) < 98000
     assert runtime.get(created["id"])["limits"]["max_context_chars"] == 384000
+
+
+def test_project_destination_change_rebinds_same_or_new_model_and_resumes_explicitly(tmp_path):
+    from test_agent_runtime_model_switch import body
+    runtime, model, _, _ = project_runtime(tmp_path / "state")
+    selected = runtime.load_project({"path": str(project_folder(tmp_path))})
+    task = runtime.create({"message": "Inspect project", "project_id": selected["id"]})
+    task_id = task["id"]
+
+    # Record prior epoch assistant/tool history before source destination changes
+    def seed_old_epoch(data):
+        row = data["tasks"][task_id]
+        row["messages"].extend([
+            {"role": "assistant", "content": "OLD_EPOCH_SECRET", "context_epoch": 0},
+        ])
+
+    runtime.store.transaction(seed_old_epoch)
+    changed = {**runtime.catalog.list_models()[0], "destination_revision": "other-endpoint"}
+    runtime.catalog.list_models = lambda: [changed]
+    runtime.run_once()
+    assert not model.calls
+    failed = runtime.get(task_id)
+    assert failed["status"] == "failed"
+    assert failed["error"] == "agent_model_destination_changed"
+
+    # Previewing the same model_id with its new destination revision allows project scope transfer
+    preview = runtime.preview_model_switch(task_id, "local:test")
+    assert preview["current_project"]["id"] == selected["id"]
+    assert preview["current_scope_authorized"] is True
+    assert preview["destination"]["destination_revision"] == "other-endpoint"
+
+    # Stale expected_destination is still rejected
+    req = body(runtime, task_id, "local:test", transfer_resource_scope=True)
+    with pytest.raises(AgentError, match="agent_model_destination_changed"):
+        runtime.switch_model(task_id, {**req, "expected_destination": {**req["expected_destination"], "destination_revision": "fixture-v1"}})
+
+    # Explicit owner confirmation rebinds destination, retains project, retires old epoch projection, and stays paused
+    switched = runtime.switch_model(task_id, req)
+    assert switched["status"] == "paused"
+    assert switched["error"] is None
+    assert switched["project"]["id"] == selected["id"]
+    stored = runtime.store.read()["tasks"][task_id]
+    assert stored["model_destination"]["destination_revision"] == "other-endpoint"
+    assert stored["model_destination_confirmed"] is True
+    assert stored["context_epoch"] == 1
+    assert stored["local_execution"]["project_id"] == selected["id"]
+    runtime._validate_context(stored)
+    projected = json.dumps(runtime._context(stored))
+    assert "OLD_EPOCH_SECRET" not in projected
+    assert "Preserve existing changes. Run isolated tests." in projected
+
+    # Does not run until explicit owner resume
+    runtime.run_once()
+    assert not model.calls
+    model.responses.append(assistant("Project inspected after explicit destination rebind."))
+    original_complete = model.complete
+    model.complete = lambda *args, **kwargs: original_complete(*args)
+    runtime.action(task_id, {"action": "resume", "expected_control_revision": switched["control_revision"]})
+    runtime.run_once()
+    completed = runtime.get(task_id)
+    assert completed["status"] == "completed"
+    assert completed["result"] == "Project inspected after explicit destination rebind."
+    assert len(model.calls) == 1
+
+    # If the project itself is removed, scope transfer is no longer authorized
+    runtime.remove_project(selected["id"])
+    assert runtime.preview_model_switch(task_id, "local:test")["current_scope_authorized"] is False
+    with pytest.raises(AgentError, match="agent_project_unavailable"):
+        runtime.switch_model(task_id, body(runtime, task_id, "local:test", transfer_resource_scope=True))
+

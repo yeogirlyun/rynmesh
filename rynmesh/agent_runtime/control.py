@@ -39,32 +39,56 @@ def remember_request(row, value):
         row.setdefault("control_requests", {})[value["client_request_id"]] = hashlib.sha256(encoded(value)).hexdigest()
 
 
-def ambiguous(row):
+def recoverable_read_in_flight(row):
+    from .execution_policy import verified_read_classification
     flight = row.get("in_flight") or {}
-    return row.get("error") == "agent_write_outcome_unknown" or (row["status"] == "interrupted" and flight.get("effect") == "write" and flight.get("dispatched"))
+    if not flight:
+        return False
+    if flight.get("effect") == "read":
+        return True
+    return verified_read_classification(
+        flight,
+        task_id=row.get("id", ""),
+        workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+    )
+
+
+def ambiguous(row):
+    from .execution_policy import verified_read_classification
+    flight = row.get("in_flight") or {}
+    if row.get("error") == "agent_write_outcome_unknown":
+        return True
+    if row["status"] == "interrupted" and flight.get("effect") == "write" and flight.get("dispatched"):
+        return not verified_read_classification(
+            flight,
+            task_id=row.get("id", ""),
+            workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+        )
+    return False
 
 
 def allowed_actions(row, settings):
     status, flight = row["status"], row.get("in_flight")
     enabled = settings.get("enabled", False)
     uncertain = ambiguous(row)
+    recoverable_read = status == "interrupted" and recoverable_read_in_flight(row) and not uncertain
     active = status in {"queued", "running", "waiting_approval", "waiting_input"}
     mutable = enabled and not uncertain and status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"}
     possible = {"pause": active, "cancel": status not in {"completed", "failed", "cancelled"},
-                "resume": enabled and status in {"paused", "interrupted"} and not flight and not uncertain,
+                "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
                 "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},
                 "deny": enabled and status == "waiting_approval" and bool(row["pending_approval"]),
                 "answer": enabled and status == "waiting_input" and bool(row.get("pending_input")) and row["pending_input"]["kind"] != "credential_ref",
                 "steer": mutable, "information": mutable, "scope": not uncertain and status != "cancelled",
-                "reconcile": enabled and uncertain and row.get("reconciliation", {}).get("state") not in {"pending", "running"}
-                             and row.get("reconciliation", {}).get("attempts", 0) < 3}
+                "reconcile": enabled and ((uncertain and row.get("reconciliation", {}).get("attempts", 0) < 3) or recoverable_read)
+                             and row.get("reconciliation", {}).get("state") not in {"pending", "running"}}
     safe_lifecycle = not flight and not row.get("queue") and not uncertain and status in {"completed", "failed", "cancelled", "paused"}
-    possible.update(archive=safe_lifecycle and not row.get("archived"), restore=bool(row.get("archived")), delete=safe_lifecycle)
+    possible.update(rename=True, archive=safe_lifecycle and not row.get("archived"), restore=bool(row.get("archived")), delete=safe_lifecycle)
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
     possible["model"] = not flight and not uncertain and not row.get("pending_control") and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted"}
     if row.get("archived"):
-        possible = {action: allowed if action in {"restore", "delete"} else False for action, allowed in possible.items()}
+        possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
     return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "cancel"},
                      "reason": None if allowed else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "cancel"} else "agent_invalid_transition"}
             for action, allowed in possible.items()}
@@ -95,11 +119,18 @@ def settle(row, emit):
         return
     if control["kind"] != "pause":
         row.pop("verification", None)
-        close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope"} else "agent_cancelled", keep_flight=False)
+        close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
     row["messages"].extend(row.pop("pending_user_messages", []))
-    if control["kind"] in {"steer", "scope"}:
+    if control["kind"] in {"steer", "scope", "permissions"}:
         row["status"] = "paused" if control.get("remain_paused") else "queued"
         row["error"] = None
         row["model_retry_count"] = 0
         row.pop("model_retry_authority", None)
+    if control["kind"] in {"pause", "cancel"}:
+        stop_type = "paused" if control["kind"] == "pause" else "cancelled"
+        stopped = next((item for item in reversed(row["events"]) if item["type"] == stop_type), {})
+        if stopped.get("operation_in_flight") is True:
+            # The stop intent precedes its final accounting. Persist the settled
+            # clock before a later owner turn can reset the current run counter.
+            emit(row, "run_settled", reason=control["kind"], operation_in_flight=False)
     row.pop("pending_control", None)

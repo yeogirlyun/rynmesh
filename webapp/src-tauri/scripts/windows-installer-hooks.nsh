@@ -104,5 +104,50 @@ FunctionEnd
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Ryn"
   StrCmp $0 '$\"$INSTDIR\Ryn.exe$\"' 0 +2
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Ryn"
+  !insertmacro RYN_REMOVE_SYSTEM_APPS
   ${EndIf}
+!macroend
+
+; Start menu apps and "Open with" entries Ryn creates per installed editor (src/system_apps).
+; Upgrades keep them; Ryn rewrites them on its next start. A unit test keeps this list complete.
+!macro RYN_REMOVE_SYSTEM_APPS
+  Delete "$SMPROGRAMS\Ryn PDF.lnk"
+  Delete "$SMPROGRAMS\Ryn Word.lnk"
+  Delete "$SMPROGRAMS\Ryn Excel.lnk"
+  Delete "$SMPROGRAMS\Ryn PPT.lnk"
+  Delete "$SMPROGRAMS\Ryn CAD.lnk"
+  Delete "$SMPROGRAMS\Ryn Layout.lnk"
+  Delete "$SMPROGRAMS\Ryn Effects.lnk"
+  Delete "$SMPROGRAMS\Ryn UI Design.lnk"
+  Delete "$SMPROGRAMS\Ryn Photo.lnk"
+  Delete "$SMPROGRAMS\Ryn Image.lnk"
+  Delete "$SMPROGRAMS\Ryn Audio.lnk"
+  Delete "$SMPROGRAMS\Ryn Vector.lnk"
+  Delete "$SMPROGRAMS\Ryn Resume.lnk"
+  Delete "$SMPROGRAMS\Ryn Recruit.lnk"
+  Delete "$SMPROGRAMS\Ryn Desk.lnk"
+  Delete "$SMPROGRAMS\Ryn Drive.lnk"
+  !insertmacro RYN_REMOVE_FILE_TYPE "pdfcraft" "pdf"
+  !insertmacro RYN_REMOVE_FILE_TYPE "wordcraft" "docx"
+  !insertmacro RYN_REMOVE_FILE_TYPE "wordcraft" "doc"
+  !insertmacro RYN_REMOVE_FILE_TYPE "wordcraft" "odt"
+  !insertmacro RYN_REMOVE_FILE_TYPE "wordcraft" "rtf"
+  !insertmacro RYN_REMOVE_FILE_TYPE "gridcraft" "xlsx"
+  !insertmacro RYN_REMOVE_FILE_TYPE "gridcraft" "xls"
+  !insertmacro RYN_REMOVE_FILE_TYPE "gridcraft" "ods"
+  !insertmacro RYN_REMOVE_FILE_TYPE "gridcraft" "csv"
+  !insertmacro RYN_REMOVE_FILE_TYPE "deckcraft" "pptx"
+  !insertmacro RYN_REMOVE_FILE_TYPE "deckcraft" "ppsx"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "Ryn PDF"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "Ryn Word"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "Ryn Excel"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "Ryn PPT"
+  DeleteRegKey HKCU "Software\Ryn\Apps"
+  ; SHCNE_ASSOCCHANGED: Explorer drops the removed "Open with" choices.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+!macroend
+
+!macro RYN_REMOVE_FILE_TYPE APP EXT
+  DeleteRegKey HKCU "Software\Classes\Ryn.${APP}.${EXT}"
+  DeleteRegValue HKCU "Software\Classes\.${EXT}\OpenWithProgids" "Ryn.${APP}.${EXT}"
 !macroend

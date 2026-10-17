@@ -487,5 +487,16 @@
   "serviceNeedsConnection": "该服务仅提供给设备所有者自己的设备。请先连接该设备后再使用；服务提供方会校验每个请求。",
   "advertisedServiceCount": "已发布 {{count}} 项服务",
   "advertisedServiceCount_one": "已发布 {{count}} 项服务",
-  "advertisedServiceCount_other": "已发布 {{count}} 项服务"
+  "advertisedServiceCount_other": "已发布 {{count}} 项服务",
+  "homeOnlineCount": "{{count}} 台在线",
+  "homeOfflineCount": "{{count}} 台离线",
+  "homeServiceCount": "{{count}} 项服务",
+  "homeServiceCount_one": "{{count}} 项服务",
+  "homeServiceCount_other": "{{count}} 项服务",
+  "homeServiceSummary": "{{count}} 项服务 · {{ready}} 项可用",
+  "homeServiceSummary_one": "{{count}} 项服务 · {{ready}} 项可用",
+  "homeServiceSummary_other": "{{count}} 项服务 · {{ready}} 项可用",
+  "homeViewLabel": "设备视图",
+  "homeViewList": "列表",
+  "homeViewMap": "地图"
 }

@@ -11,7 +11,6 @@ import json
 import re
 import time
 import uuid
-
 from concurrent.futures import ThreadPoolExecutor
 
 from jsonschema import ValidationError, validate
@@ -27,7 +26,7 @@ from . import (
     verification,
 )
 from .control import settle
-from .execution_policy import decide
+from .execution_policy import classify_operation, decide
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
@@ -39,11 +38,16 @@ from .prompt import (
 from .protocol import digest, event, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
 
-
 # Side-effect-free workstation reads that one model response may run concurrently.
 PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search", "ryn_process_read",
                             "ryn_project_inspect", "ryn_local_environment"})
 MAX_PARALLEL_READS = 8
+# Streaming text has an immediate in-memory display projection. Keep recoverable
+# checkpoints coalesced instead of encrypting the task for every token.
+# Tool intents, receipts and the complete assistant message retain their commits.
+STREAM_MIN_PERSIST_SECONDS = 0.5
+STREAM_MAX_PERSIST_SECONDS = 1.0
+STREAM_PERSIST_CHARS = 512
 
 
 class AgentLoop:
@@ -84,7 +88,13 @@ class AgentLoop:
         self.store.transaction(refresh)
 
     def _model(self, selected: dict, cancelled, started: float) -> None:
+        preparation_started = time.monotonic()
+        scheduler_wait_seconds = float(selected.get("_scheduler_wait_seconds", 0.0))
+        claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
+        prep_persistence_seconds = 0.0
+        t0 = time.monotonic()
         self._reserve_output(selected)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         self._validate_context(selected)
         (specs, menu_state), _ = self._menu(selected)
         menu_reason = "projection"
@@ -95,7 +105,9 @@ class AgentLoop:
             if row.get("tool_menu") != menu_state:
                 row["tool_menu"] = menu_state
                 event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
+        t0 = time.monotonic()
         self.store.transaction(save_menu)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         selected = {**selected, "tool_menu": menu_state}
         messages = self._context(selected)
         context_limit = self._context_limit(selected)
@@ -117,7 +129,9 @@ class AgentLoop:
                 # remain discoverable, and dispatch validates the new exposure.
                 menu_state = tool_menu.release(menu_state)
                 menu_reason = "context_space"
+                t0 = time.monotonic()
                 self.store.transaction(save_menu)
+                prep_persistence_seconds += max(0.0, time.monotonic() - t0)
                 selected = {**selected, "tool_menu": menu_state}
                 specs = self._specs(selected)
                 if not self._compact(selected, cancelled, started):
@@ -125,7 +139,9 @@ class AgentLoop:
             # Reload durable context without restarting this tick's deadline.
             selected = {**task(self.store.read(), selected["id"]),
                         **{key: selected[key] for key in ("_model_retry_authority", "_run_control_revision",
-                                                          "_run_started", "_run_lifetime_remaining")}}
+                                                          "_run_started", "_run_lifetime_remaining",
+                                                          "_scheduler_wait_seconds", "_claim_persistence_seconds")
+                           if key in selected}}
             messages = self._context(selected)
         if len(encoded(messages)) + len(encoded(specs)) > context_limit:
             raise AgentError("agent_context_limit")
@@ -142,23 +158,31 @@ class AgentLoop:
             row["steps"] += 1
             row["in_flight"]["dispatched"] = True
             event(row, "model_started", step=row["steps"])
-            return True
-        if not self.store.transaction(mark):
+            return row["steps"]
+        t0 = time.monotonic()
+        step = self.store.transaction(mark)
+        if not step:
             return
-        stream = {"text": "", "at": time.monotonic(), "total": 0}
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+        live_stream = self._start_stream(selected, step)
+        stream = {"text": "", "at": time.monotonic(), "total": 0,
+                  "writes": 0, "write_seconds": 0.0, "first_text_seconds": None}
 
         def flush_stream():
             if not stream["text"]:
                 return
             chunk = stream["text"]
             stream["text"] = ""
-            stream["at"] = time.monotonic()
 
             def append(data):
                 row = task(data, selected["id"])
                 if row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
                     event(row, "text_delta", step=row["steps"], text=chunk)
+            write_started = time.monotonic()
             self.store.transaction(append)
+            stream["at"] = time.monotonic()
+            stream["write_seconds"] += stream["at"] - write_started
+            stream["writes"] += 1
 
         def on_event(metadata):
             if not isinstance(metadata, dict) or metadata.get("type") != "text_delta" or not isinstance(metadata.get("text"), str):
@@ -166,13 +190,23 @@ class AgentLoop:
             stream["total"] += len(metadata["text"].encode())
             if stream["total"] > selected["limits"]["max_output_chars"]:
                 raise AgentError("agent_output_limit")
-            stream["text"] += sanitized(metadata["text"])
-            if len(stream["text"]) >= 512 or time.monotonic() - stream["at"] >= 0.25:
+            if metadata["text"] and stream["first_text_seconds"] is None:
+                stream["first_text_seconds"] = time.monotonic() - request_started
+            text = sanitized(metadata["text"])
+            stream["text"] += text
+            self._append_stream(selected["id"], live_stream, text)
+            since_write = time.monotonic() - stream["at"]
+            if (stream["writes"] == 0 or
+                    (since_write >= STREAM_MIN_PERSIST_SECONDS and
+                     (len(stream["text"]) >= STREAM_PERSIST_CHARS or since_write >= STREAM_MAX_PERSIST_SECONDS))):
                 flush_stream()
 
         if cancelled():
             raise AgentError(cancelled.reason)
+        request_started = time.monotonic()
+        preparation_seconds = request_started - preparation_started
         response = self._complete(selected, messages, specs, cancelled, on_event)
+        response_received = time.monotonic()
         if cancelled():
             raise AgentError(cancelled.reason)
         flush_stream()
@@ -204,7 +238,7 @@ class AgentLoop:
                 call_id, name, arguments = call["id"], call["function"]["name"], call["function"]["arguments"]
                 if not isinstance(call_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", call_id) or call_id in ids:
                     raise ValueError
-                if not isinstance(name, str) or not isinstance(arguments, str):
+                if not isinstance(name, str) or not isinstance(arguments, str) or len(arguments.encode("utf-8")) > output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES:
                     raise ValueError
                 args = json.loads(arguments)
                 if not isinstance(args, dict):
@@ -224,6 +258,20 @@ class AgentLoop:
         if calls:
             message["tool_calls"] = [{"id": call["call_id"], "type": "function", "function": {"name": call["name"], "arguments": encoded(call["arguments"]).decode()}} for call in pending]
 
+        # Inclusive wall-clock phases, not provider-only inference time. Stream
+        # persistence is a subset of model_call/response_processing; completion
+        # commit time is excluded. Store this with the existing assistant commit.
+        timing = {"scheduler_wait_seconds": round(scheduler_wait_seconds, 4),
+                  "preparation_seconds": round(preparation_seconds, 4),
+                  "preparation_persistence_seconds": round(prep_persistence_seconds, 4),
+                  "model_call_seconds": round(response_received - request_started, 4),
+                  "response_processing_seconds": round(time.monotonic() - response_received, 4),
+                  "store_persistence_seconds": round(claim_persistence_seconds + prep_persistence_seconds + stream["write_seconds"], 4),
+                  "stream_persistence_seconds": round(stream["write_seconds"], 4),
+                  "stream_persistence_count": stream["writes"],
+                  "first_text_seconds": (round(stream["first_text_seconds"], 4)
+                                         if stream["first_text_seconds"] is not None else None)}
+
         def finish(data):
             row = task(data, selected["id"])
             row["in_flight"] = None
@@ -240,7 +288,7 @@ class AgentLoop:
             row["model_retry_count"] = 0
             row.pop("model_retry_authority", None)
             row.pop("rejected_response_note", None)
-            event(row, "assistant", content=message["content"], tool_count=len(pending))
+            event(row, "assistant", content=message["content"], tool_count=len(pending), timing=timing)
             if pending:
                 row.pop("answer_continuation", None)
                 row["status"] = "queued"
@@ -507,7 +555,12 @@ class AgentLoop:
         return False
 
     def _tool(self, selected: dict, cancelled, started: float) -> None:
+        preparation_started = time.monotonic()
+        claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
+        prep_persistence_seconds = 0.0
+        t0 = time.monotonic()
         self._reserve_output(selected)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         call = selected["queue"][0]
         if call["name"] in INTERNAL_NAMES:
             self._internal_tool(selected, started)
@@ -515,8 +568,16 @@ class AgentLoop:
         batch = selected["queue"][:MAX_PARALLEL_READS]
         batch = batch[:next((index for index, item in enumerate(batch)
                              if item["name"] not in PARALLEL_READS or item["effect"] != "read" or item.get("internal")), len(batch))]
-        if len(batch) > 1 and self._tool_batch(selected, batch, cancelled, started):
-            return
+        if len(batch) > 1:
+            batch_handled, batch_prep_persistence = self._tool_batch(
+                selected, batch, cancelled, started,
+                preparation_started=preparation_started,
+                claim_persistence_seconds=claim_persistence_seconds,
+                prep_persistence_seconds=prep_persistence_seconds,
+            )
+            if batch_handled:
+                return
+            prep_persistence_seconds = batch_prep_persistence
         meta = self.tools.metadata(call["name"])
         if meta.get("effect") != call["effect"]:
             raise AgentError("agent_tool_definition_changed")
@@ -532,10 +593,13 @@ class AgentLoop:
         if call["effect"] == "write" and hasattr(self.tools, "preview"):
             preview_options = {"context": self._execution_context(selected, call["operation_id"])} if meta.get("scope_context_supported") else {}
             preview = sanitized(self.tools.preview(call["name"], copy.deepcopy(call["arguments"]), **preview_options))
-            if len(encoded(preview)) > selected["limits"]["max_output_chars"]:
+            if len(encoded(preview)) > max(selected["limits"]["max_output_chars"], output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES):
                 raise AgentError("agent_output_limit")
 
+        authorized_classification = None
+
         def authorize(data):
+            nonlocal authorized_classification
             row = task(data, selected["id"])
             authorization = "read"
             if row["status"] != "running" or not data["settings"]["enabled"] or row["control_revision"] != selected["_run_control_revision"]:
@@ -543,7 +607,19 @@ class AgentLoop:
                 row["elapsed_seconds"] += time.monotonic() - started
                 settle(row, event)
                 return "stopped"
-            if call["effect"] == "read" and self._read_retries_exhausted(row, call):
+            classification = classify_operation(
+                call["name"],
+                call["arguments"],
+                meta,
+                operation_id=call["operation_id"],
+                task_id=row["id"],
+                workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+                goal_revision=row["goal"]["revision"],
+                scope_revision=row["scope_revision"],
+                context_epoch=row.get("context_epoch", 0),
+                control_revision=row["control_revision"],
+            )
+            if (call["effect"] == "read" or classification["effect_class"] == "read") and self._read_retries_exhausted(row, call):
                 raise AgentToolRejected("agent_read_retry_limit")
             decision = decide(call, meta, row, data["settings"])
             if decision.action == "deny":
@@ -580,8 +656,11 @@ class AgentLoop:
                     event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
                 authorization = "approved" if approved else decision.basis
             usage_reservation = budget.reserve(row, "tool", call["name"])
+            authorized_classification = classification
             row["in_flight"] = {**call, "kind": "tool", "dispatched": True, "authorization": authorization,
-                                "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
+                                "operation_classification": classification,
+                                "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
+                                "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                                 "authority": model_retry_authority(data["settings"]), "preview": preview}
             row["in_flight"]["permission_record"] = {
                 "basis": authorization, "operation_id": call["operation_id"], "arguments_sha256": digest(call["arguments"]),
@@ -593,22 +672,36 @@ class AgentLoop:
             row["approved"] = None  # One-shot capability, consumed durably before execution.
             event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], effect=call["effect"])
             return usage_reservation
+        t0 = time.monotonic()
         usage_reservation = self.store.transaction(authorize)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         if not isinstance(usage_reservation, dict):
             return
+        post_persistence_seconds = 0.0
         # A cancellation at this boundary has not dispatched the operation yet.
         if cancelled():
+            t0 = time.monotonic()
             self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
             raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
         execute_options = {"operation_id": call["operation_id"], "cancelled": cancelled}
         if meta.get("scope_context_supported"):
-            execute_options["context"] = self._tool_context(selected, call["operation_id"])
+            context = self._tool_context(selected, call["operation_id"])
+            context["context_epoch"] = selected.get("context_epoch", 0)
+            if authorized_classification is not None:
+                context["operation_classification"] = copy.deepcopy(authorized_classification)
+            execute_options["context"] = context
         if call["effect"] == "write" and meta.get("preview_precondition"):
             execute_options["expected_preview"] = copy.deepcopy(preview)
+        exec_started = time.monotonic()
+        preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
         try:
             result = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+            tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
         finally:
+            t0 = time.monotonic()
             self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
         origin = copy.deepcopy(result.get("origin")) if meta.get("scope_context_supported") and isinstance(result.get("origin"), dict) else None
         reference = None
         result_size = len(encoded(result))
@@ -616,11 +709,19 @@ class AgentLoop:
             def save_result(data):
                 task(data, selected["id"])  # A deleted/archived task cannot get a late blob.
                 return results.save(self.store, selected, call, result)
+            t0 = time.monotonic()
             reference = self.store.transaction(save_result)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
             if origin:
                 reference["resource_origin"] = origin
             result = {"result_ref": reference["id"], "output_sha256": reference["sha256"], "bytes": result_size,
                       "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome."}
+
+        store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
+        tool_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
+                       "preparation_seconds": round(preparation_seconds, 4),
+                       "tool_execution_seconds": round(tool_execution_seconds, 4),
+                       "store_persistence_seconds": round(store_persistence_seconds, 4)}
 
         def finish(data):
             row = task(data, selected["id"])
@@ -637,31 +738,37 @@ class AgentLoop:
             row["messages"].append(message)
             verification.record(row, call, "confirmed", now(), result=result)
             row["queue"].pop(0)
-            event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result, context_epoch=selected.get("context_epoch", 0))
+            event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
+                  result=result, context_epoch=selected.get("context_epoch", 0), timing=tool_timing)
             if row["status"] == "running":
                 row["status"] = "queued"
             settle(row, event)
         self.store.transaction(finish)
 
-    def _tool_batch(self, selected: dict, batch: list, cancelled, started: float) -> bool:
+    def _tool_batch(self, selected: dict, batch: list, cancelled, started: float, *,
+                    preparation_started: float | None = None,
+                    claim_persistence_seconds: float = 0.0,
+                    prep_persistence_seconds: float = 0.0) -> tuple[bool, float]:
         """Run consecutive local reads from one model response concurrently.
 
         Only side-effect-free workstation reads qualify. Authorization, receipts
         and results are persisted in two transactions like a single read; a
         restart during the batch interrupts it like any read (never ambiguous),
-        and unanswered calls stay queued. Returns False to use the ordinary
-        one-call path whenever any precondition differs from a plain read.
+        and unanswered calls stay queued. Returns (False, prep_persistence_seconds)
+        to use the ordinary one-call path whenever any precondition differs from a plain read.
         """
+        if preparation_started is None:
+            preparation_started = time.monotonic()
         specs = {item["function"]["name"]: item["function"] for item in self.tools.specs()}
         metas = {}
         for call in batch:
             meta = self.tools.metadata(call["name"])
             if meta.get("effect") != "read" or meta.get("requires_explicit_approval") or call["name"] not in specs:
-                return False
+                return False, prep_persistence_seconds
             try:
                 validate(call["arguments"], specs[call["name"]]["parameters"])
             except ValidationError:
-                return False
+                return False, prep_persistence_seconds
             metas[call["call_id"]] = meta
         call_ids = [call["call_id"] for call in batch]
 
@@ -680,9 +787,23 @@ class AgentLoop:
                 return None  # The one-call path reports the exhausted budget.
             flights = {}
             for call in batch:
+                classification = classify_operation(
+                    call["name"],
+                    call["arguments"],
+                    metas[call["call_id"]],
+                    operation_id=call["operation_id"],
+                    task_id=row["id"],
+                    workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+                    goal_revision=row["goal"]["revision"],
+                    scope_revision=row["scope_revision"],
+                    context_epoch=row.get("context_epoch", 0),
+                    control_revision=row["control_revision"],
+                )
                 flight = flights[call["call_id"]] = {**call, "kind": "tool", "dispatched": True, "authorization": "read",
+                          "operation_classification": classification,
                           "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
-                          "scope_revision": row["scope_revision"], "authority": model_retry_authority(data["settings"]), "preview": None,
+                          "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
+                          "authority": model_retry_authority(data["settings"]), "preview": None,
                           "permission_record": {"basis": "read", "operation_id": call["operation_id"],
                                                 "arguments_sha256": digest(call["arguments"]), "preview_sha256": digest(None),
                                                 "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"],
@@ -691,39 +812,64 @@ class AgentLoop:
                 event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], effect="read")
             row["in_flight"] = {**flights[batch[0]["call_id"]], "batch_call_ids": call_ids}
             return reservations
+        t0 = time.monotonic()
         reservations = self.store.transaction(authorize)
+        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         if reservations is None:
-            return False
+            return False, prep_persistence_seconds
+        post_persistence_seconds = 0.0
         if cancelled():
+            t0 = time.monotonic()
             for reservation in reservations:
                 self._settle_usage(selected["id"], reservation["id"], elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
             raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
 
         def run(call):
+            call_started = time.monotonic()
             options = {"operation_id": call["operation_id"], "cancelled": cancelled}
             if metas[call["call_id"]].get("scope_context_supported"):
                 options["context"] = self._tool_context(selected, call["operation_id"])
             try:
-                return sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options)), False
+                res = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))
+                return res, False, max(0.0, time.monotonic() - call_started)
             except AgentError as exc:
                 code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                extra = {}
+                if isinstance(exc, AgentToolRejected):
+                    if getattr(exc, "correction", None):
+                        extra["correction"] = sanitized(exc.correction[:1600])
+                    if getattr(exc, "details", None):
+                        extra["details"] = sanitized(copy.deepcopy(exc.details))
+                return {"error": code, "not_executed": isinstance(exc, AgentToolRejected), "no_mutation": True, **extra}, True, max(0.0, time.monotonic() - call_started)
             except Exception:
                 code = "agent_operation_failed"
             # The same receipt a failed dispatched read gets on the one-call path.
-            return {"error": code, "not_executed": False, "no_mutation": True}, True
+            return {"error": code, "not_executed": False, "no_mutation": True}, True, max(0.0, time.monotonic() - call_started)
+        exec_started = time.monotonic()
+        preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
         try:
             with ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="ryn-agent-read") as pool:
                 outcomes = list(pool.map(run, batch))
+            tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
         finally:
+            t0 = time.monotonic()
             for reservation in reservations:
                 self._settle_usage(selected["id"], reservation["id"], elapsed=time.monotonic() - started)
+            post_persistence_seconds += max(0.0, time.monotonic() - t0)
+
+        store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
+        lead_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
+                       "preparation_seconds": round(preparation_seconds, 4),
+                       "tool_execution_seconds": round(tool_execution_seconds, 4),
+                       "store_persistence_seconds": round(store_persistence_seconds, 4)}
 
         def finish(data):
             row = task(data, selected["id"])
             row["in_flight"] = None
             row["elapsed_seconds"] += time.monotonic() - started
             notice = self._budget_notice(row)
-            for index, (call, (result, failed)) in enumerate(zip(batch, outcomes)):
+            for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes)):
                 reference = None
                 origin = (copy.deepcopy(result.get("origin")) if metas[call["call_id"]].get("scope_context_supported")
                           and isinstance(result.get("origin"), dict) else None)
@@ -743,13 +889,25 @@ class AgentLoop:
                 row["messages"].append(message)
                 verification.record(row, call, "failed" if failed else "confirmed", now(), result=result)
                 row["queue"] = [item for item in row["queue"] if item["call_id"] != call["call_id"]]
+                item_timing = (
+                    {**lead_timing, "call_execution_seconds": round(call_exec_seconds, 4)}
+                    if index == 0
+                    else {
+                        "scheduler_wait_seconds": 0.0,
+                        "preparation_seconds": 0.0,
+                        "tool_execution_seconds": 0.0,
+                        "store_persistence_seconds": 0.0,
+                        "call_execution_seconds": round(call_exec_seconds, 4),
+                        "batch_shared": True,
+                    }
+                )
                 event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
-                      result=result, context_epoch=selected.get("context_epoch", 0))
+                      result=result, context_epoch=selected.get("context_epoch", 0), timing=item_timing)
             if row["status"] == "running":
                 row["status"] = "queued"
             settle(row, event)
         self.store.transaction(finish)
-        return True
+        return True, prep_persistence_seconds
 
     def _internal_tool(self, selected: dict, started: float) -> None:
         """Persist a bounded model proposal; never confer business authority."""

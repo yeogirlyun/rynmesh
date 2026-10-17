@@ -32,6 +32,7 @@ from .control import (
     ambiguous,
     check_version,
     close_queue,
+    recoverable_read_in_flight,
     remember_request,
     request_replayed,
     settle,
@@ -79,10 +80,16 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
                 active_run: dict | None = None, monotonic_now: float | None = None) -> dict:
     synchronize(row)
     result = copy.deepcopy({key: row[key] for key in PUBLIC_FIELDS if key in row and not (summary and key in {"messages", "events"})})
+    # Metadata changes advance revision too; only an actual completed response
+    # identifies a new completion for clients that were away from the task.
+    result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
+                                           if item["type"] == "completed"), 0)
     result.setdefault("archived", False)
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
+    if not summary:
+        result["streaming"] = None
     for message in result.get("messages", []):
         # Some providers require their opaque reasoning continuation field back.
         # Keep it encrypted internally; it is never an owner-facing transcript.
@@ -102,8 +109,10 @@ def detached(row: dict, *, summary: bool = False) -> dict:
     the outcome, so those are the parts copied here.
     """
     # A legacy row without a budget derives its usage from events.
+    # Keep the events reference for the read-only completion marker. Summaries
+    # still omit both events and messages from the public deep copy.
     shallow = {key: value for key, value in row.items()
-               if not (summary and "budget" in row and key in {"messages", "events"})}
+               if not (summary and "budget" in row and key == "messages")}
     if "outcome" in shallow:
         shallow["outcome"] = copy.deepcopy(shallow["outcome"])
     return shallow
@@ -115,15 +124,21 @@ def revision(row: dict, expected: Any) -> None:
 
 
 def write_permission_revoked(row: dict, settings: dict) -> bool:
+    from .execution_policy import decide, verified_read_classification
     flight = row.get("in_flight") or {}
+    if str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_")) and not settings.get("desktop_access"):
+        return True
     if flight.get("effect") != "write":
         return False
-    if flight.get("authorization") == "read":
+    if verified_read_classification(
+        flight,
+        task_id=row.get("id", ""),
+        workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+    ):
         return False
     if settings["permission_mode"] == "read_only":
         return True
     if flight.get("authorization") == "automatic":
-        from .execution_policy import decide
         return decide(flight, {"effect": flight["effect"]}, row, settings).action != "execute"
     return False
 
@@ -146,7 +161,10 @@ class AgentRuntime(AgentLoop):
         self._run_slots = threading.BoundedSemaphore(3)
         self._active_lock = threading.Lock()
         self._active_runs = {}
+        self._queued_since = {}
         self._step = threading.local()  # Whether this thread's last step ended normally.
+        self._stream_lock = threading.Lock()
+        self._streams = {}
         # Display only. Never used by admission, cancellation or persistence.
         self._active_run = None
 
@@ -166,6 +184,40 @@ class AgentRuntime(AgentLoop):
     def _task_run(self, task_id):
         with self._active_lock:
             return next((run.copy() for run in self._active_runs.values() if run["task_id"] == task_id), None)
+
+    def _start_stream(self, selected, step):
+        # Live text is a display projection, separate from encrypted recovery
+        # checkpoints. The provider callback must not wait on a disk commit for
+        # every token, and clients need not wait for the next checkpoint.
+        stream = {"step": step, "context_epoch": selected.get("context_epoch", 0),
+                  "control_revision": selected["_run_control_revision"], "text": ""}
+        with self._stream_lock:
+            self._streams[selected["id"]] = stream
+        self._step.stream = stream
+        return stream
+
+    def _append_stream(self, task_id, stream, text):
+        with self._stream_lock:
+            if self._streams.get(task_id) is stream:
+                stream["text"] += text
+
+    def _clear_stream(self, task_id, stream):
+        with self._stream_lock:
+            # A following worker may already own the task's next model step.
+            if self._streams.get(task_id) is stream:
+                self._streams.pop(task_id, None)
+
+    def _stream_snapshot(self, row):
+        with self._stream_lock:
+            stream = self._streams.get(row["id"])
+            flight = row.get("in_flight") or {}
+            if (not stream or not stream["text"] or row["status"] != "running"
+                    or flight.get("kind") != "model" or not flight.get("dispatched")
+                    or stream["control_revision"] != row["control_revision"]
+                    or stream["step"] != row["steps"]
+                    or stream["context_epoch"] != row.get("context_epoch", 0)):
+                return None
+            return {key: stream[key] for key in ("step", "context_epoch", "text")}
 
     def _context_limit(self, row):
         """Respect both the owner's byte ceiling and the selected model window.
@@ -192,14 +244,15 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_tool_definition_changed")
         pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"], "context_checkpoint": None}
         authority_bytes = len(encoded(self._context(pinned)))
+        desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
         return tool_menu.project(business_specs, INTERNAL_SPECS, row.get("tool_menu"),
             max_context_bytes=self._context_limit(row), authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
-            pinned_names=(("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS,
-            initial_names=("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
+            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + desktop,
+            initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list") if row.get("project") else
-                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search")), authority_bytes
+                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search")) + desktop), authority_bytes
 
     def _specs(self, row=None) -> list:
         specs = self.tools.specs()
@@ -525,6 +578,9 @@ class AgentRuntime(AgentLoop):
     def load_project(self, value: dict) -> dict:
         return self.store.transaction(lambda data: projects.register(data, value))
 
+    def rename_project(self, project_id: str, value: dict) -> dict:
+        return self.store.transaction(lambda data: projects.rename(data, project_id, value))
+
     def project_selection(self) -> str:
         data = self.store.read()
         ident = data.get("selected_project_id", "")
@@ -586,6 +642,7 @@ class AgentRuntime(AgentLoop):
                 data["settings"]["workspace_root"] = root
                 data["settings_revision"] = data.get("settings_revision", 0) + 1
             row.setdefault("local_execution", {})["workspace_root"] = data["settings"]["workspace_root"]
+            row["observed_files"] = {}
             close_queue(row, event, "agent_owner_changed")
             row.update(pending_input=None, approved=None, status="queued", error=None, result="", steps=0, elapsed_seconds=0.0)
             row.pop("verification", None)
@@ -629,6 +686,8 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_invalid_settings")
 
         def update(data):
+            workspace_changed = "workspace_root" in values and values["workspace_root"] != data["settings"].get("workspace_root")
+            desktop_changed = "desktop_access" in values and bool(values["desktop_access"]) != bool(data["settings"].get("desktop_access"))
             permission_changed = any(key in values and values[key] != data["settings"].get(key) for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
             if "model_id" in values and data.get("default_model_destination"):
@@ -639,13 +698,24 @@ class AgentRuntime(AgentLoop):
             data["settings"].update(values)
             if permission_changed:
                 for row in data["tasks"].values():
+                    if desktop_changed and not row.get("archived"):
+                        row.setdefault("local_execution", {})["desktop_access"] = bool(data["settings"].get("desktop_access"))
                     if row["status"] not in TERMINAL:
                         row.update(approved=None, pending_approval=None)
+                        if workspace_changed:
+                            row["observed_files"] = {}
                         if row["status"] == "waiting_approval":
                             row["status"] = "queued"
+                        if row.get("in_flight") and (row.get("pending_control") or {}).get("kind") not in {"pause", "cancel"}:
+                            prior_control = row.get("pending_control") or {}
+                            row["pending_control"] = {
+                                "kind": prior_control.get("kind", "permissions"),
+                                "remain_paused": bool(prior_control.get("remain_paused")) or row["status"] != "running" or not data["settings"]["enabled"],
+                            }
                         event(row, "permissions_changed")
                         if row.get("pending_input"):
                             row["pending_input"]["control_revision"] = row["control_revision"]
+                        settle(row, event)
             if values.get("enabled") is False:
                 for row in data["tasks"].values():
                     if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} or ambiguous(row):
@@ -733,11 +803,12 @@ class AgentRuntime(AgentLoop):
             current = public_task(detached(row, summary=since_revision == row["revision"]), settings=data["settings"],
                                   active_run=self._task_run(task_id), monotonic_now=time.monotonic(),
                                   summary=since_revision == row["revision"])
+            current["streaming"] = self._stream_snapshot(row)
             if since_revision != row["revision"]:
                 return current
             # Unchanged since the caller's copy: only fields that move on their own.
             return {"id": task_id, "revision": row["revision"], "unchanged": True,
-                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state") if key in current}}
+                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming") if key in current}}
         found = self.store.inspect(view)
         if found is not None:
             return found
@@ -748,6 +819,31 @@ class AgentRuntime(AgentLoop):
     def lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
         with credential_control.gate(self.store, task_id):
             return self._lifecycle(task_id, value, operation)
+
+    def rename_task(self, task_id: str, value: dict) -> dict:
+        if set(value) - {"title", "expected_control_revision", "client_request_id"}:
+            raise AgentError("agent_invalid_request")
+        title = value.get("title")
+        if not isinstance(title, str) or not title.strip() or len(title) > 160 or any(ord(char) < 32 for char in title):
+            raise AgentError("agent_invalid_title")
+        keyed = {**value, "metadata_action": "rename"}
+
+        def rename(data):
+            row = lifecycle.find(self.store, data, task_id)
+            if request_replayed(row, keyed):
+                return public_task(row, settings=data["settings"])
+            check_version(row, value)
+            row["title"] = title.strip()
+            # A display label changes the poll revision, never execution authority.
+            # Advancing control_revision here would discard an active model result
+            # or invalidate the owner's pending tool approval.
+            event(row, "title_changed")
+            remember_request(row, keyed)
+            if row.get("archived"):
+                lifecycle.archive_store(self.store, task_id).transaction(lambda archive: archive["tasks"].update({task_id: row}))
+                data["archives"][task_id]["updated_at"] = row["updated_at"]
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(rename)
 
     def _lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
         result = lifecycle.change(self.store, task_id, value, operation, event, now)
@@ -914,7 +1010,10 @@ class AgentRuntime(AgentLoop):
             event(row, "created")
             data["tasks"][row["id"]] = row
             return public_task(row, settings=settings)
-        return self.store.transaction(create)
+        created = self.store.transaction(create)
+        if created.get("status") == "queued":
+            self._queued_since[created["id"]] = time.monotonic()
+        return created
 
     def add_message(self, task_id: str, value: dict) -> dict:
         if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort"}:
@@ -968,10 +1067,10 @@ class AgentRuntime(AgentLoop):
             row.update(approved=None, pending_approval=None, pending_input=None, result="")
             row.setdefault("pending_user_messages", []).append(message)
             row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and intent is not None}
-            event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
-            close_queue(row, event, "agent_owner_changed")
             if ended or intent is None:
                 row.update(steps=0, elapsed_seconds=0.0)
+            event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
+            close_queue(row, event, "agent_owner_changed")
             settle(row, event)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
@@ -1014,10 +1113,21 @@ class AgentRuntime(AgentLoop):
             elif action == "resume":
                 if row["status"] not in {"paused", "interrupted"}:
                     raise AgentError("agent_invalid_transition")
-                if row["in_flight"]:
-                    raise AgentError("agent_operation_unresolved")
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
+                if row["in_flight"]:
+                    if not recoverable_read_in_flight(row) or ambiguous(row):
+                        raise AgentError("agent_operation_unresolved")
+                    flight = row["in_flight"]
+                    err_code = row.get("error") or "agent_read_interrupted"
+                    cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
+                    if not cleanup_ok:
+                        raise AgentError("agent_operation_unresolved")
+                    if flight.get("effect") == "write":
+                        self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+                    row["in_flight"] = None
+                    row["approved"] = None
+                    settle(row, event)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
                 event(row, "resumed")
@@ -1080,13 +1190,182 @@ class AgentRuntime(AgentLoop):
             elif action == "reconcile":
                 if not allowed_actions(row, data["settings"])["reconcile"]["enabled"] or not hasattr(self.tools, "reconcile"):
                     raise AgentError("agent_invalid_transition")
-                row["reconciliation"] = {"state": "pending", "attempts": row.get("reconciliation", {}).get("attempts", 0)}
-                event(row, "reconciliation_requested")
+                if recoverable_read_in_flight(row) and not ambiguous(row):
+                    flight = row["in_flight"]
+                    err_code = row.get("error") or "agent_read_interrupted"
+                    attempts = row.get("reconciliation", {}).get("attempts", 0) + 1
+                    cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
+                    if not cleanup_ok:
+                        row["reconciliation"] = {
+                            "state": "unknown",
+                            "attempts": attempts,
+                            "operation_id": flight.get("operation_id"),
+                            "reason": "agent_operation_unresolved",
+                            "checked_at": now(),
+                        }
+                        event(row, "reconciliation_finished", outcome="unknown", operation_id=flight.get("operation_id"), continued=False)
+                    else:
+                        outcome = "not_executed"
+                        if flight.get("effect") == "write":
+                            outcome = self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+                        row["in_flight"] = None
+                        row["approved"] = None
+                        settle(row, event)
+                        may_continue = self._read_may_continue_after_restart(row, flight, data)
+                        row["reconciliation"] = {
+                            "state": "executed" if outcome == "confirmed" else "not_executed",
+                            "attempts": attempts,
+                            "operation_id": flight.get("operation_id"),
+                            "checked_at": now(),
+                        }
+                        row.update(status="queued" if may_continue else "paused", error=None)
+                        event(row, "reconciliation_finished", outcome=row["reconciliation"]["state"], operation_id=flight.get("operation_id"), continued=may_continue)
+                else:
+                    row["reconciliation"] = {"state": "pending", "attempts": row.get("reconciliation", {}).get("attempts", 0)}
+                    event(row, "reconciliation_requested")
             else:
                 raise AgentError("agent_invalid_action")
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(apply)
+
+    def _recover_read_operation_details(
+        self, row: dict, flight: dict | None, *, error: str = "agent_read_interrupted"
+    ) -> tuple[bool, dict]:
+        from .execution_policy import WORKSPACE_TOOLS
+        recover = getattr(self.tools, "recover_operation", None)
+        if not callable(recover) and getattr(self.tools, "local", None) is not None:
+            recover = getattr(self.tools.local, "recover_operation", None)
+        if not callable(recover):
+            ok = (flight or {}).get("name") not in WORKSPACE_TOOLS
+            return ok, (
+                {
+                    "ok": True,
+                    "ledger_outcome": "failed",
+                    "settled_result": {"error": error, "not_executed": False, "no_mutation": True},
+                }
+                if ok
+                else {"ok": False}
+            )
+        try:
+            stopped = recover(
+                row["id"],
+                (flight or {}).get("operation_id"),
+                error=error,
+                operation_classification=(flight or {}).get("operation_classification"),
+            )
+        except Exception:
+            return False, {"ok": False}
+        ok = (
+            isinstance(stopped, dict)
+            and stopped.get("still_running") is False
+            and not stopped.get("cleanup_error")
+            and not stopped.get("process_ids")
+            and stopped.get("ok", True) is not False
+            and stopped.get("ledger_settled", True) is not False
+        )
+        return ok, (stopped if isinstance(stopped, dict) else {"ok": False})
+
+    def _recover_read_operation(self, row: dict, flight: dict | None, *, error: str = "agent_read_interrupted") -> bool:
+        ok, _ = self._recover_read_operation_details(row, flight, error=error)
+        return ok
+
+    def _settle_interrupted_read(
+        self, row: dict, flight: dict, error_code: str, *, recovery: dict | None = None
+    ) -> str:
+        call_id = flight.get("call_id")
+        outcome = (recovery or {}).get("ledger_outcome")
+        if outcome not in {"confirmed", "not_executed", "failed"}:
+            outcome = "failed"
+        if not call_id:
+            return outcome
+        raw_result = (recovery or {}).get("settled_result")
+        if isinstance(raw_result, dict):
+            result = sanitized(copy.deepcopy(raw_result))
+        elif outcome == "not_executed":
+            result = {"error": error_code, "not_executed": True, "no_mutation": True}
+        else:
+            result = {"error": error_code, "not_executed": False, "no_mutation": True}
+        epoch = flight.get("context_epoch", row.get("context_epoch", 0))
+        if outcome == "confirmed":
+            result_size = len(encoded(result))
+            if result_size > row["limits"]["max_output_chars"]:
+                reference = results.save(self.store, row, flight, result)
+                row.setdefault("result_refs", []).append(reference)
+                result = {
+                    "result_ref": reference["id"],
+                    "output_sha256": reference["sha256"],
+                    "bytes": result_size,
+                    "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome.",
+                }
+        row["messages"].append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": encoded(result).decode(),
+            "context_epoch": epoch,
+        })
+        verification.record(row, flight, outcome, now(), result=result, flight=flight)
+        row["queue"] = [call for call in row.get("queue", []) if call.get("call_id") != call_id]
+        event(
+            row,
+            "tool_result",
+            tool=flight.get("name"),
+            call_id=call_id,
+            operation_id=flight.get("operation_id"),
+            result=result,
+            context_epoch=epoch,
+        )
+        return outcome
+
+    def _read_may_continue_after_restart(self, row: dict, flight: dict, data: dict) -> bool:
+        if (
+            not data["settings"].get("enabled")
+            or row.get("pending_control")
+            or row.get("pending_input")
+            or row.get("pending_approval")
+            or flight.get("control_revision") != row["control_revision"]
+            or flight.get("goal_revision") != row["goal"]["revision"]
+            or flight.get("scope_revision") != row["scope_revision"]
+            or flight.get("context_epoch", 0) != row.get("context_epoch", 0)
+            or flight.get("authority") != model_retry_authority(data["settings"])
+            or write_permission_revoked(row, data["settings"])
+            or row["steps"] >= row["limits"]["max_steps"]
+            or row["elapsed_seconds"] >= row["limits"]["max_seconds"]
+            or budget.time_remaining(row) <= 0
+        ):
+            return False
+        budget_state = budget.public(row)
+        limits = budget_state["limits"]
+        lifetime = budget_state["lifetime"]
+        if (
+            lifetime["charged_tokens"] >= limits["max_total_tokens"]
+            or lifetime["charged_model_calls"] >= limits["max_total_model_calls"]
+            or lifetime["charged_tool_calls"] >= limits["max_total_tool_calls"]
+        ):
+            return False
+        bound = row.get("local_execution") or {}
+        if bound.get("project_id"):
+            try:
+                project = projects.validate_binding(
+                    data,
+                    {
+                        "id": bound["project_id"],
+                        "path": bound.get("workspace_root"),
+                        "generation": bound.get("project_generation"),
+                    },
+                )
+                current_root = project["path"]
+            except AgentError:
+                return False
+        else:
+            current_root = data["settings"].get("workspace_root") or self.store.default_workspace()
+        if bound.get("workspace_root", "") != current_root:
+            return False
+        try:
+            self._validate_context(row, cheap_only=True, control_state=data)
+        except AgentError:
+            return False
+        return True
 
     def reconcile(self) -> None:
         """Called once at node construction, before worker startup."""
@@ -1094,21 +1373,80 @@ class AgentRuntime(AgentLoop):
             return
 
         def reconcile(data):
+            from .execution_policy import verified_read_classification
             for row in data["tasks"].values():
                 budget.abandon(row)
                 flight = row.get("in_flight")
                 if flight or row["status"] == "running" or row.get("approved"):
-                    was_cancelled = row["status"] == "cancelled"
-                    ambiguous = bool(flight and flight.get("effect") == "write" and flight.get("dispatched"))
-                    row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous else "agent_node_restarted")
-                    if ambiguous:
+                    was_cancelled = row["status"] == "cancelled" or (row.get("pending_control") or {}).get("kind") == "cancel"
+                    was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") == "pause"
+                    workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
+                    is_verified_read = bool(
+                        flight
+                        and flight.get("dispatched")
+                        and verified_read_classification(flight, task_id=row["id"], workspace_root=workspace_root)
+                    )
+                    ambiguous_write = bool(
+                        flight
+                        and flight.get("effect") == "write"
+                        and flight.get("dispatched")
+                        and not is_verified_read
+                    )
+                    cleanup_ok = True
+                    recovery = None
+                    if is_verified_read or (flight and flight.get("effect") == "read" and flight.get("dispatched")):
+                        cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error="agent_node_restarted")
+                    if is_verified_read and flight.get("effect") == "write":
+                        if not cleanup_ok:
+                            row.update(
+                                status="cancelled" if was_cancelled else "interrupted",
+                                approved=None,
+                                error="agent_node_restarted",
+                            )
+                            event(
+                                row,
+                                "interrupted",
+                                ambiguous_write=False,
+                                continued=False,
+                                cleanup_confirmed=False,
+                            )
+                            continue
+                        may_continue = (
+                            not was_cancelled
+                            and not was_paused
+                            and self._read_may_continue_after_restart(row, flight, data)
+                        )
+                        settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
+                        row["in_flight"] = None
+                        row["approved"] = None
+                        settle(row, event)
+                        if was_cancelled:
+                            row.update(status="cancelled", error="agent_node_restarted")
+                        elif was_paused:
+                            row.update(status="paused", error="agent_node_restarted")
+                        elif may_continue:
+                            row.update(status="queued", error=None)
+                        else:
+                            row.update(status="interrupted", error="agent_node_restarted")
+                        event(
+                            row,
+                            "interrupted",
+                            ambiguous_write=False,
+                            continued=may_continue,
+                            cleanup_confirmed=True,
+                            ledger_outcome=settled_outcome,
+                        )
+                        continue
+                    row.update(status="interrupted", approved=None, error="agent_write_outcome_unknown" if ambiguous_write else "agent_node_restarted")
+                    if ambiguous_write:
                         verification.record(row, flight, "unknown", now(), flight=flight)
                         self._schedule_reconciliation(row)
-                    if not ambiguous:
-                        row["in_flight"] = None
-                        settle(row, event)
+                    if not ambiguous_write:
+                        if cleanup_ok:
+                            row["in_flight"] = None
+                            settle(row, event)
                         row["status"] = "cancelled" if was_cancelled else "interrupted"
-                    event(row, "interrupted", ambiguous_write=ambiguous)
+                    event(row, "interrupted", ambiguous_write=ambiguous_write)
         self.store.transaction(reconcile)
 
     def _schedule_reconciliation(self, row):
@@ -1215,19 +1553,58 @@ class AgentRuntime(AgentLoop):
             event(row, "reconciliation_finished", outcome=result["outcome"], operation_id=operation_id, continued=may_continue)
         self.store.transaction(save)
 
-    def _fail(self, task_id: str, code: str, *, elapsed: float = 0.0) -> None:
+    def _fail(self, task_id: str, code: str, *, elapsed: float = 0.0, read_cleanup_ok: bool | None = None, read_recovery: dict | None = None) -> None:
         def fail(data):
+            from .execution_policy import verified_read_classification
             row = task(data, task_id)
             row["elapsed_seconds"] += elapsed
             flight = row["in_flight"]
-            ambiguous = bool(flight and flight.get("effect") == "write" and flight.get("dispatched"))
-            if ambiguous:
+            workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
+            is_verified_read = bool(
+                flight
+                and flight.get("dispatched")
+                and verified_read_classification(flight, task_id=row["id"], workspace_root=workspace_root)
+            )
+            ambiguous_write = bool(
+                flight
+                and flight.get("effect") == "write"
+                and flight.get("dispatched")
+                and not is_verified_read
+            )
+            if ambiguous_write:
+                if (row.get("pending_control") or {}).get("kind") == "permissions":
+                    row.pop("pending_control", None)
                 verification.record(row, flight, "unknown", now(), flight=flight)
                 row.update(status="interrupted", error="agent_write_outcome_unknown", approved=None, pending_approval=None)
                 self._schedule_reconciliation(row)
                 event(row, "interrupted", error=row["error"], ambiguous_write=True)
             else:
+                if is_verified_read:
+                    if read_cleanup_ok is None:
+                        cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=code)
+                    else:
+                        cleanup_ok, recovery = read_cleanup_ok, read_recovery
+                    if not cleanup_ok:
+                        if (row.get("pending_control") or {}).get("kind") == "permissions":
+                            row.pop("pending_control", None)
+                        row.update(status="interrupted", error=code, approved=None, pending_approval=None)
+                        event(
+                            row,
+                            "interrupted",
+                            error=code,
+                            ambiguous_write=False,
+                            continued=False,
+                            cleanup_confirmed=False,
+                        )
+                        return
+                    self._settle_interrupted_read(row, flight, code, recovery=recovery)
                 row["in_flight"] = None
+                if (row.get("pending_control") or {}).get("kind") == "permissions" and code not in {
+                    "agent_owner_changed",
+                    "agent_cancelled",
+                    "agent_permission_denied",
+                }:
+                    row.pop("pending_control", None)
                 if row.get("pending_control"):
                     settle(row, event)
                 elif row["status"] in {"running", "queued"}:
@@ -1235,16 +1612,16 @@ class AgentRuntime(AgentLoop):
                     event(row, "failed", error=code)
         self.store.transaction(fail)
 
-    def _operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None) -> None:
+    def _operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None, correction=None, details=None) -> None:
         try:
-            self._handle_operation_error(selected, code, started, definitely_not_executed=definitely_not_executed, read_connection=read_connection)
+            self._handle_operation_error(selected, code, started, definitely_not_executed=definitely_not_executed, read_connection=read_connection, correction=None if code == "agent_owner_changed" else correction, details=details)
         except AgentError as exc:
             if str(exc) not in {"agent_task_not_found", "agent_task_deleted"}:
                 raise
             # A late operation from a retired process cannot resurrect a task
             # deleted after restart reconciliation cleared its read flight.
 
-    def _handle_operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None) -> None:
+    def _handle_operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None, correction=None, details=None) -> None:
         """Only proven no-side-effect failures may return to the correction loop."""
         if selected.get("verification"):
             def verification_failed(data):
@@ -1265,6 +1642,7 @@ class AgentRuntime(AgentLoop):
                         return
                     verification.finish(row, error=code)
                     event(row, "verification_finished", outcome=row["outcome"]["status"], error=code)
+                    event(row, "completed")
             self.store.transaction(verification_failed)
             return
         if code in RETRYABLE_MODEL_ERRORS and not selected["queue"]:
@@ -1275,16 +1653,18 @@ class AgentRuntime(AgentLoop):
                     return False
                 row["elapsed_seconds"] += time.monotonic() - started
                 row["in_flight"] = None
-                if row.get("pending_control"):
+                if row.get("pending_control") and row["pending_control"].get("kind") != "permissions":
                     settle(row, event)
                     return True
                 if row["status"] != "running" or not data["settings"]["enabled"]:
+                    row.pop("pending_control", None)
                     return True  # Pause/cancel/disable wins over late failure.
                 authority = model_retry_authority(data["settings"])
                 error = ("agent_permission_denied" if authority != selected.get("_model_retry_authority") else
                          "agent_time_limit" if row["elapsed_seconds"] >= row["limits"]["max_seconds"] else
                          "agent_step_limit" if row["steps"] >= row["limits"]["max_steps"] else
                          code if row.get("model_retry_count", 0) >= 1 else None)
+                row.pop("pending_control", None)
                 if error:
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error)
@@ -1294,11 +1674,59 @@ class AgentRuntime(AgentLoop):
                 return True
             if self.store.transaction(retry_model):
                 return
+        from .execution_policy import verified_read_classification
         current = task(self.store.read(), selected["id"])
         flight = current.get("in_flight") or {}
-        if selected["queue"] and (definitely_not_executed or selected["queue"][0]["effect"] == "read" or not flight.get("dispatched")):
+        queued_call = selected["queue"][0] if selected["queue"] else {}
+        is_verified_read = bool(
+            selected["queue"]
+            and verified_read_classification(
+                flight,
+                task_id=current["id"],
+                workspace_root=(current.get("local_execution") or {}).get("workspace_root", ""),
+                operation_id=queued_call.get("operation_id"),
+                tool=queued_call.get("name"),
+                arguments=queued_call.get("arguments"),
+            )
+        )
+        read_cleanup_ok = True
+        read_recovery = None
+        if is_verified_read and flight.get("dispatched"):
+            if code == "agent_local_operation_unconfirmed":
+                read_cleanup_ok = False
+            else:
+                read_cleanup_ok, read_recovery = self._recover_read_operation_details(current, flight, error=code)
+        elif flight.get("effect") == "read" and flight.get("dispatched"):
+            read_cleanup_ok, read_recovery = self._recover_read_operation_details(current, flight, error=code)
+        if selected["queue"] and (
+            definitely_not_executed
+            or (selected["queue"][0]["effect"] == "read" and read_cleanup_ok)
+            or (is_verified_read and read_cleanup_ok)
+            or not flight.get("dispatched")
+        ):
             call = selected["queue"][0]
-            result = {"error": code, "not_executed": call["effect"] == "write" or not flight.get("dispatched"), "no_mutation": True}
+            recovery_outcome = (read_recovery or {}).get("ledger_outcome")
+            if recovery_outcome == "confirmed" and isinstance((read_recovery or {}).get("settled_result"), dict):
+                result = sanitized(copy.deepcopy(read_recovery["settled_result"]))
+                record_status = "confirmed"
+            else:
+                not_executed = (
+                    (call["effect"] == "write" and not is_verified_read)
+                    or (is_verified_read and (definitely_not_executed or recovery_outcome == "not_executed"))
+                    or not flight.get("dispatched")
+                )
+                result = {"error": code, "not_executed": not_executed, "no_mutation": True}
+                if isinstance(correction, str) and correction:
+                    result["correction"] = sanitized(correction[:1600])
+                if isinstance(details, dict) and details:
+                    result["details"] = sanitized(copy.deepcopy(details))
+                record_status = "not_executed" if result["not_executed"] else "failed"
+            if code == "agent_ripgrep_unavailable_use_file_search":
+                result["correction"] = (
+                    "ripgrep (rg) is not installed in this node's command environment. Nothing was executed. "
+                    "Use the built-in ryn_file_search with a path and literal query, or ryn_file_list to find files. "
+                    "Search alternative terms in separate calls; do not repeat the unavailable rg command."
+                )
             if call["name"] == "ryn_request_input" and code == "agent_invalid_control_proposal":
                 result["correction"] = (
                     "Use kind=information/choice with text/choice fields for model names and other facts. "
@@ -1313,15 +1741,45 @@ class AgentRuntime(AgentLoop):
                 from .diagnostics import safe_label
                 result.update({key: safe_label(read_connection.get(key)) for key in ("connection_id", "connection_name")})
 
+            step_elapsed = max(0.0, time.monotonic() - started)
+            was_not_executed = bool(result.get("not_executed"))
+            error_timing = {
+                "scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
+                "preparation_seconds": round(step_elapsed if was_not_executed else 0.0, 4),
+                "tool_execution_seconds": round(0.0 if was_not_executed else step_elapsed, 4),
+                "store_persistence_seconds": round(float(selected.get("_claim_persistence_seconds", 0.0)), 4),
+            }
+            can_continue_cleanly = False
+
             def reject(data):
+                nonlocal can_continue_cleanly
                 row = task(data, selected["id"])
                 row.update(in_flight=None, approved=None, pending_approval=None)
                 row["elapsed_seconds"] += time.monotonic() - started
+                consecutive_same_error = 0
+                if record_status != "confirmed":
+                    for prev_event in reversed(row.get("events", [])):
+                        if prev_event.get("type") != "tool_result":
+                            continue
+                        if prev_event.get("context_epoch", 0) != call.get("context_epoch", 0):
+                            break
+                        prev_res = prev_event.get("result")
+                        prev_err = prev_res.get("error") if isinstance(prev_res, dict) else None
+                        if prev_event.get("tool") == call["name"] and prev_err == code and code is not None:
+                            consecutive_same_error += 1
+                        else:
+                            break
+                    if consecutive_same_error >= 1 and "correction" not in result:
+                        result["correction"] = (
+                            "This tool failed with the same error on the previous attempt. "
+                            "Adjust the arguments, switch to an alternative tool, or report the limitation "
+                            "instead of repeating the same failing call."
+                        )
                 row["messages"].append({"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(), "context_epoch": call.get("context_epoch", 0)})
-                verification.record(row, call, "not_executed" if result["not_executed"] else "failed", now(), result=result)
+                verification.record(row, call, record_status, now(), result=result)
                 row["queue"].pop(0)
                 event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result,
-                      internal=call["name"] in INTERNAL_NAMES, context_epoch=call.get("context_epoch", 0))
+                      internal=call["name"] in INTERNAL_NAMES, context_epoch=call.get("context_epoch", 0), timing=error_timing)
                 if row["status"] == "running":
                     if code == "agent_time_limit" or code.endswith("_budget_exhausted"):
                         row.update(status="failed", error=code)
@@ -1329,9 +1787,34 @@ class AgentRuntime(AgentLoop):
                     else:
                         row["status"] = "queued"
                 settle(row, event)
+                budget_state = budget.public(row)
+                b_limits = budget_state["limits"]
+                b_life = budget_state["lifetime"]
+                within_budget = (
+                    budget.time_remaining(row) > 0
+                    and b_life["charged_tokens"] < b_limits["max_total_tokens"]
+                    and (bool(row.get("queue")) or b_life["charged_model_calls"] < b_limits["max_total_model_calls"])
+                    and (not row.get("queue") or b_life["charged_tool_calls"] < b_limits["max_total_tool_calls"])
+                )
+                can_continue_cleanly = bool(
+                    (result.get("no_mutation") is True or record_status == "confirmed")
+                    and consecutive_same_error == 0
+                    and row["status"] == "queued"
+                    and data["settings"].get("enabled")
+                    and row["control_revision"] == selected["_run_control_revision"]
+                    and not row.get("pending_control")
+                    and not row.get("pending_approval")
+                    and not row.get("approved")
+                    and not row.get("pending_input")
+                    and row["elapsed_seconds"] < row["limits"]["max_seconds"]
+                    and (bool(row.get("queue")) or row["steps"] < row["limits"]["max_steps"])
+                    and within_budget
+                )
             self.store.transaction(reject)
+            if can_continue_cleanly:
+                self._step.clean = True
         else:
-            self._fail(selected["id"], code, elapsed=time.monotonic() - started)
+            self._fail(selected["id"], code, elapsed=time.monotonic() - started, read_cleanup_ok=read_cleanup_ok, read_recovery=read_recovery)
 
     def run_continuously(self) -> WorkerRunResult:
         """Worker entry point: consecutive steps without a scheduler interval between them.
@@ -1352,6 +1835,7 @@ class AgentRuntime(AgentLoop):
 
     def run_once(self) -> WorkerRunResult:
         self._step.clean = False
+        self._step.stream = None
         if not self._run_slots.acquire(blocking=False):
             return WorkerRunResult()
         if not self._run_lock.acquire(blocking=False):
@@ -1399,6 +1883,7 @@ class AgentRuntime(AgentLoop):
                         if row.get("verification"):
                             verification.finish(row, error="agent_time_limit")
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_time_limit")
+                            event(row, "completed")
                             continue
                         row.update(status="failed", error="agent_time_limit")
                         event(row, "failed", error=row["error"])
@@ -1407,6 +1892,7 @@ class AgentRuntime(AgentLoop):
                         if row.get("verification"):
                             verification.finish(row, error="agent_step_limit")
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_step_limit")
+                            event(row, "completed")
                             continue
                         row.update(status="failed", error="agent_step_limit")
                         event(row, "failed", error=row["error"])
@@ -1414,15 +1900,20 @@ class AgentRuntime(AgentLoop):
                     row["status"] = "running"
                     row["in_flight"] = {"kind": "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
                                         "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"], "scope_revision": row["scope_revision"]}
+                    queued_at = self._queued_since.pop(row["id"], None)
+                    scheduler_wait_seconds = max(0.0, claim_started - queued_at) if queued_at is not None else 0.0
                     return {**copy.deepcopy(row), "_model_retry_authority": model_retry_authority(data["settings"]), "_run_control_revision": row["control_revision"],
-                            "_run_lifetime_remaining": budget.time_remaining(row)}
+                            "_run_lifetime_remaining": budget.time_remaining(row),
+                            "_scheduler_wait_seconds": scheduler_wait_seconds}
                 return None
             # Avoid rewriting encrypted history every idle worker tick.
             if not peek["enabled"] or not peek["queued"]:
                 return WorkerRunResult()
+            claim_started = time.monotonic()
             selected = self.store.transaction(claim)
             if selected is None:
                 return WorkerRunResult()
+            selected["_claim_persistence_seconds"] = max(0.0, time.monotonic() - claim_started)
             self._run_lock.release()
             gate_owned = False
             started = time.monotonic()
@@ -1464,7 +1955,14 @@ class AgentRuntime(AgentLoop):
                 code = str(exc)
                 if code == "agent_cancelled":
                     code = getattr(cancelled, "reason", None) or code
-                self._operation_error(selected, code, started, definitely_not_executed=True)
+                self._operation_error(
+                    selected,
+                    code,
+                    started,
+                    definitely_not_executed=True,
+                    correction=getattr(exc, "correction", None),
+                    details=getattr(exc, "details", None),
+                )
             return WorkerRunResult(activity=bool(selected))
         except AgentError as exc:
             if selected:
@@ -1497,6 +1995,16 @@ class AgentRuntime(AgentLoop):
                 self._operation_error(selected, "agent_operation_failed", started)
             return WorkerRunResult(activity=bool(selected))
         finally:
+            if selected is not None:
+                self._clear_stream(selected["id"], self._step.stream)
+                try:
+                    post = self.store.read_control(selected["id"]).get("tasks", {}).get(selected["id"]) or {}
+                    if post.get("status") == "queued":
+                        self._queued_since[selected["id"]] = time.monotonic()
+                    else:
+                        self._queued_since.pop(selected["id"], None)
+                except Exception:
+                    pass
             self._active_run = None
             if gate_owned:
                 self._run_lock.release()

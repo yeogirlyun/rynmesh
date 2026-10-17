@@ -3,7 +3,11 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "main",
+    "craft-resume",
+    "craft-recruit",
+    "craft-desk",
+    "craft-nas"
   ],
   "permissions": [
     "core:default",

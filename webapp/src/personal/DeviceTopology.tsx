@@ -16,10 +16,13 @@ type Props = {
   onSelect: (id: string) => void;
   onEdit: (device: Device) => void;
   onShare: () => void;
+  /** Home draws its own "My devices" heading and selected-device card around the map. */
+  hideHeading?: boolean;
+  hideDetail?: boolean;
 };
 type Wire = { id: string; path: string; kind: string; selected: boolean };
 
-export function DeviceTopology({ devices, selected, loading, demo, onSelect, onEdit, onShare }: Props) {
+export function DeviceTopology({ devices, selected, loading, demo, onSelect, onEdit, onShare, hideHeading, hideDetail }: Props) {
   const { t } = useTranslation();
   const label = (value: string) => personalLabelKeys[value] ? t(`personal.${personalLabelKeys[value]}`) : value;
   const canvas = useRef<HTMLDivElement>(null);
@@ -99,7 +102,7 @@ export function DeviceTopology({ devices, selected, loading, demo, onSelect, onE
     </div>;
   };
   return <section className="pf-topology" aria-label={t("personal.deviceNetwork")}>
-    <div className="pf-topology-heading"><h2>{t("personal.myDevices")} <span>({devices.length})</span></h2><span><Network size={14} /> {t("personal.connectionView")}</span></div>
+    {!hideHeading && <div className="pf-topology-heading"><h2>{t("personal.myDevices")} <span>({devices.length})</span></h2><span><Network size={14} /> {t("personal.connectionView")}</span></div>}
     {devices.length === 0 ? <p role="status">{loading ? t("personal.findingDevices") : t("personal.noDevicesYetAddADeviceToGetStarted")}</p> : <>
       <div ref={canvas} className={`pf-topology-canvas${other.length ? "" : " local-only"}`}>
         <svg className="pf-topology-wires" aria-hidden="true">{wires.map(w => <path key={w.id} d={w.path} className={`${w.kind}${w.selected ? " selected" : ""}`} />)}</svg>
@@ -119,7 +122,7 @@ export function DeviceTopology({ devices, selected, loading, demo, onSelect, onE
         </>}
       </div>
       {devices.length > 1 && <div className="pf-topology-legend"><span className="lan">{t("personal.lanDirect")}</span><span className="public">{t("personal.publicRelay")}</span><span className="unknown">{t("personal.unconfirmedOffline")}</span></div>}
-      {selected && <div className="pf-topology-detail" aria-live="polite">
+      {selected && !hideDetail && <div className="pf-topology-detail" aria-live="polite">
         <div><strong>{selected.name}</strong><small>{selected.self ? t("personal.thisDevice") : selected.online === false ? t("personal.offlineLastKnownNetwork") : selected.online === null ? t("personal.statusUnknownRouteUnconfirmed") : label(routeLabel(selected.network?.route))}</small>{selected.network?.address && <small>{t("personal.advertisedDiscoveryAddress", { address: selected.network.address })}</small>}{selected.note && <small>{selected.note}</small>}</div>
         <div className="pf-topology-actions"><button className="pf-icon-button" aria-label={t("personal.editName", { name: selected.name })} onClick={() => onEdit(selected)}><Pencil size={14} /></button><button className="pf-button" onClick={onShare}><Share2 size={14} />{t("personal.shareService")}</button></div>
       </div>}

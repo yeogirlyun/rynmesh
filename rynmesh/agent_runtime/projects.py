@@ -1,8 +1,8 @@
 """Owner-selected local projects. Selection is a task grant, never a model proposal."""
 from __future__ import annotations
 
-import hashlib
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -73,12 +73,27 @@ def register(data, value):
     if ident not in projects and len(projects) >= 32:
         raise AgentError("agent_project_limit")
     existing = projects.get(ident)
+    if existing:
+        info["name"] = existing["name"]
     generation = (existing or {}).get("generation", 1)
     if existing and not existing.get("enabled"):
         generation += 1
     projects[ident] = {"id": ident, **info, "enabled": True, "generation": generation}
     data["selected_project_id"] = ident
     return projects[ident]
+
+
+def rename(data, ident, value):
+    if set(value) != {"name"}:
+        raise AgentError("agent_invalid_request")
+    name = value["name"]
+    if not isinstance(name, str) or not name.strip() or len(name) > 160 or any(ord(char) < 32 for char in name):
+        raise AgentError("agent_invalid_project_name")
+    project = data.get("projects", {}).get(ident)
+    if not project or not project.get("enabled"):
+        raise AgentError("agent_project_unavailable")
+    project["name"] = name.strip()
+    return project
 
 
 def selected(data, ident, *, refresh=False):
@@ -90,7 +105,7 @@ def selected(data, ident, *, refresh=False):
     root = root_path(value["path"])
     if str(root) != value["path"]:
         raise AgentError("agent_project_path_changed")
-    result = {**value, **overview(root)} if refresh else dict(value)
+    result = {**value, **overview(root), "name": value["name"]} if refresh else dict(value)
     if refresh and inside_file(root, "AGENTS.md"):
         with (root / "AGENTS.md").open("rb") as stream:
             raw = stream.read(64 * 1024 + 1)

@@ -1770,5 +1770,8 @@
   "连接已完成，此接入支持聊天，不支持助手工具。": "Connected. This source supports chat but does not support assistant tools.",
   "Not connected — connect this device to use its models": "Not connected — connect this device to use its models",
   "Personal Space AI access is off — turn it on to use this device's models": "Personal Space AI access is off — turn it on to use this device's models",
-  "Device unreachable — check the connection": "Device unreachable — check the connection"
+  "Device unreachable — check the connection": "Device unreachable — check the connection",
+  "{{count}} installed": "{{count}} installed",
+  "Not installed": "Not installed",
+  "{{count}} not installed": "{{count}} not installed"
 }

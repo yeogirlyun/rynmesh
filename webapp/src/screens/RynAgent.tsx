@@ -1,17 +1,21 @@
 import { agentTaskCache, readAgentWorkspace, writeAgentWorkspace } from "../domain/agentWorkspaceCache";
-import RynAgentProgress, { groupAgentMessages } from "./RynAgentProgress";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./RynAgentProgress";
+import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
 import { ArrowUp, LoaderCircle, MoreHorizontal, Square, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
-import { AgentAPIError, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
+import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, mergeAgentTaskSnapshot, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
 import { AgentNavigationContext } from "../personal/agentNavigation";
+import { craftAgentPluginID } from "../domain/craftPlugins";
 import ChatMarkdown from "./ChatMarkdown";
+import RynAgentStream from "./RynAgentStream";
 import RynAgentScope from "./RynAgentScope";
 import RynAgentModel from "./RynAgentModel";
 import RynAgentModelPicker from "./RynAgentModelPicker";
 import RynAgentComposer from "./RynAgentComposer";
 import RynAgentProject from "./RynAgentProject";
+import { useAgentTaskMenu } from "./RynAgentTaskMenu";
+import { useAgentTaskAttention } from "./useAgentTaskAttention";
 import RynAgentInputCard from "./RynAgentInputCard";
 import RynAgentVerification from "./RynAgentVerification";
 import { PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
@@ -36,11 +40,12 @@ const PENDING_KEY = "ryn.agent.pending-create";
 const CONTROL_KEY = "ryn.agent.pending-control";
 const SCOPE_DRAFT_KEY = "ryn.agent.scope-draft";
 const PROJECT_KEY = "ryn.agent.project";
+const NAVIGATION_KEY = "ryn.agent.navigation";
 const PENDING_MESSAGE_KEY = "ryn.agent.pending-message";
-interface PendingMessage { requestID: string; taskID: string; draftKey: string; message: string; baseMessageCount: number; phase: "sending" | "uncertain"; }
+interface PendingMessage { requestID: string; taskID: string; draftKey: string; message: string; baseMessageCount: number; navigationRevision?: number; phase: "sending" | "uncertain" | "rejected"; }
 function newDraftKey(projectID = "") { return projectID ? `new:${projectID}` : "new"; }
 function readPendingMessage(): PendingMessage | null {
-  try { const value = JSON.parse(saved(PENDING_MESSAGE_KEY)); return typeof value?.message === "string" && typeof value?.draftKey === "string" && typeof value?.taskID === "string" ? { ...value, phase: "uncertain" } : null; } catch { return null; }
+  try { const value = JSON.parse(saved(PENDING_MESSAGE_KEY)); return typeof value?.message === "string" && typeof value?.draftKey === "string" && typeof value?.taskID === "string" ? { ...value, phase: value.phase === "rejected" ? "rejected" : "uncertain" } : null; } catch { return null; }
 }
 interface PendingControl { task_id: string; route: "messages" | "actions" | "scope" | "workspace"; body: Record<string, unknown>; }
 interface ScopeDraft { scope: AgentScopeSelection; model_id: string; destination_revision: string | null; }
@@ -65,15 +70,23 @@ const outcomeReasons: Record<string, string> = {
 
 export default function RynAgent() {
   const { t, i18n } = useTranslation("rynAgent");
+  const location = useLocation();
+  const routerNavigate = useRouterNavigate();
+  const [pluginEntry] = useState(() => {
+    const id = craftAgentPluginID(location.state);
+    return id ? { id, draftKey: `new:plugin:${id}` } : null;
+  });
+  const [pluginDraftKey, setPluginDraftKey] = useState(pluginEntry?.draftKey || "");
   const nav = useContext(AgentNavigationContext);
   const taskCache = useRef(agentTaskCache());
   const [cachedWorkspace] = useState(readAgentWorkspace);
   const [settings, setSettings] = useState<AgentSettings | null>(cachedWorkspace.settings);
   const [models, setModels] = useState<AgentModel[]>(cachedWorkspace.models);
   const [tasks, setTasks] = useState<AgentTaskSummary[]>(() => sortAgentTasks([...taskCache.current.values()].filter(item => !item.archived)));
+  const [tasksReady, setTasksReady] = useState(false);
   const [recordsSupported, setRecordsSupported] = useState(false);
   const [recordsRevision, setRecordsRevision] = useState(0);
-  const [selected, setSelected] = useState(() => saved(SELECTED_KEY));
+  const [selected, setSelected] = useState(() => pluginEntry ? "" : saved(SELECTED_KEY));
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const [task, setTask] = useState<AgentTask | null>(() => taskCache.current.get(selected) || null);
@@ -89,60 +102,104 @@ export default function RynAgent() {
   const [taskModelOpen, setTaskModelOpen] = useState(false);
   const [taskModelTarget, setTaskModelTarget] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState("");
-  const [projectID, setProjectID] = useState(() => saved(PROJECT_KEY) === "__general__" ? "" : saved(PROJECT_KEY));
+  const [projectID, setProjectID] = useState(() => pluginEntry || saved(PROJECT_KEY) === "__general__" ? "" : saved(PROJECT_KEY));
   const [projects, setProjects] = useState<AgentProject[]>([]);
+  const [navigationRevision, setNavigationRevision] = useState(() => (Number(saved(NAVIGATION_KEY)) || 0) + (pluginEntry ? 1 : 0));
+  const navigationRef = useRef(navigationRevision);
+  const initialNavigationRef = useRef(navigationRevision - (pluginEntry ? 1 : 0));
+  const navigate = () => {
+    const revision = ++navigationRef.current;
+    setNavigationRevision(revision); save(NAVIGATION_KEY, String(revision));
+  };
   const chooseProject = (id: string) => {
-    if (mutationRef.current) return;
+    navigate();
+    if (pluginDraftKey) setScopeDraft(readScopeDraft());
+    setPluginDraftKey("");
     setProjectID(id); save(PROJECT_KEY, id || "__general__");
     selectedRef.current = ""; setSelected(""); setTask(null); setDetailLoading(false);
     input.current?.focus();
   };
-  const [drafts, setDrafts] = useState(readDrafts);
+  const [drafts, setDrafts] = useState(() => {
+    const current = readDrafts();
+    if (pluginEntry && !current[pluginEntry.draftKey]) current[pluginEntry.draftKey] = i18n.t("craft.agentQueryDraft", { app: pluginEntry.id, name: i18n.t(`craft.${pluginEntry.id}`) });
+    return current;
+  });
   const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(readPendingMessage);
   const [model, setModel] = useState(cachedWorkspace.model || cachedWorkspace.settings?.model_id || "");
   const [messageIntent, setMessageIntent] = useState<AgentMessageIntent>("steer");
-  const [scopeDraft, setScopeDraft] = useState<ScopeDraft | null>(readScopeDraft);
+  const [scopeDraft, setScopeDraft] = useState<ScopeDraft | null>(() => pluginEntry ? null : readScopeDraft());
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
   const defaultModelRef = useRef(cachedWorkspace.settings?.model_id || "");
-  const draftKey = selected || newDraftKey(projectID);
+  const draftKey = selected || pluginDraftKey || newDraftKey(projectID);
   const draft = drafts[draftKey] || "";
   const input = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const mutationRef = useRef(false);
   const deletedTaskIDs = useRef(new Set<string>());
+  const recordMutationRevision = useRef(0);
+  const confirmedCreateRequests = useRef(new Set<string>());
   const refreshRevision = useRef(0);
+  const refreshAbort = useRef<AbortController | null>(null);
+  const [pollRevision, setPollRevision] = useState(0);
   const cachedSettingsRef = useRef(settings);
   const cachedModelsRef = useRef(models);
   cachedSettingsRef.current = settings;
   cachedModelsRef.current = models;
+  const [attentionVisible, setAttentionVisible] = useState(() => document.visibilityState === "visible" && document.hasFocus());
+  useEffect(() => {
+    const update = () => setAttentionVisible(document.visibilityState === "visible" && document.hasFocus());
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    document.addEventListener("visibilitychange", update);
+    return () => { window.removeEventListener("focus", update); window.removeEventListener("blur", update); document.removeEventListener("visibilitychange", update); };
+  }, []);
+  const taskAttention = useAgentTaskAttention({ tasks, selected, openedTask: detailLoading ? null : task, visible: attentionVisible, ready: tasksReady });
+  const selectedExecuting = Boolean(task?.id === selected && ["queued", "running", "pausing", "reconciling"].includes(agentTaskState(task)));
 
   const acceptTask = useCallback((incoming: AgentTask) => {
     if (deletedTaskIDs.current.has(incoming.id)) return;
     const previous = taskCache.current.get(incoming.id);
+    const latest = mergeAgentTaskSnapshot(previous, incoming);
     if (!previous || incoming.revision >= previous.revision) {
       taskCache.current.delete(incoming.id);
-      taskCache.current.set(incoming.id, incoming);
+      taskCache.current.set(incoming.id, latest);
       if (taskCache.current.size > 20) taskCache.current.delete(taskCache.current.keys().next().value!);
     }
-    if (incoming.archived !== undefined) setRecordsSupported(true);
-    setTasks(current => sortAgentTasks([...(incoming.archived ? [] : [current.find(item => item.id === incoming.id && item.revision > incoming.revision) || incoming]), ...current.filter(item => item.id !== incoming.id)]));
-    if (selectedRef.current === incoming.id) setTask(current => current?.id === incoming.id && current.revision > incoming.revision ? current : incoming);
+    if (latest.archived !== undefined) setRecordsSupported(true);
+    setTasks(current => {
+      const known = current.find(item => item.id === latest.id);
+      // Live text and clock updates do not reorder or rerender the sidebar.
+      if (known && known.revision >= latest.revision && !latest.archived) return current;
+      return sortAgentTasks([...(latest.archived ? [] : [latest]), ...current.filter(item => item.id !== latest.id)]);
+    });
+    if (selectedRef.current === latest.id) setTask(current => current?.id === latest.id && current.revision > latest.revision ? current : latest);
   }, []);
   const acceptTaskList = useCallback((incoming: AgentTaskSummary[]) => {
+    setTasksReady(true);
     if (incoming.some(item => item.archived !== undefined)) setRecordsSupported(true);
-    setTasks(current => sortAgentTasks(incoming.filter(item => !deletedTaskIDs.current.has(item.id)).map(item => current.find(savedTask => savedTask.id === item.id && savedTask.revision > item.revision) || item)));
+    setTasks(current => sortAgentTasks(incoming.filter(item => !deletedTaskIDs.current.has(item.id)).map(item => {
+      const known = current.find(savedTask => savedTask.id === item.id) || taskCache.current.get(item.id);
+      return known && known.revision > item.revision ? known : item;
+    }).filter(item => !item.archived)));
   }, []);
   const recoverCreate = useCallback((summaries: AgentTaskSummary[]) => {
     let pendingID = "", pendingProject = "", submitted = "";
-    try { const pending = JSON.parse(saved(PENDING_KEY) || "{}"); pendingID = pending.client_request_id || ""; pendingProject = pending.project_id || ""; submitted = pending.message || ""; } catch { /* Ignore old or unavailable storage. */ }
+    let pendingDraftKey = "";
+    let originNavigation: number | undefined;
+    try { const pending = JSON.parse(saved(PENDING_KEY) || "{}"); pendingID = pending.client_request_id || ""; pendingProject = pending.project_id || ""; submitted = pending.message || ""; originNavigation = pending.navigation_revision; pendingDraftKey = pending.draft_key || ""; } catch { /* Ignore old or unavailable storage. */ }
     const recovered = summaries.find(item => pendingID && item.client_request_id === pendingID && !deletedTaskIDs.current.has(item.id));
     if (recovered) {
+      recordMutationRevision.current++;
+      confirmedCreateRequests.current.add(pendingID);
+      if (confirmedCreateRequests.current.size > 32) confirmedCreateRequests.current.delete(confirmedCreateRequests.current.values().next().value!);
       const optimistic = readPendingMessage()?.requestID === pendingID;
-      if (!selectedRef.current) { selectedRef.current = recovered.id; setSelected(recovered.id); }
+      const ownsDraft = (originNavigation ?? initialNavigationRef.current) === navigationRef.current;
+      if (ownsDraft && !selectedRef.current) { selectedRef.current = recovered.id; setSelected(recovered.id); }
       save(PENDING_KEY, ""); setUncertain(false);
       setPendingMessage(current => current?.requestID === pendingID ? null : current);
       setDrafts(current => {
-        const key = newDraftKey(pendingProject);
+        if (!ownsDraft) return current;
+        const key = pendingDraftKey || newDraftKey(pendingProject);
         const nextDraft = current[key] && (optimistic || current[key] !== submitted) ? current[key] : "";
         return { ...current, [key]: "", ...(nextDraft && !current[recovered.id] ? { [recovered.id]: nextDraft } : {}) };
       });
@@ -150,11 +207,16 @@ export default function RynAgent() {
   }, []);
   const refresh = useCallback(async () => {
     const refreshID = ++refreshRevision.current;
+    refreshAbort.current?.abort();
+    const controller = new AbortController();
+    refreshAbort.current = controller;
+    setPollRevision(current => current + 1);
+    const recordsVersion = recordMutationRevision.current;
     const currentID = selectedRef.current;
     // Apply each response independently. A slow catalog must not hold settings,
     // task history or a cached composer behind a connection check.
     await Promise.all([
-      rynAgent.settings().then(nextSettings => {
+      rynAgent.settings(controller.signal).then(nextSettings => {
         if (refreshID !== refreshRevision.current) return;
         const previousDefault = defaultModelRef.current;
         const nextDefault = nextSettings.model_id;
@@ -167,7 +229,7 @@ export default function RynAgent() {
         if (refreshID !== refreshRevision.current) return;
         if (!cachedSettingsRef.current) setResourceErrors(current => ({ ...current, settings: reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "settingsLoadError" }));
       }).finally(() => { if (refreshID === refreshRevision.current) setLoading(false); }),
-      rynAgent.models().then(nextModels => {
+      rynAgent.models(controller.signal).then(nextModels => {
         if (refreshID !== refreshRevision.current) return;
         cachedModelsRef.current = nextModels.models;
         setModels(nextModels.models);
@@ -176,14 +238,15 @@ export default function RynAgent() {
       }).catch(() => {
         if (refreshID === refreshRevision.current && !cachedModelsRef.current.length) setResourceErrors(current => ({ ...current, models: "modelsLoadError" }));
       }),
-      rynAgent.tasks().then(nextTasks => {
+      rynAgent.tasks(controller.signal).then(nextTasks => {
         if (refreshID !== refreshRevision.current) return;
-        acceptTaskList(nextTasks.tasks); recoverCreate(nextTasks.tasks);
+        if (recordsVersion === recordMutationRevision.current) acceptTaskList(nextTasks.tasks);
+        recoverCreate(nextTasks.tasks);
         setResourceErrors(current => ({ ...current, tasks: "" }));
       }).catch(() => {
         if (refreshID === refreshRevision.current) setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
       }),
-      currentID ? rynAgent.task(currentID).then(detail => {
+      currentID ? rynAgent.task(currentID, controller.signal).then(detail => {
         if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
         acceptTask(detail); setResourceErrors(current => ({ ...current, detail: "" }));
       }).catch(() => {
@@ -194,6 +257,13 @@ export default function RynAgent() {
 
   const defaultWriteReceipt = task?.events.filter(item => item.type === "tool_result" && item.tool === "ryn_set_default_agent_model").at(-1)?.seq;
   const refreshedDefaults = useRef(new Set<string>());
+  useEffect(() => {
+    if (!pluginEntry) return;
+    save(NAVIGATION_KEY, String(navigationRef.current));
+    // The handoff creates an ordinary editable message, never a system prompt.
+    // Consume it so a later reload can resume the conversation created by Send.
+    routerNavigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [pluginEntry, routerNavigate]);
   useEffect(() => {
     if (defaultWriteReceipt === undefined) return;
     const receipt = `${task?.id}/${defaultWriteReceipt}`;
@@ -207,7 +277,7 @@ export default function RynAgent() {
     void refresh().catch(reason => {
       if (active) setError(reason instanceof AgentAPIError && [404, 501].includes(reason.status) ? "unavailable" : "loadError");
     }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; refreshRevision.current++; };
+    return () => { active = false; refreshRevision.current++; refreshAbort.current?.abort(); };
   }, [refresh]);
   useEffect(() => { writeAgentWorkspace(settings, models, model); }, [settings, models, model]);
   useEffect(() => {
@@ -219,7 +289,7 @@ export default function RynAgent() {
   }, [refresh]);
   useEffect(() => { save(DRAFT_KEY, JSON.stringify(drafts)); }, [drafts]);
   useEffect(() => { save(PENDING_MESSAGE_KEY, pendingMessage ? JSON.stringify(pendingMessage) : ""); }, [pendingMessage]);
-  useEffect(() => { save(SCOPE_DRAFT_KEY, scopeDraft ? JSON.stringify(scopeDraft) : ""); }, [scopeDraft]);
+  useEffect(() => { if (!pluginDraftKey) save(SCOPE_DRAFT_KEY, scopeDraft ? JSON.stringify(scopeDraft) : ""); }, [scopeDraft, pluginDraftKey]);
   useEffect(() => {
     save(SELECTED_KEY, selected);
     if (!selected) { setTask(null); setDetailLoading(false); setResourceErrors(current => ({ ...current, detail: "" })); return; }
@@ -236,46 +306,83 @@ export default function RynAgent() {
     if (loading) return;
     let stopped = false;
     let timer: number;
+    let failures = 0;
     const abort = new AbortController();
     const poll = async () => {
-      let activeTasks = false;
-      const id = selectedRef.current;
-      const cached = id ? taskCache.current.get(id) : undefined;
-      const [summary, detail] = await Promise.allSettled([rynAgent.tasks(abort.signal), id ? cached ? rynAgent.taskSince(cached, abort.signal) : rynAgent.task(id, abort.signal) : Promise.resolve(null)]);
-      if (stopped) return;
-      if (summary.status === "fulfilled") {
-        acceptTaskList(summary.value.tasks);
+      const recordsVersion = recordMutationRevision.current;
+      let delay = 5000;
+      try {
+        const summary = await rynAgent.tasks(abort.signal);
+        if (stopped) return;
+        failures = 0;
+        if (recordsVersion === recordMutationRevision.current) acceptTaskList(summary.tasks);
         setResourceErrors(current => ({ ...current, tasks: "" }));
-        recoverCreate(summary.value.tasks);
-        activeTasks = summary.value.tasks.some(item => isAgentActive(agentTaskState(item)));
-      } else setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
-      if (id && selectedRef.current === id) {
-        if (detail.status === "fulfilled" && detail.value) {
-          acceptTask(detail.value); setResourceErrors(current => ({ ...current, detail: "" }));
-          activeTasks ||= isAgentActive(agentTaskState(detail.value));
-        } else setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
+        recoverCreate(summary.tasks);
+        if (summary.tasks.some(item => isAgentActive(agentTaskState(item)))) delay = 1200;
+      } catch (reason) {
+        if (stopped) return;
+        setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
+        if (!isTransientAgentReadError(reason)) return;
+        delay = agentReadBackoff(++failures);
       }
-      if (!stopped) timer = window.setTimeout(poll, activeTasks ? 1200 : 5000);
+      if (!stopped) timer = window.setTimeout(poll, delay);
     };
     timer = window.setTimeout(poll, 1200);
     return () => { stopped = true; abort.abort(); window.clearTimeout(timer); };
-  // Poll server snapshots, never append repeated messages or events.
-  }, [loading, selected, acceptTask, acceptTaskList, recoverCreate]);
+  }, [loading, pollRevision, acceptTaskList, recoverCreate]);
+  useEffect(() => {
+    if (loading || !selected) return;
+    let stopped = false;
+    let timer: number;
+    let failures = 0;
+    const abort = new AbortController();
+    const poll = async () => {
+      const cached = taskCache.current.get(selected);
+      let delay = 5000;
+      try {
+        const detail = await (cached ? rynAgent.taskSince(cached, abort.signal) : rynAgent.task(selected, abort.signal));
+        if (stopped || selectedRef.current !== selected) return;
+        failures = 0;
+        acceptTask(detail); setResourceErrors(current => ({ ...current, detail: "" }));
+        // Only the open executing task needs the low-latency live projection.
+        // Requests remain sequential so a slow node never builds a request queue.
+        if (["queued", "running", "pausing", "reconciling"].includes(agentTaskState(detail))) delay = document.visibilityState === "hidden" ? 1200 : 120;
+        else if (isAgentActive(agentTaskState(detail))) delay = 1200;
+      } catch (reason) {
+        if (stopped || selectedRef.current !== selected) return;
+        setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
+        if (!isTransientAgentReadError(reason)) return;
+        delay = agentReadBackoff(++failures);
+      }
+      if (!stopped) timer = window.setTimeout(poll, delay);
+    };
+    timer = window.setTimeout(poll, selectedExecuting ? 0 : 1200);
+    return () => { stopped = true; abort.abort(); window.clearTimeout(timer); };
+  // Each resource advances independently; a stalled index cannot hold the current response.
+  }, [loading, selected, selectedExecuting, pollRevision, acceptTask]);
 
   const changeDraft = (value: string) => setDrafts(current => ({ ...current, [draftKey]: value }));
   const newTask = () => {
-    if (mutationRef.current) return;
-    if (task?.project) { setProjectID(task.project.id); save(PROJECT_KEY, task.project.id); }
+    navigate();
+    if (pluginDraftKey) setScopeDraft(readScopeDraft());
+    setPluginDraftKey("");
+    const id = task?.project ? projects.some(project => project.id === task.project?.id) ? task.project.id : "" : projectID;
+    setProjectID(id); save(PROJECT_KEY, id || "__general__");
     selectedRef.current = ""; setSelected(""); setTask(null); setDetailLoading(false);
     input.current?.focus();
   };
   const chooseTask = (id: string) => {
-    const project = tasks.find(item => item.id === id)?.project;
+    navigate();
+    if (pluginDraftKey) setScopeDraft(readScopeDraft());
+    setPluginDraftKey("");
+    const project = projects.find(project => project.id === tasks.find(item => item.id === id)?.project?.id);
     setProjectID(project?.id || ""); save(PROJECT_KEY, project?.id || "__general__");
     selectedRef.current = id; setSelected(id); setTask(taskCache.current.get(id) || null);
   };
-  const changeRecord = (incoming: AgentTask) => { acceptTask(incoming); setRecordsRevision(current => current + 1); };
+  const changeRecord = (incoming: AgentTask) => { recordMutationRevision.current++; acceptTask(incoming); setRecordsRevision(current => current + 1); };
   const deleteRecord = (id: string) => {
+    taskAttention.forget(id);
+    recordMutationRevision.current++;
     deletedTaskIDs.current.add(id);
     taskCache.current.delete(id);
     setTasks(current => current.filter(item => item.id !== id)); setRecordsRevision(current => current + 1);
@@ -283,7 +390,6 @@ export default function RynAgent() {
     if (selectedRef.current === id) { selectedRef.current = ""; setSelected(""); setTask(null); setResourceErrors(current => ({ ...current, detail: "" })); }
   };
   const chooseGeneralProject = () => {
-    if (mutationRef.current) return;
     chooseProject("");
     void rynAgent.selectProject("").catch(() => setError("projectSelectionError"));
   };
@@ -345,7 +451,8 @@ export default function RynAgent() {
     if (selected ? !currentTask || (currentTask.allowed_actions ? !canUseAgentAction(currentTask, effectiveIntent) : !legacyReady || !canContinueAgentTask(currentTask)) : !legacyReady) return;
     mutationRef.current = true; setBusy(true); setError("");
     const submittedMessage = draft.trim();
-    const sending: PendingMessage = { requestID: crypto.randomUUID(), taskID: currentTask?.id || "", draftKey, message: submittedMessage, baseMessageCount: currentTask?.messages.length || 0, phase: "sending" };
+    const originNavigation = navigationRef.current;
+    const sending: PendingMessage = { requestID: crypto.randomUUID(), taskID: currentTask?.id || "", draftKey, message: submittedMessage, baseMessageCount: currentTask?.messages.length || 0, navigationRevision: originNavigation, phase: "sending" };
     setPendingMessage(sending);
     setDrafts(current => ({ ...current, [draftKey]: "" }));
     const responseLanguage = i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en";
@@ -353,27 +460,36 @@ export default function RynAgent() {
     const newScope = !currentTask && scopeDraft?.scope.resources.length ? scopeDraft.scope : undefined;
     const destinationRevision = newScope ? scopeDraft?.destination_revision || undefined : undefined;
     const submittedEffort = selectedModel?.supported_reasoning_efforts?.includes(effectiveEffort) ? effectiveEffort : undefined;
-    if (!currentTask) save(PENDING_KEY, JSON.stringify({ client_request_id: requestID, message: submittedMessage, model_id: model, response_language: responseLanguage, ...(projectID ? { project_id: projectID } : {}), ...(newScope ? { scope: newScope, expected_destination_revision: destinationRevision } : {}), ...(skillIDs.length ? { skill_ids: skillIDs } : {}), ...(submittedEffort ? { reasoning_effort: submittedEffort } : {}), at: Date.now() }));
+    if (!currentTask) {
+      save(PROJECT_KEY, projectID || "__general__");
+      save(PENDING_KEY, JSON.stringify({ client_request_id: requestID, message: submittedMessage, draft_key: draftKey, model_id: model, response_language: responseLanguage, navigation_revision: originNavigation, ...(projectID ? { project_id: projectID } : {}), ...(newScope ? { scope: newScope, expected_destination_revision: destinationRevision } : {}), ...(skillIDs.length ? { skill_ids: skillIDs } : {}), ...(submittedEffort ? { reasoning_effort: submittedEffort } : {}), at: Date.now() }));
+    }
     try {
       const next = currentTask ? currentTask.allowed_actions ? await submitControl({ task_id: currentTask.id, route: "messages", body: agentMessageBody(currentTask, submittedMessage, effectiveIntent, submittedEffort) }) : await rynAgent.message(currentTask, submittedMessage, effectiveIntent, requestID, submittedEffort) : await rynAgent.create(submittedMessage, model, requestID, newScope, destinationRevision, skillIDs, responseLanguage, projectID || undefined, submittedEffort);
-      if (!currentTask && !selectedRef.current) { selectedRef.current = next.id; setSelected(next.id); }
+      const ownsDraft = originNavigation === navigationRef.current;
+      if (!currentTask && ownsDraft && !selectedRef.current) { selectedRef.current = next.id; setSelected(next.id); }
+      if (!currentTask) recordMutationRevision.current++;
       acceptTask(next);
       if (!currentTask) setDrafts(current => {
+        if (!ownsDraft) return current;
         // A next draft typed during submission follows its newly created conversation.
         const nextDraft = current[draftKey];
         return nextDraft && !current[next.id] ? { ...current, [draftKey]: "", [next.id]: nextDraft } : current;
       });
       setPendingMessage(current => current?.requestID === requestID ? null : current);
       save(PENDING_KEY, ""); setUncertain(false);
-      if (!currentTask) { setScopeDraft(null); setSkillIDs([]); }
+      if (!currentTask && ownsDraft) { setScopeDraft(null); setSkillIDs([]); }
     } catch (reason) {
+      // A polled server record is a receipt even if the original HTTP response fails later.
+      if (!currentTask && confirmedCreateRequests.current.has(requestID)) return;
       const ambiguous = !(reason instanceof AgentAPIError) || reason.status >= 500;
       if (!currentTask && ambiguous) setUncertain(true);
       else if (!currentTask) save(PENDING_KEY, "");
       if (ambiguous && (!currentTask || currentTask.allowed_actions)) setPendingMessage(current => current?.requestID === requestID ? { ...current, phase: "uncertain" } : current);
       else {
-        setPendingMessage(current => current?.requestID === requestID ? null : current);
-        setDrafts(current => current[draftKey] ? current : { ...current, [draftKey]: submittedMessage });
+        const detachedCreate = !currentTask && originNavigation !== navigationRef.current;
+        setPendingMessage(current => current?.requestID === requestID ? detachedCreate ? { ...current, phase: "rejected" } : null : current);
+        if (!detachedCreate) setDrafts(current => current[draftKey] ? current : { ...current, [draftKey]: submittedMessage });
       }
       setError(mutationErrorKey(reason));
       void refresh().catch(() => undefined);
@@ -381,29 +497,36 @@ export default function RynAgent() {
   };
   const recoverRequest = async () => {
     if (mutationRef.current) return;
-    let pending: { client_request_id: string; message: string; model_id: string; scope?: AgentScopeSelection; expected_destination_revision?: string; skill_ids?: string[]; project_id?: string; response_language?: "zh-CN" | "en"; reasoning_effort?: string };
+    let pending: { client_request_id: string; message: string; model_id: string; draft_key?: string; scope?: AgentScopeSelection; expected_destination_revision?: string; skill_ids?: string[]; project_id?: string; response_language?: "zh-CN" | "en"; reasoning_effort?: string; navigation_revision?: number };
     try { pending = JSON.parse(saved(PENDING_KEY)); if (!pending.client_request_id || !pending.message || !pending.model_id) return; }
     catch { return; }
     mutationRef.current = true; setBusy(true);
-    const recoverySelection = selectedRef.current;
+    const originNavigation = pending.navigation_revision ?? initialNavigationRef.current;
     setPendingMessage(current => current ? { ...current, phase: "sending" } : current);
     try {
       const next = await rynAgent.create(pending.message, pending.model_id, pending.client_request_id, pending.scope, pending.expected_destination_revision, pending.skill_ids, pending.response_language, pending.project_id, pending.reasoning_effort);
-      if (selectedRef.current === recoverySelection) { selectedRef.current = next.id; setSelected(next.id); }
+      const ownsDraft = originNavigation === navigationRef.current;
+      if (ownsDraft && !selectedRef.current) { selectedRef.current = next.id; setSelected(next.id); }
+      recordMutationRevision.current++;
       acceptTask(next);
       save(PENDING_KEY, ""); setUncertain(false); setError("");
       setPendingMessage(null);
       setDrafts(current => {
-        const key = newDraftKey(pending.project_id);
+        if (!ownsDraft) return current;
+        const key = pending.draft_key || newDraftKey(pending.project_id);
         const nextDraft = current[key] && (pendingMessage || current[key] !== pending.message) ? current[key] : "";
         return { ...current, [key]: "", ...(nextDraft && !current[next.id] ? { [next.id]: nextDraft } : {}) };
       });
-      setScopeDraft(null); setSkillIDs([]);
+      if (ownsDraft) { setScopeDraft(null); setSkillIDs([]); }
     } catch (reason) {
+      if (confirmedCreateRequests.current.has(pending.client_request_id)) return;
       if (reason instanceof AgentAPIError && reason.status < 500) {
-        save(PENDING_KEY, ""); setUncertain(false); setPendingMessage(null);
-        const key = newDraftKey(pending.project_id);
-        setDrafts(current => current[key] ? current : { ...current, [key]: pending.message });
+        save(PENDING_KEY, ""); setUncertain(false);
+        const key = pending.draft_key || newDraftKey(pending.project_id);
+        if (originNavigation === navigationRef.current) {
+          setPendingMessage(null);
+          setDrafts(current => current[key] ? current : { ...current, [key]: pending.message });
+        } else setPendingMessage(current => ({ ...(current || { requestID: pending.client_request_id, taskID: "", draftKey: key, message: pending.message, baseMessageCount: 0, navigationRevision: originNavigation }), phase: "rejected" }));
       } else setPendingMessage(current => current ? { ...current, phase: "uncertain" } : current);
       setError(mutationErrorKey(reason)); await refresh().catch(() => undefined);
     }
@@ -445,12 +568,14 @@ export default function RynAgent() {
     && !(task.result && index === messages.length - 1 && message.role === "assistant" && message.content === task.result),
   ) || [];
   const transcript = groupAgentMessages(visibleMessages);
+  const streamedText = task ? pendingAgentText(task) : "";
+  const streamStart = task && [...task.events].reverse().find(event => event.type === "model_started");
   const legacySend = enabled && selectedModel && canUseAgentModel(selectedModel) && (!selected || (task && canContinueAgentTask(task)));
   const canSend = draft.trim() && !busy && !uncertain && !controlUncertain && (!selected ? newScopeReady : true) && (task?.allowed_actions ? canUseAgentAction(task, effectiveIntent) : legacySend);
   const sendLabel = task?.allowed_actions ? effectiveIntent === "steer" ? "sendSteer" : "sendInformation" : selected ? "followup" : "send";
   const currentProject = task?.project || (!selected ? projects.find(item => item.id === projectID) : undefined);
   const generalTasks = tasks.filter(item => !item.project || !projects.some(project => project.id === item.project?.id));
-  const visiblePending = pendingMessage && (pendingMessage.taskID ? pendingMessage.taskID === selected : !selected && pendingMessage.draftKey === draftKey) ? pendingMessage : null;
+  const visiblePending = pendingMessage && pendingMessage.phase !== "rejected" && (pendingMessage.taskID ? pendingMessage.taskID === selected : !selected && pendingMessage.draftKey === draftKey && (pendingMessage.navigationRevision ?? initialNavigationRef.current) === navigationRevision) ? pendingMessage : null;
   const pendingRecorded = Boolean(visiblePending && task?.messages.slice(visiblePending.baseMessageCount).some(message => message.role === "user" && (message.ui?.text ?? message.content)?.trim() === visiblePending.message));
   const pendingFeedback = visiblePending && <>
     {!pendingRecorded && <div className="ra-message ra-user ra-message-pending"><ChatMarkdown>{visiblePending.message}</ChatMarkdown></div>}
@@ -465,6 +590,7 @@ export default function RynAgent() {
     if (task) { setTaskModelTarget(id); setTaskModelOpen(true); }
     else { setModel(id); setReasoningEffort(""); }
   }} />;
+  const taskMenu = useAgentTaskMenu({ selected, busy: busy || uncertain || controlUncertain, onChoose: chooseTask, onChange: changeRecord, onDelete: deleteRecord, isUnread: taskAttention.isUnread });
 
   return <section className={`ra-workspace${tasksCollapsed ? " ra-tasks-collapsed" : ""}`} aria-label={t("title")}>
     <header className="ra-header">
@@ -496,6 +622,8 @@ export default function RynAgent() {
             </section>}
           <details className="ra-record-options"><summary>{t("manageRecords")}</summary><TaskRecords task={task} busy={busy || controlUncertain} onChange={changeRecord} onDelete={deleteRecord} /></details></>}</div></details><Link to="/services/sources">{t("models")}</Link><button className="ra-icon" aria-label={t("settings")} disabled={!settingsReady} onClick={() => setSettingsOpen(true)}><Settings size={18} /></button></div>
     </header>
+    {taskMenu.dialogs}
+    {pendingMessage?.phase === "rejected" && <div className="ra-banner ra-unsent-message" role="alert"><CircleAlert size={17} /><details><summary>{t("unsentMessage")}</summary><p>{pendingMessage.message}</p></details><button className="ra-icon" aria-label={t("close")} onClick={() => setPendingMessage(null)}><X size={16} /></button></div>}
     {error && <div role="alert" className="ra-banner"><CircleAlert size={17} /><span>{t(error)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>}
     {Object.values(resourceErrors).filter(Boolean).map(key => <div key={key} role="alert" className="ra-banner"><CircleAlert size={17} /><span>{t(key)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>)}
     {uncertain && <div role="alert" className="ra-banner">{t("uncertain")}<button disabled={busy} onClick={() => void recoverRequest()}>{t("recoverRequest")}</button></div>}
@@ -503,8 +631,8 @@ export default function RynAgent() {
     {loading ? <div className="ra-empty" role="status">{t("loading")}</div> : <div className="ra-layout">
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
         <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
-        <div className="ra-task-items"><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} disabled={busy || uncertain || controlUncertain} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!saved(PROJECT_KEY)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} disabled={busy} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => <button key={item.id} className={`ra-task-item${selected === item.id ? " selected" : ""}`} aria-pressed={selected === item.id} onClick={() => chooseTask(item.id)}><span>{item.title}</span><small>{t(agentTaskState(item))}</small></button>) : <p>{t("emptyTasks")}</p>}</div>
-        <ArchivedTasks enabled={recordsSupported} selected={selected} onChoose={chooseTask} revision={recordsRevision} />
+        <div className="ra-task-items"><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} navigationRevision={navigationRevision} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!pluginEntry && !saved(PROJECT_KEY)} renderTask={item => taskMenu.renderTask(item, true)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => taskMenu.renderTask(item)) : <p>{t("emptyTasks")}</p>}</div>
+        <ArchivedTasks enabled={recordsSupported} selected={selected} onChoose={chooseTask} revision={recordsRevision} renderTask={item => taskMenu.renderTask(item)} />
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
       <div className="ra-chat">
@@ -513,8 +641,8 @@ export default function RynAgent() {
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task}>
-            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} active={index === transcript.length - 1 && isAgentActive(agentTaskState(task))} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <div key={`${task.id}-${index}`} className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong><ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown></>}</div>; })}
-            {pendingAgentText(task) && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><ChatMarkdown>{pendingAgentText(task)}</ChatMarkdown></div>}
+            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} active={index === transcript.length - 1 && isAgentActive(agentTaskState(task))} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong><ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown></>}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
+            {streamedText && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><RynAgentStream text={streamedText} streamKey={`${task.id}/${streamStart?.seq}`} active={selectedExecuting} /></div>}
             {pendingFeedback}
             {!visiblePending && <ExecutionProgress task={task} />}
 

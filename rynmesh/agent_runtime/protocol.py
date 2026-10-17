@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -39,7 +40,10 @@ def event(row: dict, kind: str, **fields) -> None:
     row["event_cursor"] += 1
     if kind in CONTROL_EVENTS:
         row["control_revision"] += 1
-    row["events"].append({"seq": row["event_cursor"], "type": kind, "at": now(), "context_epoch": row.get("context_epoch", 0), **fields})
+    elapsed = row.get("elapsed_seconds")
+    timing = ({"run_elapsed_seconds": elapsed}
+              if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0 else {})
+    row["events"].append({"seq": row["event_cursor"], "type": kind, "at": now(), "context_epoch": row.get("context_epoch", 0), **timing, **fields})
     row["revision"] += 1
     row["updated_at"] = now()
 

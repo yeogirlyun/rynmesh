@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen, Image as ImageIcon, File as FileIcon, RefreshCw, Sheet, TriangleAlert } from "lucide-react";
-import { AgentAPIError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
+import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
 import { AgentFileContext, fileAvailable } from "./RynAgentFileContext";
@@ -92,7 +92,8 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
     // until the fresh listing arrives, so an open file follows its newest version.
     const controller = new AbortController(); setChosen(null); setError(false);
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let failures = 0; let loading = false;
+    let failures = 0; let unchanged = 0; let loading = false;
+    let previous = "";
     const load = async () => {
       if (controller.signal.aborted || loading) return;
       if (timer) clearTimeout(timer);
@@ -102,17 +103,23 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
         if (controller.signal.aborted) return;
         // Polling an unchanged file listing must not invalidate every Markdown
         // message while the user types in the composer.
-        setListing(current => JSON.stringify(current) === JSON.stringify(value) ? current : value); setError(false);
+        const snapshot = JSON.stringify(value);
+        unchanged = snapshot === previous ? unchanged + 1 : 0;
+        previous = snapshot;
+        setListing(current => JSON.stringify(current) === snapshot ? current : value); setError(false);
         const unavailable = value.files?.some(file => file.status === "unavailable");
         failures = unavailable ? failures + 1 : 0;
         // A completed model turn may still have a command producing files.
-        if (!finished || value.pending_files) timer = setTimeout(load, 750);
+        if (value.pending_files) timer = setTimeout(load, 1500);
         else if (unavailable) timer = setTimeout(load, Math.min(30000, 750 * 2 ** Math.min(failures - 1, 6)));
+        // Tool/file revisions trigger an immediate refresh. While the model is thinking,
+        // re-hashing unchanged files needs only a slow fallback; shell delivery stays polled.
+        else if (!finished) timer = setTimeout(load, Math.min(30000, 5000 * 2 ** Math.min(unchanged, 3)));
       } catch (reason) {
         if (controller.signal.aborted) return;
-        setError(true); setListing(current => current && { ...current, artifacts: [] });
-        if (!(reason instanceof AgentAPIError) || reason.status >= 500 || reason.status === 409) {
-          timer = setTimeout(load, Math.min(30000, 250 * 2 ** Math.min(failures++, 7)));
+        setError(true);
+        if (isTransientAgentReadError(reason)) {
+          timer = setTimeout(load, agentReadBackoff(++failures));
         }
       } finally { loading = false; }
     };

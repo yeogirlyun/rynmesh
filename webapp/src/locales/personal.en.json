@@ -487,5 +487,16 @@
   "serviceNeedsConnection": "This service is offered to the device owner's own devices. Connect the device before using it; the provider checks every request.",
   "advertisedServiceCount": "{{count}} services advertised",
   "advertisedServiceCount_one": "{{count}} service advertised",
-  "advertisedServiceCount_other": "{{count}} services advertised"
+  "advertisedServiceCount_other": "{{count}} services advertised",
+  "homeOnlineCount": "{{count}} online",
+  "homeOfflineCount": "{{count}} offline",
+  "homeServiceCount": "{{count}} services",
+  "homeServiceCount_one": "{{count}} service",
+  "homeServiceCount_other": "{{count}} services",
+  "homeServiceSummary": "{{count}} services · {{ready}} ready",
+  "homeServiceSummary_one": "{{count}} service · {{ready}} ready",
+  "homeServiceSummary_other": "{{count}} services · {{ready}} ready",
+  "homeViewLabel": "Device view",
+  "homeViewList": "List",
+  "homeViewMap": "Map"
 }

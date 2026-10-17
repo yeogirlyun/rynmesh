@@ -72,7 +72,7 @@ async function openComposer(kind: SendKind) {
   const view = render(<MemoryRouter initialEntries={["/agent"]}><RynAgent /></MemoryRouter>);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("verified-model"));
   if (kind === "followup") {
-    await userEvent.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Inspect devices" }));
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
   }
   return view;
@@ -204,7 +204,7 @@ it.each([
   const request = vi.spyOn(rynAgent, "message").mockImplementation(() => response.promise);
   const user = userEvent.setup();
   const { container } = await openComposer("create");
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Turn finished$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
   const message = "Try another inspection in this legacy conversation";
   await user.type(screen.getByRole("textbox"), message);
@@ -238,7 +238,7 @@ it("keeps project conversations reachable when their task index arrives after th
   // The sidebar mounted with no tasks; late project history must have a visible fallback.
   await act(async () => { taskIndex.resolve({ tasks: [conversation] }); await taskIndex.promise; });
   server.use(http.get("*/api/local/agent/tasks/:id", () => HttpResponse.json(conversation)));
-  await user.click(await screen.findByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(await screen.findByText("Project history remains readable")).toBeVisible();
 });
 
@@ -278,7 +278,7 @@ it.each<SendKind>(["create", "followup"])("keeps a pending %s scoped to its conv
   await user.type(screen.getByRole("textbox"), message);
   await user.click(screen.getByRole("button", { name: kind === "create" ? "Send task" : "Send requirements update" }));
   expect(bubbles(container, message)).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: /^Independent task.*Running$/ }));
+  await user.click(screen.getByRole("button", { name: "Independent task" }));
   await screen.findByText("Independent conversation reply");
   expect(bubbles(container, message)).toHaveLength(0);
   expect(screen.queryByText("Sending message…")).not.toBeInTheDocument();
@@ -290,7 +290,7 @@ it.each<SendKind>(["create", "followup"])("keeps a pending %s scoped to its conv
   expect(screen.getByText("Independent conversation reply")).toBeVisible();
   expect(screen.getByRole("textbox")).toHaveValue("A draft for the independent conversation");
   expect(bubbles(container, message)).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: /^Inspect devices.*Running$/ }));
+  await user.click(screen.getByRole("button", { name: "Inspect devices" }));
   await waitFor(() => expect(bubbles(container, message)).toHaveLength(1));
 });
 
