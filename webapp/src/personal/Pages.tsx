@@ -1,19 +1,16 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDownToLine,
   Check,
   ChevronRight,
   Copy,
-  ExternalLink,
   Globe2,
-  Link2,
   Moon,
   Pencil,
   Plus,
   Search,
-  Share2,
   X,
 } from "lucide-react";
 import { useAppContext } from "../appContext";
@@ -37,110 +34,13 @@ import { LanguageSelect } from "./LanguageSelect";
 import { nativeModelRequest, nativeBusy } from "../domain/nativeModel";
 import { tr } from "../uiI18n";
 import { personalHref, usePersonal, type Device, type Service } from "./model";
-import { groupHomeDevices, readHomeView, serviceUrl, writeHomeView, type HomeView } from "./homeModel";
+import { groupHomeDevices, readHomeView, writeHomeView, type HomeView } from "./homeModel";
 import { DeviceHero, DeviceRail, HomeServices, HomeStats, NearbyPanel, ViewSwitch } from "./HomeParts";
+import { SegTabs, ServiceDetail, ServiceTable, ServicesBand } from "./ServicesParts";
 
 function useLinks() {
   const { demo } = usePersonal();
   return (path: string) => personalHref(path, demo);
-}
-function ServiceRow({
-  service,
-  onSelect,
-  selected,
-  compact = false,
-}: {
-  service: Service;
-  onSelect?: () => void;
-  selected?: boolean;
-  compact?: boolean;
-}) {
-  const { t } = useTranslation();
-  const { resolveName, devices, demo } = usePersonal();
-  const href = useLinks();
-  const [preview, setPreview] = useState(false);
-  const navigate = useNavigate();
-  // An advertisement from a device this node has no relationship with is not "ready":
-  // the provider would refuse the request, so the action is to connect the device first.
-  const needsConnection = service.availability === "needs_connection";
-  return (
-    <article
-      className={`pf-service-row${selected ? " selected" : ""}${compact ? " compact" : ""}`}
-    >
-      <button
-        className="pf-service-select"
-        onClick={
-          onSelect ||
-          (() =>
-            service.preview
-              ? setPreview(true)
-              : navigate(href(serviceUrl(service))))
-        }
-      >
-        <ServiceArt kind={service.kind} brand={service.brand} />
-        <div>
-          <h3 className="pf-service-title">{service.title}{service.accessLabel && <span className="pf-access-label">{service.accessLabel}</span>}</h3>
-          <p>
-            {resolveName(service.deviceId)} ·{" "}
-            {devices.find((device) => device.id === service.deviceId)?.own
-              ? t("personal.myDevice")
-              : demo
-                ? t("personal.sharedWithMe")
-                : t("personal.discoveredDevice")}
-          </p>
-          {!compact && <small>{service.description}</small>}
-        </div>
-      </button>
-      {!compact && (
-        <Status
-          online={service.online}
-          label={needsConnection ? "Not connected" : service.online ? "Ready" : "Offline"}
-        />
-      )}
-      {needsConnection ? (
-        <Link
-          className="pf-button"
-          to={href(`/devices?device=${encodeURIComponent(service.deviceId)}`)}
-        >
-          {t("personal.connectDevice")}
-        </Link>
-      ) : (
-        <button
-          className={`pf-button${service.kind === "ai" ? " primary" : ""}`}
-          disabled={!service.online}
-          onClick={() =>
-            service.preview
-              ? setPreview(true)
-              : navigate(href(serviceUrl(service)))
-          }
-        >
-          {service.kind === "ai" ? t("personal.openChat") : t("personal.open")}
-        </button>
-      )}
-      {onSelect && (
-        <button
-          className="pf-icon-button"
-          aria-label={t("personal.viewNameDetails", { name: service.title })}
-          onClick={onSelect}
-        >
-          <Arrow />
-        </button>
-      )}
-      {preview && (
-        <Modal title={service.title} onClose={() => setPreview(false)}>
-          <ServiceArt kind={service.kind} />
-          <p>
-            {t("personal.thisServiceIsShownAsSampleDataInTheDesignPreviewItIsNotInstalledOrRunning")}
-          </p>
-          <footer className="pf-dialog-actions">
-            <button className="pf-button" onClick={() => setPreview(false)}>
-              {t("personal.close")}
-            </button>
-          </footer>
-        </Modal>
-      )}
-    </article>
-  );
 }
 export function PersonalHome() {
   const { t } = useTranslation();
@@ -259,14 +159,22 @@ export function PersonalServices() {
       setQuery("");
     }
   }, [params]);
-  const [tab, setTab] = useState("Overview");
+  const [tab, setTab] = useState<"Overview" | "API access">("Overview");
   const [share, setShare] = useState(false);
   const href = useLinks();
   // Usable services first, then known-but-offline, then those that need a connection.
   const rank = (service: Service) =>
     service.availability === "needs_connection" ? 2 : service.online ? 0 : 1;
+  const isOwn = (service: Service) =>
+    devices.find((device) => device.id === service.deviceId)?.own;
+  const otherFilter = demo ? "Shared with me" : "Discovered";
+  const counts: Record<string, number> = {
+    All: services.length,
+    "My devices": services.filter((service) => isOwn(service)).length,
+    [otherFilter]: services.filter((service) => !isOwn(service)).length,
+  };
   const visible = services.filter((service) => {
-    const own = devices.find((device) => device.id === service.deviceId)?.own;
+    const own = isOwn(service);
     return (
       (filter === "All" || (filter === "My devices" ? own : !own)) &&
       `${service.title} ${resolveName(service.deviceId)}`
@@ -278,28 +186,27 @@ export function PersonalServices() {
     visible.find((service) => service.id === selectedId) || visible[0];
   const owner = devices.find((device) => device.id === selected?.deviceId);
   return (
-    <div className="pf-page">
+    <div className="pf-page rs-services">
       <PageHeading
         title={t("nav.services")}
         description={t("pages.servicesSubtitle")}
       >
-        <Link className="pf-button primary" to={href("/services/manage")}>
-          <Plus size={19} />
+        <Link className="rs-btn primary" to={href("/services/manage")}>
+          <Plus size={16} aria-hidden="true" />
           {t("personal.addService")}
         </Link>
       </PageHeading>
-      <div className="pf-filter-row">
-        <Tabs
-          options={[
-            "All",
-            "My devices",
-            demo ? "Shared with me" : "Discovered",
-          ]}
+      {services.length > 0 && <ServicesBand services={services} />}
+      <div className="rs-bar">
+        <SegTabs
+          options={["All", "My devices", otherFilter]}
           value={filter}
           onChange={setFilter}
+          counts={counts}
+          label={t("personal.filter")}
         />
-        <label className="pf-search">
-          <Search size={18} />
+        <label className="rs-field">
+          <Search size={16} aria-hidden="true" />
           <input
             aria-label={t("personal.searchServices")}
             placeholder={t("personal.searchServices")}
@@ -316,129 +223,38 @@ export function PersonalServices() {
           </button>
         </Note>
       )}
-      <div className="pf-service-layout">
-        <div className="pf-service-list">
-          {visible.map((service) => (
-            <ServiceRow
-              key={service.id}
-              service={service}
-              selected={selected?.id === service.id}
-              onSelect={() => setSelectedId(service.id)}
-            />
-          ))}
-          {!visible.length && (
+      <div className="rs-cols">
+        <ServiceTable
+          services={visible}
+          selectedId={selected?.id}
+          onSelect={setSelectedId}
+          empty={
             <Empty
               title={loading ? t("personal.findingServices") : t("personal.noMatchingServices")}
             >
               {t("personal.addAServiceOnThisDeviceOrTryAnotherFilter")}
             </Empty>
-          )}
-        </div>
+          }
+        />
         {selected && (
-          <aside className="pf-panel pf-service-detail">
-            <div className="pf-detail-lockup">
-              <ServiceArt kind={selected.kind} brand={selected.brand} />
-              <div>
-                <h2>{selected.title}</h2>
-                <p>{t("personal.onName", { name: resolveName(selected.deviceId) })}</p>
-              </div>
-            </div>
-            <Tabs
-              options={["Overview", "API access"]}
-              value={tab}
-              onChange={setTab}
-            />
-            {tab === "Overview" ? (
-              <>
-                <p className="pf-description">
-                  {selected.description}
-                  {selected.accessLabel && <><br />{t("personal.accessMethodMethod", { method: selected.accessLabel })}</>}
-                </p>
-                <h3>{t("personal.access")}</h3>
-                <p>
-                  {demo
-                    ? owner?.own
-                      ? t("personal.onlyMyDevices")
-                      : t("personal.sharedWithMe")
-                    : selected.availability === "needs_connection"
-                      ? t("personal.serviceNeedsConnection")
-                      : t("personal.controlledByTheServiceProvider")}
-                </p>
-                <div className="pf-button-row">
-                  {selected.availability === "needs_connection" && (
-                    <Link
-                      className="pf-button primary"
-                      to={href(`/devices?device=${encodeURIComponent(selected.deviceId)}`)}
-                    >
-                      {t("personal.connectDevice")}
-                    </Link>
-                  )}
-                  <button
-                    className="pf-button"
-                    onClick={() => setTab("API access")}
-                  >
-                    <Link2 size={15} />
-                    {t("personal.apiAccess")}
-                  </button>
-                  {owner?.own && (
-                    <button
-                      className="pf-button"
-                      onClick={() => setShare(true)}
-                    >
-                      <Share2 size={15} />
-                      {t("personal.manageAccess")}
-                    </button>
-                  )}
-                </div>
-                <hr />
-                <h3>{t("personal.manageOnName", { name: resolveName(selected.deviceId) })}</h3>
-                <p>{t("personal.serviceSetupIsManagedOnTheDeviceRunningIt")}</p>
-                <Link
-                  className="pf-link"
-                  to={href(
-                    `/devices?device=${encodeURIComponent(selected.deviceId)}`,
-                  )}
-                >
-                  {t("personal.viewDevice")} <ExternalLink size={14} />
-                </Link>
-              </>
-            ) : (
-              <>
-                <p className="pf-description">
-                  {t("personal.connectYourAppsAndAgentsThroughTheLocalInferenceAPI")}
-                </p>
-                {selected.kind === "ai" ? (
-                  <Link
-                    className="pf-button"
-                    to={href("/services/api")}
-                  >
-                    <Link2 size={16} />
-                    {t("personal.configureAPIAccess")}
-                  </Link>
-                ) : (
-                  <Note>
-                    {selected.preview
-                      ? t("personal.thisSampleServiceDoesNotProvideAWorkingAPI")
-                      : t("personal.apiDetailsAreProvidedByTheServiceOwner")}
-                  </Note>
-                )}
-              </>
-            )}
-          </aside>
+          <ServiceDetail
+            service={selected}
+            tab={tab}
+            onTab={setTab}
+            onManage={() => setShare(true)}
+          />
         )}
       </div>
-      <Link
-        className="pf-link"
-        style={{ marginTop: 22 }}
-        to={href("/services/catalog")}
-      >
-        {t("personal.moreServiceTools")} <Arrow />
-      </Link>
-      <Note>
-        {demo
-          ? t("personal.requestAccessBeforeUsingAServiceThatIsNotSharedWithYou")
-          : t("personal.discoveredServicesAreNotProofOfOwnershipOrGrantedAccessTheProviderChecksEveryRequest")}
-      </Note>
+      <div className="rs-foot">
+        <Link className="rs-link" to={href("/services/catalog")}>
+          {t("personal.moreServiceTools")} <Arrow />
+        </Link>
+        <span>
+          {demo
+            ? t("personal.requestAccessBeforeUsingAServiceThatIsNotSharedWithYou")
+            : t("personal.discoveredServicesAreNotProofOfOwnershipOrGrantedAccessTheProviderChecksEveryRequest")}
+        </span>
+      </div>
       {share && owner && (
         <ShareServices device={owner} onClose={() => setShare(false)} />
       )}
