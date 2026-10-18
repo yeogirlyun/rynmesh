@@ -498,5 +498,12 @@
   "homeServiceSummary_other": "{{count}} services · {{ready}} ready",
   "homeViewLabel": "Device view",
   "homeViewList": "List",
-  "homeViewMap": "Map"
+  "homeViewMap": "Map",
+  "servicesAcrossDevices": "services on {{devices}}",
+  "servicesAcrossDevices_one": "service on {{devices}}",
+  "servicesAcrossDevices_other": "services on {{devices}}",
+  "servicesBandLabel": "Services overview",
+  "servicesBandSummary": "{{ready}} ready, {{offline}} offline, {{notConnected}} not connected",
+  "servicesProvidedBy": "Provided by",
+  "servicesStatus": "Status"
 }

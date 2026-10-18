@@ -77,3 +77,44 @@ Notes for merging
 - The design's miniature map thumbnail in the device list was replaced by a "Connection view" button that switches to Map.
 
 final result: passed (scoped), with the pre-existing Agent test timeouts noted above
+
+## Services page redesign - 2026-10-18
+
+What changed
+- `/services` only (`PersonalServices`): a summary band (service count, device count, a ready / offline / not connected meter), a segmented filter with counts, one grouped table (service, provided by, status, action) and a detail panel with a connection strip (this device, route, provider). The rules are unchanged: same ordering (ready, offline, needs connection), filters, search, `?service=` selection, Overview / API access tabs, Connect device link, Manage access for owned devices only, and the API tab behaviour for AI and other services.
+- Files: new `ServicesParts.tsx`, `services-refresh.css` (every selector, media and container queries included, is under `.rs-services`: 150 selectors, 0 outside), `ServicesView.test.tsx`; edited `Pages.tsx` (`PersonalServices`; the old `ServiceRow`, which only this page used, is removed), `personal.en.json` and `personal.zh-CN.json` (7 keys).
+- Not touched: the section tabs above the page (they come from `Shell.tsx`), the Devices page, every other Services sub page and all dialogs.
+- Font: the page inherits the app font. The design mock used Plus Jakarta Sans; using it in the app means bundling the font.
+
+Evidence (scratch copy of this tree on a local disk, not the share)
+- `tsc -b --noEmit` and `vite build` pass.
+- `npx vitest run src/personal src/Localization.test.tsx --no-file-parallelism`: 17 files, 120 tests pass, including the global copy lint. `ServicesView.test.tsx` has 7 tests: summary, meter and list order; route text per row and filter counts hidden from button names; selecting from the row button or anywhere on the row; API tab rules; search and empty state; the sample-data dialog keeping the selection (added in review round 1); Chinese copy.
+- Browser, fixture mode, with an offline and a needs-connection service added in the scratch copy only: 1520 px (table plus detail panel), 1300 px, 1024 px, 700 px and 390 px have no horizontal overflow and no clipped titles (script audit); light and dark checked on screenshots; Chinese checked at 1520 px.
+- Review round 1 below adds a check in the real desktop window with real node services. Still not done: a computed-style fingerprint of the other pages against an untouched tree (scoped CSS check and the Home tests only).
+
+Known gap
+- The service section tabs and the Services sub pages keep their old look until they get their own pass.
+
+### Review round 1 - 2026-10-18 (acceptance findings)
+
+Findings and fixes
+1. Dark-mode tag contrast (P2). Cause: in dark mode `.rs-tag` kept the light-mode hue ink (`--hd`), about 2.17:1 on the tag background. Fix, all under `.rs-services`: in dark, tags and device glyphs take `color-mix(in srgb, var(--h2) 58%, var(--rs-ink))`; the global `--hd` is not touched. The light-mode amber `--hd` measured 3.84:1, so it is now `#965a00`. Measured as computed colour against the composited background, in the page: light 4.68:1 or better for all seven hue classes (probe elements) and 5.92 to 6.8:1 on real rows; dark 8.03:1 or better for all hues and 8.09:1 on real rows (online API and Local CLI tags, the offline slate tag).
+2. Rows at small list widths (P2). Cause: the row was a wrapping flex line, so service, provider, status and action stacked into three or four layers at 343 to 449 px lists. Fix: a grid with named areas. Default is two rows (service | status, provider | action); from a 420 px list the provider line is indented under the title; from a 700 px list it becomes four columns, and `.rs-lh` shares the exact same column template as `.rs-row`. Nothing is hidden, clipped or scrolled. Measured (script audit of each row's cells): browser 390 px (list 343), 700 px (list 449), 820 px and 1300 px give two rows; 1024 px and 1520 px give one band; desktop window lists of 693 px give two rows and 709, 733 and 1034 px give one band; no overlaps, nothing outside the row, no horizontal overflow.
+3. Sample-data dialog selecting the row behind it (P3). Cause: the shared `Modal` renders inside the row's `article`, so clicks on dialog text bubbled to the row's click handler. Fix: the row ignores clicks that start in `a, button, dialog`, and the select button no longer calls `onSelect` twice. The shared `Modal` is unchanged. The regression test (Open on an unselected sample service keeps the selection; dialog text and backdrop clicks keep it; closing keeps it; the select button and plain row content still select) fails against the old handler and passes now.
+
+Found while checking in the desktop window and fixed (not in the findings list)
+- The table's last column was 100 px, but the English "Connect device" button needs about 115 px, so it spilled left to 1 px from the status pill. The column is now 126 px in both header and rows (27 px between pill and button).
+- In the table the provider caption was cut with an ellipsis ("Route ..."), which hid the route status near 700 px. It now wraps.
+
+Evidence (scratch copy on a local disk; the three source files and the locale files in it are byte-identical to the tree)
+- `npx tsc -b --noEmit` exit 0; `npx vitest run src/personal src/Localization.test.tsx --no-file-parallelism` 17 files, 120 tests pass; `npx vite build` exit 0 (only the existing chunk-size and dynamic-import warnings). tsc, vitest and the build were run once more after the two final CSS-only edits listed above (column width, caption wrap), and the desktop checks of those two edits were made after them. Scope check 150 selectors, 0 outside `.rs-services`; `personal.css`, `secondary.css`, `Shell.tsx`, `components.tsx` and `model.tsx` have no changes.
+- Real desktop (WebView2, Windows): the existing debug `Ryn.exe` embeds an older bundle (page URL `tauri.localhost`, no `.rs-services`, the old service rows), so it is not evidence for the redesign. It was started isolated (own `RYNMESH_HOME`, own WebView2 profile, its own sidecar; ports 8791 and 9222 were free before and after, and 5173 was used only by the dev server started for this check; no installed program, existing node or autostart touched), then the same window was pointed at a dev server serving this tree. Result: `.rs-services` present, three rows, Tauri IPC present. Real node services (Antigravity and ChatGPT as Local CLI, Z.ai GLM as API; ChatGPT and Z.ai show their brand logos, Antigravity the generic tile) checked in light and dark at 1280 px, near 960 to 1000 px and maximised; fixture data also checked near the 700 px threshold. All processes were stopped and the isolated profile deleted afterwards.
+- Screenshots are kept outside the repository in the session scratchpad (`desktop` folder): old embedded page, current page at 1280 light and dark, maximised, and near the threshold.
+
+Not verified
+- A freshly compiled Tauri build that embeds the current `dist`. It needs a full cargo build and none was made, so the `tauri.localhost` origin and the packaged assets of a release build are untested with this page. The desktop check used the dev server inside the real WebView2 window.
+- Ready and offline rows from a live node: the isolated node only had three not-connected services. Those states were checked on fixture data, and offline with services added temporarily to the scratch copy (restored; the tree's `model.tsx` was never changed).
+- A 390 px width in the real desktop window (its minimum width is 960 px; 390 px was checked in browser emulation only).
+- Chinese copy in the desktop window (browser at 1520 px and the unit test only).
+- The sample-data dialog in the desktop window (the real node had no sample services; covered by the unit test and the browser).
+- A computed-style fingerprint of the other pages against an untouched tree.
