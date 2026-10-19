@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .adapters import AdapterError
+from .adapters import AdapterError, actual_usage
 from .chat import validate_chat
 from .process_guard import communicate_bounded, spawn, terminate
 
@@ -48,27 +48,53 @@ def _mac_codex_apps(refresh_bucket: int) -> tuple[Path, ...]:
     return ()
 
 
+def _windows_codex_binary() -> str | None:
+    """Prefer the desktop's canonical binary over stale PATH/MSIX shims."""
+    local_roots = [Path.home() / "AppData" / "Local"]
+    if os.environ.get("LOCALAPPDATA"):
+        local_roots.append(Path(os.environ["LOCALAPPDATA"]))
+    for local_root in dict.fromkeys(local_roots):
+        candidates = []
+        try:
+            for path in (local_root / "OpenAI" / "Codex" / "bin").glob("*/codex.exe"):
+                try:
+                    if path.is_file():
+                        canonical = path.resolve()
+                        candidates.append((path.stat().st_mtime_ns, str(canonical), canonical))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+        if candidates:
+            return str(max(candidates, key=lambda row: row[:2])[2])
+    return None
+
+
 class CLIAgentAdapter:
+    # Callers pass conversation_scope (authenticated requester + opaque window).
+    supports_conversation_scope = True
+
     def __init__(self, kind: str, *, executable: str = "") -> None:
-        if kind not in {"codex_cli", "claude_cli"}:
+        if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
             raise ValueError("unsupported CLI adapter")
         self.kind = kind
-        self.executable = executable or ("codex" if kind == "codex_cli" else "claude")
+        self.executable = executable or {"codex_cli": "codex", "claude_cli": "claude", "antigravity_cli": "agy"}[kind]
         self._lock = threading.Lock()
         self._running: dict[str, subprocess.Popen[str]] = {}
         self._cancelled: set[str] = set()
 
     def _command_path(self) -> str:
-        found = shutil.which(self.executable)
-        # Explorer-started desktop apps do not inherit Codex's private PATH.
-        # The desktop installer keeps versioned CLI binaries in this folder.
-        if not found and self.kind == "codex_cli" and self.executable == "codex":
-            local_app_data = os.environ.get("LOCALAPPDATA", "")
-            if local_app_data:
-                root = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
-                candidates = [path for path in root.glob("*/codex.exe") if path.is_file()]
-                if candidates:
-                    found = str(max(candidates, key=lambda path: path.stat().st_mtime))
+        # Packaged desktop processes can receive a virtual LOCALAPPDATA and a
+        # stale PATH shim. Resolve the real profile first without spawning a CLI.
+        found = (_windows_codex_binary() if sys.platform == "win32" and
+                 self.kind == "codex_cli" and self.executable == "codex" else None)
+        if not found:
+            found = shutil.which(self.executable)
+        if not found and self.kind == "antigravity_cli" and self.executable == "agy":
+            candidates = [Path.home() / ".local" / "bin" / "agy"]
+            if os.environ.get("LOCALAPPDATA"):
+                candidates.insert(0, Path(os.environ["LOCALAPPDATA"]) / "agy" / "bin" / "agy.exe")
+            found = next((str(path) for path in candidates if path.is_file()), None)
         # Finder-launched apps may not inherit Homebrew / shell PATH entries.
         # Query registered apps and standard command directories without running
         # shell startup files or replacing an explicitly configured executable.
@@ -111,9 +137,12 @@ class CLIAgentAdapter:
         return [{"id": self.kind}]
 
     def capabilities(self) -> dict[str, Any]:
-        return {"chat_completions": True, "streaming": self.kind == "codex_cli",
-                "tools": self.kind == "codex_cli", "tool_execution": "origin_client",
-                "conversation_storage": "none", "cancel": "process_tree_termination"}
+        from .codex_threads import enabled as threads_enabled
+        return {"chat_completions": True, "streaming": self.kind in {"codex_cli", "antigravity_cli"},
+                "tools": self.kind in {"codex_cli", "antigravity_cli"}, "tool_execution": "origin_client",
+                "conversation_storage": "none", "cancel": "process_tree_termination",
+                # A client tool loop may keep an ephemeral in-memory thread between steps.
+                "conversation_memory": "tool_loop_idle_bounded" if self.kind == "codex_cli" and threads_enabled() else "none"}
 
     @staticmethod
     def _prompt(messages: list[dict[str, Any]]) -> str:
@@ -135,6 +164,9 @@ class CLIAgentAdapter:
              max_tokens: int) -> dict[str, Any]:
         from .codex_session import private_workspace
 
+        if self.kind == "antigravity_cli":
+            from .antigravity_session import infer
+            return infer(self, prompt, task_id=task_id, timeout_s=timeout_s, max_tokens=max_tokens)
         if self.kind != "claude_cli":
             raise AdapterError("Codex requires the environment-free app-server")
         command = self._command_path()
@@ -202,10 +234,9 @@ class CLIAgentAdapter:
                 raise AdapterError("Claude Code returned invalid JSON") from exc
             if payload.get("is_error") or not isinstance(answer, str):
                 raise AdapterError("Claude Code did not return a text answer")
-            input_tokens = int(usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("output_tokens") or 0)
+            counts = actual_usage(usage)
             return {"text": answer, "message": {"role": "assistant", "content": answer},
-                    "input_tokens": max(0, input_tokens), "output_tokens": max(0, output_tokens),
+                    **counts, "reported_usage": counts,
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "finish_reason": "stop"}
 
@@ -218,17 +249,34 @@ class CLIAgentAdapter:
                          timeout_s=timeout_s, model=model)
 
     def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
-             on_event: Any = None, model: str = "") -> dict[str, Any]:
+             on_event: Any = None, model: str = "", conversation_scope: dict | None = None) -> dict[str, Any]:
         with self._lock:
             if task_id in self._cancelled:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
         body = validate_chat(body)
-        if self.kind == "codex_cli":
-            from .codex_session import chat
+        for message in body["messages"]:
+            # Native API continuation belongs only to its bound HTTP adapter.
+            # CLI sessions must never stringify it into their prompt envelope.
+            message.pop("provider_state", None)
+            message.pop("is_error", None)
+        if "reasoning_effort" in body and self.kind != "codex_cli":
+            raise AdapterError("CLI API mode does not support reasoning_effort for this CLI")
+        if self.kind != "codex_cli" and any(isinstance(message.get("content"), list) for message in body["messages"]):
+            raise AdapterError("CLI API mode does not support image input")
+        if self.kind in {"codex_cli", "antigravity_cli"}:
+            if self.kind == "codex_cli":
+                from .codex_session import chat
+            else:
+                from .antigravity_session import chat
             for key in ("temperature", "top_p", "stop", "enable_thinking"):
                 if key in body:
                     raise AdapterError(f"CLI API mode does not support {key}")
+            if self.kind == "codex_cli":
+                # Codex forwards assistant text as it streams; proposals stay
+                # buffered until validated, then end the stream.
+                return chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model,
+                            on_event=on_event if body.get("stream") else None, scope=conversation_scope)
             result = chat(self, body, task_id=task_id, timeout_s=min(timeout_s, 300), model=model)
             if body.get("stream") and on_event:
                 # Buffered SSE: no provider turn remains alive awaiting tools.
@@ -238,7 +286,8 @@ class CLIAgentAdapter:
                 on_event({"choices": [{"index": 0, "delta": delta, "finish_reason": None}]})
                 on_event({"choices": [{"index": 0, "delta": {}, "finish_reason": result["finish_reason"]}],
                           "usage": {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"],
-                                    "total_tokens": result["input_tokens"] + result["output_tokens"]}})
+                                    "total_tokens": (result["input_tokens"] + result["output_tokens"]
+                                                     if result["input_tokens"] is not None and result["output_tokens"] is not None else None)}})
             return result
         if body.get("tools") or body.get("tool_choice", "auto") not in ("auto", "none"):
             raise AdapterError("CLI API mode does not support client tool calls")
@@ -262,8 +311,14 @@ class CLIAgentAdapter:
         with self._lock:
             return {"running": len(self._running)}
 
+    def close_sessions(self) -> None:
+        """Close kept provider threads, e.g. after an owner permission change."""
+        from .codex_threads import close_pool
+        close_pool(self)
+
     def shutdown(self) -> None:
         with self._lock:
             ids = list(self._running)
         for task_id in ids:
             self.cancel(task_id)
+        self.close_sessions()

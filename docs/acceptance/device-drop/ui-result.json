@@ -1,0 +1,38 @@
+{
+  "scope": "Two loopback nodes; seeded own-device trust; real HTTP data and messages",
+  "date": "2026-10-13T09:45:32.866Z",
+  "textDelivered": true,
+  "fileBytes": 2097183,
+  "sha256": "96a2c14e06dad86086cf84b91a49fdd0ffd40c71042eb8be388c9cd53f903833",
+  "receiverCompleted": true,
+  "viewports": [
+    {
+      "width": 1440,
+      "overflow": false,
+      "menuInBounds": true
+    },
+    {
+      "width": 1024,
+      "overflow": false,
+      "menuInBounds": true
+    },
+    {
+      "width": 736,
+      "overflow": false,
+      "menuInBounds": true
+    },
+    {
+      "width": 390,
+      "overflow": false,
+      "menuInBounds": true
+    },
+    {
+      "width": 320,
+      "overflow": false,
+      "menuInBounds": true
+    }
+  ],
+  "errors": [],
+  "largeFile100GB": "not tested",
+  "publicInternet": "not tested"
+}

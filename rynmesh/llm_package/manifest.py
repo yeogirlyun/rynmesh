@@ -13,7 +13,7 @@ from rynmesh.crypto import sha256_file
 
 PROTOCOL_VERSION = "rynmesh.llm.task.v1"
 PACKAGE_VERSION = "0.1.0"
-MODES = {"managed", "import_gguf", "openai_compatible", "ollama", "codex_cli", "claude_cli"}
+MODES = {"managed", "import_gguf", "openai_compatible", "ollama", "codex_cli", "claude_cli", "antigravity_cli"}
 
 
 class ManifestError(ValueError):

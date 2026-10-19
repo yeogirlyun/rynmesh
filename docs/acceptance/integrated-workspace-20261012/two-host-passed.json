@@ -1,0 +1,28 @@
+{
+  "record_date": "2026-10-11",
+  "physical_hosts": 2,
+  "model": "GLM-5.3-Flash",
+  "transport": "direct ICE/UDP",
+  "scope": "consumer sessions, history isolation, manual sharing with Agent off, cancellation and subsequent invocation",
+  "passed_observations": {
+    "same_238_installed_files": true,
+    "different_physical_hostnames": true,
+    "consumer_process_unchanged_during_cancel_and_next_call": true,
+    "provider_process_unchanged_during_cancel_and_next_call": true,
+    "dispatch_observed_before_cancel": true,
+    "single_dispatch_for_cancelled_request": true,
+    "single_dispatch_for_following_request": true,
+    "consumer_returned_cancel_within_two_seconds": true,
+    "cancelled_receipt_does_not_publish_output_or_fake_usage": true,
+    "cancelled_order_still_cancelled_on_both_hosts": true,
+    "earlier_cancel_persisted_across_restart": true,
+    "following_call_succeeded_with_exact_marker": true,
+    "following_call_uses_new_direct_ice_connection": true,
+    "agent_stayed_off_task_ids_unchanged": true,
+    "only_real_model_glm": true,
+    "owner_source_unchanged": true,
+    "test_listeners_and_remote_firewall_rules_removed": true
+  },
+  "consumer_cancel_return_seconds": 0.10899999999674037,
+  "source_record_sha256": "a9c6f11ec9875920344f07d4d93be38c9f761dc449da053e04469b05769cdff2"
+}

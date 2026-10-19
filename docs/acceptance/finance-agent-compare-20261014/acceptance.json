@@ -1,0 +1,457 @@
+{
+  "date": "2026-10-14T15:46:29.482443+00:00",
+  "objective": "Actual dashboard finance-query workload, issue location, code repair and guarded test execution; compare current Ryn, same-model Ryn and native Codex",
+  "projects": [
+    "D:/code/rynmesh",
+    "D:/code/chat-backend"
+  ],
+  "live_questions": [
+    "HSBC USD balance at cutoff date",
+    "Each company bank account balance, including zero and missing coverage",
+    "September monthly profit-and-loss and weighted operating margin"
+  ],
+  "live_scope": {
+    "production_messages_reviewed": 115,
+    "inbound_messages": 53,
+    "tool_history_rows": 35,
+    "live_queries": 3,
+    "read_tool_invocations": 4,
+    "financial_writes": 0,
+    "staff_messages_sent": 0,
+    "mode": "synthetic scheduled_task with hard signed read-only context"
+  },
+  "paired_tasks": {
+    "C1": "Raw-precision zero/missing-account semantics; preserve Dashboard rounding",
+    "C2": "Complete UTF-8 attachment and whole-line Markdown preview, coherent header/separator",
+    "C3": "Ordered columns/sort in export scope while account sets and object keys remain equivalent",
+    "Q1": "All returned account balances, zero/missing classification and displayed-row USD sum",
+    "Q2": "All returned teams, totals and weighted operating margin"
+  },
+  "native_codex": {
+    "model": "gpt-6.1-sol",
+    "cli_version": "0.162.0-alpha.17.2",
+    "wall_seconds_approx": 278.04,
+    "new_tests_passed": 13,
+    "independent_contract_tests": {
+      "passed": 9,
+      "failed": 0,
+      "suites": 1
+    },
+    "existing_tests": {
+      "passed": 28,
+      "failed": 1,
+      "suites": 2
+    },
+    "query_checks": {
+      "Q1": {
+        "passed": true,
+        "errors": []
+      },
+      "Q2": {
+        "passed": true,
+        "errors": []
+      }
+    },
+    "input_tokens": 716543,
+    "cached_input_tokens": 661760,
+    "output_tokens": 5786,
+    "model_calls": null,
+    "caveat": "13 command execution starts are not 13 model calls. Existing suite found one preview-length regression despite new/contract tests passing."
+  },
+  "ryn_rounds": {
+    "ryn-glm-r1": {
+      "model": "glm-5.3-flash",
+      "status": "failed",
+      "error": "agent_time_limit",
+      "goal_outcome": "unverified",
+      "wall_seconds": 919.38,
+      "recorded_run_seconds": 900.7809999998426,
+      "model_calls": 22,
+      "tool_calls": 25,
+      "compactions": 2,
+      "response_rejections": 1,
+      "input_tokens": 395748,
+      "output_tokens": 8044,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-codex-r1": {
+      "model": "gpt-6.1-sol",
+      "status": "failed",
+      "error": "agent_context_limit",
+      "goal_outcome": "unverified",
+      "wall_seconds": 887.15,
+      "recorded_run_seconds": 850.5390000001062,
+      "model_calls": 18,
+      "tool_calls": 72,
+      "compactions": 7,
+      "response_rejections": 0,
+      "input_tokens": 491306,
+      "output_tokens": 5414,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-glm-r2": {
+      "model": "glm-5.3-flash",
+      "status": "failed",
+      "error": "agent_time_limit",
+      "goal_outcome": "unverified",
+      "wall_seconds": 922.14,
+      "recorded_run_seconds": 900.9719999999797,
+      "model_calls": 16,
+      "tool_calls": 22,
+      "compactions": 1,
+      "response_rejections": 1,
+      "input_tokens": 248299,
+      "output_tokens": 11562,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-codex-r2": {
+      "model": "gpt-6.1-sol",
+      "status": "failed",
+      "error": "agent_model_upstream_failed",
+      "goal_outcome": "unverified",
+      "wall_seconds": 568.42,
+      "recorded_run_seconds": 546.7690000000002,
+      "model_calls": 9,
+      "tool_calls": 40,
+      "compactions": 3,
+      "response_rejections": 0,
+      "input_tokens": 171416,
+      "output_tokens": 3699,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-glm-r3": {
+      "model": "glm-5.3-flash",
+      "status": "failed",
+      "error": "agent_model_call_budget_exhausted",
+      "goal_outcome": "unverified",
+      "wall_seconds": 753.61,
+      "recorded_run_seconds": 738.0819999999367,
+      "model_calls": 24,
+      "tool_calls": 26,
+      "compactions": 1,
+      "response_rejections": 1,
+      "input_tokens": 447575,
+      "output_tokens": 6422,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-codex-r3": {
+      "model": "gpt-6.1-sol",
+      "status": "completed",
+      "error": null,
+      "goal_outcome": "unverified",
+      "wall_seconds": 630.71,
+      "recorded_run_seconds": 618.5950000001176,
+      "model_calls": 12,
+      "tool_calls": 38,
+      "compactions": 4,
+      "response_rejections": 0,
+      "input_tokens": 273941,
+      "output_tokens": 8175,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 120000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-glm-r4": {
+      "model": "glm-5.3-flash",
+      "status": "failed",
+      "error": "agent_time_limit",
+      "goal_outcome": "unverified",
+      "wall_seconds": 919.42,
+      "recorded_run_seconds": 900.2760000000708,
+      "model_calls": 25,
+      "tool_calls": 38,
+      "compactions": 0,
+      "response_rejections": 1,
+      "input_tokens": 811104,
+      "output_tokens": 11718,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 384000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 40,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-codex-r4": {
+      "model": "gpt-6.1-sol",
+      "status": "failed",
+      "error": "agent_invalid_model_response",
+      "goal_outcome": "unverified",
+      "wall_seconds": 446.42,
+      "recorded_run_seconds": 438.5490000000864,
+      "model_calls": 8,
+      "tool_calls": 28,
+      "compactions": 0,
+      "response_rejections": 2,
+      "input_tokens": 453003,
+      "output_tokens": 8461,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 384000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    },
+    "ryn-codex-r5": {
+      "model": "gpt-6.1-sol",
+      "status": "completed",
+      "error": null,
+      "goal_outcome": "verified",
+      "wall_seconds": 719.0,
+      "recorded_run_seconds": 703.3080000000191,
+      "model_calls": 14,
+      "tool_calls": 55,
+      "compactions": 0,
+      "response_rejections": 0,
+      "input_tokens": 985711,
+      "output_tokens": 11052,
+      "limits": {
+        "max_steps": 40,
+        "max_seconds": 900,
+        "max_context_chars": 384000,
+        "max_output_chars": 20000
+      },
+      "lifetime_limits": {
+        "max_total_model_calls": 24,
+        "max_total_tool_calls": 80,
+        "max_total_tokens": 2000000,
+        "max_total_seconds": 900
+      }
+    }
+  },
+  "final_same_model": {
+    "participant": "ryn-codex-r5",
+    "new_tests_passed": 16,
+    "first_new_test_run": {
+      "passed": 13,
+      "failed": 3,
+      "exit_code": 1
+    },
+    "final_new_test_exit_code": 0,
+    "independent_plus_new_plus_existing": {
+      "passed": 54,
+      "failed": 0,
+      "suites": 4
+    },
+    "query_checks": {
+      "Q1": {
+        "passed": true,
+        "errors": []
+      },
+      "Q2": {
+        "passed": true,
+        "errors": []
+      }
+    },
+    "task_cases_passed": 5,
+    "task_cases_total": 5,
+    "model_response_rejections": 0,
+    "context_compactions": 0,
+    "goal_verification": "verified",
+    "human_task_steering": 0,
+    "global_80_percent_claim": false,
+    "caveat": "One successful final combined workload is insufficient to establish general reliability or a global Codex capability percentage."
+  },
+  "latest_glm": {
+    "participant": "ryn-glm-r4",
+    "independent_tests": {
+      "passed": 5,
+      "failed": 4,
+      "suites": 1
+    },
+    "query_checks": {
+      "Q1": {
+        "passed": false,
+        "errors": [
+          "No answer artifact"
+        ]
+      },
+      "Q2": {
+        "passed": false,
+        "errors": [
+          "No answer artifact"
+        ]
+      }
+    },
+    "own_test_run": {
+      "passed": 3,
+      "failed": 3
+    },
+    "completed_full_workflow": false,
+    "caveat": "This supplemental GLM run allowed 40 model calls, versus the initial 24; it still exhausted the 900-second run budget. Not an identical-budget win."
+  },
+  "fixes": [
+    "Keep provider sandbox restrictions distinct from remote-client tool proposals",
+    "Discover fresh model windows from the CLI private cache; owner byte ceilings still apply",
+    "Expose larger bounded task context and increase installed project-development limits",
+    "Cache CLI model catalog for metadata polling; destination/executable/authentication checks remain independent",
+    "Checkpoint bounded source excerpts plus historical file-read coverage; retain complete encrypted evidence",
+    "Read fresh cancellation authority without cloning every task transcript; preserve origins/epochs and invalidation",
+    "Bounded model retry for upstream failures without replaying business operations",
+    "Safe specific client-proposal validation feedback and max-eight-proposal schema",
+    "Merge three independently validated finance fixes into actual chat-backend and retain original test assertions"
+  ],
+  "checks": {
+    "chat_backend": {
+      "passed": 38,
+      "failed": 0,
+      "suites": 3
+    },
+    "framework_context_and_tools": "96 passed; framework-final-tests.log",
+    "framework_authority": "88 passed; framework-authority-tests.log",
+    "final_cli_and_bridge": "95 passed, 2 skipped; framework-final-boundary-tests.log",
+    "actual_codex_binary_isolation": "2 passed with explicit RYNMESH_TEST_CODEX_BINARY=1; no cloud model; tests demonstrate no provider environment tools",
+    "live_client_write_proposal": {
+      "passed": true,
+      "executed": false,
+      "model": "gpt-6.1-sol",
+      "duration_ms": 8219,
+      "input_tokens": 8126,
+      "output_tokens": 52
+    },
+    "search_profile": {
+      "seconds": 12.719,
+      "scanned_files": 937,
+      "matches": 1,
+      "incomplete": false,
+      "method": "actual project src search + actual fresh control reads; no model or production access"
+    },
+    "note": "Framework groups overlap; do not sum their counts."
+  },
+  "installed": {
+    "health": true,
+    "binary_hash_matches": true,
+    "sidecar_sha256": "57d22d2e01ba5324491a24dc313bd83fdb765d1fcede565d559f30ee0d00adcb",
+    "selected_project": "chat-backend",
+    "settings": {
+      "max_steps": 64,
+      "max_seconds": 900,
+      "max_context_chars": 384000,
+      "model_id": "local/codex-cli/model/gpt-6.1-sol"
+    },
+    "codex_context_window": 500000,
+    "owner_tasks_preserved": 9
+  },
+  "integration": {
+    "chat_backend_production_deployed": false,
+    "financial_state_changed": false,
+    "local_chat_backend_source_changes": 3,
+    "local_chat_backend_regression_tests": 9,
+    "ryn_runtime_installed": true,
+    "prior_settings": {
+      "max_steps": 16,
+      "max_seconds": 180,
+      "max_context_chars": 60000
+    },
+    "current_settings": {
+      "max_steps": 64,
+      "max_seconds": 900,
+      "max_context_chars": 384000
+    }
+  },
+  "limits": [
+    "TypeScript checking is unverified: Jest configuration uses isolatedModules=true and diagnostics=false",
+    "Production conversation transport and post-fix robot behavior have not been deployed or retested",
+    "Frozen balance export rows contain displayed two-decimal values: their sum differs from the live raw/subtotal total by 0.01; query grading explicitly uses frozen displayed rows",
+    "Original source was not fault-injected; all candidate workspaces started from the same logical frozen tree, with possible CRLF/LF normalization in clones",
+    "CLI Windows sandbox and physical dependencies were repaired during setup; invalid setup attempts excluded but retained privately",
+    "Model quota/cost is unknown; token counts are observations, not prices",
+    "Native Codex was about 2.6 times faster than the final same-model Ryn run",
+    "Current GLM configuration remains below this task acceptance bar"
+  ],
+  "private_evidence_directory": "D:\\code\\rynmesh\\.codex-tmp\\finance-agent-compare-20261014",
+  "privacy": "Public report omits message text, bank identifiers, finance amounts, source credentials and endpoints.",
+  "privacy_cleanup": {
+    "temporary_helpers_stopped": true,
+    "copied_benchmark_api_keys_removed_from": [
+      "ryn-home",
+      "ryn-home-r3",
+      "ryn-home-r4",
+      "ryn-home-r5"
+    ],
+    "encrypted_task_evidence_retained": true,
+    "owner_credentials_unchanged": true
+  },
+  "default_model_switch": {
+    "user_requested": true,
+    "previous": "local/src-7de9fb1d36c44bc8-0d8724178b09",
+    "current": "local/codex-cli/model/gpt-6.1-sol",
+    "scope": "new tasks only",
+    "persisted": true
+  }
+}

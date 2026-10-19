@@ -1,0 +1,24 @@
+{
+  "revoked": {
+    "grant": {
+      "service_id": "src-44516966ec61409c-8ed3f6ad685b",
+      "relationship_id": "93fb64e20ee74ddbb19979b8411ff01c",
+      "peer_id": "Vj0kx/RgP3yDSc5SPnL+KMFBPATlU0y1psNx+YmFss0=",
+      "allowed": false,
+      "revision": 4,
+      "effective": false
+    },
+    "cancellation": "requested"
+  },
+  "enabled": {
+    "grant": {
+      "service_id": "src-44516966ec61409c-8ed3f6ad685b",
+      "relationship_id": "93fb64e20ee74ddbb19979b8411ff01c",
+      "peer_id": "Vj0kx/RgP3yDSc5SPnL+KMFBPATlU0y1psNx+YmFss0=",
+      "allowed": true,
+      "revision": 3,
+      "effective": true
+    },
+    "cancellation": "not_requested"
+  }
+}

@@ -5,6 +5,12 @@ import personalEn from "./locales/personal.en.json";
 import personalZh from "./locales/personal.zh-CN.json";
 import uiEn from "./locales/ui.en.json";
 import uiZh from "./locales/ui.zh-CN.json";
+import drivesEn from "./locales/drives.en.json";
+import drivesZh from "./locales/drives.zh-CN.json";
+import dropEn from "./locales/drop.en.json";
+import dropZh from "./locales/drop.zh-CN.json";
+import craftEn from "./locales/craft.en.json";
+import craftZh from "./locales/craft.zh-CN.json";
 
 export type LanguagePreference = "system" | "zh-CN" | "en";
 const STORAGE_KEY = "ryn.language";
@@ -26,6 +32,9 @@ export function resolveLanguage(preference: LanguagePreference, systemLanguage =
 }
 
 const en = {
+  craft: craftEn,
+  drive: drivesEn,
+  drop: dropEn,
   personal: personalEn,
   nav: {
     home: "Home", services: "Services", devices: "Devices", tasks: "Tasks", nas: "NAS",
@@ -70,6 +79,9 @@ const en = {
 } as const;
 
 const zh = {
+  craft: craftZh,
+  drive: drivesZh,
+  drop: dropZh,
   personal: personalZh,
   nav: {
     home: "首页", services: "服务", devices: "设备", tasks: "任务", nas: "NAS",

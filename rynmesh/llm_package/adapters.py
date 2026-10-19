@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import socket
 import threading
@@ -15,15 +16,43 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 
+def actual_usage(result: Any) -> dict[str, int | None]:
+    """Reported metadata wins by presence, including an explicit unknown value.
+
+    Legacy adapters without that marker may provide typed actual top-level
+    counters. Estimates must never occupy either of these accounting fields.
+    Keep this helper stdlib-only for runtime staging and plain inference.
+    """
+    result = result if isinstance(result, dict) else {}
+    source = result.get("reported_usage") if "reported_usage" in result else result
+    source = source if isinstance(source, dict) else {}
+    return {key: source.get(key) if type(source.get(key)) is int and source[key] >= 0 else None
+            for key in ("input_tokens", "output_tokens")}
+
+
+def _openai_usage(usage):
+    usage = usage if isinstance(usage, dict) else {}
+    return actual_usage({"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")})
+
+
 class AdapterError(RuntimeError):
-    def __init__(self, message: str, *, code: str = "inference_failed") -> None:
+    def __init__(self, message: str, *, code: str = "inference_failed", reported_usage=None, finish_reason=None) -> None:
         super().__init__(message)
         self.code = code if code in RUNTIME_ERROR_CODES else "inference_failed"
+        self.reported_usage = ({name: reported_usage.get(name) if type(reported_usage.get(name)) is int and reported_usage[name] >= 0 else None
+                                for name in ("input_tokens", "output_tokens")} if isinstance(reported_usage, dict) else None)
+        self.finish_reason = (finish_reason if isinstance(finish_reason, str) and
+                              finish_reason in {"stop", "length", "tool_calls", "content_filter", "cancelled"} else "unknown")
 
 
 RUNTIME_ERROR_CODES = frozenset({
     "runtime_busy", "model_not_ready", "model_not_found", "runtime_unavailable",
     "runtime_connection_failed", "inference_timeout", "inference_failed",
+    "model_configuration_changed", "model_daily_quota_exhausted",
+    "ai_permission_denied",
+    "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
+    "source_protocol_parameters_unsupported",
+    "source_protocol_response_invalid",
 })
 
 
@@ -41,6 +70,18 @@ class LLMAdapter(Protocol):
     def cancel(self, task_id: str) -> bool: ...
     def metrics(self) -> dict[str, Any]: ...
     def shutdown(self) -> None: ...
+
+
+def deadline_options(options, deadline):
+    """Consume an optional in-process deadline at the final admission boundary."""
+    if deadline is None:
+        return options
+    if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline):
+        raise AdapterError("invalid_request_deadline")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise AdapterError("request_deadline_exhausted", code="inference_timeout")
+    return {**options, "timeout_s": min(options["timeout_s"], remaining)}
 
 
 def validate_local_url(base_url: str, *, allow_non_loopback: bool = False) -> str:
@@ -70,6 +111,7 @@ class AdapterMetrics:
     failures: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    unknown_usage_requests: int = 0
     total_duration_ms: int = 0
 
 
@@ -108,7 +150,7 @@ class OpenAICompatibleAdapter:
         return self.base_url + (self.api_prefix + path[3:] if path.startswith("/v1/") else path)
 
     def _json(self, path: str, payload: dict[str, Any] | None, timeout_s: float,
-              *, task_id: str = "") -> dict[str, Any]:
+              *, task_id: str = "", classify_errors: bool = False) -> dict[str, Any]:
         if payload is not None:
             payload = {**self.request_defaults, **payload}
         request = urllib.request.Request(
@@ -128,7 +170,7 @@ class OpenAICompatibleAdapter:
                         with self._lock:
                             self._active_responses.pop(task_id, None)
         except urllib.error.HTTPError as exc:
-            code = "inference_failed"
+            code = "upstream_http_failed" if classify_errors else "inference_failed"
             # Read only a bounded error envelope. Never expose runtime body text,
             # which can contain prompts, paths, or credentials.
             try:
@@ -150,10 +192,12 @@ class OpenAICompatibleAdapter:
             raise AdapterError("local API response exceeded 4 MiB")
         try:
             value = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AdapterError("local API returned invalid JSON") from exc
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise AdapterError("local API returned invalid JSON",
+                               code="upstream_response_invalid" if classify_errors else "inference_failed") from None
         if not isinstance(value, dict):
-            raise AdapterError("local API JSON root must be an object")
+            raise AdapterError("local API JSON root must be an object",
+                               code="upstream_response_invalid" if classify_errors else "inference_failed")
         return value
 
     def models(self) -> list[dict[str, Any]]:
@@ -225,16 +269,16 @@ class OpenAICompatibleAdapter:
             if not text:
                 raise AdapterError("local API returned no completion text")
             usage = result.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(prompt) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+            counts = _openai_usage(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
-                self._metrics.input_tokens += input_tokens
-                self._metrics.output_tokens += output_tokens
+                self._metrics.input_tokens += counts["input_tokens"] or 0
+                self._metrics.output_tokens += counts["output_tokens"] or 0
+                self._metrics.unknown_usage_requests += any(value is None for value in counts.values())
                 self._metrics.total_duration_ms += duration_ms
-            return {"text": text, "model": self.model, "input_tokens": input_tokens,
-                    "output_tokens": output_tokens, "duration_ms": duration_ms}
+            return {"text": text, "model": self.model, **counts,
+                    "reported_usage": counts, "duration_ms": duration_ms}
         except Exception:
             with self._lock:
                 self._metrics.failures += 1
@@ -249,6 +293,10 @@ class OpenAICompatibleAdapter:
         from .chat import ChatAccumulator, validate_chat
 
         body = {**self.request_defaults, **validate_chat(body)}
+        for message in body["messages"]:
+            # Native protocol continuation is never a Chat Completions field.
+            message.pop("provider_state", None)
+            message.pop("is_error", None)
         if task_id in self._cancelled:
             raise AdapterError("task_cancelled")
         if not self.model and not self.health().get("ok"):
@@ -259,24 +307,49 @@ class OpenAICompatibleAdapter:
             body["stream_options"] = {"include_usage": True}
         started = time.monotonic()
         deadline = started + timeout_s
+        received_usage, received_finish = None, None
+
+        def observed_usage(usage):
+            # Reported zero is real; estimates, booleans and malformed counters
+            # are never evidence for durable accounting after a failed request.
+            return _openai_usage(usage)
+
+        def failure(code):
+            cancelled = task_id in self._cancelled
+            return AdapterError("task_cancelled" if cancelled else code,
+                                code="inference_failed" if cancelled else code,
+                                reported_usage=received_usage, finish_reason=received_finish)
+
         try:
             if not streaming:
-                raw = self._json("/v1/chat/completions", body, timeout_s, task_id=task_id)
+                raw = self._json("/v1/chat/completions", body, timeout_s, task_id=task_id, classify_errors=True)
                 choice = raw["choices"][0]
                 message = choice["message"]
                 usage = raw.get("usage") or {}
                 finish = choice.get("finish_reason") or "stop"
+                received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
             else:
                 request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
                                                  data=json.dumps(body).encode(), headers=self._headers())
                 accumulator = ChatAccumulator()
                 with urllib.request.urlopen(request, timeout=timeout_s) as response:
-                    if "text/event-stream" not in response.headers.get("content-type", ""):
-                        raise AdapterError("upstream_streaming_not_supported")
+                    is_sse = "text/event-stream" in response.headers.get("content-type", "")
                     with self._lock:
                         self._active_responses[task_id] = response
+                    if not is_sse:
+                        # Some compatible servers ignore stream=true and return
+                        # one complete JSON response. Consume that same response;
+                        # never retry inference or invent token delta events.
+                        raw = response.read(4 * 1024 * 1024 + 1)
+                        if len(raw) > 4 * 1024 * 1024:
+                            raise AdapterError("local API response exceeded 4 MiB")
+                        payload = json.loads(raw)
+                        choice = payload["choices"][0]
+                        message, usage = choice["message"], payload.get("usage") or {}
+                        finish = choice.get("finish_reason") or "stop"
+                        received_usage, received_finish = observed_usage(usage), choice.get("finish_reason")
                     total = 0
-                    while True:
+                    while is_sse:
                         line = response.readline(1024 * 1024 + 1)
                         if not line:
                             break
@@ -288,7 +361,7 @@ class OpenAICompatibleAdapter:
                         if task_id in self._cancelled:
                             raise AdapterError("task_cancelled")
                         if time.monotonic() > deadline:
-                            raise AdapterError("inference timed out")
+                            raise AdapterError("inference timed out", code="inference_timeout")
                         if not line.startswith(b"data:"):
                             continue
                         data = line[5:].strip()
@@ -297,25 +370,58 @@ class OpenAICompatibleAdapter:
                         chunk = json.loads(data)
                         if "error" in chunk:
                             raise AdapterError("upstream_stream_error")
+                        if isinstance(chunk, dict):
+                            if "usage" in chunk:
+                                fresh_usage = observed_usage(chunk["usage"])
+                                received_usage = {name: value if value is not None else (received_usage or {}).get(name)
+                                                  for name, value in fresh_usage.items()}
+                            choices = chunk.get("choices")
+                            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                                received_finish = choices[0].get("finish_reason") or received_finish
                         accumulator.add(chunk)
                         if on_event:
-                            on_event(chunk)
-                if not accumulator.finished:
-                    raise AdapterError("upstream_stream_truncated")
-                message, usage, finish = accumulator.message(), accumulator.usage, accumulator.finish_reason
+                            try:
+                                on_event(chunk)
+                            except AdapterError:
+                                raise
+                            except Exception:
+                                # This is downstream delivery, not an upstream
+                                # HTTP/read/parse failure. Never expose callback text.
+                                raise failure("stream_delivery_failed") from None
+                if is_sse:
+                    if not accumulator.finished:
+                        raise AdapterError("upstream_stream_truncated")
+                    message, usage, finish = accumulator.message(), accumulator.usage, accumulator.finish_reason
             if task_id in self._cancelled:
                 raise AdapterError("task_cancelled")
+            if time.monotonic() > deadline:
+                raise AdapterError("inference timed out", code="inference_timeout")
             if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(json.dumps(body["messages"])) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(json.dumps(message)) // 4))
+            counts = observed_usage(usage)
             return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens,
+                    **counts, "reported_usage": counts,
                     "duration_ms": int((time.monotonic() - started) * 1000)}
-        except (OSError, ValueError, KeyError, IndexError) as exc:
-            if task_id in self._cancelled:
-                raise AdapterError("task_cancelled") from exc
-            raise AdapterError("upstream_chat_failed") from exc
+        except AdapterError as exc:
+            if received_usage is not None:
+                exc.reported_usage = {name: (exc.reported_usage or {}).get(name)
+                    if (exc.reported_usage or {}).get(name) is not None else received_usage.get(name)
+                    for name in ("input_tokens", "output_tokens")}
+            if (exc.finish_reason == "unknown" and isinstance(received_finish, str)
+                    and received_finish in {"stop", "length", "tool_calls", "content_filter", "cancelled"}):
+                exc.finish_reason = received_finish
+            if task_id in self._cancelled and str(exc) != "task_cancelled":
+                raise AdapterError("task_cancelled", reported_usage=exc.reported_usage,
+                                   finish_reason=exc.finish_reason) from None
+            raise
+        except urllib.error.HTTPError as exc:
+            exc.close()
+            raise failure("upstream_http_failed") from None
+        except OSError as exc:
+            timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(exc, "reason", None), TimeoutError)
+            raise failure("inference_timeout" if timed_out else "runtime_connection_failed") from None
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            raise failure("upstream_response_invalid") from None
         finally:
             with self._lock:
                 self._active_responses.pop(task_id, None)
@@ -385,7 +491,7 @@ class OpenAICompatibleAdapter:
                     raise AdapterError("local API returned no completion text")
                 on_delta(delta)
                 text_parts.append(delta)
-                usage = dict(value.get("usage") or {})
+                usage = value.get("usage")
             else:
                 while True:
                     if task_id in self._cancelled:
@@ -444,19 +550,18 @@ class OpenAICompatibleAdapter:
             text = "".join(text_parts)
             if not text:
                 raise AdapterError("local API returned no completion text")
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(prompt) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+            counts = _openai_usage(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
-                self._metrics.input_tokens += input_tokens
-                self._metrics.output_tokens += output_tokens
+                self._metrics.input_tokens += counts["input_tokens"] or 0
+                self._metrics.output_tokens += counts["output_tokens"] or 0
+                self._metrics.unknown_usage_requests += any(value is None for value in counts.values())
                 self._metrics.total_duration_ms += duration_ms
             return {
                 "text": text,
                 "model": self.model,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
+                **counts, "reported_usage": counts,
                 "duration_ms": duration_ms,
             }
         except AdapterError:
@@ -526,7 +631,7 @@ class OllamaAdapter(OpenAICompatibleAdapter):
 
 
 def adapter_from_manifest(manifest: Any) -> LLMAdapter:
-    if manifest.adapter in {"codex_cli", "claude_cli"}:
+    if manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"}:
         from .cli_adapter import CLIAgentAdapter
         return CLIAgentAdapter(manifest.adapter)
     kwargs = {

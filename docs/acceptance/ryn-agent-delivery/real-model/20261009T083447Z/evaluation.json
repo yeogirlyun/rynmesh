@@ -1,0 +1,54 @@
+{
+  "runs": [
+    {
+      "index": 1,
+      "passed": true,
+      "ordered_initial_share_read_revoke_read": true,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 9,
+      "rejected_not_executed": [],
+      "successful_writes": 2,
+      "approvals": 2,
+      "model_calls": 6,
+      "elapsed_seconds": 100.625,
+      "input_tokens": 18089,
+      "output_tokens": 1989,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    },
+    {
+      "index": 2,
+      "passed": true,
+      "ordered_initial_share_read_revoke_read": true,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 9,
+      "rejected_not_executed": [],
+      "successful_writes": 2,
+      "approvals": 2,
+      "model_calls": 6,
+      "elapsed_seconds": 80.312,
+      "input_tokens": 18021,
+      "output_tokens": 2127,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    },
+    {
+      "index": 3,
+      "passed": false,
+      "ordered_initial_share_read_revoke_read": false,
+      "sibling_private_all_model_reads": true,
+      "successful_tool_operations": 6,
+      "rejected_not_executed": [],
+      "successful_writes": 1,
+      "approvals": 1,
+      "model_calls": 4,
+      "elapsed_seconds": 160.922,
+      "input_tokens": null,
+      "output_tokens": null,
+      "usage_scope": "business runs only; initial capability probe usage was not captured"
+    }
+  ],
+  "all_three_objective_checks_passed": false,
+  "final_report_semantic_review_passed": false,
+  "other_run_context_identity_absent": true,
+  "all_three_passed": false,
+  "owner_source_unchanged": true
+}

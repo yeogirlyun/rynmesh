@@ -1,0 +1,20 @@
+{
+  "result": "passed",
+  "headless": true,
+  "global_input_used": false,
+  "temporary_http_nodes": 2,
+  "granted_craft_apps": 13,
+  "flows": [
+    "unshared apps hidden",
+    "explicit grants",
+    "all Craft catalog entries",
+    "review before editor_info",
+    "read-only receipt",
+    "native-only distinction",
+    "Chinese UI"
+  ],
+  "browser_errors": [],
+  "document_edits_claimed": false,
+  "model_calls": 0,
+  "coin_transfers": 0
+}

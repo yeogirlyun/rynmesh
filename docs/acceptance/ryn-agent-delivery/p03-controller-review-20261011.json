@@ -1,0 +1,31 @@
+{
+  "kind": "root-nonauthor-bounded-P03-controller-review",
+  "status": "accepted_for_one_draft_development_attempt",
+  "formal_trials_executed": 0,
+  "files": {
+    "docs\\acceptance\\ryn-agent-delivery\\real-model\\run_p03.py": "24d49b98c857dbfca4cadc6703ffbf8aac12fcfc5107cf35a99db0de497d9c6b",
+    "tests\\test_agent_p03_controller.py": "7a25aa5acbd6cc30d473177a043c80f52ebc89b8028815ababb5fd2aeef9d14a"
+  },
+  "author_tests_passed": 5,
+  "independent_tests": {
+    "actual_owner_approval_revocation_ordering": {
+      "passed": 1,
+      "seconds": 4.92
+    },
+    "new_settings_and_cancel_persistence_fault_paths": {
+      "passed": 2,
+      "seconds": 8.3
+    }
+  },
+  "confirmed": [
+    "Original prompt, real owner API rejects tampered arguments; exact persisted approval consumed before original business tool execution.",
+    "Read-only change occurs under a real worker barrier; production tool guard supplies rejection, no synthetic denial.",
+    "Settings failure persists cancellation before release; if cancellation save also fails, barrier is not released and times out before original executor.",
+    "24 lifetime model-call limit and600seconds; readonly original GLM source; draft role/no formal activation."
+  ],
+  "limitations": [
+    "Offline checks use scripted planner; live outcome remains pending.",
+    "Single-host owner-world only, not native desktop owner interaction."
+  ],
+  "started_live": "real-model/20261011T0800Z-P03-ryn-owner-draft"
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bounded-product-fix-evidence",
+  "case": "C02",
+  "formal_trials_executed": 0,
+  "paid_model_retests": 0,
+  "problem": "Successful reads and draft preparation incorrectly counted as partial business progress after a failed source probe with no saved configuration.",
+  "change": "Partial requires a current goal/context confirmed write receipt bound to a required passed mechanical tool criterion. A verified read-only goal still passes. Not achieved does not imply that no write occurred.",
+  "production_file": "rynmesh/agent_runtime/verification.py",
+  "validation": {
+    "reported_by": "desktop_remote_preflight",
+    "neighborhood_tests_passed": 81,
+    "final_changed_tests_passed": 17,
+    "ruff": "passed",
+    "root_read_review": "finish classification and binding/status cases inspected; no redundant test rerun",
+    "actual_http_fixture": "Pre-save probe failure and post-save conflict both remain not_achieved; actual save receipt and newer owner configuration are preserved in the latter."
+  },
+  "limitations": [
+    "Historical real-model failures remain unchanged.",
+    "No new live C02 trial or formal acceptance is claimed.",
+    "Windows candidate built earlier on this date predates this production fix."
+  ]
+}

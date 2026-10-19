@@ -1,0 +1,24 @@
+.ra-sidebar-task { position: relative; border-radius: 9px; }
+.ra-workspace .ra-sidebar-task > .ra-task-item,
+.ra-workspace .ra-sidebar-task > .ra-project-task { flex-direction: row; align-items: center; gap: 7px; padding: 9px 35px 9px 9px; }
+.ra-sidebar-task .ra-task-title { flex: 1 1 auto; min-width: 0; }
+.ra-sidebar-task .ra-task-indicator { margin-left: auto; }
+.ra-sidebar-task:hover { background: var(--pf-selection); }
+.ra-workspace .ra-sidebar-task > .ra-task-overflow { position: absolute; top: 7px; right: 3px; width: 27px; height: 27px; border-radius: 6px; opacity: 0; background: transparent; }
+.ra-sidebar-task:hover > .ra-task-overflow,
+.ra-sidebar-task:focus-within > .ra-task-overflow,
+.ra-sidebar-task.selected > .ra-task-overflow { opacity: 1; }
+.ra-task-dialog-backdrop { position: fixed; inset: 0; z-index: 1100; display: grid; place-items: center; padding: 20px; background: #0005; }
+.ra-task-dialog { width: min(440px, 100%); max-height: calc(100dvh - 40px); overflow: auto; padding: 24px; border: 1px solid var(--pf-line); border-radius: 14px; background: var(--pf-panel); box-shadow: 0 18px 70px #0003; font-size: 13px; }
+.ra-task-dialog h2 { margin: 0 0 18px; font-size: 16px; }
+.ra-task-dialog p { line-height: 1.65; overflow-wrap: anywhere; }
+.ra-task-dialog-name { font-weight: 600; }
+.ra-task-dialog label { display: grid; gap: 8px; }
+.ra-task-dialog input { min-width: 0; width: 100%; padding: 10px 12px; border: 1px solid var(--pf-line); border-radius: 8px; background: var(--pf-subtle); color: var(--pf-text); font: inherit; }
+.ra-task-dialog input:focus { outline: 2px solid var(--pf-blue); outline-offset: 2px; }
+.ra-task-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
+.ra-workspace .ra-task-danger { color: #c54242; border-color: #c5424260; }
+.ra-task-record-notice { position: fixed; left: 24px; bottom: 24px; z-index: 1200; width: min(420px, calc(100vw - 48px)); padding: 15px; border: 1px solid var(--pf-line); border-radius: 10px; background: var(--pf-panel); box-shadow: 0 8px 35px #0002; font-size: 12px; }
+.ra-task-record-notice p { line-height: 1.6; margin: 6px 0 12px; }
+.ra-task-record-notice strong { display: block; overflow-wrap: anywhere; }
+@media (hover: none) { .ra-workspace .ra-sidebar-task > .ra-task-overflow { opacity: 1; } }

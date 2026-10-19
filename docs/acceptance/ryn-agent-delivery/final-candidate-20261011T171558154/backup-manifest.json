@@ -1,0 +1,22 @@
+﻿[
+    {
+        "path":  "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/Ryn.exe",
+        "sha256":  "A5A884C5EA387D62D7021985A7DCE543F05647DEEF711F84BD3C50F1859051B8",
+        "backup":  "D:\\code\\rynmesh\\.codex-tmp\\final-candidate-backup-20261011T171558154\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\Ryn.exe"
+    },
+    {
+        "path":  "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/rynmesh-peer.exe",
+        "sha256":  "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+        "backup":  "D:\\code\\rynmesh\\.codex-tmp\\final-candidate-backup-20261011T171558154\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\rynmesh-peer.exe"
+    },
+    {
+        "path":  "webapp/src-tauri/binaries/rynmesh-peer-x86_64-pc-windows-msvc.exe",
+        "sha256":  "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+        "backup":  "D:\\code\\rynmesh\\.codex-tmp\\final-candidate-backup-20261011T171558154\\webapp\\src-tauri\\binaries\\rynmesh-peer-x86_64-pc-windows-msvc.exe"
+    },
+    {
+        "path":  "webapp/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Ryn_0.7.0_x64-setup.exe",
+        "sha256":  "16B3D454F1F189F1E17E4F17DC4280A070B465810F476E39F032974A34000C55",
+        "backup":  "D:\\code\\rynmesh\\.codex-tmp\\final-candidate-backup-20261011T171558154\\webapp\\src-tauri\\target\\x86_64-pc-windows-msvc\\release\\bundle\\nsis\\Ryn_0.7.0_x64-setup.exe"
+    }
+]

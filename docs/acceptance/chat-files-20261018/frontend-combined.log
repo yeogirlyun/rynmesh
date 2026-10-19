@@ -1,0 +1,12 @@
+
+> @rynmesh/webapp@0.7.0 test
+> vitest run src/screens/RynAgent.test.tsx src/screens/RynAgentComposer.test.tsx src/screens/RynAgentMessageEditor.test.tsx src/screens/RynAgentConversationControls.test.tsx src/screens/RynAgentProgress.test.tsx src/screens/RynAgentArtifacts.test.tsx src/personal/OfficePreview.test.tsx src/domain/agentFilePreview.test.ts src/domain/rynAgent.test.ts src/domain/rynAgentRequests.test.ts --maxWorkers=2
+
+
+ RUN  v4.1.11 D:/code/rynmesh/webapp
+
+
+ Test Files  10 passed (10)
+      Tests  156 passed (156)
+   Start at  21:06:28
+   Duration  45.58s (transform 1.41s, setup 8.85s, import 4.95s, tests 43.25s, environment 29.55s)

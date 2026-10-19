@@ -1,6 +1,8 @@
 # Rynmesh
 
-> Development branch `feature/personal-ai-workspace`: the September 20–24 personal-device, AI workspace, local-model, NAS and desktop redesign is documented in the [requirements, implementation and acceptance report](docs/PERSONAL_AI_WORKSPACE_20260920_20260924.md). This is a development snapshot, not a new public release; older release notes below do not describe every feature in this branch.
+> Branch delivery updated October 19, 2026: [本次增量交付 / latest delivery](docs/changes/2026-10-19-upstream-delivery.md) and [验证记录 / verification](docs/changes/2026-10-19-verification.md), covering the UI integration, Agent runtime, native source protocols, attachments, Office/PDF previews and Craft compatibility. The [October 15 full branch delivery](docs/changes/2026-10-15-upstream-delivery.md) retains the earlier implementation, inventories and limitations relative to upstream `main`.
+
+> Development branch `feature/ryn-integrated-workspace`: see the [product guide](docs/RYN_INTEGRATED_WORKSPACE_PRODUCT.md), [development guide](docs/RYN_INTEGRATED_WORKSPACE_DEVELOPMENT.md) and [test documentation](docs/RYN_INTEGRATED_WORKSPACE_TEST_REPORT.md) for the integrated workspace. This local development version uses the `0.7.0` version label. The [September 20–24 implementation record](docs/PERSONAL_AI_WORKSPACE_20260920_20260924.md) is also available.
 
 [![CI](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/yeogirlyun/rynmesh/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)

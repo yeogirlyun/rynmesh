@@ -1,0 +1,215 @@
+{
+  "kind": "pinned-reference-menu-fixture",
+  "formal_case_score": false,
+  "real_model": false,
+  "reference": {
+    "result": {
+      "response": "Synthetic service read confirmed.",
+      "turn_id": "turn_23d58acd-8596-46d9-aa6c-ade215be40bf",
+      "registered_tools": [
+        "inspect_service",
+        "share_service",
+        "read_fixture_0",
+        "read_fixture_1",
+        "read_fixture_2",
+        "read_fixture_3",
+        "read_fixture_4",
+        "read_fixture_5",
+        "read_fixture_6",
+        "read_fixture_7",
+        "read_fixture_8",
+        "read_fixture_9",
+        "read_fixture_10",
+        "read_fixture_11",
+        "read_fixture_12",
+        "read_fixture_13",
+        "read_fixture_14",
+        "read_fixture_15",
+        "read_fixture_16",
+        "read_fixture_17",
+        "read_fixture_18",
+        "read_fixture_19",
+        "read_fixture_20",
+        "read_fixture_21",
+        "read_fixture_22",
+        "read_fixture_23",
+        "read_fixture_24",
+        "read_fixture_25",
+        "read_fixture_26",
+        "read_fixture_27",
+        "ryn_discover_tools"
+      ],
+      "event_count": 26,
+      "persistent_session": false,
+      "upstream_target_verification": false,
+      "target_status": null,
+      "extra_host_tools": false,
+      "real_model": false
+    },
+    "dispatch_counts": {
+      "model": 3,
+      "tool": 2,
+      "approval": 0
+    },
+    "elapsed_seconds": 3.438000000001921,
+    "stderr_bytes": 0,
+    "upstream_commit": "29628c9acdb81b703bbd4080c207a0e7ce5e276e"
+  },
+  "checks_passed": true,
+  "model_requests": [
+    {
+      "context_bytes": 7372,
+      "exposed": [
+        "ryn_discover_tools"
+      ]
+    },
+    {
+      "context_bytes": 9957,
+      "exposed": [
+        "ryn_discover_tools",
+        "inspect_service"
+      ]
+    },
+    {
+      "context_bytes": 10254,
+      "exposed": [
+        "ryn_discover_tools",
+        "inspect_service"
+      ]
+    }
+  ],
+  "tool_events": [
+    {
+      "type": "tool_result",
+      "name": "ryn_discover_tools",
+      "arguments": {
+        "load": [
+          "inspect_service"
+        ]
+      },
+      "tool_call_id": "menu-1",
+      "identity": "ed7af651304cdff122a78d419b2ef00db68d30f6c298e99e886c3a667b549477",
+      "state": "returned",
+      "operation_id": "ee6ba93341cf4f20bfe220a1601ff940:menu-1",
+      "result": {
+        "tools": [
+          {
+            "name": "inspect_service",
+            "description": "inspect_service",
+            "effect": "read",
+            "schema_bytes": 221
+          },
+          {
+            "name": "read_fixture_0",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 281
+          },
+          {
+            "name": "read_fixture_1",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 281
+          },
+          {
+            "name": "read_fixture_10",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 282
+          },
+          {
+            "name": "read_fixture_11",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 282
+          },
+          {
+            "name": "read_fixture_12",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 282
+          },
+          {
+            "name": "read_fixture_13",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 282
+          },
+          {
+            "name": "read_fixture_14",
+            "description": "Read the named synthetic business record; permission is checked at dispatch.",
+            "effect": "read",
+            "schema_bytes": 282
+          }
+        ],
+        "cursor": 0,
+        "next_cursor": 8,
+        "total": 30,
+        "loaded_names": [
+          "inspect_service"
+        ],
+        "catalog_revision": "a4c25afa7f677bbab885144938745d691e8da1b93fe5ab3db4eb88fe425fdfa6",
+        "menu_revision": 2,
+        "permission_granted": false,
+        "available_tool_names": [
+          "inspect_service",
+          "read_fixture_0",
+          "read_fixture_1",
+          "read_fixture_10",
+          "read_fixture_11",
+          "read_fixture_12",
+          "read_fixture_13",
+          "read_fixture_14",
+          "read_fixture_15",
+          "read_fixture_16",
+          "read_fixture_17",
+          "read_fixture_18",
+          "read_fixture_19",
+          "read_fixture_2",
+          "read_fixture_20",
+          "read_fixture_21",
+          "read_fixture_22",
+          "read_fixture_23",
+          "read_fixture_24",
+          "read_fixture_25",
+          "read_fixture_26",
+          "read_fixture_27",
+          "read_fixture_3",
+          "read_fixture_4",
+          "read_fixture_5",
+          "read_fixture_6",
+          "read_fixture_7",
+          "read_fixture_8",
+          "read_fixture_9",
+          "share_service"
+        ]
+      }
+    },
+    {
+      "type": "tool_result",
+      "name": "inspect_service",
+      "arguments": {
+        "service_id": "svc1"
+      },
+      "tool_call_id": "menu-2",
+      "identity": "c51a4b023019e63bcfd4464844da5dd65ea5d115d2dbca7591707156609be8bf",
+      "state": "returned",
+      "operation_id": "ee6ba93341cf4f20bfe220a1601ff940:menu-2",
+      "result": {
+        "service_id": "svc1",
+        "shared": false,
+        "api_key": "never-expose-test-secret"
+      }
+    }
+  ],
+  "menu_state": {
+    "catalog_revision": "a4c25afa7f677bbab885144938745d691e8da1b93fe5ab3db4eb88fe425fdfa6",
+    "context_epoch": 0,
+    "goal_revision": 1,
+    "mode": "directory",
+    "loaded_names": [
+      "inspect_service"
+    ],
+    "revision": 2
+  }
+}

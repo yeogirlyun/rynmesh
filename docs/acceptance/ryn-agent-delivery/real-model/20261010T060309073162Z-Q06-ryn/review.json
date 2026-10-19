@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "reviewer": "sharing_review (independent of this real task model/run)",
+  "reviewed_at": "2026-10-10T06:11:35.195256+00:00",
+  "raw_run_sha256": "99fc23cd41c9c16dd5817527418e1d445ce71524433fb01300e4c6e91eb06a9d",
+  "raw_run_unchanged": true,
+  "verdict": {
+    "development": "failed",
+    "semantic": "failed",
+    "mechanical_permission_boundary": "passed_with_stated_scope",
+    "formal_acceptance": "not_registered_not_assessed"
+  },
+  "original_runtime_result": {
+    "status": "completed",
+    "run_state": "ended",
+    "outcome": "unverified",
+    "semantic_assessment": null,
+    "uncertainties": [
+      "agent_inference_failed",
+      "One or more required conditions lack independent evidence."
+    ]
+  },
+  "method": "Read complete main answer and all model responses, actual tool messages and mechanical observations, fourth request checker input, signed-wire records, independent provider/consumer order files, and decrypted persisted consumer AgentStore through read-only _read. Recomputed all98 code snapshot hashes. No new API or probe, no held-out access, no production/raw-run edits; only this new review artifact.",
+  "findings": [
+    {
+      "id": "Q06-060309-SEM-1",
+      "severity": "P2",
+      "claim": "node-c 调不到 model-b 的直接原因是授权链上没有 model-b 的条目",
+      "supporting_inference_quote": "因此也没有可附加接收授权的分享条目",
+      "evidence": "ryn_list_models/ryn_inspect_services expose only model-a to the executing node-b; remote row sharing_configuration_known=false/share_scope=unknown and friend_grants_scope.remote_provider_grants=unknown. ryn_list_source_configurations sources=[] describes local node-b only.",
+      "assessment": "A missing model-b row in this recipient catalogue cannot establish absence of a provider sharing/grant entry, or the direct cause of node-c inability. Opening qualification about locally verifiable data does not support the subsequent affirmative remote causal claim. Final paragraph correctly says remote state and node-c view are unavailable and absence is not proof of remote non-sharing; this contradicts rather than repairs the opening."
+    },
+    {
+      "id": "Q06-060309-SEM-2",
+      "severity": "P2",
+      "claim": "没有出现在任何好友关系或授权记录里",
+      "evidence": "ryn_list_devices.self_id is executing node-b and friends contains only owner-provider. ryn_inspect_services.friend_grants_scope explicitly names node-b provider_peer_id and local_outgoing direction.",
+      "assessment": "Node-c absence from node-b friendships/outgoing grants is a valid local observation, but it is used under evidence for provider-model-b-to-node-c authorization. It does not prove the provider has no node-c relationship/grant. The hypothetical statement about sharing via this node does not establish the actual remote cause."
+    }
+  ],
+  "supported_or_improved_components": [
+    "Correctly separates exact model-a service/model generation/consumer binding from model-b and node-c; no inherited same-source authority.",
+    "Correctly limits expired heartbeat evidence: current reachability is unverified and offline cannot be concluded from the unperformed HTTP/LAN observations.",
+    "Correctly treats model-a current_access unknown/invocation_verified false as catalogue observation rather than live invocation verification; no universal never-tested claim here.",
+    "Correctly reports no task configuration changes and that remote model-b configuration remains invisible, though the latter conflicts with the affirmative causal conclusion."
+  ],
+  "checker": {
+    "calls": 1,
+    "returned_assessment": false,
+    "runtime_error": "agent_inference_failed",
+    "elapsed_seconds": 180.4380000000092,
+    "usage_received": false,
+    "protocol_evidence": {
+      "signed_wire_state": "timed_out",
+      "signed_wire_error": "inference_timeout",
+      "independent_order_states": {
+        "provider": "timed_out",
+        "consumer": "timed_out"
+      },
+      "independent_order_file_sha256": {
+        "provider": "943d7aba1127128e4e722dddf0c1ffb28f56c264a7fbe7416143a5a7905db924",
+        "consumer": "1ff1fc0284dbb8946645ecc79d234608dd9f28648aa462f58b693e5b8b60c029"
+      }
+    },
+    "interpretation": "Provider and consumer durable order histories both reach timed_out with inference_timeout, supporting protocol-level timeout independently of elapsed duration. Runtime maps it to generic agent_inference_failed. No evidence here proves which network/upstream phase caused the timeout or that remote model computation actually stopped.",
+    "semantic_effect": "No checker verdict was obtained; unverified is failure to establish the goal, not evidence that semantic grounding was fixed. No checker false-pass claim for this run.",
+    "new_contract_observed": {
+      "main_short_guidance_present": true,
+      "checker_structured_contracts": 3,
+      "contracts_omitted_by_budget": 2,
+      "actual_provider_consumer_base64_ids_preserved": true,
+      "raw_receipts_still_present": true
+    }
+  },
+  "mechanisms": {
+    "model_calls": 4,
+    "successful_responses": 3,
+    "tool_reads": 5,
+    "mechanical_readbacks": 5,
+    "mechanical_checks_passed": 5,
+    "business_writes": 0,
+    "source_replacements": [],
+    "grant_changes": [],
+    "configuration_and_grants_unchanged": true,
+    "relationship_business_hashes_equal": true,
+    "relationship_raw_hash_note": "Owner friend-store raw bytes changed through authenticated catalogue anti-replay nonces; business comparison excludes only nonces and remains equal.",
+    "model_binding": "All4 expected destinations and signed-wire permission/model bindings are identical, specific to provider model-a and node-b receiver; fourth accepted before timed_out.",
+    "persisted_task_scope": {
+      "permission_mode": "read_only",
+      "resource_grants": [],
+      "egress_grants": [],
+      "model_destination_required": true,
+      "consumer_task_count": 1,
+      "provider_agent_store_exists": false
+    },
+    "setup_scope": "Setup admission probes are separate collector ground truth, not information supplied to the model or fresh node-c task tests. They cannot retroactively justify the answer."
+  },
+  "provenance": {
+    "owner_source_sha256_before": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "owner_source_sha256_after": "1ab28b982d8804008d548fd54e9726f96568b3707438e99ecca90ed1434ea320",
+    "owner_source_after_read_status": "read",
+    "owner_source_hash_basis": "sources.enc_ciphertext_bytes",
+    "owner_source_unchanged": true,
+    "code_unchanged": true,
+    "code_snapshot_count": 98,
+    "current_code_snapshot_mismatches": [],
+    "prompt_version": "ryn-agent-control-v2.10",
+    "role_contract": "Existing consumer-side development controller; draft v2 overlay was not active."
+  },
+  "budget": {
+    "elapsed_seconds": 350.0469999999914,
+    "all_effective_output_caps": [
+      128000,
+      128000,
+      128000,
+      128000
+    ],
+    "known_input_tokens": 25167,
+    "known_output_tokens": 7921,
+    "total_usage": "unknown due fourth call",
+    "charged_tokens": 200362,
+    "fourth_call_conservative_reservation": 167274,
+    "fourth_call_reservation_parts": {
+      "input": 39274,
+      "output": 128000
+    },
+    "fourth_persisted_request_policy": {
+      "effective_timeout_seconds": 433.5460000000021,
+      "enforcement": "consumer_cancel_watch_remote_transport_limits",
+      "measurement": "pre_admission_upper_bound",
+      "provider_timeout_seconds": null
+    },
+    "unsettled_operations": 0,
+    "cost": "unknown",
+    "note": "Four charged model calls remain. Settled fourth record retains unknown usage reservation, not zero usage. Consumer pre-admission bound does not remove provider transport limits."
+  },
+  "limits": [
+    "One development run, same original GLM; no formal registration, threshold result or broad capability percentage.",
+    "Signed production consumer/provider protocol over local fixture wire on one host, not physical-node or ICE evidence.",
+    "Credential scan reports no egress in all four complete-in-memory requests; no universal memory/secret-path security claim.",
+    "The original v1 consumer role still cannot observe all required provider-private facts. Role correction must use separately activated versioned inputs, never relabel this failure.",
+    "No resample or history overwrite. Semantic causal error remains unresolved despite correct narrower heartbeat/invocation caveats and correct runtime unverified outcome."
+  ]
+}

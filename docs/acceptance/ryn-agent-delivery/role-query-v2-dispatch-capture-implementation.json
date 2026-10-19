@@ -1,0 +1,223 @@
+{
+  "kind": "future-v2-query-dispatch-capture-implementation",
+  "status": "frozen_awaiting_independent_review",
+  "author": "sharing_review (implementation author for this batch; not independent reviewer)",
+  "created_at": "2026-10-10T07:18:16.234992+00:00",
+  "formal_activation": false,
+  "changed_files_sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "8ce89fd5e164a13f9fd5fbed428b5622400d553c074a186a972b4a856ee0934c",
+    "docs/acceptance/ryn-agent-delivery/real-model/role_query_world.py": "3602796d369c3e60e2adb6f55d5f4f4bb00d7702cdd67fb7eb0cecfd8ff0f990",
+    "docs/acceptance/ryn-agent-delivery/reference/documents.py": "934ec46f09eace64e672fa2a20fc5596409cf9bec24db3a5459a0ad2fd0164b4",
+    "docs/acceptance/ryn-agent-delivery/reference/worker_host.py": "4b3b635e1a46965f3255b4f101769b8bd2abb436bebf30fe301aa9d2ffb1c341",
+    "docs/acceptance/ryn-agent-delivery/reference/zcode-worker.mjs": "caa1f71fa42880474739a2d5332ad9ec8a795f299c8e44a624bb84267871b7b0",
+    "tests/test_agent_role_dispatch_capture.py": "a687d5fd6d5e6479bb3c3fb24ec3d2bbebc2c360ea373a60f8e4423e594fbbf5",
+    "tests/test_agent_role_query_world.py": "314459286a0f27ceac30fa255e02c5ac1869a19fcf970b84b05d5999eba90fd2",
+    "tests/test_agent_query_planner_guard.py": "d69330282c9f818cdf6b4244ec70ce68a301d01a427e2bc8af84243b7e79794b"
+  },
+  "tests": {
+    "final_command": ".venv/Scripts/python.exe -m pytest tests/test_agent_role_dispatch_capture.py tests/test_agent_role_query_world.py tests/test_agent_query_planner_guard.py tests/test_agent_reference_output_policy.py tests/test_agent_reference_host.py -q -p no:cacheprovider --tb=short",
+    "passed": 55,
+    "failed": 0,
+    "seconds": 80.76,
+    "exit_code": 0,
+    "ruff_command": ".venv/Scripts/python.exe -m ruff check docs/acceptance/ryn-agent-delivery/real-model/run_queries.py docs/acceptance/ryn-agent-delivery/real-model/role_query_world.py docs/acceptance/ryn-agent-delivery/reference/documents.py docs/acceptance/ryn-agent-delivery/reference/worker_host.py tests/test_agent_role_query_world.py tests/test_agent_role_dispatch_capture.py tests/test_agent_query_planner_guard.py",
+    "ruff": "passed",
+    "counts_note": "Overlapping earlier groups are not added to 55."
+  },
+  "design": {
+    "registration": "Fresh output only, exclusive files; registration and task-binding fsynced before first Agent model/tool. registration_sha256 is the actual registration.json byte SHA, not canonical JSON digest. effective_case_sha256 uses the grader unbound effective-envelope hash; effective_input_sha256 separately binds actual role identities.",
+    "contract_snapshot": "Future v2 registration stores grader/schema/decision byte hashes; v2 code_snapshot now includes those files along with existing helper/loader/overlay/schema. No grader, decision, loader or overlay was edited.",
+    "candidate": "Bridge attempts are stamped before original complete. Tools preserve all original arguments and results. Context-bearing calls check task identity; contextless catalog calls bind their operation/name to actual decrypted durable in_flight. Internal runtime controls use a runtime-instance observer with actual durable queue identity; no production method was edited. Mechanical readbacks and checker/summary bridge calls share the capture.",
+    "durability": "dispatch-events.jsonl is appended and fsynced before dispatch. Final dispatch-audit.json and model-requests.json expose original observations. Safe capture faults are tracked even if runtime serializes an exception into a tool error; coverage becomes partial, not complete. No retry or recapture.",
+    "reference": "Opt-in config carries sampling binding outside model messages. Native Node worker appends/fsyncs session+original pipe RPC sequence metadata before sending; worker_host checks packet/session/registration/binding and passes context to optional documents observer. Native observer binds original model/tool requests through unchanged budget and permission gates. Default v1 callback remains two positional arguments.",
+    "native_artifact": "Independent read-only SQLite session-id and message-count readback is correlated with the separate native RPC JSONL and host original model request IDs. RPC sequence is a worker adapter ID, not an invented upstream SDK or SQLite field. SQLite and sidecar hashes remain distinct; the queued Ryn accounting task is not the reference conversation.",
+    "privacy": "Audit files contain identifiers, times, known tool names and hashes, not prompts, arguments, responses, reasoning, source credentials or provider payloads. Sampling metadata is not sent to model messages/specs or business tool arguments. Existing model transcript export guards and source provider guards are retained.",
+    "scope": "Only future explicit Q01/Q06 v2 draft collections. Setup probes remain separate. No production, prompt, planner policy, source rule, permission, budget, retry, grader, normalizer, frozen suite, overlay or historical run changes."
+  },
+  "regression_history": [
+    {
+      "stage": "grader contract test",
+      "result": "1 failed / 11 passed in 3.15s",
+      "cause": "Externally changed decision.json bytes made the unchanged grader correctly reject its pin.",
+      "observed_drift_sha256": "9a248c002dfa825e8d66747770b3550b2d92bc156a4c359cbc0b642775cc7658",
+      "resolution": "Root moved dynamic progress fields into a separate progress record and restored original exact decision bytes d80ba913f728ff6404f556c1211cf25de3ab764aab438cf999c4e74181c87273. No grader pin bypass or edit."
+    },
+    {
+      "stage": "first compatibility group",
+      "result": "34 passed / 3 failed in 76.83s",
+      "cause": "Three extracted-AST trace tests lacked the new dispatch_collector closure.",
+      "resolution": "Only their test namespace gained dispatch_collector=None; original whitelist/secret-omission assertions remain."
+    },
+    {
+      "stage": "insufficient first green coverage",
+      "result": "49 passed in 95.99s, then author raw-evidence audit exposed a real collector regression",
+      "cause": "Observer incorrectly required scope context on ordinary catalog tools. Candidate audit showed zero tools; actual responses contained agent_operation_failed. Reference RPC collection alone also did not prove underlying tool success. These green tests did not establish functioning capture.",
+      "retained_raw_runs": {
+        "docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T070452563192Z-Q01-ryn-v2-draft-fixture\\run.json": "2101e804bddb61df62c3c64df2b6133e14aa43abfc3ba927c97c5c4b86ad0e12",
+        "docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T070500392698Z-Q06-ryn-v2-draft-fixture\\run.json": "76f3a3e32c6278793bcb9e8184e45b68e7434ada595a3c78ced4a882b8d284ba",
+        "docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T070508063929Z-Q01-reference-v2-draft-fixture\\run.json": "f9312e92d7c8d0209a5036715f7622d95c93ff08163e1973872097e14f56e289",
+        "docs\\acceptance\\ryn-agent-delivery\\real-model\\20261010T070520714507Z-Q06-reference-v2-draft-fixture\\run.json": "bb45711df3433bcf46eda0b79426a24a3feeafa0adf8b36d8a3aee21ea99d3ca"
+      },
+      "resolution": "Contextless candidate reads now bind actual durable in_flight without injecting context; reference uses native request context. Added actual successful tool-body, candidate mechanical readback, durable-operation mismatch and original argument-preservation assertions. Intermediate corrected group 26 passed62.37s; final 55 includes these checks."
+    },
+    {
+      "stage": "additional static completeness review",
+      "cause": "BusinessTools wrapper does not see internal runtime controls; a swallowed observer fault could otherwise leave complete coverage metadata.",
+      "resolution": "Added actual runtime internal-tool proposal test and durable queue observer; capture-error tracking plus swallowed-fault regression requires partial coverage. No fabricated red execution is claimed for these static findings."
+    }
+  ],
+  "fixtures": [
+    {
+      "case_id": "Q01",
+      "cohort": "ryn",
+      "run_path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T071531131946Z-Q01-ryn-v2-draft-fixture/run.json",
+      "artifact_hashes": {
+        "run.json": "f71c7b00b7bf9112edf6ce28f0a980688ae3671646b54a265ce92701358a83a6",
+        "effective-input.json": "c47bc05b1d90a829928f3a90bf11966cf3d4302b7e2cf255fe86c3b3d7b9066e",
+        "registration.json": "d428cdd6fecf846c7bf88dffddc3681117499a823e309587729d68acc10afb50",
+        "task-binding.json": "384fcb7f3423fa78614c80d32f0c9ac73b78cbc5aa4576d6748166d0ffecedfc",
+        "dispatch-events.jsonl": "d7f8a07eebf62e7e0951a8e24dbd93a48e8b88ff46eb7cbaa41ea0801faf2e30",
+        "dispatch-audit.json": "449803008b5c32a87347f0a9ec1a32c3c9fcfcd13e768d7918b1de6a2070fc73",
+        "model-requests.json": "6bc3e36af5d1003cf1481f1778169d36a90111c7e9d314f491024bae1f38dff3"
+      },
+      "synthetic_model": true,
+      "actual_pinned_native_worker": false,
+      "model_attempts": 5,
+      "audited_tool_attempts": 3,
+      "successful_model_requested_tool_results": 1,
+      "all_tool_results_successful": true,
+      "writes": 0,
+      "current_code_hashes_match_run_snapshot": true,
+      "source_configuration_unchanged": true,
+      "native_readback": {},
+      "mechanical_readback_evidence_count": 1
+    },
+    {
+      "case_id": "Q01",
+      "cohort": "reference",
+      "run_path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T071543900789Z-Q01-reference-v2-draft-fixture/run.json",
+      "artifact_hashes": {
+        "run.json": "159cf38bc2c2a1799bc31ecdd1a4ce26c9cf3b8ef5d6a472eed649f2ad0d9c4b",
+        "effective-input.json": "8d41d3a00a48bb4ee6d94b1b7b06f5d7bd3167ee89d83de7f70303f1911e8d93",
+        "registration.json": "e342e2ae9939fe04baea781474f4acc967523aebe4c4d30c66a1ee2fd5dfc50d",
+        "task-binding.json": "261f7e0543866bfda51dc8c9fd650e6aa0ad2bf637bbb4d332819a7b7420c99c",
+        "dispatch-events.jsonl": "de7198f9c1523e4255c071e6cf62cf8289d7aa4a089cc4daa8a82f24f4488f77",
+        "dispatch-audit.json": "2177aa489f1d59c3bb04e72beb8c83a1d52e24e03fc421c8aabc78958c62b982",
+        "model-requests.json": "e142f720b695a1624704158e9d1860b029abbf179ab50838df61f1774524e3ed",
+        "native-rpc-events.jsonl": "560d27026c6b12ae2d17dd6c43dbe360e8191732974a16aaf457e79ba57be55b"
+      },
+      "synthetic_model": true,
+      "actual_pinned_native_worker": true,
+      "model_attempts": 3,
+      "audited_tool_attempts": 1,
+      "successful_model_requested_tool_results": 1,
+      "all_tool_results_successful": true,
+      "writes": 0,
+      "current_code_hashes_match_run_snapshot": true,
+      "source_configuration_unchanged": true,
+      "native_readback": {
+        "status": "observed",
+        "task_id": "agent_d5249be1cab24b529de94b35a649595a",
+        "run_nonce": "83fb92f1bcf245288ea0bf648e8b1517",
+        "proof_scope": "native_session_and_request_readback",
+        "request_id_basis": "Native worker pipe RPC sequence, collected before send in a separate audit; not SQLite request fields.",
+        "native_session_path": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-query-development-ewsq2vgk\\reference-session.sqlite",
+        "observed_request_ids": [
+          "6347b12c4e034b17add80a11fa0f3e6c:rpc:1",
+          "6347b12c4e034b17add80a11fa0f3e6c:rpc:3",
+          "6347b12c4e034b17add80a11fa0f3e6c:rpc:4"
+        ],
+        "native_rpc_audit_sha256": "560d27026c6b12ae2d17dd6c43dbe360e8191732974a16aaf457e79ba57be55b",
+        "session_id": "6347b12c4e034b17add80a11fa0f3e6c",
+        "sha256": "dc972c2c5a9556955713ee8cdea4a171911214c99857dd12dc25577c608b7c74",
+        "message_count": 4
+      },
+      "mechanical_readback_evidence_count": 0
+    },
+    {
+      "case_id": "Q06",
+      "cohort": "ryn",
+      "run_path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T071536968930Z-Q06-ryn-v2-draft-fixture/run.json",
+      "artifact_hashes": {
+        "run.json": "8318752d6df50173db00b3cfe23f96a6007b9c643ff6e53535ab5edc2f361eb7",
+        "effective-input.json": "1405fc51b921f130ebb3f7f2165685955b9fe9c7f39ec2c35bf0755908036800",
+        "registration.json": "2d397859c5c4f75a126080b7803728b2236f85c1d0d0602ed0a49fe07b8d5d31",
+        "task-binding.json": "bfb2d79f34175162246d03af41b9199e6bcdff4d212957589ce89e4ad6159e24",
+        "dispatch-events.jsonl": "d3e8dd8d246cea74da3827551ea843feaa4e1bfb80d44352f23ce4cb88cfd202",
+        "dispatch-audit.json": "2c10a1df78c40e2fcd456f32a5d2d6076cf3904876f31aa0abdaaaefd7806058",
+        "model-requests.json": "db082e1f88ce758fc23be1335e5636e38c53c6c0f85a82a3ee4772cf11adfca0"
+      },
+      "synthetic_model": true,
+      "actual_pinned_native_worker": false,
+      "model_attempts": 7,
+      "audited_tool_attempts": 9,
+      "successful_model_requested_tool_results": 3,
+      "all_tool_results_successful": true,
+      "writes": 0,
+      "current_code_hashes_match_run_snapshot": true,
+      "source_configuration_unchanged": true,
+      "native_readback": {},
+      "mechanical_readback_evidence_count": 3
+    },
+    {
+      "case_id": "Q06",
+      "cohort": "reference",
+      "run_path": "docs/acceptance/ryn-agent-delivery/real-model/20261010T071552750255Z-Q06-reference-v2-draft-fixture/run.json",
+      "artifact_hashes": {
+        "run.json": "1bbd3ed8d486ea48761dddc11a9abff578b8eb2b06aa0374a66650c20fe40afe",
+        "effective-input.json": "934f140e571bdf96bfacfbe3ca89a21384a56927f0f9e4a807d17d3d4013c5a8",
+        "registration.json": "8c99212244d6711bccbdd0c55bc73e8bcb4e8ba858d2f05529ebe4ea8ddf29e7",
+        "task-binding.json": "5bb0e8301c5bf785707e802529ffb2d4e2c6b1614da041ee647cb7a47c092b43",
+        "dispatch-events.jsonl": "5a3ee8aae669c751c63dd282869b9f03c3dfef0096191060760cdd08ea3f0b90",
+        "dispatch-audit.json": "f4c28b961bd187c6658dd8363837cea6465f97a7b62b5abe5164bd968c75389f",
+        "model-requests.json": "bacec83cf241c6bdb6239d5bf354123c0d78bf7110f395724a3ca292d3ff2aee",
+        "native-rpc-events.jsonl": "e238b13f2a39d89fdddc3c4b24f364d7788e581d55c213466323cfaa4850f272"
+      },
+      "synthetic_model": true,
+      "actual_pinned_native_worker": true,
+      "model_attempts": 5,
+      "audited_tool_attempts": 3,
+      "successful_model_requested_tool_results": 3,
+      "all_tool_results_successful": true,
+      "writes": 0,
+      "current_code_hashes_match_run_snapshot": true,
+      "source_configuration_unchanged": true,
+      "native_readback": {
+        "status": "observed",
+        "task_id": "agent_ef0c866c54c74598bd3ebed7576627a9",
+        "run_nonce": "8823898b8d574e4a9c361a1504a8cf5b",
+        "proof_scope": "native_session_and_request_readback",
+        "request_id_basis": "Native worker pipe RPC sequence, collected before send in a separate audit; not SQLite request fields.",
+        "native_session_path": "C:\\Users\\子陵\\AppData\\Local\\Temp\\ryn-query-development-3or9ry5g\\reference-session.sqlite",
+        "observed_request_ids": [
+          "f4d229432ff2435bbd889e820da0c43c:rpc:1",
+          "f4d229432ff2435bbd889e820da0c43c:rpc:3",
+          "f4d229432ff2435bbd889e820da0c43c:rpc:5",
+          "f4d229432ff2435bbd889e820da0c43c:rpc:7",
+          "f4d229432ff2435bbd889e820da0c43c:rpc:8"
+        ],
+        "native_rpc_audit_sha256": "e238b13f2a39d89fdddc3c4b24f364d7788e581d55c213466323cfaa4850f272",
+        "session_id": "f4d229432ff2435bbd889e820da0c43c",
+        "sha256": "b5b03aef25e78037e30f22a97e721143335fba149506a77ca7229e9cba59ad2b",
+        "message_count": 6
+      },
+      "mechanical_readback_evidence_count": 0
+    }
+  ],
+  "preserved_history": {
+    "latest_real_Q01_raw_sha256": "aa1eb99773da6e6b5882c0b9050838b39fcfc2ddb2c2fc2914ac02d24e66e458",
+    "prior_Q01_classification": "passed independently before this implementation",
+    "prior_Q01_overall_semantics": "failed; unchanged by this work",
+    "all_production_files_match_prior_real_Q01_snapshot": true
+  },
+  "limitations": [
+    "No real/paid model or external API calls were run in this implementation batch; fixture models are synthetic even where the actual pinned Node engine and actual Ryn gates run.",
+    "This supplies new raw collection evidence only; normalization and independent semantic/security/role/dependency review are still separate. No review or dependency pass is fabricated.",
+    "Draft remains disabled/not_formal_ready. Old samples lack these original observations and cannot be retrospectively registered by copying final metadata.",
+    "Identifiers/hashes/time consistency rely on trusted local collectors; no remote attestation, anti-forgery or two-physical-host proof is claimed.",
+    "Gateway/bridge audit records attempts, including requests that later fail admission. It is not a claim that all attempts consumed upstream tokens or completed business work.",
+    "Native request IDs live in the worker sidecar, while SQLite proves the actual session and messages separately; never label sidecar IDs as native SQLite schema fields.",
+    "Partial/error captures remain failed or pending; this controller does not resume a capture or re-dispatch an ambiguous request.",
+    "No complete v2 grading/normalization of a live run, formal acceptance percentage, or Q01/Q06 semantic success is asserted by these software tests."
+  ]
+}

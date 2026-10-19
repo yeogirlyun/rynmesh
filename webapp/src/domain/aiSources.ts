@@ -1,15 +1,28 @@
 import { tr } from "../uiI18n";
 import { nodeControlUrl } from "./nodeUrl";
 
+export interface AIModelParameters { context_window: number; max_output_tokens: number; request_defaults: Record<string, unknown>; max_concurrent: number; requests_per_day: number | null; }
+export type ModelShareScope = "personal_space" | "friends";
+export type APIProtocol = "openai_chat" | "openai_responses" | "anthropic_messages";
+export interface AIModelSettings { overrides: Partial<AIModelParameters> & { share_scope?: ModelShareScope }; effective: AIModelParameters & { share_scope?: ModelShareScope }; context_window_basis?: string; context_window_known?: boolean; inherited_fields: Array<keyof AIModelParameters | "share_scope">; rule_revision: string; destination_revision: string; evidence: { connection?: unknown; model_exists?: unknown; tools?: { status: string; checked_at: string | null } }; }
+
 export type AISource = {
   id: string; name: string; kind: "api" | "local"; provider: string; base_url: string;
+  protocol?: APIProtocol;
   models: string[]; context_window: number; max_output_tokens: number;
+  context_window_mode?: "auto" | "manual";
+  model_metadata?: Record<string, { context_window: number }>;
   request_defaults: Record<string, unknown>; enabled: boolean; sharing: boolean;
   status: string; has_key: boolean; api_key?: string; clear_key?: boolean;
+  shared_models?: string[];
+  source_revision?: string;
+  tool_support?: Record<string, "supported" | "unsupported">;
+  model_settings?: Record<string, AIModelSettings>;
 };
 export const sourcePresets = [
   { id: "zai", name: "Z.ai · GLM", url: "https://api.z.ai/api/paas/v4", model: "glm-5.3-flash" },
   { id: "openai", name: "OpenAI", url: "https://api.openai.com/v1", model: "" },
+  { id: "anthropic", name: "Anthropic · Claude", url: "https://api.anthropic.com/v1", model: "" },
   { id: "deepseek", name: "DeepSeek", url: "https://api.deepseek.com", model: "deepseek-chat" },
   { id: "qwen", get name() { return tr("通义千问"); }, url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "" },
   { id: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "" },
@@ -20,8 +33,9 @@ export const sourcePresets = [
 export function newSource(provider = "zai"): AISource {
   const preset = sourcePresets.find(p => p.id === provider)!;
   return { id: "new", name: preset.name, kind: ["ollama", "lmstudio"].includes(provider) ? "local" : "api",
-    provider, base_url: preset.url, models: preset.model ? [preset.model] : [],
-    context_window: provider === "zai" ? 1000000 : 32768, max_output_tokens: provider === "zai" ? 128000 : 4096,
+    provider, protocol: provider === "anthropic" ? "anthropic_messages" : "openai_chat",
+    base_url: preset.url, models: preset.model ? [preset.model] : [],
+    context_window: 32768, context_window_mode: "auto", max_output_tokens: 4096,
     request_defaults: provider === "zai" ? { thinking: { type: "enabled" }, reasoning_effort: "max" } : {},
     enabled: true, sharing: false, status: "untested", has_key: false };
 }

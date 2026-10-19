@@ -1,0 +1,48 @@
+{
+  "kind": "independent_non_author_code_review_followup",
+  "reviewer": "sharing_review",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "status": "original_finding_resolved_separate_issue_open",
+  "prior_review": "atomic-sharing-independent-review.json",
+  "original_finding_resolution": "Committed model binding and enabled/ready readback now reject changed target while retaining executed attribution. Sibling/label changes remain valid; invalid legacy binding unknown.",
+  "approval_projection_review": "No new material issue reproduced. Server-only bound historical proof survives checkpoint/reopen/reconciliation. Tool output cannot author it; no new execution authority.",
+  "validation": {
+    "tests": 40,
+    "elapsed_seconds": 17.51,
+    "additional_reproductions": [
+      "Post-commit lost response, reopen, reconciliation retains same owner approval and performs exactly one write.",
+      "Prewrite model catalog followed by atomic share and postwrite services inspection reproduces required stale-catalog failure."
+    ]
+  },
+  "reviewed_sha256": {
+    "rynmesh/agent_runtime/sharing.py": "055258fdc5c3d4f61d3a23e580a3289f326481e232d8341c63e8ae8367329848",
+    "rynmesh/agent_runtime/operation_permissions.py": "295835e2a7405f06566c7f9f5bcf53366bd3d87a8ebcb8790af55c99c84a4460",
+    "rynmesh/agent_runtime/runtime.py": "fc2052a3cd9b1b0c03c490ed5084f910586e166de5fca208ce3da27e7e147e26",
+    "rynmesh/agent_runtime/verification.py": "16c3767490bbe82fb3886f3d5f538ac27942031424d59bcc442d26f32c324ed0",
+    "rynmesh/agent_runtime/prompt.py": "35e25ca0e2f947ce906bb48c921e854f7b92dd2f71c58869513bf748ec0498e6",
+    "rynmesh/agent_runtime/read_verification.py": "e837ebb1986b431a4ad2163d0e8b6884b08d23e6e2c95ee5a82956a08ec6c869"
+  },
+  "remaining_findings": [
+    {
+      "severity": "P2",
+      "title": "Superseded preparation catalog read becomes required failing criterion",
+      "files": [
+        {
+          "path": "rynmesh/agent_runtime/verification.py",
+          "line": 70
+        },
+        {
+          "path": "rynmesh/agent_runtime/read_verification.py",
+          "line": 100
+        }
+      ],
+      "reproduction": "Read models, atomically share, read services; verification yields old models failed, share passed, services passed.",
+      "recommendation": "Recognize superseded preparation observations in criterion lifecycle while preserving relevant current factual checks; do not simply force changed reads to pass."
+    }
+  ],
+  "limits": [
+    "No paid model calls or held-out access by reviewer.",
+    "Not complete R02 or Windows upgrade acceptance."
+  ]
+}

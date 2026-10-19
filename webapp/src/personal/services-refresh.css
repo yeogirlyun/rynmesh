@@ -1,0 +1,218 @@
+/* Services page redesign. Every selector hangs off .rs-services so no other page is affected.
+   Colours are page-scoped tokens (--rs-*); the shared --pf-* tokens and pf-* classes are not edited.
+   Palette: porcelain neutrals and one indigo brand colour. The jewel hues (--h/--h2/--hd) exist only
+   for service identity and status, all at similar lightness so they sit together. */
+.rs-services {
+  --rs-surface: #ffffff; --rs-surface2: #f9fafd; --rs-hair: #e8eaf2; --rs-hair2: #d9dde9;
+  --rs-ink: #141a33; --rs-ink2: #4d5670; --rs-ink3: #687189;
+  --rs-brand: #3b57e0; --rs-brand2: #6580f6; --rs-brand-deep: #2b43c2; --rs-on-brand: #ffffff;
+  --rs-ok: #10a58f; --rs-warn: #ee9d1f; --rs-off: #7d869d;
+  --rs-wash1: #5568f0; --rs-wash2: #10a58f;
+  --rs-tint: 11%; --rs-shadow-c: rgba(20, 26, 51, 0.1);
+  position: relative;
+  isolation: isolate;
+  color: var(--rs-ink);
+  font-feature-settings: "tnum" 1;
+}
+[data-theme="dark"] .rs-services {
+  --rs-surface: #141a2c; --rs-surface2: #10162a; --rs-hair: #212a42; --rs-hair2: #2e3856;
+  --rs-ink: #eaeef8; --rs-ink2: #aab3c9; --rs-ink3: #8892aa;
+  --rs-brand: #8aa2ff; --rs-brand2: #a9bbff; --rs-brand-deep: #b8c6ff; --rs-on-brand: #0b1230;
+  --rs-ok: #3fd0b4; --rs-warn: #f2b655; --rs-off: #7e89a1;
+  --rs-wash1: #7d8dff; --rs-wash2: #3fd0b4;
+  --rs-tint: 20%; --rs-shadow-c: rgba(0, 0, 0, 0.5);
+}
+/* Soft colour wash that reaches the edges of the content area (follows .pf-main's padding). */
+.rs-services::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: -29px -32px auto -32px;
+  height: 380px;
+  background:
+    radial-gradient(720px 280px at 14% 0, color-mix(in srgb, var(--rs-wash1) 11%, transparent), transparent 72%),
+    radial-gradient(640px 260px at 92% 10px, color-mix(in srgb, var(--rs-wash2) 9%, transparent), transparent 72%);
+}
+@media (min-width: 1600px) { .rs-services::before { inset: -38px -48px auto -48px; } }
+@media (max-width: 1180px) { .rs-services::before { inset: -25px -23px auto -23px; } }
+@media (max-width: 620px) { .rs-services::before { inset: -23px -16px auto -16px; } }
+
+/* hues: base, light end of the gradient, deep end for details */
+.rs-services .rs-h-indigo { --h: #5568f0; --h2: #8493fb; --hd: #3a49c8; }
+.rs-services .rs-h-violet { --h: #7c5cf0; --h2: #a58bfb; --hd: #5a3fcb; }
+.rs-services .rs-h-teal { --h: #10a58f; --h2: #3fd0b4; --hd: #0a7867; }
+.rs-services .rs-h-sky { --h: #2a94e8; --h2: #5cb8fb; --hd: #1b6db4; }
+.rs-services .rs-h-rose { --h: #e8567f; --h2: #f58aa6; --hd: #b83259; }
+.rs-services .rs-h-amber { --h: #ee9d1f; --h2: #f8c260; --hd: #965a00; }
+.rs-services .rs-h-slate { --h: #66708a; --h2: #909ab3; --hd: #475068; }
+
+/* Text and icons that sit on a tinted chip. In light mode the deep hue (--hd) reads well; in dark mode it is darker
+   than the chip, so a pale tint of the hue is used there. --hd itself stays as it is for the drawn glyph details. */
+[data-theme="dark"] .rs-services .rs-tag,
+[data-theme="dark"] .rs-services .rs-dg { color: color-mix(in srgb, var(--h2) 58%, var(--rs-ink)); }
+
+/* ---- heading ---- */
+.rs-services .pf-heading { margin-bottom: 22px; align-items: flex-end; }
+.rs-services .pf-heading h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 800; letter-spacing: -0.035em; color: var(--rs-ink); text-wrap: balance; }
+.rs-services .pf-heading p { margin-top: 6px; font-size: 14px; color: var(--rs-ink2); }
+
+/* ---- shared pieces ---- */
+.rs-services .rs-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 15px; border: 1px solid var(--rs-hair2); border-radius: 10px; background: var(--rs-surface); color: var(--rs-ink); font-size: 13px; font-weight: 650; white-space: nowrap; text-decoration: none; cursor: pointer; box-shadow: 0 1px 2px var(--rs-shadow-c); }
+.rs-services .rs-btn:hover { background: var(--rs-surface2); }
+.rs-services .rs-btn.primary { border-color: transparent; color: var(--rs-on-brand); background: linear-gradient(180deg, var(--rs-brand2), var(--rs-brand)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(43, 67, 194, 0.4), 0 8px 16px -8px var(--rs-brand); }
+.rs-services .rs-btn.primary:hover { filter: brightness(1.05); background: linear-gradient(180deg, var(--rs-brand2), var(--rs-brand)); }
+.rs-services .rs-btn.sm { height: 30px; padding: 0 12px; font-size: 12.5px; border-radius: 9px; }
+.rs-services .rs-btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.rs-services .rs-link { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--rs-brand-deep); font-size: 13px; font-weight: 650; text-decoration: none; cursor: pointer; }
+.rs-services .rs-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rs-services .rs-ico { flex-shrink: 0; }
+.rs-services .rs-tag { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; color: var(--hd, var(--rs-brand-deep)); background: color-mix(in srgb, var(--h, var(--rs-brand)) 13%, var(--rs-surface)); font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; }
+.rs-services .rs-dot { display: inline-block; flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--rs-ok); }
+.rs-services .rs-dot.off { background: var(--rs-off); }
+.rs-services .rs-dot.need { background: var(--rs-warn); }
+.rs-services .rs-pill { --p: var(--rs-ok); display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px 0 9px; border-radius: 12px; font-size: 12px; font-weight: 650; white-space: nowrap;
+  background: color-mix(in srgb, var(--p) var(--rs-tint), var(--rs-surface)); color: color-mix(in srgb, var(--p) 72%, var(--rs-ink)); }
+.rs-services .rs-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--p); box-shadow: 0 0 0 3px color-mix(in srgb, var(--p) 22%, transparent); }
+.rs-services .rs-pill.off { --p: var(--rs-off); }
+.rs-services .rs-pill.need { --p: var(--rs-warn); }
+
+/* ---- summary band ---- */
+.rs-services .rs-band { display: flex; align-items: center; gap: 28px 40px; flex-wrap: wrap; margin-bottom: 24px; padding: 20px 24px; border: 1px solid var(--rs-hair); border-radius: 16px; box-shadow: 0 1px 2px var(--rs-shadow-c), 0 12px 28px -20px var(--rs-shadow-c);
+  background: linear-gradient(115deg, color-mix(in srgb, var(--rs-wash1) 7%, var(--rs-surface)), color-mix(in srgb, var(--rs-wash2) 6%, var(--rs-surface)) 80%); }
+.rs-services .rs-band-left { display: flex; align-items: center; gap: 18px; }
+.rs-services .rs-band-num { font-size: 38px; line-height: 1; font-weight: 800; letter-spacing: -0.04em; }
+.rs-services .rs-band-cap { margin-top: 4px; color: var(--rs-ink2); font-size: 13px; }
+.rs-services .rs-avs { display: flex; }
+.rs-services .rs-avs span { width: 32px; height: 32px; margin-left: -4px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 800; background: linear-gradient(150deg, var(--h2), var(--h)); box-shadow: 0 0 0 2.5px var(--rs-surface); }
+.rs-services .rs-avs span:first-child { margin-left: 0; }
+.rs-services .rs-band-right { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.rs-services .rs-meter { display: flex; gap: 3px; height: 10px; }
+.rs-services .rs-meter i { display: block; height: 100%; min-width: 8px; border-radius: 5px; }
+.rs-services .rs-meter .ok { background: linear-gradient(90deg, var(--rs-ok), color-mix(in srgb, var(--rs-ok) 60%, #fff)); }
+.rs-services .rs-meter .off { background: linear-gradient(90deg, var(--rs-off), color-mix(in srgb, var(--rs-off) 60%, #fff)); }
+.rs-services .rs-meter .need { background: linear-gradient(90deg, var(--rs-warn), color-mix(in srgb, var(--rs-warn) 60%, #fff)); }
+.rs-services .rs-legend { display: flex; gap: 22px; flex-wrap: wrap; font-size: 13px; color: var(--rs-ink2); }
+.rs-services .rs-legend span { display: inline-flex; align-items: center; gap: 8px; }
+.rs-services .rs-legend b { color: var(--rs-ink); font-weight: 750; }
+
+/* ---- filter row ---- */
+.rs-services .rs-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+.rs-services .rs-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; background: color-mix(in srgb, var(--rs-hair) 75%, var(--rs-surface2)); }
+.rs-services .rs-seg button { display: inline-flex; align-items: center; height: 30px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--rs-ink2); font-size: 13px; font-weight: 600; cursor: pointer; }
+.rs-services .rs-seg button.on { background: var(--rs-surface); color: var(--rs-ink); font-weight: 700; box-shadow: 0 1px 2px var(--rs-shadow-c), 0 0 0 1px var(--rs-hair); }
+.rs-services .rs-seg em { margin-left: 7px; font-style: normal; font-size: 11.5px; font-weight: 600; color: var(--rs-ink3); }
+.rs-services .rs-seg button.on em { color: var(--rs-brand); }
+.rs-services .rs-field { display: flex; align-items: center; gap: 8px; height: 36px; width: 280px; max-width: 100%; padding: 0 12px; border: 1px solid var(--rs-hair2); border-radius: 10px; background: var(--rs-surface); color: var(--rs-ink3); box-shadow: 0 1px 2px var(--rs-shadow-c); }
+/* secondary.css styles every shell input at (0,3,1); the extra :not()s keep this one transparent inside the field. */
+.rs-services .rs-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; border-radius: 0; outline: 0; background-color: transparent; font: inherit; font-size: 13px; color: var(--rs-ink); }
+.rs-services .rs-field:focus-within { border-color: var(--rs-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--rs-brand) 18%, transparent); }
+.rs-services .rs-field input::placeholder { color: var(--rs-ink3); }
+
+/* ---- service table ---- */
+.rs-services .rs-cols { display: flex; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+.rs-services .rs-list { flex: 1 1 520px; min-width: 0; container-type: inline-size; overflow: hidden; border: 1px solid var(--rs-hair); border-radius: 16px; background: var(--rs-surface); box-shadow: 0 1px 2px var(--rs-shadow-c), 0 12px 28px -20px var(--rs-shadow-c); }
+.rs-services .rs-lh { display: none; padding: 11px 22px; border-bottom: 1px solid var(--rs-hair); background: var(--rs-surface2); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--rs-ink3); }
+/* Small containers: two explicit rows (service | status, provider | action). The four-column table below replaces it from 700px. */
+.rs-services .rs-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "svc st" "dev ac"; align-items: center; gap: 12px 16px; margin: 0; padding: 16px 22px; background: var(--rs-surface); cursor: pointer; }
+.rs-services .rs-row + .rs-row { border-top: 1px solid var(--rs-hair); }
+.rs-services .rs-row:hover { background: var(--rs-surface2); }
+.rs-services .rs-row.selected { background: color-mix(in srgb, var(--h) 7%, var(--rs-surface)); }
+.rs-services .rs-row.selected::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, var(--h2), var(--h)); }
+.rs-services .rs-select { grid-area: svc; display: flex; align-items: center; gap: 14px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.rs-services .rs-tile { position: relative; display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px; background: linear-gradient(155deg, var(--h2), var(--h));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.08), 0 8px 14px -8px var(--h); }
+.rs-services .rs-tile::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(165deg, rgba(255, 255, 255, 0.28), transparent 48%); }
+.rs-services .rs-tile .rs-glyph { position: relative; z-index: 1; width: 26px; height: 26px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.16)); }
+.rs-services .rs-glyph .deep { fill: var(--hd); }
+.rs-services .rs-glyph .deep-line { stroke: var(--hd); }
+.rs-services .rs-tile.xl { width: 56px; height: 56px; border-radius: 16px; }
+.rs-services .rs-tile.xl .rs-glyph { width: 32px; height: 32px; }
+.rs-services .rs-tile.branded { background: var(--rs-surface); box-shadow: 0 0 0 1px var(--rs-hair2), 0 6px 12px -8px var(--rs-shadow-c); color: var(--rs-ink); }
+.rs-services .rs-tile.branded::after { display: none; }
+.rs-services .rs-tile .pf-provider-logo { position: relative; z-index: 1; width: 26px; height: 26px; }
+.rs-services .rs-tile.xl .pf-provider-logo { width: 32px; height: 32px; }
+.rs-services .rs-row.off .rs-tile { filter: grayscale(0.85); opacity: 0.6; box-shadow: none; }
+.rs-services .rs-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rs-services .rs-title { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; font-size: 14.5px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.35; color: var(--rs-ink); overflow-wrap: anywhere; }
+.rs-services .rs-row.off .rs-title { color: var(--rs-ink2); }
+.rs-services .rs-text small { color: var(--rs-ink3); font-size: 12.5px; }
+.rs-services .rs-dev { grid-area: dev; display: flex; align-items: center; gap: 11px; min-width: 0; }
+.rs-services .rs-dg { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: 9px; color: var(--hd); background: color-mix(in srgb, var(--h) 13%, var(--rs-surface)); }
+.rs-services .rs-dn { min-width: 0; display: flex; flex-direction: column; }
+.rs-services .rs-dn b { font-size: 13.5px; font-weight: 650; overflow-wrap: anywhere; }
+.rs-services .rs-dn small { font-size: 12px; color: var(--rs-ink3); overflow-wrap: anywhere; }
+.rs-services .rs-dn small i { font-style: normal; font-weight: 650; color: var(--rs-ink2); }
+.rs-services .rs-dn small i.ok { color: var(--rs-ok); }
+.rs-services .rs-dn small i.warn { color: color-mix(in srgb, var(--rs-warn) 78%, var(--rs-ink)); }
+.rs-services .rs-st { grid-area: st; display: flex; justify-self: end; }
+.rs-services .rs-ac { grid-area: ac; display: flex; justify-content: flex-end; justify-self: end; }
+/* Wide enough to put the provider's name under the service title, in line with the title text. */
+@container (min-width: 420px) {
+  .rs-services .rs-dev { padding-left: 58px; }
+}
+@container (min-width: 700px) {
+  .rs-services .rs-lh { display: grid; }
+  /* The last column must hold "Connect device" (about 115px in English) without spilling back over the status pill. */
+  .rs-services .rs-lh, .rs-services .rs-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 118px 126px; align-items: center; gap: 14px; }
+  .rs-services .rs-row { grid-template-areas: "svc dev st ac"; }
+  .rs-services .rs-dev { padding-left: 0; }
+  .rs-services .rs-st { justify-self: start; }
+  .rs-services .rs-ac { justify-self: stretch; }
+}
+.rs-services .rs-list .pf-empty { margin: 0; padding: 48px 20px; border: 0; background: transparent; }
+
+/* ---- detail panel ---- */
+.rs-services .rs-detail { flex: 0 0 380px; width: 380px; max-width: 100%; overflow: hidden; border: 1px solid var(--rs-hair); border-radius: 16px; background: var(--rs-surface); box-shadow: 0 1px 2px var(--rs-shadow-c), 0 18px 40px -22px var(--rs-shadow-c); }
+.rs-services .rs-detail-top { display: flex; align-items: center; gap: 16px; padding: 22px 22px 18px; background: linear-gradient(160deg, color-mix(in srgb, var(--h) 13%, var(--rs-surface)), var(--rs-surface) 78%); }
+.rs-services .rs-detail-top > div { flex: 1; min-width: 0; }
+.rs-services .rs-detail-top h2 { margin: 0; font-size: 19px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.3; overflow-wrap: anywhere; }
+.rs-services .rs-detail-top p { margin: 1px 0 0; font-size: 13px; color: var(--rs-ink2); }
+.rs-services .rs-detail-top .rs-pill { margin-top: 8px; }
+.rs-services .rs-detail > .rs-seg { display: flex; gap: 22px; padding: 0 22px; border-radius: 0; background: transparent; border-bottom: 1px solid var(--rs-hair); }
+.rs-services .rs-detail > .rs-seg button { position: relative; flex: none; height: 40px; padding: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--rs-ink2); font-size: 13px; font-weight: 600; }
+.rs-services .rs-detail > .rs-seg button.on { color: var(--rs-ink); font-weight: 700; background: transparent; box-shadow: none; }
+.rs-services .rs-detail > .rs-seg button.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: linear-gradient(90deg, var(--rs-brand), var(--rs-brand2)); }
+.rs-services .rs-detail-body { display: flex; flex-direction: column; gap: 18px; padding: 20px 22px 22px; }
+.rs-services .rs-detail-body p { margin: 0; }
+.rs-services .rs-description { color: var(--rs-ink2); font-size: 13.5px; }
+.rs-services .rs-h3 { margin: 0; padding-top: 11px; border-top: 1px solid var(--rs-hair); font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--rs-ink3); }
+.rs-services .rs-access { margin-top: -10px; color: var(--rs-ink); font-size: 13.5px; font-weight: 550; }
+.rs-services .rs-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rs-services .rs-manage { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; background: color-mix(in srgb, var(--rs-brand) 6%, var(--rs-surface)); }
+.rs-services .rs-manage > div { flex: 1; min-width: 0; }
+.rs-services .rs-manage h3 { margin: 0; font-size: 13px; font-weight: 700; }
+.rs-services .rs-manage p { margin-top: 1px; font-size: 12.5px; color: var(--rs-ink2); }
+.rs-services .rs-callout { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--rs-hair); border-radius: 12px; background: var(--rs-surface2); color: var(--rs-ink2); font-size: 13px; }
+.rs-services .rs-callout svg { margin-top: 1px; color: var(--rs-ink3); }
+
+/* connection strip: this device, the route, the provider */
+.rs-services .rs-conn { display: grid; grid-template-columns: auto minmax(24px, 1fr) auto; align-items: center; gap: 10px 10px; padding: 14px; border: 1px solid var(--rs-hair); border-radius: 14px; background: var(--rs-surface2); }
+.rs-services .rs-end { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.rs-services .rs-end > div { min-width: 0; }
+.rs-services .rs-end small { display: block; font-size: 11px; line-height: 1.2; color: var(--rs-ink3); }
+.rs-services .rs-end b { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.rs-services .rs-end .rs-dg { width: 32px; height: 32px; }
+.rs-services .rs-wire { position: relative; height: 2px; border-radius: 2px; background: var(--rs-ok); }
+.rs-services .rs-wire.dash { background: repeating-linear-gradient(90deg, var(--rs-off) 0 5px, transparent 5px 10px); opacity: 0.7; }
+.rs-services .rs-wire.dash.warn { background: repeating-linear-gradient(90deg, var(--rs-warn) 0 5px, transparent 5px 10px); opacity: 0.9; }
+.rs-services .rs-rt { grid-column: 1 / -1; justify-self: center; padding: 3px 11px; border-radius: 10px; font-size: 11.5px; font-weight: 700; text-align: center; background: color-mix(in srgb, var(--rs-hair) 55%, var(--rs-surface2)); color: var(--rs-ink2); }
+.rs-services .rs-rt.ok { color: color-mix(in srgb, var(--rs-ok) 75%, var(--rs-ink)); }
+.rs-services .rs-rt.warn { color: color-mix(in srgb, var(--rs-warn) 78%, var(--rs-ink)); }
+@media (min-width: 1100px) { .rs-services .rs-detail { position: sticky; top: 16px; } }
+
+/* ---- footer ---- */
+.rs-services .rs-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 22px; color: var(--rs-ink3); font-size: 12.5px; }
+.rs-services .rs-foot .pf-note { margin: 0; }
+.rs-services > .pf-note { margin: 0 0 18px; }
+
+@media (max-width: 560px) {
+  .rs-services .pf-heading h1 { font-size: 26px; }
+  .rs-services .rs-row { padding: 14px 16px; }
+  .rs-services .rs-seg button { padding: 0 10px; }
+  .rs-services .rs-band { padding: 18px; }
+  .rs-services .rs-detail { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rs-services .rs-row, .rs-services .rs-btn { transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s; }
+}

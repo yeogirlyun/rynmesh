@@ -1,0 +1,36 @@
+{
+  "kind": "independent-limited-business-report-review",
+  "date": "2026-10-11",
+  "reviewer": "pending_independent_review; not the C04 author or operator reviewer",
+  "run": "real-model/20261011T0753Z-C04-ryn-owner-draft",
+  "scope": "Existing run.json and operator-review.json only; no rerun, no raw evidence rewrite, no wider acceptance search.",
+  "conclusion": {
+    "controller_business_controls_observed": true,
+    "agent_node_c_verification_complete": false,
+    "report_semantic_coverage": "partial; node-c identity requirement remains conditional in the Agent report",
+    "business_success_seen": false,
+    "formal_pass": false,
+    "formal_trials_executed": 0
+  },
+  "supported": [
+    "Run probes show separately signed node-b allowed before revoke (one actual upstream request), node-c denied before revoke (zero upstream requests), and node-b denied after revoke (zero upstream requests). The recorded node-c peer ID matches its controller identity binding.",
+    "Initial report correctly explains that node-b's effective grant already existed. The recorded exact approved confirmation and subsequent exact approved revocation, unchanged model-b, and configuration readbacks support those reported control actions.",
+    "Final report limits its revocation verification to observed local outgoing configuration and explicitly does not claim an Agent-executed live denial probe."
+  ],
+  "finding": {
+    "severity": "P2 report/semantic evidence gap; not a new production-code finding",
+    "pointer": "/stages/0/task/result and /stages/0/task/outcome/semantic_assessment",
+    "description": "The initial report opens with completion and labels node-c locally verified, but the body says no displayed device is named node-c and makes the denial conditional on node-c being ungranted-peer. The checker nevertheless records passed, uncovered_requirements=[], uncertainties=[]. Identifying the requested subject is unresolved in the Agent-visible evidence, so complete goal coverage is not established.",
+    "evidence": "The controller's separately signed node-c probe occurs in before_revoke_probes after the initial report. It establishes the controller-observed denial, but cannot retroactively establish that the Agent identified or tested node-c when it reported completion.",
+    "minimal_disposition": "Keep the raw run unchanged; record the controller controls as observed and the Agent business/report outcome as incomplete. Do not upgrade business_success_seen to true using the runtime checker or later controller probe. No paid rerun requested."
+  },
+  "confirmed_limits": [
+    "This is an owner-role draft development run with disabled/not-formal-ready role overlay, one physical host, and independent_identity_proof=false. It cannot satisfy the formal two-physical-node requirement.",
+    "This review checks report semantics against the recorded trace, not an independent replay or fresh authentication of the supplied probe records."
+  ],
+  "source_sha256": {
+    "run.json": "2ce98a57cffac70bd609ccd9db807d3b058863ff7a3da97167815cc3f24a823e",
+    "operator-review.json": "548413fc7116c9ffea5c7713720a0d8e7c19f1ae58b46f7fed1b52941ffae05d"
+  },
+  "minimum_validation": {"method": "Read-only comparison of original reports, outcome fields, intervention order, signed-probe summaries and recorded identity mapping", "new_model_calls": 0}
+}

@@ -1,0 +1,33 @@
+
+> @rynmesh/webapp@0.7.0 build
+> tsc -b && vite build
+
+vite v8.2.1 building client environment for production...
+[2K
+transforming...✓ 2370 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/node-apps.html                       0.93 kB │ gzip:   0.47 kB
+dist/index.html                           1.15 kB │ gzip:   0.47 kB
+dist/assets/NodeApps-8FQ0fOqP.css         1.58 kB │ gzip:   0.67 kB
+dist/assets/Drives-Ci622sOu.css          26.23 kB │ gzip:   5.20 kB
+dist/assets/index-CdlB01m9.css          441.85 kB │ gzip:  83.58 kB
+dist/assets/CraftPlugins-BjprPXDO.js      0.15 kB │ gzip:   0.15 kB
+dist/assets/node-apps-CXX-2jQV.js         0.49 kB │ gzip:   0.30 kB
+dist/assets/core-C39NPJJ8.js              2.27 kB │ gzip:   0.91 kB
+dist/assets/webview-kEMLJF9U.js           3.24 kB │ gzip:   1.08 kB
+dist/assets/window-D8pYXNyW.js           14.23 kB │ gzip:   3.51 kB
+dist/assets/Nas-CqqeMjV9.js              20.15 kB │ gzip:   6.22 kB
+dist/assets/Drives-bB469WKA.js           34.17 kB │ gzip:   8.80 kB
+dist/assets/NodeApps-D94uaJNx.js        202.70 kB │ gzip:  64.29 kB
+dist/assets/nodeUrl-B0CWyW_C.js         447.19 kB │ gzip: 144.18 kB
+dist/assets/index-So6ETYPy.js         1,270.81 kB │ gzip: 370.47 kB
+
+[INEFFECTIVE_DYNAMIC_IMPORT] node_modules/@tauri-apps/plugin-notification/dist-js/index.js is dynamically imported by src/personal/dropStore.tsx but also statically imported by src/domain/notifications.ts, dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.16s

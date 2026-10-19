@@ -1,0 +1,47 @@
+{
+  "kind": "native-windows-desktop-development-observation",
+  "date": "2026-10-11",
+  "host": "172.16.8.82",
+  "hostname": "DESKTOP-SQ6VA8I",
+  "transport": "Saved mstsc RDP connection; actual installed Tauri window observed and clicked using computer-use sky API",
+  "installed_binary_binding": "../windows-upgrade-20261011.json",
+  "formal_pass": false,
+  "model_calls_in_native_ui": 0,
+  "observations": [
+    "Saved RDP credentials reached the desktop without automation of an authentication dialog.",
+    "Launched installed candidate via the Ryn desktop shortcut; native Ryn window and child sidecar processes observed in session 2.",
+    "Dismissed first-run onboarding using Continue later; normal Chinese home page rendered and listed DESKTOP-SQ6VA8I.",
+    "Ryn assistant opened from its independent left menu, without service tabs above the workspace.",
+    "Fresh home has no models and Agent remains disabled; setup explains tool-support requirement and continued manual usage.",
+    "Observed both panels open, main menu alone hidden, both hidden, and only task list hidden. Restoring the main menu preserved the task-list state.",
+    "Assistant model link reached the existing service model-pool page. Empty state offers API/local model/local CLI and marks Agent optional.",
+    "Add model opened the source form. It labels configuration device DESKTOP-SQ6VA8I as local and exposes model and per-model sharing sections. Closed without entering credentials or saving."
+  ],
+  "screenshots": [
+    "agent-disabled.png",
+    "main-menu-collapsed.png",
+    "both-panels-collapsed.png",
+    "tasks-collapsed.png",
+    "model-pool-empty.png",
+    "source-config-local-device.png"
+  ],
+  "ui_automation_stop": {
+    "action": "Attempt to open Settings for the normal quit path",
+    "first_error": "failed to activate captured window",
+    "one_recovery_error": "GetCursorPos failed: access denied (0x80070005)",
+    "further_ui_input": false,
+    "classification": "Local computer-use environment failure; not evidence of a Ryn crash or normal exit."
+  },
+  "limitations": [
+    "Native real-model conversation, populated model-pool sharing controls, approval and task-history restoration remain untested in this desktop session.",
+    "Upgrade retained an isolated node identity. Historical baseline lacked Agent APIs, so no old Agent task was available to prove upgrade task-history retention.",
+    "No native GUI claim is inferred from headless API or fixture tests.",
+    "Normal quit and subsequent desktop restart remain unverified after the input-helper failure. Cleanup is recorded separately."
+  ],
+  "cleanup": {
+    "remote": "backend-observation.json",
+    "local_rdp": "Disconnected PID27224 after exact command line and creation-time guard; remote user session retained",
+    "default_home_preserved": true,
+    "normal_quit_verified": false
+  }
+}

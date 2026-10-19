@@ -27,10 +27,21 @@ def rule_key(service_id: str, relationship_id: str) -> str:
 
 
 class AIAccessStore:
-    def __init__(self, home: str | Path, *, relationship: Callable[[str], dict | None]):
+    def __init__(self, home: str | Path, *, relationship: Callable[[str], dict | None], sources=None):
         self.path = Path(home) / "ai-access" / "permissions.json"
-        self.lock = self.path.parent / ".permissions.lock"
+        self.lock = Path(home) / "llm" / ".sharing.lock"
         self.relationship = relationship
+        self.sources = sources
+
+    def _source_grants(self):
+        return {sid: (record, grants) for record in (self.sources.read().values() if self.sources else ())
+                for sid, grants in record.get("_friend_grants", {}).items()}
+
+    def _grants(self):
+        legacy = self._read()["grants"]
+        managed = self._source_grants()
+        return {**{key: row for key, row in legacy.items() if row["service_id"] not in managed},
+                **{key: row for _record, grants in managed.values() for key, row in grants.items()}}
 
     def _read(self) -> dict:
         if not self.path.exists():
@@ -55,13 +66,12 @@ class AIAccessStore:
 
     def list(self) -> list[dict]:
         with file_transaction(self.lock):
-            data = self._read()
-            return [self._public(row) for row in data["grants"].values()]
+            return [self._public(row) for row in self._grants().values()]
 
     def grant(self, service_id: str, relationship_id: str) -> dict | None:
         key = rule_key(service_id, relationship_id)
         with file_transaction(self.lock):
-            row = self._read()["grants"].get(key)
+            row = self._grants().get(key)
             return self._public(row) if row else None
 
     def set(self, service_id: str, relationship_id: str, *, allowed: bool, expected_revision: int) -> dict:
@@ -70,7 +80,9 @@ class AIAccessStore:
             raise AIAccessError("ai_permission_request_invalid")
         with file_transaction(self.lock):
             data = self._read()
-            prior = data["grants"].get(key)
+            managed = self._source_grants().get(service_id)
+            grants = managed[1] if managed else data["grants"]
+            prior = grants.get(key)
             relationship = self.relationship(relationship_id)
             if allowed and (not relationship or relationship.get("status") != "active"):
                 raise AIAccessError("ai_friend_inactive")
@@ -89,8 +101,17 @@ class AIAccessStore:
                 raise AIAccessError("ai_relationship_invalid")
             row = {**(prior or {}), "service_id": service_id, "relationship_id": relationship_id, "peer_id": peer_id,
                    "allowed": allowed, "revision": expected_revision + 1}
-            data["grants"][key] = row
-            atomic_write_json(self.path, data, max_bytes=MAX_BYTES)
+            if managed:
+                records = self.sources.read()
+                source = records[managed[0]["id"]]
+                source["_friend_grants"][service_id][key] = row
+                # A grant-only edit also invalidates pending source approvals.
+                import uuid
+                source["source_revision"] = uuid.uuid4().hex
+                self.sources._write(records)
+            else:
+                data["grants"][key] = row
+                atomic_write_json(self.path, data, max_bytes=MAX_BYTES)
             return self._public(row)
 
     def authorize(self, peer_id: str, service_id: str, permission: dict | None) -> dict:
@@ -104,7 +125,7 @@ class AIAccessStore:
             raise AIAccessError("ai_permission_required")
         key = rule_key(service_id, permission.get("relationship_id"))
         with file_transaction(self.lock):
-            row = self._read()["grants"].get(key)
+            row = self._grants().get(key)
             if not row or row["peer_id"] != peer_id or not row["allowed"]:
                 raise AIAccessError("ai_permission_denied")
             if row["revision"] != permission["revision"]:

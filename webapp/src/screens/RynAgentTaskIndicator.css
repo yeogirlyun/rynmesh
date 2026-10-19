@@ -1,0 +1,14 @@
+.ra-task-indicator,
+.ra-task-item .ra-task-indicator,
+.ra-project-task .ra-task-indicator { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; align-self: center; max-width: 100%; color: var(--pf-muted); line-height: 1; vertical-align: middle; }
+.ra-task-indicator.ra-task-indicator-badge { padding: 3px 5px; border: 1px solid var(--pf-line); border-radius: 5px; font-size: 10px; font-weight: 500; white-space: nowrap; }
+.ra-task-indicator.ra-task-indicator-approval { color: color-mix(in srgb, var(--accent-amber, #d49120) 75%, var(--pf-text)); background: color-mix(in srgb, var(--accent-amber, #d49120) 12%, var(--pf-panel)); border-color: color-mix(in srgb, var(--accent-amber, #d49120) 30%, var(--pf-line)); }
+.ra-task-indicator.ra-task-indicator-input { color: var(--pf-blue); background: var(--pf-selection); border-color: var(--pf-selected-line); }
+.ra-task-indicator.ra-task-indicator-unread { width: 13px; height: 13px; }
+.ra-task-unread-dot { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-red, #e34b4b); }
+.ra-task-indicator.ra-task-indicator-running { color: var(--pf-blue); }
+.ra-task-indicator.ra-task-indicator-failed { color: var(--accent-red, #e34b4b); }
+.ra-task-indicator.ra-task-indicator-interrupted { color: color-mix(in srgb, var(--accent-amber, #d49120) 75%, var(--pf-text)); }
+.ra-task-indicator-spinner { animation: ra-task-indicator-spin 1.1s linear infinite; }
+@keyframes ra-task-indicator-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ra-task-indicator-spinner { animation: none; } }

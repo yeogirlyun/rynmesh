@@ -1,0 +1,73 @@
+{
+  "kind": "local_development_repair_not_formal_acceptance",
+  "date": "2026-10-11",
+  "changes": [
+    "Single checker request factors only exact repeated evidence/receipt JSON values into a shared table, escaping literal markers. All original records, identifiers, owner text, facts, errors, permissions and stored receipts remain recoverable unchanged. No added model call or limit increase.",
+    "Checker prose shortened without removing evidence-semantics examples, permission or inference guidance, numeric/time/exclusive-claim checks, uncertainty rules, or response requirements.",
+    "Current goal/epoch/scope unresolved resource read/search receipt IDs are projected using existing registered target fields and latest-attempt selection. Later success replaces prior failure for the same target. Checker must judge relevance to requested material; partial deliverables and omission reporting do not establish full coverage. No forced mechanical failure or response schema change."
+  ],
+  "public_capture_projection_bytes": [
+    {
+      "case": "F07",
+      "call": 9,
+      "before": 42519,
+      "after": 32473
+    },
+    {
+      "case": "R04",
+      "call": 6,
+      "before": 28653,
+      "after": 19661
+    },
+    {
+      "case": "R04",
+      "call": 11,
+      "before": 49754,
+      "after": 29209
+    },
+    {
+      "case": "P03",
+      "call": 5,
+      "before": 58361,
+      "after": 35672
+    }
+  ],
+  "measurement_note": "Capture byte comparisons retain each captured system message plus shared-table guidance; compare exact UTF-8 message JSON wire size, not tokens. Every transformed capture roundtrips to the full original payload. They are not new model runs.",
+  "small_context_actual_tool_fixture": {
+    "test": "test_real_resource_tools_reach_body_and_approved_artifact_under_pressure",
+    "max_context_bytes": 12000,
+    "checker_message_bytes": 19227,
+    "system_json_bytes": 3519,
+    "payload_field_json_bytes": {
+      "receipts": 6493,
+      "evidence": 2673,
+      "shared_values": 1636,
+      "criteria": 1874,
+      "owner_information_in_order": 295,
+      "owner_requirements_in_order": 475,
+      "operation_permissions": 506,
+      "inference_context": 168,
+      "candidate_answer": 43
+    },
+    "result": "Existing fixture passed: one approved output totals.md with observed total 89; source unchanged, restart exercised. Semantic checker not dispatched because required evidence still exceeds 12000. Outcome remains unverified/agent_verification_context_limit.",
+    "intermediate_failure": "One earlier run during concurrent menu/runtime work ended agent_model_call_budget_exhausted before checker. Runtime owner identified old stand-in only reading transient discovery result, adapted it to observe persistent schema names; subsequent same workflow passed with above explicit verification limitation."
+  },
+  "validation": {
+    "new_tests": 14,
+    "regression_run": "109 passed, 3 failed in 13.90s; two raw-shape assertions required decode adaptation preserving exact full receipt equality, one new test had a shared-list fixture mutation. Only those 3 rerun after fixes: 3 passed in 1.90s.",
+    "fixture": "1 passed in 2.76s",
+    "lint": "Ruff clean on five owned/authorized files"
+  },
+  "limits": [
+    "No paid/remote model run, no evidence of preserved or improved real-model semantic accuracy yet. F07 prompt effect remains unvalidated on a real model.",
+    "12000-byte full verification workflow remains blocked; cannot mark verified. A future bounded segmentation design must preserve all required facts within the original total-call/time budget.",
+    "No heldout cases or build_cases.py read. Original acceptance prompts/assertions/thresholds untouched."
+  ],
+  "sha256": {
+    "rynmesh/agent_runtime/verification.py": "61454a6a7c7ce7285987795a0a81300580abf843146aefc96563da473bcf7811",
+    "rynmesh/agent_runtime/checker_references.py": "8ed18423a05e200559fb5e21d7f55d8375aa0a94437bb087101bf08dbd44199e",
+    "tests/test_agent_checker_references.py": "6b17c98c5e23d9d9b002de016109770fca03dbda6890abd95b2f65649957c464",
+    "tests/test_agent_evidence_semantics.py": "b4e216b4bdf340d3d557017c0b466824ab67503a9434dbdb411cbca2aa362516",
+    "tests/test_agent_inference_context.py": "bcd1bff3876132ea608966631ad06443000b31973e4a5f0de365658e170aadbf"
+  }
+}

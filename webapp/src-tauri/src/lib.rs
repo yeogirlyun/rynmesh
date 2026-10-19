@@ -3,6 +3,11 @@ mod preferences;
 mod desktop;
 mod localization;
 mod local_model;
+mod drop;
+mod drive_browser;
+mod craft_browser;
+mod system_apps;
+mod deployment;
 use localization::tr;
 
 use node::NodeState;
@@ -11,7 +16,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent, WindowEvent};
 
-fn focus_main(app: &tauri::AppHandle) {
+pub(crate) fn focus_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show(); let _ = w.unminimize(); let _ = w.set_focus();
     }
@@ -35,17 +40,33 @@ fn dispatch(app: &tauri::AppHandle, action: &str) {
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(error) = deployment::initialize() {
+        desktop::message(&format!("Ryn deployment configuration error\n\n{error}"), false);
+        return;
+    }
     let port = std::env::var("RYNMESH_PEER_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(8791);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // "Ryn Excel" from the Start menu, a launcher or "Open with": only that app's window.
+            if let Some(request) = system_apps::from_args(&argv) { system_apps::launch(app, request); return; }
             open_requested_page(app, &argv);
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![preferences::get_desktop_preferences,
+        .invoke_handler(|invoke| {
+            if !craft_browser::allows_native_commands(invoke.message.webview_ref().label()) {
+                invoke.resolver.reject("plugin_native_access_denied");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
-            local_model::choose_local_model])
+            local_model::choose_local_model, drive_browser::open_drive_browser,
+            craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
+            system_apps::choose_default_system_app,
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path];
+            handler(invoke)
+        })
         .manage(preferences::DesktopState::default())
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())
@@ -79,16 +100,30 @@ pub fn run() {
                 action @ ("logs" | "restart" | "quit") => dispatch(app, action),
                 _ => {}
             }).build(app)?;
-            if !silent { focus_main(app.handle()); }
-            open_requested_page(app.handle(), &std::env::args().collect::<Vec<_>>());
+            let args = std::env::args().collect::<Vec<_>>();
+            if let Some(request) = system_apps::from_args(&args) { system_apps::launch(app.handle(), request); }
+            else if !silent { system_apps::show_main_at_start(app.handle()); }
+            open_requested_page(app.handle(), &args);
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(e) = node::start(handle.state::<NodeState>().inner()) { log::error!("failed to start Ryn node: {e}"); }
             });
             desktop::watchdog(app.handle().clone(), status, sharing);
+            system_apps::sync_when_ready(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Plugin windows close normally; only the main window owns tray/quit behavior.
+            if window.label() != "main" {
+                if (window.label().starts_with("craft-") || window.label().starts_with("starting-"))
+                    && matches!(event, WindowEvent::CloseRequested { .. }) {
+                    system_apps::clear_identity(window);
+                }
+                if window.label().starts_with("craft-") && matches!(event, WindowEvent::Destroyed) {
+                    system_apps::editor_closed(window.app_handle(), window.label());
+                }
+                return;
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let prefs = window.state::<preferences::DesktopState>().prefs.lock().unwrap().clone();
@@ -103,6 +138,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!()).expect("error while running tauri application");
     app.run(|handle, event| {
+        // Documents a launcher such as "Ryn Excel" passes on (open -b), or dropped on Ryn itself:
+        // each opens in the app for its type.
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Opened { urls } = &event {
+            for path in urls.iter().filter_map(|url| url.to_file_path().ok()) {
+                if let Some(request) = system_apps::for_document(&path) { system_apps::launch(handle, request); }
+            }
+        }
         if let RunEvent::ExitRequested { .. } = event {
             // Only permanent shutdown sets this flag; manual restart never stops
             // the watchdog. After resume its next tick rechecks the node.

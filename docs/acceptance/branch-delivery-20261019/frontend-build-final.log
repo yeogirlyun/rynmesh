@@ -1,0 +1,96 @@
+
+> @rynmesh/webapp@0.7.0 build
+> tsc -b && vite build
+
+vite v8.2.1 building client environment for production...
+
+transforming...✓ 2570 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/node-apps.html                                     1.26 kB │ gzip:   0.54 kB
+dist/index.html                                         1.55 kB │ gzip:   0.55 kB
+dist/assets/ETHK-B5-H-1MLb5v9x.bcmap                    4.42 kB
+dist/assets/HKscs-B5-H-CXbBbq6g.bcmap                   4.43 kB
+dist/assets/GBT-H-DL9h-WkS.bcmap                        7.26 kB
+dist/assets/GBT-EUC-H-BTsQIL1M.bcmap                    7.29 kB
+dist/assets/GBTpc-EUC-H-DnIh5WJ3.bcmap                  7.29 kB
+dist/assets/LICENSE-D31w_yiC.                          10.17 kB
+dist/assets/LICENSE_JBIG2-C_izpuvI.                    12.86 kB
+dist/assets/GBKp-EUC-H-CElrnV5g.bcmap                  14.68 kB
+dist/assets/GBK-EUC-H-CAORqCkf.bcmap                   14.69 kB
+dist/assets/FoxitSymbol-BVtbc20u.pfb                   16.72 kB
+dist/assets/KSC-Johab-H-CGtV3MPT.bcmap                 16.79 kB
+dist/assets/FoxitFixed-Dyd5Nipw.pfb                    17.59 kB
+dist/assets/FoxitFixedBold-D5TuYRwj.pfb                18.05 kB
+dist/assets/FoxitFixedItalic-DqjQkmbS.pfb              18.74 kB
+dist/assets/FoxitFixedBoldItalic-BqlXQ_Yv.pfb          19.15 kB
+dist/assets/FoxitSerifBold-DZZ4CclT.pfb                19.39 kB
+dist/assets/FoxitSerif-qbgiDIe-.pfb                    19.46 kB
+dist/assets/GBK2K-H-Cv55KPk8.bcmap                     19.66 kB
+dist/assets/FoxitSerifBoldItalic-DSQtwd_X.pfb          20.73 kB
+dist/assets/FoxitSerifItalic-CQs5lx9Y.pfb              21.22 kB
+dist/assets/LICENSE_LIBERATION-DvFkOp_c.               22.15 kB
+dist/assets/Adobe-Korea1-UCS2-BEQZuOdo.bcmap           23.29 kB
+dist/assets/UniJIS-UCS2-H-2DbZ0MaQ.bcmap               25.43 kB
+dist/assets/UniKS-UCS2-H-YeUc7k1L.bcmap                25.78 kB
+dist/assets/UniKS-UTF16-H-B0dvB-Td.bcmap               26.32 kB
+dist/assets/UniKS-UTF32-H-olR_LtmR.bcmap               26.45 kB
+dist/assets/UniKS-UTF8-H-CbpebD-y.bcmap                27.79 kB
+dist/assets/FoxitDingbats-BaQLufoW.pfb                 29.51 kB
+dist/assets/Adobe-GB1-UCS2-BA083yIo.bcmap              33.97 kB
+dist/assets/UniJIS-UTF16-H-BlDDPdCK.bcmap              39.44 kB
+dist/assets/UniJIS2004-UTF16-H-KXixH-HI.bcmap          39.53 kB
+dist/assets/UniJISX0213-UTF32-H-BavAhZjb.bcmap         40.51 kB
+dist/assets/UniJIS-UTF32-H-BIQPWkjv.bcmap              40.53 kB
+dist/assets/UniJISX02132004-UTF32-H-DAH-AgUq.bcmap     40.60 kB
+dist/assets/UniJIS2004-UTF32-H-CXrD-9YE.bcmap          40.63 kB
+dist/assets/Adobe-Japan1-UCS2-BL-4M2vS.bcmap           40.95 kB
+dist/assets/Adobe-CNS1-UCS2-fO900upv.bcmap             41.19 kB
+dist/assets/UniJIS-UTF8-H-CGusholx.bcmap               41.69 kB
+dist/assets/UniJIS2004-UTF8-H-BkOctZjn.bcmap           41.77 kB
+dist/assets/UniGB-UCS2-H-D7xzRvZN.bcmap                43.36 kB
+dist/assets/UniGB-UTF16-H-DKjbEwc0.bcmap               44.08 kB
+dist/assets/UniGB-UTF32-H-Behfouj5.bcmap               45.73 kB
+dist/assets/UniGB-UTF8-H-EROft1ro.bcmap                46.83 kB
+dist/assets/UniCNS-UCS2-H-DWzv8UhH.bcmap               48.28 kB
+dist/assets/UniCNS-UTF16-H-Bw0JKgCq.bcmap              50.41 kB
+dist/assets/UniCNS-UTF32-H-IE_GrH2i.bcmap              52.67 kB
+dist/assets/UniCNS-UTF8-H-BbLcFh6Q.bcmap               53.62 kB
+dist/assets/qcms_bg-3PJi_GXR.wasm                      96.58 kB │ gzip:  36.09 kB
+dist/assets/jbig2-BUnLb-NU.wasm                       103.67 kB │ gzip:  41.64 kB
+dist/assets/LiberationSans-BoldItalic-Bj53-jFw.ttf    135.12 kB
+dist/assets/LiberationSans-Bold-BPt4bU5Z.ttf          137.05 kB
+dist/assets/LiberationSans-Regular-cbskN6YR.ttf       139.51 kB
+dist/assets/LiberationSans-Italic-5QhGB3P9.ttf        162.03 kB
+dist/assets/openjpeg-tw7Aizcv.wasm                    251.13 kB │ gzip:  82.95 kB
+dist/assets/quickjs-eval-zJSp5SB4.wasm                469.10 kB │ gzip: 220.69 kB
+dist/assets/pdf.worker.min-Dkey6ZUl.mjs             1,321.30 kB
+dist/assets/NodeApps-8FQ0fOqP.css                       1.58 kB │ gzip:   0.67 kB
+dist/assets/PdfPreview-CHAtZxnM.css                     1.95 kB │ gzip:   0.73 kB
+dist/assets/Drives-Ci622sOu.css                        26.23 kB │ gzip:   5.20 kB
+dist/assets/index-CdlB01m9.css                        441.85 kB │ gzip:  83.58 kB
+dist/assets/appContext-JOVcAns0.js                      0.07 kB │ gzip:   0.09 kB
+dist/assets/CraftPlugins-CTuBTPWX.js                    0.15 kB │ gzip:   0.15 kB
+dist/assets/uiI18n-C3dpqz-K.js                          0.32 kB │ gzip:   0.22 kB
+dist/assets/node-apps-CH31MzdA.js                       0.57 kB │ gzip:   0.33 kB
+dist/assets/rolldown-runtime-hePW80VL.js                0.71 kB │ gzip:   0.42 kB
+dist/assets/plus-BlwzPFpS.js                            1.59 kB │ gzip:   0.89 kB
+dist/assets/core-C39NPJJ8.js                            2.27 kB │ gzip:   0.91 kB
+dist/assets/webview-kEMLJF9U.js                         3.24 kB │ gzip:   1.08 kB
+dist/assets/window-D8pYXNyW.js                         14.23 kB │ gzip:   3.51 kB
+dist/assets/jsx-runtime-Dc8p2Pcp.js                    14.80 kB │ gzip:   6.03 kB
+dist/assets/Nas-CaYJxwog.js                            20.26 kB │ gzip:   6.28 kB
+dist/assets/Drives-BWMgp8jq.js                         34.28 kB │ gzip:   8.83 kB
+dist/assets/NodeApps-CI5dRvep.js                      202.61 kB │ gzip:  64.25 kB
+dist/assets/nodeUrl-BDauywih.js                       432.69 kB │ gzip: 138.47 kB
+dist/assets/PdfPreview-BKNv0gNm.js                    641.41 kB │ gzip: 204.79 kB
+dist/assets/index-Bmm6MwyF.js                       1,270.10 kB │ gzip: 370.13 kB
+
+[INEFFECTIVE_DYNAMIC_IMPORT] node_modules/@tauri-apps/plugin-notification/dist-js/index.js is dynamically imported by src/personal/dropStore.tsx but also statically imported by src/domain/notifications.ts, dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.35s

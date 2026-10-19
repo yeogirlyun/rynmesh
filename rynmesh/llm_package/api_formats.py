@@ -5,7 +5,7 @@ import json
 import time
 from typing import Any
 
-from .chat import validate_chat
+from .chat import reported_token_count, validate_chat
 
 
 def text_content(value: Any) -> str:
@@ -18,7 +18,7 @@ def text_content(value: Any) -> str:
 
 def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
     common = {"model", "stream", "temperature", "top_p", "tools", "tool_choice"}
-    allowed = common | ({"messages", "max_tokens", "max_completion_tokens", "stop", "stream_options", "n", "enable_thinking", "chat_template_kwargs"} if protocol == "chat" else
+    allowed = common | ({"messages", "max_tokens", "max_completion_tokens", "stop", "stream_options", "n", "enable_thinking", "chat_template_kwargs", "reasoning_effort"} if protocol == "chat" else
                         {"input", "instructions", "max_output_tokens", "store", "previous_response_id"} if protocol == "responses" else
                         {"messages", "system", "max_tokens", "stop_sequences"})
     if set(body) - allowed:
@@ -31,7 +31,7 @@ def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
             raise ValueError("unsupported stream_options")
         if "max_tokens" in body and "max_completion_tokens" in body:
             raise ValueError("use only one maximum token parameter")
-        result.update({key: body[key] for key in ("messages", "tools", "stop", "enable_thinking", "chat_template_kwargs") if key in body})
+        result.update({key: body[key] for key in ("messages", "tools", "stop", "enable_thinking", "chat_template_kwargs", "reasoning_effort") if key in body})
         result["max_tokens"] = body.get("max_completion_tokens", body.get("max_tokens", 512))
     elif protocol == "responses":
         if body.get("store") or body.get("previous_response_id"):
@@ -88,7 +88,10 @@ def normalize(body: dict[str, Any], protocol: str) -> dict[str, Any]:
                     calls.append({"id": block["id"], "type": "function", "function": {"name": block["name"], "arguments": json.dumps(block["input"])}})
                 elif block["type"] == "tool_result" and message["role"] == "user":
                     tool_text = text_content(block.get("content", ""))
-                    results.append({"role": "tool", "tool_call_id": block["tool_use_id"], "content": ("Tool error: " if block.get("is_error") else "") + tool_text})
+                    if "is_error" in block and type(block["is_error"]) is not bool:
+                        raise ValueError("invalid tool result error flag")
+                    results.append({"role": "tool", "tool_call_id": block["tool_use_id"], "content": ("Tool error: " if block.get("is_error") else "") + tool_text,
+                                    **({"is_error": block["is_error"]} if "is_error" in block else {})})
                 else:
                     raise ValueError("unsupported Messages content block")
             messages.extend(results)
@@ -118,8 +121,13 @@ def convert_response(chat: dict[str, Any], protocol: str) -> dict[str, Any]:
         return chat
     message = chat["choices"][0]["message"]
     reason = chat["choices"][0]["finish_reason"]
+    if reason not in {"stop", "tool_calls", "length", "content_filter"}:
+        raise ValueError("completion has no supported terminal reason")
     calls = message.get("tool_calls", [])
-    usage = {"input_tokens": chat["usage"]["prompt_tokens"], "output_tokens": chat["usage"]["completion_tokens"]}
+    reported = chat.get("usage")
+    reported = reported if isinstance(reported, dict) else {}
+    usage = {"input_tokens": reported_token_count(reported.get("prompt_tokens")),
+             "output_tokens": reported_token_count(reported.get("completion_tokens"))}
     if protocol == "messages":
         content = []
         if message.get("content"):
@@ -127,17 +135,19 @@ def convert_response(chat: dict[str, Any], protocol: str) -> dict[str, Any]:
         for call in calls:
             content.append({"type": "tool_use", "id": call["id"], "name": call["function"]["name"], "input": json.loads(call["function"]["arguments"])})
         return {"id": "msg_" + chat["id"], "type": "message", "role": "assistant", "model": chat["model"], "content": content,
-                "stop_reason": "tool_use" if calls else "max_tokens" if reason == "length" else "end_turn", "stop_sequence": None, "usage": usage}
+                "stop_reason": "max_tokens" if reason == "length" else "refusal" if reason == "content_filter" else "tool_use" if calls else "end_turn", "stop_sequence": None, "usage": usage}
     output = []
     if message.get("content"):
         output.append({"id": "msg_" + chat["id"], "type": "message", "status": "completed", "role": "assistant", "content": [{"type": "output_text", "text": message["content"], "annotations": []}]})
     for call in calls:
         output.append({"id": "fc_" + call["id"], "type": "function_call", "status": "completed", "call_id": call["id"], **call["function"]})
     return {"id": "resp_" + chat["id"], "object": "response", "created_at": chat["created"], "model": chat["model"],
-            "status": "incomplete" if reason == "length" else "completed", "error": None,
-            "incomplete_details": {"reason": "max_output_tokens"} if reason == "length" else None,
+            "status": "incomplete" if reason in {"length", "content_filter"} else "completed", "error": None,
+            "incomplete_details": {"reason": "max_output_tokens" if reason == "length" else "content_filter"} if reason in {"length", "content_filter"} else None,
             "output": output, "parallel_tool_calls": True, "tool_choice": "auto", "tools": [],
-            "usage": {**usage, "total_tokens": sum(usage.values()), "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}}
+            "usage": {**usage, "total_tokens": sum(usage.values()) if all(value is not None for value in usage.values()) else None,
+                      "input_tokens_details": {"cached_tokens": 0 if usage["input_tokens"] is not None else None},
+                      "output_tokens_details": {"reasoning_tokens": 0 if usage["output_tokens"] is not None else None}}}
 
 
 def sse(value: Any, event: str = "") -> str:
@@ -152,6 +162,9 @@ class StreamFormat:
         self.blocks: dict[str, int] = {}
         self.calls: dict[int, dict[str, Any]] = {}
         self.text = ""
+        self.text_emitted = 0
+        self.text_started = False
+        self.chat_streamed = False
         self.chat_id = "chatcmpl-" + task_id
 
     def event(self, kind: str, **values: Any) -> str:
@@ -165,12 +178,13 @@ class StreamFormat:
         if self.protocol == "chat":
             return []
         if self.protocol == "messages":
-            return [self.event("message_start", message={"id": "msg_" + self.chat_id, "type": "message", "role": "assistant", "model": self.model, "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 0, "output_tokens": 0}})]
+            return [self.event("message_start", message={"id": "msg_" + self.chat_id, "type": "message", "role": "assistant", "model": self.model, "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": None, "output_tokens": None}})]
         value = {"id": "resp_" + self.chat_id, "object": "response", "created_at": self.created, "model": self.model, "status": "in_progress", "output": [], "error": None}
         return [self.event("response.created", response=value), self.event("response.in_progress", response=value)]
 
     def delta(self, chunk: dict[str, Any]) -> list[str]:
         if self.protocol == "chat":
+            self.chat_streamed = self.chat_streamed or bool(chunk.get("choices"))
             return [sse({**chunk, "id": self.chat_id, "object": "chat.completion.chunk", "created": self.created, "model": self.model})]
         output = []
         for choice in chunk.get("choices", []):
@@ -179,41 +193,96 @@ class StreamFormat:
             if text:
                 if "text" not in self.blocks:
                     index = self.blocks["text"] = len(self.blocks)
+                    if self.protocol == "messages" and not self.calls:
+                        output.append(self.event("content_block_start", index=index, content_block={"type": "text", "text": ""}))
+                        self.text_started = True
+                    elif self.protocol == "responses" and not self.calls:
+                        output.append(self.event("response.output_item.added", output_index=index, item={"id": "msg_" + self.chat_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}))
+                        output.append(self.event("response.content_part.added", item_id="msg_" + self.chat_id, output_index=index, content_index=0, part={"type": "output_text", "text": "", "annotations": []}))
+                        self.text_started = True
+                index = self.blocks["text"]
+                self.text += text
+                if not self.calls:
+                    self.text_emitted += len(text)
+                    output.append(self.event("content_block_delta", index=index, delta={"type": "text_delta", "text": text}) if self.protocol == "messages" else
+                                  self.event("response.output_text.delta", item_id="msg_" + self.chat_id, output_index=index, content_index=0, delta=text))
+            for call in delta.get("tool_calls") or []:
+                key = "tool:" + str(call["index"])
+                function = call.get("function", {})
+                if key not in self.blocks:
+                    index = self.blocks[key] = len(self.blocks)
+                    self.calls[index] = {"id": "", "name": "", "arguments": ""}
+                index = self.blocks[key]
+                if call.get("id"):
+                    if self.calls[index]["id"] and self.calls[index]["id"] != call["id"]:
+                        raise ValueError("tool identity changed")
+                    self.calls[index]["id"] = call["id"]
+                self.calls[index]["name"] += function.get("name") or ""
+                args = function.get("arguments") or ""
+                self.calls[index]["arguments"] += args
+                # Neither target protocol can amend a tool name after its
+                # start event. Wait for the authoritative completed item.
+        return output
+
+    def finish(self, chat: dict[str, Any]) -> list[str]:
+        if self.protocol == "chat":
+            output = []
+            if not self.chat_streamed:
+                message = {**chat["choices"][0]["message"]}
+                if "tool_calls" in message:
+                    message["tool_calls"] = [{"index": index, **call} for index, call in enumerate(message["tool_calls"])]
+                output.extend(self.delta({"choices": [{"index": 0, "delta": message,
+                    "finish_reason": chat["choices"][0]["finish_reason"]}]}))
+            return [*output, sse("[DONE]")]
+        final = convert_response(chat, self.protocol)
+        output = []
+        message = chat["choices"][0]["message"]
+        text = message.get("content") or ""
+        if not text.startswith(self.text):
+            raise ValueError("final text disagrees with stream")
+        self.text = text
+        if text and "text" not in self.blocks:
+            self.blocks["text"] = len(self.blocks)
+        calls = message.get("tool_calls") or []
+        for ordinal, call in enumerate(calls):
+            key = "tool:" + str(ordinal)
+            if key not in self.blocks:
+                self.blocks[key] = len(self.blocks)
+            index = self.blocks[key]
+            seen = self.calls.get(index)
+            if seen:
+                if ((seen["id"] and seen["id"] != call["id"])
+                        or (seen["name"] and seen["name"] != call["function"]["name"])):
+                    raise ValueError("final tool identity disagrees with stream")
+                try:
+                    arguments_match = json.loads(seen["arguments"]) == json.loads(call["function"]["arguments"])
+                except ValueError:
+                    arguments_match = seen["arguments"] == call["function"]["arguments"]
+                if not arguments_match:
+                    raise ValueError("final tool arguments disagree with stream")
+            self.calls[index] = {"id": call["id"], **call["function"]}
+        if sum(key.startswith("tool:") for key in self.blocks) != len(calls):
+            raise ValueError("streamed tool missing from final response")
+        for key, index in self.blocks.items():
+            if key == "text":
+                if not self.text_started:
                     if self.protocol == "messages":
                         output.append(self.event("content_block_start", index=index, content_block={"type": "text", "text": ""}))
                     else:
                         output.append(self.event("response.output_item.added", output_index=index, item={"id": "msg_" + self.chat_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}))
                         output.append(self.event("response.content_part.added", item_id="msg_" + self.chat_id, output_index=index, content_index=0, part={"type": "output_text", "text": "", "annotations": []}))
-                index = self.blocks["text"]
-                self.text += text
-                output.append(self.event("content_block_delta", index=index, delta={"type": "text_delta", "text": text}) if self.protocol == "messages" else
-                              self.event("response.output_text.delta", item_id="msg_" + self.chat_id, output_index=index, content_index=0, delta=text))
-            for call in delta.get("tool_calls") or []:
-                key = "tool:" + str(call["index"])
-                function = call.get("function", {})
-                if key not in self.blocks:
-                    if not call.get("id") or not function.get("name"):
-                        raise ValueError("upstream must start tool delta with id and name")
-                    index = self.blocks[key] = len(self.blocks)
-                    self.calls[index] = {"id": call["id"], "name": function["name"], "arguments": ""}
-                    if self.protocol == "messages":
-                        output.append(self.event("content_block_start", index=index, content_block={"type": "tool_use", "id": call["id"], "name": function["name"], "input": {}}))
-                    else:
-                        output.append(self.event("response.output_item.added", output_index=index, item={"id": "fc_" + call["id"], "type": "function_call", "status": "in_progress", "call_id": call["id"], "name": function["name"], "arguments": ""}))
-                index = self.blocks[key]
-                args = function.get("arguments") or ""
-                self.calls[index]["arguments"] += args
-                if args:
-                    output.append(self.event("content_block_delta", index=index, delta={"type": "input_json_delta", "partial_json": args}) if self.protocol == "messages" else
-                                  self.event("response.function_call_arguments.delta", item_id="fc_" + self.calls[index]["id"], output_index=index, delta=args))
-        return output
-
-    def finish(self, chat: dict[str, Any]) -> list[str]:
-        if self.protocol == "chat":
-            return [sse("[DONE]")]
-        final = convert_response(chat, self.protocol)
-        output = []
-        for key, index in self.blocks.items():
+                remaining = self.text[self.text_emitted:]
+                if remaining:
+                    output.append(self.event("content_block_delta", index=index, delta={"type": "text_delta", "text": remaining}) if self.protocol == "messages" else
+                                  self.event("response.output_text.delta", item_id="msg_" + self.chat_id, output_index=index, content_index=0, delta=remaining))
+            else:
+                call = self.calls[index]
+                if self.protocol == "messages":
+                    output.append(self.event("content_block_start", index=index, content_block={"type": "tool_use", "id": call["id"], "name": call["name"], "input": {}}))
+                    output.append(self.event("content_block_delta", index=index, delta={"type": "input_json_delta", "partial_json": call["arguments"]}))
+                else:
+                    output.append(self.event("response.output_item.added", output_index=index, item={"id": "fc_" + call["id"], "type": "function_call", "status": "in_progress", "call_id": call["id"], "name": call["name"], "arguments": ""}))
+                    output.append(self.event("response.function_call_arguments.delta", item_id="fc_" + call["id"], output_index=index, delta=call["arguments"]))
             if self.protocol == "messages":
                 output.append(self.event("content_block_stop", index=index))
             elif key == "text":

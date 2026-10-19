@@ -1,0 +1,39 @@
+﻿{
+    "installerPid":  744,
+    "exitCode":  0,
+    "identityPreserved":  true,
+    "after":  [
+                  {
+                      "path":  "C:\\Users\\ziling\\AppData\\Local\\Ryn\\Ryn.exe",
+                      "sha256":  "009AE4D7818BBD10CDE5F9FAB1294C95D09FCA073AFD1CC0F1AD23BF3189EC2E",
+                      "bytes":  10925568
+                  },
+                  {
+                      "path":  "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe",
+                      "sha256":  "F61DBC0513DB7CA9DFB3FA5769AD7220070652E3BAEB82EBFE193316BA64817B",
+                      "bytes":  36314790
+                  }
+              ],
+    "before":  [
+                   {
+                       "sha256":  "C08CD91354E899C3D38024FEEB0340759BFB2EEA78D8FEB291D82ADAA019A521",
+                       "path":  "C:\\Users\\ziling\\AppData\\Local\\Ryn\\Ryn.exe"
+                   },
+                   {
+                       "sha256":  "D2C0F80CB233C1A46DBDF4C1F2E19735DFDD6AB7806128066782714C20691831",
+                       "path":  "C:\\Users\\ziling\\AppData\\Local\\Ryn\\rynmesh-peer.exe"
+                   }
+               ],
+    "finishedUtc":  "2026-10-11T09:31:36.6643186Z",
+    "identityBefore":  "A0DBDE819C970F6F9B0CD7545FB2ED022C7D895715E8D1719F674E2AA5789E75",
+    "identityAfter":  "A0DBDE819C970F6F9B0CD7545FB2ED022C7D895715E8D1719F674E2AA5789E75",
+    "modelCalls":  0,
+    "installerSha256":  "F33692522216638A2D57222A29479ABC3967D451B2F1C5FEAAD1612FC6A4C189",
+    "host":  "DESKTOP-SQ6VA8I",
+    "kind":  "final-installed-candidate-upgrade",
+    "nativeUiObserved":  false,
+    "remainingProcesses":  [
+
+                           ],
+    "startedUtc":  "2026-10-11T09:31:31.5432222Z"
+}

@@ -1,0 +1,143 @@
+{
+  "scope": {
+    "scope": {
+      "egress_grants": [
+        {
+          "destination": {
+            "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "source_id": "src-1fe50b9c7ce9432b"
+          },
+          "origin_grant_ids": [
+            "1652f96b65794fa09bcd8eb863e5cd09"
+          ]
+        }
+      ],
+      "resource_grants": [
+        {
+          "actions": [
+            "list",
+            "read_ai"
+          ],
+          "allowed_formats": [
+            ".csv",
+            ".json",
+            ".log",
+            ".markdown",
+            ".md",
+            ".pdf",
+            ".tsv",
+            ".txt",
+            ".yaml",
+            ".yml"
+          ],
+          "byte_limit": 262144,
+          "connection_access_generation": "d03f50db332d938adc2ab8b090643bb23f9a401f89739bf4aafa9629ff134142",
+          "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+          "document_byte_limit": 8388608,
+          "grant_id": "1652f96b65794fa09bcd8eb863e5cd09",
+          "recursive": false,
+          "root_resource_ref": "gAAAAABqyLfQxxHrW-7HqAiSrtT-DWgl5uNpyllX-2SISYXdogRP8mBY4v8J-tdVftvc1jf22sPa1xSI4INwVGkM0guiTsSq7cnUK1kdfI2wZYgCty4Ohc2C9XJoMlPBlqpEgUn7kVTFxOfqqOKFQhqZWU_CwWPVpi6rlvOLksf48CU88FlMq0bECXsfsq5nhN9dcEwVkkhMV3gsZIUJVFqrxsYIjtqC3U8TfD3JS9nMDUtjR1QIZH4wkhydq7vXHyp4aWpdXJ9GQSsTCeuRooE0RKajoeHPGCU6oT2DObYxXGAs4ChqXE-btFX-SyhDkOoL-Fr3FOKW"
+        }
+      ],
+      "revision": 1,
+      "selection": {
+        "allow_model_data": true,
+        "resources": [
+          {
+            "actions": [
+              "list",
+              "read_ai"
+            ],
+            "connection_id": "76f367d62ab744db88727f5ab8d62ce8",
+            "recursive": false,
+            "root_path": "projects/orion/week-41"
+          }
+        ]
+      }
+    },
+    "scope_revision": 1,
+    "control_revision": 2,
+    "model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b"
+    },
+    "current_model_destination": {
+      "catalog_model_id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+      "provider_peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+      "source_id": "src-1fe50b9c7ce9432b",
+      "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd"
+    }
+  },
+  "task_id": "agent_49e0b8a313114d48bf4572a7bfe5f05a",
+  "tools": [
+    {
+      "at": "2026-10-09T17:45:53.727999+08:00",
+      "call_id": "inspect",
+      "context_epoch": 0,
+      "effect": "read",
+      "operation_id": "op_a0ea58f2235348e7a0fb646a76d45cd1",
+      "seq": 4,
+      "tool": "ryn_list_models",
+      "type": "tool_started"
+    },
+    {
+      "at": "2026-10-09T17:45:53.743549+08:00",
+      "call_id": "inspect",
+      "context_epoch": 0,
+      "operation_id": "op_a0ea58f2235348e7a0fb646a76d45cd1",
+      "result": {
+        "models": [
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": true,
+            "available": true,
+            "context_window": 32768,
+            "description": "可供本机 Agent 使用；工具在本机执行。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "model_id": "acceptance-model",
+            "name": "验收用本机模型 · acceptance-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-a3cfb2a53f09",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "supported"
+          },
+          {
+            "adapter": "openai_compatible",
+            "agent_supported": false,
+            "available": true,
+            "context_window": 32768,
+            "description": "尚未验证结构化工具调用，请先验证此模型。",
+            "destination_revision": "legacy-17231844e698e9e23b2f6025e8946614f39dd0674ca9695934a5915f0fa056bd",
+            "id": "local/src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "model_id": "second-model",
+            "name": "验收用本机模型 · second-model",
+            "peer_id": "kB7hp74qpq0qc6V86911GzSlyzuxZW0HK8dVsBf9s+U=",
+            "service_id": "src-1fe50b9c7ce9432b-fcda1814c7c9",
+            "share_scope": "personal_space",
+            "sharing": false,
+            "source": "local_api",
+            "source_id": "src-1fe50b9c7ce9432b",
+            "source_name": "验收用本机模型",
+            "streaming": false,
+            "tool_support": "unknown"
+          }
+        ]
+      },
+      "seq": 5,
+      "tool": "ryn_list_models",
+      "type": "tool_result"
+    }
+  ],
+  "control_revision": 2,
+  "status": "waiting_approval"
+}

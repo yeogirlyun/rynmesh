@@ -1,0 +1,45 @@
+{
+  "author": "sharing_transaction / gpt-6-astra high",
+  "status": "implementation_frozen_independent_review_in_progress",
+  "changes": [
+    "Agent runtime/storage/tools now belong to actual node-b; its own SourceStore is empty.",
+    "The authorized remote model-a receives signed production requests and passes provider admission/outer ModelDispatchAdapter; only the wire exchange is a local fixture.",
+    "Both candidate and actual pinned reference use the same consumer tools, model policy and permission boundary.",
+    "Provider truth stays separate; no private B or third-party grants are injected into consumer observations.",
+    "Original hashes retained; relationship business comparison excludes only top-level nonces, preserving keys and all other fields.",
+    "Agent state isolation records consumer tasks/tool identity and provider AgentStore absence, while allowing provider inference-order/quota logs."
+  ],
+  "tests": {
+    "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_access_query.py tests/test_agent_query_cases.py tests/test_agent_query_planner_guard.py tests/test_agent_planner_policy.py -q",
+    "passed": 39,
+    "seconds": 100.75,
+    "lint": "Six files passed Ruff."
+  },
+  "samples": [
+    {
+      "path": "real-model/20261010T052709106597Z-Q06-ryn-fixture/run.json",
+      "model_requests": 7,
+      "signed_wire_requests": 7,
+      "code_unchanged": true
+    },
+    {
+      "path": "real-model/20261010T052716130664Z-Q06-reference-fixture/run.json",
+      "model_requests": 5,
+      "signed_wire_requests": 5,
+      "code_unchanged": true
+    }
+  ],
+  "sha256": {
+    "docs/acceptance/ryn-agent-delivery/real-model/access_query.py": "958c260c6287e3fe83630333b1d4fc26b5c73b6d57678ddd1d5c5d7fa3246d12",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_consumer.py": "e4618f42cb5c7090ddccdedfc7c75df46dd80c32ddb3981ba144278496be4531",
+    "docs/acceptance/ryn-agent-delivery/real-model/query_cases.py": "8708936b536e90348a6d7ee55ce9667c05ae0c6ba46fb5d3444f1641aff25347",
+    "docs/acceptance/ryn-agent-delivery/real-model/run_queries.py": "2f0976eb3bff9bbf7736d45f44177c283fd5f7e3621596e13a085e45a97684b2",
+    "tests/test_agent_access_query.py": "5d83b1bc5fbebfa56bbb053f712c269d95defd2cb690b89af232a4e8ee08b33c",
+    "tests/test_agent_query_planner_guard.py": "c3e2a5338bd7f8a1d44c5419ca808f738b56da3e4a6091059a3905f89f243bf6"
+  },
+  "limitations": [
+    "No real model, ICE, two physical hosts, or remote cancellation-delivery proof.",
+    "Consumer cannot prove provider-private B configuration or third-party grant absence; original frozen assertions remain, even if honest unknown produces failure."
+  ],
+  "formal_executed_trials": 0
+}

@@ -1,0 +1,134 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+.content { padding: 0; display: grid; grid-template-columns: 290px 1fr 300px; min-height: 0; }
+.convs { border-right: 1px solid var(--line); background: #fff; padding: 18px 14px; }
+.convs h2 { font-size: 18px; padding: 0 6px 12px; display: flex; align-items: center; gap: 8px; }
+.conv { display: flex; gap: 11px; align-items: center; padding: 10px; border-radius: 11px; margin-bottom: 2px; }
+.conv.on { background: var(--blue-bg); }
+.conv .n { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.conv .p { font-size: 12.5px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.conv .tm { font-size: 12px; color: var(--faint); margin-left: auto; align-self: flex-start; text-align: right; }
+.grp { font-size: 12px; color: var(--faint); padding: 12px 8px 6px; }
+.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.chead { height: 72px; flex: none; background: #fff; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 14px; padding: 0 22px; }
+.tl { flex: 1; min-height: 0; padding: 16px 26px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; background: #f6f8fb; }
+.day { align-self: center; font-size: 12px; color: var(--faint); background: #eceff4; padding: 3px 10px; border-radius: 10px; }
+.sys { align-self: center; font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.msg { max-width: 76%; }
+.msg.out { align-self: flex-end; }
+.bub { padding: 10px 14px; border-radius: 14px; background: #fff; border: 1px solid var(--line); line-height: 1.55; }
+.out .bub { background: var(--navy); border-color: var(--navy); color: #fff; border-bottom-right-radius: 4px; }
+.in .bub { border-bottom-left-radius: 4px; }
+.when { font-size: 12px; color: var(--faint); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+.out .when { justify-content: flex-end; }
+.fileb { width: 410px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.out .fileb { border-color: var(--blue-line); }
+.fileb .top2 { display: flex; gap: 12px; align-items: center; }
+.ficon { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; flex: none; }
+.fileb .nm { font-weight: 700; } .fileb .mt { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.fileb .bar { margin-top: 12px; display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.fileb .acts { display: flex; gap: 8px; margin-top: 12px; }
+.thumbs { display: flex; gap: 8px; }
+.thumbs i { width: 96px; height: 60px; border-radius: 10px; display: block; }
+.composer { flex: none; background: #fff; border-top: 1px solid var(--line); padding: 12px 18px 14px; }
+.cbox { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 6px; }
+.cbox .ph { flex: 1; color: var(--faint); padding: 0 6px; }
+.side2 { border-left: 1px solid var(--line); background: #fff; padding: 20px 18px; }
+.side2 h3 { font-size: 14px; margin: 18px 0 10px; color: var(--ink2); }
+.fl { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line2); font-size: 13px; }
+.fl .ficon { width: 32px; height: 32px; border-radius: 8px; }
+.kv2 { font-size: 13px; display: grid; grid-template-columns: 70px 1fr; row-gap: 8px; }
+.kv2 .k { color: var(--muted); }
+</style></head>
+<body class="withlegend"><div class="app">
+<div data-side="devices"></div>
+<div class="main"><div data-top="<span class='muted'>设备</span><span data-i='cr' class='s14'></span><span>MacBook Pro</span>"></div>
+<div class="content">
+  <div class="convs">
+    <h2><span data-i="cl" class="s16"></span>设备会话</h2>
+    <div class="input" style="height:34px;margin-bottom:6px"><span data-i="search" class="s14 faint"></span><span class="faint small">搜索设备或消息</span></div>
+    <div class="grp">我的设备</div>
+    <div class="conv on"><div class="dev laptop sm"></div><div><div class="n">MacBook Pro <i class="dot"></i></div><div class="p">正在接收 素材_1013/ · 62%</div></div><div class="tm">14:31</div></div>
+    <div class="conv"><div class="dev monitor sm"></div><div><div class="n">书房台式机 <i class="dot"></i></div><div class="p">Q3报告.pdf</div></div><div class="tm">昨天</div></div>
+    <div class="conv"><div class="dev server sm"></div><div><div class="n">家里 NAS <i class="dot"></i></div><div class="p">备份完成：照片_2026国庆/</div></div><div class="tm">周一</div></div>
+    <div class="conv"><div class="dev laptop sm"></div><div><div class="n">公司笔记本 <i class="dot off"></i></div><div class="p">1 条消息排队中，上线后送达</div></div><div class="tm">09:12</div></div>
+    <div class="grp">好友设备</div>
+    <div class="conv"><div class="avatar" style="background:#7c5cdb;width:34px;height:34px">安</div><div><div class="n">安娜 · 工作站 <i class="dot"></i></div><div class="p">好的，收到了 👍</div></div><div class="tm">10/11<br><span class="badge">1</span></div></div>
+  </div>
+
+  <div class="chat">
+    <div class="chead">
+      <div class="dev laptop"></div>
+      <div class="grow">
+        <div class="row"><span style="font-weight:700;font-size:17px">MacBook Pro</span><span class="st"><i class="dot"></i>在线</span><span class="chip mine">我的设备</span></div>
+        <div class="row small muted" style="margin-top:4px"><span class="chip p2p" style="height:21px"><span data-i="globe" class="s14"></span>P2P 直连 · 公网</span><span data-i="lock" class="s14" style="color:var(--green)"></span>端到端加密 · 不经过任何服务器</div>
+      </div>
+      <div class="btn sm"><span data-i="send" class="s14"></span>发送文件</div>
+      <div class="btn sm icon"><span data-i="more" class="s16"></span></div>
+    </div>
+    <div class="tl">
+      <div class="day">今天</div>
+      <div class="msg out"><div class="bub">我在公司，把昨天拍的素材整个文件夹发我一下</div><div class="when">14:20 <span data-i="check" class="s14" style="color:var(--green)"></span>已送达</div></div>
+      
+      <div class="msg in"><div class="bub">好，原片比较大，直接用 Ryn 发你</div><div class="when">14:21</div></div>
+      <div class="msg in">
+        <div class="fileb">
+          <div class="top2"><div class="ficon" style="background:var(--amber-bg);color:var(--amber)"><span data-i="folder" class="s22"></span></div>
+            <div class="grow"><div class="nm">素材_1013/</div><div class="mt">86 个文件 · 23.4 GB · 保存到 下载\Ryn</div></div><span class="chip p2p"><span data-i="globe" class="s14"></span>P2P</span></div>
+          <div class="bar"><div class="progress grow"><i style="width:62%"></i></div><b style="color:var(--ink)">62%</b></div>
+          <div class="bar" style="margin-top:6px"><span>14.5 / 23.4 GB</span><span>·</span><span>41.8 MB/s</span><span>·</span><span>剩余约 3 分钟</span><span class="grow"></span><span class="btn sm icon"><span data-i="pause" class="s14"></span></span><span class="btn sm icon"><span data-i="x" class="s14"></span></span></div>
+        </div>
+        <div class="when">14:22 · 正在接收</div>
+      </div>
+      <div class="sys"><span data-i="refresh" class="s14"></span>14:26 网络切换，传输从断点自动续传（未重传已完成的 9.1 GB）</div>
+      <div class="msg out">
+        <div class="fileb">
+          <div class="top2"><div class="ficon" style="background:var(--blue-bg);color:var(--blue)"><span data-i="video" class="s22"></span></div>
+            <div class="grow"><div class="nm">最终剪辑_v3_ProRes.mov</div><div class="mt">100.2 GB · 用时 38 分钟 · 平均 44 MB/s</div></div></div>
+          <div class="acts"><span class="chip ok"><span data-i="shield" class="s14"></span>对方已校验 SHA-256</span><span class="chip">回执已签名</span></div>
+        </div>
+        <div class="when">13:05 <span data-i="check" class="s14" style="color:var(--green)"></span>对方已接收</div>
+      </div>
+      <div class="msg in"><div class="thumbs"><i style="background:linear-gradient(135deg,#fbbf77,#f97316 60%,#9a3412)"></i><i style="background:linear-gradient(135deg,#7dd3fc,#2563eb 70%)"></i><i style="background:linear-gradient(135deg,#bbf7d0,#16a34a 70%)"></i></div><div class="when">14:30 · 3 张照片 · 18 MB <span style="color:var(--blue)">打开 · 在文件夹中显示</span></div></div>
+    </div>
+    <div class="composer">
+      <div class="cbox">
+        <span class="btn sm icon ghost"><span data-i="clip" class="s16"></span></span>
+        <span class="btn sm icon ghost"><span data-i="folder" class="s16"></span></span>
+        <span class="btn sm icon ghost"><span data-i="smile" class="s16"></span></span>
+        <span class="ph">输入消息，Enter 发送 · 也可以把文件拖进来</span>
+        <span class="btn blue sm"><span data-i="send" class="s14"></span>发送</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="side2">
+    <div class="row"><div class="dev laptop"></div><div><div class="b">MacBook Pro</div><div class="small muted">macOS 15 · Ryn 0.8.0</div></div></div>
+    <h3>连接</h3>
+    <div class="kv2">
+      <div class="k">线路</div><div><span class="chip p2p" style="height:21px">P2P 直连</span></div>
+      <div class="k">延迟</div><div>42 ms</div>
+      <div class="k">对方网络</div><div>家庭宽带 · NAT 已打通</div>
+      <div class="k">指纹</div><div class="mono">🦊 🌵 🚀 🎈</div>
+    </div>
+    <h3 class="between">会话里的文件 <span class="small" style="color:var(--blue);font-weight:400">全部</span></h3>
+    <div class="fl"><div class="ficon" style="background:var(--amber-bg);color:var(--amber)"><span data-i="folder" class="s16"></span></div><div class="grow"><div class="b">素材_1013/</div><div class="small muted">23.4 GB · 接收中</div></div></div>
+    <div class="fl"><div class="ficon" style="background:var(--blue-bg);color:var(--blue)"><span data-i="video" class="s16"></span></div><div class="grow"><div class="b">最终剪辑_v3_ProRes.mov</div><div class="small muted">100.2 GB · 已发送</div></div></div>
+    <div class="fl"><div class="ficon" style="background:var(--green-bg);color:var(--green)"><span data-i="image" class="s16"></span></div><div class="grow"><div class="b">IMG_2041 等 3 张</div><div class="small muted">18 MB · 已接收</div></div></div>
+    <div class="btn" style="width:100%;justify-content:center;margin-top:16px"><span data-i="folder" class="s16"></span>打开接收文件夹</div>
+  </div>
+
+  <div class="note" style="left:1080px;top:-2px;display:none"></div>
+  <div class="note" style="left:350px;top:40px">1</div>
+  <div class="note" style="left:760px;top:268px">2</div>
+  <div class="note" style="left:330px;top:440px">3</div>
+  <div class="note" style="left:296px;top:738px">4</div>
+</div></div></div>
+<div class="legend">
+  <div class="k"><i>1</i><b>线路与加密</b><span class="muted">P2P 成功即不限大小</span></div>
+  <div class="k"><i>2</i><b>文件即消息</b><span class="muted">进度、速度、暂停 / 取消</span></div>
+  <div class="k"><i>3</i><b>断点续传</b><span class="muted">换网络不重传</span></div>
+  <div class="k"><i>4</i><b>发消息</b><span class="muted">离线排队，上线送达</span></div>
+  <span class="tag">02 设备会话 · 消息 + 文件 · 示例数据</span>
+</div>
+<script src="common.js"></script></body></html>

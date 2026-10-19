@@ -1,0 +1,40 @@
+{
+  "author": "sharing_transaction / gpt-6-astra high",
+  "status": "frozen_independent_followup_in_progress",
+  "prior_review": "request-deadline-independent-review.json",
+  "fix": "AdapterError carries sanitized reported_usage and closed finish metadata for actual chat JSON/SSE failures after parsing usage. Bridge propagates typed accounting error, preserving cancellation/deadline failure semantics. No late tool dispatch or content publication.",
+  "scope": [
+    "rynmesh/llm_package/adapters.py: AdapterError/chat only",
+    "rynmesh/agent_runtime/bridge.py",
+    "tests/test_agent_adapter_rejected_usage.py"
+  ],
+  "tests": [
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_adapter_rejected_usage.py tests/test_agent_request_deadline.py tests/test_agent_output_policy.py tests/test_agent_integrations.py tests/test_agent_runtime_budget.py tests/test_agent_budget_dispatch.py tests/test_agent_reference_budget.py tests/test_agent_runtime_retry.py tests/test_agent_checker_empty_retry.py tests/test_agent_sharing_recovery_case.py tests/test_agent_reference_output_policy.py -q",
+      "passed": 197,
+      "seconds": 79.04,
+      "note": "New failure-usage matrix had42 tests at this point."
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m pytest tests/test_agent_adapter_rejected_usage.py::test_reviewer_reproduction_complete_json_then_adapter_cancel -q",
+      "passed": 1,
+      "seconds": 1.92,
+      "note": "Original reviewer reproduction added after combined run;safe7/3 retained."
+    },
+    {
+      "command": ".venv/Scripts/python.exe -m ruff check rynmesh/llm_package/adapters.py rynmesh/agent_runtime/bridge.py tests/test_agent_adapter_rejected_usage.py",
+      "status": "passed"
+    }
+  ],
+  "sha256": {
+    "rynmesh/llm_package/adapters.py": "0cc5b59a390a919ba5088fc05575679ee4753da8d713cb341194710aa7c4b097",
+    "rynmesh/agent_runtime/bridge.py": "a7b2d1798e3fc645f7b77dd9b734e262f1a5e252117d1ebd7ca95ed6a479d6e4",
+    "tests/test_agent_adapter_rejected_usage.py": "621cbe13579aca668f2787ef3368eedd176c9d751b63f5359ddfdccbe1caf0fa"
+  },
+  "limitations": [
+    "No successful parse of usage means unknown reservation retained.",
+    "Remote cancellation remains best effort.",
+    "No live calls, retry/budget/source changes or infer/infer_stream expansion."
+  ],
+  "formal_executed_trials": 0
+}
