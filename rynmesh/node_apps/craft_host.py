@@ -130,7 +130,7 @@ def _location(cache, slug):
     return Path(cache).expanduser().resolve() / slug / spec["tag"]
 
 
-def installed(cache, slug):
+def _upstream_installed(cache, slug):
     """Verify every installed file before starting a server; never trust saved paths."""
     spec = specification(slug)
     root = _location(cache, slug)
@@ -162,6 +162,14 @@ def installed(cache, slug):
         return web
     except (OSError, ValueError, KeyError, TypeError):
         raise CraftError("craft_build_not_verified") from None
+
+
+def installed(cache, slug):
+    """Verify the original release before selecting a separately pinned compatibility build."""
+    from . import craft_compat
+
+    web = _upstream_installed(cache, slug)
+    return craft_compat.installed(cache, slug) or web
 
 
 def install(cache, slug, *, download=download_to):
@@ -257,7 +265,7 @@ def create_editor(cache, slug, *, public_host="127.0.0.1"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["list", "install", "serve"])
+    parser.add_argument("command", choices=["list", "install", "install-compat", "serve"])
     parser.add_argument("--app", choices=sorted(CRAFT))
     parser.add_argument("--cache", default=str(Path.home() / ".rynmesh-craft"))
     parser.add_argument("--host", default="127.0.0.1")
@@ -265,6 +273,7 @@ def main():
         "--public-host", help="Exact browser hostname when explicitly binding a network interface"
     )
     parser.add_argument("--port", type=int)
+    parser.add_argument("--archive", type=Path, help="Local archive for an explicitly pinned compatibility build")
     args = parser.parse_args()
     if args.command == "list":
         print(
@@ -279,6 +288,12 @@ def main():
     try:
         if args.command == "install":
             print(json.dumps(install(args.cache, args.app)))
+        elif args.command == "install-compat":
+            from . import craft_compat
+
+            if not args.archive:
+                parser.error("--archive is required for install-compat")
+            print(json.dumps(craft_compat.install(args.cache, args.app, args.archive)))
         else:
             if args.host in {"0.0.0.0", "::"} and not args.public_host:
                 parser.error("--public-host is required for a wildcard interface")
@@ -294,7 +309,8 @@ def main():
                 access_log=False,
                 log_level="warning",
             )
-    except (CraftError, OSError) as exc:
+    # Compatibility imports the canonical module even when this CLI runs with -m.
+    except (ValueError, OSError) as exc:
         parser.exit(1, f"Craft: {exc}\n")
 
 

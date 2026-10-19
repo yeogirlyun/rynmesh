@@ -66,8 +66,14 @@ def test_unexposed_tool_cannot_skip_discovery(tmp_path):
     runtime.tools = ManyTools()
     runtime.update_settings({"max_context_chars": 12000})
     task = runtime.create({"message": "Inspect the service."})
-    advance(runtime)
-    assert runtime.get(task["id"])["error"] == "agent_invalid_tool_call"
+    advance(runtime, 2)
+    saved = runtime.store.read()["tasks"][task["id"]]
+    assert saved["status"] == "queued"
+    rejection = json.loads(saved["messages"][-1]["content"])
+    assert rejection["error"] == "agent_unknown_tool" and rejection["not_executed"] and rejection["no_mutation"]
+    assert saved["messages"][-1]["tool_call_id"] == saved["messages"][-2]["tool_calls"][0]["id"]
+    assert saved.get("receipts", []) == []
+    assert runtime.tools.calls == []
     assert not runtime.tools.calls
 
 

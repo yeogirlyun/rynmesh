@@ -32,6 +32,8 @@ _ERROR_GUIDANCE = {
     "agent_model_tools_unsupported": ("review_models", "This connection does not provide the Agent tool protocol. Select a connected model with Agent tool support.", "/services/sources"),
     "agent_inference_timeout": ("review_connection", "Check the source connection and model timeout; do not assume the model responded.", "/services/sources"),
     "agent_model_connection_failed": ("review_connection", "Check the source connection using its existing test action.", "/services/sources"),
+    "agent_model_protocol_unsupported": ("review_connection", "Review the source protocol and its supported request parameters.", "/services/sources"),
+    "agent_model_protocol_invalid": ("review_connection", "The upstream protocol response was incomplete or unsupported. Check the selected source protocol before retrying.", "/services/sources"),
     "agent_model_busy": ("wait_for_capacity", "Wait for model capacity, then start an explicit retry.", "/agent"),
     "agent_step_limit": ("review_budget", "Review the task's step limit and narrow the request before starting another task.", "/agent"),
     "agent_time_limit": ("review_budget", "Review the task's time limit and narrow the request before starting another task.", "/agent"),
@@ -143,6 +145,7 @@ class DiagnosticTools:
                 "default_model_in_catalog": any(row["id"] == model_id for row in models),
                 "permission_mode": settings.get("permission_mode") if settings.get("permission_mode") in {"read_only", "confirm_changes", "automatic"} else "unknown",
                 "limits": {key: _number(settings.get(key)) for key in _LIMITS},
+                "context_budget_policy": snapshot.get("context_budget_policy"),
                 "evidence": {"kind": "persisted_agent_settings", "default_model_selected_from": "settings.model_id"},
                 "note": "Agent enablement is optional. Catalog availability/tool support is not a fresh connection, inference, quota or performance test."}
 

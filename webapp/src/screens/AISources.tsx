@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Cloud, Terminal, Box, Plus, ChevronRight, Laptop, RefreshCw, Check, Settings2, Share2, Eye, EyeOff, ShieldCheck, Trash2, Power, ArrowRight, Server } from "lucide-react";
 import { useAppContext } from "../appContext";
 import { Modal } from "../personal/components";
-import { newSource, sourcePresets, sourceRequest, type AISource } from "../domain/aiSources";
+import { newSource, sourcePresets, sourceRequest, type AISource, type APIProtocol } from "../domain/aiSources";
 import type { CLIServicesStatus, CLIServiceStatus, LLMServiceRecord } from "../domain/nodeClient";
 import WorkspaceSelect from "./WorkspaceSelect";
 import "./AISources.css";
@@ -53,6 +53,7 @@ export default function AISources() {
   const [modelText, setModelText] = useState("");
   const [defaultsText, setDefaultsText] = useState("{}");
   const [foundModels, setFoundModels] = useState<string[]>([]);
+  const protocol = draft.protocol ?? "openai_chat";
   const refresh = useCallback(async () => {
     try {
       const [data, cliData, services] = await Promise.all([
@@ -65,7 +66,7 @@ export default function AISources() {
     finally { setLoading(false); }
   }, [client]);
   const edit = (value: AISource) => {
-    setDraft({ ...value, api_key: "" }); setModelText(value.models.join("\n")); setDefaultsText(JSON.stringify(value.request_defaults, null, 2));
+    setDraft({ ...value, protocol: value.protocol ?? "openai_chat", api_key: "" }); setModelText(value.models.join("\n")); setDefaultsText(JSON.stringify(value.request_defaults, null, 2));
     setMessage(""); setShowKey(false); setFoundModels([]); setModal("source");
   };
   useEffect(() => { void refresh().then(items => {
@@ -79,12 +80,16 @@ export default function AISources() {
     setBusy(true); setMessage("");
     try { await task(); } catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
   };
+  const sourceLimitsValid = Number.isInteger(draft.max_output_tokens) && draft.max_output_tokens >= 1 && draft.max_output_tokens <= 256000 &&
+    (draft.context_window_mode === "auto" || (Number.isInteger(draft.context_window) && draft.context_window >= 256 &&
+      draft.context_window <= 2000000 && draft.max_output_tokens <= draft.context_window));
   const payload = () => {
     const models = [...new Set(modelText.split(/[\n,]/).map(v => v.trim()).filter(Boolean))];
     const shared = draft.shared_models ?? (draft.sharing ? draft.models : []);
     return { ...draft, models, shared_models: shared.filter(model => models.includes(model)), request_defaults: JSON.parse(defaultsText) };
   };
   const save = async (test = false) => perform(async () => {
+    if (!sourceLimitsValid) throw new Error(tr("上下文窗口和输出上限必须为有效范围内的整数，手动输出上限不能超过上下文窗口。"));
     const saved = await sourceRequest<AISource>(`/${draft.id}`, payload(), "PUT");
     setDraft(saved);
     if (test) {
@@ -126,21 +131,32 @@ export default function AISources() {
       {modal === "native" && <>{nativeLoadError && <p role="alert">{nativeLoadError}</p>}<NativeModelPanel status={native} onUpdate={setNative} onConnect={() => edit(newSource("ollama"))} /></>}
       {modal === "source" && <>
         <WorkspaceSelect caption={draft.kind === "api" ? tr("厂商") : tr("本地服务")} label={tr("厂商")} value={draft.provider} icon={<Brand provider={draft.provider} />} options={sourcePresets.filter(p => draft.kind === "local" ? ["ollama", "lmstudio", "custom"].includes(p.id) : !["ollama", "lmstudio"].includes(p.id)).map(p => ({ value: p.id, label: p.name }))} disabled={busy} onChange={provider => { const next = newSource(provider); edit({ ...next, id: draft.id, kind: draft.kind, has_key: false, clear_key: true, sharing: false, shared_models: [] }); }} />
-        <p className="ais-muted ais-protocol">{tr("OpenAI 兼容 Chat Completions")}</p>
+        <WorkspaceSelect caption={tr("API 协议")} label={tr("API 协议")} value={protocol}
+          options={[{ value: "openai_chat", label: "OpenAI Chat Completions" },
+            { value: "openai_responses", label: "OpenAI Responses" },
+            { value: "anthropic_messages", label: "Anthropic Messages" }]}
+          disabled={busy} onChange={value => setDraft({ ...draft, protocol: value as APIProtocol })} />
         <label className="ais-field">{tr("API Key")} {draft.kind === "local" && <small>{tr("（可选）")}</small>}<span className="ais-secret"><input aria-label={tr("API Key")} type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} value={draft.api_key || ""} placeholder={draft.has_key ? tr("已保存 · 留空保留原密钥") : tr("粘贴你的 API Key")} onChange={e => setDraft({ ...draft, api_key: e.target.value, clear_key: false })} /><button type="button" aria-label={showKey ? tr("隐藏密钥") : tr("显示密钥")} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
         {draft.has_key && <label className="ais-check"><input type="checkbox" checked={draft.clear_key || false} onChange={e => setDraft({ ...draft, clear_key: e.target.checked })} /> {tr("清除已保存的密钥")}</label>}
         <label className="ais-field">{tr("来源名称")}<input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
         <div className="ais-device"><span>{tr("配置设备")}</span><span><Laptop size={16} /> {device} {tr("· 本机")}</span></div>
         <details className="ais-disclosure" open={draft.provider === "custom" || draft.kind === "local" || undefined}><summary><Settings2 size={17} /> {tr("连接设置")} <small>{tr("地址与请求参数")}</small></summary>
           <label className="ais-field">{tr("服务地址")}<input aria-label={tr("服务地址")} value={draft.base_url} placeholder="https://example.com/v1" onChange={e => setDraft({ ...draft, base_url: e.target.value })} /></label>
-          <p className="ais-muted">{tr("填写接口根地址，系统会追加 /chat/completions。")}</p>
+          <p className="ais-muted">{protocol === "anthropic_messages"
+            ? tr("填写包含版本路径的接口根地址（如 https://api.anthropic.com/v1），系统会追加 /messages。")
+            : protocol === "openai_responses"
+              ? tr("填写包含版本路径的接口根地址（如 https://api.openai.com/v1），系统会追加 /responses。")
+              : tr("填写接口根地址，系统会追加 /chat/completions。")}</p>
           <label className="ais-field">{tr("请求参数（JSON）")}<textarea rows={4} value={defaultsText} onChange={e => setDefaultsText(e.target.value)} /></label>
         </details>
         <details className="ais-disclosure" open={!draft.models.length || undefined}><summary><Box size={17} /> {tr("模型")} <small>{modelText.split(/[\n,]/).filter(Boolean).length} {tr("个 · 管理")}</small></summary>
           <label className="ais-field">{tr("模型 ID（每行一个）")}<textarea aria-label={tr("模型 ID")} rows={3} value={modelText} onChange={e => setModelText(e.target.value)} /></label>
           <button className="ais-secondary" disabled={busy} onClick={() => void perform(async () => { const result = await sourceRequest<{ models: string[] }>("/models", payload()); setFoundModels(result.models); setMessage(result.models.length ? tr("已读取模型，点击名称添加") : tr("未返回模型，请手动填写 ID")); })}><RefreshCw size={14} /> {tr("读取模型")}</button>
           {!!foundModels.length && <div className="ais-models">{foundModels.map(m => <button key={m} onClick={() => setModelText([...new Set([...modelText.split(/\n/).filter(Boolean), m])].join("\n"))}>{m}</button>)}</div>}
-          <div className="ais-limits"><label className="ais-field">{tr("上下文窗口")}<input type="number" min={256} max={2000000} value={draft.context_window} onChange={e => setDraft({ ...draft, context_window: Number(e.target.value) })} /></label><label className="ais-field">{tr("最大输出 Token")}<input type="number" min={1} max={256000} value={draft.max_output_tokens} onChange={e => setDraft({ ...draft, max_output_tokens: Number(e.target.value) })} /></label></div>
+          <label className="ais-check"><input type="checkbox" checked={draft.context_window_mode === "auto"} onChange={e => setDraft({ ...draft, context_window_mode: e.target.checked ? "auto" : "manual" })} />{tr("自动使用已发现的模型上下文窗口")}</label>
+          <div className="ais-limits"><label className="ais-field">{tr("上下文窗口")}<input type="number" min={256} max={2000000} disabled={draft.context_window_mode === "auto"} placeholder={draft.context_window_mode === "auto" ? tr("按模型分别读取") : undefined} value={draft.context_window_mode === "auto" ? "" : draft.context_window} onChange={e => setDraft({ ...draft, context_window: Number(e.target.value), context_window_mode: "manual" })} /></label><label className="ais-field">{tr("最大输出 Token")}<input type="number" min={1} max={256000} value={draft.max_output_tokens} onChange={e => setDraft({ ...draft, max_output_tokens: Number(e.target.value) })} /></label></div>
+          {draft.context_window_mode === "auto" && <p className="ais-muted">{tr("读取模型列表后保存以应用容量。来源未提供容量时按未知处理并保守回退，可取消自动后手动填写。")}</p>}
+          {!sourceLimitsValid && <p role="alert">{tr("上下文窗口和输出上限必须为有效范围内的整数，手动输出上限不能超过上下文窗口。")}</p>}
           <p className="ais-muted">{tr("当前工作台支持文本；图片、视频、PDF 不会因厂商支持而自动启用。")}</p>
         </details>
         <details className="ais-disclosure"><summary><Share2 size={17} /> {tr("逐模型分享")} <small>{tr("个人空间节点")}</small></summary>
@@ -160,7 +176,7 @@ export default function AISources() {
       </>}
       {message && <p role="status" className="ais-feedback">{message}</p>}
       {modal !== "choose" && modal !== "native" && modal !== "manage" && <div className="ais-modal-footer">
-        {modal === "source" ? <><button className="ais-secondary" disabled={busy} onClick={() => void save(true)}>{busy ? tr("处理中…") : tr("保存并测试")}</button><div className="ais-footer-right">{draft.id !== "new" && <button className="ais-icon" aria-label={tr("删除来源")} disabled={busy} onClick={() => confirm({ title: tr("删除这个 AI 来源？"), body: tr("将删除当前节点上的配置与密钥，不影响厂商账号。"), risk: "high", confirmLabel: tr("删除来源"), onConfirm: async () => { await sourceRequest(`/${draft.id}`, undefined, "DELETE"); setModal(null); setParams({}); await refresh(); } })}><Trash2 size={17} /></button>}<button className="ais-primary" disabled={busy || !draft.name.trim()} onClick={() => void save()}>{tr("保存")}</button></div></> : <><button className="ais-secondary" disabled={busy} onClick={close}>{tr("关闭")}</button><button className="ais-primary" disabled={busy || !currentCLI?.installed} onClick={() => void perform(async () => { const result = await client.setupCLIService(kind); await refresh(); setMessage(tr(result.agent_usable ? "连接已完成，可直接聊天或用于助手。" : "连接已完成，此接入支持聊天，不支持助手工具。")); })}>{busy ? tr("正在接入…") : currentCLI?.configured ? tr("重新接入") : tr("配置接入")}</button></>}
+        {modal === "source" ? <><button className="ais-secondary" disabled={busy || !sourceLimitsValid} onClick={() => void save(true)}>{busy ? tr("处理中…") : tr("保存并测试")}</button><div className="ais-footer-right">{draft.id !== "new" && <button className="ais-icon" aria-label={tr("删除来源")} disabled={busy} onClick={() => confirm({ title: tr("删除这个 AI 来源？"), body: tr("将删除当前节点上的配置与密钥，不影响厂商账号。"), risk: "high", confirmLabel: tr("删除来源"), onConfirm: async () => { await sourceRequest(`/${draft.id}`, undefined, "DELETE"); setModal(null); setParams({}); await refresh(); } })}><Trash2 size={17} /></button>}<button className="ais-primary" disabled={busy || !draft.name.trim() || !sourceLimitsValid} onClick={() => void save()}>{tr("保存")}</button></div></> : <><button className="ais-secondary" disabled={busy} onClick={close}>{tr("关闭")}</button><button className="ais-primary" disabled={busy || !currentCLI?.installed} onClick={() => void perform(async () => { const result = await client.setupCLIService(kind); await refresh(); setMessage(tr(result.agent_usable ? "连接已完成，可直接聊天或用于助手。" : "连接已完成，此接入支持聊天，不支持助手工具。")); })}>{busy ? tr("正在接入…") : currentCLI?.configured ? tr("重新接入") : tr("配置接入")}</button></>}
       </div>}
       </div>
     </Modal>}

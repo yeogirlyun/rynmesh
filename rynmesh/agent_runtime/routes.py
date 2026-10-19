@@ -80,12 +80,12 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
             failure("api_" + method, exc, elapsed_seconds=time.monotonic() - started)
             raise HTTPException(503, detail="agent_unavailable") from None
 
-    async def body(request: Request) -> dict:
+    async def body(request: Request, max_bytes: int = 64 * 1024) -> dict:
         local_control(request)
         raw = bytearray()
         async for chunk in request.stream():
             raw.extend(chunk)
-            if len(raw) > 64 * 1024:
+            if len(raw) > max_bytes:
                 raise HTTPException(413, detail="agent_request_limit")
         try:
             value = json.loads(raw)
@@ -212,7 +212,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     @app.post("/api/local/agent/tasks")
     async def create_task(request: Request):
-        return await call("create", await body(request))
+        return await call("create", await body(request, 28 * 1024 * 1024))
 
     @app.get("/api/local/agent/tasks/{task_id}")
     async def get_task(task_id: str, request: Request, since_revision: int | None = None):
@@ -221,7 +221,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     @app.post("/api/local/agent/tasks/{task_id}/messages")
     async def add_message(task_id: str, request: Request):
-        return await call("add_message", task_id, await body(request))
+        return await call("add_message", task_id, await body(request, 28 * 1024 * 1024))
 
     @app.post("/api/local/agent/tasks/{task_id}/actions")
     async def action(task_id: str, request: Request):
@@ -273,5 +273,8 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def get_result(task_id: str, result_id: str, request: Request, offset: int = 0, limit: int = 8192):
         local_control(request)
         return await call("get_result", task_id, result_id, offset, limit)
+
+    from .file_preview import install_file_preview_routes
+    install_file_preview_routes(app, call, local_control)
 
     return runtime

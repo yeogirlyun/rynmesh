@@ -15,12 +15,23 @@ _lock = threading.Lock()
 _cache_lock = threading.Lock()
 
 
+def context_metadata(models, model="", *, fallback=32768):
+    """Read only the selected/default model's declared window, never a caller hint."""
+    selected = next((row for row in models if row.get("id") == model), {}) if model else next(
+        (row for row in models if row.get("default")), {})
+    window = selected.get("context_window")
+    known = type(window) is int and 256 <= window <= 2000000
+    return {"context_window": window if known else fallback,
+            "context_window_known": known,
+            "context_window_basis": "installed_cli_model_cache" if known else "unknown_fallback"}
+
+
 def cached_models(kind, executable):
     """Metadata reads must not wait behind a CLI discovery subprocess."""
     key = (kind, executable) if kind == "codex_cli" else executable
     with _cache_lock:
         cached = _cache.get(key)
-        if cached and 0 <= time.monotonic() - cached[0] < 300:
+        if cached and 0 <= time.monotonic() - cached[0] < (60 if kind == "codex_cli" else 30):
             return [dict(row) for row in cached[1]]
     return []
 
@@ -54,7 +65,7 @@ def list_models(kind, executable, *, refresh=False):
         from .codex_session import list_models as codex_models
         with _lock:
             cached = _cache.get((kind, executable))
-            if not refresh and cached and time.monotonic() - cached[0] < 60:
+            if not refresh and cached and 0 <= time.monotonic() - cached[0] < 60:
                 return [dict(row) for row in cached[1]]
             models = codex_models(executable)
             with _cache_lock:
@@ -64,7 +75,7 @@ def list_models(kind, executable, *, refresh=False):
         raise AdapterError("model discovery is unavailable for this CLI")
     with _lock:
         cached = _cache.get(executable)
-        if not refresh and cached and time.monotonic() - cached[0] < 30:
+        if not refresh and cached and 0 <= time.monotonic() - cached[0] < 30:
             return [dict(row) for row in cached[1]]
         with private_workspace(copy_auth=False) as (root, env):
             from .antigravity_session import prepare_workspace

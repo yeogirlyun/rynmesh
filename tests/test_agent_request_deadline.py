@@ -175,13 +175,15 @@ def test_unknown_history_rule_reaches_main_model(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("done"))
     runtime.create({"message": "Explain"})
     advance(runtime)
-    system = model.calls[0][1][0]["content"]
+    system = "\n".join(message["content"] for message in model.calls[0][1]
+                       if message["role"] in {"system", "developer"})
     assert "unknown/missing is not no/never" in system
     assert "Claims need matching subject/scope/time" in system
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
-def test_watcher_requests_transport_cancellation(node, monkeypatch, stop):  # noqa: F811
+@pytest.mark.parametrize("transport_code", ["inference_failed", "runtime_connection_failed"])
+def test_watcher_requests_transport_cancellation(node, monkeypatch, stop, transport_code):  # noqa: F811
     bridge, selected, manager, now, seen = local_bridge(node, monkeypatch)
     interrupted = threading.Event()
     stopped = [False]
@@ -192,7 +194,9 @@ def test_watcher_requests_transport_cancellation(node, monkeypatch, stop):  # no
         else:
             stopped[0] = True
         assert interrupted.wait(2)
-        raise AdapterError("interrupted")
+        # Killing a Codex app-server at the deadline closes its stdout pipe;
+        # that EOF must retain the deadline/owner cause, not become a crash.
+        raise AdapterError("Codex app-server disconnected", code=transport_code)
     monkeypatch.setattr(manager.adapter.inner, "chat", wait_for_cancel)
     with pytest.raises(ValueError, match="agent_cancelled" if stop == "cancel" else "agent_inference_timeout"):
         bridge.complete(selected, [{"role": "user", "content": "hello"}], [], lambda: stopped[0], deadline=now[0] + 10)

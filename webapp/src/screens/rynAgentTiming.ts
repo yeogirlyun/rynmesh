@@ -100,7 +100,14 @@ export function agentTurnTiming(task: AgentTask, turnIndex: number): AgentTurnTi
   const unknown: AgentTurnTiming = { seconds: null, approximate: false, live: false, state };
   if (turnIndex < 0 || turnIndex >= owners.length) return unknown;
   const events = [...task.events].sort((left, right) => left.seq - right.seq);
-  const boundaries = events.filter(event => turnEvents.has(event.type));
+  const boundaries: AgentEvent[] = [];
+  for (const event of events) {
+    if (turnEvents.has(event.type)) boundaries.push(event);
+    else if (event.type === "message_edited" && typeof event.user_turn_index === "number" && Number.isInteger(event.user_turn_index) && event.user_turn_index >= 0) {
+      boundaries.splice(event.user_turn_index);
+      boundaries.push(event);
+    }
+  }
   const current = latest ? task.run_timing : undefined;
   const currentSeconds = seconds(current?.elapsed_seconds);
   const live = latest && state === "running" && current?.measurement === "live";
@@ -111,8 +118,10 @@ export function agentTurnTiming(task: AgentTask, turnIndex: number): AgentTurnTi
       ? { seconds: currentSeconds, approximate: false, live, state } : unknown;
   }
   const start = boundaries[turnIndex];
-  const next = boundaries[turnIndex + 1];
-  const scoped = events.filter(event => event.seq >= start.seq && (!next || event.seq < next.seq));
+  // A retained earlier turn ends at its original next owner boundary. Audit
+  // events from a discarded branch must not add runtime to that earlier turn.
+  const nextOriginal = events.find(event => event.seq > start.seq && (turnEvents.has(event.type) || event.type === "message_edited"));
+  const scoped = events.filter(event => event.seq >= start.seq && (!nextOriginal || event.seq < nextOriginal.seq));
   const last = scoped.at(-1) || start;
   const baseline = seconds(start.run_elapsed_seconds) ?? (turnIndex === 0 ? 0 : null);
   const terminal = [...scoped].reverse().find(event => stopEvents.has(event.type));
@@ -121,7 +130,7 @@ export function agentTurnTiming(task: AgentTask, turnIndex: number): AgentTurnTi
   // Events emitted while a model is in flight carry only its unsettled
   // baseline. Avoid presenting that baseline as an exact split of two turns.
   const unsettledBoundary = turnIndex > 0 && hasUnsettledOperation(events, start.seq);
-  const unsettledEnd = next && hasUnsettledOperation(events, next.seq);
+  const unsettledEnd = nextOriginal && hasUnsettledOperation(events, nextOriginal.seq);
   if (baseline !== null && endCounter !== null && endCounter >= baseline && !unsettledBoundary && !unsettledEnd) {
     return { seconds: endCounter - baseline, approximate: false, live, state };
   }

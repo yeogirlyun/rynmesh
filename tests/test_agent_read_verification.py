@@ -22,7 +22,8 @@ def test_self_diagnostic_does_not_fail_because_verification_added_read_activity(
              "operations": [*prior["operations"], {"effect": "read", "tool": "ryn_file_read"}]}
     tools = SimpleNamespace(lock=threading.Lock(), completed={}, execute=lambda *args, **kwargs: fresh)
     receipt = {"tool": "ryn_diagnose_current_task", "arguments": {}, "result": prior, "status": "confirmed"}
-    check = lambda: verify_read(tools, receipt, context={"task_id": "self"}, cancelled=lambda: False)
+    def check():
+        return verify_read(tools, receipt, context={"task_id": "self"}, cancelled=lambda: False)
     assert check()["status"] == "passed"
     fresh["write_dispatch_count"] = 1
     assert check()["status"] == "failed"

@@ -168,3 +168,106 @@ def test_per_phase_timing_tracks_scheduler_wait_model_tool_and_store_persistence
     assert second_model_timing["model_call_seconds"] == pytest.approx(0.35)
     assert second_model_timing["store_persistence_seconds"] > 0
 
+
+def test_parallel_read_batch_coalesces_observed_files_and_usage_settlement(tmp_path, monkeypatch):
+    from test_agent_speedups import calls, workstation
+
+    runtime, _, workspace = workstation(
+        tmp_path,
+        calls(
+            ("ryn_file_read", {"path": "a.py"}),
+            ("ryn_file_read", {"path": "b.py"}),
+            ("ryn_file_read", {"path": "c.py"}),
+        ),
+        assistant("Done reading."),
+    )
+    for name in ("a.py", "b.py", "c.py"):
+        (workspace / name).write_text(f"{name} = 1\n", encoding="utf-8")
+
+    created = runtime.create({"message": "Read three files in parallel."})
+
+    # Step 1: Model emits 3 parallel ryn_file_read tool calls.
+    runtime.run_once()
+
+    tx_count = [0]
+    orig_tx = runtime.store.transaction
+
+    def count_tx(mutate):
+        tx_count[0] += 1
+        return orig_tx(mutate)
+
+    monkeypatch.setattr(runtime.store, "transaction", count_tx)
+
+    # Step 2: _tool_batch executes all 3 reads concurrently.
+    runtime.run_once()
+    # Expected transactions: claim + _reserve_output + authorize + _settle_usage_batch + finish = 5 total
+    # (instead of 5 + 3 observed_files + 2 extra _settle_usage = 10 transactions).
+    assert tx_count[0] == 5
+
+    stored = runtime.store.read()["tasks"][created["id"]]
+    assert len(stored.get("observed_files", {})) == 3
+
+
+def test_model_timeout_retry_records_request_id_monotonic_timing_and_safe_diagnostics(tmp_path, monkeypatch):
+    from rynmesh.agent_runtime.store import AgentError
+
+    runtime, model, _, _ = make_runtime(tmp_path)
+    clock = simulated_clock(monkeypatch, runtime)
+    created = runtime.create({"message": "Diagnose a timed-out model turn."})
+
+    attempts = [0]
+
+    def complete_timeout_then_succeed(model_id, messages, specs, cancelled, on_event):
+        attempts[0] += 1
+        if attempts[0] == 1:
+            clock[0] += 12.5
+            err = AgentError("agent_inference_timeout")
+            err.diagnostics = {
+                "rpc_stage": "turn_wait",
+                "session_mode": "started",
+                "events_received": 1,
+                "deltas_received": 0,
+                "last_event_age_seconds": 12.4,
+                "process_alive": True,
+                "secret_token": "MUST_NOT_LEAK",
+            }
+            raise err
+        clock[0] += 0.3
+        return assistant("Recovered on attempt 2.")
+
+    model.complete = complete_timeout_then_succeed
+    runtime.run_once()
+    runtime.run_once()
+
+    done = runtime.get(created["id"])
+    assert done["status"] == "completed"
+    started_events = [e for e in done["events"] if e["type"] == "model_started"]
+    retry_events = [e for e in done["events"] if e["type"] == "model_retry_scheduled"]
+    assistant_events = [e for e in done["events"] if e["type"] == "assistant"]
+
+    assert len(started_events) == 2
+    assert len(retry_events) == 1
+    assert len(assistant_events) == 1
+
+    assert started_events[0]["request_id"] == retry_events[0]["request_id"]
+    assert started_events[0]["attempt"] == retry_events[0]["attempt"] == 1
+    assert started_events[1]["request_id"] == assistant_events[0]["request_id"]
+    assert started_events[1]["attempt"] == assistant_events[0]["attempt"] == 2
+    assert started_events[0]["request_id"] != started_events[1]["request_id"]
+
+    retry_timing = retry_events[0]["timing"]
+    # 12.5s call + 2 * 0.05s (_meter_model admit + _settle_usage commits)
+    assert retry_timing["model_call_seconds"] == pytest.approx(12.6)
+    assert retry_timing["preparation_persistence_seconds"] == pytest.approx(0.15)
+    assert retry_timing["store_persistence_seconds"] == pytest.approx(0.20)
+
+    diag = retry_events[0]["diagnostics"]
+    assert diag == {
+        "rpc_stage": "turn_wait",
+        "session_mode": "started",
+        "events_received": 1,
+        "deltas_received": 0,
+        "last_event_age_seconds": 12.4,
+        "process_alive": True,
+    }
+    assert "secret_token" not in str(done["events"])

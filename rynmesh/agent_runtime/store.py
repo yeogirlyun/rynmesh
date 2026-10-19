@@ -35,20 +35,13 @@ MAX_BYTES = 34 * 1024 * 1024
 DEFAULT_SETTINGS = {
     "enabled": False, "model_id": "", "permission_mode": "workspace", "allowed_write_tools": [],
     "workspace_root": "", "desktop_access": False, "verify_text_responses": False,
-    # 60000 left ~30 KB for conversation after the always-sent tool schemas, so a coding task
-    # compacted every second step and spent half its time budget on summaries (measured).
-    # Agent-wide defaults, separate from model-source settings (output cap, reasoning effort).
-    # max_context_chars is only a ceiling: the selected model's declared window clamps it further.
-    # Time and steps stay moderate (owners can raise them to 3600 s / 128 steps). A run that
-    # needed 48+ steps (23 of them locating the code) hit the old 48-step cap mid-edit; the loop
-    # now flags repeated reads, ranks search hits per file and announces budget use at 60%/85%.
-    # max_context_chars is a ceiling: a model with a declared window gets most of that window
-    # (120000 when no window is declared), so long work compacts far less often. 120000 as a
-    # ceiling compacted a 31-step task four times (71 s of summaries, measured).
-    "max_steps": 64, "max_seconds": 900, "max_context_chars": 600000,
+    # None follows the selected model's declared token window, reserving output
+    # and framing. An integer remains an owner-selected UTF-8 request-byte cap.
+    # The legacy field name is retained for saved sessions and API compatibility.
+    "max_steps": 64, "max_seconds": 900, "max_context_chars": None,
     "max_output_chars": 20000,
 }
-# The previous default ceiling, still used when a model does not declare its window.
+# An additional conservative byte ceiling for an undeclared model window.
 UNKNOWN_WINDOW_CONTEXT_CHARS = 120000
 
 
@@ -124,6 +117,8 @@ class AgentStore:
         self.pub = peer_box.public_key_b64(messaging_key)
         self._cached_stamp = None
         self._cached_data = None
+        self._cached_layout = None
+        self._migration_pending = False
         self._index = {}  # task_id -> committed blob entry of the cached data
         self._total = 0  # committed plaintext bytes (root plus every task)
 
@@ -145,9 +140,11 @@ class AgentStore:
     def _read(self, *, copy_result=True) -> dict:
         if not self.path.exists():
             self._cached_stamp = self._cached_data = None
+            self._cached_layout = None
+            self._migration_pending = False
             self._index, self._total = {}, 0
             return {"version": VERSION, "schema_version": 2, "settings": dict(DEFAULT_SETTINGS), "tasks": {},
-                    "context_budget_version": 1}
+                    "context_budget_version": 2, "settings_context_budget_provenance": "default_auto"}
         try:
             stamp = self._stamp()
             if stamp == self._cached_stamp and self._cached_data is not None:
@@ -178,8 +175,11 @@ class AgentStore:
                 data["tasks"] = tasks
             if data.get("version") != VERSION or not isinstance(data.get("tasks"), dict) or not isinstance(data.get("settings"), dict):
                 raise AgentError("agent_state_unreadable")
+            before_migration = encoded(data)
             data = migrate(data)
+            self._migration_pending = before_migration != encoded(data)
             self._cached_stamp, self._cached_data, self._index, self._total = stamp, data, index, total
+            self._cached_layout = envelope["version"]
             return _copy(data) if copy_result else data
         except AgentError:
             raise
@@ -208,7 +208,13 @@ class AgentStore:
         for task_id in list(reservations):
             if not data["tasks"].get(task_id, {}).get("in_flight"):
                 reservations.pop(task_id)
-        cached = (self._cached_data or {}).get("tasks", {})
+        # A checked transaction can leave state unchanged (menu projection,
+        # admission fallback, or an idempotent control request). Keep its lock
+        # and fresh read, but avoid another encrypted root/fsync/replace. Legacy
+        # roots must still convert even when their logical state is unchanged.
+        if self._cached_layout == ROOT_VERSION and not self._migration_pending and data == self._cached_data:
+            return
+        cached = {} if self._migration_pending else (self._cached_data or {}).get("tasks", {})
         index, changed = {}, {}
         for task_id, row in data["tasks"].items():
             entry = self._index.get(task_id)
@@ -241,6 +247,8 @@ class AgentStore:
         cache = _copy({key: value for key, value in data.items() if key != "tasks"})
         cache["tasks"] = {task_id: _copy(row) if task_id in changed else cached[task_id] for task_id, row in data["tasks"].items()}
         self._cached_stamp, self._cached_data, self._index, self._total = self._stamp(), cache, index, total
+        self._cached_layout = ROOT_VERSION
+        self._migration_pending = False
         live = {entry["file"] for entry in index.values()}
         for entry in previous_index.values():
             if entry["file"] not in live:
@@ -303,7 +311,7 @@ class AgentStore:
                 raise AgentError("agent_task_not_found")
             control = {key: value for key, value in row.items() if key not in {
                 "messages", "events", "receipts", "result_refs", "verification_evidence", "result",
-                "queue", "context_checkpoint", "verification", "verification_rejected_responses"}}
+                "queue", "context_checkpoint", "verification", "verification_rejected_responses", "conversation_branches"}}
             control["messages"] = [{key: message[key] for key in ("role", "context_epoch", "resource_origin") if key in message}
                                    for message in row.get("messages", []) if isinstance(message.get("resource_origin"), dict)]
             return copy.deepcopy({"settings": data["settings"], "projects": data.get("projects", {}),

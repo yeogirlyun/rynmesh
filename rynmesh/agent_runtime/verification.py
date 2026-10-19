@@ -217,7 +217,11 @@ def checker_messages(row, *, context_limit=None):
     base_size = len(encoded([{"role": "system", "content": system}, {"role": "user", "content": encoded(payload).decode()}]))
     limit = row.get("limits", {}).get("max_context_chars", 120000)
     if context_limit is not None:
-        limit = min(limit, context_limit)
+        limit = min(limit, context_limit) if type(limit) is int else context_limit
+    elif type(limit) is not int:
+        # Direct callers without model metadata retain a conservative fallback;
+        # runtime always supplies the selected model's effective request budget.
+        limit = 120000
     remaining = min(4096, max(0, limit - base_size - 128))
     for contract in reversed(contracts[-16:]):
         # Payload JSON is itself a message string, so count escaped quotes too.

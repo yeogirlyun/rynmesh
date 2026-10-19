@@ -12,7 +12,7 @@ from .operation_permissions import projection as permission_projection
 from .output_policy import MAX_TOOL_CALLS
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v4"
+PROMPT_VERSION = "ryn-agent-loop-v7"
 
 SYSTEM = (
     "You are Ryn, the user's assistant on their computer. Reply concisely in their language. "
@@ -20,8 +20,8 @@ SYSTEM = (
     "Persist until done or blocked by essential missing information. Decide from tool results; plan only if useful. "
     "Give brief progress during sustained work. Do not reconfirm requests, ask to proceed, or ask for discoverable facts. "
     "Queries should retrieve and report the observed data directly. Use the supplied workspace. "
-    "For diagnostics, start with cheap targeted checks before broad recursive scans. Bound long jobs by time and output; "
-    "reuse active jobs and their results instead of scanning overlapping trees or restarting slow work. "
+    "Use targeted diagnostics, bounded jobs and reused results. "
+    "Batch independent reads (up to eight calls), related edits in one patch and independent checks; keep dependencies ordered and report failures. "
     "For background jobs, drain pending pages with next_offset, then use ryn_process_read with a bounded wait_seconds "
     "at offset=previous output_length when awaiting new output; avoid model turns spent on immediate empty polls. "
     "Stop unnecessary jobs once enough evidence answers the request. For inspection requests, report useful partial "
@@ -81,8 +81,47 @@ INTERNAL_NAMES = {spec["function"]["name"] for spec in INTERNAL_SPECS}
 
 def provider_messages(messages: list[dict]) -> list[dict]:
     # Stable owner IDs and origin metadata are local bookkeeping, not vendor fields.
-    allowed = {"role", "content", "tool_calls", "tool_call_id", "reasoning_content"}
-    return [{key: copy.deepcopy(value) for key, value in message.items() if key in allowed} for message in messages]
+    allowed = {"role", "content", "tool_calls", "tool_call_id", "reasoning_content", "provider_state", "is_error"}
+    from .input_attachments import provider_content
+    return [{**{key: copy.deepcopy(value) for key, value in message.items() if key in allowed},
+             "content": copy.deepcopy(provider_content(message))} for message in messages]
+
+
+def select_base_instructions(*, model_base=None, persisted_base=None, session_base=None) -> str:
+    """Select a base once: an explicit empty override is different from absence."""
+    for candidate in (session_base, persisted_base, model_base):
+        if candidate is not None:
+            if not isinstance(candidate, str):
+                raise ValueError("base instructions must be text")
+            return candidate
+    return SYSTEM
+
+
+def instruction_layers(row: dict, *, model_base=None, persisted_base=None, session_base=None,
+                       developer_instructions=None, project_guidance="") -> list[dict]:
+    """Build Ryn's internal instruction roles; adapters own provider compatibility.
+
+    The base can be pinned in a task so switching providers does not silently
+    rewrite an existing conversation. Host permissions remain a separate layer
+    even when the caller explicitly overrides the base with an empty string.
+    """
+    base = select_base_instructions(model_base=model_base, persisted_base=persisted_base,
+                                    session_base=session_base)
+    policy = ("This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
+              if row["permission_mode"] == "read_only" else
+              "This task may request changes; the server enforces current owner permissions for every call.")
+    messages = [{"role": "developer", "content": base},
+                {"role": "developer", "content": policy + authority(row)}]
+    if developer_instructions is not None:
+        if not isinstance(developer_instructions, str):
+            raise ValueError("developer instructions must be text")
+        if developer_instructions:
+            messages.append({"role": "developer", "content": developer_instructions})
+    if not isinstance(project_guidance, str):
+        raise ValueError("project guidance must be text")
+    if project_guidance:
+        messages.append({"role": "user", "content": project_guidance})
+    return messages
 
 
 def authority(row: dict) -> str:

@@ -47,6 +47,7 @@ export function writeAgentWorkspace(settings: AgentSettings | null, models: Agen
       destination_revision: item.destination_revision, destination_binding_supported: item.destination_binding_supported,
       source_id: item.source_id, source_name: item.source_name, peer_id: item.peer_id,
       supported_reasoning_efforts: item.supported_reasoning_efforts, default_reasoning_effort: item.default_reasoning_effort,
+      context_window: item.context_window, context_window_known: item.context_window_known, context_window_basis: item.context_window_basis,
     }));
     localStorage.setItem(key(), JSON.stringify({ settings: publicSettings, models: publicModels, model }));
   } catch { /* Disabled or full storage must not interrupt the workspace. */ }

@@ -74,6 +74,50 @@ it("keeps a failed test editable and never marks it successful", async () => {
 
 beforeEach(async () => { await i18n.changeLanguage("zh-CN"); });
 
+it("edits legacy Chat sources and saves explicit native protocols with the matching endpoint hint", async () => {
+  const stored = { ...newSource("custom"), protocol: undefined, id: "src-protocol", name: "Protocol source", models: ["m"] };
+  let savedProtocol: string | undefined;
+  server.use(
+    http.get("*/api/local/llm/sources", () => HttpResponse.json({ sources: [stored], peer_id: "self", node_name: "My PC" })),
+    http.put("*/api/local/llm/sources/src-protocol", async ({ request }) => {
+      const body = await request.json() as Omit<typeof stored, "protocol"> & { protocol: string };
+      savedProtocol = body.protocol;
+      return HttpResponse.json(body);
+    }),
+  );
+  const user = page("/services/sources?edit=src-protocol");
+  const protocol = await screen.findByRole("button", { name: "API 协议" });
+  expect(protocol).toHaveTextContent("OpenAI Chat Completions");
+  await user.click(protocol);
+  await user.click(screen.getByRole("option", { name: "OpenAI Responses" }));
+  expect(screen.getByText(/系统会追加 \/responses/)).toBeInTheDocument();
+  await user.click(protocol);
+  await user.click(screen.getByRole("option", { name: "Anthropic Messages" }));
+  expect(screen.getByText(/系统会追加 \/messages/)).toHaveTextContent("https://api.anthropic.com/v1");
+  await user.click(screen.getByRole("button", { name: /^保存$/ }));
+  await waitFor(() => expect(savedProtocol).toBe("anthropic_messages"));
+});
+
+it.each(["12", "10000.5", "2000001"])("blocks invalid manual source context %s before save or test", async input => {
+  const stored = { ...newSource("custom"), id: "src-manual", name: "Manual source", context_window_mode: "manual" as const,
+    context_window: 60000, max_output_tokens: 4096, models: ["manual-model"] };
+  const saves = vi.fn();
+  server.use(
+    http.get("*/api/local/llm/sources", () => HttpResponse.json({ sources: [stored], peer_id: "self", node_name: "My PC" })),
+    http.put("*/api/local/llm/sources/src-manual", () => { saves(); return HttpResponse.json(stored); }),
+  );
+  const user = page("/services/sources?edit=src-manual");
+  const field = await screen.findByLabelText("上下文窗口");
+  const details = field.closest("details")!;
+  if (!details.open) await user.click(details.querySelector("summary")!);
+  await user.clear(field); await user.type(field, input);
+  expect(screen.getByRole("alert")).toHaveTextContent("必须为有效范围内的整数");
+  expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "保存并测试" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: /^保存$/ }));
+  expect(saves).not.toHaveBeenCalled();
+});
+
 it("offers all three first-use connections without requiring an existing service", async () => {
   server.use(http.get("*/api/local/llm/sources", () => HttpResponse.json({ sources: [], peer_id: "self", node_name: "My PC" })));
   const user = page("/services/sources", true);

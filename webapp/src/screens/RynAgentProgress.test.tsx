@@ -17,9 +17,24 @@ function task(extra: Partial<AgentTask> = {}): AgentTask {
 afterEach(() => vi.useRealTimers());
 
 it("keeps timing associated with each user turn when tool messages are grouped", () => {
-  const tool = { role: "assistant", content: "Inspecting", tool_calls: [{ id: "a", function: { name: "inspect", arguments: "{}" } }] };
+  const tool = { role: "assistant", content: null, tool_calls: [{ id: "a", function: { name: "inspect", arguments: "{}" } }] };
   const entries = groupAgentMessages([{ role: "user", content: "First" }, tool, { ...tool }, { role: "assistant", content: "Done" }, { role: "user", content: "Next" }, tool]);
   expect(entries.map(entry => [entry.kind, entry.turnIndex])).toEqual([["message", 0], ["progress", 0], ["message", 0], ["message", 1], ["progress", 1]]);
+});
+
+it("keeps each public update before its operations while coalescing tool-only messages", () => {
+  const tool = { role: "assistant", content: null, tool_calls: [{ id: "a", function: { name: "inspect", arguments: "{}" } }] };
+  const entries = groupAgentMessages([
+    { role: "user", content: "Make an Excel template" },
+    { ...tool, content: "I will create the sales template." }, tool,
+    { ...tool, content: "The template is ready; I am checking the formulas." }, tool,
+    { role: "assistant", content: "Created and checked the workbook." },
+  ]);
+  expect(entries.map(entry => entry.kind === "message" ? entry.message.content : entry.messages.length)).toEqual([
+    "Make an Excel template", "I will create the sales template.", 2,
+    "The template is ready; I am checking the formulas.", 2, "Created and checked the workbook.",
+  ]);
+  expect(entries.every(entry => entry.turnIndex === 0)).toBe(true);
 });
 
 it("retains exact historical durations after the next execution resets its clock", () => {
@@ -43,6 +58,19 @@ it("splits a continued execution at an input answer without counting the user's 
     run_timing: { elapsed_seconds: 9, recorded_seconds: 4, max_seconds: 600, measurement: "live" } });
   expect(agentTurnTiming(record, 0)).toMatchObject({ seconds: 4, live: false });
   expect(agentTurnTiming(record, 1)).toMatchObject({ seconds: 5, live: true });
+});
+
+it("keeps timings on the retained conversation after editing an earlier turn", () => {
+  const record = task({ messages: [{ role: "user", content: "First" }, { role: "user", content: "Edited second" }],
+    events: [event(1, "created", 0, { run_elapsed_seconds: 0 }), event(2, "model_started", 1, { run_elapsed_seconds: 0 }),
+      event(3, "assistant", 5, { run_elapsed_seconds: 4 }), event(4, "completed", 5, { run_elapsed_seconds: 4 }),
+      event(5, "information_added", 10, { run_elapsed_seconds: 0 }), event(6, "model_started", 11, { run_elapsed_seconds: 0 }),
+      event(7, "assistant", 25, { run_elapsed_seconds: 14 }), event(8, "completed", 25, { run_elapsed_seconds: 14 }),
+      event(9, "information_added", 30, { run_elapsed_seconds: 0 }), event(10, "completed", 45, { run_elapsed_seconds: 15 }),
+      event(11, "message_edited", 50, { user_turn_index: 1, run_elapsed_seconds: 0 }), event(12, "model_started", 51, { run_elapsed_seconds: 0 })],
+    run_timing: { elapsed_seconds: 3, recorded_seconds: 0, max_seconds: 600, measurement: "live" } });
+  expect(agentTurnTiming(record, 0)).toMatchObject({ seconds: 4, state: "ended" });
+  expect(agentTurnTiming(record, 1)).toMatchObject({ seconds: 3, state: "running", live: true });
 });
 
 it("retains settled in-flight pause time after the next question resets the run clock", () => {

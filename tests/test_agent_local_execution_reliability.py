@@ -292,9 +292,9 @@ def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node
     # Simulate crash/restart right after authorize() recorded in_flight and ledger dispatched
     queued_row = store.read()["tasks"][created["id"]]
     queued_call = queued_row["queue"][0]
+    from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import digest, model_retry_authority, now
-    from rynmesh.agent_runtime import verification
 
     classification = classify_operation(
         queued_call["name"],
@@ -366,9 +366,9 @@ def test_restart_during_read_only_shell_settles_error_receipt_and_continues(node
 
 
 def test_restart_recovery_preserves_cancel_pause_permission_budget_and_revision_constraints(node, tmp_path):
+    from rynmesh.agent_runtime import verification
     from rynmesh.agent_runtime.execution_policy import classify_operation
     from rynmesh.agent_runtime.protocol import model_retry_authority, now
-    from rynmesh.agent_runtime import verification
 
     runtime, store, bridge, tools, catalog, _ = _make_node_runtime(node, tmp_path, "constraints-read-shell")
     read_cmd = "Get-Location" if os.name == "nt" else "pwd"
@@ -514,7 +514,11 @@ def test_genuine_write_shell_unknown_outcome_still_enters_reconciliation(node, m
 
 
 def test_forged_or_stale_read_classification_cannot_bypass_write_protection(local):
-    from rynmesh.agent_runtime.execution_policy import classify_operation, shell_read, verified_read_classification
+    from rynmesh.agent_runtime.execution_policy import (
+        classify_operation,
+        shell_read,
+        verified_read_classification,
+    )
 
     tools, context, workspace, _ = local
     read_cmd = "Get-Location" if os.name == "nt" else "pwd"
@@ -581,8 +585,8 @@ def test_forged_or_stale_read_classification_cannot_bypass_write_protection(loca
 
 
 def test_missing_read_classification_in_historical_record_stays_conservative(node, tmp_path):
-    from rynmesh.agent_runtime.protocol import model_retry_authority, now
     from rynmesh.agent_runtime import verification
+    from rynmesh.agent_runtime.protocol import model_retry_authority, now
 
     read_cmd = "Get-Location" if os.name == "nt" else "pwd"
     runtime, store, bridge, node_tools, catalog, _ = _make_node_runtime(node, tmp_path, "legacy-record")
@@ -845,11 +849,12 @@ def test_read_recovery_rejects_still_running_or_cleanup_exception_and_retains_re
 
 
 def test_isolated_host_process_exit_cleans_up_child_and_recreated_tools_reconcile(tmp_path):
-    from pathlib import Path
     import subprocess
     import sys
     import time
+    from pathlib import Path
     from types import SimpleNamespace
+
     from rynmesh.agent_runtime.local_tools import LocalTools
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
     from rynmesh.services import peer_box
@@ -1340,11 +1345,12 @@ def test_temporary_cleanup_failure_allows_later_resume_or_reconcile_after_proces
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows JobObject forced host exit test")
 def test_isolated_windows_host_forced_exit_bypasses_atexit_and_cleans_up_child(tmp_path):
-    from pathlib import Path
     import subprocess
     import sys
     import time
+    from pathlib import Path
     from types import SimpleNamespace
+
     from rynmesh.agent_runtime.local_tools import LocalTools
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
     from rynmesh.services import peer_box

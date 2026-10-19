@@ -11,6 +11,7 @@ SCHEMA_VERSION = 2
 CONTROL_EVENTS = {"created", "workspace_bound", "message_added", "approval_requested", "approved", "denied", "paused",
                   "resumed", "cancelled", "goal_changed", "information_added", "input_requested", "input_answered", "scope_changed", "permissions_changed", "reconciliation_requested", "archived", "restored", "budget_changed", "source_credential_saved", "source_credential_revoked", "model_changed"}
 CONTROL_EVENTS.add("approval_no_longer_required")
+CONTROL_EVENTS.update({"message_edit_requested", "message_edited"})
 PUBLIC_STATE_FIELDS = ("schema_version", "goal", "criteria", "plan", "control_revision", "event_cursor",
                        "run_state", "pending_input", "outcome", "scope_revision")
 
@@ -79,13 +80,24 @@ def migrate(data: dict) -> dict:
                     raise ValueError("incomplete Agent task state")
             row.setdefault("observed_files", {})
             synchronize(row)
-    if data.get("context_budget_version", 0) < 1:
-        # 120000 was the default ceiling, not an owner choice; a model's declared
-        # window now bounds context. Applied once, so a later explicit value stays.
-        for limits in [data["settings"], *(row.get("limits", {}) for row in data["tasks"].values())]:
-            if limits.get("max_context_chars") == 120000:
-                limits["max_context_chars"] = 600000
-        data["context_budget_version"] = 1
+    # Numeric defaults and owner overrides were saved in the same field. Neither
+    # 120000, 600000 nor the old migration marker proves automatic intent. Keep
+    # ambiguous numeric settings/task limits, and label that uncertainty. Only
+    # an explicit automatic provenance can retire a former numeric default.
+    def context_mode(container, limits, key):
+        provenance = container.get(key)
+        if provenance in {"default_auto", "owner_auto"}:
+            limits["max_context_chars"] = None
+        elif "max_context_chars" not in limits or limits["max_context_chars"] is None:
+            limits["max_context_chars"] = None
+            provenance = "default_auto"
+        elif provenance != "owner_manual":
+            provenance = "legacy_ambiguous_manual"
+        container[key] = provenance
+    context_mode(data, data["settings"], "settings_context_budget_provenance")
+    for row in data["tasks"].values():
+        context_mode(row, row.setdefault("limits", {}), "context_budget_provenance")
+    data["context_budget_version"] = 2
     data["schema_version"] = SCHEMA_VERSION
     return data
 

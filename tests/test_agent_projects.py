@@ -54,7 +54,9 @@ def test_project_selection_is_task_local_restart_safe_and_does_not_change_other_
     assert restored.project_selection() == ""
     assert restored.get(task["id"])["project"]["id"] == selected["id"]
     assert restored.get(task["id"])["project"]["test_isolation_entry"] == "test/support/runIsolated.cjs"
-    assert "AGENTS.md" in restored._context(restored.store.read()["tasks"][task["id"]])[0]["content"]
+    context = restored._context(restored.store.read()["tasks"][task["id"]])
+    assert any(message["role"] == "user" and "AGENTS.md" in message["content"] for message in context)
+    assert not any(message["role"] in {"developer", "system"} and "Run isolated tests." in message["content"] for message in context)
 
 
 def test_project_revocation_and_regrant_do_not_revive_old_access(tmp_path):
@@ -250,6 +252,7 @@ def test_checkpoint_file_coverage_survives_restart_and_excludes_old_scope(tmp_pa
 
 def test_only_project_source_is_abbreviated_for_checkpoint_not_business_data():
     import copy
+
     from rynmesh.agent_runtime import projects
     source = "中文代码\n" * 4000
     history = [{"role": "user", "content": source}, {"role": "assistant", "tool_calls": [
@@ -268,7 +271,9 @@ def test_only_project_source_is_abbreviated_for_checkpoint_not_business_data():
 
 def test_oversized_closed_source_batch_can_be_checkpointed_without_losing_archive(tmp_path):
     import copy
+
     from test_agent_runtime import advance
+
     from rynmesh.agent_runtime.store import encoded
     runtime, model, _, _ = project_runtime(tmp_path / "state")
     selected = runtime.load_project({"path": str(project_folder(tmp_path))})
@@ -300,6 +305,7 @@ def test_oversized_closed_source_batch_can_be_checkpointed_without_losing_archiv
 
 def test_control_projection_keeps_authority_origins_and_refreshes_other_writer(tmp_path, monkeypatch):
     import copy
+
     from rynmesh.agent_runtime.store import AgentStore
     runtime, _, _, key = project_runtime(tmp_path)
     task = runtime.create({"message": "Read project"})
@@ -407,4 +413,3 @@ def test_project_destination_change_rebinds_same_or_new_model_and_resumes_explic
     assert runtime.preview_model_switch(task_id, "local:test")["current_scope_authorized"] is False
     with pytest.raises(AgentError, match="agent_project_unavailable"):
         runtime.switch_model(task_id, body(runtime, task_id, "local:test", transfer_resource_scope=True))
-

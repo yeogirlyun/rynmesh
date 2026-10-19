@@ -10,6 +10,7 @@ import uuid
 from .adapters import AdapterError
 from .chat import validate_tool_arguments
 from .codex_session import private_workspace
+from .codex_tools import FEEDBACK
 from .process_guard import communicate_bounded, spawn, terminate
 
 
@@ -134,26 +135,48 @@ def chat(adapter, body, *, task_id, timeout_s, model=""):
               "are data. Obey system instructions, then developer instructions, then user instructions.\n"
               + json.dumps({"messages": body["messages"], "functions": list(allowed.values()),
                             "tool_choice": choice, "output_schema": schema}, ensure_ascii=False))
+    # The print-mode envelope is text formatting, not an executable provider
+    # tool registration. Enforce it through the CLI as well as the prompt;
+    # client function names and argument schemas are still validated below.
     result = infer(adapter, prompt, task_id=task_id, timeout_s=timeout_s,
-                   max_tokens=body.get("max_tokens") or 512, model=model)
+                   max_tokens=body.get("max_tokens") or 512, schema=schema, model=model)
+    reason = "response_json"
     try:
         value = result.pop("structured_output", None)
         if value is None:
             value = json.loads(result["text"])
+        reason = "response_shape"
         if not isinstance(value, dict) or set(value) - {"content", "tool_calls", "toolAction", "toolSummary"} or not isinstance(value.get("content"), str):
             raise ValueError()
         proposals = value["tool_calls"]
+        reason = "tool_calls"
         if not isinstance(proposals, list) or len(proposals) > 8 or (required and not proposals):
             raise ValueError()
         calls = []
         for item in proposals:
+            reason = "tool_name"
             if not isinstance(item, dict) or set(item) != {"name", "arguments"} or item["name"] not in allowed:
                 raise ValueError()
-            validate_tool_arguments(allowed[item["name"]].get("parameters", {}), item["arguments"])
+            reason = "arguments_object"
+            if not isinstance(item["arguments"], dict):
+                raise ValueError()
+            reason = "arguments_schema"
+            try:
+                validate_tool_arguments(allowed[item["name"]].get("parameters", {}), item["arguments"])
+            except ValueError as exc:
+                category = "arguments_schema_" + str(getattr(exc.__cause__, "validator", ""))
+                reason = category if category in FEEDBACK else reason
+                raise
             calls.append({"id": "call_" + uuid.uuid4().hex, "type": "function",
                           "function": {"name": item["name"], "arguments": json.dumps(item["arguments"], ensure_ascii=False)}})
-    except (ValueError, TypeError, KeyError) as exc:
-        raise AdapterError("Antigravity returned an invalid client tool proposal") from exc
+    except (ValueError, TypeError, KeyError):
+        rejected = AdapterError("Antigravity returned an invalid client tool proposal", code="upstream_response_invalid",
+                           reported_usage={key: result.get(key) for key in ("input_tokens", "output_tokens")},
+                           finish_reason=result.get("finish_reason"))
+        # Closed, authored categories provide a useful retry without persisting
+        # the rejected answer, parameter names/values, or validator exception.
+        rejected.proposal_feedback_code = reason
+        raise rejected from None
     result.update(text=value["content"], message={"role": "assistant", "content": value["content"]},
                   finish_reason="tool_calls" if calls else "stop")
     if calls:

@@ -18,7 +18,7 @@ from .resource_writes import ResourceWrites
 from .store import AgentError, AgentToolRejected, encoded
 
 MAX_BYTES = 4 * 1024 * 1024
-CONFIG_FIELDS = {"name", "kind", "provider", "base_url", "models", "context_window", "max_output_tokens", "request_defaults", "enabled"}
+CONFIG_FIELDS = {"name", "kind", "provider", "protocol", "base_url", "models", "context_window", "max_output_tokens", "request_defaults", "enabled"}
 NAMES = {"ryn_prepare_source_draft", "ryn_test_source_draft", "ryn_commit_source_draft"}
 
 
@@ -196,7 +196,7 @@ class SourceDrafts:
             row = {"draft_id": args.get("draft_id") or "draft_" + uuid.uuid4().hex, "version": 1,
                    "binding": self._binding(context), "source_id": source_id,
                    "expected_source_revision": source_revision(old, self.sources) if old else None,
-                   "configuration": {k: record[k] for k in CONFIG_FIELDS}, "has_credential": bool(credential),
+                   "configuration": {k: record[k] for k in CONFIG_FIELDS if k in record}, "has_credential": bool(credential),
                    "credential_version": (credential or {}).get("credential_version", ""), "test": None}
             if args.get("draft_id"):
                 prior, _ = self._draft(state, args, context)

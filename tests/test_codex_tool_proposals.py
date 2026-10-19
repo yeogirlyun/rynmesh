@@ -91,9 +91,6 @@ def test_private_workspace_cleanup_does_not_mask_result_when_windows_file_is_loc
 
 @pytest.mark.parametrize("proposal", [
     {"content": "", "tool_calls": [{"name": "exec_command", "arguments": "{}"}]},
-    {"content": "", "tool_calls": [{"name": "probe", "arguments": '{"value":"bad"}'}]},
-    {"content": "", "tool_calls": [{"name": "probe", "arguments": "not json"}]},
-    {"content": "", "tool_calls": [{"name": "probe", "arguments": "[]"}]},
     {"content": "", "tool_calls": []},
     {"content": "", "tool_calls": [], "extra": "untrusted"},
 ])
@@ -162,13 +159,15 @@ def test_reasoning_cache_only_supplements_fresh_known_models(tmp_path, monkeypat
     assert "supported_reasoning_efforts" not in original[0]
 
 
-@pytest.mark.parametrize("arguments, code", [("not json", "arguments_json"), ('{"value":"bad"}', "arguments_schema_enum"), ('{"value":"ok","private-secret":"never-export"}', "arguments_schema_additionalProperties")])
-def test_bad_proposal_feedback_never_copies_argument_values(monkeypatch, arguments, code):
-    from rynmesh.llm_package.codex_tools import FEEDBACK
+@pytest.mark.parametrize("arguments", ["not json", '{"value":"bad"}', '{"value":"ok","private-secret":"never-export"}',
+                                      {"value": "bad"}, [], 1])
+def test_bad_arguments_remain_paired_for_origin_client_feedback(monkeypatch, arguments):
+    from rynmesh.agent_runtime.tool_router import normalize_tool_calls
     monkeypatch.setattr(codex_session, "_native_chat", lambda *args, **kwargs: {"text": json.dumps({"content": "", "tool_calls": [{"name": "probe", "arguments": arguments}]})})
-    with pytest.raises(AdapterError) as rejected:
-        CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}], "tools": [TOOL]}, task_id="feedback", timeout_s=1)
-    actual = rejected.value.proposal_feedback_code
-    # probe uses const rather than enum; both still receive safe schema feedback.
-    assert actual == code or (code == "arguments_schema_enum" and actual == "arguments_schema")
-    assert "never-export" not in FEEDBACK[actual] and "private-secret" not in FEEDBACK[actual]
+    result = CLIAgentAdapter("codex_cli").chat({"messages": [{"role": "user", "content": "hello"}], "tools": [TOOL]}, task_id="feedback", timeout_s=1)
+    raw = result["message"]["tool_calls"]
+    calls = normalize_tool_calls(raw, [TOOL])
+    assert len(calls) == 1 and calls[0]["call_id"] == raw[0]["id"]
+    error = calls[0]["error_result"]
+    assert error["error"] == "agent_tool_arguments_invalid" and error["not_executed"]
+    assert "never-export" not in json.dumps(error) and "private-secret" not in json.dumps(error)

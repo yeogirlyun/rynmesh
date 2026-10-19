@@ -671,7 +671,8 @@ class Browser:
     def _wait_for_navigation_ready(self, ident, task_id, allowed, cancelled, *, timeout=3.0, expect_new_doc=True):
         deadline = time.monotonic() + max(0.0, float(timeout))
         last_state = {"url": "", "title": "", "ready": "loading", "has_body": False, "pre_nav": expect_new_doc}
-        guard = lambda: self._check_guards(allowed, cancelled)
+        def guard():
+            return self._check_guards(allowed, cancelled)
         while True:
             self._check_guards(allowed, cancelled)
             remaining = deadline - time.monotonic()
@@ -819,7 +820,8 @@ class Browser:
 
     def _execute_inner(self, name, args, task_id, resolve, allowed, cancelled, state):
         self._check_guards(allowed, cancelled)
-        guard = lambda: self._check_guards(allowed, cancelled)
+        def guard():
+            return self._check_guards(allowed, cancelled)
         if name == "ryn_browser_open":
             url = self.validate_url(args["url"], resolve)
             session = self.session(task_id, resolve, allowed, cancelled)
@@ -1246,4 +1248,3 @@ class Browser:
             self.cdp(ident, task_id, "DOM.setFileInputFiles", {"nodeId": node["nodeId"], "files": [str(resolve(p)) for p in args["files"]]}, mutating=True)
         tabs = self.sync_tabs(task_id)
         return {"page_id": ident, "action_delivered": action, "tabs": tabs, "next_step": "Read page again to verify the actual effect."}
-

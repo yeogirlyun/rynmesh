@@ -75,6 +75,11 @@ def advance(runtime, count=1):
         runtime.run_once()
 
 
+def instruction_text(messages):
+    """Inspect instruction layers without treating contextual user data as authority."""
+    return "\n".join(message["content"] for message in messages if message["role"] in {"system", "developer"})
+
+
 def approve(runtime, task_id):
     row = runtime.get(task_id)
     return runtime.action(task_id, {"action": "approve", "expected_revision": row["revision"], "approval_id": row["pending_approval"]["id"]})
@@ -266,20 +271,30 @@ def test_cancel_during_write_retains_late_evidence(tmp_path):
     thread.join(3)
     done = runtime.get(row["id"])
     assert done["status"] == "cancelled"
-    assert done["events"][-1]["type"] == "tool_result"
-    assert done["events"][-1]["result"]["shared"]
+    late = next(item for item in reversed(done["events"]) if item["type"] == "tool_result")
+    assert late["result"]["shared"]
+    assert done["events"][-1]["type"] == "run_settled"
 
 
 @pytest.mark.parametrize("response,error", [
-    (assistant(name="shell", args={}), "agent_invalid_tool_call"),
-    (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_invalid_tool_call"),
+    (assistant(name="shell", args={}), "agent_unknown_tool"),
+    (assistant(name="share_service", args={"service_id": "svc1", "shell": "bad"}), "agent_tool_arguments_invalid"),
     (assistant("x" * 41000), "agent_output_limit"),
 ])
 def test_untrusted_model_output_cannot_bypass_tool_boundary(tmp_path, response, error):
     runtime, _, tools, _ = make_runtime(tmp_path, response)
     row = runtime.create({"message": "hi"})
     advance(runtime)
-    assert runtime.get(row["id"])["error"] == error
+    if error == "agent_output_limit":
+        assert runtime.get(row["id"])["error"] == error
+    else:
+        advance(runtime)
+        saved = runtime.store.read()["tasks"][row["id"]]
+        paired = json.loads(saved["messages"][-1]["content"])
+        assert paired == {"error": error, "message": paired["message"], "not_executed": True, "no_mutation": True}
+        assert saved["messages"][-1]["tool_call_id"] == response["message"]["tool_calls"][0]["id"]
+        assert saved.get("receipts", []) == []
+        assert saved["status"] == "queued"  # The model can correct it in the same conversation.
     assert tools.calls == []
 
 
@@ -416,7 +431,7 @@ def test_private_provider_continuation_never_exposes_reasoning_or_reasoning_even
     runtime, model, _, _ = make_runtime(tmp_path, response, assistant("Done."))
     row = runtime.create({"message": "Inspect"})
     advance(runtime, 3)
-    internal_message = model.calls[-1][1][2]
+    internal_message = next(message for message in model.calls[-1][1] if "reasoning_content" in message)
     assert internal_message["reasoning_content"] == "opaque-private-continuation"
     assert "opaque-private-continuation" not in json.dumps(runtime.get(row["id"]))
     assert "opaque-private-continuation" not in json.dumps(runtime.events(row["id"]))

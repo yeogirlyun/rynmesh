@@ -74,7 +74,7 @@ def allowed_actions(row, settings):
     recoverable_read = status == "interrupted" and recoverable_read_in_flight(row) and not uncertain
     active = status in {"queued", "running", "waiting_approval", "waiting_input"}
     mutable = enabled and not uncertain and status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"}
-    possible = {"pause": active, "cancel": status not in {"completed", "failed", "cancelled"},
+    possible = {"pause": active, "stop": active, "cancel": status not in {"completed", "failed", "cancelled"},
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
                 "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},
                 "deny": enabled and status == "waiting_approval" and bool(row["pending_approval"]),
@@ -87,10 +87,11 @@ def allowed_actions(row, settings):
     possible["budget"] = safe_lifecycle and status in {"paused", "completed", "failed"}
     possible["source_credential"] = enabled and not flight and not uncertain and status in {"queued", "waiting_input", "paused", "completed", "failed"}
     possible["model"] = not flight and not uncertain and not row.get("pending_control") and status in {"paused", "completed", "failed", "waiting_input", "waiting_approval", "interrupted"}
+    possible["edit_message"] = enabled and not uncertain and status != "interrupted" and not row.get("pending_user_messages")
     if row.get("archived"):
         possible = {action: allowed if action in {"rename", "restore", "delete"} else False for action, allowed in possible.items()}
-    return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "cancel"},
-                     "reason": None if allowed else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "cancel"} else "agent_invalid_transition"}
+    return {action: {"enabled": bool(allowed), "requires_control_revision": action not in {"pause", "stop", "cancel"},
+                     "reason": None if allowed else "agent_operation_unresolved" if uncertain else "agent_disabled" if not enabled and action not in {"pause", "stop", "cancel"} else "agent_invalid_transition"}
             for action, allowed in possible.items()}
 
 
@@ -106,7 +107,7 @@ def close_queue(row, emit, reason, *, keep_flight=True):
             continue
         result = {"error": reason, "not_executed": True, "no_mutation": True}
         row["messages"].append({"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(),
-                                "context_epoch": call.get("context_epoch", row.get("context_epoch", 0))})
+                                "context_epoch": call.get("context_epoch", row.get("context_epoch", 0)), "is_error": True})
         emit(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result,
              internal=call.get("internal", False), context_epoch=call.get("context_epoch", row.get("context_epoch", 0)))
     row["queue"] = retained
@@ -120,14 +121,19 @@ def settle(row, emit):
     if control["kind"] != "pause":
         row.pop("verification", None)
         close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
+    if control["kind"] == "edit_message":
+        from .conversation import rewrite
+        rewrite(row, control, emit)
+        row.pop("pending_control", None)
+        return
     row["messages"].extend(row.pop("pending_user_messages", []))
     if control["kind"] in {"steer", "scope", "permissions"}:
         row["status"] = "paused" if control.get("remain_paused") else "queued"
         row["error"] = None
         row["model_retry_count"] = 0
         row.pop("model_retry_authority", None)
-    if control["kind"] in {"pause", "cancel"}:
-        stop_type = "paused" if control["kind"] == "pause" else "cancelled"
+    if control["kind"] in {"pause", "stop", "cancel"}:
+        stop_type = "paused" if control["kind"] in {"pause", "stop"} else "cancelled"
         stopped = next((item for item in reversed(row["events"]) if item["type"] == stop_type), {})
         if stopped.get("operation_in_flight") is True:
             # The stop intent precedes its final accounting. Persist the settled

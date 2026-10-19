@@ -29,6 +29,13 @@ it("restores autonomous execution without discarding the cached model", () => {
   expect(readAgentWorkspace()).toEqual({ settings: autonomous, models: [model], model: model.id });
 });
 
+it("preserves automatic context mode and public model capacity without persisting a stale policy", () => {
+  const automatic: AgentSettings = { ...settings, max_context_chars: null };
+  const capacity: AgentModel = { ...model, context_window: 1048576, context_window_known: true, context_window_basis: "provider_model_metadata" };
+  writeAgentWorkspace(automatic, [capacity], model.id);
+  expect(readAgentWorkspace()).toEqual({ settings: automatic, models: [capacity], model: model.id });
+});
+
 it("isolates configuration and conversation memory by node endpoint", () => {
   vi.stubEnv("VITE_RYN_NODE_BASE_URL", "https://node-a/api/local");
   writeAgentWorkspace(settings, [model], model.id);

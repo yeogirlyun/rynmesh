@@ -12,7 +12,8 @@ from ..file_transactions import file_transaction
 def client_tools_contract(adapter, capabilities=()):
     """Declared bridge support; never run capability discovery or model inference."""
     return (adapter != "claude_cli" and "api-text-only" not in capabilities
-            and (adapter in {"openai_compatible", "ollama", "llama_cpp", "codex_cli", "antigravity_cli"}
+            and (adapter in {"openai_compatible", "openai_chat", "openai_responses", "anthropic_messages",
+                             "ollama", "llama_cpp", "codex_cli", "antigravity_cli"}
                  or "client-tools" in capabilities))
 
 

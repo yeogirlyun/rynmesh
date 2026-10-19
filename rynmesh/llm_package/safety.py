@@ -13,7 +13,9 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-MAX_REQUEST = 1024 * 1024
+# Bounded transport capacity for declared windows up to 2M tokens, including
+# UTF-8 / JSON framing. Model-specific context and output limits still apply.
+MAX_REQUEST = 16 * 1024 * 1024
 MAX_OUTPUT = 8 * 1024 * 1024
 MAX_TEMP = 64 * 1024 * 1024
 MIN_FREE_DISK = 512 * 1024 * 1024

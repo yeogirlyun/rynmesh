@@ -126,7 +126,10 @@ class AppTools:
                 },
             )
         except AppError as exc:
-            if str(exc) == "apps_response_unconfirmed":
+            # These failures leave the consumer intent pending in NodeApps.
+            # A provider may already have committed; never claim no mutation
+            # or discard the original operation's reconciliation identity.
+            if str(exc) in {"apps_response_unconfirmed", "apps_response_invalid", "apps_store_unavailable"}:
                 from ..agent_runtime.store import AgentError
 
                 raise AgentError("agent_write_outcome_unknown") from None
@@ -174,7 +177,12 @@ class AppTools:
             return {"outcome": "unknown"}
         try:
             receipt = self._receipt(args, operation_id)
-        except (AppError, ValueError, OSError):
+            if receipt:
+                command = {"app": args["app"], "action": args["action"], "arguments": args["arguments"],
+                           "operation_id": operation_id, "preview_hash": preview_for(
+                               args["reviewed_context"], args["action"], args["arguments"])["preview_hash"]}
+                receipt = self.service.confirm_receipt(args.get("provider_peer", ""), command, receipt)
+        except (AppError, ValueError, OSError, TypeError, KeyError, AttributeError):
             return {"outcome": "unknown"}
         return (
             {

@@ -34,6 +34,8 @@ def project(messages, previous=None):
                    for key, value in references.items())):
         raise AgentError("agent_checkpoint_references_invalid")
     projected = copy.deepcopy(messages)
+    for message in projected:
+        message.pop("provider_state", None)
     names = {call["id"]: call["function"]["name"] for message in projected
              for call in message.get("tool_calls", [])}
 
@@ -58,9 +60,11 @@ def project(messages, previous=None):
             return value
         try:
             parsed = json.loads(value)
-        except (ValueError, TypeError):
+            return encoded(replace(parsed)).decode()
+        except AgentError:
+            raise  # Reference limits remain hard admission failures.
+        except (ValueError, TypeError, RecursionError):
             return value
-        return encoded(replace(parsed)).decode()
 
     for message in projected:
         if message.get("role") == "tool" and names.get(message.get("tool_call_id")) in RESOURCE_TOOLS:

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   Download,
   File,
@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 import { nasRequest, type NasEntry, type NasSource } from "../domain/nas";
 import { Modal } from "./components";
+import { type OfficePreviewLoader } from "../domain/agentFilePreview";
+import { OfficePreview } from "./OfficePreview";
+import type { PdfPreviewLoader } from "./PdfPreview";
+
+const PdfPreview = lazy(() => import("./PdfPreview").then(module => ({ default: module.PdfPreview })));
 
 export const isNasImage = (entry: NasEntry) =>
   !entry.directory && /\.(jpe?g|png|webp)$/i.test(entry.name);
@@ -115,6 +120,8 @@ export function NasPreview({
   busy,
   readText,
   loadImage,
+  loadDocument,
+  loadPdf,
   readOnly = false,
 }: {
   source: Pick<NasSource, "id" | "name" | "allow_ai">;
@@ -126,11 +133,17 @@ export function NasPreview({
   readText?: (signal: AbortSignal) => Promise<string>;
   /** Supplies image bytes from another store; SVG is then drawn as an inert image. */
   loadImage?: ImageLoader;
+  /** Receipt-bound structured document content; no remote Office viewer is involved. */
+  loadDocument?: OfficePreviewLoader;
+  /** Original PDF bytes, bound to the selected file's receipt and version. */
+  loadPdf?: PdfPreviewLoader;
   readOnly?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const picture = loadImage ? isPreviewImage(entry) : isNasImage(entry);
-  const textFile = !picture && isNasText(entry);
+  const pdfFile = !picture && !!loadPdf && /\.pdf$/i.test(entry.name);
+  const documentFile = !picture && !pdfFile && !!loadDocument;
+  const textFile = !picture && !pdfFile && !documentFile && (!!readText || isNasText(entry));
   const {
     url,
     error: imageError,
@@ -266,7 +279,9 @@ export function NasPreview({
           {imageView}
           {controls}
         </div>
-      ) : textFile ? (
+      ) : pdfFile && loadPdf ? <Suspense fallback={<p className="nas-preview-message" role="status">{t("personal.loadingDocument")}</p>}>
+        <PdfPreview load={loadPdf} name={entry.name} />
+      </Suspense> : documentFile && loadDocument ? <OfficePreview load={loadDocument} /> : textFile ? (
         <div className="nas-text-frame">
           <div className="nas-text-label">
             <FileText size={14} />

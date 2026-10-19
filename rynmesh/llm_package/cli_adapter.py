@@ -17,7 +17,7 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .adapters import AdapterError
+from .adapters import AdapterError, actual_usage
 from .chat import validate_chat
 from .process_guard import communicate_bounded, spawn, terminate
 
@@ -234,10 +234,9 @@ class CLIAgentAdapter:
                 raise AdapterError("Claude Code returned invalid JSON") from exc
             if payload.get("is_error") or not isinstance(answer, str):
                 raise AdapterError("Claude Code did not return a text answer")
-            input_tokens = int(usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("output_tokens") or 0)
+            counts = actual_usage(usage)
             return {"text": answer, "message": {"role": "assistant", "content": answer},
-                    "input_tokens": max(0, input_tokens), "output_tokens": max(0, output_tokens),
+                    **counts, "reported_usage": counts,
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "finish_reason": "stop"}
 
@@ -256,9 +255,14 @@ class CLIAgentAdapter:
                 self._cancelled.discard(task_id)
                 raise AdapterError("task_cancelled")
         body = validate_chat(body)
+        for message in body["messages"]:
+            # Native API continuation belongs only to its bound HTTP adapter.
+            # CLI sessions must never stringify it into their prompt envelope.
+            message.pop("provider_state", None)
+            message.pop("is_error", None)
         if "reasoning_effort" in body and self.kind != "codex_cli":
             raise AdapterError("CLI API mode does not support reasoning_effort for this CLI")
-        if any(isinstance(message.get("content"), list) for message in body["messages"]):
+        if self.kind != "codex_cli" and any(isinstance(message.get("content"), list) for message in body["messages"]):
             raise AdapterError("CLI API mode does not support image input")
         if self.kind in {"codex_cli", "antigravity_cli"}:
             if self.kind == "codex_cli":

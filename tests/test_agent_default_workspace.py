@@ -1,12 +1,12 @@
 from pathlib import Path
 
 import pytest
+from test_agent_runtime import advance, assistant, make_runtime
 
-from test_agent_runtime import make_runtime, assistant, advance
 from rynmesh.agent_runtime.local_tools import LocalTools
 from rynmesh.agent_runtime.operation_ledger import OperationLedger
-from rynmesh.agent_runtime.store import AgentError
 from rynmesh.agent_runtime.prompt import authority
+from rynmesh.agent_runtime.store import AgentError
 
 
 def test_fresh_task_can_create_and_read_file_without_directory_setup(tmp_path):

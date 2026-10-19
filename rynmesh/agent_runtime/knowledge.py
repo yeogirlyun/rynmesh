@@ -7,13 +7,14 @@ import re
 from .store import AgentError, encoded
 
 SKILLS = {
-    "project-development": {"id": "project-development", "version": "1", "title": "Project development",
+    "project-development": {"id": "project-development", "version": "2", "title": "Project development",
         "description": "Load project instructions, locate code, make focused changes and run the project's tests.",
-        "content": "Start with project entry instructions and manifests. Read nested AGENTS.md before editing its directory. "
-                   "Inspect existing Git changes; preserve them. Narrow searches to source/test directories, read relevant ranges once. "
+        "content": "Use the project inspection's layout and included entry pages; read only missing guidance and relevant source/test/data ranges together. "
+                   "Read applicable nested AGENTS.md before edits. Preserve existing Git changes. Reuse unchanged observations and successful checks. "
                    "Use the actual declared build/test commands and mandatory isolation runner; do not start production services or migrations. "
                    "Make the smallest coherent change, retain existing checks, then run focused tests. Distinguish test failures from "
-                   "missing dependencies. Review the final diff and report actual results, changed files and remaining limits."},
+                   "missing dependencies. Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty. "
+                   "Review the final diff and report actual results, changed files and remaining limits."},
     "spreadsheet-work": {"id": "spreadsheet-work", "version": "1", "title": "Spreadsheet processing",
         "description": "Inspect, process and verify spreadsheet files using installed libraries.",
         "content": "Inspect sheets, headers, types and formulas before transforming data. Discover installed spreadsheet libraries "

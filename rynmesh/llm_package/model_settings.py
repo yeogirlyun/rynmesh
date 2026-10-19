@@ -8,10 +8,28 @@ import uuid
 
 FIELDS = {"context_window", "max_output_tokens", "request_defaults", "max_concurrent", "requests_per_day", "share_scope"}
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
+FALLBACK_CONTEXT_WINDOW = 32768
 
 
-def defaults(record):
-    return {"context_window": record.get("context_window", 32768),
+def context_metadata(record, model=None, *, overrides=True):
+    """Separate owner limits and authenticated discovery from an unknown fallback."""
+    model = model if model is not None else next(iter(record.get("models", [])), "")
+    manual = record.get("model_settings", {}).get(model, {}).get("overrides", {}) if overrides else {}
+    if "context_window" in manual:
+        return {"context_window": manual["context_window"], "context_window_basis": "model_override", "context_window_known": True}
+    if record.get("context_window_mode") != "auto" and type(record.get("context_window")) is int:
+        return {"context_window": record["context_window"],
+                "context_window_basis": "source_configuration" if record.get("context_window_mode") else "legacy_source_configuration",
+                "context_window_known": True}
+    metadata = record.get("model_metadata", {}).get(model, {})
+    window = metadata.get("context_window")
+    if type(window) is int and 256 <= window <= 2000000:
+        return {"context_window": window, "context_window_basis": "provider_model_metadata", "context_window_known": True}
+    return {"context_window": FALLBACK_CONTEXT_WINDOW, "context_window_basis": "unknown_fallback", "context_window_known": False}
+
+
+def defaults(record, model=None):
+    return {"context_window": context_metadata(record, model, overrides=False)["context_window"],
             "max_output_tokens": record.get("max_output_tokens", 4096),
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
             "max_concurrent": 1, "requests_per_day": None, "share_scope": "personal_space"}
@@ -47,19 +65,20 @@ def validate(values):
 def effective(record, model):
     row = record.get("model_settings", {}).get(model, {})
     overrides = row.get("overrides", {})
-    return {**defaults(record), **copy.deepcopy(overrides)}
+    return {**defaults(record, model), **copy.deepcopy(overrides)}
 
 
 def reconcile(record, old):
     """Server-owned revisions; adding a sibling does not invalidate this model."""
     settings = {}
     source_fields = ("kind", "provider", "base_url", "api_key", "enabled")
-    common_same = all(record.get(k) == old.get(k) for k in source_fields)
+    common_same = (all(record.get(k) == old.get(k) for k in source_fields)
+                   and record.get("protocol", "openai_chat") == old.get("protocol", "openai_chat"))
     for model in record["models"]:
         prior = old.get("model_settings", {}).get(model, {})
         proposed = record.get("model_settings", {}).get(model, prior)
         overrides = validate(proposed.get("overrides", {}))
-        values = {**defaults(record), **overrides}
+        values = {**defaults(record, model), **overrides}
         # Existing source defaults may contain vendor-specific historical values.
         # Migration must not make the node unloadable; new per-model overrides
         # are strictly validated above and by the owner configuration endpoint.
@@ -80,7 +99,7 @@ def reconcile(record, old):
 
 def public(record, model):
     row = record.get("model_settings", {}).get(model, {})
-    return {**copy.deepcopy(row), "effective": effective(record, model),
+    return {**copy.deepcopy(row), "effective": effective(record, model), **context_metadata(record, model),
             "inherited_fields": sorted(FIELDS - set(row.get("overrides", {}))),
             "evidence": {key: copy.deepcopy(row.get("evidence", {}).get(key, {"status": "unknown", "checked_at": None}))
                          for key in ("connection", "model_exists", "tools")}}
@@ -89,6 +108,7 @@ def public(record, model):
 def fingerprint(record, model):
     # Internal only: never expose hashes of secret-bearing source snapshots.
     value = {key: record.get(key) for key in ("kind", "provider", "base_url", "api_key", "enabled")}
+    value["protocol"] = record.get("protocol", "openai_chat")
     value.update(model=model, configuration=effective(record, model),
                  rule_revision=record.get("model_settings", {}).get(model, {}).get("rule_revision"))
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()

@@ -42,6 +42,7 @@ def test_selected_model_reaches_process_arguments(monkeypatch, model):
 
 def test_discovery_is_cached_and_returns_independent_rows(monkeypatch):
     from types import SimpleNamespace
+
     from rynmesh.llm_package import cli_models
     cli_models._cache.clear()
     commands = []
@@ -121,3 +122,42 @@ def test_plain_conversations_do_not_require_tool_proposal_json(monkeypatch, answ
     assert seen[0][0]["messages"] == messages
     assert seen[0][1]["model"] == "gemini-3.8-flash-medium"
     assert "output_schema" not in seen[0][0]
+
+
+def test_client_protocol_schema_reaches_actual_spawn_and_structured_output_is_consumed(monkeypatch):
+    from types import SimpleNamespace
+    commands = []
+    adapter = CLIAgentAdapter("antigravity_cli")
+    monkeypatch.setattr(adapter, "_command_path", lambda: "pinned-agy")
+    monkeypatch.setattr(session, "spawn", lambda args, **kwargs: commands.append(args) or SimpleNamespace(returncode=0))
+    monkeypatch.setattr(session, "terminate", lambda _: None)
+    structured = {"content": "Requested inspection.", "tool_calls": [{"name": "probe", "arguments": {"value": "ok"}}]}
+    monkeypatch.setattr(session, "communicate_bounded", lambda *args, **kwargs: json.dumps({
+        "status": "SUCCESS", "response": "Display text, not protocol JSON.", "structured_output": structured,
+        "usage": {"input_tokens": 19, "output_tokens": 7}}))
+    tool = {"type": "function", "function": {"name": "probe", "parameters": {
+        "type": "object", "properties": {"value": {"const": "ok"}}, "required": ["value"]}}}
+    result = adapter.chat({"messages": [{"role": "user", "content": "Inspect"}], "tools": [tool], "tool_choice": "required"},
+                          task_id="schema-spawn", timeout_s=1, model="gemini-4-argon-low")
+    args = commands[0]
+    schema = json.loads(args[args.index("--json-schema") + 1])
+    assert args[0] == "pinned-agy" and args[args.index("--model") + 1] == "gemini-4-argon-low"
+    assert args[args.index("--output-format") + 1] == "json"
+    assert "--disable-slash-commands" in args and "--dangerously-skip-permissions" not in args
+    assert schema["type"] == "object" and schema["additionalProperties"] is False
+    assert schema["properties"]["tool_calls"]["minItems"] == 1
+    assert schema["properties"]["tool_calls"]["items"]["properties"]["name"]["enum"] == ["probe"]
+    assert result["text"] == "Requested inspection." and result["finish_reason"] == "tool_calls"
+    assert result["input_tokens"] == 19 and result["output_tokens"] == 7
+    assert result["message"]["tool_calls"][0]["function"] == {"name": "probe", "arguments": '{"value": "ok"}'}
+
+
+def test_invalid_structured_output_cannot_fall_back_to_valid_display_text(monkeypatch):
+    monkeypatch.setattr(session, "infer", lambda *args, **kwargs: {
+        "text": json.dumps({"content": "ok", "tool_calls": []}),
+        "structured_output": {"content": "", "tool_calls": [{"name": "run_shell_command", "arguments": {}}]}})
+    tool = {"type": "function", "function": {"name": "probe", "parameters": {"type": "object"}}}
+    with pytest.raises(AdapterError) as info:
+        CLIAgentAdapter("antigravity_cli").chat({"messages": [{"role": "user", "content": "Inspect"}], "tools": [tool]},
+                                               task_id="strict-structured", timeout_s=1)
+    assert info.value.proposal_feedback_code == "tool_name"

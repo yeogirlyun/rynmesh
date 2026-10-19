@@ -9,7 +9,7 @@ from test_agent_peer_binding import paired  # noqa: F401
 from test_agent_peer_scope import consumer, create_scoped  # noqa: F401
 from test_agent_resources import file_ref, invoke, resources  # noqa: F401
 from test_agent_resources_http import http_resources  # noqa: F401
-from test_agent_runtime import assistant, make_runtime
+from test_agent_runtime import assistant, instruction_text, make_runtime
 from test_agent_runtime_model_switch import body
 from test_native_model_policy import native  # noqa: F401
 
@@ -23,7 +23,7 @@ from rynmesh.services import peer_box
 
 
 def control(messages):
-    system = next(m["content"] for m in messages if m["role"] == "system")
+    system = instruction_text(messages)
     state = json.loads(system.split("\nServer control state: ", 1)[1].split("\n", 1)[0])
     assert GUIDANCE in system
     assert len(encoded(state["inference_context"])) + len(GUIDANCE.encode()) < 1000
@@ -61,8 +61,8 @@ def test_peer_request_carries_read_body_and_facts_then_switch_removes_current_gr
                      "resource_grants_recorded": 1, "resources_with_matching_egress": 1,
                      "historical_egress": "not_established"}
     assert json.loads(next(m["content"] for m in messages if m["role"] == "tool"))["text"] == result["text"]
-    assert "read-only" in messages[0]["content"]
-    assert result["text"] not in messages[0]["content"]
+    assert "read-only" in instruction_text(messages)
+    assert result["text"] not in instruction_text(messages)
     before = runtime.store.read()["tasks"][task_id]
     checker_before = checker_messages(before, context_limit=12000)
     before_payload = expand(json.loads(checker_before[1]["content"]))

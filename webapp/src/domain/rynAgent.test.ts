@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { agentToolResultState, agentTurnToolCount, canUseAgentAction, canUseAgentModel, isAgentLateToolResult, mergeAgentTaskSnapshot, mergeUnchangedTask, pendingAgentText, type AgentTask } from "./rynAgent";
+import { agentMessageModelID, agentToolResultState, agentTurnToolCount, canUseAgentAction, canUseAgentModel, isAgentLateToolResult, mergeAgentTaskSnapshot, mergeUnchangedTask, pendingAgentText, type AgentTask } from "./rynAgent";
 
 it("requires a supported assistant protocol and current availability, independently of diagnostic probes", () => {
   const ready = { id: "model", name: "Model", source: "peer", available: true, agent_supported: true };
@@ -30,6 +30,24 @@ it("trusts only explicit allowed actions with their control version", () => {
   expect(canUseAgentAction(task, "cancel")).toBe(true);
   expect(canUseAgentAction({ ...task, control_revision: undefined }, "cancel")).toBe(false);
   expect(canUseAgentAction(task, "resume", true)).toBe(false);
+});
+
+it("retires discarded stream text and tool counts when editing a previous message", () => {
+  const task: Pick<AgentTask, "events"> = { events: [
+    { seq: 1, type: "model_started", at: 1, step: 1 }, { seq: 2, type: "text_delta", at: 1, text: "Discarded reply" },
+    { seq: 3, type: "tool_result", at: 1, result: { ok: true } }, { seq: 4, type: "message_edited", at: 2 },
+  ] };
+  expect(pendingAgentText(task)).toBe("");
+  expect(agentTurnToolCount(task)).toBe(0);
+  task.events.push({ seq: 5, type: "model_started", at: 3, step: 1 }, { seq: 6, type: "text_delta", at: 3, text: "New reply" });
+  expect(pendingAgentText(task)).toBe("New reply");
+});
+
+it("preserves the original reply model label when an edit rebases retained inference context", () => {
+  const task: Pick<AgentTask, "model_id" | "events"> = { model_id: "new-model", events: [{ seq: 1, type: "model_changed", at: 1, context_epoch: 1,
+    previous: { model_id: "original-model", context_epoch: 0 }, destination: { catalog_model_id: "new-model" } }] };
+  expect(agentMessageModelID(task, { role: "assistant", content: "Earlier reply", context_epoch: 2, original_context_epoch: 0 })).toBe("original-model");
+  expect(agentMessageModelID(task, { role: "assistant", content: "New reply", context_epoch: 2 })).toBe("new-model");
 });
 
 it("uses only the current streamed reply and replaces it when the complete assistant message arrives", () => {

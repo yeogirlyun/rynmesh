@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import queue
 import tempfile
@@ -35,8 +36,14 @@ from rynmesh.peer_directory import FreshnessPolicy
 from rynmesh.store import RynmeshStore
 
 from . import codex_threads, runtime_native
-from .adapters import RUNTIME_ERROR_CODES, AdapterError, LLMAdapter, adapter_from_manifest
-from .chat import validate_chat
+from .adapters import (
+    RUNTIME_ERROR_CODES,
+    AdapterError,
+    LLMAdapter,
+    actual_usage,
+    adapter_from_manifest,
+)
+from .chat import reported_token_count, validate_chat
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
@@ -226,9 +233,26 @@ def _open_provider_response(
     state = str(result.get("state") or "")
     if state not in TERMINAL_STATES:
         raise TaskProtocolError("LLM response state is not terminal")
-    for name in ("input_tokens", "output_tokens", "duration_ms"):
-        if name in result and int(result[name]) < 0:
+    usage_source = result.get("reported_usage") if "reported_usage" in result else result
+    usage_source = usage_source if isinstance(usage_source, dict) else {}
+    for name in ("input_tokens", "output_tokens"):
+        if usage_source.get(name) is not None and reported_token_count(usage_source[name]) is None:
             raise TaskProtocolError(f"LLM response {name} is invalid")
+    if "duration_ms" in result and (type(result["duration_ms"]) is not int or result["duration_ms"] < 0):
+        raise TaskProtocolError("LLM response duration_ms is invalid")
+    amount = result.get("amount")
+    if amount is not None and (type(amount) not in (int, float) or not math.isfinite(amount) or amount < 0):
+        raise TaskProtocolError("LLM response amount is invalid")
+    if state == "succeeded":
+        counts = actual_usage(result)
+        complete = all(value is not None for value in counts.values())
+        result.update(**counts, reported_usage=counts, usage_complete=complete)
+        if not complete:
+            own_request = outer.get("from_peer_id") == recipient_peer_id
+            result.update(amount=0.0 if own_request else None,
+                          billing_status="own_request" if own_request else "pending_usage",
+                          billing_basis="own_request" if own_request else "pending_usage",
+                          billing_pending_usage=not own_request)
     return outer, result
 
 
@@ -342,9 +366,23 @@ class ProviderService:
             return []
         from .cli_models import cached_models, list_models
         try:
+            if not cached_only and callable(getattr(self.adapter, "current_models", None)):
+                return self.adapter.current_models()
             return (cached_models if cached_only else list_models)(self.manifest.adapter, self.adapter._command_path())
         except (AdapterError, OSError, AttributeError):
             return []
+
+    def context_window_for_model(self, model=""):
+        if self.manifest.adapter in {"codex_cli", "antigravity_cli"}:
+            from .cli_models import context_metadata
+            current = getattr(self.adapter, "context_metadata_for_model", None)
+            if callable(current):
+                return current(model)["context_window"]
+            models = self.cli_models()
+            if not models or (model and not any(item.get("id") == model for item in models)):
+                raise AdapterError("cli_model_unavailable", code="model_configuration_changed")
+            return context_metadata(models, model)["context_window"]
+        return self.manifest.context_window
 
     def public_status(self, *, benchmark: bool = False, cached_cli_models: bool = False) -> dict[str, Any]:
         health = self.adapter.health()
@@ -389,13 +427,17 @@ class ProviderService:
             result["service"]["capabilities"] = [c for c in result["service"]["capabilities"] if c != "client-tools"]
         if self.manifest.adapter in {"codex_cli", "antigravity_cli"}:
             evidence = getattr(self.store, "llm_tool_capabilities", None)
+            binding_for_model = getattr(self.adapter, "cached_binding_for_model" if cached_cli_models else "binding_for_model", None)
             result["cli_models"] = [{**row,
                 "tool_support": evidence.support(self.manifest, row["id"]) if evidence else "unknown",
-                **({"model_binding": self.adapter.binding_for_model(row["id"])}
-                   if callable(getattr(self.adapter, "binding_for_model", None)) else {})}
+                **({"model_binding": binding_for_model(row["id"])} if callable(binding_for_model) else {})}
                 for row in self.cli_models(cached_only=cached_cli_models)]
-        if getattr(self.adapter, "model_binding", None):
-            result["model_binding"] = self.adapter.model_binding
+        if cached_cli_models and self.manifest.adapter in {"codex_cli", "antigravity_cli"}:
+            binding = binding_for_model("") if callable(binding_for_model) else None
+        else:
+            binding = getattr(self.adapter, "model_binding", None)
+        if binding:
+            result["model_binding"] = binding
         if "explicit-friends" in self.manifest.capabilities:
             result["access_policy"] = "explicit_friends"
         evidence = getattr(self.store, "llm_tool_capabilities", None)
@@ -445,7 +487,7 @@ class ProviderService:
         if not explicit_friends and space is not None and space.enforces_ai() and not space.allows_ai(str(outer["from_peer_id"])):
             raise TaskProtocolError("This device is not allowed to use this personal-space AI service.")
         task_id = str(outer["task_id"])
-        if len(json.dumps(body).encode()) > MAX_REQUEST:
+        if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_REQUEST:
             raise TaskProtocolError("request_too_large")
         if "conversation_id" in body:
             raise TaskProtocolError("persistent_cli_conversations_removed")
@@ -464,7 +506,7 @@ class ProviderService:
         max_tokens = min(int(body.get("max_tokens") or 64), self.manifest.max_output_tokens)
         if max_tokens < 1:
             raise TaskProtocolError("max_tokens is invalid")
-        if _estimate_input_tokens(prompt) + max_tokens > self.manifest.context_window:
+        if _estimate_input_tokens(prompt) + max_tokens > self.context_window_for_model(body.get("cli_model", "")):
             raise TaskProtocolError("estimated context window exceeded")
         reply_pub = str(body.get("reply_messaging_pub") or "")
         _validate_messaging_pub(reply_pub)
@@ -660,21 +702,22 @@ class ProviderService:
             # prompts routinely tokenize 3-4x denser than the chars/4 guess.
             # The hold is a price ceiling the consumer consented to: bill at
             # most that ceiling instead of failing after inference already ran.
-            amount = 0.0 if own_request else min(
-                _price(self.manifest, int(result["input_tokens"]), int(result["output_tokens"])),
-                max_amount,
-            )
+            counts = actual_usage(result)
+            usage_complete = all(value is not None for value in counts.values())
+            amount = (0.0 if own_request else min(_price(self.manifest, counts["input_tokens"], counts["output_tokens"]), max_amount)
+                      if usage_complete else None)
+            billing = {"usage_complete": usage_complete,
+                       "billing_status": "own_request" if own_request else "priced" if usage_complete else "pending_usage",
+                       "billing_basis": "own_request" if own_request else "reported_usage" if usage_complete else "pending_usage"}
             response_body = {
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
                 **({"cli_model": cli_model} if cli_model else {}),
-                "input_tokens": int(result["input_tokens"]), "output_tokens": int(result["output_tokens"]),
+                **counts, **billing, "reported_usage": counts,
                 "duration_ms": duration_ms, "amount": amount, "currency": "DEV_TASK_BALANCE",
             }
             if chat:
                 response_body.update(message=result["message"], finish_reason=result["finish_reason"])
-            if isinstance(result.get("reported_usage"), dict):
-                response_body["reported_usage"] = {k: result["reported_usage"].get(k) for k in ("input_tokens", "output_tokens")}
             encrypted = seal_task(
                 body=response_body, task_id=task_id, kind="llm_response",
                 sender_peer_id=self.store.peer_id, recipient_peer_id=str(outer["from_peer_id"]),
@@ -687,7 +730,7 @@ class ProviderService:
                 task_id=task_id, state="succeeded",
                 metadata={**metadata, "input_tokens": response_body["input_tokens"],
                           "output_tokens": response_body["output_tokens"], "duration_ms": duration_ms,
-                          "amount": amount}, encrypted_response=encrypted,
+                          "amount": amount, "reported_usage": counts, **billing}, encrypted_response=encrypted,
             )
             return encrypted
         except Exception as exc:
@@ -858,12 +901,14 @@ class ProviderService:
         if payload.get("settlement_id") != "settle:" + task_id:
             raise TaskProtocolError("settlement id mismatch")
         final = record["history"][-1]
+        if final.get("amount") is None or final.get("billing_status") == "pending_usage":
+            raise TaskProtocolError("settlement usage is unknown")
         amount = float(payload.get("amount") or 0)
         if amount != float(final.get("amount") or 0):
             raise TaskProtocolError("settlement amount mismatch")
+        counts = actual_usage(final)
         earning = self.balance.earn(
-            task_id=task_id, amount=amount, input_tokens=int(final.get("input_tokens") or 0),
-            output_tokens=int(final.get("output_tokens") or 0), duration_ms=int(final.get("duration_ms") or 0),
+            task_id=task_id, amount=amount, **counts, duration_ms=int(final.get("duration_ms") or 0),
             service_id=self.manifest.package_id, consumer_peer_id=envelope.public_key,
         )
         self.task_store.purge_encrypted_response(task_id)
@@ -1031,15 +1076,36 @@ def _recover_consumer_orders(
             continue
         history = list(record.get("history") or [])
         pending = next(
-            (dict(item) for item in reversed(history) if item.get("settlement_pending")),
+            (dict(item) for item in reversed(history) if item.get("settlement_pending") or item.get("billing_pending_usage")),
             None,
         )
+        pending_counts = actual_usage(pending)
+        pending_usage = pending and (pending.get("billing_pending_usage") or pending.get("amount") is None
+            or (pending.get("billing_basis") != "own_request" and any(
+                value is None for value in pending_counts.values())))
+        if pending_usage:
+            # A successful model result survives independently of unavailable
+            # price evidence. Keep the original quote held, without a charge,
+            # refund, retry or provider settlement during recovery.
+            counts = pending_counts
+            facts = {**pending, **counts, "usage_complete": all(value is not None for value in counts.values()),
+                     "reported_usage": counts,
+                     "billing_pending_usage": True, "amount": None,
+                     "billing_status": "pending_usage", "billing_basis": "pending_usage"}
+            if state not in TERMINAL_STATES:
+                consumer_orders.transition(task_id=task_id, state="succeeded",
+                    metadata={key: value for key, value in facts.items()
+                              if key not in {"at", "checkpoint", "state", "settlement_pending"}})
+            elif state == "succeeded" and not pending.get("billing_pending_usage"):
+                consumer_orders.checkpoint(task_id=task_id,
+                    metadata={key: value for key, value in facts.items()
+                              if key not in {"at", "checkpoint", "state", "settlement_pending"}})
+            continue
         if state not in TERMINAL_STATES and pending:
             bindings = dict(record.get("bindings") or {})
             balance.settle(
                 task_id=task_id, amount=float(pending.get("amount") or 0),
-                input_tokens=int(pending.get("input_tokens") or 0),
-                output_tokens=int(pending.get("output_tokens") or 0),
+                **pending_counts,
                 duration_ms=int(pending.get("duration_ms") or 0),
                 service_id=str(pending.get("service_id") or bindings.get("service_id") or ""),
                 provider_peer_id=str(
@@ -1295,7 +1361,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                             model=model, base_url=record["base_url"], allow_non_loopback=record["kind"] == "api",
                             context_window=policy["context_window"], max_output_tokens=policy["max_output_tokens"], max_concurrent=policy["max_concurrent"],
                             timeout_seconds=180, capabilities=["text-generation", "streaming", "client-tools",
-                                "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only"])
+                                "explicit-friends" if policy["share_scope"] == "friends" else "personal-space-only",
+                                *(["protocol:" + record["protocol"]] if record.get("protocol") in
+                                  {"openai_responses", "anthropic_messages"} else [])])
                         adapter = source_store.adapter(record, model)
                         if model in record.get("model_settings", {}):
                             adapter = ModelDispatchAdapter(source_store, record, model, adapter)
@@ -1566,7 +1634,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     agent_registry_cache = {}
     agent_registry_lock = threading.Lock()
 
-    def collect_services(network_id: str, *, cache_registry=False) -> list[dict[str, Any]]:
+    def collect_services(network_id: str, *, cache_registry=False, local_only=False) -> list[dict[str, Any]]:
         services = []
         current = active_manager()
         if current is not None:
@@ -1585,6 +1653,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             status = local_service.public_status(cached_cli_models=cache_registry)
             services.insert(0, {**status, "peer_id": store.peer_id, "node_name": store.node_name,
                                 "local_only": True, "online": bool(local_service.adapter.health().get("ok"))})
+        if local_only:
+            return services
         access_state = getattr(app.state, "ai_access", None)
         if access_state and access_state.catalog:
             services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
@@ -2126,7 +2196,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if space_shared and (state.get("membership") != "active" or state.get("ai_access") != "space"):
                     raise HTTPException(409, "请先加入个人空间并开启 AI 访问，再分享来源")
                 old = source_store.read().get(record["id"], {})
-                if all(record.get(k) == old.get(k) for k in ("base_url", "api_key", "kind", "provider")):
+                if (all(record.get(k) == old.get(k) for k in ("base_url", "api_key", "kind", "provider"))
+                        and record.get("protocol", "openai_chat") == old.get("protocol", "openai_chat")):
                     record["status"] = old.get("status", record["status"])
                 saved = source_store.save(record)
             active_source_managers()
@@ -2192,6 +2263,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if not isinstance(body, dict) or set(body) - {"model_id", "probe"} or body.get("model_id") not in record["models"]:
             raise HTTPException(400, "configured_model_required")
         model = body["model_id"]
+        record_before_listing = dict(record)
         probe = body.get("probe", "tools")
         if probe not in {"connection", "model_exists", "tools"}:
             raise HTTPException(400, "model_probe_invalid")
@@ -2219,7 +2291,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if result.get("error_code"):
             evidence["error_code"] = result["error_code"]
         with source_store.lock:
-            if source_store.read().get(source_id) != record:
+            if source_store.read().get(source_id) != record_before_listing:
                 raise HTTPException(409, "source_changed_retest_required")
             record["model_settings"][model].setdefault("evidence", {})[probe] = evidence
             if probe == "tools":
@@ -2242,11 +2314,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if current.manifest.adapter == "claude_cli":
             raise HTTPException(409, "client_tools_unsupported")
         if cli_model:
-            from .cli_models import list_models, validate_model
+            from .cli_models import validate_model
             validate_model(cli_model)
             if current.manifest.adapter not in {"codex_cli", "antigravity_cli"}:
                 raise HTTPException(400, "model selection is unavailable for this service")
-            if not any(row["id"] == cli_model for row in list_models(current.manifest.adapter, current.adapter._command_path())):
+            if not any(row["id"] == cli_model for row in current.cli_models()):
                 raise HTTPException(400, "CLI model is no longer available")
             original_adapter = adapter_override or current.adapter
             class SelectedModel:
@@ -2332,7 +2404,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         from .cli_adapter import CLIAgentAdapter
         from .cli_models import list_models
         try:
-            values = await asyncio.to_thread(list_models, kind, CLIAgentAdapter(kind)._command_path())
+            current = active_cli_managers().get(kind)
+            values = (await asyncio.to_thread(current.cli_models) if current is not None else
+                      await asyncio.to_thread(list_models, kind, CLIAgentAdapter(kind)._command_path()))
             return {"models": values}
         except (AdapterError, OSError) as exc:
             raise HTTPException(503, str(exc)) from exc
@@ -2732,7 +2806,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         task_id = str(body.get("task_id") or ("task_" + uuid.uuid4().hex))
         service_id = current.manifest.package_id
         max_tokens = min(max_tokens, current.manifest.max_output_tokens)
-        if _estimate_input_tokens(prompt) + max_tokens > current.manifest.context_window:
+        if _estimate_input_tokens(prompt) + max_tokens > current.context_window_for_model(body.get("cli_model", "")):
             raise HTTPException(400, "estimated context window exceeded")
         bindings = {"provider_peer_id": store.peer_id, "service_id": service_id,
                     "idempotency_key": str(body.get("idempotency_key") or task_id),
@@ -2782,8 +2856,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     return {"task_id": task_id, "state": "cancelled"}
                 response = {"task_id": task_id, "state": "succeeded", **metadata,
                             "model_alias": current.manifest.public_model_alias,
-                            "output": result["text"], "input_tokens": result["input_tokens"],
-                            "output_tokens": result["output_tokens"], "duration_ms": result["duration_ms"]}
+                            "output": result["text"], **actual_usage(result), "reported_usage": actual_usage(result),
+                            "usage_complete": all(value is not None for value in actual_usage(result).values()),
+                            "amount": 0.0, "billing_status": "own_request", "billing_basis": "own_request",
+                            "duration_ms": result["duration_ms"]}
                 if chat:
                     response.update(message=result["message"], finish_reason=result["finish_reason"])
                 retention = 0 if body.get("_no_retention") else response_retention()
@@ -2793,7 +2869,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                       recipient_messaging_pub=peer_box.public_key_b64(messaging_key),
                                       expires_at=_expires(max(retention, 300))).to_dict() if retention else None
                 committed = consumer_orders.transition(task_id=task_id, state="succeeded",
-                                           metadata={**metadata, "response_expires_at": _expires(retention) if retention else ""},
+                                           metadata={**metadata, **{key: response[key] for key in (
+                                               "input_tokens", "output_tokens", "reported_usage", "usage_complete",
+                                               "duration_ms", "amount", "billing_status", "billing_basis")},
+                                               "response_expires_at": _expires(retention) if retention else ""},
                                            encrypted_response=encrypted)
                 if committed.get("state") != "succeeded":
                     return local_llm_order_status(task_id)
@@ -2816,7 +2895,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         conversation_key = body.get("conversation_key")
         if conversation_key is not None and codex_threads.scope("", conversation_key)["window"] is None:
             raise HTTPException(400, "conversation_key is invalid")
-        if len(json.dumps(body).encode()) > MAX_REQUEST:
+        if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_REQUEST:
             raise HTTPException(413, "request_too_large")
         network_id = str(body.get("network_id") or "rynmesh-main")
         provider_peer_id = str(body.get("provider_peer_id") or "")
@@ -2905,6 +2984,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             and (effective_transport == "p2p" or callable(getattr(get_transport(), "iter_post_bytes", None)))
             and not own_request
         )
+        if public_manifest.get("adapter") in {"codex_cli", "antigravity_cli"}:
+            from .cli_models import context_metadata
+            public_manifest["context_window"] = context_metadata(selected.get("cli_models", []), cli_model,
+                fallback=public_manifest.get("context_window", 32768))["context_window"]
         try:
             # Only package_id/model_alias/context_window/max_output_tokens/
             # timeout_seconds/pricing are load-bearing here; the rest are
@@ -3396,11 +3479,21 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     )
                     return result
                 retention = 0 if body.get("_no_retention") else response_retention()
+                counts = actual_usage(result)
+                result.update(**counts, reported_usage=counts)
+                usage_complete = all(value is not None for value in counts.values())
+                billing_pending = result.get("amount") is None or (not usage_complete and not own_request)
+                if billing_pending:
+                    result.update(amount=None, usage_complete=usage_complete, billing_status="pending_usage", billing_basis="pending_usage")
                 settlement_metadata = {
                     "provider_peer_id": provider_peer_id, "service_id": service_id,
                     "network_id": network_id, "input_tokens": result["input_tokens"],
                     "output_tokens": result["output_tokens"], "duration_ms": result["duration_ms"],
                     "amount": result["amount"], "transport": result["transport"],
+                    "usage_complete": usage_complete, "billing_status": result.get("billing_status", "priced"),
+                    "reported_usage": counts,
+                    "billing_basis": result.get("billing_basis", "reported_usage"),
+                    "billing_pending_usage": billing_pending,
                     "relay_used": transport_evidence.get("relay_used"),
                     "transport_evidence": transport_evidence,
                     "connection_phase": "connected", "connection_attempts": list(attempts),
@@ -3408,14 +3501,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 }
                 consumer_orders.checkpoint(
                     task_id=task_id,
-                    metadata={**settlement_metadata, "settlement_pending": True},
+                    metadata={**settlement_metadata, "settlement_pending": not billing_pending},
                     encrypted_response=encrypted_response if retention else None,
                 )
-                balance.settle(
-                    task_id=task_id, amount=float(result["amount"]), input_tokens=int(result["input_tokens"]),
-                    output_tokens=int(result["output_tokens"]), duration_ms=int(result["duration_ms"]),
-                    service_id=service_id, provider_peer_id=provider_peer_id,
-                )
+                if not billing_pending:
+                    balance.settle(
+                        task_id=task_id, amount=float(result["amount"]), **counts, duration_ms=int(result["duration_ms"]),
+                        service_id=service_id, provider_peer_id=provider_peer_id,
+                    )
                 committed = consumer_orders.transition(
                     task_id=task_id, state="succeeded",
                     metadata=settlement_metadata,
@@ -3424,7 +3517,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 )
                 if committed.get("state") != "succeeded":
                     return local_llm_order_status(task_id)
-            settlement_delivered = await asyncio.to_thread(
+            settlement_delivered = not billing_pending and await asyncio.to_thread(
                 dispatch_settlement, store, task_id=task_id,
                 provider_peer_id=provider_peer_id, service_id=service_id,
                 amount=float(result["amount"]), network_id=network_id,
@@ -3634,8 +3727,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
     def order_state_metadata(record: dict[str, Any]) -> dict[str, Any]:
         # Later settlement checkpoints supplement the current state's usage
         # and transport; metadata from earlier states must not leak through.
-        return {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
-                for key, value in event.items() if key not in {"at", "checkpoint"}}
+        final = {key: value for event in record.get("history", []) if event.get("state") == record.get("state")
+                 for key, value in event.items() if key not in {"at", "checkpoint"}}
+        if record.get("state") == "succeeded" and "reported_usage" in final:
+            counts = actual_usage(final)
+            complete = all(value is not None for value in counts.values())
+            final.update(**counts, reported_usage=counts, usage_complete=complete)
+            if not complete:
+                own_request = (record.get("bindings") or {}).get("provider_peer_id") == store.peer_id
+                final.update(amount=0.0 if own_request else None,
+                             billing_status="own_request" if own_request else "pending_usage",
+                             billing_basis="own_request" if own_request else "pending_usage",
+                             billing_pending_usage=not own_request)
+        return final
 
     def order_status(task_id: str, *, consume_ephemeral: bool = False) -> dict[str, Any]:
         try:
@@ -3851,6 +3955,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         # Only untrusted registry locators are cached. Local configuration and
         # authenticated access catalogs above are rechecked on every call.
         "discover_agent": lambda network: discover(network, cache_registry=True),
+        # Resolving a local model must not wait for registry or peer catalogs.
+        # Local readiness, configuration and exact bindings are still rebuilt.
+        "discover_local": lambda network: collect_services(network, cache_registry=True, local_only=True),
         "cancel_order": local_llm_cancel, "source_store": source_store,
         "active_manager": active_manager, "active_source_managers": active_source_managers,
         "active_cli_managers": active_cli_managers,

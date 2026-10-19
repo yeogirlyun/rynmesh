@@ -13,7 +13,43 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
 
+from .adapters import actual_usage
 from .reasoning import validate_effort
+from .safety import MAX_REQUEST
+
+
+def validate_provider_state(state):
+    """Validate opaque native continuation without treating it as model prose.
+
+    The adapter additionally checks the protocol and destination scope before
+    replay. This shared boundary only admits bounded JSON with an explicit
+    namespace, never arbitrary Python objects or non-finite JSON extensions.
+    """
+    if (not isinstance(state, dict) or set(state) != {"protocol", "scope", "data"}
+            or not isinstance(state.get("protocol"), str)
+            or state["protocol"] not in {"openai_responses", "anthropic_messages"}
+            or not isinstance(state.get("scope"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", state["scope"])):
+        raise ValueError("invalid private provider state")
+    pending = [(state["data"], 0)]
+    nodes = 0
+    while pending:
+        value, depth = pending.pop()
+        nodes += 1
+        if depth > 64 or nodes > 65536:
+            raise ValueError("private provider state complexity limit exceeded")
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise ValueError("private provider state must contain JSON")
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            pending.extend((item, depth + 1) for item in value)
+        elif value is not None and type(value) not in (str, int, bool, float):
+            raise ValueError("private provider state must contain JSON")
+        elif type(value) is float and not math.isfinite(value):
+            raise ValueError("private provider state must contain finite JSON")
+    if len(json.dumps(state, ensure_ascii=False, allow_nan=False).encode()) > MAX_REQUEST:
+        raise ValueError("private provider state exceeds request byte limit")
 
 
 def validate_tool_schema(schema):
@@ -68,10 +104,16 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
     for message in messages:
         if not isinstance(message, dict) or message.get("role") not in {"system", "developer", "user", "assistant", "tool"}:
             raise ValueError("invalid message role")
-        if set(message) - {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}:
+        if set(message) - {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content", "provider_state", "is_error"}:
             raise ValueError("unsupported message fields")
+        if "is_error" in message and (message["role"] != "tool" or type(message["is_error"]) is not bool):
+            raise ValueError("is_error must be a tool result boolean")
         if "reasoning_content" in message and (message["role"] != "assistant" or (message["reasoning_content"] is not None and not isinstance(message["reasoning_content"], str))):
             raise ValueError("reasoning_content must be assistant text")
+        if "provider_state" in message:
+            if message["role"] != "assistant":
+                raise ValueError("private provider state requires an assistant message")
+            validate_provider_state(message["provider_state"])
         content = message.get("content")
         if isinstance(content, list):
             images = 0
@@ -157,8 +199,8 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid tool_choice")
     if choice != "auto" and choice != "none" and not tools:
         raise ValueError("tool_choice requires tools")
-    if len(json.dumps(body, ensure_ascii=False).encode()) > 1024 * 1024:
-        raise ValueError("chat exceeds 1 MiB")
+    if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_REQUEST:
+        raise ValueError("chat exceeds request byte limit")
     return body
 
 
@@ -201,9 +243,18 @@ class ChatAccumulator:
         return message
 
 
+def reported_token_count(value: Any) -> int | None:
+    """Only a nonnegative reported integer is measured usage; missing stays unknown."""
+    return value if type(value) is int and value >= 0 else None
+
+
 def completion(result: dict[str, Any], model: str, request_id: str) -> dict[str, Any]:
-    usage = {"prompt_tokens": result["input_tokens"], "completion_tokens": result["output_tokens"]}
-    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+    counts = actual_usage(result)
+    usage = {"prompt_tokens": counts["input_tokens"], "completion_tokens": counts["output_tokens"]}
+    usage["total_tokens"] = (usage["prompt_tokens"] + usage["completion_tokens"]
+                             if all(value is not None for value in usage.values()) else None)
+    message = copy.deepcopy(result.get("message") or {"role": "assistant", "content": result.get("output", result.get("text", ""))})
+    message.pop("provider_state", None)
     return {"id": "chatcmpl-" + request_id, "object": "chat.completion", "created": int(time.time()),
-            "model": model, "choices": [{"index": 0, "message": result.get("message") or {"role": "assistant", "content": result.get("output", result.get("text", ""))},
+            "model": model, "choices": [{"index": 0, "message": message,
                                           "finish_reason": result.get("finish_reason", "stop")}], "usage": usage}

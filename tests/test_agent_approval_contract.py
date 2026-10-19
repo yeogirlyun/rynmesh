@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from agent_tool_fixtures import expose_on_create
 from test_agent_atomic_sharing import seed
-from test_agent_runtime import advance, approve, assistant, make_runtime
+from test_agent_runtime import advance, approve, assistant, instruction_text, make_runtime
 
 from rynmesh.agent_runtime.prompt import PROMPT_VERSION
 from rynmesh.agent_runtime.sharing import NAME
@@ -50,7 +50,7 @@ def test_write_proposal_exposes_contract_stages_exact_approval_and_cannot_run_ea
     assert_no_completion(waiting)
     # Assert the contract actually reaches the provider, not merely a constant
     # that could be omitted from the transmitted system/tool descriptions.
-    system = model.calls[0][1][0]["content"]
+    system = instruction_text(model.calls[0][1])
     assert PROMPT_VERSION in system and "confirm_changes is the user's strict mode" in system
     assert "External configuration/access changes retain their host approval boundary" in system
     input_tool = next(spec["function"] for spec in model.calls[0][2] if spec["function"]["name"] == "ryn_request_input")

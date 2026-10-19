@@ -1,4 +1,8 @@
 {
+  "自动使用已发现的模型上下文窗口": "Automatically use discovered model context windows",
+  "按模型分别读取": "Read separately for each model",
+  "读取模型列表后保存以应用容量。来源未提供容量时按未知处理并保守回退，可取消自动后手动填写。": "Save after reading the model list to apply its context windows. If the source provides no capacity, it remains unknown and uses a conservative fallback. Turn off automatic discovery to enter a value manually.",
+  "上下文窗口和输出上限必须为有效范围内的整数，手动输出上限不能超过上下文窗口。": "Context and output limits must be whole numbers in range; a manual output limit cannot exceed its context window.",
   "添加模型": "Add model",
   "接入一次，自己使用，也可以分享给其他设备。": "Connect once to use models yourself or share them with other devices.",
   "管理来源": "Manage sources",
@@ -74,6 +78,9 @@
   "厂商": "Provider",
   "本地服务": "Local service",
   "OpenAI 兼容 Chat Completions": "OpenAI-compatible Chat Completions",
+  "API 协议": "API protocol",
+  "填写包含版本路径的接口根地址（如 https://api.anthropic.com/v1），系统会追加 /messages。": "Enter the API base URL including its version path (for example https://api.anthropic.com/v1). The app appends /messages.",
+  "填写包含版本路径的接口根地址（如 https://api.openai.com/v1），系统会追加 /responses。": "Enter the API base URL including its version path (for example https://api.openai.com/v1). The app appends /responses.",
   "API Key": "API Key",
   "（可选）": "(optional)",
   "已保存 · 留空保留原密钥": "Saved · Leave blank to keep the current key",
