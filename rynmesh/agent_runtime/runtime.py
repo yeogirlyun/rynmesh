@@ -16,6 +16,7 @@ from ..background_workers import WorkerRunResult
 from . import (
     budget,
     credential_control,
+    diagnostic_log,
     knowledge,
     lifecycle,
     model_switch,
@@ -37,11 +38,13 @@ from .control import (
     request_replayed,
     settle,
 )
+from .input_attachments import attach_to_message, parse_attachments
 from .loop import AgentLoop
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
     PROMPT_VERSION,
+    select_base_instructions,
 )
 from .protocol import digest, event, model_retry_authority, now, sanitized, task
 from .state import (
@@ -52,7 +55,6 @@ from .state import (
 )
 from .store import (
     DEFAULT_SETTINGS,
-    UNKNOWN_WINDOW_CONTEXT_CHARS,
     AgentError,
     AgentModelResponseError,
     AgentReadFailure,
@@ -61,18 +63,20 @@ from .store import (
     cancellation_reason,
     encoded,
 )
+from .streamed_reads import recover_stream_reads
 
 TERMINAL = {"completed", "cancelled", "failed", "interrupted"}
 # A worker continues queued steps for at most this long before yielding its slot.
 CONTINUE_SECONDS = 20.0
-# A rejected inference has not dispatched its proposed business tools. These
-# retries remain one-per-consecutive-failure, durable and subject to all budgets.
+# Completed streaming reads retain their receipts before inference retry. Writes
+# remain behind accepted responses. Retries are bounded by task and lifetime budgets.
 RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_failed", "agent_model_busy",
                           "agent_model_upstream_failed",
-                          "agent_invalid_model_response", "agent_compaction_size_limit"}
+                          "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
                  "messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
-                 "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision", *PUBLIC_STATE_FIELDS)
+                 "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
+                 "conversation_revision", "conversation_event_cursor", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -94,6 +98,7 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
         # Some providers require their opaque reasoning continuation field back.
         # Keep it encrypted internally; it is never an owner-facing transcript.
         message.pop("reasoning_content", None)
+        message.pop("provider_state", None)
         message.pop("resource_origin", None)
     for reference in result.get("result_refs", []):
         reference.pop("resource_origin", None)
@@ -144,7 +149,7 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
 
 
 def message_text(value: Any) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > 8000:
+    if not isinstance(value, str) or not value.strip():
         raise AgentError("agent_invalid_message")
     return value.strip()
 
@@ -220,23 +225,13 @@ class AgentRuntime(AgentLoop):
             return {key: stream[key] for key in ("step", "context_epoch", "text")}
 
     def _context_limit(self, row):
-        """Respect both the owner's byte ceiling and the selected model window.
+        """A model-derived projection; never overwrite the owner's saved limit."""
+        return self._context_policy(row)["effective_max_context_bytes"]
 
-        Match the bridge's three-character input estimate conservatively with
-        UTF-8 bytes, retaining space for serialization and a useful completion.
-        This is a working projection, never a change to the owner's saved limit.
-        """
-        limit = row["limits"]["max_context_chars"]
+    def _context_policy(self, row):
         model = self._model_metadata(row["model_id"]) or {}
-        window = model.get("context_window")
-        if type(window) is int and window > 0:
-            maximum = model.get("max_output_tokens", 512)
-            reserve = min(512, maximum) if type(maximum) is int and maximum > 0 else 512
-            limit = min(limit, max(0, (window - reserve) * 3 - 1024))
-        else:
-            # An undeclared window may be small; keep the previous safe ceiling.
-            limit = min(limit, UNKNOWN_WINDOW_CONTEXT_CHARS)
-        return limit
+        return output_policy.context_budget(model, row["limits"].get("max_context_chars"),
+                                            provenance=row.get("context_budget_provenance"))
 
     def _menu(self, row):
         business_specs = self.tools.specs()
@@ -293,7 +288,12 @@ class AgentRuntime(AgentLoop):
 
     def _validate_context(self, row: dict, *, cheap_only=False, control_state=None) -> None:
         if row.get("project"):
-            projects.validate_binding(control_state if control_state is not None else self.store.read(), row["project"])
+            if control_state is not None:
+                projects.validate_binding(control_state, row["project"])
+            elif hasattr(self.store, "inspect"):
+                self.store.inspect(lambda data: projects.validate_binding(data, row["project"]))
+            else:
+                projects.validate_binding(self.store.read(), row["project"])
         context = self._execution_context(row)
         if self._requires_destination_binding(row, context):
             if not context["model_destination"].get("destination_revision") or getattr(self.model, "supports_destination_binding", False) is not True:
@@ -388,6 +388,9 @@ class AgentRuntime(AgentLoop):
             def record_request_policy(policy):
                 self.store.transaction(lambda data: budget.record_request_policy(task(data, row["id"]), policy))
             options["on_request_policy"] = record_request_policy
+        if row.get("_request_id") and getattr(self.model, "supports_request_id", False) is True:
+            options["request_id"] = row["_request_id"]
+
         model = self._model_metadata(row["model_id"]) or {}
         if "reasoning_effort" in row:
             options["reasoning_effort"] = reasoning.validate(model, row["reasoning_effort"])
@@ -396,12 +399,13 @@ class AgentRuntime(AgentLoop):
         # The window's own conversation may continue a provider thread across
         # turns. Summaries (no tools) and nested checks are separate requests.
         if not nested and specs and getattr(self.model, "supports_conversation_key", False) is True:
-            options["conversation"] = row["id"]
+            options["conversation"] = (row["id"] + ":edit:" + str(row["conversation_revision"])
+                                       if row.get("conversation_revision") else row["id"])
         policy = output_policy.select(model, messages, specs, request_cap=output_cap)
         return self._meter_model(row, lambda allowed: self.model.complete(
             row["model_id"], messages, specs, cancelled, on_event,
             **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {})),
-            input_bound=len(encoded(messages)) + len(encoded(specs)) + 512, output_bound=policy["effective_cap"], output_policy_record=policy,
+            input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"], output_policy_record=policy,
             nested=nested, stage=stage,
             can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
 
@@ -420,6 +424,10 @@ class AgentRuntime(AgentLoop):
                 input_bound=input_bound, output_bound=min(output_bound, available), seconds_bound=0 if nested else None)
             if output_policy_record:
                 policy = output_policy.budgeted(output_policy_record, record["output_reservation"])
+                if selected.get("_request_id"):
+                    policy["request_id"] = selected["_request_id"]
+                if selected.get("_attempt"):
+                    policy["attempt"] = selected["_attempt"]
                 row["budget"]["records"][-1]["output_policy"] = policy
                 event(row, "model_output_policy", **policy)
             return record
@@ -453,6 +461,16 @@ class AgentRuntime(AgentLoop):
             row = data["tasks"].get(task_id)
             if row is not None:
                 budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed)
+        self.store.transaction(finish)
+
+    def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None):
+        if not reservation_ids:
+            return
+        def finish(data):
+            row = data["tasks"].get(task_id)
+            if row is not None:
+                for reservation_id in reservation_ids:
+                    budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed)
         self.store.transaction(finish)
 
     def _tool_context(self, selected, operation_id=None):
@@ -570,7 +588,8 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(apply)
 
     def settings(self) -> dict:
-        return {**DEFAULT_SETTINGS, **self.store.read()["settings"]}
+        snapshot = self.configuration_snapshot()
+        return {**snapshot["settings"], "context_budget_policy": snapshot["context_budget_policy"]}
 
     def list_projects(self) -> list[dict]:
         return [copy.deepcopy(item) for item in self.store.read().get("projects", {}).values() if item.get("enabled")]
@@ -657,7 +676,10 @@ class AgentRuntime(AgentLoop):
 
     def configuration_snapshot(self) -> dict:
         data = self.store.read()
-        return {"settings": {**DEFAULT_SETTINGS, **data["settings"]}, "settings_revision": data.get("settings_revision", 0)}
+        settings = {**DEFAULT_SETTINGS, **data["settings"]}
+        policy = self._context_policy({"model_id": settings["model_id"], "limits": settings,
+                                       "context_budget_provenance": data.get("settings_context_budget_provenance")})
+        return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
 
     def update_settings(self, values: dict) -> dict:
         if not isinstance(values, dict) or set(values) - set(DEFAULT_SETTINGS):
@@ -681,7 +703,10 @@ class AgentRuntime(AgentLoop):
             selected_model = self._model_metadata(values["model_id"])
             if selected_model is None or not selected_model.get("available") or selected_model.get("agent_supported") is not True:
                 raise AgentError("agent_model_unavailable")
-        for key, low, high in (("max_steps", 1, 128), ("max_seconds", 10, 3600), ("max_context_chars", 4000, 2000000), ("max_output_chars", 1000, 40000)):
+        if ("max_context_chars" in values and values["max_context_chars"] is not None
+                and (type(values["max_context_chars"]) is not int or not 4000 <= values["max_context_chars"] <= 2000000)):
+            raise AgentError("agent_invalid_settings")
+        for key, low, high in (("max_steps", 1, 128), ("max_seconds", 10, 3600), ("max_output_chars", 1000, 40000)):
             if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
                 raise AgentError("agent_invalid_settings")
 
@@ -690,6 +715,10 @@ class AgentRuntime(AgentLoop):
             desktop_changed = "desktop_access" in values and bool(values["desktop_access"]) != bool(data["settings"].get("desktop_access"))
             permission_changed = any(key in values and values[key] != data["settings"].get(key) for key in ("permission_mode", "allowed_write_tools", "workspace_root", "desktop_access"))
             changed = any(data["settings"].get(key) != value for key, value in values.items())
+            if "max_context_chars" in values:
+                provenance = "owner_auto" if values["max_context_chars"] is None else "owner_manual"
+                changed = changed or data.get("settings_context_budget_provenance") != provenance
+                data["settings_context_budget_provenance"] = provenance
             if "model_id" in values and data.get("default_model_destination"):
                 data.pop("default_model_destination")
                 changed = True  # Explicit owner reselection supersedes the old binding.
@@ -706,9 +735,10 @@ class AgentRuntime(AgentLoop):
                             row["observed_files"] = {}
                         if row["status"] == "waiting_approval":
                             row["status"] = "queued"
-                        if row.get("in_flight") and (row.get("pending_control") or {}).get("kind") not in {"pause", "cancel"}:
+                        if row.get("in_flight") and (row.get("pending_control") or {}).get("kind") not in {"pause", "stop", "cancel"}:
                             prior_control = row.get("pending_control") or {}
                             row["pending_control"] = {
+                                **prior_control,
                                 "kind": prior_control.get("kind", "permissions"),
                                 "remain_paused": bool(prior_control.get("remain_paused")) or row["status"] != "running" or not data["settings"]["enabled"],
                             }
@@ -718,12 +748,17 @@ class AgentRuntime(AgentLoop):
                         settle(row, event)
             if values.get("enabled") is False:
                 for row in data["tasks"].values():
+                    if (row.get("pending_control") or {}).get("kind") == "edit_message":
+                        row["pending_control"]["remain_paused"] = True
+                        continue
                     if row["status"] in {"queued", "running", "waiting_approval", "waiting_input"} or ambiguous(row):
                         row["status"] = "interrupted" if ambiguous(row) else "paused"
                         row["pending_control"] = {"kind": "pause"}
                         event(row, "paused", reason="agent_disabled")
                         settle(row, event)
-            return data["settings"]
+            return {**data["settings"], "context_budget_policy": self._context_policy({
+                "model_id": data["settings"].get("model_id", ""), "limits": {**DEFAULT_SETTINGS, **data["settings"]},
+                "context_budget_provenance": data.get("settings_context_budget_provenance")})}
         return self.store.transaction(update)
 
     def models(self) -> list[dict]:
@@ -917,11 +952,12 @@ class AgentRuntime(AgentLoop):
         return {"events": [item for item in row["events"] if item["seq"] > after], "cursor": row["event_cursor"], "status": row["status"], "revision": row["revision"], "control_revision": row["control_revision"]}
 
     def create(self, value: dict) -> dict:
-        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort"}:
+        if set(value) - {"message", "model_id", "title", "client_request_id", "scope", "expected_destination_revision", "skill_ids", "budget_limits", "response_language", "project_id", "reasoning_effort", "attachments"}:
             raise AgentError("agent_invalid_request")
         if value.get("response_language") not in {None, "zh-CN", "en"}:
             raise AgentError("agent_invalid_request")
-        content = message_text(value.get("message"))
+        prepared = parse_attachments(value.get("attachments"))
+        content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
         skills = knowledge.select(value.get("skill_ids"))
         budget_limits = budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
@@ -979,6 +1015,10 @@ class AgentRuntime(AgentLoop):
                    "limits": {key: settings[key] for key in DEFAULT_SETTINGS if key.startswith("max_")},
                    "permission_mode": settings["permission_mode"], "allowed_write_tools": list(settings["allowed_write_tools"]), "queue": [], "in_flight": None,
                    "approved": None, "elapsed_seconds": 0.0}
+            # New tasks pin the Ryn base for restart/model-switch continuity.
+            # Legacy sessions stay readable and use the documented fallback.
+            row["base_instructions"] = select_base_instructions()
+            row["context_budget_provenance"] = data.get("settings_context_budget_provenance", "default_auto" if settings["max_context_chars"] is None else "legacy_ambiguous_manual")
             initialize(row)
             if effort is not None:
                 row["reasoning_effort"] = effort
@@ -1006,6 +1046,13 @@ class AgentRuntime(AgentLoop):
                 row["model_destination_confirmed"] = True
             if scope is not None:
                 row["scope"] = {**copy.deepcopy(scope), "revision": row["scope_revision"], "selection": copy.deepcopy(value["scope"])}
+            if prepared:
+                attach_to_message(self.store, row, row["messages"][0], prepared)
+                row["goal"]["text"] = row["messages"][0]["content"]
+                row["goal"]["constraints"][0]["text"] = row["messages"][0]["content"]
+                (future_specs, _), authority_bytes = self._menu(row)
+                if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
+                    raise AgentError("agent_context_limit")
             row["prompt_version"] = PROMPT_VERSION
             event(row, "created")
             data["tasks"][row["id"]] = row
@@ -1016,9 +1063,12 @@ class AgentRuntime(AgentLoop):
         return created
 
     def add_message(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort"}:
+        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments"}:
             raise AgentError("agent_invalid_request")
-        content = message_text(value.get("message"))
+        prepared = parse_attachments(value.get("attachments"))
+        content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+        if "edit_message_index" in value:
+            return self._edit_message(task_id, value, content, prepared)
         intent = value.get("intent")
         if intent not in {None, "steer", "information"}:
             raise AgentError("agent_invalid_request")
@@ -1046,17 +1096,18 @@ class AgentRuntime(AgentLoop):
             # Original evidence survives compaction, so its archive size is not
             # the next prompt size. Only immutable owner constraints form a hard
             # context floor; the normal loop may compact the remaining history.
+            message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
+                       "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
+            attach_to_message(self.store, row, message, prepared)
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
-            prospective = {**row, "messages": [*owners, {"role": "user", "content": content}],
+            prospective = {**row, "messages": [*owners, message],
                            "context_checkpoint": None, "tool_menu": None}
             (future_specs, _), authority_bytes = self._menu(prospective)
             if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                 raise AgentError("agent_context_limit")
-            if len(encoded(row)) + len(content.encode()) > 2 * 1024 * 1024:
+            if len(encoded(row)) + len(encoded(message)) > 2 * 1024 * 1024:
                 raise AgentError("agent_task_limit")
-            message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
-                       "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
-            ended = row["status"] in {"completed", "failed"}
+            ended = row["status"] in {"completed", "failed"} or bool(row.get("turn_stopped"))
             if effort is not None:
                 # Running requests already own an immutable task snapshot.
                 # This preference starts with the next admitted request.
@@ -1066,8 +1117,9 @@ class AgentRuntime(AgentLoop):
                 owner_update(row, message)
             row.update(approved=None, pending_approval=None, pending_input=None, result="")
             row.setdefault("pending_user_messages", []).append(message)
-            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and intent is not None}
-            if ended or intent is None:
+            was_stopped = row.pop("turn_stopped", False)
+            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and intent is not None and not was_stopped}
+            if ended or intent is None or was_stopped:
                 row.update(steps=0, elapsed_seconds=0.0)
             event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
             close_queue(row, event, "agent_owner_changed")
@@ -1075,6 +1127,51 @@ class AgentRuntime(AgentLoop):
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(add)
+
+    def _edit_message(self, task_id: str, value: dict, content: str, prepared=None) -> dict:
+        if value.get("intent") not in {None, "steer", "information"} or type(value["edit_message_index"]) is not int:
+            raise AgentError("agent_invalid_request")
+
+        def edit(data):
+            row = task(data, task_id)
+            if request_replayed(row, value):
+                return public_task(row, settings=data["settings"])
+            check_version(row, value, goal=value.get("intent") is not None)
+            if not data["settings"]["enabled"]:
+                raise AgentError("agent_disabled")
+            if not allowed_actions(row, data["settings"])["edit_message"]["enabled"]:
+                raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
+            index = value["edit_message_index"]
+            if index < 0 or index >= len(row["messages"]) or row["messages"][index].get("role") != "user":
+                raise AgentError("agent_invalid_message_index")
+            if len(row["events"]) >= 998 or len(encoded(row)) + len(content.encode()) > 2 * 1024 * 1024:
+                raise AgentError("agent_task_limit")
+            replacement = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
+                           "ui": {"kind": "message", "text": content}}
+            if prepared is None:
+                replacement["attachments"] = copy.deepcopy(row["messages"][index].get("attachments", []))
+            attach_to_message(self.store, row, replacement, prepared)
+            if len(encoded(row)) + len(encoded(replacement)) > 2 * 1024 * 1024:
+                raise AgentError("agent_task_limit")
+            # Test the replacement owner's pinned floor before committing stop
+            # intent. Discarded future constraints cannot consume its context.
+            retained = [*row["messages"][:index], replacement]
+            owner_ids = {message.get("message_id") for message in retained if message["role"] == "user"}
+            prospective = {**row, "messages": retained, "context_checkpoint": None, "tool_menu": None,
+                           "goal": {**row["goal"], "constraints": [item for item in row["goal"]["constraints"] if item.get("message_id") in owner_ids]}}
+            (future_specs, _), authority_bytes = self._menu(prospective)
+            if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
+                raise AgentError("agent_context_limit")
+            if "reasoning_effort" in value:
+                row["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
+            row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
+                       pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
+            event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
+            close_queue(row, event, "agent_owner_changed")
+            settle(row, event)
+            remember_request(row, value)
+            return public_task(row, settings=data["settings"])
+        return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
         if set(value) - {"action", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id"}:
@@ -1085,7 +1182,7 @@ class AgentRuntime(AgentLoop):
             row = task(data, task_id)
             if request_replayed(row, value):
                 return public_task(row, settings=data["settings"])
-            if action not in {"pause", "cancel"}:
+            if action not in {"pause", "stop", "cancel"}:
                 check_version(row, value, goal=action == "answer")
             if action == "cancel":
                 if row["status"] not in {"completed", "failed", "cancelled"}:
@@ -1093,7 +1190,24 @@ class AgentRuntime(AgentLoop):
                     event(row, "cancelled", operation_in_flight=bool(row["in_flight"]))
                     close_queue(row, event, "agent_cancelled")
                     settle(row, event)
+            elif action == "stop":
+                if ambiguous(row):
+                    row["pending_control"] = {"kind": "stop"}
+                    event(row, "paused", operation_in_flight=True, reason="owner_stopped")
+                elif row["status"] in {"queued", "running", "waiting_approval", "waiting_input", "paused"}:
+                    # Capture the accepted text already shown in the composer
+                    # before cancelling transport; a late response is discarded.
+                    stream = self._stream_snapshot(row)
+                    if stream:
+                        row["messages"].append({"role": "assistant", "content": stream["text"],
+                                                "context_epoch": row.get("context_epoch", 0), "interrupted": True})
+                    row.update(status="paused", pending_approval=None, approved=None, pending_input=None,
+                               pending_control={"kind": "stop"}, turn_stopped=True)
+                    event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
+                    close_queue(row, event, "agent_cancelled")
+                    settle(row, event)
             elif action == "pause":
+                row.pop("turn_stopped", None)
                 if ambiguous(row):
                     # Stop intent survives reconciliation, even while the write's
                     # outcome is unknown. Pausing never clears that marker.
@@ -1115,6 +1229,7 @@ class AgentRuntime(AgentLoop):
                     raise AgentError("agent_invalid_transition")
                 if not data["settings"]["enabled"]:
                     raise AgentError("agent_disabled")
+                row.pop("turn_stopped", None)
                 if row["in_flight"]:
                     if not recoverable_read_in_flight(row) or ambiguous(row):
                         raise AgentError("agent_operation_unresolved")
@@ -1375,11 +1490,16 @@ class AgentRuntime(AgentLoop):
         def reconcile(data):
             from .execution_policy import verified_read_classification
             for row in data["tasks"].values():
+                journal = row.get("stream_read_journal", [])
+                if journal:
+                    recover_stream_reads(row, allow_publish=bool(data["settings"].get("enabled") and all(
+                        entry["authority"] == model_retry_authority(data["settings"]) for entry in journal)))
                 budget.abandon(row)
                 flight = row.get("in_flight")
                 if flight or row["status"] == "running" or row.get("approved"):
                     was_cancelled = row["status"] == "cancelled" or (row.get("pending_control") or {}).get("kind") == "cancel"
                     was_paused = row["status"] == "paused" or (row.get("pending_control") or {}).get("kind") == "pause"
+                    was_editing = (row.get("pending_control") or {}).get("kind") == "edit_message"
                     workspace_root = (row.get("local_execution") or {}).get("workspace_root", "")
                     is_verified_read = bool(
                         flight
@@ -1420,7 +1540,12 @@ class AgentRuntime(AgentLoop):
                         row["in_flight"] = None
                         row["approved"] = None
                         settle(row, event)
-                        if was_cancelled:
+                        if was_editing:
+                            # The owner already committed the replacement turn.
+                            # Its old flight settled above; do not overwrite the
+                            # edited branch's queued/paused state with recovery.
+                            may_continue = row["status"] == "queued"
+                        elif was_cancelled:
                             row.update(status="cancelled", error="agent_node_restarted")
                         elif was_paused:
                             row.update(status="paused", error="agent_node_restarted")
@@ -1445,7 +1570,8 @@ class AgentRuntime(AgentLoop):
                         if cleanup_ok:
                             row["in_flight"] = None
                             settle(row, event)
-                        row["status"] = "cancelled" if was_cancelled else "interrupted"
+                        if not (was_editing and cleanup_ok):
+                            row["status"] = "cancelled" if was_cancelled else "interrupted"
                     event(row, "interrupted", ambiguous_write=ambiguous_write)
         self.store.transaction(reconcile)
 
@@ -1612,16 +1738,47 @@ class AgentRuntime(AgentLoop):
                     event(row, "failed", error=code)
         self.store.transaction(fail)
 
-    def _operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None, correction=None, details=None) -> None:
+    def _operation_error(
+        self,
+        selected: dict,
+        code: str,
+        started: float,
+        *,
+        definitely_not_executed=False,
+        read_connection=None,
+        correction=None,
+        details=None,
+        diagnostics=None,
+    ) -> None:
         try:
-            self._handle_operation_error(selected, code, started, definitely_not_executed=definitely_not_executed, read_connection=read_connection, correction=None if code == "agent_owner_changed" else correction, details=details)
+            self._handle_operation_error(
+                selected,
+                code,
+                started,
+                definitely_not_executed=definitely_not_executed,
+                read_connection=read_connection,
+                correction=None if code == "agent_owner_changed" else correction,
+                details=details,
+                diagnostics=diagnostics,
+            )
         except AgentError as exc:
             if str(exc) not in {"agent_task_not_found", "agent_task_deleted"}:
                 raise
             # A late operation from a retired process cannot resurrect a task
             # deleted after restart reconciliation cleared its read flight.
 
-    def _handle_operation_error(self, selected: dict, code: str, started: float, *, definitely_not_executed=False, read_connection=None, correction=None, details=None) -> None:
+    def _handle_operation_error(
+        self,
+        selected: dict,
+        code: str,
+        started: float,
+        *,
+        definitely_not_executed=False,
+        read_connection=None,
+        correction=None,
+        details=None,
+        diagnostics=None,
+    ) -> None:
         """Only proven no-side-effect failures may return to the correction loop."""
         if selected.get("verification"):
             def verification_failed(data):
@@ -1646,6 +1803,34 @@ class AgentRuntime(AgentLoop):
             self.store.transaction(verification_failed)
             return
         if code in RETRYABLE_MODEL_ERRORS and not selected["queue"]:
+            now_mono = time.monotonic()
+            req_started = selected.get("_request_started")
+            prep_started = selected.get("_preparation_started", started)
+            prep_persist = float(selected.get("_prep_persistence_seconds", 0.0))
+            claim_persist = float(selected.get("_claim_persistence_seconds", 0.0))
+            sched_wait = float(selected.get("_scheduler_wait_seconds", 0.0))
+            failed_timing = {
+                "scheduler_wait_seconds": round(sched_wait, 4),
+                "preparation_seconds": round(max(0.0, (req_started if req_started is not None else now_mono) - prep_started), 4),
+                "preparation_persistence_seconds": round(prep_persist, 4),
+                "model_call_seconds": round(max(0.0, now_mono - req_started) if req_started is not None else 0.0, 4),
+                "store_persistence_seconds": round(claim_persist + prep_persist, 4),
+            }
+            safe_diag = diagnostic_log.safe_diagnostics(diagnostics)
+            req_id = selected.get("_request_id")
+            attempt = selected.get("_attempt", int(selected.get("model_retry_count", 0)) + 1)
+            diagnostic_log.failure(
+                "model_inference",
+                code,
+                task_id=selected["id"],
+                step=selected.get("_step") or selected.get("steps"),
+                request_id=req_id,
+                attempt=attempt,
+                elapsed_seconds=now_mono - started,
+                model_call_seconds=failed_timing["model_call_seconds"],
+                diagnostics=safe_diag,
+            )
+
             def retry_model(data):
                 row = task(data, selected["id"])
                 flight = row.get("in_flight") or {}
@@ -1665,15 +1850,33 @@ class AgentRuntime(AgentLoop):
                          "agent_step_limit" if row["steps"] >= row["limits"]["max_steps"] else
                          code if row.get("model_retry_count", 0) >= 1 else None)
                 row.pop("pending_control", None)
+                extra_event = {
+                    "step": row["steps"],
+                    "attempt": attempt,
+                    "timing": failed_timing,
+                    **({"request_id": req_id} if req_id else {}),
+                    **({"diagnostics": safe_diag} if safe_diag else {}),
+                }
                 if error:
                     row.update(status="failed", error=error)
-                    event(row, "failed", error=error)
+                    event(row, "failed", error=error, **extra_event)
                     return True
                 row.update(status="queued", error=None, model_retry_count=1, model_retry_authority=authority)
-                event(row, "model_retry_scheduled", error=code, retry_count=1)
+                event(row, "model_retry_scheduled", error=code, retry_count=1, **extra_event)
                 return True
             if self.store.transaction(retry_model):
                 return
+        elif not selected["queue"]:
+            diagnostic_log.failure(
+                "model_inference",
+                code,
+                task_id=selected["id"],
+                step=selected.get("_step") or selected.get("steps"),
+                request_id=selected.get("_request_id"),
+                attempt=selected.get("_attempt"),
+                elapsed_seconds=time.monotonic() - started,
+                diagnostics=diagnostic_log.safe_diagnostics(diagnostics),
+            )
         from .execution_policy import verified_read_classification
         current = task(self.store.read(), selected["id"])
         flight = current.get("in_flight") or {}
@@ -1778,8 +1981,9 @@ class AgentRuntime(AgentLoop):
                 row["messages"].append({"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(), "context_epoch": call.get("context_epoch", 0)})
                 verification.record(row, call, record_status, now(), result=result)
                 row["queue"].pop(0)
-                event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], result=result,
-                      internal=call["name"] in INTERNAL_NAMES, context_epoch=call.get("context_epoch", 0), timing=error_timing)
+                event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
+                      step=row["steps"], result=result, internal=call["name"] in INTERNAL_NAMES,
+                      context_epoch=call.get("context_epoch", 0), timing=error_timing)
                 if row["status"] == "running":
                     if code == "agent_time_limit" or code.endswith("_budget_exhausted"):
                         row.update(status="failed", error=code)
@@ -1843,6 +2047,7 @@ class AgentRuntime(AgentLoop):
             return WorkerRunResult()
         gate_owned = True
         selected = None
+        scope_cm = None
         started = time.monotonic()
         try:
             # Idle ticks only look: copying every task's history three times a
@@ -1916,6 +2121,8 @@ class AgentRuntime(AgentLoop):
             selected["_claim_persistence_seconds"] = max(0.0, time.monotonic() - claim_started)
             self._run_lock.release()
             gate_owned = False
+            scope_cm = diagnostic_log.context_scope(task_id=selected["id"], step=selected.get("steps", 0))
+            scope_cm.__enter__()
             started = time.monotonic()
             selected["_run_started"] = started
             self._active_run = {"task_id": selected["id"], "started": started,
@@ -1962,6 +2169,7 @@ class AgentRuntime(AgentLoop):
                     definitely_not_executed=True,
                     correction=getattr(exc, "correction", None),
                     details=getattr(exc, "details", None),
+                    diagnostics=getattr(exc, "diagnostics", None),
                 )
             return WorkerRunResult(activity=bool(selected))
         except AgentError as exc:
@@ -1969,8 +2177,13 @@ class AgentRuntime(AgentLoop):
                 code = cancellation_reason(cancelled) if str(exc) == "agent_cancelled" else str(exc)
                 if code == "agent_inference_failed" and exc.__context__ is not None:
                     self._record_runtime_fault(selected, exc.__context__)
-                self._operation_error(selected, code, started,
-                                      read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None)
+                self._operation_error(
+                    selected,
+                    code,
+                    started,
+                    read_connection=exc.connection if isinstance(exc, AgentReadFailure) else None,
+                    diagnostics=getattr(exc, "diagnostics", None),
+                )
             return WorkerRunResult(activity=bool(selected))
         except ValueError as exc:
             # Only explicitly enumerated boundary codes may reach the owner.
@@ -2005,6 +2218,8 @@ class AgentRuntime(AgentLoop):
                         self._queued_since.pop(selected["id"], None)
                 except Exception:
                     pass
+            if scope_cm is not None:
+                scope_cm.__exit__(None, None, None)
             self._active_run = None
             if gate_owned:
                 self._run_lock.release()

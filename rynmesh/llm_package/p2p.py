@@ -55,7 +55,9 @@ _DATA = 1
 _ACK = 2
 _HEADER = struct.Struct("!7sB16sHH32s")
 _CHUNK_BYTES = 900
-_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
+# Encrypted/base64 task envelopes must accommodate the bounded large-context
+# request. 32 MiB still fits the protocol's unsigned-16-bit chunk count.
+_MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 _MAX_CHUNKS = math.ceil(_MAX_MESSAGE_BYTES / _CHUNK_BYTES)
 _MAX_IN_FLIGHT_MESSAGES = 8
 _MAX_BUFFERED_BYTES = _MAX_MESSAGE_BYTES * 2

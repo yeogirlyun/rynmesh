@@ -53,7 +53,11 @@ class ModelCatalog:
         source_index = {sources.model_service_id(record, model): (record, model)
                         for record in records.values() for model in record["models"]}
         try:
-            discovered = self.services.get("discover_agent", self.services["discover"])(self.network)
+            discover = self.services.get("discover_agent", self.services["discover"])
+            if (isinstance(selected_model_id, str) and selected_model_id.startswith("local/")
+                    and callable(self.services.get("discover_local"))):
+                discover = self.services["discover_local"]
+            discovered = discover(self.network)
         except Exception:
             discovered = []
         rows = {}
@@ -83,6 +87,8 @@ class ModelCatalog:
                    "tool_support": "unsupported" if adapter == "claude_cli" else value.get("tool_support", "unknown"),
                    "agent_support_basis": "adapter_contract" if own else "provider_protocol_contract",
                    "context_window": manifest.get("context_window", 32768),
+                   "context_window_known": adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int,
+                   "context_window_basis": "provider_manifest" if adapter not in {"codex_cli", "antigravity_cli"} and type(manifest.get("context_window")) is int else "unknown_fallback",
                    "streaming": "streaming" in capabilities or "buffered-streaming" in capabilities,
                    "max_output_tokens": manifest.get("max_output_tokens", 4096),
                    "sharing": bool(value.get("accepting_orders", value.get("publication_enabled", False))) if own else True,
@@ -110,7 +116,18 @@ class ModelCatalog:
                 row.update(destination_revision=peer_binding.revision(value, self.store.peer_id),
                            destination_binding_supported=bound is not None, expected_model_binding=bound,
                            consumer_peer_id=self.store.peer_id, recipient_access=access)
+                # P2P still carries Ryn's canonical chat contract. A bound
+                # source may also declare the native upstream continuation it
+                # can replay; ambiguous or unbound claims never retain state.
+                native_protocols = [protocol for protocol in ("openai_responses", "anthropic_messages")
+                                    if "protocol:" + protocol in capabilities]
+                if adapter == "openai_compatible" and bound is not None and len(native_protocols) == 1:
+                    row["adapter"] = native_protocols[0]
                 if adapter in {"codex_cli", "antigravity_cli"}:
+                    from ..llm_package.cli_models import context_metadata
+                    row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"]))
+                    if row["context_window_known"]:
+                        row["context_window_basis"] = "provider_cli_model_metadata"
                     for upstream in value.get("cli_models", []):
                         if not upstream.get("id"):
                             continue
@@ -123,6 +140,9 @@ class ModelCatalog:
                             "tool_support": support, "agent_supported": row["agent_supported"],
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
+                        rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"]))
+                        if rows[identifier]["context_window_known"]:
+                            rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
                             rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
         # Include drafts/offline sources so absence never masquerades as deletion.
@@ -136,12 +156,15 @@ class ModelCatalog:
                 "model_id": model, "service_id": service_id, "peer_id": self.store.peer_id,
                 "destination_revision": self.source_destination_revision(record, model),
                 "model_settings": policy, "rule_revision": policy.get("rule_revision", ""), "evidence": policy["evidence"],
-                "adapter": "openai_compatible", "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
+                "adapter": (record.get("protocol") if record.get("protocol") in {"openai_responses", "anthropic_messages"}
+                            else "openai_compatible"),
+                "available": bool(prior.get("available") and record.get("enabled") and record.get("status") == "ready"),
                 "availability_basis": "configured_source_readiness_not_live_probe",
                 # A source's two-turn tool probe proves tools, not streaming.
                 "streaming": False,
                 "agent_supported": True, "tool_support": support, "agent_support_basis": "adapter_contract",
                 "context_window": policy["effective"]["context_window"], "max_output_tokens": policy["effective"]["max_output_tokens"],
+                "context_window_basis": policy["context_window_basis"], "context_window_known": policy["context_window_known"],
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
                 "destination_binding_supported": True}
@@ -160,33 +183,27 @@ class ModelCatalog:
                 adapter = CLIAgentAdapter(row["adapter"])
                 executable = adapter._command_path()
                 manager = self.services["provider_for"](row["service_id"])
-                self._bind_cli(row, manager)
-                binding = copy.deepcopy(row.get("local_model_binding"))
                 with self._cli_metadata_lock:
                     snapshot = self._cli_metadata.get(row["id"])
-                same_binding = bool(snapshot and binding and snapshot["manager"] is manager
-                                    and snapshot["binding"] == binding)
                 prefix = row["id"] + "/model/"
                 selected = selected_model_id[len(prefix):] if selected_model_id and selected_model_id.startswith(prefix) else None
-                if (selected and same_binding and
-                        any(model["id"] == selected for model in snapshot["models"])):
+                if not row["available"] and snapshot and snapshot["manager"] is manager:
+                    # Offline display metadata conveys no current project authority.
                     upstream = copy.deepcopy(snapshot["models"])
+                    row.update(local_model_binding=None, destination_binding_supported=False, destination_revision="")
                 else:
-                    if snapshot and not same_binding:
-                        # A changed executable/configuration must not bless older
-                        # metadata under a new binding, even within the CLI TTL.
-                        upstream = list_models(row["adapter"], executable, refresh=True)
-                    else:
-                        upstream = cached_models(row["adapter"], executable) or list_models(row["adapter"], executable)
+                    current_models = getattr(manager.adapter, "current_models", None) if manager else None
+                    upstream = (current_models() if callable(current_models) else
+                                cached_models(row["adapter"], executable) or list_models(row["adapter"], executable))
                     self._bind_cli(row, manager)
-                    if binding and row.get("local_model_binding") == binding:
-                        with self._cli_metadata_lock:
-                            self._cli_metadata[row["id"]] = {"manager": manager, "binding": binding,
-                                                            "models": copy.deepcopy(upstream)}
+                    with self._cli_metadata_lock:
+                        self._cli_metadata[row["id"]] = {"manager": manager, "models": copy.deepcopy(upstream)}
             except Exception:
+                row.update(available=False, local_model_binding=None,
+                           destination_binding_supported=False, destination_revision="")
                 continue
             for model in upstream:
-                if not model["id"]:
+                if not model["id"] or (selected and model["id"] != selected):
                     continue
                 support = self.store.llm_tool_capabilities.support(manager.manifest, model["id"]) if manager else "unknown"
                 identifier = row["id"] + "/model/" + model["id"]
@@ -194,15 +211,17 @@ class ModelCatalog:
                     "cli_model": model["id"], "cli_source": row["adapter"], "model_id": model["id"],
                     "source_name": "Codex" if row["adapter"] == "codex_cli" else "Antigravity",
                     "tool_support": support, "agent_supported": row["agent_supported"]}
-                if type(model.get("context_window")) is int and 256 <= model["context_window"] <= 2000000:
-                    rows[identifier]["context_window"] = model["context_window"]
-                    rows[identifier]["context_window_basis"] = "installed_cli_model_cache"
-                self._bind_cli(rows[identifier], manager, model["id"])
+                from ..llm_package.cli_models import context_metadata
+                rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"]))
+                if row["available"]:
+                    self._bind_cli(rows[identifier], manager, model["id"])
                 if row["adapter"] == "codex_cli":
                     rows[identifier].update(reasoning_metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort")))
             if row["adapter"] == "codex_cli":
                 default = next((model for model in upstream if model.get("default")), {})
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
+            from ..llm_package.cli_models import context_metadata
+            row.update(context_metadata(upstream, fallback=row["context_window"]))
         for row in rows.values():
             row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
                 "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else

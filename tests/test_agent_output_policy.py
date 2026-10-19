@@ -15,7 +15,7 @@ from rynmesh.agent_runtime.store import AgentError, AgentModelResponseError, Age
 @pytest.mark.parametrize("configured,window,request_cap,expected,reason", [
     (128, 1000000, None, 128, None), (128000, 1000000, None, 128000, None),
     (256000, 1000000, None, 131072, "transport"), (128000, 1000000, 9000, 9000, "request"),
-    (128000, 100, None, 98, "context"),
+    (128000, 1024, None, 510, "context"),
 ])
 def test_shared_policy_clamps(configured, window, request_cap, expected, reason):
     result = output_policy.select({"max_output_tokens": configured, "context_window": window}, [], [], request_cap=request_cap)
@@ -23,6 +23,11 @@ def test_shared_policy_clamps(configured, window, request_cap, expected, reason)
     assert result["configured_cap"] == configured
     if reason:
         assert reason in result["clamp_reasons"]
+
+
+def test_window_smaller_than_framing_rejects_even_an_empty_request():
+    with pytest.raises(AgentError, match="agent_context_limit"):
+        output_policy.select({"max_output_tokens": 128000, "context_window": 100}, [], [])
 
 
 @pytest.mark.parametrize("cap", [0, -1, True, "128000"])
@@ -95,7 +100,7 @@ def test_private_continuation_exceeds_visible_limit_survives_restart_without_pub
     assert private not in (tmp_path / "sessions.json").read_text()
 
 
-@pytest.mark.parametrize("bad", ["overflow", "role", "calls_type", "arguments", "reasoning_type"])
+@pytest.mark.parametrize("bad", ["overflow", "role", "calls_type", "call_identity", "reasoning_type"])
 def test_bridge_structural_rejections_retain_only_safe_accounting(bad):
     result = {"message": {"role": "assistant", "content": "ok"}, "reported_usage": {"input_tokens": 11, "output_tokens": 8000},
               "finish_reason": "length"}
@@ -105,8 +110,8 @@ def test_bridge_structural_rejections_retain_only_safe_accounting(bad):
         result["message"]["role"] = "user"
     elif bad == "calls_type":
         result["message"]["tool_calls"] = "PRIVATE"
-    elif bad == "arguments":
-        result["message"]["tool_calls"] = [{"id": "c", "function": {"name": "unknown", "arguments": "PRIVATE"}}]
+    elif bad == "call_identity":
+        result["message"]["tool_calls"] = [{"id": "", "function": {"name": "unknown", "arguments": "PRIVATE"}}]
     else:
         result["message"]["reasoning_content"] = {"private": True}
     with pytest.raises(AgentModelResponseError) as error:

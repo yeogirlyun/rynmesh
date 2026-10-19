@@ -55,6 +55,66 @@ def test_a_transaction_rewrites_only_the_task_it_changed(tmp_path):
     assert reopened["tasks"]["b"]["messages"][-1]["content"] == "x" and set(reopened["tasks"]) == {"a", "b", "c"}
 
 
+def test_noop_keeps_committed_bytes_and_detaches_return_value(tmp_path, monkeypatch):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    before = store.path.read_bytes()
+    writes = []
+    original = storage.atomic_write_json
+    monkeypatch.setattr(storage, "atomic_write_json", lambda *a, **kw: (writes.append(a[0]), original(*a, **kw))[1])
+    returned = store.transaction(lambda data: data["tasks"]["a"]["messages"])
+    returned.append({"role": "assistant", "content": "detached"})
+    assert writes == [] and store.path.read_bytes() == before
+    assert len(store.read()["tasks"]["a"]["messages"]) == 1
+    store.transaction(lambda data: data["tasks"]["a"]["messages"].append({"role": "assistant", "content": "persisted"}))
+    assert len(writes) == 2  # changed task blob, then the committing root
+    assert AgentStore(tmp_path, store.key).read()["tasks"]["a"]["messages"][-1]["content"] == "persisted"
+
+
+def test_noop_refreshes_another_store_commit(tmp_path):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    other = AgentStore(tmp_path, store.key)
+    other.transaction(lambda data: data["tasks"]["a"].update(result="external"))
+    before = store.path.read_bytes()
+    assert store.transaction(lambda data: data["tasks"]["a"]["result"]) == "external"
+    assert store.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("layout", [storage.VERSION, storage.ROOT_VERSION])
+def test_noop_persists_layout_and_payload_migration(tmp_path, layout):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    envelope = json.loads(store.path.read_bytes())
+    payload = json.loads(peer_box.open_sealed(store.key, store.pub, envelope["nonce"], envelope["ciphertext"], info=storage.CHANNEL))
+    if layout == storage.VERSION:
+        payload.pop("task_blobs")
+        payload["tasks"] = store.read()["tasks"]
+    payload.pop("context_budget_version", None)
+    payload.pop("settings_context_budget_provenance", None)
+    payload["settings"]["max_context_chars"] = 120000
+    nonce, ciphertext = peer_box.seal(store.key, store.pub, encoded(payload), info=storage.CHANNEL)
+    atomic_write_json(store.path, {"version": layout, "nonce": nonce, "ciphertext": ciphertext})
+    reopened = AgentStore(tmp_path, store.key)
+    reopened.transaction(lambda data: None)
+    committed = json.loads(store.path.read_bytes())
+    raw = json.loads(peer_box.open_sealed(store.key, store.pub, committed["nonce"], committed["ciphertext"], info=storage.CHANNEL))
+    assert committed["version"] == storage.ROOT_VERSION
+    assert raw["context_budget_version"] == 2 and raw["settings"]["max_context_chars"] == 120000
+    assert raw["settings_context_budget_provenance"] == "legacy_ambiguous_manual"
+
+
+def test_noop_releases_stale_storage_reservations(tmp_path):
+    store = AgentStore(tmp_path, X25519PrivateKey.generate())
+    seed(store, "a")
+    def reserve(data):
+        data["tasks"]["a"]["in_flight"] = {"kind": "model"}
+        data["storage_reservations"] = {"a": {"bytes": 100, "baseline": 0}}
+    store.transaction(reserve)
+    store.transaction(lambda data: data["tasks"]["a"].update(in_flight=None))
+    assert not AgentStore(tmp_path, store.key).read()["storage_reservations"]
+
+
 def test_removed_tasks_lose_their_file_and_orphans_are_swept(tmp_path):
     store = AgentStore(tmp_path, X25519PrivateKey.generate())
     seed(store, "a", "b")
@@ -102,7 +162,7 @@ def test_unchanged_task_poll_returns_only_live_fields(tmp_path):
     full = runtime.get(task["id"])
     same = runtime.get(task["id"], full["revision"])
     assert same["unchanged"] is True and "messages" not in same and set(same) <= {
-        "id", "revision", "unchanged", "run_timing", "budget", "allowed_actions", "run_state"}
+        "id", "revision", "unchanged", "run_timing", "budget", "allowed_actions", "run_state", "streaming"}
     assert runtime.get(task["id"], full["revision"] - 1) == full
     summaries = runtime.list_tasks()
     assert summaries[0]["id"] == task["id"] and "messages" not in summaries[0]

@@ -3,7 +3,7 @@ import copy
 import json
 
 import pytest
-from test_agent_runtime import advance, approve, assistant, make_runtime
+from test_agent_runtime import advance, approve, assistant, instruction_text, make_runtime
 from test_agent_runtime_verification import assessment, verified_runtime
 
 from rynmesh.agent_runtime.operation_permissions import fingerprint, projection
@@ -17,7 +17,7 @@ def raw(runtime, task_id):
 
 
 def system_state(messages):
-    system = messages[0]["content"]
+    system = instruction_text(messages)
     return json.loads(system.split("Server control state: ", 1)[1].split("\n", 1)[0])
 
 

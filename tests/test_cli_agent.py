@@ -274,6 +274,7 @@ def test_cli_is_a_distinct_model_in_local_api_and_rejects_unsupported_features(t
                                     public_model_alias="Codex CLI", runtime="external",
                                     capabilities=["text"], context_window=16000, max_output_tokens=512),
         _slots=threading.BoundedSemaphore(1), _lock=threading.Lock(), _running=0,
+        context_window_for_model=lambda model="": 16000,
     )
     app = FastAPI()
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"),
@@ -291,6 +292,7 @@ def test_cli_is_a_distinct_model_in_local_api_and_rejects_unsupported_features(t
 
 def test_cli_sharing_requires_personal_space_ai_policy_and_publishes_plural_catalog(tmp_path, monkeypatch):
     import rynmesh.llm_package.routes as routes
+    from rynmesh.llm_package import cli_models
 
     home = tmp_path / "node"
     store = RynmeshStore(home=home, network_dir=tmp_path / "network")
@@ -304,6 +306,8 @@ def test_cli_sharing_requires_personal_space_ai_policy_and_publishes_plural_cata
     save_manifest(manifest, path)
     monkeypatch.setattr(routes, "connect_cli", lambda **_: {"manifest": str(path)})
     monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: "C:/bin/codex.exe")
+    monkeypatch.setattr(cli_models, "list_models", lambda *a, **kw: [
+        {"id": "fixture-model", "name": "Fixture", "default": True, "context_window": 16000}])
     monkeypatch.setattr(CLIAgentAdapter, "infer", lambda *_, **__: {
         "text": "local CLI connected", "input_tokens": 4, "output_tokens": 3, "duration_ms": 1})
     with TestClient(app) as client:

@@ -237,3 +237,35 @@ def test_shell_execute_surfaces_active_background_process_hint_to_prevent_overla
             pass
 
 
+def test_compound_shell_command_with_unavailable_rg_is_rejected_before_spawn(tmp_path, monkeypatch):
+    from test_agent_local_tools import local as local_fixture
+
+    from rynmesh.agent_runtime import local_processes, local_tools
+
+    monkeypatch.setattr(local_processes, "resolve_rg_executable", lambda: None)
+    monkeypatch.setattr(local_tools, "resolve_rg_executable", lambda: None)
+
+    for cmd in (
+        "rg --files",
+        "git status --short; rg --files",
+        "rg --files -g 'AGENTS.md' -g 'CLAUDE.md'; git diff --stat",
+        "Get-ChildItem | rg pattern",
+    ):
+        with pytest.raises(AgentToolRejected, match="agent_ripgrep_unavailable_use_file_search"):
+            local_processes.prepare_shell_command({"command": cmd})
+
+    # Quoted literals mentioning rg are not treated as ripgrep invocations.
+    safe_cmd = local_processes.prepare_shell_command({"command": 'python -c "print(\'rg --files\')"'})
+    assert isinstance(safe_cmd, list) and safe_cmd
+
+    gen = local_fixture.__wrapped__(tmp_path)
+    tools, context, _, _ = next(gen)
+    try:
+        env = tools.perform("ryn_local_environment", {}, context, lambda: False)
+        assert env["rg_available"] is False
+    finally:
+        tools.processes.close()
+        try:
+            next(gen)
+        except StopIteration:
+            pass

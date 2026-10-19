@@ -88,6 +88,11 @@ class Codex:
                 # Nothing left to read: what a killed or crashed app-server looks like.
                 raise AdapterError("Codex app-server disconnected", code="runtime_connection_failed")
 
+            def diagnostics(self):
+                return {"rpc_stage": self.stage, "session_mode": self.session_mode,
+                        "events_received": self.events_received, "deltas_received": self.deltas_received,
+                        "last_event_age_seconds": None, "process_alive": self.process.poll() is None}
+
             def take_deltas(self):
                 deltas, self.deltas = self.deltas, []
                 return deltas
@@ -128,7 +133,7 @@ def codex(monkeypatch, tmp_path):
 
 
 def propose(name="read_file", **arguments):
-    return {"content": "", "tool_calls": [{"name": name, "arguments": json.dumps(arguments)}]}
+    return {"content": "", "tool_calls": [{"name": name, "arguments": arguments}]}
 
 
 def answer(text):
@@ -213,7 +218,7 @@ def test_context_and_function_changes_are_sent_as_updates(codex):
     assert codex.payload(second)["functions_update"] == {"added_or_replaced": [LIST["function"]], "removed": []}
     assert codex.payload(third)["functions_update"] == {"added_or_replaced": [], "removed": ["read_file"]}
     # The schema of each turn still admits only the current names.
-    assert third["outputSchema"]["properties"]["tool_calls"]["items"]["properties"]["name"]["enum"] == ["list_dir"]
+    assert third["outputSchema"]["properties"]["tool_calls"]["items"]["anyOf"][0]["properties"]["name"]["enum"] == ["list_dir"]
 
 
 def test_cancel_during_a_continued_turn_closes_the_thread_without_fallback(codex, monkeypatch):
@@ -581,7 +586,7 @@ def test_bridge_sends_only_a_hashed_window_and_the_local_requester(tmp_path):
     assert "conversation_key" not in sent[1]
 
 
-def test_provider_derives_the_requester_from_the_signed_sender_not_the_body(codex, tmp_path):
+def test_provider_derives_the_requester_from_the_signed_sender_not_the_body(codex, tmp_path, monkeypatch):
     from rynmesh.llm_package.manifest import LLMPackageManifest
     from rynmesh.llm_package.routes import ProviderService, _expires
     from rynmesh.llm_package.task_balance import TaskBalanceLedger
@@ -589,6 +594,9 @@ def test_provider_derives_the_requester_from_the_signed_sender_not_the_body(code
     from rynmesh.services import peer_box
     from rynmesh.store import RynmeshStore
 
+    monkeypatch.setattr("rynmesh.llm_package.cli_models.list_models", lambda *args, **kwargs: [
+        {"id": "fixture-default", "name": "Authored fixture", "default": True,
+         "context_window": 32768, "context_window_known": True, "context_window_basis": "fixture_declared"}])
     a = RynmeshStore(home=tmp_path / "a", network_dir=tmp_path / "net")
     b = RynmeshStore(home=tmp_path / "b", network_dir=tmp_path / "net")
     ak = peer_box.load_or_create_messaging_key(tmp_path / "ak")
@@ -638,7 +646,8 @@ def test_local_api_key_is_the_requester_for_api_clients(tmp_path):
     manager = SimpleNamespace(adapter=Adapter(), manifest=LLMPackageManifest(
         package_id="codex-cli", mode="codex_cli", adapter="codex_cli", public_model_alias="Codex CLI", runtime="external",
         capabilities=["text"], context_window=16000, max_output_tokens=512),
-        _slots=threading.BoundedSemaphore(1), _lock=threading.Lock(), _running=0)
+        _slots=threading.BoundedSemaphore(1), _lock=threading.Lock(), _running=0,
+        context_window_for_model=lambda _="": 16000)
     app = FastAPI()
     install_inference_api(app, home=tmp_path, store=SimpleNamespace(peer_id="self"), active_manager=lambda: None,
                           local_manager_for=lambda service_id: manager if service_id == "codex-cli" else None,
@@ -648,7 +657,7 @@ def test_local_api_key_is_the_requester_for_api_clients(tmp_path):
         key = client.post("/api/local/llm/api-keys", json={"name": name}).json()["key"]
         response = client.post("/v1/chat/completions", headers={"Authorization": "Bearer " + key},
                                json={"model": "local/codex-cli", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 12})
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
     first, second = (options["conversation_scope"] for options in seen)
     assert first["requester"].startswith("local-api:") and first["window"] is None
     assert first["requester"] != second["requester"]

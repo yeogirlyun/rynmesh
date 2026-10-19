@@ -1,10 +1,18 @@
 import { createRef, useRef, useState, type ComponentProps } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { AgentProject } from "../domain/rynAgent";
+import type { AgentDraftAttachment } from "../domain/agentAttachments";
+import type { NativeDropEvent } from "../domain/dropDesktop";
 import RynAgentComposer from "./RynAgentComposer";
 import "./rynAgentText";
+
+const desktopDrop = vi.hoisted(() => ({ handler: undefined as ((event: NativeDropEvent) => void) | undefined }));
+vi.mock("../domain/dropDesktop", () => ({ listenNativeFileDrop: vi.fn(async (handler: (event: NativeDropEvent) => void) => {
+  desktopDrop.handler = handler;
+  return () => { if (desktopDrop.handler === handler) desktopDrop.handler = undefined; };
+}) }));
 
 type ComposerProps = ComponentProps<typeof RynAgentComposer>;
 const project: AgentProject = { id: "rynmesh", name: "rynmesh", path: "D:\\code\\rynmesh", generation: 1, entry_files: [], manifests: [], directories: [] };
@@ -23,6 +31,11 @@ function EditableComposer({ initial = "", ...overrides }: Partial<ComposerProps>
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   return <RynAgentComposer {...props(overrides)} value={value} inputRef={inputRef} onChange={next => { setValue(next); overrides.onChange?.(next); }} />;
+}
+
+function AttachmentComposer() {
+  const [attachments, setAttachments] = useState<AgentDraftAttachment[]>([]);
+  return <RynAgentComposer {...props()} attachments={attachments} onAttachmentsChange={setAttachments} />;
 }
 
 beforeEach(() => {
@@ -126,6 +139,97 @@ it("disables voice input when speech recognition is unavailable", () => {
   render(<RynAgentComposer {...props()} />);
   expect(screen.getByRole("button", { name: "Voice input" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Voice input" })).toHaveAttribute("title", "Voice input is not available on this device");
+});
+
+it("adds picked files through the plus menu and lets the owner remove them", async () => {
+  const user = userEvent.setup();
+  render(<AttachmentComposer />);
+  await user.click(screen.getByLabelText("Options", { selector: "summary" }));
+  await user.click(screen.getByRole("button", { name: "Attach images or files" }));
+  const picker = screen.getByLabelText("Attach images or files", { selector: "input" });
+  await user.upload(picker, [new File(["Quarter 2 sales"], "sales.txt", { type: "text/plain" }), new File(["notes"], "notes.md", { type: "text/markdown" })]);
+  expect(await screen.findByText("sales.txt")).toBeInTheDocument();
+  expect(screen.getByText("notes.md")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove sales.txt" }));
+  expect(screen.queryByText("sales.txt")).not.toBeInTheDocument();
+  expect(screen.getByText("notes.md")).toBeInTheDocument();
+});
+
+it("accepts dropped files while keeping the next draft editable during a run", async () => {
+  const onAttachmentsChange = vi.fn();
+  const view = render(<RynAgentComposer {...props({ busy: true, onAttachmentsChange })} />);
+  const composer = view.container.querySelector(".ra-composer-shell") as HTMLElement;
+  const file = new File(["drop content"], "dropped.txt", { type: "text/plain" });
+  fireEvent.dragOver(composer, { dataTransfer: { types: ["Files"], files: [file] } });
+  expect(screen.getByText("Drop files to attach")).toBeInTheDocument();
+  fireEvent.drop(composer, { dataTransfer: { types: ["Files"], files: [file] } });
+  await waitFor(() => expect(onAttachmentsChange).toHaveBeenCalledOnce());
+  expect(onAttachmentsChange.mock.calls[0][0][0]).toMatchObject({ name: "dropped.txt", data_base64: btoa("drop content") });
+  expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
+});
+
+it("pastes images as visible removable attachments", async () => {
+  const view = render(<AttachmentComposer />);
+  const file = new File([new Uint8Array([137, 80, 78, 71])], "clipboard.png", { type: "image/png" });
+  fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { files: [file] } });
+  expect(await screen.findByText("clipboard.png")).toBeInTheDocument();
+  expect(view.container.querySelector(".ra-composer-attachment img")).toHaveAttribute("src", "data:image/png;base64,iVBORw==");
+  fireEvent.click(screen.getByRole("button", { name: "Remove clipboard.png" }));
+  expect(screen.queryByText("clipboard.png")).not.toBeInTheDocument();
+});
+
+it("blocks excessive attachments before reading their contents", async () => {
+  const onAttachmentsChange = vi.fn();
+  const view = render(<RynAgentComposer {...props({ onAttachmentsChange })} />);
+  const files = Array.from({ length: 9 }, (_, index) => new File(["text"], `${index}.txt`, { type: "text/plain" }));
+  fireEvent.drop(view.container.querySelector(".ra-composer-shell") as HTMLElement, { dataTransfer: { types: ["Files"], files } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Attach up to 8 files");
+  expect(onAttachmentsChange).not.toHaveBeenCalled();
+});
+
+it("does not take dropped files when the composer is disabled", () => {
+  const onAttachmentsChange = vi.fn();
+  const view = render(<RynAgentComposer {...props({ inputDisabled: true, onAttachmentsChange })} />);
+  fireEvent.drop(view.container.querySelector(".ra-composer-shell") as HTMLElement, { dataTransfer: { types: ["Files"], files: [new File(["text"], "private.txt")] } });
+  expect(onAttachmentsChange).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("accepts desktop native drops only inside the composer", async () => {
+  const onAttachmentsChange = vi.fn();
+  const view = render(<RynAgentComposer {...props({ onAttachmentsChange })} />);
+  const composer = view.container.querySelector(".ra-composer-shell") as HTMLElement;
+  vi.spyOn(composer, "getBoundingClientRect").mockReturnValue({ x: 10, y: 100, left: 10, right: 500, top: 100, bottom: 400, width: 490, height: 300, toJSON: () => ({}) });
+  await waitFor(() => expect(desktopDrop.handler).toBeDefined());
+  act(() => desktopDrop.handler?.({ type: "drop", x: 900, y: 200, paths: ["D:\\outside.txt"] }));
+  expect(onAttachmentsChange).not.toHaveBeenCalled();
+  act(() => desktopDrop.handler?.({ type: "over", x: 100, y: 200 }));
+  expect(screen.getByText("Drop files to attach")).toBeInTheDocument();
+  act(() => desktopDrop.handler?.({ type: "drop", x: 100, y: 200, paths: ["D:\\Quarter 2\\sales.xlsx"] }));
+  expect(onAttachmentsChange).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({ name: "sales.xlsx", path: "D:\\Quarter 2\\sales.xlsx" })]);
+  expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
+});
+
+it("does not clear a new chat's attachment preparation when an old reader finishes", async () => {
+  const readers: Array<{ result: string; onload: (() => void) | null }> = [];
+  class DeferredReader {
+    result = "data:text/plain;base64,dGV4dA==";
+    onload: (() => void) | null = null;
+    readAsDataURL() { readers.push(this); }
+  }
+  vi.stubGlobal("FileReader", DeferredReader);
+  const onAttachmentsChange = vi.fn(), onAttachmentsBusyChange = vi.fn();
+  const first = render(<RynAgentComposer {...props({ onAttachmentsChange, onAttachmentsBusyChange })} />);
+  fireEvent.change(screen.getByLabelText("Attach images or files", { selector: "input" }), { target: { files: [new File(["text"], "first.txt")] } });
+  first.unmount();
+  render(<RynAgentComposer {...props({ onAttachmentsChange, onAttachmentsBusyChange })} />);
+  fireEvent.change(screen.getByLabelText("Attach images or files", { selector: "input" }), { target: { files: [new File(["text"], "second.txt")] } });
+  await act(async () => { readers[0].onload?.(); });
+  expect(onAttachmentsBusyChange.mock.calls).toEqual([[true], [true]]);
+  expect(onAttachmentsChange).not.toHaveBeenCalled();
+  await act(async () => { readers[1].onload?.(); });
+  expect(onAttachmentsBusyChange.mock.calls).toEqual([[true], [true], [false]]);
+  expect(onAttachmentsChange.mock.calls[0][0][0].name).toBe("second.txt");
 });
 
 it("appends final voice results to the newest draft and stops recognition on unmount", async () => {

@@ -16,6 +16,25 @@ from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 
+def actual_usage(result: Any) -> dict[str, int | None]:
+    """Reported metadata wins by presence, including an explicit unknown value.
+
+    Legacy adapters without that marker may provide typed actual top-level
+    counters. Estimates must never occupy either of these accounting fields.
+    Keep this helper stdlib-only for runtime staging and plain inference.
+    """
+    result = result if isinstance(result, dict) else {}
+    source = result.get("reported_usage") if "reported_usage" in result else result
+    source = source if isinstance(source, dict) else {}
+    return {key: source.get(key) if type(source.get(key)) is int and source[key] >= 0 else None
+            for key in ("input_tokens", "output_tokens")}
+
+
+def _openai_usage(usage):
+    usage = usage if isinstance(usage, dict) else {}
+    return actual_usage({"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")})
+
+
 class AdapterError(RuntimeError):
     def __init__(self, message: str, *, code: str = "inference_failed", reported_usage=None, finish_reason=None) -> None:
         super().__init__(message)
@@ -32,6 +51,8 @@ RUNTIME_ERROR_CODES = frozenset({
     "model_configuration_changed", "model_daily_quota_exhausted",
     "ai_permission_denied",
     "stream_delivery_failed", "upstream_http_failed", "upstream_response_invalid",
+    "source_protocol_parameters_unsupported",
+    "source_protocol_response_invalid",
 })
 
 
@@ -90,6 +111,7 @@ class AdapterMetrics:
     failures: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    unknown_usage_requests: int = 0
     total_duration_ms: int = 0
 
 
@@ -247,16 +269,16 @@ class OpenAICompatibleAdapter:
             if not text:
                 raise AdapterError("local API returned no completion text")
             usage = result.get("usage") or {}
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(prompt) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+            counts = _openai_usage(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
-                self._metrics.input_tokens += input_tokens
-                self._metrics.output_tokens += output_tokens
+                self._metrics.input_tokens += counts["input_tokens"] or 0
+                self._metrics.output_tokens += counts["output_tokens"] or 0
+                self._metrics.unknown_usage_requests += any(value is None for value in counts.values())
                 self._metrics.total_duration_ms += duration_ms
-            return {"text": text, "model": self.model, "input_tokens": input_tokens,
-                    "output_tokens": output_tokens, "duration_ms": duration_ms}
+            return {"text": text, "model": self.model, **counts,
+                    "reported_usage": counts, "duration_ms": duration_ms}
         except Exception:
             with self._lock:
                 self._metrics.failures += 1
@@ -271,6 +293,10 @@ class OpenAICompatibleAdapter:
         from .chat import ChatAccumulator, validate_chat
 
         body = {**self.request_defaults, **validate_chat(body)}
+        for message in body["messages"]:
+            # Native protocol continuation is never a Chat Completions field.
+            message.pop("provider_state", None)
+            message.pop("is_error", None)
         if task_id in self._cancelled:
             raise AdapterError("task_cancelled")
         if not self.model and not self.health().get("ok"):
@@ -286,9 +312,7 @@ class OpenAICompatibleAdapter:
         def observed_usage(usage):
             # Reported zero is real; estimates, booleans and malformed counters
             # are never evidence for durable accounting after a failed request.
-            usage = usage if isinstance(usage, dict) else {}
-            return {name: usage.get(field) if type(usage.get(field)) is int and usage[field] >= 0 else None
-                    for name, field in (("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens"))}
+            return _openai_usage(usage)
 
         def failure(code):
             cancelled = task_id in self._cancelled
@@ -374,15 +398,9 @@ class OpenAICompatibleAdapter:
                 raise AdapterError("inference timed out", code="inference_timeout")
             if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(json.dumps(body["messages"])) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(json.dumps(message)) // 4))
+            counts = observed_usage(usage)
             return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens,
-                    # Legacy accounting keeps its bounded estimate fields.
-                    # Agent budgets must distinguish absent provider usage from
-                    # a reported zero, including reasoning-token completions.
-                    "reported_usage": {"input_tokens": usage.get("prompt_tokens") if type(usage.get("prompt_tokens")) is int and usage["prompt_tokens"] >= 0 else None,
-                                       "output_tokens": usage.get("completion_tokens") if type(usage.get("completion_tokens")) is int and usage["completion_tokens"] >= 0 else None},
+                    **counts, "reported_usage": counts,
                     "duration_ms": int((time.monotonic() - started) * 1000)}
         except AdapterError as exc:
             if received_usage is not None:
@@ -473,7 +491,7 @@ class OpenAICompatibleAdapter:
                     raise AdapterError("local API returned no completion text")
                 on_delta(delta)
                 text_parts.append(delta)
-                usage = dict(value.get("usage") or {})
+                usage = value.get("usage")
             else:
                 while True:
                     if task_id in self._cancelled:
@@ -532,19 +550,18 @@ class OpenAICompatibleAdapter:
             text = "".join(text_parts)
             if not text:
                 raise AdapterError("local API returned no completion text")
-            input_tokens = int(usage.get("prompt_tokens") or max(1, len(prompt) // 4))
-            output_tokens = int(usage.get("completion_tokens") or max(1, len(text) // 4))
+            counts = _openai_usage(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
-                self._metrics.input_tokens += input_tokens
-                self._metrics.output_tokens += output_tokens
+                self._metrics.input_tokens += counts["input_tokens"] or 0
+                self._metrics.output_tokens += counts["output_tokens"] or 0
+                self._metrics.unknown_usage_requests += any(value is None for value in counts.values())
                 self._metrics.total_duration_ms += duration_ms
             return {
                 "text": text,
                 "model": self.model,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
+                **counts, "reported_usage": counts,
                 "duration_ms": duration_ms,
             }
         except AdapterError:

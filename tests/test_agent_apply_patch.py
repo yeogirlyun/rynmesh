@@ -262,7 +262,9 @@ def test_patch_preserves_added_indentation_verbatim_and_reports_bounded_diagnost
 
 def test_observed_file_version_tracks_reads_detects_external_changes_and_survives_restart(tmp_path):
     from types import SimpleNamespace
+
     from test_agent_runtime import advance, assistant, make_runtime
+
     from rynmesh.agent_runtime.local_tools import LocalTools
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
     from rynmesh.agent_runtime.runtime import AgentRuntime
@@ -353,7 +355,9 @@ def test_observed_file_version_tracks_reads_detects_external_changes_and_survive
 
 def test_large_apply_patch_exceeds_max_output_chars_and_executes_end_to_end(tmp_path):
     from types import SimpleNamespace
+
     from test_agent_runtime import advance, assistant, make_runtime
+
     from rynmesh.agent_runtime.local_tools import LocalTools
     from rynmesh.agent_runtime.operation_ledger import OperationLedger
 
@@ -437,6 +441,7 @@ def test_file_search_regex_case_sensitive_file_pattern_and_invalid_regex_diagnos
 
 def test_resolve_rg_executable_prefers_bundled_binary_and_falls_back_to_path(tmp_path, monkeypatch):
     import os
+
     from rynmesh.agent_runtime import local_processes
 
     fake_bin_dir = tmp_path / "bundled_bin"
@@ -554,10 +559,9 @@ def test_codex_thread_reuses_session_across_tool_execution_permission_updates_to
 
     # Turn 3: Same-window owner follow-up message increments goal_revision and reuses the session.
     row3 = make_row(goal_rev=2, receipts=row2["receipts"])
-    sys3 = SYSTEM + authority(row3)
+    _ = SYSTEM + authority(row3)
     msgs3 = [*msgs2, final_msg, {"role": "user", "content": "Now change x to 2."}]
     conv3 = codex_threads.Conversation(msgs3, funcs_v2, scope={"requester": "local_owner", "window": key[-1]})
     leased3 = pool.lease(key, conv3)
     assert leased3 is session
     assert conv3.update["messages"] == [{"role": "user", "content": "Now change x to 2."}]
-

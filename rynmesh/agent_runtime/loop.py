@@ -8,19 +8,22 @@ from __future__ import annotations
 
 import copy
 import json
-import re
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from jsonschema import ValidationError, validate
 
+from ..llm_package.chat import validate_provider_state
 from . import (
     budget,
     checkpoint_refs,
+    diagnostic_log,
     knowledge,
     output_policy,
     projects,
+    request_context,
     results,
     tool_menu,
     verification,
@@ -30,13 +33,16 @@ from .execution_policy import classify_operation, decide
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
-    SYSTEM,
-    authority,
+    instruction_layers,
     plan_message,
     provider_messages,
 )
 from .protocol import digest, event, model_retry_authority, now, sanitized, task
 from .store import AgentError, AgentToolRejected, encoded
+from .stream_tools import StreamToolMismatch
+from .streamed_reads import StreamedReads
+from .tool_router import assert_schema_unchanged, normalize_tool_calls
+from .turn_state import decide_turn
 
 # Side-effect-free workstation reads that one model response may run concurrently.
 PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search", "ryn_process_read",
@@ -88,245 +94,311 @@ class AgentLoop:
         self.store.transaction(refresh)
 
     def _model(self, selected: dict, cancelled, started: float) -> None:
+        streams = []
+        try:
+            self._model_turn(selected, cancelled, started, streams)
+        except Exception as exc:
+            # Even an invalid/failing model response may already have completed
+            # read-only items. Join every admitted worker and retain its receipt.
+            for stream in streams:
+                records = stream.abort()
+                if records:
+                    def recover(data, records=records, stream=stream):
+                        row = task(data, selected["id"])
+                        if (data["settings"].get("enabled") and all(
+                                record["authority"] == model_retry_authority(data["settings"]) for record in records)):
+                            stream.record_recovered(row, records)
+                        row["rejected_response_note"] = (
+                            "The response did not complete. Completed read-only tool results are recorded; "
+                            "no mutation was dispatched by the stream. Continue from the recorded evidence.")
+                    self.store.transaction(recover)
+            if isinstance(exc, StreamToolMismatch):
+                raise AgentError("agent_invalid_model_response") from None
+            raise
+
+    def _model_turn(self, selected: dict, cancelled, started: float, streams: list) -> None:
+        caller_selected = selected
         preparation_started = time.monotonic()
+        request_id = "req_" + uuid.uuid4().hex
+        attempt = int(selected.get("model_retry_count", 0)) + 1
+        caller_selected.update(
+            _preparation_started=preparation_started,
+            _prep_persistence_seconds=0.0,
+            _request_id=request_id,
+            _attempt=attempt,
+        )
         scheduler_wait_seconds = float(selected.get("_scheduler_wait_seconds", 0.0))
         claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
         prep_persistence_seconds = 0.0
-        t0 = time.monotonic()
-        self._reserve_output(selected)
-        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-        self._validate_context(selected)
-        (specs, menu_state), _ = self._menu(selected)
-        menu_reason = "projection"
-        def save_menu(data):
-            row = task(data, selected["id"])
-            if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
-                raise AgentError("agent_cancelled")
-            if row.get("tool_menu") != menu_state:
-                row["tool_menu"] = menu_state
-                event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
-        t0 = time.monotonic()
-        self.store.transaction(save_menu)
-        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-        selected = {**selected, "tool_menu": menu_state}
-        messages = self._context(selected)
-        context_limit = self._context_limit(selected)
-        # A summary is a paid model request too. A percentage of the total
-        # window mostly measures pinned authority/schemas in small contexts,
-        # not reclaimable history, and can trigger a summary after every tool.
-        # Dispatch the complete evidence unchanged whenever it actually fits.
-        if len(encoded(messages)) + len(encoded(specs)) > context_limit:
-            try:
-                if not self._compact(selected, cancelled, started):
-                    return
-            except AgentError as exc:
-                if (str(exc) != "agent_context_limit" or menu_state.get("mode") != "directory"
-                        or not (menu_state.get("loaded_names") or menu_state.get("pinned_names"))):
-                    raise
-                # A schema selection is a cache, never permission or business
-                # state. Release it before declaring that pinned owner facts,
-                # receipts and exact continuation values cannot fit. All tools
-                # remain discoverable, and dispatch validates the new exposure.
-                menu_state = tool_menu.release(menu_state)
-                menu_reason = "context_space"
-                t0 = time.monotonic()
-                self.store.transaction(save_menu)
-                prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-                selected = {**selected, "tool_menu": menu_state}
-                specs = self._specs(selected)
-                if not self._compact(selected, cancelled, started):
-                    return
-            # Reload durable context without restarting this tick's deadline.
-            selected = {**task(self.store.read(), selected["id"]),
-                        **{key: selected[key] for key in ("_model_retry_authority", "_run_control_revision",
-                                                          "_run_started", "_run_lifetime_remaining",
-                                                          "_scheduler_wait_seconds", "_claim_persistence_seconds")
-                           if key in selected}}
+        with diagnostic_log.context_scope(step=int(selected.get("steps", 0)) + 1, request_id=request_id):
+            t0 = time.monotonic()
+            self._reserve_output(selected)
+            prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+            caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+            self._validate_context(selected)
+            (specs, menu_state), _ = self._menu(selected)
+            menu_reason = "projection"
+            def save_menu(data):
+                row = task(data, selected["id"])
+                if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+                    raise AgentError("agent_cancelled")
+                if row.get("tool_menu") != menu_state:
+                    row["tool_menu"] = menu_state
+                    event(row, "tool_menu_changed", menu=copy.deepcopy(menu_state), reason=menu_reason)
+            t0 = time.monotonic()
+            self.store.transaction(save_menu)
+            prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+            caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+            selected = {**selected, "tool_menu": menu_state, "_request_id": request_id, "_attempt": attempt}
             messages = self._context(selected)
-        if len(encoded(messages)) + len(encoded(specs)) > context_limit:
-            raise AgentError("agent_context_limit")
+            context_limit = self._context_limit(selected)
+            # A summary is a paid model request too. A percentage of the total
+            # window mostly measures pinned authority/schemas in small contexts,
+            # not reclaimable history, and can trigger a summary after every tool.
+            # Dispatch the complete evidence unchanged whenever it actually fits.
+            if len(encoded(messages)) + len(encoded(specs)) > context_limit:
+                try:
+                    if not self._compact(selected, cancelled, started):
+                        return
+                except AgentError as exc:
+                    if (str(exc) != "agent_context_limit" or menu_state.get("mode") != "directory"
+                            or not (menu_state.get("loaded_names") or menu_state.get("pinned_names"))):
+                        raise
+                    # A schema selection is a cache, never permission or business
+                    # state. Release it before declaring that pinned owner facts,
+                    # receipts and exact continuation values cannot fit. All tools
+                    # remain discoverable, and dispatch validates the new exposure.
+                    menu_state = tool_menu.release(menu_state)
+                    menu_reason = "context_space"
+                    t0 = time.monotonic()
+                    self.store.transaction(save_menu)
+                    prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+                    caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+                    selected = {**selected, "tool_menu": menu_state}
+                    specs = self._specs(selected)
+                    if not self._compact(selected, cancelled, started):
+                        return
+                # Reload durable context without restarting this tick's deadline.
+                selected = {**task(self.store.read(), selected["id"]),
+                            **{key: selected[key] for key in ("_model_retry_authority", "_run_control_revision",
+                                                              "_run_started", "_run_lifetime_remaining",
+                                                              "_scheduler_wait_seconds", "_claim_persistence_seconds",
+                                                              "_request_id", "_attempt")
+                               if key in selected}}
+                messages = self._context(selected)
+            if len(encoded(messages)) + len(encoded(specs)) > context_limit:
+                raise AgentError("agent_context_limit")
 
-        def mark(data):
-            row = task(data, selected["id"])
-            if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+            def mark(data):
+                row = task(data, selected["id"])
+                if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+                    row["in_flight"] = None
+                    row["elapsed_seconds"] += time.monotonic() - started
+                    settle(row, event)
+                    return False
+                if row["steps"] >= row["limits"]["max_steps"]:
+                    raise AgentError("agent_step_limit")
+                row["steps"] += 1
+                row["in_flight"]["dispatched"] = True
+                row["in_flight"]["request_id"] = request_id
+                row["in_flight"]["attempt"] = attempt
+                event(row, "model_started", step=row["steps"], request_id=request_id, attempt=attempt)
+                return row["steps"]
+            t0 = time.monotonic()
+            step = self.store.transaction(mark)
+            if not step:
+                return
+            prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+            caller_selected["_prep_persistence_seconds"] = prep_persistence_seconds
+            caller_selected["_step"] = step
+            live_stream = self._start_stream(selected, step)
+            reads = StreamedReads(self, selected, specs, cancelled, PARALLEL_READS)
+            streams.append(reads)
+            stream = {"text": "", "at": time.monotonic(), "total": 0,
+                      "writes": 0, "write_seconds": 0.0, "first_text_seconds": None}
+
+            def flush_stream():
+                if not stream["text"]:
+                    return
+                chunk = stream["text"]
+                stream["text"] = ""
+
+                def append(data):
+                    row = task(data, selected["id"])
+                    if row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
+                        event(row, "text_delta", step=row["steps"], text=chunk)
+                write_started = time.monotonic()
+                self.store.transaction(append)
+                stream["at"] = time.monotonic()
+                stream["write_seconds"] += stream["at"] - write_started
+                stream["writes"] += 1
+
+            def on_event(metadata):
+                reads.on_event(metadata)
+                if not isinstance(metadata, dict) or metadata.get("type") != "text_delta" or not isinstance(metadata.get("text"), str):
+                    return
+                stream["total"] += len(metadata["text"].encode())
+                if stream["total"] > selected["limits"]["max_output_chars"]:
+                    raise AgentError("agent_output_limit")
+                if metadata["text"] and stream["first_text_seconds"] is None:
+                    stream["first_text_seconds"] = time.monotonic() - request_started
+                text = sanitized(metadata["text"])
+                stream["text"] += text
+                self._append_stream(selected["id"], live_stream, text)
+                since_write = time.monotonic() - stream["at"]
+                if (stream["writes"] == 0 or
+                        (since_write >= STREAM_MIN_PERSIST_SECONDS and
+                         (len(stream["text"]) >= STREAM_PERSIST_CHARS or since_write >= STREAM_MAX_PERSIST_SECONDS))):
+                    flush_stream()
+
+            if cancelled():
+                raise AgentError(cancelled.reason)
+            request_started = time.monotonic()
+            caller_selected["_request_started"] = request_started
+            preparation_seconds = request_started - preparation_started
+            response = self._complete(selected, messages, specs, cancelled, on_event)
+            response_received = time.monotonic()
+            if cancelled():
+                raise AgentError(cancelled.reason)
+            flush_stream()
+            if not isinstance(response, dict) or not isinstance(response.get("message"), dict):
+                raise AgentError("agent_invalid_model_response")
+            raw = response["message"]
+            finish_reason = response.get("finish_reason", "stop")
+            if finish_reason in {"content_filter", "cancelled"}:
+                raise AgentError("agent_model_response_stopped")
+            content = raw.get("content") or ""
+            calls = raw.get("tool_calls") or []
+            if not isinstance(content, str) or not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS:
+                raise AgentError("agent_invalid_model_response")
+            if len(encoded(raw)) > output_policy.MAX_RAW_RESPONSE_BYTES:
+                raise AgentError("agent_model_output_limit")
+            if len(encoded(output_policy.visible_message(raw))) > selected["limits"]["max_output_chars"]:
+                raise AgentError("agent_output_limit")
+            if not calls and not content.strip():
+                raise AgentError("agent_invalid_model_response")
+            streamed_results = reads.drain(calls)
+            message = {"role": "assistant", "content": sanitized(content)}
+            if "reasoning_content" in raw:
+                if not isinstance(raw["reasoning_content"], str):
+                    raise AgentError("agent_invalid_model_response")
+                message["reasoning_content"] = raw["reasoning_content"]
+            if "provider_state" in raw:
+                try:
+                    validate_provider_state(raw["provider_state"])
+                except (ValueError, TypeError, RecursionError):
+                    raise AgentError("agent_invalid_model_response") from None
+                message["provider_state"] = copy.deepcopy(raw["provider_state"])
+            ids = {call["id"] for msg in selected["messages"] for call in msg.get("tool_calls", [])}
+            # A malformed argument or unknown function is a paired tool result,
+            # not a rejected response that could replay valid sibling calls.
+            pending = normalize_tool_calls(calls, specs, existing_call_ids=ids,
+                                           metadata=self._metadata, internal_names=INTERNAL_NAMES)
+            for call in pending:
+                # The host ledger hashes parsed arguments, separately from the
+                # wire representation (whitespace must not alter permission proof).
+                call["raw_arguments_sha256"] = call["arguments_sha256"]
+                call["arguments_sha256"] = digest(call["arguments"])
+                call.update(operation_id="op_" + uuid.uuid4().hex,
+                            context_epoch=selected.get("context_epoch", 0), goal_revision=selected["goal"]["revision"],
+                            scope_revision=selected["scope_revision"], internal=call["name"] in INTERNAL_NAMES)
+                if finish_reason == "length":
+                    # A truncated item is not a completed tool proposal, even
+                    # when the partial argument bytes happen to parse as JSON.
+                    call.update(effect="read", error_result={"error": "agent_tool_call_incomplete",
+                        "not_executed": True, "no_mutation": True,
+                        "message": "The provider truncated this response. Issue a complete tool call."})
+            for record in streamed_results:
+                # The admitted operation owns its durable receipt identity.
+                queued = next(item for item in pending if item["call_id"] == record["call"]["call_id"])
+                queued["operation_id"] = record["call"]["operation_id"]
+            if calls:
+                message["tool_calls"] = [{"id": call["call_id"], "type": "function", "function": {"name": call["name"], "arguments": call["arguments_json"]}} for call in pending]
+            try:
+                decision = decide_turn(pending_tool_calls=len(pending), finish_reason=finish_reason,
+                                       end_turn=response.get("end_turn"),
+                                       needs_follow_up=response.get("needs_follow_up", False))
+            except ValueError:
+                raise AgentError("agent_invalid_model_response") from None
+
+            # Inclusive wall-clock phases, not provider-only inference time. Stream
+            # persistence is a subset of model_call/response_processing; completion
+            # commit time is excluded. Store this with the existing assistant commit.
+            timing = {"scheduler_wait_seconds": round(scheduler_wait_seconds, 4),
+                      "preparation_seconds": round(preparation_seconds, 4),
+                      "preparation_persistence_seconds": round(prep_persistence_seconds, 4),
+                      "model_call_seconds": round(response_received - request_started, 4),
+                      "response_processing_seconds": round(time.monotonic() - response_received, 4),
+                      "store_persistence_seconds": round(claim_persistence_seconds + prep_persistence_seconds + stream["write_seconds"], 4),
+                      "stream_persistence_seconds": round(stream["write_seconds"], 4),
+                      "stream_persistence_count": stream["writes"],
+                      "first_text_seconds": (round(stream["first_text_seconds"], 4)
+                                             if stream["first_text_seconds"] is not None else None)}
+
+            def finish(data):
+                row = task(data, selected["id"])
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
-                settle(row, event)
-                return False
-            if row["steps"] >= row["limits"]["max_steps"]:
-                raise AgentError("agent_step_limit")
-            row["steps"] += 1
-            row["in_flight"]["dispatched"] = True
-            event(row, "model_started", step=row["steps"])
-            return row["steps"]
-        t0 = time.monotonic()
-        step = self.store.transaction(mark)
-        if not step:
-            return
-        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-        live_stream = self._start_stream(selected, step)
-        stream = {"text": "", "at": time.monotonic(), "total": 0,
-                  "writes": 0, "write_seconds": 0.0, "first_text_seconds": None}
-
-        def flush_stream():
-            if not stream["text"]:
-                return
-            chunk = stream["text"]
-            stream["text"] = ""
-
-            def append(data):
-                row = task(data, selected["id"])
-                if row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
-                    event(row, "text_delta", step=row["steps"], text=chunk)
-            write_started = time.monotonic()
-            self.store.transaction(append)
-            stream["at"] = time.monotonic()
-            stream["write_seconds"] += stream["at"] - write_started
-            stream["writes"] += 1
-
-        def on_event(metadata):
-            if not isinstance(metadata, dict) or metadata.get("type") != "text_delta" or not isinstance(metadata.get("text"), str):
-                return
-            stream["total"] += len(metadata["text"].encode())
-            if stream["total"] > selected["limits"]["max_output_chars"]:
-                raise AgentError("agent_output_limit")
-            if metadata["text"] and stream["first_text_seconds"] is None:
-                stream["first_text_seconds"] = time.monotonic() - request_started
-            text = sanitized(metadata["text"])
-            stream["text"] += text
-            self._append_stream(selected["id"], live_stream, text)
-            since_write = time.monotonic() - stream["at"]
-            if (stream["writes"] == 0 or
-                    (since_write >= STREAM_MIN_PERSIST_SECONDS and
-                     (len(stream["text"]) >= STREAM_PERSIST_CHARS or since_write >= STREAM_MAX_PERSIST_SECONDS))):
-                flush_stream()
-
-        if cancelled():
-            raise AgentError(cancelled.reason)
-        request_started = time.monotonic()
-        preparation_seconds = request_started - preparation_started
-        response = self._complete(selected, messages, specs, cancelled, on_event)
-        response_received = time.monotonic()
-        if cancelled():
-            raise AgentError(cancelled.reason)
-        flush_stream()
-        if not isinstance(response, dict) or not isinstance(response.get("message"), dict):
-            raise AgentError("agent_invalid_model_response")
-        raw = response["message"]
-        finish_reason = response.get("finish_reason", "stop")
-        if finish_reason in {"content_filter", "cancelled"}:
-            raise AgentError("agent_model_response_stopped")
-        content = raw.get("content") or ""
-        calls = raw.get("tool_calls") or []
-        if not isinstance(content, str) or not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS:
-            raise AgentError("agent_invalid_model_response")
-        if len(encoded(raw)) > output_policy.MAX_RAW_RESPONSE_BYTES:
-            raise AgentError("agent_model_output_limit")
-        if len(encoded(output_policy.visible_message(raw))) > selected["limits"]["max_output_chars"]:
-            raise AgentError("agent_output_limit")
-        if not calls and not content.strip():
-            raise AgentError("agent_invalid_model_response")
-        message = {"role": "assistant", "content": sanitized(content)}
-        if "reasoning_content" in raw:
-            if not isinstance(raw["reasoning_content"], str):
-                raise AgentError("agent_invalid_model_response")
-            message["reasoning_content"] = raw["reasoning_content"]
-        pending = []
-        ids = {call["id"] for msg in selected["messages"] for call in msg.get("tool_calls", [])}
-        for call in calls:
-            try:
-                call_id, name, arguments = call["id"], call["function"]["name"], call["function"]["arguments"]
-                if not isinstance(call_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", call_id) or call_id in ids:
-                    raise ValueError
-                if not isinstance(name, str) or not isinstance(arguments, str) or len(arguments.encode("utf-8")) > output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES:
-                    raise ValueError
-                args = json.loads(arguments)
-                if not isinstance(args, dict):
-                    raise ValueError
-                spec = next(item["function"] for item in specs if item["function"]["name"] == name)
-                if name not in INTERNAL_NAMES:
-                    validate(args, spec["parameters"])
-                meta = self._metadata(name)
-                if meta.get("effect") not in {"read", "write"}:
-                    raise ValueError
-                ids.add(call_id)
-                pending.append({"call_id": call_id, "name": name, "arguments": args, "effect": meta["effect"], "operation_id": "op_" + uuid.uuid4().hex,
-                                "context_epoch": selected.get("context_epoch", 0), "goal_revision": selected["goal"]["revision"],
-                                "scope_revision": selected["scope_revision"], "internal": name in INTERNAL_NAMES})
-            except (KeyError, TypeError, ValueError, StopIteration, ValidationError):
-                raise AgentError("agent_invalid_tool_call") from None
-        if calls:
-            message["tool_calls"] = [{"id": call["call_id"], "type": "function", "function": {"name": call["name"], "arguments": encoded(call["arguments"]).decode()}} for call in pending]
-
-        # Inclusive wall-clock phases, not provider-only inference time. Stream
-        # persistence is a subset of model_call/response_processing; completion
-        # commit time is excluded. Store this with the existing assistant commit.
-        timing = {"scheduler_wait_seconds": round(scheduler_wait_seconds, 4),
-                  "preparation_seconds": round(preparation_seconds, 4),
-                  "preparation_persistence_seconds": round(prep_persistence_seconds, 4),
-                  "model_call_seconds": round(response_received - request_started, 4),
-                  "response_processing_seconds": round(time.monotonic() - response_received, 4),
-                  "store_persistence_seconds": round(claim_persistence_seconds + prep_persistence_seconds + stream["write_seconds"], 4),
-                  "stream_persistence_seconds": round(stream["write_seconds"], 4),
-                  "stream_persistence_count": stream["writes"],
-                  "first_text_seconds": (round(stream["first_text_seconds"], 4)
-                                         if stream["first_text_seconds"] is not None else None)}
-
-        def finish(data):
-            row = task(data, selected["id"])
-            row["in_flight"] = None
-            row["elapsed_seconds"] += time.monotonic() - started
-            if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
-                settle(row, event)
-                return  # Never publish a late completion after pause or cancellation.
-            if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
-                row.update(status="failed", error="agent_time_limit")
-                event(row, "failed", error=row["error"])
-                return
-            row["messages"].append({**message, "context_epoch": selected.get("context_epoch", 0)})
-            row["queue"] = pending
-            row["model_retry_count"] = 0
-            row.pop("model_retry_authority", None)
-            row.pop("rejected_response_note", None)
-            event(row, "assistant", content=message["content"], tool_count=len(pending), timing=timing)
-            if pending:
-                row.pop("answer_continuation", None)
-                row["status"] = "queued"
-            elif finish_reason == "length":
-                # A transport output limit is not an answer boundary. Keep the
-                # partial turn and continue under the existing task budget.
-                row["messages"].append({"role": "assistant", "content":
-                    "Runtime note: output was cut off. Continue the unfinished response or work; do not repeat earlier content.",
-                    "context_epoch": row.get("context_epoch", 0)})
-                continuation = row.get("answer_continuation") or {}
-                if (continuation.get("goal_revision") != row["goal"]["revision"] or
-                        continuation.get("context_epoch") != row.get("context_epoch", 0)):
-                    continuation = {"goal_revision": row["goal"]["revision"], "context_epoch": row.get("context_epoch", 0), "text": ""}
-                continuation["text"] += message["content"]
-                if len(continuation["text"].encode()) > row["limits"]["max_output_chars"]:
-                    raise AgentError("agent_output_limit")
-                row["answer_continuation"] = continuation
-                row["status"] = "queued"
-                event(row, "response_continuation_requested")
-            else:
-                continuation = row.pop("answer_continuation", {})
-                prefix = continuation.get("text", "") if (continuation.get("goal_revision") == row["goal"]["revision"] and
-                    continuation.get("context_epoch") == row.get("context_epoch", 0)) else ""
-                answer = prefix + message["content"]
-                if len(answer.encode()) > row["limits"]["max_output_chars"]:
-                    raise AgentError("agent_output_limit")
-                row.update(status="completed", result=answer)
-                # Independent verification is an explicit optional feature.
-                # Normal turns end here; no hidden reviewer or repair loop.
-                if row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
-                    verification.begin(row, self.tools.verification_specs())
+                if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
+                    settle(row, event)
+                    return  # Never publish a late completion after pause or cancellation.
+                if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
+                    row.update(status="failed", error="agent_time_limit")
+                    event(row, "failed", error=row["error"], step=step, request_id=request_id, attempt=attempt)
+                    return
+                event(row, "model_response_completed", step=step, request_id=request_id,
+                      finish_reason=finish_reason, tool_count=len(pending))
+                row["messages"].append({**message, "context_epoch": selected.get("context_epoch", 0)})
+                row["queue"] = pending
+                if streamed_results:
+                    if not reads.publish(row, streamed_results):
+                        raise AgentError("agent_owner_changed")
+                    consumed = {record["call"]["call_id"] for record in streamed_results}
+                    row["queue"] = [call for call in row["queue"] if call["call_id"] not in consumed]
+                row["model_retry_count"] = 0
+                row.pop("model_retry_authority", None)
+                row.pop("rejected_response_note", None)
+                event(row, "assistant", content=message["content"], tool_count=len(pending),
+                      step=step, request_id=request_id, attempt=attempt, timing=timing)
+                event(row, "turn_decision", action=decision.action, reason=decision.reason, step=step)
+                if decision.action == "execute_tools":
+                    row.pop("answer_continuation", None)
                     row["status"] = "queued"
-                    event(row, "verification_started", goal_revision=row["goal"]["revision"])
+                elif decision.action == "continue":
+                    # A transport output limit is not an answer boundary. Keep the
+                    # partial turn and continue under the existing task budget.
+                    row["messages"].append({"role": "assistant", "content":
+                        "Runtime note: continue the unfinished response or work; do not repeat earlier content.",
+                        "context_epoch": row.get("context_epoch", 0)})
+                    continuation = row.get("answer_continuation") or {}
+                    if (continuation.get("goal_revision") != row["goal"]["revision"] or
+                            continuation.get("context_epoch") != row.get("context_epoch", 0)):
+                        continuation = {"goal_revision": row["goal"]["revision"], "context_epoch": row.get("context_epoch", 0), "text": ""}
+                    continuation["text"] += message["content"]
+                    if len(continuation["text"].encode()) > row["limits"]["max_output_chars"]:
+                        raise AgentError("agent_output_limit")
+                    row["answer_continuation"] = continuation
+                    row["status"] = "queued"
+                    event(row, "response_continuation_requested", reason=decision.reason)
                 else:
-                    row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
-                        uncertainties=["No independent goal assessment was requested."])
-                    event(row, "completed")
-        self.store.transaction(finish)
+                    continuation = row.pop("answer_continuation", {})
+                    prefix = continuation.get("text", "") if (continuation.get("goal_revision") == row["goal"]["revision"] and
+                        continuation.get("context_epoch") == row.get("context_epoch", 0)) else ""
+                    answer = prefix + message["content"]
+                    if len(answer.encode()) > row["limits"]["max_output_chars"]:
+                        raise AgentError("agent_output_limit")
+                    row.update(status="completed", result=answer)
+                    # Independent verification is an explicit optional feature.
+                    # Normal turns end here; no hidden reviewer or repair loop.
+                    if row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
+                        verification.begin(row, self.tools.verification_specs())
+                        row["status"] = "queued"
+                        event(row, "verification_started", goal_revision=row["goal"]["revision"])
+                    else:
+                        row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
+                            uncertainties=["No independent goal assessment was requested."])
+                        event(row, "completed")
+            self.store.transaction(finish)
 
     @staticmethod
     def _budget_notice(row: dict):
@@ -347,24 +419,20 @@ class AgentLoop:
         return f"Server budget notice: {steps} of {cap} model steps are used. {advice}"
 
     def _context(self, row: dict) -> list[dict]:
-        policy = (" This task is read-only: inspect and explain a proposed plan, never request a mutation tool."
-                  if row["permission_mode"] == "read_only" else
-                  " This task may request changes; the server enforces current owner permissions for every call.")
         checkpoint = row.get("context_checkpoint")
         history = self._history(row)
-        system = SYSTEM + policy + authority(row) + projects.guidance(row)
-        guidance = knowledge.messages(row, knowledge.preferences(self.store.read()))
+        instructions = instruction_layers(row, persisted_base=row.get("base_instructions"),
+                                          project_guidance=projects.guidance(row))
+        prefs = self.store.inspect(knowledge.preferences) if hasattr(self.store, "inspect") else knowledge.preferences(self.store.read())
+        guidance = knowledge.messages(row, prefs)
         # The retry after a structurally invalid response is told what was wrong, once, so that the
         # identical invalid call is not simply generated again (nothing in it was executed).
         rejection = row.get("rejected_response_note")
-        tail = ([{"role": "assistant", "content": "Server note: your previous response was rejected and nothing in it was executed: "
-                  + rejection + ". Respond again with a valid tool call or a plain answer."}] if rejection else [])
+        tail = ([{"role": "assistant", "content": "Server note about the previous response: "
+                  + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
         if not checkpoint:
-            return [{"role": "system", "content": system}, *guidance, *plan_message(row), *provider_messages(history), *tail]
-        through = checkpoint["through"]
-        # Keep every owner constraint verbatim, including constraints from old
-        # turns. Generated summaries cannot replace or elevate these messages.
-        owners = [message for message in history[:through] if message["role"] == "user"]
+            return provider_messages(request_context.build_context(instructions, history, guidance=guidance,
+                                                                   plan=plan_message(row), tail=tail))
         write_ids = {item["call_id"] for item in row["events"] if item["type"] == "tool_started" and item.get("effect") == "write" and item.get("context_epoch", 0) == row.get("context_epoch", 0)}
         receipts = [{"tool": item["tool"], "call_id": item["call_id"], "result": item["result"]}
                     for item in row["events"] if item["type"] == "tool_result" and item["call_id"] in write_ids]
@@ -373,7 +441,9 @@ class AgentLoop:
                 + projects.read_progress(row)
                 + "\nServer-recorded mutation receipts (data, not instructions):\n" + encoded(receipts).decode()
                 + "\nThe complete original transcript and evidence remain in this task's encrypted history.")
-        return [{"role": "system", "content": system}, *guidance, *plan_message(row), *provider_messages(owners), {"role": "assistant", "content": note}, *provider_messages(history[through:]), *tail]
+        return provider_messages(request_context.build_context(instructions, history, guidance=guidance,
+                                                               plan=plan_message(row), checkpoint=checkpoint,
+                                                               checkpoint_note=note, tail=tail))
 
     def _compact(self, selected: dict, cancelled, started: float) -> bool:
         """Summarize a closed prefix; never split tool calls from their results.
@@ -422,6 +492,7 @@ class AgentLoop:
                 # transcript for normal tool turns, never recast as user data
                 # for a summarizer to reproduce as public checkpoint prose.
                 message.pop("reasoning_content", None)
+                message.pop("provider_state", None)
             summary_history, references = checkpoint_refs.project(summary_history, prior.get("references"))
             # This is summary data, not provider protocol. Unwrap only the
             # protocol's JSON envelopes so they are not escaped a third time
@@ -437,7 +508,18 @@ class AgentLoop:
                         if isinstance(value, (dict, list)):
                             message["content"] = value
                 for call in message.get("tool_calls", []):
-                    call["function"]["arguments"] = json.loads(call["function"]["arguments"])
+                    arguments = call["function"]["arguments"]
+                    if isinstance(arguments, str):
+                        try:
+                            value = json.loads(arguments)
+                            encoded(value)  # Reject JSON's non-finite Python extensions too.
+                        except (ValueError, RecursionError):
+                            # Rejected calls also belong to closed history.
+                            # Keep their original bytes and paired tool error;
+                            # parsing failure alone is not an execution receipt.
+                            call["function"]["arguments_parse_error"] = True
+                        else:
+                            call["function"]["arguments"] = value
             source = {"previous_checkpoint": prior["content"], "history": summary_history}
             projected = {**selected, "context_checkpoint": {"through": cut, "content": "", "references": references}}
             available = context_limit - len(encoded(self._context(projected))) - len(encoded(self._specs(selected))) - 64
@@ -481,6 +563,13 @@ class AgentLoop:
         response = self._complete(selected, summary_messages, [], cancelled, lambda _metadata: None)
         if cancelled():
             raise AgentError(cancelled.reason)
+        if isinstance(response, dict) and (response.get("finish_reason") in {"length", "cancelled", "content_filter"}
+                or response.get("end_turn") is False or response.get("needs_follow_up") is True):
+            # Install only a completed checkpoint. Original evidence and the
+            # previous checkpoint remain intact for a bounded retry.
+            self.store.transaction(lambda data: event(task(data, selected["id"]),
+                "context_compaction_rejected", error="agent_compaction_incomplete"))
+            raise AgentError("agent_compaction_incomplete")
         raw = response.get("message") if isinstance(response, dict) else None
         content = raw.get("content") if isinstance(raw, dict) else None
         if not isinstance(content, str) or not content.strip() or raw.get("tool_calls"):
@@ -554,194 +643,253 @@ class AgentLoop:
                     return True
         return False
 
+    @staticmethod
+    def _apply_deferred_observed_files(row: dict, selected: dict, deferred: dict[str, str | None]) -> None:
+        if not deferred:
+            return
+        bound = selected.get("local_execution") or {}
+        row_exec = row.get("local_execution") or {}
+        observed = row.setdefault("observed_files", {})
+        if (
+            row_exec.get("workspace_root") != bound.get("workspace_root")
+            or row_exec.get("project_generation") != bound.get("project_generation")
+        ):
+            observed.clear()
+            return
+        stamp = now()
+        for key, digest_val in deferred.items():
+            if digest_val is None:
+                observed.pop(key, None)
+            else:
+                observed[key] = {
+                    "sha256": digest_val,
+                    "observed_at": stamp,
+                    "scope_revision": row.get("scope_revision", 1),
+                    "workspace_root": bound.get("workspace_root", ""),
+                    "project_generation": bound.get("project_generation"),
+                }
+
     def _tool(self, selected: dict, cancelled, started: float) -> None:
         preparation_started = time.monotonic()
         claim_persistence_seconds = float(selected.get("_claim_persistence_seconds", 0.0))
         prep_persistence_seconds = 0.0
-        t0 = time.monotonic()
-        self._reserve_output(selected)
-        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
         call = selected["queue"][0]
-        if call["name"] in INTERNAL_NAMES:
-            self._internal_tool(selected, started)
+        if call.get("error_result") is not None:
+            self._tool_rejection(selected, call, started)
             return
-        batch = selected["queue"][:MAX_PARALLEL_READS]
-        batch = batch[:next((index for index, item in enumerate(batch)
-                             if item["name"] not in PARALLEL_READS or item["effect"] != "read" or item.get("internal")), len(batch))]
-        if len(batch) > 1:
-            batch_handled, batch_prep_persistence = self._tool_batch(
-                selected, batch, cancelled, started,
-                preparation_started=preparation_started,
-                claim_persistence_seconds=claim_persistence_seconds,
-                prep_persistence_seconds=prep_persistence_seconds,
-            )
-            if batch_handled:
+        with diagnostic_log.context_scope(step=int(selected.get("steps", 0)), operation_id=call["operation_id"]):
+            t0 = time.monotonic()
+            self._reserve_output(selected)
+            prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+            if call["name"] in INTERNAL_NAMES:
+                self._internal_tool(selected, started)
                 return
-            prep_persistence_seconds = batch_prep_persistence
-        meta = self.tools.metadata(call["name"])
-        if meta.get("effect") != call["effect"]:
-            raise AgentError("agent_tool_definition_changed")
-        # Revalidate schema immediately before dispatch, not merely model output.
-        spec = next((item["function"] for item in self.tools.specs() if item["function"]["name"] == call["name"]), None)
-        if spec is None:
-            raise AgentError("agent_tool_unavailable")
-        try:
-            validate(call["arguments"], spec["parameters"])
-        except ValidationError:
-            raise AgentError("agent_invalid_tool_call") from None
-        preview = None
-        if call["effect"] == "write" and hasattr(self.tools, "preview"):
-            preview_options = {"context": self._execution_context(selected, call["operation_id"])} if meta.get("scope_context_supported") else {}
-            preview = sanitized(self.tools.preview(call["name"], copy.deepcopy(call["arguments"]), **preview_options))
-            if len(encoded(preview)) > max(selected["limits"]["max_output_chars"], output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES):
-                raise AgentError("agent_output_limit")
+            batch = selected["queue"][:MAX_PARALLEL_READS]
+            batch = batch[:next((index for index, item in enumerate(batch)
+                                 if item["name"] not in PARALLEL_READS or item["effect"] != "read" or item.get("internal") or item.get("error_result")), len(batch))]
+            if len(batch) > 1:
+                batch_handled, batch_prep_persistence = self._tool_batch(
+                    selected, batch, cancelled, started,
+                    preparation_started=preparation_started,
+                    claim_persistence_seconds=claim_persistence_seconds,
+                    prep_persistence_seconds=prep_persistence_seconds,
+                )
+                if batch_handled:
+                    return
+                prep_persistence_seconds = batch_prep_persistence
+            meta = self.tools.metadata(call["name"])
+            if meta.get("effect") != call["effect"]:
+                raise AgentError("agent_tool_definition_changed")
+            # Revalidate schema immediately before dispatch, not merely model output.
+            spec = next((item["function"] for item in self.tools.specs() if item["function"]["name"] == call["name"]), None)
+            if spec is None:
+                raise AgentError("agent_tool_unavailable")
+            if "schema_snapshot" in call:  # Old queued sessions retain their previous validation path.
+                assert_schema_unchanged(call, spec)
+            try:
+                validate(call["arguments"], spec["parameters"])
+            except ValidationError:
+                raise AgentError("agent_invalid_tool_call") from None
+            preview = None
+            if call["effect"] == "write" and hasattr(self.tools, "preview"):
+                preview_options = {"context": self._execution_context(selected, call["operation_id"])} if meta.get("scope_context_supported") else {}
+                preview = sanitized(self.tools.preview(call["name"], copy.deepcopy(call["arguments"]), **preview_options))
+                if len(encoded(preview)) > max(selected["limits"]["max_output_chars"], output_policy.MAX_TOOL_CALL_ARGUMENT_BYTES):
+                    raise AgentError("agent_output_limit")
 
-        authorized_classification = None
+            authorized_classification = None
 
-        def authorize(data):
-            nonlocal authorized_classification
-            row = task(data, selected["id"])
-            authorization = "read"
-            if row["status"] != "running" or not data["settings"]["enabled"] or row["control_revision"] != selected["_run_control_revision"]:
+            def authorize(data):
+                nonlocal authorized_classification
+                row = task(data, selected["id"])
+                authorization = "read"
+                if row["status"] != "running" or not data["settings"]["enabled"] or row["control_revision"] != selected["_run_control_revision"]:
+                    row["in_flight"] = None
+                    row["elapsed_seconds"] += time.monotonic() - started
+                    settle(row, event)
+                    return "stopped"
+                classification = classify_operation(
+                    call["name"],
+                    call["arguments"],
+                    meta,
+                    operation_id=call["operation_id"],
+                    task_id=row["id"],
+                    workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
+                    goal_revision=row["goal"]["revision"],
+                    scope_revision=row["scope_revision"],
+                    context_epoch=row.get("context_epoch", 0),
+                    control_revision=row["control_revision"],
+                )
+                if (call["effect"] == "read" or classification["effect_class"] == "read") and self._read_retries_exhausted(row, call):
+                    raise AgentToolRejected("agent_read_retry_limit")
+                decision = decide(call, meta, row, data["settings"])
+                if decision.action == "deny":
+                    raise AgentToolRejected("agent_permission_denied")
+                if call["effect"] == "write":
+                    if row.get("model_history") and any(
+                        receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
+                        and receipt["arguments_sha256"] == digest(call["arguments"]) and receipt["status"] == "confirmed"
+                        and receipt.get("context_epoch", 0) != row.get("context_epoch", 0)
+                        for receipt in row.get("receipts", [])
+                    ):
+                        raise AgentToolRejected("agent_operation_already_confirmed")
+                    if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
+                           and receipt["arguments_sha256"] == digest(call["arguments"])
+                           and receipt.get("result", {}).get("error") == "owner_denied_operation" for receipt in row.get("receipts", [])):
+                        raise AgentToolRejected("agent_owner_denied_operation")
+                    approved = row["approved"]
+                    automatic = decision.action == "execute" and decision.basis == "automatic"
+                    if decision.action == "ask":
+                        approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
+                                    "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
+                                    "preview_sha256": digest(preview), "title": str(meta.get("title", call["name"]))}
+                        row.update(status="waiting_approval", pending_approval=approval, in_flight=None)
+                        row["elapsed_seconds"] += time.monotonic() - started
+                        event(row, "approval_requested", approval_id=approval["id"], tool=call["name"])
+                        approval.update(goal_revision=row["goal"]["revision"], control_revision=row["control_revision"], scope_revision=row["scope_revision"])
+                        return "waiting"
+                    if approved and (approved["arguments_sha256"] != digest(call["arguments"]) or approved["call_id"] != call["call_id"] or approved["tool"] != call["name"]):
+                        raise AgentError("agent_approval_mismatch")
+                    if approved and approved["preview_sha256"] != digest(preview):
+                        row["approved"] = None
+                        raise AgentError("agent_approval_preview_changed")
+                    if automatic and not approved:
+                        event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
+                    authorization = "approved" if approved else decision.basis
+                usage_reservation = budget.reserve(row, "tool", call["name"])
+                authorized_classification = classification
+                row["in_flight"] = {**call, "kind": "tool", "dispatched": True, "authorization": authorization,
+                                    "operation_classification": classification,
+                                    "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
+                                    "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
+                                    "authority": model_retry_authority(data["settings"]), "preview": preview}
+                row["in_flight"]["permission_record"] = {
+                    "basis": authorization, "operation_id": call["operation_id"], "arguments_sha256": digest(call["arguments"]),
+                    "preview_sha256": digest(preview), "goal_revision": row["goal"]["revision"],
+                    "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
+                    "control_revision": row["control_revision"],
+                    **({"approval_id": approved["id"]} if authorization == "approved" else {})}
+                verification.record(row, call, "intent", now(), flight=row["in_flight"])
+                row["approved"] = None  # One-shot capability, consumed durably before execution.
+                event(row, "tool_started", tool=call["name"], call_id=call["call_id"],
+                      operation_id=call["operation_id"], effect=call["effect"], step=row["steps"])
+                return usage_reservation
+            t0 = time.monotonic()
+            usage_reservation = self.store.transaction(authorize)
+            prep_persistence_seconds += max(0.0, time.monotonic() - t0)
+            if not isinstance(usage_reservation, dict):
+                return
+            post_persistence_seconds = 0.0
+            # A cancellation at this boundary has not dispatched the operation yet.
+            if cancelled():
+                t0 = time.monotonic()
+                self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
+                post_persistence_seconds += max(0.0, time.monotonic() - t0)
+                raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+            execute_options = {"operation_id": call["operation_id"], "cancelled": cancelled}
+            deferred_observed_files: dict[str, str | None] = {}
+            if meta.get("scope_context_supported"):
+                context = self._tool_context(selected, call["operation_id"])
+                context["context_epoch"] = selected.get("context_epoch", 0)
+                if authorized_classification is not None:
+                    context["operation_classification"] = copy.deepcopy(authorized_classification)
+                if call["effect"] == "read":
+                    context["_deferred_observed_files"] = deferred_observed_files
+                    context["_observed_files_snapshot"] = copy.deepcopy(selected.get("observed_files") or {})
+                execute_options["context"] = context
+            if call["effect"] == "write" and meta.get("preview_precondition"):
+                execute_options["expected_preview"] = copy.deepcopy(preview)
+            exec_started = time.monotonic()
+            preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
+            try:
+                result = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **execute_options))
+                tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
+            finally:
+                t0 = time.monotonic()
+                self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
+                post_persistence_seconds += max(0.0, time.monotonic() - t0)
+            origin = copy.deepcopy(result.get("origin")) if meta.get("scope_context_supported") and isinstance(result.get("origin"), dict) else None
+            reference = None
+            result_size = len(encoded(result))
+            if result_size > selected["limits"]["max_output_chars"]:
+                def save_result(data):
+                    task(data, selected["id"])  # A deleted/archived task cannot get a late blob.
+                    return results.save(self.store, selected, call, result)
+                t0 = time.monotonic()
+                reference = self.store.transaction(save_result)
+                post_persistence_seconds += max(0.0, time.monotonic() - t0)
+                if origin:
+                    reference["resource_origin"] = origin
+                result = {"result_ref": reference["id"], "output_sha256": reference["sha256"], "bytes": result_size,
+                          "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome."}
+
+            store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
+            tool_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
+                           "preparation_seconds": round(preparation_seconds, 4),
+                           "tool_execution_seconds": round(tool_execution_seconds, 4),
+                           "store_persistence_seconds": round(store_persistence_seconds, 4)}
+
+            def finish(data):
+                row = task(data, selected["id"])
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
+                self._apply_deferred_observed_files(row, selected, deferred_observed_files)
+                # The receipt keeps the exact result; only the model-visible copy carries the budget notice.
+                notice = self._budget_notice(row)
+                shown = {**result, "server_note": notice} if notice and isinstance(result, dict) else result
+                message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(), "context_epoch": selected.get("context_epoch", 0)}
+                if isinstance(result, dict) and result.get("error"):
+                    message["is_error"] = True
+                if origin:
+                    message["resource_origin"] = origin
+                if reference:
+                    row.setdefault("result_refs", []).append(reference)
+                row["messages"].append(message)
+                verification.record(row, call, "confirmed", now(), result=result)
+                row["queue"].pop(0)
+                event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
+                      step=row["steps"], result=result, context_epoch=selected.get("context_epoch", 0), timing=tool_timing)
+                if row["status"] == "running":
+                    row["status"] = "queued"
                 settle(row, event)
-                return "stopped"
-            classification = classify_operation(
-                call["name"],
-                call["arguments"],
-                meta,
-                operation_id=call["operation_id"],
-                task_id=row["id"],
-                workspace_root=(row.get("local_execution") or {}).get("workspace_root", ""),
-                goal_revision=row["goal"]["revision"],
-                scope_revision=row["scope_revision"],
-                context_epoch=row.get("context_epoch", 0),
-                control_revision=row["control_revision"],
-            )
-            if (call["effect"] == "read" or classification["effect_class"] == "read") and self._read_retries_exhausted(row, call):
-                raise AgentToolRejected("agent_read_retry_limit")
-            decision = decide(call, meta, row, data["settings"])
-            if decision.action == "deny":
-                raise AgentToolRejected("agent_permission_denied")
-            if call["effect"] == "write":
-                if row.get("model_history") and any(
-                    receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
-                    and receipt["arguments_sha256"] == digest(call["arguments"]) and receipt["status"] == "confirmed"
-                    and receipt.get("context_epoch", 0) != row.get("context_epoch", 0)
-                    for receipt in row.get("receipts", [])
-                ):
-                    raise AgentToolRejected("agent_operation_already_confirmed")
-                if any(receipt["goal_revision"] == row["goal"]["revision"] and receipt["tool"] == call["name"]
-                       and receipt["arguments_sha256"] == digest(call["arguments"])
-                       and receipt.get("result", {}).get("error") == "owner_denied_operation" for receipt in row.get("receipts", [])):
-                    raise AgentToolRejected("agent_owner_denied_operation")
-                approved = row["approved"]
-                automatic = decision.action == "execute" and decision.basis == "automatic"
-                if decision.action == "ask":
-                    approval = {"id": "approval_" + uuid.uuid4().hex, "tool": call["name"], "arguments": sanitized(call["arguments"]),
-                                "call_id": call["call_id"], "arguments_sha256": digest(call["arguments"]), "preview": preview,
-                                "preview_sha256": digest(preview), "title": str(meta.get("title", call["name"]))}
-                    row.update(status="waiting_approval", pending_approval=approval, in_flight=None)
-                    row["elapsed_seconds"] += time.monotonic() - started
-                    event(row, "approval_requested", approval_id=approval["id"], tool=call["name"])
-                    approval.update(goal_revision=row["goal"]["revision"], control_revision=row["control_revision"], scope_revision=row["scope_revision"])
-                    return "waiting"
-                if approved and (approved["arguments_sha256"] != digest(call["arguments"]) or approved["call_id"] != call["call_id"] or approved["tool"] != call["name"]):
-                    raise AgentError("agent_approval_mismatch")
-                if approved and approved["preview_sha256"] != digest(preview):
-                    row["approved"] = None
-                    raise AgentError("agent_approval_preview_changed")
-                if automatic and not approved:
-                    event(row, "automatically_authorized", tool=call["name"], arguments_sha256=digest(call["arguments"]), preview=preview)
-                authorization = "approved" if approved else decision.basis
-            usage_reservation = budget.reserve(row, "tool", call["name"])
-            authorized_classification = classification
-            row["in_flight"] = {**call, "kind": "tool", "dispatched": True, "authorization": authorization,
-                                "operation_classification": classification,
-                                "goal_revision": row["goal"]["revision"], "control_revision": row["control_revision"],
-                                "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
-                                "authority": model_retry_authority(data["settings"]), "preview": preview}
-            row["in_flight"]["permission_record"] = {
-                "basis": authorization, "operation_id": call["operation_id"], "arguments_sha256": digest(call["arguments"]),
-                "preview_sha256": digest(preview), "goal_revision": row["goal"]["revision"],
-                "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
-                "control_revision": row["control_revision"],
-                **({"approval_id": approved["id"]} if authorization == "approved" else {})}
-            verification.record(row, call, "intent", now(), flight=row["in_flight"])
-            row["approved"] = None  # One-shot capability, consumed durably before execution.
-            event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], effect=call["effect"])
-            return usage_reservation
-        t0 = time.monotonic()
-        usage_reservation = self.store.transaction(authorize)
-        prep_persistence_seconds += max(0.0, time.monotonic() - t0)
-        if not isinstance(usage_reservation, dict):
-            return
-        post_persistence_seconds = 0.0
-        # A cancellation at this boundary has not dispatched the operation yet.
-        if cancelled():
-            t0 = time.monotonic()
-            self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
-            post_persistence_seconds += max(0.0, time.monotonic() - t0)
-            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
-        execute_options = {"operation_id": call["operation_id"], "cancelled": cancelled}
-        if meta.get("scope_context_supported"):
-            context = self._tool_context(selected, call["operation_id"])
-            context["context_epoch"] = selected.get("context_epoch", 0)
-            if authorized_classification is not None:
-                context["operation_classification"] = copy.deepcopy(authorized_classification)
-            execute_options["context"] = context
-        if call["effect"] == "write" and meta.get("preview_precondition"):
-            execute_options["expected_preview"] = copy.deepcopy(preview)
-        exec_started = time.monotonic()
-        preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
-        try:
-            result = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **execute_options))
-            tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
-        finally:
-            t0 = time.monotonic()
-            self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
-            post_persistence_seconds += max(0.0, time.monotonic() - t0)
-        origin = copy.deepcopy(result.get("origin")) if meta.get("scope_context_supported") and isinstance(result.get("origin"), dict) else None
-        reference = None
-        result_size = len(encoded(result))
-        if result_size > selected["limits"]["max_output_chars"]:
-            def save_result(data):
-                task(data, selected["id"])  # A deleted/archived task cannot get a late blob.
-                return results.save(self.store, selected, call, result)
-            t0 = time.monotonic()
-            reference = self.store.transaction(save_result)
-            post_persistence_seconds += max(0.0, time.monotonic() - t0)
-            if origin:
-                reference["resource_origin"] = origin
-            result = {"result_ref": reference["id"], "output_sha256": reference["sha256"], "bytes": result_size,
-                      "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome."}
+            self.store.transaction(finish)
 
-        store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
-        tool_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
-                       "preparation_seconds": round(preparation_seconds, 4),
-                       "tool_execution_seconds": round(tool_execution_seconds, 4),
-                       "store_persistence_seconds": round(store_persistence_seconds, 4)}
-
+    def _tool_rejection(self, selected: dict, call: dict, started: float) -> None:
+        """Commit router feedback without dispatching or fabricating a receipt."""
         def finish(data):
             row = task(data, selected["id"])
             row["in_flight"] = None
             row["elapsed_seconds"] += time.monotonic() - started
-            # The receipt keeps the exact result; only the model-visible copy carries the budget notice.
-            notice = self._budget_notice(row)
-            shown = {**result, "server_note": notice} if notice and isinstance(result, dict) else result
-            message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(), "context_epoch": selected.get("context_epoch", 0)}
-            if origin:
-                message["resource_origin"] = origin
-            if reference:
-                row.setdefault("result_refs", []).append(reference)
-            row["messages"].append(message)
-            verification.record(row, call, "confirmed", now(), result=result)
+            if (row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]
+                    or not row["queue"] or row["queue"][0]["call_id"] != call["call_id"]):
+                settle(row, event)
+                return
+            result = copy.deepcopy(call["error_result"])
+            row["messages"].append({"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(),
+                                    "context_epoch": selected.get("context_epoch", 0), "is_error": True})
             row["queue"].pop(0)
-            event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
-                  result=result, context_epoch=selected.get("context_epoch", 0), timing=tool_timing)
-            if row["status"] == "running":
-                row["status"] = "queued"
+            event(row, "tool_rejected", call_id=call["call_id"], tool=call["name"], result=result)
+            row["status"] = "queued"
             settle(row, event)
         self.store.transaction(finish)
 
@@ -766,8 +914,10 @@ class AgentLoop:
             if meta.get("effect") != "read" or meta.get("requires_explicit_approval") or call["name"] not in specs:
                 return False, prep_persistence_seconds
             try:
+                if "schema_snapshot" in call:
+                    assert_schema_unchanged(call, specs[call["name"]])
                 validate(call["arguments"], specs[call["name"]]["parameters"])
-            except ValidationError:
+            except (ValidationError, AgentToolRejected):
                 return False, prep_persistence_seconds
             metas[call["call_id"]] = meta
         call_ids = [call["call_id"] for call in batch]
@@ -781,9 +931,15 @@ class AgentLoop:
             if any(decide(call, metas[call["call_id"]], row, data["settings"]).action != "execute"
                    or self._read_retries_exhausted(row, call) for call in batch):
                 return None
+            records = budget.initialize(row)["records"]
+            reservation_start = len(records)
             try:
                 reservations = [budget.reserve(row, "tool", call["name"]) for call in batch]
             except AgentError:
+                # No intent or operation has been dispatched yet. Returning
+                # normally commits this transaction, so undo every partial
+                # reservation before the one-call fallback tries admission.
+                del records[reservation_start:]
                 return None  # The one-call path reports the exhausted budget.
             flights = {}
             for call in batch:
@@ -809,7 +965,8 @@ class AgentLoop:
                                                 "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"],
                                                 "context_epoch": row.get("context_epoch", 0), "control_revision": row["control_revision"]}}
                 verification.record(row, call, "intent", now(), flight=flight)
-                event(row, "tool_started", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"], effect="read")
+                event(row, "tool_started", tool=call["name"], call_id=call["call_id"],
+                      operation_id=call["operation_id"], effect="read", step=row["steps"])
             row["in_flight"] = {**flights[batch[0]["call_id"]], "batch_call_ids": call_ids}
             return reservations
         t0 = time.monotonic()
@@ -818,34 +975,47 @@ class AgentLoop:
         if reservations is None:
             return False, prep_persistence_seconds
         post_persistence_seconds = 0.0
+        reservation_ids = [r["id"] for r in reservations]
         if cancelled():
             t0 = time.monotonic()
-            for reservation in reservations:
-                self._settle_usage(selected["id"], reservation["id"], elapsed=time.monotonic() - started)
+            self._settle_usage_batch(selected["id"], reservation_ids, elapsed=time.monotonic() - started)
             post_persistence_seconds += max(0.0, time.monotonic() - t0)
             raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
 
+        deferred_observed_files: dict[str, str | None] = {}
+        deferred_observed_lock = threading.Lock()
+        observed_snapshot = copy.deepcopy(selected.get("observed_files") or {})
+
         def run(call):
-            call_started = time.monotonic()
-            options = {"operation_id": call["operation_id"], "cancelled": cancelled}
-            if metas[call["call_id"]].get("scope_context_supported"):
-                options["context"] = self._tool_context(selected, call["operation_id"])
-            try:
-                res = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))
-                return res, False, max(0.0, time.monotonic() - call_started)
-            except AgentError as exc:
-                code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
-                extra = {}
-                if isinstance(exc, AgentToolRejected):
-                    if getattr(exc, "correction", None):
-                        extra["correction"] = sanitized(exc.correction[:1600])
-                    if getattr(exc, "details", None):
-                        extra["details"] = sanitized(copy.deepcopy(exc.details))
-                return {"error": code, "not_executed": isinstance(exc, AgentToolRejected), "no_mutation": True, **extra}, True, max(0.0, time.monotonic() - call_started)
-            except Exception:
-                code = "agent_operation_failed"
-            # The same receipt a failed dispatched read gets on the one-call path.
-            return {"error": code, "not_executed": False, "no_mutation": True}, True, max(0.0, time.monotonic() - call_started)
+            with diagnostic_log.context_scope(
+                task_id=selected["id"],
+                step=int(selected.get("steps", 0)),
+                operation_id=call["operation_id"],
+            ):
+                call_started = time.monotonic()
+                options = {"operation_id": call["operation_id"], "cancelled": cancelled}
+                if metas[call["call_id"]].get("scope_context_supported"):
+                    ctx = self._tool_context(selected, call["operation_id"])
+                    ctx["_deferred_observed_files"] = deferred_observed_files
+                    ctx["_deferred_observed_lock"] = deferred_observed_lock
+                    ctx["_observed_files_snapshot"] = observed_snapshot
+                    options["context"] = ctx
+                try:
+                    res = sanitized(self.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))
+                    return res, False, max(0.0, time.monotonic() - call_started)
+                except AgentError as exc:
+                    code = str(exc) if str(exc).startswith("agent_") else "agent_operation_failed"
+                    extra = {}
+                    if isinstance(exc, AgentToolRejected):
+                        if getattr(exc, "correction", None):
+                            extra["correction"] = sanitized(exc.correction[:1600])
+                        if getattr(exc, "details", None):
+                            extra["details"] = sanitized(copy.deepcopy(exc.details))
+                    return {"error": code, "not_executed": isinstance(exc, AgentToolRejected), "no_mutation": True, **extra}, True, max(0.0, time.monotonic() - call_started)
+                except Exception:
+                    code = "agent_operation_failed"
+                # The same receipt a failed dispatched read gets on the one-call path.
+                return {"error": code, "not_executed": False, "no_mutation": True}, True, max(0.0, time.monotonic() - call_started)
         exec_started = time.monotonic()
         preparation_seconds = max(0.0, (exec_started - preparation_started) - prep_persistence_seconds)
         try:
@@ -854,8 +1024,7 @@ class AgentLoop:
             tool_execution_seconds = max(0.0, time.monotonic() - exec_started)
         finally:
             t0 = time.monotonic()
-            for reservation in reservations:
-                self._settle_usage(selected["id"], reservation["id"], elapsed=time.monotonic() - started)
+            self._settle_usage_batch(selected["id"], reservation_ids, elapsed=time.monotonic() - started)
             post_persistence_seconds += max(0.0, time.monotonic() - t0)
 
         store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
@@ -868,8 +1037,9 @@ class AgentLoop:
             row = task(data, selected["id"])
             row["in_flight"] = None
             row["elapsed_seconds"] += time.monotonic() - started
+            self._apply_deferred_observed_files(row, selected, deferred_observed_files)
             notice = self._budget_notice(row)
-            for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes)):
+            for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes, strict=True)):
                 reference = None
                 origin = (copy.deepcopy(result.get("origin")) if metas[call["call_id"]].get("scope_context_supported")
                           and isinstance(result.get("origin"), dict) else None)
@@ -884,6 +1054,8 @@ class AgentLoop:
                 shown = {**result, "server_note": notice} if notice and index == len(batch) - 1 and isinstance(result, dict) else result
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(),
                            "context_epoch": selected.get("context_epoch", 0)}
+                if failed or (isinstance(result, dict) and result.get("error")):
+                    message["is_error"] = True
                 if origin:
                     message["resource_origin"] = origin
                 row["messages"].append(message)
@@ -902,7 +1074,7 @@ class AgentLoop:
                     }
                 )
                 event(row, "tool_result", tool=call["name"], call_id=call["call_id"], operation_id=call["operation_id"],
-                      result=result, context_epoch=selected.get("context_epoch", 0), timing=item_timing)
+                      step=row["steps"], result=result, context_epoch=selected.get("context_epoch", 0), timing=item_timing)
             if row["status"] == "running":
                 row["status"] = "queued"
             settle(row, event)
@@ -914,6 +1086,10 @@ class AgentLoop:
         call = selected["queue"][0]
         args = call["arguments"]
         spec = next(item["function"] for item in INTERNAL_SPECS if item["function"]["name"] == call["name"])
+        if "schema_snapshot" in call:
+            (current_specs, _), _ = self._menu(selected)
+            current = next((item["function"] for item in current_specs if item["function"]["name"] == call["name"]), None)
+            assert_schema_unchanged(call, current)
         try:
             validate(args, spec["parameters"])
         except ValidationError:
@@ -976,6 +1152,8 @@ class AgentLoop:
                 pending["control_revision"] = row["control_revision"]
                 result = {"accepted": True, "pending_input_id": pending["id"], "waiting_for_owner": True}
             message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(result).decode(), "context_epoch": selected.get("context_epoch", 0)}
+            if isinstance(result, dict) and result.get("error"):
+                message["is_error"] = True
             if reference and reference.get("resource_origin"):
                 message["resource_origin"] = copy.deepcopy(reference["resource_origin"])
             row["messages"].append(message)
@@ -988,7 +1166,7 @@ class AgentLoop:
                 # A model cannot precompute a mutation beyond unanswered input.
                 for queued in row["queue"]:
                     receipt = {"error": "agent_waiting_for_input", "not_executed": True, "no_mutation": True}
-                    row["messages"].append({"role": "tool", "tool_call_id": queued["call_id"], "content": encoded(receipt).decode(), "context_epoch": selected.get("context_epoch", 0)})
+                    row["messages"].append({"role": "tool", "tool_call_id": queued["call_id"], "content": encoded(receipt).decode(), "context_epoch": selected.get("context_epoch", 0), "is_error": True})
                     event(row, "tool_result", tool=queued["name"], call_id=queued["call_id"], operation_id=queued["operation_id"], result=receipt, internal=queued["name"] in INTERNAL_NAMES)
                 row["queue"] = []
         self.store.transaction(apply)

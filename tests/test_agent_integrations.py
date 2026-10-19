@@ -274,12 +274,18 @@ def test_real_bridge_invalid_control_proposal_is_rejected_and_model_can_correct(
 
 
 def test_real_bridge_keeps_business_tool_argument_validation(node, monkeypatch):
+    from rynmesh.agent_runtime.tool_router import normalize_tool_calls
+
     app, store = node
     _record, model_id = add_source(app)
     model, tools, _catalog = build_agent_integrations(app, store, store.home)
     fake_upstream(monkeypatch, [call("ryn_set_model_sharing", '{"enabled":true}')], json_only=True)
-    with pytest.raises(ValueError):
-        model.complete(model_id, [{"role": "user", "content": "Inspect only"}], tools.specs(), lambda: False)
+    response = model.complete(model_id, [{"role": "user", "content": "Inspect only"}], tools.specs(), lambda: False)
+    routed = normalize_tool_calls(response["message"]["tool_calls"], tools.specs(), metadata=tools.metadata)
+    assert len(routed) == 1 and routed[0]["call_id"] == "call-real"
+    assert routed[0]["error_result"]["error"] == "agent_tool_arguments_invalid"
+    assert routed[0]["error_result"]["not_executed"] and routed[0]["error_result"]["no_mutation"]
+    assert not _record["sharing"]
 
 
 def test_destination_generation_changes_for_credentials_not_sharing_and_never_resurrects(node):
@@ -786,6 +792,8 @@ def test_configured_codex_agent_support_precedes_optional_two_turn_probe(node, m
     (store.home / "llm" / "cli-services.json").write_text(json.dumps({"codex_cli": {"manifest": str(path), "publication_enabled": False}}), encoding="utf-8")
     monkeypatch.setattr(CLIAgentAdapter, "health", lambda _: {"ok": True})
     monkeypatch.setattr(CLIAgentAdapter, "_command_path", lambda _: sys.executable)
+    monkeypatch.setattr("rynmesh.llm_package.cli_models.list_models", lambda *_args, **_options: [
+        {"id": "", "name": "CLI default", "default": True}])
     _model, _tools, catalog = build_agent_integrations(app, store, store.home)
     row = next(row for row in catalog.list_models() if row["adapter"] == "codex_cli")
     assert row["available"] and row["agent_supported"] and row["tool_support"] == "unknown"

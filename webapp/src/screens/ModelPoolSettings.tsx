@@ -34,7 +34,9 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
         configuration[name] = value ? Number(value) : null;
       }
       configuration.request_defaults = draft.request_defaults.trim() ? JSON.parse(draft.request_defaults) : null;
-      const context = Number(configuration.context_window || inheritedSource.context_window);
+      const inheritedContext = inheritedSource.context_window_mode === "auto"
+        ? inheritedSource.model_metadata?.[modelID]?.context_window || 32768 : inheritedSource.context_window;
+      const context = Number(configuration.context_window || inheritedContext);
       const output = Number(configuration.max_output_tokens || inheritedSource.max_output_tokens);
       if (output > context) throw new Error(text("最大输出不能超过上下文窗口。", "Maximum output cannot exceed the context window."));
     } catch (reason) { setError(reason instanceof Error ? reason.message : text("参数格式无效。", "Invalid parameter format.")); return; }
@@ -88,6 +90,11 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
   };
   return <Modal title={`${text("此模型参数", "Parameters for this model")} · ${modelID}`} onClose={() => { if (!busy) onClose(); }}><div className="ais-modal mp-parameters">
     <p>{source.name} · {modelID}</p><p className="ais-muted">{text("只改变这个模型，同一来源的其他模型、助手默认选择与分享设置保持独立。留空恢复继承；每日上限留空为不限。", "Changes only this model. Sibling models, the assistant default and sharing remain independent. Leave blank to inherit; an empty daily limit means unlimited.")}</p>
+    {settings.context_window_basis && <p className="ais-muted">{settings.context_window_known === false
+      ? text("模型未声明实际窗口，当前为保守回退值；可手动覆盖。", "The model did not declare its window. A conservative fallback applies; you can set an override.")
+      : settings.context_window_basis === "provider_model_metadata"
+        ? text("窗口来自该来源的模型列表；手动覆盖优先。", "The window comes from this source's model listing; manual overrides take priority.")
+        : text("当前使用手动配置的模型窗口。", "The configured model window applies.")}</p>}
     {fields.map(([name, label, min, max]) => <label className="ais-field" key={name}>{label}<input type="number" aria-label={label} min={min} max={max} value={draft[name]} disabled={busy || conflict} onChange={event => edit(name, event.target.value)} placeholder={settings.effective[name] === null ? text("不限", "Unlimited") : String(settings.effective[name])} /><small>{text("当前生效", "Currently effective")}: {settings.effective[name] === null ? text("不限", "Unlimited") : String(settings.effective[name])} · {settings.inherited_fields.includes(name) ? text("继承来源", "Inherited from source") : text("此模型覆盖", "Model override")}</small><button className="ais-secondary" type="button" disabled={busy || conflict} onClick={() => reset(name)}>{name === "requests_per_day" ? text("取消每日上限", "Remove daily limit") : text("恢复继承", "Inherit source")}</button></label>)}
     <label className="ais-field">{text("请求参数 JSON", "Request parameters JSON")}<textarea aria-label={text("请求参数 JSON", "Request parameters JSON")} value={draft.request_defaults} disabled={busy || conflict} onChange={event => edit("request_defaults", event.target.value)} placeholder={JSON.stringify(settings.effective.request_defaults, null, 2)} /><small>{text("支持 temperature、top_p、thinking、reasoning_effort。请使用供应商支持的参数；下方探测可帮助排查连接问题。", "Supports temperature, top_p, thinking and reasoning_effort. Use parameters supported by the provider; the probes below can help diagnose connection issues.")}</small><button className="ais-secondary" disabled={busy || conflict} onClick={() => reset("request_defaults")}>{text("恢复来源请求参数", "Inherit source request parameters")}</button></label>
     <details><summary>{text("当前请求参数及证据", "Effective request parameters and evidence")}</summary><pre>{JSON.stringify({ request_defaults: settings.effective.request_defaults, evidence: settings.evidence }, null, 2)}</pre></details>

@@ -1,4 +1,5 @@
 import { nodeControlUrl } from "./nodeUrl";
+import type { AgentAttachmentInput, AgentMessageAttachment } from "./agentAttachments";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
 export type AgentRunState = "queued" | "running" | "pausing" | "paused" | "waiting_input" | "waiting_approval" | "reconciling" | "ended";
@@ -57,6 +58,20 @@ export interface AgentScopeSnapshot {
   model_destination?: AgentModelDestination;
   current_model_destination?: AgentModelDestination | null;
 }
+export interface AgentContextBudgetPolicy {
+  mode: string;
+  provenance: string;
+  effective_max_context_bytes: number;
+  context_window_tokens: number;
+  context_window_known: boolean;
+  context_window_basis: string;
+  reserved_output_tokens: number;
+  framing_reserve_tokens: number;
+  estimate_basis: string;
+  units?: Record<string, string>;
+  token_count_is_estimate?: boolean;
+  manual_max_context_bytes?: number | null;
+}
 export interface AgentSettings {
   enabled: boolean;
   model_id: string;
@@ -66,10 +81,14 @@ export interface AgentSettings {
   desktop_access?: boolean;
   max_steps: number;
   max_seconds: number;
-  max_context_chars: number;
+  max_context_chars: number | null;
+  context_budget_policy?: AgentContextBudgetPolicy;
   max_output_chars: number;
 }
 export interface AgentModel {
+  context_window?: number;
+  context_window_known?: boolean;
+  context_window_basis?: string;
   supported_reasoning_efforts?: string[];
   default_reasoning_effort?: string;
   cli_model?: string;
@@ -111,6 +130,9 @@ export interface AgentApproval {
   preview?: unknown;
 }
 export interface AgentMessage {
+  attachments?: AgentMessageAttachment[];
+  message_id?: string;
+  original_context_epoch?: number;
   role: string;
   context_epoch?: number;
   content: string | null;
@@ -127,6 +149,8 @@ export interface AgentEvent {
   [key: string]: unknown;
 }
 export interface AgentTaskSummary {
+  conversation_revision?: number;
+  conversation_event_cursor?: number;
   reasoning_effort?: string;
   project?: AgentProject;
   local_execution?: { workspace_root: string; desktop_access?: boolean };
@@ -187,7 +211,7 @@ export interface AgentTask extends AgentTaskSummary {
   events: AgentEvent[];
   limits: Partial<AgentSettings>;
 }
-export type AgentAction = "pause" | "resume" | "cancel" | "approve" | "deny";
+export type AgentAction = "pause" | "resume" | "stop" | "cancel" | "approve" | "deny";
 
 export class AgentAPIError extends Error {
   constructor(public code: string, public status: number) { super(code); }
@@ -336,11 +360,11 @@ export const rynAgent = {
   taskSince: (cached: AgentTask, signal?: AbortSignal) => request<AgentTask | AgentTaskUnchanged>(
     `/tasks/${encodeURIComponent(cached.id)}?since_revision=${cached.revision}`, "GET", undefined, signal)
     .then(value => mergeUnchangedTask(cached, value)),
-  create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[], response_language?: "zh-CN" | "en", project_id?: string, reasoning_effort?: string) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(project_id ? { project_id } : {}), ...(response_language ? { response_language } : {}), ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}), ...(reasoning_effort ? { reasoning_effort } : {}) }),
+  create: (message: string, model_id: string, client_request_id: string, scope?: AgentScopeSelection, expected_destination_revision?: string, skill_ids?: string[], response_language?: "zh-CN" | "en", project_id?: string, reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>("/tasks", "POST", { message, model_id, client_request_id, ...(attachments?.length ? { attachments } : {}), ...(project_id ? { project_id } : {}), ...(response_language ? { response_language } : {}), ...(scope ? { scope, expected_destination_revision } : {}), ...(skill_ids?.length ? { skill_ids } : {}), ...(reasoning_effort ? { reasoning_effort } : {}) }),
   control: (id: string, route: "messages" | "actions" | "scope" | "workspace", body: Record<string, unknown>) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/${route}`, route === "scope" ? "PUT" : "POST", body),
-  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
-    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}),
-  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}) }),
+  message: (task: AgentTask, message: string, intent: AgentMessageIntent = "information", client_request_id: string = crypto.randomUUID(), reasoning_effort?: string, attachments?: AgentAttachmentInput[]) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/messages`, "POST", task.allowed_actions ? {
+    message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}),
+  } : { message, expected_revision: task.revision, ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) }),
   action: (task: AgentTask, action: AgentAction) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
     action, ...(task.allowed_actions ? { expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID() } : { expected_revision: task.revision }),
     ...((action === "approve" || action === "deny") && task.pending_approval ? { approval_id: task.pending_approval.id } : {}),
@@ -358,8 +382,8 @@ export const rynAgent = {
   switchModel: (id: string, body: AgentModelSwitchRequest) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/model`, "PUT", body),
 };
 
-export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string): Record<string, unknown> {
-  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}) };
+export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[]): Record<string, unknown> {
+  return { message, intent, expected_goal_revision: task.goal?.revision, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(), ...(reasoning_effort ? { reasoning_effort } : {}), ...(attachments?.length ? { attachments } : {}) };
 }
 export function agentActionBody(task: AgentTask, action: AgentAction): Record<string, unknown> {
   return { action, expected_control_revision: task.control_revision, client_request_id: crypto.randomUUID(),
@@ -410,13 +434,13 @@ export function sortAgentTasks<T extends AgentTaskSummary>(tasks: T[]): T[] {
 /** A finalized assistant event replaces its streamed draft; snapshots never append twice. */
 export function pendingAgentText(task: Pick<AgentTask, "events" | "streaming">): string {
   const started = [...task.events].reverse().find(event => event.type === "model_started");
-  if (!started || task.events.some(event => event.seq > started.seq && event.type === "assistant")) return "";
+  if (!started || task.events.some(event => event.seq > started.seq && (["assistant", "message_edited"].includes(event.type) || (event.type === "paused" && event.reason === "owner_stopped")))) return "";
   if (task.streaming && task.streaming.step === started.step && task.streaming.context_epoch === started.context_epoch) return task.streaming.text;
   return task.events.filter(event => event.seq > started.seq && event.type === "text_delta" && typeof event.text === "string").map(event => event.text).join("");
 }
 
 export function agentTurnToolCount(task: Pick<AgentTask, "events">): number {
-  const turnStart = [...task.events].reverse().find(event => ["created", "message_added", "goal_changed", "information_added", "input_answered"].includes(event.type))?.seq || 0;
+  const turnStart = [...task.events].reverse().find(event => ["created", "message_added", "goal_changed", "information_added", "input_answered", "message_edited"].includes(event.type))?.seq || 0;
   return task.events.filter(event => event.seq > turnStart && event.type === "tool_result" && event.internal !== true && agentToolResultState(event) !== "not_executed").length;
 }
 
@@ -427,18 +451,19 @@ export function agentToolResultState(event: AgentEvent): "not_executed" | "error
 }
 
 /** Attribute owner-visible replies using runtime epochs, never the task's new model alone. */
-export function agentMessageModelID(task: AgentTask, message: AgentMessage): string | null {
+export function agentMessageModelID(task: Pick<AgentTask, "model_id" | "events">, message: AgentMessage): string | null {
   const switches = task.events.filter(event => event.type === "model_changed").sort((a, b) => a.seq - b.seq);
   if (!switches.length) return task.model_id;
-  if (typeof message.context_epoch !== "number") return null;
+  const epoch = message.original_context_epoch ?? message.context_epoch;
+  if (typeof epoch !== "number") return null;
   for (const event of switches) {
     const previous = event.previous as { model_id?: unknown; context_epoch?: unknown } | undefined;
-    if (typeof previous?.context_epoch === "number" && message.context_epoch <= previous.context_epoch)
+    if (typeof previous?.context_epoch === "number" && epoch <= previous.context_epoch)
       return typeof previous.model_id === "string" ? previous.model_id : null;
   }
   const last = switches[switches.length - 1];
   const destination = last.destination as { catalog_model_id?: unknown } | undefined;
-  return typeof last.context_epoch === "number" && message.context_epoch >= last.context_epoch && typeof destination?.catalog_model_id === "string" ? destination.catalog_model_id : null;
+  return typeof last.context_epoch === "number" && epoch >= last.context_epoch && typeof destination?.catalog_model_id === "string" ? destination.catalog_model_id : null;
 }
 
 export function isAgentLateToolResult(event: AgentEvent, events: AgentEvent[]): boolean {

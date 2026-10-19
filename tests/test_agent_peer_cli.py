@@ -185,7 +185,18 @@ def test_expired_catalog_refreshes_metadata_before_followup(cli_pair):
 
 def test_clarification_answer_and_followup_survive_name_sync(cli_pair, monkeypatch):
     import json
+
+    from rynmesh.llm_package import cli_models
     p = cli_pair
+    # This test exercises authenticated name sync/clarification, not a 4k
+    # pressure case. Advertise capacity through the actual signed CLI catalog.
+    prior_models = cli_models.list_models
+    def capacity_models(*args, **kwargs):
+        return [{**row, 'context_window': 131072} for row in prior_models(*args, **kwargs)]
+    monkeypatch.setattr(cli_models, 'list_models', capacity_models)
+    monkeypatch.setattr(cli_models, 'cached_models', capacity_models)
+    p.provider.public_status()
+    p.consumer.refresh(p.locator)
     calls = []
     def answer(self, body, **options):
         calls.append(body)
@@ -205,8 +216,8 @@ def test_clarification_answer_and_followup_survive_name_sync(cli_pair, monkeypat
     runtime = AgentRuntime(AgentStore(p.child.store.home, p.keys[1]), bridge, tools, catalog, consumer_node_id=p.child.store.peer_id)
     runtime.update_settings({'enabled': True})
     task = runtime.create({'message': '帮我准备报告，先问我语言。', 'model_id': model['id']})
-    from agent_tool_fixtures import expose
-    expose(runtime, task['id'], ['ryn_request_input'])
+    assert any(spec['function']['name'] == 'ryn_request_input'
+               for spec in runtime._specs(runtime.store.read()['tasks'][task['id']]))
     runtime.run_once(); runtime.run_once()
     row = runtime.get(task['id'])
     assert row['status'] == 'waiting_input', row.get('error')

@@ -1,12 +1,14 @@
 import copy
 import json
-from test_agent_space_binding import space_pair, nodes
-from rynmesh.llm_package.peer_binding import expected, revision
-from rynmesh.agent_runtime.prompt import authority
-from test_agent_runtime import make_runtime, assistant, advance
+
+from test_agent_runtime import advance, assistant, make_runtime
+from test_agent_space_binding import nodes, space_pair  # noqa: F401
 from test_agent_tool_menu import ManyTools
+
 from rynmesh.agent_runtime import tool_menu
+from rynmesh.agent_runtime.prompt import authority
 from rynmesh.agent_runtime.store import encoded
+from rynmesh.llm_package.peer_binding import expected, revision
 
 
 def test_wrapped_inference_fault_records_code_location_without_exception_text(tmp_path):
@@ -29,7 +31,9 @@ def test_wrapped_inference_fault_records_code_location_without_exception_text(tm
 
 def test_run_time_limit_can_be_adjusted_without_resuming_or_erasing_usage(tmp_path):
     import uuid
+
     import pytest
+
     from rynmesh.agent_runtime.store import AgentError
     runtime, _, _, _ = make_runtime(tmp_path, assistant('Done'))
     task = runtime.create({'message': 'Work'})
@@ -49,7 +53,7 @@ def test_run_time_limit_can_be_adjusted_without_resuming_or_erasing_usage(tmp_pa
         runtime.update_budget(task['id'], body)
 
 
-def test_lease_renewal_and_name_sync_preserve_bound_model(space_pair):
+def test_lease_renewal_and_name_sync_preserve_bound_model(space_pair):  # noqa: F811
     p = space_pair
     old = p.consumer.refresh(p.locator)[0]
     prior = revision(old, p.child.store.peer_id)
@@ -100,9 +104,11 @@ def test_chat_answer_skips_extra_model_but_never_claims_verification(tmp_path):
 
 def test_workspace_is_an_explicit_owner_grant_and_replay_safe(tmp_path):
     import uuid
+
     import pytest
-    from rynmesh.agent_runtime.store import AgentError
+
     from rynmesh.agent_runtime.local_tools import LocalTools
+    from rynmesh.agent_runtime.store import AgentError
     runtime, _, _, _ = make_runtime(tmp_path, assistant('等待工作目录。'))
     created = runtime.create({'message': 'Create a drawing'})
     advance(runtime)
@@ -127,7 +133,9 @@ def test_workspace_is_an_explicit_owner_grant_and_replay_safe(tmp_path):
 
 def test_workspace_cannot_change_under_running_work_or_expand_an_existing_grant(tmp_path):
     import uuid
+
     import pytest
+
     from rynmesh.agent_runtime.store import AgentError
     runtime, _, _, _ = make_runtime(tmp_path, assistant('Done'))
     task = runtime.create({'message': 'Work'})

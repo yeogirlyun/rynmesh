@@ -9,9 +9,8 @@ import uuid
 from test_agent_codex_loop import WorkstationTools
 from test_agent_runtime import Catalog, advance, assistant, make_runtime
 
-from rynmesh.agent_runtime import local_tools, state
+from rynmesh.agent_runtime import local_tools, output_policy, state
 from rynmesh.agent_runtime.local_processes import HEAD_CHARS, PAGE_CHARS, Processes
-from rynmesh.agent_runtime.store import UNKNOWN_WINDOW_CONTEXT_CHARS
 
 
 def calls(*items):
@@ -85,6 +84,46 @@ def test_a_write_in_the_same_response_keeps_ordinary_order(tmp_path):
     assert [m["role"] for m in row["messages"]].count("tool") == 3 and not row["queue"]
 
 
+def test_read_batch_time_reservations_roll_back_before_serial_fallback(tmp_path):
+    names = [f"file_{index}.txt" for index in range(5)]
+    runtime, model, workspace = workstation(tmp_path,
+        calls(*[("ryn_file_read", {"path": name}) for name in names]), assistant("Read all five."))
+    runtime.update_settings({"max_seconds": 900})
+    for name in names:
+        (workspace / name).write_text(name, encoding="utf-8")
+    task = runtime.create({"message": "Read five files.", "budget_limits": {"max_total_seconds": 3600}})
+    advance(runtime, 2)  # Five full time reservations do not fit; execute one read instead.
+    row = runtime.get(task["id"])
+    totals = row["budget"]["lifetime"]
+    assert row["status"] == "queued" and totals["tool_calls"] == 1
+    assert totals["unsettled_operations"] == 0 and totals["active_seconds"] is not None
+    assert totals["charged_seconds"] < 900
+    advance(runtime, 2)  # The remaining four fit, settle, and reach the final answer.
+    done = runtime.get(task["id"])
+    assert done["status"] == "completed" and len(model.calls) == 2
+    assert done["budget"]["lifetime"]["tool_calls"] == 5
+    assert done["budget"]["lifetime"]["unsettled_operations"] == 0
+
+
+def test_read_batch_tool_limit_does_not_charge_undispatched_fallback_calls(tmp_path):
+    names = [f"file_{index}.txt" for index in range(3)]
+    runtime, _, workspace = workstation(tmp_path,
+        calls(*[("ryn_file_read", {"path": name}) for name in names]))
+    for name in names:
+        (workspace / name).write_text(name, encoding="utf-8")
+    task = runtime.create({"message": "Read three files.", "budget_limits": {"max_total_tool_calls": 2}})
+    advance(runtime, 2)
+    row = runtime.get(task["id"])
+    assert row["status"] == "queued" and row["budget"]["lifetime"]["tool_calls"] == 1
+    advance(runtime, 2)
+    done = runtime.get(task["id"])
+    assert done["status"] == "failed" and done["error"] == "agent_tool_budget_exhausted"
+    assert done["budget"]["lifetime"]["tool_calls"] == 2
+    assert done["budget"]["lifetime"]["unsettled_operations"] == 0
+    receipts = runtime.store.read()["tasks"][task["id"]]["receipts"]
+    assert [receipt["status"] for receipt in receipts].count("confirmed") == 2
+
+
 def test_continuous_runner_finishes_a_task_in_one_worker_call(tmp_path):
     runtime, model, workspace = workstation(tmp_path,
         assistant(name="ryn_file_list", args={"path": "."}), assistant("Listed."))
@@ -114,19 +153,21 @@ def test_context_budget_follows_a_declared_window(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
     task = runtime.create({"message": "Hi."})
     row = runtime.store.read()["tasks"][task["id"]]
-    assert row["limits"]["max_context_chars"] == 600000
-    assert runtime._context_limit(row) == UNKNOWN_WINDOW_CONTEXT_CHARS
+    assert row["limits"]["max_context_chars"] is None
+    assert runtime._context_limit(row) == (output_policy.UNKNOWN_CONTEXT_WINDOW_TOKENS - 4096 - 512) * 3
+    assert runtime._context_policy(row)["context_window_known"] is False
     runtime.catalog = WindowCatalog(200000)
-    assert runtime._context_limit(row) == (200000 - 512) * 3 - 1024
+    assert runtime._context_limit(row) == (200000 - 4096 - 512) * 3
     runtime.catalog = WindowCatalog(8000)
-    assert runtime._context_limit(row) == (8000 - 512) * 3 - 1024
+    assert runtime._context_limit(row) == (8000 - 4096 - 512) * 3
 
 
-def test_old_default_ceiling_is_migrated_once_and_explicit_values_stay():
+def test_ambiguous_old_ceiling_is_preserved_and_later_explicit_values_stay():
     data = {"settings": {"max_context_chars": 120000}, "tasks": {}}
-    assert state.migrate(data)["settings"]["max_context_chars"] == 600000 and data["context_budget_version"] == 1
-    data["settings"]["max_context_chars"] = 120000
-    assert state.migrate(data)["settings"]["max_context_chars"] == 120000
+    assert state.migrate(data)["settings"]["max_context_chars"] == 120000 and data["context_budget_version"] == 2
+    assert data["settings_context_budget_provenance"] == "legacy_ambiguous_manual"
+    data["settings"]["max_context_chars"] = 600000
+    assert state.migrate(data)["settings"]["max_context_chars"] == 600000
 
 
 def test_finished_command_output_shows_head_and_tail():
@@ -164,7 +205,9 @@ def test_system_prompt_changes_only_in_state_lines_after_a_write(tmp_path):
         assistant(name="ryn_file_write", args={"path": "a.txt", "content": "x\n"}), assistant("Wrote a.txt."))
     runtime.create({"message": "Write a.txt."})
     advance(runtime, 3)
-    before, after = model.calls[0][1][0]["content"], model.calls[1][1][0]["content"]
+    assert model.calls[0][1][0] == model.calls[1][1][0]  # Pinned base stays stable.
+    before, after = [next(m["content"] for m in call[1] if "Server control state: " in m["content"])
+                     for call in model.calls]
     assert before != after  # the write receipt is visible to the model
     assert state_lines(before, after) is not None  # ...as a state-line update, so a Codex thread continues
 
@@ -200,4 +243,3 @@ def test_continuous_runner_continues_after_single_no_side_effect_tool_error_and_
     tool_msgs = [json.loads(m["content"]) for m in runtime2.store.read()["tasks"][task2["id"]]["messages"] if m["role"] == "tool"]
     assert len(tool_msgs) == 2
     assert "correction" in tool_msgs[1]
-

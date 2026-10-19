@@ -24,6 +24,7 @@ from .local_processes import (
     AgentProcessStartRejected,
     Processes,
     prepare_shell_command,
+    resolve_rg_executable,
     shell_command,
 )
 from .local_specs import NAMES, SPECS
@@ -579,15 +580,33 @@ class LocalTools:
         return check
 
     @staticmethod
-    def _observed_key(path: Path) -> str:
-        return os.path.normcase(str(path.resolve()))
+    def _observed_key(path: Path | str) -> str:
+        resolved = path.resolve() if isinstance(path, Path) else Path(path).resolve()
+        return os.path.normcase(str(resolved))
 
     def _get_observed_sha256(self, context: dict, path: Path) -> str | None:
-        if not hasattr(self.store, "inspect") or not isinstance(context, dict):
+        if not isinstance(context, dict):
+            return None
+        key = self._observed_key(path)
+        deferred = context.get("_deferred_observed_files")
+        if isinstance(deferred, dict) and key in deferred:
+            digest_val = deferred[key]
+            return digest_val if isinstance(digest_val, str) and digest_val else None
+        bound = context.get("local_execution") or {}
+        snapshot = context.get("_observed_files_snapshot")
+        if isinstance(snapshot, dict):
+            entry = snapshot.get(key)
+            if not isinstance(entry, dict):
+                return None
+            if entry.get("workspace_root") and entry.get("workspace_root") != bound.get("workspace_root", ""):
+                return None
+            if entry.get("project_generation") is not None and entry.get("project_generation") != bound.get("project_generation"):
+                return None
+            digest_val = entry.get("sha256")
+            return digest_val if isinstance(digest_val, str) and digest_val else None
+        if not hasattr(self.store, "inspect"):
             return None
         task_id = context.get("task_id")
-        bound = context.get("local_execution") or {}
-        key = self._observed_key(path)
 
         def lookup(data):
             row = data.get("tasks", {}).get(task_id)
@@ -614,13 +633,24 @@ class LocalTools:
         except Exception:
             return None
 
-    def _record_observed_files(self, context: dict, updates: dict[Path, str | None]) -> None:
-        if not hasattr(self.store, "transaction") or not isinstance(context, dict) or not updates:
+    def _record_observed_files(self, context: dict, updates: dict[Path | str, str | None]) -> None:
+        if not isinstance(context, dict) or not updates:
+            return
+        normalized = {self._observed_key(p): v for p, v in updates.items()}
+        deferred = context.get("_deferred_observed_files")
+        if isinstance(deferred, dict):
+            lock = context.get("_deferred_observed_lock")
+            if lock is not None:
+                with lock:
+                    deferred.update(normalized)
+            else:
+                deferred.update(normalized)
+            return
+        if not hasattr(self.store, "transaction"):
             return
         task_id = context.get("task_id")
         bound = context.get("local_execution") or {}
-        normalized = {self._observed_key(p): v for p, v in updates.items()}
-        if all(v is not None and self._get_observed_sha256(context, p) == v for p, v in updates.items()):
+        if all(v is not None and self._get_observed_sha256(context, Path(p)) == v for p, v in updates.items()):
             return
         stamp = datetime.now(timezone.utc).isoformat()
 
@@ -837,7 +867,11 @@ class LocalTools:
         policy = self.policy(context)
         if SPECS[name][1] == "read":
             return self.perform(name, args, context, cancelled)
-        from .execution_policy import SHELL_ARGUMENT_KEYS, classify_operation, verified_read_classification
+        from .execution_policy import (
+            SHELL_ARGUMENT_KEYS,
+            classify_operation,
+            verified_read_classification,
+        )
         if name == "ryn_shell_execute" and (not isinstance(args, dict) or set(args) - SHELL_ARGUMENT_KEYS):
             raise AgentToolRejected("agent_invalid_operation_classification")
         host_classification = classify_operation(
@@ -1053,7 +1087,21 @@ class LocalTools:
         task_id = context["task_id"]
         if name == "ryn_project_inspect":
             from .projects import inspect
-            return inspect(self.path(".", context))
+            if isinstance(context.get("_deferred_observed_files"), dict):
+                return inspect(self.path(".", context), cancelled=cancelled,
+                               validate=lambda: self.path(".", context),
+                               read_file=lambda path: self.perform(
+                                   "ryn_file_read", {"path": path, "start_line": 1, "max_lines": 80}, context, cancelled))
+            local_deferred: dict[str, str | None] = {}
+            sub_context = {**context, "_deferred_observed_files": local_deferred}
+            try:
+                return inspect(self.path(".", context), cancelled=cancelled,
+                               validate=lambda: self.path(".", context),
+                               read_file=lambda path: self.perform(
+                                   "ryn_file_read", {"path": path, "start_line": 1, "max_lines": 80}, sub_context, cancelled))
+            finally:
+                if local_deferred:
+                    self._record_observed_files(context, local_deferred)
         if name == "ryn_image_inspect":
             import base64
             import io
@@ -1091,6 +1139,7 @@ class LocalTools:
         if name == "ryn_local_environment":
             from .local_browser import find_browser
             return {"os": platform.system(), **self.policy(context), "shells": [s for s in ("powershell", "pwsh", "cmd", "sh") if shutil.which(s)],
+                    "rg_available": bool(resolve_rg_executable()),
                     "browser_installed": bool(find_browser()), "computer_control_supported": os.name == "nt",
                     "shell_scope": "user_account_not_sandboxed",
                     "image_observation": ("You receive text, never pixels. ryn_render_inspect renders workspace SVG/HTML/image files and "
@@ -1376,6 +1425,8 @@ class LocalTools:
                     "Other background process(es) are still running for this task; "
                     "use ryn_process_read or ryn_process_stop before starting overlapping commands."
                 )
+            if result.get("exit_code") == 0 and "CommandNotFoundException" in str(result.get("output") or ""):
+                result["partial_command_error"] = True
             return self._command_artifacts(result, task_id)
         if name == "ryn_process_read":
             return self._command_artifacts(self.processes.read(args["process_id"], task_id, args.get("offset", 0),

@@ -12,6 +12,26 @@ beforeEach(() => {
 });
 const source: AISource = { ...newSource("custom"), id: "source-a", name: "My source", context_window: 32000, max_output_tokens: 4000, models: ["model-a", "model-b"], model_settings: { "model-a": { overrides: { max_output_tokens: 2000 }, effective: { context_window: 32000, max_output_tokens: 2000, request_defaults: {}, max_concurrent: 1, requests_per_day: null }, inherited_fields: ["context_window", "request_defaults", "max_concurrent", "requests_per_day"], rule_revision: "rule-1", destination_revision: "dest-1", evidence: { tools: { status: "unknown", checked_at: null } } } } };
 
+it("uses this exact model's discovered capacity when inheriting an automatic source", async () => {
+  const settings = source.model_settings!["model-a"];
+  const discovered: AISource = { ...source, context_window: 32768, context_window_mode: "auto",
+    model_metadata: { "model-a": { context_window: 1050000 } }, model_settings: { "model-a": {
+      ...settings, context_window_known: true, context_window_basis: "provider_model_metadata",
+      effective: { ...settings.effective, context_window: 1050000 } } } };
+  const writes = vi.fn();
+  server.use(http.put("*/api/local/llm/sources/source-a/models/config", async ({ request }) => {
+    writes(await request.json()); return HttpResponse.json(discovered);
+  }));
+  const user = userEvent.setup();
+  render(<ModelPoolSettings source={discovered} modelID="model-a" onClose={vi.fn()} onSaved={vi.fn().mockResolvedValue(undefined)} />);
+  expect(screen.getByText(/window comes from this source's model listing/)).toBeVisible();
+  await user.clear(screen.getByLabelText("Maximum output tokens"));
+  await user.type(screen.getByLabelText("Maximum output tokens"), "128000");
+  await user.click(screen.getByRole("button", { name: "Save this model's parameters" }));
+  await waitFor(() => expect(writes).toHaveBeenCalledOnce());
+  expect(writes).toHaveBeenCalledWith(expect.objectContaining({ configuration: { max_output_tokens: 128000 } }));
+});
+
 it("shows inherited versus override values and saves only this model with its exact rule version", async () => {
   const received = vi.fn(); const saved = vi.fn().mockResolvedValue(undefined); const close = vi.fn();
   server.use(http.put("*/api/local/llm/sources/source-a/models/config", async ({ request }) => { received(await request.json()); return HttpResponse.json(source); }));

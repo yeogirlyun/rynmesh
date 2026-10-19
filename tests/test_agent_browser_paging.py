@@ -44,6 +44,7 @@ def _all_local_specs():
 class _RuntimeLocalTools:
     def __init__(self, store, home):
         from types import SimpleNamespace
+
         from rynmesh.agent_runtime.local_tools import LocalTools
         from rynmesh.agent_runtime.operation_ledger import OperationLedger
 
@@ -76,6 +77,7 @@ class _RuntimeLocalTools:
 
 def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_model_turn(tmp_path):
     from test_agent_runtime import advance, assistant, make_runtime
+
     from rynmesh.agent_runtime import tool_menu
 
     workspace = tmp_path / "ws"
@@ -113,6 +115,7 @@ def test_existing_task_enabling_desktop_access_exposes_browser_tools_on_next_mod
 
 def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
     import threading
+
     from rynmesh.agent_runtime.runtime import write_permission_revoked
     from rynmesh.agent_runtime.store import AgentToolRejected
 
@@ -177,6 +180,7 @@ def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
 
 def test_completed_task_followup_and_archived_restore_sync_desktop_access(tmp_path):
     from test_agent_runtime import advance, assistant, make_runtime
+
     from rynmesh.agent_runtime import tool_menu
 
     workspace = tmp_path / "ws"
@@ -347,6 +351,7 @@ def test_open_then_immediate_read_without_polling_and_navigation_timeout_status(
     import http.server
     import socketserver
     import threading
+
     from rynmesh.agent_runtime import local_browser
 
     tools, context, root, state = local
@@ -816,6 +821,7 @@ def test_websocket_disconnect_reconnects_reads_but_never_replays_mutating_action
 
 def test_inflight_inference_permission_change_reschedules_cleanly_and_preserves_explicit_controls(tmp_path):
     from test_agent_runtime import advance, assistant, make_runtime
+
     from rynmesh.agent_runtime import tool_menu
     from rynmesh.agent_runtime.store import AgentError
 
@@ -1099,6 +1105,7 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
     import http.server
     import socketserver
     import threading
+
     from rynmesh.agent_runtime import local_browser
     from rynmesh.agent_runtime.store import AgentToolRejected
 
@@ -1206,6 +1213,3 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
             {"page_id": busy_page_id, "action": "wait", "selector": "[[[invalid", "wait_seconds": 1.0},
             "op_wait_invalid_sel",
         )
-
-
-

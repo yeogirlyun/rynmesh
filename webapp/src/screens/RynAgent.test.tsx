@@ -857,6 +857,46 @@ it("reports unsupported API honestly and never creates a task", async () => {
   expect(backend.creates).not.toHaveBeenCalled();
 });
 
+it("saves a manual context limit and can explicitly return to following the model window", async () => {
+  const backend = api();
+  backend.setSettings({ max_context_chars: null });
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Agent settings" }));
+  let dialog = screen.getByRole("dialog", { name: "Agent settings" });
+  expect(within(dialog).getByRole("combobox", { name: "Context budget" })).toHaveValue("auto");
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Context budget" }), "manual");
+  const limit = within(dialog).getByRole("spinbutton", { name: "Request limit (UTF-8 bytes)" });
+  await user.clear(limit);
+  await user.type(limit, "3000");
+  expect(within(dialog).getByRole("button", { name: "Save settings" })).toBeDisabled();
+  await user.clear(limit);
+  await user.type(limit, "250000");
+  await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(backend.updates).toHaveBeenLastCalledWith(expect.objectContaining({ max_context_chars: 250000 }));
+  await user.click(screen.getByRole("button", { name: "Agent settings" }));
+  dialog = screen.getByRole("dialog", { name: "Agent settings" });
+  expect(within(dialog).getByRole("combobox", { name: "Context budget" })).toHaveValue("manual");
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Context budget" }), "auto");
+  await user.click(within(dialog).getByRole("button", { name: "Save settings" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(backend.updates).toHaveBeenLastCalledWith(expect.objectContaining({ max_context_chars: null }));
+});
+
+it("explains an unconfirmed model capacity without displaying its fallback as a known window", async () => {
+  const backend = api();
+  backend.setSettings({ max_context_chars: null, context_budget_policy: {
+    mode: "auto", provenance: "default_auto", effective_max_context_bytes: 84480,
+    context_window_tokens: 32768, context_window_known: false, context_window_basis: "unknown_fallback",
+    reserved_output_tokens: 4096, framing_reserve_tokens: 512, estimate_basis: "serialized_utf8_bytes_div3", units: { max_context_chars: "serialized_request_utf8_bytes", context_window: "tokens" },
+  } });
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Agent settings" }));
+  const dialog = screen.getByRole("dialog", { name: "Agent settings" });
+  expect(within(dialog).getByText(/Model capacity is unconfirmed/)).toBeVisible();
+  expect(within(dialog).queryByText(/Default model window:/)).not.toBeInTheDocument();
+});
+
 it("resumes a safe restart interruption and keeps the task's recorded permission mode", async () => {
   const backend = api(true, [task({ status: "interrupted", error: "agent_node_restarted", permission_mode: "read_only" })]);
   const user = userEvent.setup();
@@ -999,7 +1039,9 @@ it("updates the current reply while the task index request remains hung", async 
   backend.setTasks([task({ status: "completed", revision: 2, result: "Reply arrived while index is pending" })]);
   try {
     await screen.findByText("Reply arrived while index is pending", {}, { timeout: 3500 });
-    await waitFor(() => expect(started).toBe(true));
+    // The detail response can arrive in 200 ms while the independent sidebar
+    // poll waits 1.2 s; allow that polling interval after the reply appears.
+    await waitFor(() => expect(started).toBe(true), { timeout: 3500 });
   } finally { release(); }
 });
 
@@ -1088,7 +1130,7 @@ it("ignores an older focus refresh that resolves after a newer visibility refres
 });
 
 
-it("shows public progress and keeps technical receipts and interim commentary collapsed", async () => {
+it("keeps public updates in the conversation and only collapses tool activity", async () => {
   await i18n.changeLanguage("en");
   api(true, [task({ messages: [
     { role: "user", content: "Inspect devices" },
@@ -1100,6 +1142,9 @@ it("shows public progress and keeps technical receipts and interim commentary co
   const user = userEvent.setup(); const { container } = mount();
   await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
   expect(await screen.findByText("Thinking…")).toBeVisible();
+  const commentary = screen.getByText("I will inspect the device configuration.");
+  expect(commentary).toBeVisible();
+  expect(commentary.closest("details")).toBeNull();
   expect(screen.getByText("The device is online.")).toBeVisible();
   expect(container.querySelector(".ra-thread .ra-activity")).toBeNull();
   expect(container.querySelector(".ra-scroll .ra-record-options")).toBeNull();
@@ -1110,7 +1155,37 @@ it("shows public progress and keeps technical receipts and interim commentary co
   expect(container.querySelector("details.ra-process-details")).not.toHaveAttribute("open");
   await user.click(screen.getByText("View activity"));
   expect(container.querySelector("details.ra-process-details")).toHaveAttribute("open");
-  expect(screen.getByText("I will inspect the device configuration.")).toBeVisible();
+  expect(screen.getAllByText("I will inspect the device configuration.")).toHaveLength(1);
+  expect(screen.queryByText("internal result")).toBeNull();
+  expect(container.querySelectorAll(".ra-thread > .ra-message.ra-assistant")).toHaveLength(2);
+});
+
+it("preserves successive updates in order after completion without repeating the final answer", async () => {
+  const call = (id: string) => ({ id, function: { name: "inspect_devices", arguments: "{}" } });
+  api(true, [task({ status: "completed", result: "Created and checked the workbook.", messages: [
+    { role: "user", content: "Inspect devices" },
+    { role: "assistant", content: "I will create the sales template.", tool_calls: [call("c1")] },
+    { role: "tool", content: "internal result", tool_call_id: "c1" },
+    { role: "assistant", content: null, tool_calls: [call("c2")] },
+    { role: "assistant", content: "The template is ready; I am checking the formulas.", tool_calls: [call("c3")] },
+    { role: "assistant", content: "Created and checked the workbook." },
+  ] })]);
+  const user = userEvent.setup(); const { container } = mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  const updates = [...container.querySelectorAll(".ra-thread .ra-message.ra-assistant")];
+  expect(updates.map(element => element.textContent)).toEqual([
+    "I will create the sales template.", "The template is ready; I am checking the formulas.",
+  ]);
+  expect(updates.every(element => !element.closest("details"))).toBe(true);
+  const tools = [...container.querySelectorAll("details.ra-process-details")];
+  expect(tools).toHaveLength(2);
+  expect(updates[0].compareDocumentPosition(tools[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(tools[0].compareDocumentPosition(updates[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(updates[1].compareDocumentPosition(tools[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getAllByText("Created and checked the workbook.")).toHaveLength(1);
+  expect(screen.getByText("Created and checked the workbook.").closest(".ra-result")).not.toBeNull();
+  expect(screen.queryByText("Thinking…")).toBeNull();
+  expect(screen.queryByText("internal result")).toBeNull();
 });
 
 

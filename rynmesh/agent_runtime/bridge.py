@@ -13,12 +13,17 @@ import uuid
 from fastapi import HTTPException
 
 from ..llm_package import codex_threads, model_settings, peer_binding
-from ..llm_package.adapters import AdapterError
+from ..llm_package.adapters import AdapterError, actual_usage
 from ..llm_package.api_formats import normalize
-from ..llm_package.chat import validate_chat, validate_tool_arguments
+from ..llm_package.chat import validate_chat
 from . import output_policy, reasoning
+from .model_events import (
+    ModelEventError,
+    ModelEventStream,
+    project_leading_developer,
+    response_calls,
+)
 from .models import ModelCatalog
-from .prompt import INTERNAL_NAMES
 from .store import AgentError, AgentModelResponseError, cancellation_reason
 from .tools import RynTools
 
@@ -28,9 +33,12 @@ class AgentModelBridge:
     supports_destination_binding = True
     supports_output_token_limit = True
     supports_request_deadline = True
+    supports_request_id = True
     supports_reasoning_effort = True
     # The runtime passes its task id; only an opaque hash leaves this process.
     supports_conversation_key = True
+    supports_model_events = True
+
 
     def __init__(self, services, catalog):
         self.services, self.catalog = services, catalog
@@ -39,10 +47,7 @@ class AgentModelBridge:
     def _response_metadata(result, target):
         data = result if isinstance(result, dict) else {}
         finish = data.get("finish_reason")
-        reported = data.get("reported_usage")
-        usage_source = reported if isinstance(reported, dict) else ({} if target["source"] == "peer" else data)
-        usage = {key: usage_source.get(key) if type(usage_source.get(key)) is int and usage_source[key] >= 0 else None
-                 for key in ("input_tokens", "output_tokens")}
+        usage = actual_usage(data if "reported_usage" in data or target["source"] != "peer" else {})
         return usage, finish
 
     @staticmethod
@@ -50,47 +55,29 @@ class AgentModelBridge:
         data = result if isinstance(result, dict) else {}
         usage, finish = AgentModelBridge._response_metadata(result, target)
         detail = "the response was malformed"
+        flags = {}
         try:
             if len(json.dumps(result).encode()) > output_policy.MAX_RAW_RESPONSE_BYTES:
                 raise AgentModelResponseError(usage, finish, "agent_model_output_limit")
             message = copy.deepcopy(data.get("message"))
             if not isinstance(message, dict) or message.get("role") != "assistant":
                 raise ValueError
-            specs = {s["function"]["name"]: s["function"].get("parameters", {}) for s in tool_specs}
-            calls = message.get("tool_calls") or []
-            if not isinstance(calls, list) or len(calls) > output_policy.MAX_TOOL_CALLS or not message.get("content") and not calls:
-                detail = (f"more than {output_policy.MAX_TOOL_CALLS} tool calls in one response" if isinstance(calls, list) and len(calls) > output_policy.MAX_TOOL_CALLS
-                          else "the response had neither text nor a tool call")
+            calls = response_calls(message)
+            if not message.get("content") and not calls:
+                detail = "the response had neither text nor a tool call"
                 raise ValueError
-            for call in calls:
-                function = call.get("function") or {}
-                name = function.get("name")
-                shown = name if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name) else "(unnamed)"
-                if name not in specs:
-                    detail = f"'{shown}' is not one of the available tools; use only the tools offered"
-                    raise ValueError
-                try:
-                    arguments = json.loads(function["arguments"])
-                except (ValueError, TypeError, KeyError):
-                    detail = f"the arguments of '{shown}' were not valid JSON"
-                    raise ValueError from None
-                if not isinstance(arguments, dict):
-                    detail = f"the arguments of '{shown}' must be a JSON object"
-                    raise ValueError
-                if name not in INTERNAL_NAMES:
-                    try:
-                        validate_tool_arguments(specs[name], arguments)
-                    except ValueError as exc:
-                        cause = exc.__cause__
-                        where = "/".join(re.sub(r"[^A-Za-z0-9_]", "", str(part))[:40] for part in getattr(cause, "absolute_path", ())) or "the top level"
-                        keyword = re.sub(r"[^A-Za-z]", "", str(getattr(cause, "validator", "schema")))[:24] or "schema"
-                        extra = ""
-                        if keyword in {"required", "additionalProperties"}:
-                            # These messages only name properties; they never echo argument values.
-                            extra = ": " + re.sub(r"[^A-Za-z0-9_ ',.()-]", "", str(getattr(cause, "message", "")))[:140]
-                        detail = f"the arguments of '{shown}' violate its schema at {where} ({keyword}){extra}"
-                        raise
-            validate_chat({"messages": [message, *[
+            for key in ("end_turn", "needs_follow_up"):
+                if key in data:
+                    if type(data[key]) is not bool:
+                        raise ValueError
+                    flags[key] = data[key]
+            # Validate the assistant envelope separately from tool semantics.
+            # A usable pairing id lets RynToolRouter return a tool error instead
+            # of retrying an entire response that may contain valid sibling calls.
+            envelope = {**message, "tool_calls": [
+                {"id": call["id"], "type": "function", "function": {"name": "__ryn_envelope__", "arguments": "{}"}}
+                for call in calls]}
+            validate_chat({"messages": [envelope, *[
                 {"role": "tool", "tool_call_id": call["id"], "content": ""} for call in calls]]})
         except AgentModelResponseError:
             raise
@@ -99,9 +86,9 @@ class AgentModelBridge:
             error.detail = detail
             raise error from None
         finish = finish if isinstance(finish, str) and finish in {"stop", "length", "tool_calls", "content_filter", "cancelled"} else "unknown"
-        return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy}
+        return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, request_id=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -118,24 +105,10 @@ class AgentModelBridge:
         chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
             chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
-        streaming = bool(on_event and tool_specs and target.get("streaming"))
+        streaming = bool(on_event and target.get("streaming"))
         if streaming:
             chat["stream"] = True
-        emitted_chars = 0
-
-        def emit(chunk):
-            nonlocal emitted_chars
-            if cancelled() or expired():
-                return
-            # Only actual assistant text deltas are public. Provider reasoning,
-            # partial function arguments and transport details stay internal.
-            for choice in chunk.get("choices", []):
-                text = (choice.get("delta") or {}).get("content")
-                if isinstance(text, str) and text and emitted_chars < 20000:
-                    text = text[:20000 - emitted_chars]
-                    emitted_chars += len(text)
-                    on_event({"type": "text_delta", "text": text})
-        task_id = "agent_" + uuid.uuid4().hex
+        task_id = request_id if isinstance(request_id, str) and re.fullmatch(r"agent_[0-9a-f]{32}", request_id) else "agent_" + uuid.uuid4().hex
         window = codex_threads.window_key(conversation)
         manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
         if expected_destination is not None and target["source"] == "local_api":
@@ -161,6 +134,18 @@ class AgentModelBridge:
                 raise AgentError("agent_model_destination_changed")
         if target["source"] != "peer" and manager is None:
             raise ValueError("agent_model_unavailable")
+        adapter = manager.adapter if manager else None
+        if (target.get("adapter") in {"openai_responses", "anthropic_messages"}
+                and target["source"] == "peer"
+                and (expected_destination is None or target.get("destination_binding_supported") is not True)):
+            raise AgentError("agent_model_destination_unverifiable")
+        supports_developer = (target.get("supports_developer_role") is True
+                              or getattr(adapter, "supports_developer_role", False) is True
+                              or target.get("adapter") in {"codex_cli", "antigravity_cli"})
+        if target.get("adapter") not in {"openai_responses", "anthropic_messages"}:
+            for message in chat["messages"]:
+                message.pop("provider_state", None)
+        chat["messages"] = project_leading_developer(chat["messages"], supports_developer=supports_developer)
         # Local providers expose an authoritative manifest limit. Remote orders
         # enforce their own manifest/transport limits; no shorter remote timeout
         # field exists. Our watcher requests cancellation and rejects late data.
@@ -172,6 +157,14 @@ class AgentModelBridge:
 
         def expired():
             return request_deadline is not None and time.monotonic() >= request_deadline
+
+        model_events = ModelEventStream(on_event, stopped=lambda: cancelled() or expired())
+
+        def emit(chunk):
+            try:
+                model_events.feed(chunk)
+            except ModelEventError:
+                raise AdapterError("invalid model event envelope", code="upstream_response_invalid") from None
 
         def cancel_transport():
             try:
@@ -199,12 +192,12 @@ class AgentModelBridge:
                     manager._running += 1
             watcher.start()
             if on_event:
-                on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"]})
+                on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"], "request_id": task_id})
             if cancelled():
                 raise AgentError(cancellation_reason(cancelled))
             if expired():
                 raise AgentError("agent_inference_timeout")
-            request_policy = {"provider_timeout_seconds": provider_limit,
+            request_policy = {"request_id": task_id, "provider_timeout_seconds": provider_limit,
                 "effective_timeout_seconds": max(0.0, request_deadline - time.monotonic()) if request_deadline is not None else None,
                 "measurement": "pre_admission_upper_bound",
                 "enforcement": "adapter_timeout_and_cancel_watch" if manager else "consumer_cancel_watch_remote_transport_limits"}
@@ -246,21 +239,38 @@ class AgentModelBridge:
                 if not cancelled() and not expired() and result.get("state") != "succeeded":
                     raise AgentError({"model_configuration_changed": "agent_model_destination_changed",
                                       "ai_permission_denied": "agent_model_destination_changed",
+                                      "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
+                                      "source_protocol_response_invalid": "agent_model_protocol_invalid",
                                       "model_daily_quota_exhausted": "agent_model_quota_exhausted"}.get(result.get("error_code"), "agent_inference_failed"))
             stopped = cancelled()
             if stopped or expired():
                 usage, finish = self._response_metadata(result, target)
-                raise AgentModelResponseError(usage, finish, cancellation_reason(cancelled) if stopped else "agent_inference_timeout")
-            return {**self._response(result, target, tool_specs, policy), "request_policy": request_policy}
+                err = AgentModelResponseError(usage, finish, cancellation_reason(cancelled) if stopped else "agent_inference_timeout")
+                err.request_id = task_id
+                raise err
+            response = {**self._response(result, target, tool_specs, policy), "request_policy": request_policy, "request_id": task_id}
+            try:
+                model_events.finish(response)
+            except ModelEventError:
+                usage, finish = self._response_metadata(result, target)
+                raise AgentModelResponseError(usage, finish) from None
+            return response
         except HTTPException as exc:
             if cancelled():
                 raise AgentError(cancellation_reason(cancelled)) from None
             if expired():
-                raise AgentError("agent_inference_timeout") from None
+                err = AgentError("agent_inference_timeout")
+                err.request_id = task_id
+                raise err from None
             raise AgentError("agent_model_destination_changed" if exc.detail == "model_configuration_changed" else "agent_inference_failed") from None
         except AdapterError as exc:
+            from .diagnostic_log import safe_diagnostics
+            diag = safe_diagnostics(getattr(exc, "diagnostics", None))
             if exc.code == "upstream_response_invalid" and not cancelled() and not expired():
                 rejected = AgentModelResponseError(exc.reported_usage, exc.finish_reason)
+                rejected.request_id = task_id
+                if diag:
+                    rejected.diagnostics = diag
                 rejected.detail = "The model response or client tool proposal was invalid. Return the required response format and tool names, and obey each argument schema and size limit. No proposed tool was executed."
                 from ..llm_package.codex_tools import FEEDBACK
                 feedback = FEEDBACK.get(getattr(exc, "proposal_feedback_code", None))
@@ -273,6 +283,8 @@ class AgentModelBridge:
             code = {"inference_timeout": "agent_inference_timeout",
                     "runtime_connection_failed": "agent_model_connection_failed",
                     "upstream_http_failed": "agent_model_upstream_failed",
+                    "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
+                    "source_protocol_response_invalid": "agent_model_protocol_invalid",
                     "runtime_busy": "agent_model_busy",
                     "model_configuration_changed": "agent_model_destination_changed",
                     "model_daily_quota_exhausted": "agent_model_quota_exhausted",
@@ -284,8 +296,13 @@ class AgentModelBridge:
             elif expired():
                 code = "agent_inference_timeout"
             if isinstance(exc.reported_usage, dict):
-                raise AgentModelResponseError(exc.reported_usage, exc.finish_reason, code) from None
-            raise AgentError(code) from None
+                err = AgentModelResponseError(exc.reported_usage, exc.finish_reason, code)
+            else:
+                err = AgentError(code)
+            err.request_id = task_id
+            if diag:
+                err.diagnostics = diag
+            raise err from None
         finally:
             done.set()
             if watcher.is_alive():

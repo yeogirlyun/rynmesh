@@ -1,0 +1,8 @@
+.ra-message-actions { display: flex; justify-content: flex-end; margin-top: 5px; }
+.ra-message-actions .ra-edit-message { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--pf-muted); padding: 5px; border-radius: 5px; }
+.ra-message-actions .ra-edit-message:hover { color: var(--pf-text); background: var(--pf-panel); }
+.ra-message-editor { display: grid; gap: 10px; }
+.ra-message-editor textarea { width: 100%; min-height: 85px; max-height: 360px; resize: vertical; padding: 9px 11px; border: 1px solid var(--pf-selected-line); border-radius: 8px; background: var(--pf-panel); color: var(--pf-text); font: inherit; line-height: 1.7; }
+.ra-message-editor small { color: var(--pf-muted); font-size: 12px; }
+.ra-message-editor > div { display: flex; justify-content: flex-end; gap: 8px; }
+.ra-message-editor button { padding: 6px 12px; }

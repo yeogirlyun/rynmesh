@@ -199,4 +199,3 @@ it("delivers a dispatched mutation to the currently mounted controller after rem
     expect(sessionStorage.getItem("ryn.agent.pending-record")).toBeNull();
   } finally { record.mockRestore(); }
 });
-

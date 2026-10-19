@@ -4,13 +4,13 @@ from __future__ import annotations
 import atexit
 import math
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from ..llm_package.process_guard import _windows_job, terminate
 from .store import AgentToolRejected
@@ -370,7 +370,65 @@ def literal_read_command(arguments):
     return shell_command(shell, module + "\\" + program + " " + " ".join(args))
 
 
+def _contains_unavailable_rg_segment(command: str) -> bool:
+    """Detect unquoted rg/rg.exe command heads in compound shell invocations."""
+    if not isinstance(command, str) or "rg" not in command.lower():
+        return False
+    import re
+    segments = []
+    current = []
+    quote = None
+    escaped = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if escaped:
+            current.append(ch)
+            escaped = False
+        elif quote == "'":
+            if ch == "'":
+                if i + 1 < len(command) and command[i + 1] == "'":
+                    current.append("''")
+                    i += 1
+                else:
+                    quote = None
+            else:
+                current.append(ch)
+        elif quote == '"':
+            if ch in {"\\", "`"}:
+                escaped = True
+                current.append(ch)
+            elif ch == '"':
+                quote = None
+            else:
+                current.append(ch)
+        else:
+            if ch in {"'", '"'}:
+                quote = ch
+                current.append(ch)
+            elif ch in {";", "|", "&", "\n", "\r"}:
+                segments.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        i += 1
+    segments.append("".join(current))
+    for seg in segments:
+        stripped = seg.strip()
+        if stripped.startswith("&") and len(stripped) > 1 and stripped[1].isspace():
+            stripped = stripped[1:].strip()
+        if re.match(r"^(?:rg|rg\.exe)(?:\s|$)", stripped, re.IGNORECASE):
+            return True
+    return False
+
+
 def prepare_shell_command(arguments):
     """Resolve the actual executable before recording a durable dispatch intent."""
-    return literal_read_command(arguments) or shell_command(
-        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), arguments["command"])
+    literal = literal_read_command(arguments)
+    if literal is not None:
+        return literal
+    command = arguments["command"]
+    if not resolve_rg_executable() and _contains_unavailable_rg_segment(command):
+        raise AgentToolRejected("agent_ripgrep_unavailable_use_file_search")
+    return shell_command(
+        arguments.get("shell", "powershell" if os.name == "nt" else "sh"), command)

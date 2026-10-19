@@ -203,8 +203,8 @@ def test_space_catalog_limits_and_stranger_cannot_read_metadata(space_pair):
 
 
 def test_space_catalog_concurrent_refresh_shares_one_signed_challenge(space_pair):
-    from concurrent.futures import ThreadPoolExecutor
     import threading
+    from concurrent.futures import ThreadPoolExecutor
     p = space_pair
     entered, release, joined = threading.Event(), threading.Event(), threading.Event()
     calls = []

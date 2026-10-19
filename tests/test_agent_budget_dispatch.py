@@ -3,8 +3,9 @@ import copy
 
 from test_agent_runtime import advance, approve, assistant, make_runtime
 
+from rynmesh.agent_runtime import output_policy
 from rynmesh.agent_runtime.runtime import AgentRuntime
-from rynmesh.agent_runtime.store import AgentStore, encoded
+from rynmesh.agent_runtime.store import AgentStore
 
 
 def test_model_limit_stops_before_another_provider_request(tmp_path):
@@ -61,7 +62,7 @@ def test_adapter_without_output_limit_cannot_underreserve_its_output(tmp_path):
     runtime, model, _, _ = make_runtime(tmp_path, assistant("must not dispatch"))
     row = runtime.create({"message": "Inspect"})
     stored = runtime.store.read()["tasks"][row["id"]]
-    input_bound = len(encoded(runtime._context(stored))) + len(encoded(runtime._specs())) + 512
+    input_bound = output_policy.estimate_input(runtime._context(stored), runtime._specs(stored))["estimated_input_tokens"]
     # Enough for input plus only 100 output tokens. This model cannot enforce
     # that reduced limit, so reserving 100 then requesting 4096 would overspend.
     def reduce_limit(data):

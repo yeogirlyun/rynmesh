@@ -4,6 +4,7 @@ import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen,
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import { NasPreview } from "../personal/NasPreview";
+import { decodeAgentFileText, isOfficePreview, readAgentFilePreview } from "../domain/agentFilePreview";
 import { AgentFileContext, fileAvailable } from "./RynAgentFileContext";
 import "../personal/nas.css";
 
@@ -140,12 +141,23 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
   const loadFile = useCallback((signal: AbortSignal) => {
     if (!file) return Promise.reject(new Error(t("artifactReadError")));
     return rynAgent.fileContent(task.id, file, signal).catch(reason => {
-      if (reason instanceof AgentAPIError && reason.code === "agent_artifact_content_changed" && !signal.aborted) setReload(n => n + 1);
+      if (reason instanceof AgentAPIError && reason.code === "agent_artifact_content_changed" && !signal.aborted) {
+        setReload(n => n + 1);
+        if (/\.pdf$/i.test(file.name)) throw reason;
+      }
       throw new Error(t("artifactReadError"));
     });
   // The version, not the listing object's identity, decides when bytes are fetched again.
-  }, [task.id, file?.id, file?.sha256, file?.media_type, t]);
-  const readFileText = useCallback(async (signal: AbortSignal) => (await loadFile(signal)).text(), [loadFile]);
+  }, [task.id, file?.id, file?.sha256, file?.media_type, file?.name, t]);
+  const readFileText = useCallback(async (signal: AbortSignal) => decodeAgentFileText(await loadFile(signal)), [loadFile]);
+  const readDocument = useCallback(async (signal: AbortSignal) => {
+    if (!file) throw new Error(t("artifactReadError"));
+    try { return await readAgentFilePreview(task.id, file, signal); }
+    catch (reason) {
+      if (reason instanceof AgentAPIError && reason.code === "agent_artifact_content_changed" && !signal.aborted) setReload(n => n + 1);
+      throw reason;
+    }
+  }, [task.id, file?.id, file?.sha256, t]);
   const items = listing?.artifacts || [];
   const deliverables = files.filter(item => item.role === "deliverable");
   const supporting = files.filter(item => item.role !== "deliverable");
@@ -170,7 +182,9 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
       {file && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
         entry={{ name: file.name, path: file.path, directory: false, size: file.bytes || 0, modified: file.updated_at || "" }}
         onClose={() => setChosenFile("")} download={() => { void saveCopy(task, file).catch(() => setError(true)); }} askAi={() => {}} busy={false}
-        loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined} /></div>}
+        loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
+        loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
+        loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
     </section>}
     {!files.length && finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
     {(items.length > 0 || error) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>

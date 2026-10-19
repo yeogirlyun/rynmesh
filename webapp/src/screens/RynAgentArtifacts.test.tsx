@@ -63,6 +63,28 @@ const pelican = { id: "file_pelican", name: "pelican.svg", path: "pelican.svg", 
 const helper = { ...pelican, id: "file_helper", name: "notes.txt", path: "notes.txt", media_type: "text/plain", preview: "text", role: "supporting",
   sha256: "n1", mentioned_in_answer: false, render_inspected: undefined };
 
+it("opens common Office files through the task-bound, versioned local preview endpoint", async () => {
+  const user = userEvent.setup(); const requested: string[] = []; const nas = vi.fn();
+  const files = [{ ...helper, name: "销售.xlsx", id: "file_workbook", path: "销售.xlsx", preview: "download", role: "deliverable", sha256: "sheet-v1" },
+    { ...helper, name: "报告.docx", id: "file_document", path: "报告.docx", preview: "download", role: "deliverable", sha256: "doc-v1" }];
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files })),
+    http.get("*/api/local/agent/tasks/file-task/files/:file/preview", ({ request, params }) => {
+      requested.push(request.url);
+      return HttpResponse.json(params.file === "file_workbook" ? { kind: "spreadsheet", truncated: false, sha256: "sheet-v1", sheets: [
+        { name: "季度汇总", rows: [{ index: 1, cells: [{ column: 1, value: "季度销售额" }] }], columns: 1, total_rows: 1, total_columns: 1, truncated: false }] }
+        : { kind: "document", truncated: false, sha256: "doc-v1", blocks: [{ type: "paragraph", style: "", runs: [{ text: "已保存的销售报告", bold: false, italic: false }] }] });
+    }), http.get("*/api/local/plugins/nas/sources/:source/content", () => { nas(); return HttpResponse.json({ text: "unbound" }); }));
+  render(<TaskArtifacts task={done} />);
+  await user.click(await screen.findByRole("button", { name: "Open 销售.xlsx" }));
+  expect(await screen.findByRole("tab", { name: "季度汇总" })).toBeVisible();
+  expect(screen.getByRole("cell", { name: "季度销售额" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Open 报告.docx" }));
+  expect(await screen.findByText("已保存的销售报告")).toBeVisible();
+  expect(requested[0]).toMatch(/files\/file_workbook\/preview\?v=sheet-v1$/);
+  expect(requested[1]).toMatch(/files\/file_document\/preview\?v=doc-v1$/);
+  expect(nas).not.toHaveBeenCalled();
+});
+
 function blobURLs() {
   const blobs: Blob[] = [];
   vi.stubGlobal("URL", Object.assign(class extends URL {}, {

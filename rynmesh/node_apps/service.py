@@ -294,6 +294,39 @@ class NodeApps:
         require(row, "apps_operation_unavailable")
         return self.invoke(row["provider_peer"], row["command"])
 
+    def confirm_receipt(self, peer, command, receipt):
+        """Settle an existing consumer intent after authenticated receipt lookup.
+
+        The caller verifies the queried receipt against its original reviewed
+        context. This only closes that exact intent; it never invokes an app,
+        creates an intent, or authorizes a new command.
+        """
+        require(isinstance(command, dict) and set(command) == {
+            "app", "action", "arguments", "operation_id", "preview_hash"}, "apps_operation_changed")
+        require(isinstance(receipt, dict), "apps_response_invalid")
+        command, receipt = deepcopy(command), deepcopy(receipt)
+        operation_id, target = command["operation_id"], peer or self.peer_id
+        require(isinstance(operation_id, str) and re.fullmatch(r"[A-Za-z0-9:_-]{1,128}", operation_id))
+        expected = {"operation_id": operation_id, "provider_peer": target, "consumer_peer": self.peer_id,
+                    "app": command["app"], "action": command["action"],
+                    "arguments_hash": fingerprint(command["arguments"]), "request_hash": fingerprint(command)}
+        require(all(receipt.get(key) == value for key, value in expected.items()), "apps_response_invalid")
+        request_hash = fingerprint({"provider_peer": target, "command": command})
+
+        def confirm(data):
+            row = data["intents"].get(operation_id)
+            require(row, "apps_operation_unavailable")
+            require(row.get("provider_peer") == target and row.get("command") == command
+                    and row.get("request_hash") == request_hash, "apps_operation_changed")
+            require(row.get("status") in {"pending", "committed"}, "apps_operation_rejected")
+            if row["status"] == "committed":
+                require(row.get("result") == receipt, "apps_operation_changed")
+            else:
+                row.update(status="committed", result=receipt)
+            return row["result"]
+
+        return self.store.mutate(confirm)
+
     def invoke(self, peer, value):
         require(set(value) == {"app", "action", "arguments", "operation_id", "preview_hash"})
         contract(value["app"], value["action"], value["arguments"])

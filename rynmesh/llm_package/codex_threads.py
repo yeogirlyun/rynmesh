@@ -120,7 +120,7 @@ def state_lines(old: str, new: str) -> list[str] | None:
     if len(before) != len(after):
         return None
     changed = []
-    for previous, current in zip(before, after):
+    for previous, current in zip(before, after, strict=False):
         if previous == current:
             continue
         a, b = _LABELLED_STATE.fullmatch(previous), _LABELLED_STATE.fullmatch(current)
@@ -198,7 +198,7 @@ class Session:
             if [item.get("role") for item in before] != [item.get("role") for item in after]:
                 return None
             lines = []
-            for previous, current in zip(before, after):
+            for previous, current in zip(before, after, strict=False):
                 if previous.get("content") == current.get("content"):
                     continue
                 if not isinstance(previous.get("content"), str) or not isinstance(current.get("content"), str):

@@ -105,7 +105,7 @@ def cli_metadata_catalog(tmp_path, monkeypatch):
                            enumerations=enumerations, models=models, expire=expire)
 
 
-def test_selected_known_cli_model_reuses_expired_metadata_without_changing_authority(cli_metadata_catalog, monkeypatch):
+def test_offline_cli_snapshot_is_display_only_without_project_authority(cli_metadata_catalog, monkeypatch):
     from rynmesh.llm_package import codex_session
     fixture = cli_metadata_catalog
     identifier = "local/codex-cli/model/model-a"
@@ -116,9 +116,11 @@ def test_selected_known_cli_model_reuses_expired_metadata_without_changing_autho
     fixture.record["online"] = False
     after = fixture.catalog.get_model(identifier)
     assert after["available"] is False
-    for key in ("id", "context_window", "supported_reasoning_efforts", "default_reasoning_effort",
-                "destination_revision", "local_model_binding"):
+    for key in ("id", "context_window", "supported_reasoning_efforts", "default_reasoning_effort"):
         assert after[key] == before[key]
+    assert after["destination_revision"] == ""
+    assert after["local_model_binding"] is None
+    assert after["destination_binding_supported"] is False
     assert fixture.manager.adapter.path.read_bytes() == binding_bytes
     assert fixture.enumerations == [True]
 

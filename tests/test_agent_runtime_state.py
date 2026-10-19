@@ -36,7 +36,8 @@ def test_simple_question_has_no_required_planning_call_and_no_verified_outcome(t
     assert done["schema_version"] == 2 and done["outcome"]["status"] == "unverified"
     assert done["plan"]["steps"] == [] and len(model.calls) == 1
     assert done["criteria"][0]["required"] and done["criteria"][0]["source"] == "user"
-    assert "prompt_version" in model.calls[0][1][0]["content"]
+    assert "prompt_version" in next(m["content"] for m in model.calls[0][1]
+                                    if m["role"] == "developer" and "Server control state:" in m["content"])
     assert all("message_id" not in message for message in model.calls[0][1])
 
 

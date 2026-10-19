@@ -57,6 +57,7 @@ def _schema(properties=None, required=None):
 _STRING = {"type": "string", "minLength": 1, "maxLength": 256}
 _DRAFT_ID = {"draft_id": _STRING, "expected_draft_version": {"type": "integer", "minimum": 1}}
 _SOURCE_CONFIG = _schema({"name": {"type": "string", "minLength": 1, "maxLength": 80}, "kind": {"enum": ["api", "local"]},
+    "protocol": {"enum": ["openai_chat", "openai_responses", "anthropic_messages"]},
     "provider": {"type": "string", "maxLength": 80}, "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
     "models": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
     "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
