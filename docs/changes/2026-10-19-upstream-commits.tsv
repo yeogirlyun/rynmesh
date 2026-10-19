@@ -1,0 +1,4 @@
+commit	title
+0146c0255fb056dcbb1b4939e27cd81c05073ef7	feat: integrate home/apps redesign with native apps and Agent updates
+347e25d39d5cf15e237e7dcbf64e29d0c539de2d	feat(ui): integrate Claude services page redesign and review fixes
+6ae201772d1a8ad39b4c83d34c842565bd20d4f3	feat(agent): integrate native protocols, file inputs and turn controls

@@ -1,0 +1,61 @@
+{
+  "counts": {
+    "passed": 1090,
+    "skipped": 3
+  },
+  "total_unique": 1093,
+  "first_five_complete_file_cases": 130,
+  "repaired_outcomes": [
+    {
+      "classname": "tests.test_agent_integrations",
+      "name": "test_configured_codex_agent_support_precedes_optional_two_turn_probe",
+      "previous": {
+        "status": "failed",
+        "evidence": "backend-runtime-tests.xml"
+      },
+      "latest": {
+        "status": "passed",
+        "evidence": "codex-repair-tests.xml"
+      }
+    }
+  ],
+  "skipped": [
+    {
+      "classname": "tests.test_agent_long_shell_commands",
+      "name": "test_real_long_posix_command",
+      "status": "skipped",
+      "evidence": "backend-process-tests.xml",
+      "reason": "POSIX host execution"
+    },
+    {
+      "classname": "tests.test_codex_object_protocol",
+      "name": "test_real_binary_emits_strict_object_schema_and_continues_after_origin_execution[False]",
+      "status": "skipped",
+      "evidence": "backend-priority-tests.xml",
+      "reason": "explicit local Codex binary test"
+    },
+    {
+      "classname": "tests.test_codex_object_protocol",
+      "name": "test_real_binary_emits_strict_object_schema_and_continues_after_origin_execution[True]",
+      "status": "skipped",
+      "evidence": "backend-priority-tests.xml",
+      "reason": "explicit local Codex binary test"
+    }
+  ],
+  "failures": [],
+  "excluded": [
+    "tests/test_agent_browser_paging.py: 14 cases; interrupted after 8 passed, excluded from totals",
+    "tests/test_agent_request_deadline.py::test_reference_wait_elapsed_and_reopen_rebuild_deadline",
+    "tests/test_agent_tool_menu.py::test_reference_uses_same_menu_and_rejects_same_batch_hidden_dispatch",
+    "Other 176-file broad-suite cases outside the 64-file changed/lint scope were not completed",
+    "Windows desktop accessibility and external reference runs were not performed"
+  ],
+  "evidence_reports": [
+    "backend-runtime-tests.xml",
+    "backend-process-tests.xml",
+    "backend-priority-tests.xml",
+    "codex-repair-tests.xml",
+    "backend-selection-supplement.xml",
+    "backend-core-tests.log"
+  ]
+}
