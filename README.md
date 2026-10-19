@@ -1,6 +1,6 @@
 # Rynmesh
 
-> Branch delivery updated October 15, 2026: [完整改动与验收说明 / full branch delivery](docs/changes/2026-10-15-upstream-delivery.md), covering the Agent, model pool, drives, device transfers, plugins and desktop changes relative to upstream `main`, with file and commit inventories and remaining limitations.
+> Branch delivery updated October 19, 2026: [本次增量交付 / latest delivery](docs/changes/2026-10-19-upstream-delivery.md) and [验证记录 / verification](docs/changes/2026-10-19-verification.md), covering the UI integration, Agent runtime, native source protocols, attachments, Office/PDF previews and Craft compatibility. The [October 15 full branch delivery](docs/changes/2026-10-15-upstream-delivery.md) retains the earlier implementation, inventories and limitations relative to upstream `main`.
 
 > Development branch `feature/ryn-integrated-workspace`: see the [product guide](docs/RYN_INTEGRATED_WORKSPACE_PRODUCT.md), [development guide](docs/RYN_INTEGRATED_WORKSPACE_DEVELOPMENT.md) and [test documentation](docs/RYN_INTEGRATED_WORKSPACE_TEST_REPORT.md) for the integrated workspace. This local development version uses the `0.7.0` version label. The [September 20–24 implementation record](docs/PERSONAL_AI_WORKSPACE_20260920_20260924.md) is also available.
 

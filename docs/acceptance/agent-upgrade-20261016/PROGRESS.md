@@ -168,6 +168,3 @@
     - `json_proposal_wrapper`（现行生产方案）：**5 步完成（`21,797 ms`）**，`file_updated_correctly: true`，线程复用 `started: 1, resumed: 4`，复用了热线程将 Step 2–5 单步耗时降至 `2.2s–3.7s`；
     - `native_dynamic_tools`（原生 `dynamicTools`）：因提供端 `sandbox="read-only"` 与 `approvalPolicy="never"` 触发模型内置只读环境拒答，Step 1 未调用任何工具即终止（`file_updated_correctly: false`），且无法跨步复用线程。
   - **实验结论**：保留现行 `codex_tools.chat`（JSON 提案包装 + `codex_threads` 会话复用）作为生产方案，不切换为原生 `dynamicTools`。
-
-
-
