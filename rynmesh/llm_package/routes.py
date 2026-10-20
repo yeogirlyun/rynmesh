@@ -1633,11 +1633,26 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
     agent_registry_cache = {}
     agent_registry_lock = threading.Lock()
+    agent_registry_refreshing = set()
 
-    def collect_services(network_id: str, *, cache_registry=False, local_only=False) -> list[dict[str, Any]]:
+    def refresh_agent_registry(network_id):
+        try:
+            values = store.list_job_capacities(
+                network_id=network_id, capability=CAPABILITY,
+                max_age_hours=FreshnessPolicy.from_environment().advertisement_max_age_hours,
+            ).get("capacities", [])
+            with agent_registry_lock:
+                agent_registry_cache[network_id] = (time.monotonic(), values)
+        except Exception:
+            pass
+        finally:
+            with agent_registry_lock:
+                agent_registry_refreshing.discard(network_id)
+
+    def collect_services(network_id: str, *, cache_registry=False, local_only=False, selected_service_id=None, passive_registry=False) -> list[dict[str, Any]]:
         services = []
         current = active_manager()
-        if current is not None:
+        if current is not None and (selected_service_id is None or current.manifest.package_id == selected_service_id):
             local = current.public_status(cached_cli_models=cache_registry)
             local["service"] = {**local["service"], "pricing": {**local["service"]["pricing"], "input_per_1k": 0, "output_per_1k": 0, "minimum": 0}}
             services.append({**local, "online": local["ready"], "peer_id": store.peer_id,
@@ -1645,6 +1660,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         # The owner HTTP catalog and durable Ask review must see the same local
         # sources. These records are not published and grant no remote access.
         for local_service in [*active_cli_managers().values(), *active_source_managers().values()]:
+            if selected_service_id is not None and local_service.manifest.package_id != selected_service_id:
+                continue
             services = [item for item in services if not (
                 item.get("peer_id") == store.peer_id and
                 item.get("service", {}).get("package_id") == local_service.manifest.package_id)]
@@ -1672,7 +1689,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         try:
             with agent_registry_lock:
                 cached = agent_registry_cache.get(network_id) if cache_registry else None
-            if cached is not None and time.monotonic() - cached[0] < 10:
+            if passive_registry:
+                # Opening the local composer never waits for a registry socket.
+                # This is a display path; dispatch still resolves current authority.
+                with agent_registry_lock:
+                    if ((cached is None or time.monotonic() - cached[0] >= 10)
+                            and network_id not in agent_registry_refreshing):
+                        agent_registry_refreshing.add(network_id)
+                        threading.Thread(target=refresh_agent_registry, args=(network_id,),
+                                         name="ryn-agent-catalog-refresh", daemon=True).start()
+                values = cached[1] if cached is not None else []
+            elif cached is not None and time.monotonic() - cached[0] < 10:
                 values = cached[1]
             else:
                 values = store.list_job_capacities(
@@ -1706,13 +1733,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                                  "node_name": value.get("node_name"), "updated_at": value.get("updated_at")})
         return services
 
-    def discover(network_id: str, *, cache_registry=False) -> list[dict[str, Any]]:
+    def discover(network_id: str, *, cache_registry=False, passive_registry=False) -> list[dict[str, Any]]:
         """Collected services plus the view model every screen and API reads.
 
         ``online`` stays the provider's claim; ``availability`` is what this node can
         actually offer the user (docs/PEER_DIRECTORY_REDESIGN.md, P1).
         """
-        rows = collect_services(network_id, cache_registry=cache_registry)
+        rows = collect_services(network_id, cache_registry=cache_registry, passive_registry=passive_registry)
         space = getattr(store, "personal_space", None)
         members: list[str] = []
         if space is not None:
@@ -2178,7 +2205,23 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         return {"sources": [source_store.public(r) for r in source_store.read().values()],
                 "peer_id": store.peer_id, "node_name": store.node_name, "source_revision_cas_supported": True}
 
-    @app.put("/api/local/llm/sources/{source_id}")
+    from .sources import SOURCE_HTTP_SCHEMA
+
+    @app.put("/api/local/llm/sources/new", summary="Create an AI source with a server-generated ID",
+             description="Use this literal /new endpoint to create a source. Do not invent an ID in the URL. "
+                         "The JSON body contains configuration and an optional locally supplied api_key; a body id is ignored. "
+                         "Keep sharing=false and shared_models=[] for a private source. The response contains the actual id "
+                         "and has_key, never api_key. After saving, POST /api/local/llm/sources/{returned_id}/test "
+                         "to verify fixed-message inference using the stored credential; a failed test is not success.",
+             openapi_extra={"requestBody": {"required": True, "content": {"application/json": {"schema": SOURCE_HTTP_SCHEMA}}}})
+    async def create_source(request: Request):
+        return await save_source("new", request)
+
+    @app.put("/api/local/llm/sources/{source_id}", summary="Update an existing AI source",
+             description="source_id must be an existing ID returned by list/create. Unknown IDs return 404; "
+                         "create via PUT /api/local/llm/sources/new instead. Updates may be partial. "
+                         "A missing/empty api_key preserves the stored credential only when the endpoint is unchanged. "
+                         "Public responses never return api_key.")
     async def save_source(source_id: str, request: Request):
         try:
             body = await request.json()
@@ -3955,9 +3998,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         # Only untrusted registry locators are cached. Local configuration and
         # authenticated access catalogs above are rechecked on every call.
         "discover_agent": lambda network: discover(network, cache_registry=True),
+        "discover_display": lambda network: discover(network, cache_registry=True, passive_registry=True),
         # Resolving a local model must not wait for registry or peer catalogs.
         # Local readiness, configuration and exact bindings are still rebuilt.
         "discover_local": lambda network: collect_services(network, cache_registry=True, local_only=True),
+        "discover_local_model": lambda network, service_id: collect_services(network, cache_registry=True, local_only=True, selected_service_id=service_id),
         "cancel_order": local_llm_cancel, "source_store": source_store,
         "active_manager": active_manager, "active_source_managers": active_source_managers,
         "active_cli_managers": active_cli_managers,

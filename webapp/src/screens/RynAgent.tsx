@@ -21,10 +21,11 @@ import { useAgentTaskMenu } from "./RynAgentTaskMenu";
 import { useAgentTaskAttention } from "./useAgentTaskAttention";
 import RynAgentInputCard from "./RynAgentInputCard";
 import RynAgentVerification from "./RynAgentVerification";
-import { PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
+import { MemoryEditor, PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
 import RynAgentBudget from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
 import { TaskArtifacts } from "./RynAgentArtifacts";
+import AgentTaskComputerStatus from "./AgentTaskComputerStatus";
 import "./rynAgentText";
 import "./RynAgent.css";
 
@@ -316,6 +317,19 @@ export default function RynAgent() {
     return () => { active = false; refreshRevision.current++; refreshAbort.current?.abort(); };
   }, [refresh]);
   useEffect(() => { writeAgentWorkspace(settings, models, model); }, [settings, models, model]);
+  // Startup/reconnect failures recover without requiring the owner to press Refresh.
+  useEffect(() => {
+    if (!resourceErrors.settings && !resourceErrors.models) return;
+    if (resourceErrors.settings === "unavailable") return;
+    let active = true;
+    let timer: number;
+    const retry = async () => {
+      await refresh();
+      if (active) timer = window.setTimeout(retry, 3000);
+    };
+    timer = window.setTimeout(retry, 3000);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [resourceErrors.settings, resourceErrors.models, refresh]);
   useEffect(() => {
     const onFocus = () => { void refresh().catch(() => setError("loadError")); };
     const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
@@ -357,9 +371,11 @@ export default function RynAgent() {
         if (summary.tasks.some(item => isAgentActive(agentTaskState(item)))) delay = 1200;
       } catch (reason) {
         if (stopped) return;
-        setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
-        if (!isTransientAgentReadError(reason)) return;
-        delay = agentReadBackoff(++failures);
+        const transient = isTransientAgentReadError(reason);
+        failures++;
+        if (!transient || failures > 1) setResourceErrors(current => ({ ...current, tasks: "historyLoadError" }));
+        if (!transient) return;
+        delay = agentReadBackoff(failures);
       }
       if (!stopped) timer = window.setTimeout(poll, delay);
     };
@@ -382,13 +398,15 @@ export default function RynAgent() {
         acceptTask(detail); setResourceErrors(current => ({ ...current, detail: "" }));
         // Only the open executing task needs the low-latency live projection.
         // Requests remain sequential so a slow node never builds a request queue.
-        if (["queued", "running", "pausing", "reconciling"].includes(agentTaskState(detail))) delay = document.visibilityState === "hidden" ? 1200 : 120;
+        if (["queued", "running", "pausing", "reconciling"].includes(agentTaskState(detail))) delay = document.visibilityState === "hidden" ? 1500 : 500;
         else if (isAgentActive(agentTaskState(detail))) delay = 1200;
       } catch (reason) {
         if (stopped || selectedRef.current !== selected) return;
-        setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
-        if (!isTransientAgentReadError(reason)) return;
-        delay = agentReadBackoff(++failures);
+        const transient = isTransientAgentReadError(reason);
+        failures++;
+        if (!transient || !cached || failures > 1) setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
+        if (!transient) return;
+        delay = agentReadBackoff(failures);
       }
       if (!stopped) timer = window.setTimeout(poll, delay);
     };
@@ -669,7 +687,7 @@ export default function RynAgent() {
               {task.allowed_actions?.model && <button type="button" onClick={() => { setTaskModelTarget(""); setTaskModelOpen(true); }}>{t("taskModel")} · {selectedModel?.name || task.model_id}</button>}
               {task.allowed_actions?.scope && <RynAgentScope key={`scope/${task.id}/${task.scope_revision || 0}/${task.model_id}`} task={task} modelName={selectedModel?.name || task.model_id} busy={busy || controlUncertain} onSave={updateScope} />}
             </div></details>
-            <TaskProgress task={task} />
+            <TaskProgress task={task} settings={settings} />
             <details className="ra-activity"><summary>{t("activity")}</summary>{task.events.filter(event => ["tool_started", "tool_result", "approved", "denied", "approval_requested"].includes(event.type)).map(event => <div className="ra-event" key={event.seq}><strong>{t(event.type === "tool_result" ? event.internal === true ? "internalReceipt" : `receipt_${agentToolResultState(event)}` : event.type)} {event.tool && <span title={event.tool}>{t(`tool_${event.tool}`, { defaultValue: event.tool })}</span>}</strong>{isAgentLateToolResult(event, task.events) && <p>{t("lateReceipt")}</p>}{event.result !== undefined && <details className="ra-event-evidence"><summary>{t("viewEvidence")}</summary><pre aria-label={t("evidence")}>{json(event.result)}</pre></details>}</div>)}</details>            {task.outcome && task.outcome.assessment_requested !== false && (task.run_state === "ended" || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) && <section className="ra-result ra-outcome" aria-label={t("outcome")}>
               <strong>{t("outcome")} · {t(`outcome_${task.outcome.status}`)} · {t("goalRevision", { revision: task.outcome.goal_revision })}</strong>
               <p>{t(task.outcome.status === "verified" ? "outcomeVerifiedHelp" : "outcomeUnverifiedHelp")}</p>
@@ -677,7 +695,7 @@ export default function RynAgent() {
               {task.outcome.uncertainties.length > 0 && <ul>{task.outcome.uncertainties.map((item, index) => <li key={index}>{outcomeReasons[item] ? t(outcomeReasons[item]) : item}</li>)}</ul>}
               {(task.outcome.evidence_refs.length > 0 || task.outcome.criteria_results.length > 0) && <details className="ra-exact-details"><summary>{t("outcomeEvidence")}</summary><pre>{json({ criteria_results: task.outcome.criteria_results, evidence_refs: task.outcome.evidence_refs })}</pre></details>}
             </section>}
-          <details className="ra-record-options"><summary>{t("manageRecords")}</summary><TaskRecords task={task} busy={busy || controlUncertain} onChange={changeRecord} onDelete={deleteRecord} /></details></>}</div></details><Link to="/services/sources">{t("models")}</Link><button className="ra-icon" aria-label={t("settings")} disabled={!settingsReady} onClick={() => setSettingsOpen(true)}><Settings size={18} /></button></div>
+          <details className="ra-record-options"><summary>{t("manageRecords")}</summary><TaskRecords task={task} busy={busy || controlUncertain} onChange={changeRecord} onDelete={deleteRecord} /></details></>}</div></details><Link to="/services/sources">{t("models")}</Link><Link to="/settings/extensions">{t("extensions")}</Link><button className="ra-icon" aria-label={t("settings")} disabled={!settingsReady} onClick={() => setSettingsOpen(true)}><Settings size={18} /></button></div>
     </header>
     {taskMenu.dialogs}
     {pendingMessage?.phase === "rejected" && <div className="ra-banner ra-unsent-message" role="alert"><CircleAlert size={17} /><details><summary>{t("unsentMessage")}</summary><p>{pendingMessage.message}</p></details><button className="ra-icon" aria-label={t("close")} onClick={() => setPendingMessage(null)}><X size={16} /></button></div>}
@@ -698,7 +716,7 @@ export default function RynAgent() {
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task}>
-            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : <ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown>}</>}{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
+            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} task={task} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : <ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown>}</>}{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
             {streamedText && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><RynAgentStream text={streamedText} streamKey={`${task.id}/${streamStart?.seq}`} active={selectedExecuting} /></div>}
             {pendingFeedback}
             {!visiblePending && <ExecutionProgress task={task} />}
@@ -733,7 +751,7 @@ export default function RynAgent() {
       </div>
     </div>}
     {taskModelOpen && task && <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) setTaskModelOpen(false); }}><section className="ra-modal ra-model-dialog" role="dialog" aria-modal="true" aria-label={t("taskModel")} onKeyDown={event => { if (event.key === "Escape" && !busy) setTaskModelOpen(false); }}><div className="ra-modal-head"><h2>{t("taskModel")}</h2><button type="button" className="ra-icon" aria-label={t("close")} disabled={busy} onClick={() => setTaskModelOpen(false)}><X size={18} /></button></div><RynAgentModel key={`model/${task.id}/${taskModelTarget}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} expanded initialModelID={taskModelTarget} onChange={next => { acceptTask(next); setTaskModelOpen(false); }} /></section></div>}
-    {settingsOpen && settings && <AgentSettingsDialog settings={settings} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
+    {settingsOpen && settings && <AgentSettingsDialog settings={settings} projects={projects} currentProject={currentProject} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
   </section>;
 }
 
@@ -756,11 +774,12 @@ function TaskContext({ task }: { task: AgentTask }) {
   </>;
 }
 
-function TaskProgress({ task }: { task: AgentTask }) {
+function TaskProgress({ task, settings }: { task: AgentTask; settings?: AgentSettings | null }) {
   const { t } = useTranslation("rynAgent");
   return <>
     {task.plan && task.plan.steps.length > 0 && <section className="ra-plan" aria-label={t("plan")}><strong>{t("plan")} · {t("goalRevision", { revision: task.plan.goal_revision })}</strong><ol>{task.plan.steps.map(step => <li key={step.id}><span>{step.text}</span><small>{t(`plan_${step.status}`)}</small></li>)}</ol><small>{t("planHelp")}</small></section>}
     <TaskSkills skills={task.skills} />
+    <AgentTaskComputerStatus task={task} settings={settings} />
   </>;
 }
 
@@ -881,7 +900,7 @@ function ApprovalCard({ approval, controlled, enabled, canDeny, busy, waiting, o
   </section>;
 }
 
-function AgentSettingsDialog({ settings, busy, onClose, onSave }: { settings: AgentSettings; busy: boolean; onClose: () => void; onSave: (settings: Partial<AgentSettings>) => Promise<void> }) {
+function AgentSettingsDialog({ settings, projects, currentProject, busy, onClose, onSave }: { settings: AgentSettings; projects?: AgentProject[]; currentProject?: AgentProject; busy: boolean; onClose: () => void; onSave: (settings: Partial<AgentSettings>) => Promise<void> }) {
   const { t } = useTranslation("rynAgent");
   const [enabled, setEnabled] = useState(settings.enabled);
   const [tools, setTools] = useState<AgentTool[] | null>(null);
@@ -911,7 +930,8 @@ function AgentSettingsDialog({ settings, busy, onClose, onSave }: { settings: Ag
     {!contextValid && <p role="alert">{t("contextBudgetInvalid")}</p>}
     {contextPolicy && <p className="ra-model-context">{contextPolicy.context_window_known
       ? t("contextWindowKnown", { count: contextPolicy.context_window_tokens }) : t("contextWindowUnknown")}</p>}
-    <PreferencesEditor /><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></section></div>;
+    <div className="ra-setting"><span>{t("extensions")}<small>{t("manageExtensions")}</small></span><Link className="ra-link" to="/settings/extensions" onClick={onClose}>{t("extensions")}</Link></div>
+    <PreferencesEditor /><MemoryEditor projects={projects} currentProject={currentProject} /><p>{t("modeHelp")}</p><fieldset className="ra-tool-permissions"><legend>{t("allowedTools")}</legend><p>{t("allowedToolsHelp")}</p>{toolError ? <p role="alert">{t("toolsLoadError")}</p> : tools === null ? <p role="status">{t("loading")}</p> : tools.length ? tools.map(tool => <label key={tool.name}><input type="checkbox" disabled={busy} checked={allowed.includes(tool.name)} onChange={event => setAllowed(current => event.target.checked ? [...current, tool.name] : current.filter(name => name !== tool.name))} /><span>{t(`tool_${tool.name}`, { defaultValue: tool.title })}</span></label>) : <p>{t("noWriteTools")}</p>}</fieldset><button className="ra-primary" disabled={busy || !contextValid} onClick={() => void onSave({ enabled, workspace_root: workspace.trim(), desktop_access: desktopAccess, ...contextChange, ...(tools !== null ? { allowed_write_tools: allowed.filter(name => tools.some(tool => tool.name === name)) } : {}) })}>{t(busy ? "saving" : "save")}</button></section></div>;
 }
 
 function WorkspaceSetup({initial, busy, onBind}: {initial: string; busy: boolean; onBind: (path: string) => Promise<void>}) {

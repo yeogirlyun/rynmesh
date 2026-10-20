@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import shutil
+import ssl
 import threading
 import time
 import uuid
@@ -21,6 +22,35 @@ class AgentBrowserOperationUnconfirmed(AgentError):
 
 
 NAVIGATE_WAIT_SECONDS = 3.0
+_SSL_CONTEXT_LOCK = threading.Lock()
+_LOOPBACK_SSL_CONTEXT: ssl.SSLContext | None = None
+
+
+def _loopback_ssl_context() -> ssl.SSLContext:
+    """Return a verified SSLContext so httpx does not reload certifi CA bundles per client."""
+    global _LOOPBACK_SSL_CONTEXT
+    ctx = _LOOPBACK_SSL_CONTEXT
+    if ctx is not None:
+        return ctx
+    with _SSL_CONTEXT_LOCK:
+        if _LOOPBACK_SSL_CONTEXT is None:
+            import certifi
+
+            created = ssl.create_default_context(cafile=certifi.where())
+            created.verify_mode = ssl.CERT_REQUIRED
+            created.check_hostname = True
+            _LOOPBACK_SSL_CONTEXT = created
+        return _LOOPBACK_SSL_CONTEXT
+
+
+def _create_loopback_client(*, timeout: float = 5.0) -> httpx.Client:
+    return httpx.Client(
+        trust_env=False,
+        follow_redirects=False,
+        verify=_loopback_ssl_context(),
+        timeout=max(0.1, float(timeout)),
+        headers={"Connection": "close"},
+    )
 
 
 
@@ -412,17 +442,36 @@ class Browser:
 
     @staticmethod
     def request(session, route, method="GET", *, timeout=5.0):
-        attempts = 2 if method == "GET" else 1
+        if (
+            not isinstance(session, dict)
+            or type(session.get("port")) is not int
+            or not (1 <= session["port"] <= 65535)
+            or not isinstance(route, str)
+            or not route.startswith("/")
+            or route.startswith("//")
+            or any(ch in route for ch in ("\r", "\n", "\x00"))
+        ):
+            raise AgentToolRejected("agent_browser_connection_failed")
+        port = session["port"]
+        method_upper = str(method or "GET").upper()
+        budget = max(0.1, float(timeout))
+        deadline = time.monotonic() + budget
+        attempts = 2 if method_upper == "GET" else 1
+        url = f"http://127.0.0.1:{port}{route}"
         for attempt in range(attempts):
+            remaining = deadline - time.monotonic()
+            attempt_timeout = budget if attempt == 0 else max(0.05, remaining)
             try:
-                with httpx.Client(trust_env=False, timeout=max(0.1, float(timeout)), headers={"Connection": "close"}) as client:
-                    response = client.request(method, f"http://127.0.0.1:{session['port']}{route}")
+                with _create_loopback_client(timeout=attempt_timeout) as client:
+                    response = client.request(method_upper, url, timeout=attempt_timeout)
                     response.raise_for_status()
                     return response.json()
             except Exception:
                 if attempt + 1 < attempts:
-                    time.sleep(0.03)
-                    continue
+                    rem_after = deadline - time.monotonic()
+                    if rem_after > 0.05:
+                        time.sleep(min(0.03, rem_after - 0.05))
+                        continue
                 raise AgentToolRejected("agent_browser_connection_failed") from None
 
     def _close_connection(self, ident):

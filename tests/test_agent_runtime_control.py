@@ -215,6 +215,8 @@ def resource_runtime(tmp_path, resources):
     resource_tools, plugin, _context, state = resources
     runtime, model, _, key = make_runtime(tmp_path)
     runtime.tools = RynTools(resource_tools.app, SimpleNamespace(), {}, None)
+    runtime.tools.local.store = runtime.store
+    runtime.tools.extensions.bind_agent_store(runtime.store)
     catalog_row = {**runtime.catalog.list_models()[0], "source_id": "test-api", "destination_revision": "generation-1"}
     runtime.catalog.list_models = lambda: [catalog_row]
     model.supports_destination_binding = True

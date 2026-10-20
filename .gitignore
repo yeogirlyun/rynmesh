@@ -40,3 +40,7 @@ native/ryn_transport/target/
 # Local delivery packages, source snapshots, caches and runtime identities.
 # Acceptance evidence intended for version control lives in docs/acceptance/.
 /output/
+
+native/ryn_computer_use/target/
+/outputs/
+/work/

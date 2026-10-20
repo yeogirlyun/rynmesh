@@ -73,6 +73,7 @@ import Chat from "./screens/Chat";
 import Settings from "./screens/Settings";
 import { APIAccessPage, AgentSharingPage, ModelMappingPage } from "./screens/AIWorkspacePages";
 import AISources from "./screens/AISources";
+import AgentExtensions from "./screens/AgentExtensions";
 import UnlockGate from "./screens/components/UnlockGate";
 const NasPage = lazy(() => import("./personal/Nas").then(m => ({ default: m.NasPage })));
 const DrivePreview = lazy(() => import("./personal/Drives").then(m => ({ default: m.DrivesPage })));
@@ -196,7 +197,7 @@ export default function App() {
       // take several seconds to unpack and accept connections on a cold start.
       // Keep the loading state until the node is ready instead of flashing an
       // offline shell just before its first successful response.
-      const maxAttempts = 60;
+      const maxAttempts = 150;
       for (let attempt = 0; attempt < maxAttempts && !cancelled; attempt += 1) {
         try {
           await client.getNodeStatus();
@@ -397,6 +398,8 @@ export function AppRoutes() {
             element={<SecureWebAccess />}
           />
           <Route path="agent" element={<RynAgent />} />
+          <Route path="agent/extensions" element={<AgentExtensions />} />
+          <Route path="agent/extensions/:section" element={<AgentExtensions />} />
           <Route path="apps" element={<CraftApps />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
@@ -409,6 +412,8 @@ export function AppRoutes() {
           <Route path="nas" element={<Suspense fallback={<LoadingPanel />}><NasPage /></Suspense>} />
           <Route path="drives" element={<Suspense fallback={<LoadingPanel />}><DrivePreview /></Suspense>} />
           <Route path="settings/plugins" element={<Suspense fallback={<LoadingPanel />}><PluginsPage /></Suspense>} />
+          <Route path="settings/extensions" element={<AgentExtensions />} />
+          <Route path="settings/extensions/:section" element={<AgentExtensions />} />
           <Route path="settings/desktop" element={<DesktopPage />} />
           <Route path="settings/space" element={<PersonalSpacePage />} />
           <Route path="settings/advanced" element={<Settings />} />

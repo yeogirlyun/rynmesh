@@ -16,7 +16,13 @@ from ..llm_package import codex_threads, model_settings, peer_binding
 from ..llm_package.adapters import AdapterError, actual_usage
 from ..llm_package.api_formats import normalize
 from ..llm_package.chat import validate_chat
-from . import output_policy, reasoning
+from ..llm_package.image_input_profile import (
+    check_legacy_public_carrier_compatible,
+    cleared_internal_image_scope,
+    internal_image_scope,
+    prepare_internal_image_profile,
+)
+from . import image_capabilities, output_policy, reasoning
 from .model_events import (
     ModelEventError,
     ModelEventStream,
@@ -24,7 +30,12 @@ from .model_events import (
     response_calls,
 )
 from .models import ModelCatalog
-from .store import AgentError, AgentModelResponseError, cancellation_reason
+from .store import (
+    AgentError,
+    AgentModelResponseError,
+    AgentToolRejected,
+    cancellation_reason,
+)
 from .tools import RynTools
 
 
@@ -100,15 +111,78 @@ class AgentModelBridge:
         if expected_destination is not None and (not target.get("destination_revision") or
                 expected_destination != self.catalog.destination(target)):
             raise AgentError("agent_model_destination_changed")
+        task_id = request_id if isinstance(request_id, str) and re.fullmatch(r"agent_[0-9a-f]{32}", request_id) else "agent_" + uuid.uuid4().hex
+        has_images = image_capabilities.message_has_image_input(messages)
+        if has_images:
+            if target.get("source") == "peer":
+                cap = image_capabilities.evaluate_image_capability(target, model_client=self)
+                if (
+                    getattr(self, "supports_image_input", False) is not True
+                    or target.get("agent_supported") is False
+                    or target.get("adapter") in image_capabilities.TEXT_ONLY_CLI_ADAPTERS
+                    or (
+                        cap["model_image_support"] == "unsupported"
+                        and cap["image_capability_reason"] != "peer_image_route_unverified"
+                    )
+                ):
+                    image_capabilities.require_route_image_support(target, model_client=self)
+            else:
+                image_capabilities.require_route_image_support(target, model_client=self)
         policy = output_policy.select(target, messages, tool_specs, request_cap=max_output_tokens)
         maximum = policy["effective_cap"]
-        chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
+        image_profile = None
+        if has_images:
+            if target.get("source") == "peer":
+                legacy_ok, legacy_reason = check_legacy_public_carrier_compatible(messages)
+                if not legacy_ok:
+                    raise AgentToolRejected(
+                        "agent_image_input_unsupported",
+                        correction=(
+                            "The selected peer route only supports legacy inline image carrier bounds "
+                            "(<=128 KiB decoded, <=180000 data URL chars, PNG/JPEG/WEBP) and cannot "
+                            "transport expanded full-size local images without negotiated remote carrier support."
+                        ),
+                        details={
+                            "reason": "peer_expanded_image_carrier_unsupported",
+                            "carrier_limit_reason": legacy_reason or "peer_carrier_limit_exceeded",
+                            "source": "peer",
+                            "adapter": str(target.get("adapter") or "unknown"),
+                            "image_carrier_available": False,
+                            "supports_image_input": False,
+                        },
+                    )
+            else:
+                try:
+                    image_profile = prepare_internal_image_profile(
+                        messages,
+                        route_identity=target,
+                        request_identity=task_id,
+                    )
+                except ValueError as exc:
+                    reason = str(exc) or "unsupported_image_mime"
+                    if reason in {"unsupported_image_mime", "unsupported_route_image_carrier"}:
+                        raise AgentToolRejected(
+                            "agent_image_input_unsupported",
+                            correction=(
+                                "The selected route carrier does not support this image MIME format; "
+                                "use a supported canonical image format without silent transcoding."
+                            ),
+                            details={
+                                "reason": reason,
+                                "source": str(target.get("source") or "unknown"),
+                                "adapter": str(target.get("adapter") or "unknown"),
+                                "image_carrier_available": False,
+                                "supports_image_input": False,
+                            },
+                        ) from None
+                    raise AgentError("agent_image_invalid") from None
+        with internal_image_scope(image_profile):
+            chat = normalize({"messages": messages, "tools": tool_specs, "max_tokens": maximum}, "chat")
         if reasoning_effort is not None:
             chat["reasoning_effort"] = reasoning.validate(target, reasoning_effort)
         streaming = bool(on_event and target.get("streaming"))
         if streaming:
             chat["stream"] = True
-        task_id = request_id if isinstance(request_id, str) and re.fullmatch(r"agent_[0-9a-f]{32}", request_id) else "agent_" + uuid.uuid4().hex
         window = codex_threads.window_key(conversation)
         manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
         if expected_destination is not None and target["source"] == "local_api":
@@ -158,13 +232,19 @@ class AgentModelBridge:
         def expired():
             return request_deadline is not None and time.monotonic() >= request_deadline
 
-        model_events = ModelEventStream(on_event, stopped=lambda: cancelled() or expired())
+        def safe_on_event(event):
+            if on_event is not None:
+                with cleared_internal_image_scope():
+                    on_event(event)
+
+        model_events = ModelEventStream(safe_on_event if on_event else None, stopped=lambda: cancelled() or expired())
 
         def emit(chunk):
-            try:
-                model_events.feed(chunk)
-            except ModelEventError:
-                raise AdapterError("invalid model event envelope", code="upstream_response_invalid") from None
+            with cleared_internal_image_scope():
+                try:
+                    model_events.feed(chunk)
+                except ModelEventError:
+                    raise AdapterError("invalid model event envelope", code="upstream_response_invalid") from None
 
         def cancel_transport():
             try:
@@ -192,7 +272,7 @@ class AgentModelBridge:
                     manager._running += 1
             watcher.start()
             if on_event:
-                on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"], "request_id": task_id})
+                safe_on_event({"type": "provider_selected", "model_id": model_id, "source": target["source"], "request_id": task_id})
             if cancelled():
                 raise AgentError(cancellation_reason(cancelled))
             if expired():
@@ -202,7 +282,8 @@ class AgentModelBridge:
                 "measurement": "pre_admission_upper_bound",
                 "enforcement": "adapter_timeout_and_cancel_watch" if manager else "consumer_cancel_watch_remote_transport_limits"}
             if on_request_policy:
-                on_request_policy(request_policy)
+                with cleared_internal_image_scope():
+                    on_request_policy(request_policy)
             if expired():
                 raise AgentError("agent_inference_timeout")
             if manager:
@@ -216,10 +297,11 @@ class AgentModelBridge:
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
-                if expected_destination is not None and target["source"] == "local_service":
-                    result = manager.adapter.call_bound("chat", target["local_model_binding"], lambda: None, chat, **options)
-                else:
-                    result = manager.adapter.chat(chat, **options)
+                with internal_image_scope(image_profile):
+                    if expected_destination is not None and target["source"] == "local_service":
+                        result = manager.adapter.call_bound("chat", target["local_model_binding"], lambda: None, chat, **options)
+                    else:
+                        result = manager.adapter.chat(chat, **options)
             else:
                 # execute_order seals the complete structured chat and uses the
                 # existing authenticated consumer transport and permission check.

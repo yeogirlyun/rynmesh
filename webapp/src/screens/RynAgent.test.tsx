@@ -75,6 +75,17 @@ function mount(shell = false) {
   return render(<MemoryRouter initialEntries={["/agent"]}>{shell ? <PersonalShell><RynAgent /></PersonalShell> : <RynAgent />}</MemoryRouter>);
 }
 
+it("automatically recovers initial settings failure without clicking Refresh", async () => {
+  api();
+  const read = vi.spyOn(rynAgent, "settings");
+  read.mockRejectedValueOnce(new Error("node starting"));
+  mount();
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(1), { timeout: 5000 });
+  await waitFor(() => expect(screen.queryByText(/Could not load Agent settings/)).not.toBeInTheDocument());
+  expect(screen.getByRole("textbox")).toBeEnabled();
+});
+
 it("renders live text between durable checkpoints without waiting for the old 1.2 second poll", async () => {
   const current = task({ events: [{ seq: 1, type: "model_started", at: 1, step: 1, context_epoch: 0 }] });
   api(true, [current]);

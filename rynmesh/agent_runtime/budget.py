@@ -146,3 +146,21 @@ def time_remaining(row):
     # The current flight's time is checked by its own monotonic callback.
     used = sum(record["charged_seconds"] for record in state["records"] if record["status"] != "reserved") + state["legacy_seconds"]
     return max(0.0, state["limits"]["max_total_seconds"] - used)
+
+
+def notice(row: dict) -> str | None:
+    """Tell the model, once per threshold, how much of its step budget is gone."""
+    steps, cap = row["steps"], row["limits"]["max_steps"]
+    level = 2 if steps >= cap * 0.85 else 1 if steps >= cap * 0.6 else 0
+    if level == 0:
+        row["budget_notice_level"] = 0
+        return None
+    if level <= row.get("budget_notice_level", 0):
+        return None
+    row["budget_notice_level"] = level
+    wrote = any(r.get("effect") == "write" and r.get("status") == "confirmed" and r.get("goal_revision") == row["goal"]["revision"]
+                for r in row.get("receipts", []))
+    advice = ("Finish the remaining fixes, run focused tests and report; reserve steps for review." if wrote else
+              "Conclude from the evidence collected and report remaining uncertainties. "
+              "If the owner requested changes, focus on the necessary change and its verification; do not broaden exploration.")
+    return f"Server budget notice: {steps} of {cap} model steps are used. {advice}"

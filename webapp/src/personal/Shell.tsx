@@ -73,7 +73,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
       : (location.pathname === "/peers" || location.pathname.startsWith("/devices/"))
         ? [["/devices", t("nav.myDevices")], ["/devices/sync", tr("Device sync")], ["/peers", t("nav.connectionDetails")]]
         : location.pathname.startsWith("/settings")
-          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/advanced", t("nav.advancedSettings")]]
+          ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/extensions", t("nav.agentExtensions")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
     (inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
@@ -211,7 +211,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         </header>}
         <main className="pf-main" id="main-content">
           {sublinks.length > 0 && <nav className={`pf-subnav${inServices ? " pf-service-nav" : ""}`} aria-label={title}>
-            {sublinks.map(([path, label]) => <NavLink key={path} end to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : path === "/services/private-ai/chat" && location.pathname === "/ask" ? "active" : undefined}>
+            {sublinks.map(([path, label]) => <NavLink key={path} end={path !== "/settings/extensions"} to={href(path)} className={path === "/services/manage" ? "pf-service-settings" : path === "/services/private-ai/chat" && location.pathname === "/ask" ? "active" : undefined}>
               {inServices && path === "/services/manage" && <Settings size={17} aria-hidden="true" />}{label}
             </NavLink>)}
           </nav>}

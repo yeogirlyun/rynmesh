@@ -12,7 +12,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
+from .computer_status import get_computer_status_response
 from .diagnostic_log import failure
+from .memory_worker import MEMORY_WORKER_NAME, MemoryExtractionWorker
 from .runtime import AgentRuntime
 from .store import AgentError, AgentStore
 
@@ -35,6 +37,14 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
             craft = getattr(tools, "craft", None)
             if craft is not None:
                 await asyncio.to_thread(craft.close)
+            extensions = getattr(tools, "extensions", None)
+            if extensions is not None:
+                await asyncio.to_thread(extensions.close)
+            native_computer = getattr(tools, "native_computer", None) or getattr(
+                getattr(tools, "local", None), "native_computer", None
+            )
+            if native_computer is not None:
+                await asyncio.to_thread(native_computer.close)
 
     app.router.lifespan_context = lifespan
     runtime = AgentRuntime(AgentStore(Path(home) / "agent", messaging_key), model, tools, catalog, consumer_node_id=getattr(store, "peer_id", None))
@@ -48,9 +58,12 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         failure("startup_reconcile", exc)
     app.state.agent_runtime = runtime
     app.state.agent_startup_error = startup_error
+    memory_worker = MemoryExtractionWorker(runtime)
+    app.state.agent_memory_worker = memory_worker
     workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
     for slot in (2, 3):
         workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
+    workers.register(BackgroundWorkerSpec(name=MEMORY_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else memory_worker.run_once, policy=BackoffPolicy.fixed(1.0)), replace=True)
 
     @app.middleware("http")
     async def prevent_agent_caching(request: Request, call_next):
@@ -66,8 +79,23 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
         except AgentError as exc:
             failure("api_" + method, exc, elapsed_seconds=time.monotonic() - started)
             code = str(exc)
-            status = 410 if code == "agent_task_deleted" else 404 if code == "agent_task_not_found" else 400 if code.startswith("agent_invalid_") else 409
-            if status == 409 and args and isinstance(args[0], str):
+            if code == "agent_task_deleted":
+                status = 410
+            elif code in {"agent_task_not_found", "agent_memory_not_found", "agent_memory_candidate_not_found", "agent_preference_not_found"}:
+                status = 404
+            elif code in {"agent_memory_revision_conflict", "agent_memory_generation_conflict", "agent_memory_idempotency_conflict", "agent_memory_candidate_not_pending", "agent_memory_candidate_stale"} or code.startswith("agent_memory_candidate_source_stale"):
+                status = 409
+            elif code.startswith("agent_invalid_") or code.startswith("agent_memory_"):
+                status = 400
+            else:
+                status = 409
+            if (
+                status == 409
+                and not code.startswith("agent_memory_")
+                and not method.endswith(("_memory", "_memory_settings", "_memory_entry", "_memory_candidate"))
+                and args
+                and isinstance(args[0], str)
+            ):
                 try:
                     current = await asyncio.to_thread(runtime.get, args[0])
                 except Exception as current_error:
@@ -99,6 +127,11 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     async def settings(request: Request):
         local_control(request)
         return await call("settings")
+
+    @app.get("/api/local/agent/computer/status")
+    async def computer_status(request: Request):
+        local_control(request)
+        return await get_computer_status_response(app, runtime, request)
 
     @app.put("/api/local/agent/settings")
     async def update_settings(request: Request):
@@ -148,6 +181,45 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.put("/api/local/agent/preferences")
     async def update_preferences(request: Request):
         return await call("update_preferences", await body(request))
+
+    @app.get("/api/local/agent/memory")
+    async def memory_snapshot(request: Request, scope_kind: str | None = None, project_id: str | None = None, status: str = "active"):
+        local_control(request)
+        return await call("memory_snapshot", scope_kind, project_id, status)
+
+    @app.get("/api/local/agent/memory/destinations")
+    async def memory_destinations(request: Request):
+        local_control(request)
+        return await call("memory_destinations")
+
+    @app.put("/api/local/agent/memory/settings")
+    async def update_memory_settings(request: Request):
+        return await call("update_memory_settings", await body(request))
+
+    @app.post("/api/local/agent/memory/entries")
+    async def create_memory_entry(request: Request):
+        return await call("create_memory_entry", await body(request))
+
+    @app.put("/api/local/agent/memory/entries/{entry_id}")
+    async def update_memory_entry(entry_id: str, request: Request):
+        return await call("update_memory_entry", entry_id, await body(request))
+
+    @app.delete("/api/local/agent/memory/entries/{entry_id}")
+    async def delete_memory_entry(entry_id: str, request: Request):
+        return await call("delete_memory_entry", entry_id, await body(request))
+
+    @app.post("/api/local/agent/memory/candidates/{candidate_id}/decision")
+    async def decide_memory_candidate(candidate_id: str, request: Request):
+        return await call("decide_memory_candidate", candidate_id, await body(request))
+
+    @app.get("/api/local/agent/memory/search")
+    async def search_memory(request: Request, q: str = "", scope_kind: str | None = None, project_id: str | None = None, category: str | None = None, limit: int = 20):
+        local_control(request)
+        return await call("search_memory", q, scope_kind, project_id, category, limit)
+
+    @app.post("/api/local/agent/memory/reset")
+    async def reset_memory(request: Request):
+        return await call("reset_memory", await body(request))
 
     @app.put("/api/local/agent/tasks/{task_id}/budget")
     async def update_budget(task_id: str, request: Request):
@@ -276,5 +348,10 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
 
     from .file_preview import install_file_preview_routes
     install_file_preview_routes(app, call, local_control)
+
+    extensions = getattr(tools, "extensions", None)
+    if extensions is not None:
+        from .extensions import install_extension_routes
+        install_extension_routes(app, runtime=runtime, extensions=extensions, local_control=local_control)
 
     return runtime

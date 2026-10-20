@@ -18,6 +18,29 @@ from .adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
 
 PROTOCOLS = {"openai_chat", "openai_responses", "anthropic_messages"}
 
+# Documentation for local clients, including task-authored programs. Runtime
+# validation remains in prepare(), shared by the UI and owner HTTP endpoints.
+SOURCE_HTTP_SCHEMA = {
+    "type": "object", "required": ["name", "base_url"], "additionalProperties": True,
+    "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 80},
+        "kind": {"type": "string", "enum": ["api", "local"], "default": "api"},
+        "provider": {"type": "string", "maxLength": 80},
+        "protocol": {"type": "string", "enum": sorted(PROTOCOLS), "default": "openai_chat"},
+        "base_url": {"type": "string", "format": "uri", "description": "Provider API root; cloud API sources require HTTPS."},
+        "models": {"type": "array", "maxItems": 100, "items": {"type": "string", "maxLength": 160}},
+        "api_key": {"type": "string", "maxLength": 8192, "writeOnly": True,
+                    "description": "Supply from local owner input, never model/chat text. Public responses expose has_key only."},
+        "enabled": {"type": "boolean", "default": True},
+        "sharing": {"type": "boolean", "default": False},
+        "shared_models": {"type": "array", "items": {"type": "string"}, "default": []},
+        "context_window_mode": {"type": "string", "enum": ["auto", "manual"]},
+        "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 256000},
+        "request_defaults": {"type": "object"},
+    },
+}
+
 
 def source_protocol(record):
     """Missing protocol always means the original Chat Completions transport."""

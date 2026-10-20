@@ -97,6 +97,8 @@ def migrate(data: dict) -> dict:
     context_mode(data, data["settings"], "settings_context_budget_provenance")
     for row in data["tasks"].values():
         context_mode(row, row.setdefault("limits", {}), "context_budget_provenance")
+    from . import memory
+    memory.ensure_memory_state(data)
     data["context_budget_version"] = 2
     data["schema_version"] = SCHEMA_VERSION
     return data

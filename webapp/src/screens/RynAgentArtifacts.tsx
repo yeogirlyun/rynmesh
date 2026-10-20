@@ -159,11 +159,12 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
     }
   }, [task.id, file?.id, file?.sha256, t]);
   const items = listing?.artifacts || [];
-  const deliverables = files.filter(item => item.role === "deliverable");
-  const supporting = files.filter(item => item.role !== "deliverable");
+  const resultFiles = files.filter(item => item.source !== "computer_observation" && !item.path.replaceAll("\\", "/").startsWith(".ryn/computer/"));
+  const deliverables = resultFiles.filter(item => item.role === "deliverable");
+  const supporting = resultFiles.filter(item => item.role !== "deliverable");
   const unbacked = listing?.unbacked_mentions || [];
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
-  const availableCount = deliverables.filter(file => file.status !== "missing").length || files.filter(file => file.status !== "missing").length;
+  const availableCount = deliverables.filter(file => file.status !== "missing").length || resultFiles.filter(file => file.status !== "missing").length;
   useEffect(() => {
     if (!chosenFile && !chosen) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setChosenFile(""); setChosen(null); } };
@@ -172,20 +173,20 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
   }, [chosenFile, chosen]);
   return <AgentFileContext.Provider value={fileContext}>
     {children}
-    {files.length > 0 && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
+    {resultFiles.length > 0 && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
       <div className="ra-files-head"><span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : partial ? "filesSavedPartial" : "filesReady", { count: availableCount })}</span>
         <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button></div>
       {deliverables.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}
       {supporting.length > 0 && <details className="ra-files-supporting"><summary>{t("supportingFiles", { count: supporting.length })}</summary>
         {supporting.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}</details>}
       {finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
+    </section>}
       {file && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
         entry={{ name: file.name, path: file.path, directory: false, size: file.bytes || 0, modified: file.updated_at || "" }}
         onClose={() => setChosenFile("")} download={() => { void saveCopy(task, file).catch(() => setError(true)); }} askAi={() => {}} busy={false}
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
         loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
-    </section>}
     {!files.length && finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
     {(items.length > 0 || error) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}

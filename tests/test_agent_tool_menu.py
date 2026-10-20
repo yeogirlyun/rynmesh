@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,62 @@ class ManyTools(Tools):
     def _validate(self, name, arguments):
         assert name in {item["function"]["name"] for item in self.specs()}
         assert arguments == {"service_id": "svc1"}
+
+
+@pytest.mark.parametrize("changed_menu", [False, True])
+def test_discovery_prepares_once_outside_state_lock_and_rejects_stale_commit(tmp_path, monkeypatch, changed_menu):
+    runtime, _, _, _ = make_runtime(tmp_path,
+        assistant(name=tool_menu.NAME, args={"load": ["inspect_service"]}))
+    runtime.tools = ManyTools()
+    runtime.update_settings({"max_context_chars": 12000})
+    created = runtime.create({"message": "Inspect the service."})
+    advance(runtime)
+    task_id = created["id"]
+    runtime.store.transaction(lambda data: data["tasks"][task_id].update(status="running"))
+    selected = runtime.store.read()["tasks"][task_id]
+    selected["_run_control_revision"] = selected["control_revision"]
+    original_transaction = runtime.store.transaction
+    original_specs = runtime.tools.specs
+    original_limit = runtime._context_limit
+    in_commit = False
+    specs_calls = 0
+
+    def specs():
+        nonlocal specs_calls
+        assert not in_commit, "Catalog I/O must not hold the shared task-state lock"
+        specs_calls += 1
+        return original_specs()
+
+    def limit(row):
+        assert not in_commit, "CLI model discovery must not hold the shared task-state lock"
+        return original_limit(row)
+
+    def transaction(fn):
+        def guarded(data):
+            nonlocal in_commit
+            if changed_menu:
+                data["tasks"][task_id]["tool_menu"]["revision"] += 1
+            in_commit = True
+            try:
+                return fn(data)
+            finally:
+                in_commit = False
+        return original_transaction(guarded)
+
+    monkeypatch.setattr(runtime.tools, "specs", specs)
+    monkeypatch.setattr(runtime, "_context_limit", limit)
+    monkeypatch.setattr(runtime.store, "transaction", transaction)
+    if changed_menu:
+        with pytest.raises(AgentToolRejected, match="agent_tool_definition_changed"):
+            runtime._internal_tool(selected, time.monotonic())
+    else:
+        runtime._internal_tool(selected, time.monotonic())
+        saved = runtime.store.read()["tasks"][task_id]
+        assert saved["tool_menu"]["loaded_names"] == ["inspect_service"]
+        result = json.loads(saved["messages"][-1]["content"])
+        assert result["permission_granted"] is False
+    assert specs_calls == 1
+    assert runtime.tools.calls == []
 
 
 def test_twelve_k_runtime_discovers_then_dispatches_and_restores_menu(tmp_path):
@@ -266,3 +323,50 @@ def test_rejected_plan_returns_current_server_facts_without_accepting_proposal(t
     assert result["expected_goal_revision"] == task["goal"]["revision"]
     assert result["allowed_criterion_ids"] == [c["id"] for c in criteria]
     assert row["criteria"] == criteria and row["plan"]["steps"] == [] and not tools.calls
+
+
+def test_released_core_pins_stay_released_on_subsequent_projection():
+    tools = ManyTools()
+    base_spec = copy.deepcopy(tools.specs()[0])
+    core_specs = []
+    for name in tool_menu.CORE_TOOLS:
+        spec = copy.deepcopy(base_spec)
+        spec["function"]["name"] = name
+        core_specs.append(spec)
+    business = [*tools.specs(), *core_specs]
+    specs1, state1 = tool_menu.project(
+        business,
+        [],
+        {},
+        max_context_bytes=64000,
+        authority_bytes=2000,
+        epoch=0,
+        goal_revision=1,
+        initial_names=["inspect_service"],
+        pinned_names=list(tool_menu.CORE_TOOLS),
+    )
+    assert state1.get("pinned_candidates") == list(tool_menu.CORE_TOOLS)
+    assert state1.get("pinned_names") == list(tool_menu.CORE_TOOLS)
+    assert state1.get("loaded_names") == ["inspect_service"]
+
+    released_state = tool_menu.release(state1)
+    assert released_state.get("pins_released") is True
+    assert released_state.get("pinned_names") == []
+    assert released_state.get("loaded_names") == []
+
+    specs2, state2 = tool_menu.project(
+        business,
+        [],
+        released_state,
+        max_context_bytes=64000,
+        authority_bytes=2000,
+        epoch=0,
+        goal_revision=1,
+        initial_names=["inspect_service"],
+        pinned_names=list(tool_menu.CORE_TOOLS),
+    )
+    assert state2.get("pins_released") is True
+    assert state2.get("pinned_names", []) == []
+    assert state2.get("loaded_names", []) == []
+    assert [s["function"]["name"] for s in specs2] == [tool_menu.NAME]
+

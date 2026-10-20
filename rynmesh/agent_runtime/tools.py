@@ -35,6 +35,7 @@ from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
 from .diagnostics import NAMES as DIAGNOSTIC_NAMES
 from .diagnostics import DiagnosticTools
+from .extensions import ExtensionToolAdapter
 from .local_specs import NAMES as LOCAL_NAMES
 from .local_specs import SPECS as LOCAL_SPECS
 from .local_tools import LocalTools
@@ -72,8 +73,8 @@ _SPECS = {
         _schema({"model_id": _STRING, "relationship_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}}, ["model_id", "relationship_id"])),
     DEFAULT_MODEL_NAME: ("Set the default model for NEW tasks only. Read expected_settings_revision from ryn_get_agent_configuration and copy the exact catalog id from ryn_list_models. Requires approval; never changes this task, Agent enablement, permissions or sharing.", "write", "high",
         _schema({"model_id": _STRING, "expected_settings_revision": {"type": "integer", "minimum": 0}}, ["model_id", "expected_settings_revision"])),
-    "ryn_list_source_configurations": ("Inspect configured AI source settings and credential-presence flags. Never returns API keys; actual connection/tool capability needs explicit testing.", "read", "low", _schema()),
-    "ryn_prepare_source_draft": ("Prepare a task-bound source draft; no active changes. If endpoint/kind/credential slot are missing, first request kind=credential_ref: the secure form supplies them together. Bind to its exact endpoint; never ask for plaintext keys. Provider is optional. New models stay private.", "read", "low", _schema({"configuration": _SOURCE_CONFIG, "source_id": _STRING, **_DRAFT_ID}, ["configuration"])),
+    "ryn_list_source_configurations": ("Inspect Ryn's own configured AI source settings and credential-presence flags, not configuration inside arbitrary local projects. Never returns API keys; actual connection/tool capability needs explicit testing.", "read", "low", _schema()),
+    "ryn_prepare_source_draft": ("Prepare a task-bound draft for Ryn's own AI source catalog; no active changes. This optional path requires a task-bound credential slot. kind=credential_ref opens a FULL form asking for source type, URL, source ID and key, so it cannot satisfy a key-only input request. If only a key is missing, use file/shell/process tools to author a local collecting program and let it use the normal owner HTTP source APIs to save/test; never return the key to the model. For an existing slot, bind to its exact endpoint. Provider is optional. New models stay private.", "read", "low", _schema({"configuration": _SOURCE_CONFIG, "source_id": _STRING, **_DRAFT_ID}, ["configuration"])),
     "ryn_test_source_draft": ("Test each configured draft model using only fixed synthetic probe messages; may incur provider charges. Optional test_tools uses two additional structured-tool probes per model. No task data/history is sent. Failure does not modify the active source, sharing, or default model.", "read", "medium", _schema({**_DRAFT_ID, "test_tools": {"type": "boolean"}}, list(_DRAFT_ID))),
     "ryn_commit_source_draft": ("Save the exact tested draft only if its source, credential and draft versions still match. Requires every configured model's chat probe to have passed recently. New models are private. Post-save verification must report failure without automatic rollback.", "write", "high", _schema(_DRAFT_ID, list(_DRAFT_ID))),
     "ryn_create_text_file": ("Create one new UTF-8 .txt or .md file, at most 16 KiB, under an explicitly authorized directory_ref. Existing names are never overwritten. Requires approval of the full proposed content.", "write", "high", _schema({"directory_ref": {"type": "string", "minLength": 1, "maxLength": 2048}, "name": {"type": "string", "minLength": 1, "maxLength": 128}, "content": {"type": "string", "maxLength": 16384}}, ["directory_ref", "name", "content"])),
@@ -142,7 +143,18 @@ class RynTools:
         self.cli_sources = CLISources(app, getattr(store, "home", None), services, lambda: self.resource_writes.ledger)
         self.friend_sharing = FriendSharingTool(app, services, personal_space=getattr(store, "personal_space", None))
         self.local = LocalTools(store, lambda: self.resource_writes.ledger)
+        self.native_computer = self.local.native_computer
         self.craft = CraftTools(app, self.local, lambda: self.resource_writes.ledger)
+        self.extensions = ExtensionToolAdapter(
+            self.local,
+            lambda: self.resource_writes.ledger,
+            node_store=store,
+            native_computer=self.native_computer,
+        )
+
+    def close(self):
+        if getattr(self, "native_computer", None) is not None:
+            self.native_computer.close()
 
     def _device_evidence(self, cancelled):
         operation_id = "diagnostic-read-" + uuid.uuid4().hex
@@ -172,6 +184,9 @@ class RynTools:
             self.friend_sharing.forget_task(task_id)
             self.local.forget_baselines(task_id)
             self.craft.close_task(task_id)
+            self.extensions.forget_task(task_id, operation_ids=operation_ids)
+            if getattr(self, "native_computer", None) is not None:
+                self.native_computer.forget_task(task_id)
         except Exception:
             raise AgentError("agent_task_cleanup_failed") from None
         with self.lock:
@@ -286,6 +301,8 @@ class RynTools:
         if operation.get("operation_id") != operation_id or not isinstance(operation.get("arguments"), dict):
             return unknown
         tool, args = operation.get("tool"), operation["arguments"]
+        if self.extensions.handles(str(tool or "")) or isinstance(operation.get("extension_binding"), dict):
+            return self.extensions.reconcile(operation_id, context)
         if tool == APP_ACTION:
             return self.node_apps.reconcile(operation_id, context, cancelled)
         if tool in CRAFT_NAMES:
@@ -316,9 +333,11 @@ class RynTools:
 
     def specs(self):
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs()
+                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs()
 
     def metadata(self, name):
+        if self.extensions.handles(name):
+            return self.extensions.metadata(name)
         if name in CRAFT_NAMES:
             return self.craft.metadata(name)
         if name in PLUGIN_NAMES:
@@ -353,6 +372,9 @@ class RynTools:
         return {"effect": effect, "title": description, "risk": risk, "supports_preview": effect == "write",
                 "preview_precondition": effect == "write"}
 
+    def verify_extension_binding(self, call_or_binding: dict):
+        return self.extensions.verify_binding(call_or_binding)
+
     @staticmethod
     def _schema_rejection(name: str, exc: Exception) -> AgentToolRejected:
         cause = getattr(exc, "__cause__", None) or exc
@@ -367,13 +389,20 @@ class RynTools:
 
     def _validate(self, name, arguments):
         self.metadata(name)
-        max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
+        is_ext = self.extensions.handles(name)
+        max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES else 32 * 1024 if is_ext else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
         if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > max_bytes:
             raise AgentToolRejected(
                 "agent_tool_arguments_invalid",
                 correction=f"Arguments for '{name}' must be a JSON object within {max_bytes} bytes.",
                 details={"tool": name, "field_path": "<root>", "max_bytes": max_bytes},
             )
+        if is_ext:
+            try:
+                self.extensions.validate(name, arguments)
+            except ValueError as exc:
+                raise self._schema_rejection(name, exc) from None
+            return
         if name in CRAFT_NAMES:
             schema = next((item["function"]["parameters"] for item in self.craft.specs() if item["function"]["name"] == name), None)
             if schema is None:
@@ -424,6 +453,8 @@ class RynTools:
 
     def preview(self, name, arguments, *, context=None):
         self._validate(name, arguments)
+        if self.extensions.handles(name):
+            return self.extensions.preview(name, arguments, context=context)
         if name in CRAFT_NAMES:
             return self.craft.preview(name, arguments, context)
         if name == APP_ACTION:
@@ -491,6 +522,9 @@ class RynTools:
         self._validate(name, arguments)
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 256:
             raise AgentToolRejected("agent_operation_id_required")
+        if self.extensions.handles(name):
+            return self.extensions.execute(name, arguments, operation_id=operation_id, context=context,
+                                           expected_preview=expected_preview, cancelled=cancelled)
         if name in CRAFT_NAMES:
             return self.craft.execute(name, arguments, operation_id=operation_id, context=context,
                                       cancelled=cancelled, expected_preview=expected_preview)

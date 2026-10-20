@@ -351,3 +351,21 @@
 .ra-model-dialog .ra-model-switch > summary { display: none; }
 [data-theme="dark"] .ra-workspace .ra-welcome h2 { color: var(--pf-text); }
 @media (max-width: 760px) { .ra-workspace .ra-welcome h2 { font-size: 23px; } }
+
+/* Long-term memory scoped overrides: let the settings modal scroll as one surface without nested scroll traps. */
+.ra-guidance.ra-memory section, .ra-guidance.ra-memory fieldset { max-height: none; overflow-y: visible; min-width: 0; }
+.ra-guidance.ra-memory .ra-tool-permissions { display: grid; gap: 12px; padding: 12px; }
+.ra-guidance.ra-memory .ra-tool-permissions > label:not(:has(input[type="checkbox"])) { display: grid; gap: 6px; min-width: 0; }
+.ra-guidance.ra-memory .ra-tool-permissions > label.ra-setting { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.ra-guidance.ra-memory small { margin-left: 0; display: block; overflow-wrap: anywhere; line-height: 1.55; }
+.ra-memory-capture-controls, .ra-memory-filter, .ra-memory-edit-form { display: grid; gap: 10px; min-width: 0; }
+.ra-memory-capture-controls > label:not(.ra-setting), .ra-memory-filter > label, .ra-memory-edit-form > label { display: grid; gap: 6px; font-size: 12px; min-width: 0; }
+.ra-memory-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ra-memory-search input[type="search"] { flex: 1 1 180px; min-width: 0; padding: 7px 10px; border: 1px solid var(--pf-line); border-radius: 7px; background: var(--pf-panel); color: var(--pf-text); font: inherit; }
+.ra-guidance.ra-memory select, .ra-guidance.ra-memory input:not([type="checkbox"]):not([type="search"]), .ra-guidance.ra-memory textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--pf-line); border-radius: 7px; background: var(--pf-panel); color: var(--pf-text); font: inherit; }
+.ra-guidance.ra-memory textarea { min-height: 64px; resize: vertical; }
+.ra-memory-entries, .ra-memory-candidates { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 10px; max-height: 280px; overflow-y: auto; }
+.ra-memory-entry, .ra-memory-candidate { border: 1px solid var(--pf-line); border-radius: 8px; padding: 10px 12px; background: var(--pf-subtle); min-width: 0; overflow-wrap: anywhere; }
+.ra-memory-text { margin: 0 0 6px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ra-memory-meta { display: block; margin-bottom: 8px; font-size: 11px; color: var(--pf-muted); overflow-wrap: anywhere; line-height: 1.55; }
+

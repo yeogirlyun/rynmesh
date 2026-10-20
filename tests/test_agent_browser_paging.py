@@ -135,10 +135,12 @@ def test_disabling_desktop_access_rejects_calls_and_aborts_inflight_wait(local):
         )
     assert tools.ledger_factory().get("op_disabled_open") is None
 
-    # write_permission_revoked must detect revocation for all in-flight browser/computer tools.
+    # write_permission_revoked must detect revocation for all in-flight browser/computer tools across both global and task desktop_access.
     for tool_name in ("ryn_browser_open", "ryn_browser_read", "ryn_browser_action", "ryn_computer_action"):
-        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}}, {"desktop_access": False}) is True
-        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}}, {"desktop_access": True}) is False
+        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}, "local_execution": {"desktop_access": True}}, {"desktop_access": True}) is False
+        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}, "local_execution": {"desktop_access": True}}, {"desktop_access": False}) is True
+        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}, "local_execution": {"desktop_access": False}}, {"desktop_access": True}) is True
+        assert write_permission_revoked({"in_flight": {"name": tool_name, "effect": "read"}}, {"desktop_access": True}) is True
 
     # Enable desktop_access, then revoke mid-wait and verify the wait aborts promptly.
     context["local_execution"]["desktop_access"] = True
@@ -1118,7 +1120,31 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
     (root / "warmup.html").write_text("<!doctype html><title>Warmup</title><body>Warm</body>", encoding="utf-8")
     execute(tools, context, "ryn_browser_open", {"url": (root / "warmup.html").as_uri()}, "op_warmup")
 
-    request_count = {"slow_headers": 0}
+    import json
+
+    from websockets.sync.connection import Connection as WsSyncConnection
+
+    request_count = {"slow_headers": 0, "navigate_ws_send": 0}
+    orig_ws_send = WsSyncConnection.send
+
+    def counting_ws_send(conn, message, *args, **kwargs):
+        result = orig_ws_send(conn, message, *args, **kwargs)
+        try:
+            raw = message.decode("utf-8") if isinstance(message, (bytes, bytearray)) else message
+            if isinstance(raw, str):
+                data = json.loads(raw)
+                if (
+                    isinstance(data, dict)
+                    and data.get("method") == "Page.navigate"
+                    and isinstance(data.get("params"), dict)
+                    and "/slow-headers" in str(data["params"].get("url") or "")
+                ):
+                    request_count["navigate_ws_send"] += 1
+        except Exception:
+            pass
+        return result
+
+    monkeypatch.setattr(WsSyncConnection, "send", counting_ws_send)
 
     class SlowHeaderHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1162,7 +1188,7 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
             assert slow_hdr_open["dom_ready"] is False
             assert slow_hdr_open["timed_out"] is True
             assert slow_hdr_open["ready"] == "loading"
-            assert request_count["slow_headers"] == 1
+            assert request_count["navigate_ws_send"] == 1
 
             # Once the delayed headers finish arriving, reading the returned page_id observes the loaded page without re-navigating.
             monkeypatch.setattr(local_browser, "NAVIGATE_WAIT_SECONDS", 2.0)
@@ -1170,6 +1196,7 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
             assert read_after["title"] == "Delayed Headers Ready"
             assert any(el["name"] == "Header Ready" for el in read_after["elements"])
             assert request_count["slow_headers"] == 1
+            assert request_count["navigate_ws_send"] == 1
         finally:
             httpd.shutdown()
 
@@ -1213,3 +1240,331 @@ def test_slow_main_document_headers_budget_and_selector_wait_recovers_after_main
             {"page_id": busy_page_id, "action": "wait", "selector": "[[[invalid", "wait_seconds": 1.0},
             "op_wait_invalid_sel",
         )
+
+
+def test_loopback_http_shared_verified_ssl_context_per_request_client_close_and_retry_guards(
+    monkeypatch,
+):
+    import http.server
+    import socketserver
+    import ssl
+    import threading
+
+    from rynmesh.agent_runtime import local_browser
+    from rynmesh.agent_runtime.store import AgentToolRejected
+
+    counts = {
+        "list_get": 0,
+        "flaky_get": 0,
+        "put_ok": 0,
+        "put_drop": 0,
+        "redirect": 0,
+        "redirect_target": 0,
+    }
+
+    class LoopbackCdpHandler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def _send_json(self, status: int, payload, extra_headers=None) -> None:
+            raw = local_browser.json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            for k, v in (extra_headers or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):
+            if self.path == "/json/list":
+                counts["list_get"] += 1
+                self._send_json(200, [{"id": "p1", "type": "page", "title": "T", "url": "https://example.com"}])
+                return
+            if self.path == "/flaky":
+                counts["flaky_get"] += 1
+                if counts["flaky_get"] == 1:
+                    self.close_connection = True
+                    return
+                self._send_json(200, {"ok": True, "attempts": counts["flaky_get"]})
+                return
+            if self.path == "/slow":
+                time.sleep(0.55)
+                self._send_json(200, {"slow": True})
+                return
+            if self.path == "/redirect":
+                counts["redirect"] += 1
+                self._send_json(302, {"redirect": True}, {"Location": "/redirect-target"})
+                return
+            if self.path == "/redirect-target":
+                counts["redirect_target"] += 1
+                self._send_json(200, {"followed": True})
+                return
+            self._send_json(404, {"error": "not_found"})
+
+        def do_PUT(self):
+            if self.path == "/json/new?about:blank":
+                counts["put_ok"] += 1
+                self._send_json(200, {"id": f"tab-{counts['put_ok']}", "type": "page", "url": "about:blank"})
+                return
+            if self.path == "/json/new?drop":
+                counts["put_drop"] += 1
+                self.close_connection = True
+                return
+            self._send_json(404, {"error": "not_found"})
+
+        def log_message(self, format, *args):
+            pass
+
+    class ThreadedLoopbackServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    with ThreadedLoopbackServer(("127.0.0.1", 0), LoopbackCdpHandler) as server:
+        port = server.server_address[1]
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            # 1. Verified SSLContext is initialized once and shared across distinct short-lived per-request Clients.
+            ctx = local_browser._loopback_ssl_context()
+            assert isinstance(ctx, ssl.SSLContext)
+            assert ctx.verify_mode == ssl.CERT_REQUIRED
+            assert ctx.check_hostname is True
+
+            ssl_calls = []
+            orig_create_default_ctx = ssl.create_default_context
+
+            def _fail_if_recreated(*args, **kwargs):
+                ssl_calls.append(1)
+                return orig_create_default_ctx(*args, **kwargs)
+
+            monkeypatch.setattr(ssl, "create_default_context", _fail_if_recreated)
+
+            created_clients = []
+            orig_create_client = local_browser._create_loopback_client
+
+            def _track_client(*args, **kwargs):
+                client = orig_create_client(*args, **kwargs)
+                created_clients.append(client)
+                return client
+
+            monkeypatch.setattr(local_browser, "_create_loopback_client", _track_client)
+
+            session = {"port": port, "process_id": "proc_a", "initial_blank_ids": set()}
+            rows_1 = Browser.request(session, "/json/list", timeout=2.0)
+            tab_1 = Browser.request(session, "/json/new?about:blank", "PUT", timeout=2.0)
+            rows_2 = Browser.request(session, "/json/list", timeout=2.0)
+
+            assert len(rows_1) == 1 and len(rows_2) == 1
+            assert tab_1["id"] == "tab-1"
+            assert ssl_calls == []
+            assert len(created_clients) == 3
+            assert len({id(c) for c in created_clients}) == 3
+            for c in created_clients:
+                assert c.is_closed is True
+                assert c._trust_env is False
+                assert c.follow_redirects is False
+                assert c.headers.get("connection") == "close"
+                assert c._transport._pool._ssl_context is ctx
+
+            # 2. GET retries once on transient connection drop, while PUT side-effect disconnect never retries.
+            before_flaky = len(created_clients)
+            flaky = Browser.request(session, "/flaky", "GET", timeout=2.0)
+            assert flaky == {"ok": True, "attempts": 2}
+            assert counts["flaky_get"] == 2
+            assert len(created_clients) - before_flaky == 2
+            assert all(c.is_closed for c in created_clients[before_flaky:])
+
+            before_put = len(created_clients)
+            with pytest.raises(AgentToolRejected, match="agent_browser_connection_failed"):
+                Browser.request(session, "/json/new?drop", "PUT", timeout=2.0)
+            assert counts["put_drop"] == 1
+            assert len(created_clients) - before_put == 1
+            assert created_clients[-1].is_closed is True
+
+            # 3. Redirects and invalid routes are rejected without following or leaking open clients.
+            with pytest.raises(AgentToolRejected, match="agent_browser_connection_failed"):
+                Browser.request(session, "/redirect", "GET", timeout=1.0)
+            assert counts["redirect"] == 2
+            assert counts["redirect_target"] == 0
+            assert all(c.is_closed for c in created_clients)
+
+            before_bad = len(created_clients)
+            for bad_route in ("http://127.0.0.1/json/list", "//evil.example/json", "json/list", "/json\r\nX: 1"):
+                with pytest.raises(AgentToolRejected, match="agent_browser_connection_failed"):
+                    Browser.request(session, bad_route, "GET", timeout=1.0)
+            assert len(created_clients) == before_bad
+
+            # 4. Per-request timeout and GET retry remain bounded by the caller's timeout budget and close clients on timeout.
+            t0 = time.monotonic()
+            with pytest.raises(AgentToolRejected, match="agent_browser_connection_failed"):
+                Browser.request(session, "/slow", "GET", timeout=0.2)
+            elapsed_slow = time.monotonic() - t0
+            assert elapsed_slow < 0.65
+            assert all(c.is_closed for c in created_clients)
+            assert ssl_calls == []
+        finally:
+            server.shutdown()
+
+
+def test_browser_write_atomic_begin_dispatched_two_writes_and_idempotent_retry(local, monkeypatch):
+    import copy
+    import os
+
+    from rynmesh.agent_runtime.operation_ledger import OperationLedger
+
+    tools, context, root, state = local
+    context["local_execution"]["desktop_access"] = True
+    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+
+    (root / "target.html").write_text("<!doctype html><title>Target</title><body>Target</body>", encoding="utf-8")
+    args = {"url": (root / "target.html").as_uri()}
+    expected_preview = tools.preview("ryn_browser_open", args, context)
+
+    counter_file = root / "browser_effect_counter.txt"
+    ledger = tools.ledger_factory()
+    orig_write = ledger._write
+    write_snapshots = []
+
+    def spy_write(records):
+        orig_write(records)
+        if "op_browser_combined" in records:
+            write_snapshots.append(copy.deepcopy(records["op_browser_combined"]))
+
+    monkeypatch.setattr(ledger, "_write", spy_write)
+
+    def controlled_perform(name, call_args, ctx, cancelled, **kwargs):
+        on_disk = OperationLedger(tools.home).get("op_browser_combined")
+        assert on_disk is not None
+        assert on_disk["status"] == "dispatched"
+        assert on_disk["receipt_reserve"] == 32768
+        assert on_disk["host_pid"] == os.getpid()
+        assert on_disk["binding"]["operation_id"] == "op_browser_combined"
+        assert on_disk["binding"]["tool"] == "ryn_browser_open"
+        assert isinstance(on_disk.get("operation_classification"), dict)
+        assert on_disk["operation_classification"]["tool"] == "ryn_browser_open"
+        assert len(write_snapshots) == 1
+        with counter_file.open("a", encoding="utf-8") as fh:
+            fh.write("1\n")
+        return {
+            "page_id": "p_combined",
+            "url": call_args["url"],
+            "title": "Target",
+            "ready": "complete",
+            "dom_ready": True,
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(tools, "perform", controlled_perform)
+
+    result = tools.execute(
+        "ryn_browser_open",
+        args,
+        operation_id="op_browser_combined",
+        context=context,
+        expected_preview=expected_preview,
+        cancelled=lambda: False,
+    )
+    assert result["page_id"] == "p_combined"
+    assert [snap["status"] for snap in write_snapshots] == ["dispatched", "confirmed"]
+    assert write_snapshots[0]["receipt_reserve"] == 32768
+    assert "receipt_reserve" not in write_snapshots[1]
+
+    confirmed_on_disk = OperationLedger(tools.home).get("op_browser_combined")
+    assert confirmed_on_disk["status"] == "confirmed"
+    assert "receipt_reserve" not in confirmed_on_disk
+    assert counter_file.read_text(encoding="utf-8").splitlines() == ["1"]
+
+    prior_row, created = ledger.begin_dispatched(
+        confirmed_on_disk["binding"],
+        {"changed": True},
+        operation_classification={"changed": True},
+        host_pid=999999,
+        receipt_reserve=4096,
+    )
+    assert created is False
+    assert prior_row["status"] == "confirmed"
+    assert len(write_snapshots) == 2
+
+    def broken_preview(*_a, **_kw):
+        raise AssertionError("preview must not be called on confirmed operation retry")
+
+    monkeypatch.setattr(tools, "preview", broken_preview)
+    retry_result = tools.execute(
+        "ryn_browser_open",
+        args,
+        operation_id="op_browser_combined",
+        context=context,
+        expected_preview=expected_preview,
+        cancelled=lambda: False,
+    )
+    assert retry_result == result
+    assert counter_file.read_text(encoding="utf-8").splitlines() == ["1"]
+    assert len(write_snapshots) == 2
+
+
+def test_browser_write_cancel_after_durable_begin_dispatched_marks_not_executed_without_perform(local, monkeypatch):
+    import copy
+
+    from rynmesh.agent_runtime.operation_ledger import OperationLedger
+    from rynmesh.agent_runtime.store import AgentToolRejected
+
+    tools, context, root, state = local
+    context["local_execution"]["desktop_access"] = True
+    state.transaction(lambda data: data["settings"].update(desktop_access=True))
+
+    (root / "cancel_target.html").write_text("<!doctype html><title>Cancel</title><body>Cancel</body>", encoding="utf-8")
+    args = {"url": (root / "cancel_target.html").as_uri()}
+    expected_preview = tools.preview("ryn_browser_open", args, context)
+
+    counter_file = root / "cancel_effect_counter.txt"
+    cancel_state = {"cancelled": False}
+    ledger = tools.ledger_factory()
+    orig_write = ledger._write
+    write_snapshots = []
+
+    def spy_write(records):
+        orig_write(records)
+        if "op_browser_cancel" in records:
+            snap = copy.deepcopy(records["op_browser_cancel"])
+            write_snapshots.append(snap)
+            if len(write_snapshots) == 1:
+                assert OperationLedger(tools.home).get("op_browser_cancel")["status"] == "dispatched"
+                cancel_state["cancelled"] = True
+
+    monkeypatch.setattr(ledger, "_write", spy_write)
+
+    def should_not_perform(*_a, **_kw):
+        with counter_file.open("a", encoding="utf-8") as fh:
+            fh.write("1\n")
+        raise AssertionError("perform must not be called when cancelled after durable dispatch reservation")
+
+    monkeypatch.setattr(tools, "perform", should_not_perform)
+
+    with pytest.raises(AgentToolRejected, match="agent_cancelled"):
+        tools.execute(
+            "ryn_browser_open",
+            args,
+            operation_id="op_browser_cancel",
+            context=context,
+            expected_preview=expected_preview,
+            cancelled=lambda: cancel_state["cancelled"],
+        )
+
+    assert not counter_file.exists()
+    assert [snap["status"] for snap in write_snapshots] == ["dispatched", "not_executed"]
+    settled = OperationLedger(tools.home).get("op_browser_cancel")
+    assert settled["status"] == "not_executed"
+    assert settled["error"] == "agent_cancelled"
+    assert "receipt_reserve" not in settled
+
+    with pytest.raises(AgentToolRejected, match="agent_cancelled"):
+        tools.execute(
+            "ryn_browser_open",
+            args,
+            operation_id="op_browser_cancel",
+            context=context,
+            expected_preview=expected_preview,
+            cancelled=lambda: False,
+        )
+    assert not counter_file.exists()
+    assert len(write_snapshots) == 2

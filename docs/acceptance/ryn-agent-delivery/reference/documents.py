@@ -31,14 +31,15 @@ def execute(*, runtime, tools, catalog, selected, task, bridge, record, home, no
         raise ValueError("reference_resume_rpc_sequence_required")
     if native_business_operations and selected != task["model_id"]:
         raise ValueError("reference_task_model_mismatch")
-    context = runtime._execution_context(runtime.store.read()["tasks"][task["id"]])
+    current_task = runtime.store.read()["tasks"][task["id"]]
+    context = runtime._execution_context(current_task)
     source_host = None
     if source_owner_input is not None:
         if not native_business_operations:
             raise ValueError("reference_source_admission_required")
         from source_input_host import ReferenceSourceInput
         source_host = tools = ReferenceSourceInput(tools, runtime, context, source_owner_input, record)
-    limit = task["limits"]["max_context_chars"]
+    limit = runtime._context_limit(current_task)
     tools = ReferenceMenuTools(tools, max_context_bytes=limit,
                               epoch=context.get("context_epoch", 0), goal_revision=context["goal_revision"])
 

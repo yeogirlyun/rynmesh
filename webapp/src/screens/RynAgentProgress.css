@@ -1,3 +1,6 @@
 .ra-turn-duration { display: flex; align-items: center; gap: 6px; margin: 16px 0 12px; color: var(--pf-muted); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .ra-turn-duration svg { flex-shrink: 0; opacity: .75; }
 .ra-turn-duration-live svg { color: var(--pf-blue); }
+.ra-process-observations { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+.ra-process-observations button { border: 0; padding: 2px 0; background: transparent; color: var(--pf-muted); font-size: 12px; cursor: pointer; }
+.ra-process-observations button:hover { color: var(--pf-blue); text-decoration: underline; }

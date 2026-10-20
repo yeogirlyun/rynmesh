@@ -5,6 +5,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
 import { rynAgent, type AgentTask } from "../domain/rynAgent";
 import { TaskArtifacts } from "./RynAgentArtifacts";
+import RynAgentProgress from "./RynAgentProgress";
 import ChatMarkdown from "./ChatMarkdown";
 import { findAgentFile } from "./RynAgentFileContext";
 import type { AgentFileArtifact } from "../domain/rynAgent";
@@ -62,6 +63,22 @@ const pelican = { id: "file_pelican", name: "pelican.svg", path: "pelican.svg", 
   mentioned_in_answer: true, render_inspected: { at: "2026-10-13", findings: 0 } };
 const helper = { ...pelican, id: "file_helper", name: "notes.txt", path: "notes.txt", media_type: "text/plain", preview: "text", role: "supporting",
   sha256: "n1", mentioned_in_answer: false, render_inspected: undefined };
+
+it("keeps computer screenshots inside collapsed operation history and excludes them from delivered files", async () => {
+  const user = userEvent.setup();
+  const observation = { ...pelican, id: "screen", name: "image_1.png", path: ".ryn/computer/file-task/observe/image_1.png", source: "computer_observation", operation_id: "observe" };
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [observation] })));
+  const record = { ...done, events: [{ seq: 1, at: 1, type: "tool_result", call_id: "call", operation_id: "observe" }] };
+  const messages = [{ role: "assistant", content: "", tool_calls: [{ id: "call", function: { name: "computer_read_window", arguments: "{}" } }] }];
+  render(<TaskArtifacts task={record}><RynAgentProgress task={record} messages={messages} /></TaskArtifacts>);
+  const screenLink = await screen.findByRole("button", { name: "Screen observation 1", hidden: true });
+  expect(screenLink).not.toBeVisible();
+  expect(screen.queryByRole("region", { name: "Result files" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/1 file ready/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open image_1.png" })).not.toBeInTheDocument();
+  await user.click(screen.getByText("View activity"));
+  expect(screenLink).toBeVisible();
+});
 
 it("opens common Office files through the task-bound, versioned local preview endpoint", async () => {
   const user = userEvent.setup(); const requested: string[] = []; const nas = vi.fn();

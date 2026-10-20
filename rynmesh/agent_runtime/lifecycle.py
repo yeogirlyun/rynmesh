@@ -56,7 +56,7 @@ def eligible(row):
             and row["status"] in {"completed", "failed", "cancelled", "paused"})
 
 
-def change(store, task_id, value, operation, emit, stamp):
+def change(store, task_id, value, operation, emit, stamp, *, on_mutate=None):
     if set(value) - {"expected_control_revision", "client_request_id"}:
         raise AgentError("agent_invalid_request")
     keyed = {**value, "lifecycle_action": operation}
@@ -85,6 +85,8 @@ def change(store, task_id, value, operation, emit, stamp):
             remember_request(row, keyed)
             data["tasks"][task_id] = row
             data["archives"].pop(task_id)
+            if callable(on_mutate):
+                on_mutate(data, task_id, operation)
             # Stale encrypted copies are unreachable after the atomic index
             # update. Keeping one until next archive avoids cross-file rollback.
             return row
@@ -102,6 +104,8 @@ def change(store, task_id, value, operation, emit, stamp):
             target.transaction(lambda archived: archived.update(version=VERSION, schema_version=data["schema_version"], settings={}, tasks={task_id: row}))
             data.setdefault("archives", {})[task_id] = {key: row.get(key) for key in ("id", "client_request_id", "request_fingerprint", "updated_at")}
             data["tasks"].pop(task_id)
+            if callable(on_mutate):
+                on_mutate(data, task_id, operation)
             return row
         if operation != "delete":
             raise AgentError("agent_invalid_action")
@@ -115,5 +119,7 @@ def change(store, task_id, value, operation, emit, stamp):
         data.setdefault("deleted_tasks", {})[task_id] = tombstone
         data["tasks"].pop(task_id, None)
         data.get("archives", {}).pop(task_id, None)
+        if callable(on_mutate):
+            on_mutate(data, task_id, operation)
         return {"id": task_id, "deleted": True}
     return store.transaction(mutate)

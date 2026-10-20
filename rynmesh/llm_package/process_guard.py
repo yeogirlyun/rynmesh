@@ -114,7 +114,14 @@ def communicate_bounded(process, data: bytes, *, timeout: float, root):
         process.stdout.close()
 
 
-def _windows_job(process, *, memory_limit=2 * 1024**3, cpu_rate=2500, process_limit=16):
+def _windows_job(
+    process,
+    *,
+    memory_limit=2 * 1024**3,
+    cpu_rate=2500,
+    process_limit=16,
+    before_resume=None,
+):
     import ctypes as c
     from ctypes import wintypes as w
 
@@ -156,6 +163,8 @@ def _windows_job(process, *, memory_limit=2 * 1024**3, cpu_rate=2500, process_li
             raise OSError("CLI CPU isolation unavailable")
         if not kernel.AssignProcessToJobObject(job, w.HANDLE(process._handle)):
             raise OSError("CLI process isolation unavailable")
+        if before_resume is not None:
+            before_resume(process, w.HANDLE(job))
         resume = c.WinDLL("ntdll").NtResumeProcess
         resume.argtypes = [w.HANDLE]
         if resume(w.HANDLE(process._handle)) != 0:

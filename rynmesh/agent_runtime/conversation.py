@@ -6,7 +6,7 @@ import copy
 from . import budget
 
 
-def rewrite(row: dict, control: dict, emit) -> None:
+def rewrite(row: dict, control: dict, emit, *, data: dict | None = None) -> None:
     """Apply an edit only after the old operation has a known outcome.
 
     Receipts and events remain the durable audit trail. The previous suffix is
@@ -14,19 +14,23 @@ def rewrite(row: dict, control: dict, emit) -> None:
     The valid retained prefix keeps native signatures required by some providers;
     the runtime uses a fresh conversation key for the replacement branch.
     """
+    from . import memory, memory_integration
+
     index, replacement = control["message_index"], control["message"]
     messages = row["messages"]
+    previous_revision = row.get("conversation_revision", 0)
+    retired_messages = copy.deepcopy(messages[index:])
     row.setdefault("conversation_branches", []).append({
-        "revision": row.get("conversation_revision", 0),
+        "revision": previous_revision,
         "message_index": index,
         "event_cursor": row["event_cursor"],
-        "messages": copy.deepcopy(messages[index:]),
+        "messages": retired_messages,
         "goal": copy.deepcopy(row["goal"]),
     })
     previous_epoch = row.get("context_epoch", 0)
     epoch = previous_epoch + 1
     row["context_epoch"] = epoch
-    row["conversation_revision"] = row.get("conversation_revision", 0) + 1
+    row["conversation_revision"] = previous_revision + 1
     row["messages"] = [*messages[:index], replacement]
     replacement["context_epoch"] = epoch
     for message in row["messages"]:
@@ -39,6 +43,20 @@ def rewrite(row: dict, control: dict, emit) -> None:
                 "criteria_proposals", "rejected_response_note", "model_retry_authority", "tool_menu",
                 "project_inspection", "pending_user_messages", "turn_stopped"):
         row.pop(key, None)
+    if isinstance(data, dict):
+        memory.record_branch_rewrite_fence(
+            data,
+            task_id=row["id"],
+            previous_conversation_revision=previous_revision,
+            new_conversation_revision=row["conversation_revision"],
+            retired_messages=retired_messages,
+        )
+        memory_integration.propagate_memory_revocation_in_tx(data, exclude_task_id=row.get("id"))
+        if row.get("memory_projection_watermark") is not None or row.get("memory_disclosed_in_epoch"):
+            from . import memory_runtime
+            row["memory_projection_watermark"] = memory_runtime.memory_projection_watermark(data, row).get("watermark", "")
+            row["memory_disclosed_in_epoch"] = False
+        memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
     row["observed_files"] = {}
     row.setdefault("goal_history", []).append(copy.deepcopy(row["goal"]))
     owners = [message for message in row["messages"] if message["role"] == "user"]

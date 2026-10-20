@@ -9,6 +9,7 @@ import threading
 from ..llm_package import model_settings, peer_binding
 from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
+from .image_capabilities import catalog_image_fields
 
 
 class ModelCatalog:
@@ -35,11 +36,12 @@ class ModelCatalog:
         return "legacy-" + hashlib.sha256(self.services["source_store"].path.read_bytes()).hexdigest()
 
     @staticmethod
-    def _bind_cli(row, manager, model=""):
+    def _bind_cli(row, manager, model="", *, cached=False):
         binding = None
         try:
-            if manager and hasattr(manager.adapter, "binding_for_model"):
-                binding = manager.adapter.binding_for_model(model)
+            method = "cached_binding_for_model" if cached else "binding_for_model"
+            if manager and hasattr(manager.adapter, method):
+                binding = getattr(manager.adapter, method)(model)
         except (ValueError, OSError, RuntimeError):
             pass  # No executable/configuration evidence means no project-data authority.
         valid = peer_binding.valid(binding, row["service_id"])
@@ -47,17 +49,25 @@ class ModelCatalog:
                    destination_binding_supported=bool(valid),
                    destination_revision=peer_binding.local_revision(binding, row["peer_id"]) if valid else "")
 
-    def list_models(self, *, selected_model_id=None):
+    def list_models(self, *, selected_model_id=None, display_only=False):
         sources = self.services["source_store"]
         records = sources.read()
         source_index = {sources.model_service_id(record, model): (record, model)
                         for record in records.values() for model in record["models"]}
         try:
             discover = self.services.get("discover_agent", self.services["discover"])
+            if display_only:
+                discover = self.services.get("discover_display", discover)
+            selected_discover = self.services.get("discover_local_model")
             if (isinstance(selected_model_id, str) and selected_model_id.startswith("local/")
+                    and callable(selected_discover)):
+                discovered = selected_discover(self.network, selected_model_id[6:].split("/model/", 1)[0])
+            elif (isinstance(selected_model_id, str) and selected_model_id.startswith("local/")
                     and callable(self.services.get("discover_local"))):
                 discover = self.services["discover_local"]
-            discovered = discover(self.network)
+                discovered = discover(self.network)
+            else:
+                discovered = discover(self.network)
         except Exception:
             discovered = []
         rows = {}
@@ -96,6 +106,7 @@ class ModelCatalog:
                    "sharing_configuration_known": False,
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
+            row.update(catalog_image_fields(row, service_record=value))
             rows[model_ref] = row
             if own and manifest.get("runtime") == "native_llama_cpp":
                 native_binding = value.get("model_binding")
@@ -123,6 +134,7 @@ class ModelCatalog:
                                     if "protocol:" + protocol in capabilities]
                 if adapter == "openai_compatible" and bound is not None and len(native_protocols) == 1:
                     row["adapter"] = native_protocols[0]
+                row.update(catalog_image_fields(row, service_record=value))
                 if adapter in {"codex_cli", "antigravity_cli"}:
                     from ..llm_package.cli_models import context_metadata
                     row.update(context_metadata(value.get("cli_models", []), fallback=row["context_window"]))
@@ -145,6 +157,7 @@ class ModelCatalog:
                             rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
                             rows[identifier].update(reasoning_metadata(upstream.get("supported_reasoning_efforts"), upstream.get("default_reasoning_effort")))
+                        rows[identifier].update(catalog_image_fields(rows[identifier], service_record=value, cli_model_row=upstream))
         # Include drafts/offline sources so absence never masquerades as deletion.
         for service_id, (record, model) in source_index.items():
             model_ref = "local/" + service_id
@@ -168,6 +181,7 @@ class ModelCatalog:
                 "sharing": model in sources.shared_models(record), "share_scope": policy["effective"]["share_scope"],
                 "sharing_basis": "local_configuration", "sharing_configuration_known": True,
                 "destination_binding_supported": True}
+            rows[model_ref].update(catalog_image_fields(rows[model_ref], source_record=record))
         # CLI sources are containers; each upstream model keeps its identity and diagnostics.
         for row in list(rows.values()):
             if row["source"] != "local_service" or row["adapter"] not in {"codex_cli", "antigravity_cli"}:
@@ -192,10 +206,10 @@ class ModelCatalog:
                     upstream = copy.deepcopy(snapshot["models"])
                     row.update(local_model_binding=None, destination_binding_supported=False, destination_revision="")
                 else:
-                    current_models = getattr(manager.adapter, "current_models", None) if manager else None
+                    current_models = getattr(manager.adapter, "display_models" if display_only else "current_models", None) if manager else None
                     upstream = (current_models() if callable(current_models) else
                                 cached_models(row["adapter"], executable) or list_models(row["adapter"], executable))
-                    self._bind_cli(row, manager)
+                    self._bind_cli(row, manager, cached=display_only)
                     with self._cli_metadata_lock:
                         self._cli_metadata[row["id"]] = {"manager": manager, "models": copy.deepcopy(upstream)}
             except Exception:
@@ -214,12 +228,14 @@ class ModelCatalog:
                 from ..llm_package.cli_models import context_metadata
                 rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"]))
                 if row["available"]:
-                    self._bind_cli(rows[identifier], manager, model["id"])
+                    self._bind_cli(rows[identifier], manager, model["id"], cached=display_only)
                 if row["adapter"] == "codex_cli":
                     rows[identifier].update(reasoning_metadata(model.get("supported_reasoning_efforts"), model.get("default_reasoning_effort")))
+                rows[identifier].update(catalog_image_fields(rows[identifier], cli_model_row=model))
+            default = next((model for model in upstream if model.get("default")), {})
             if row["adapter"] == "codex_cli":
-                default = next((model for model in upstream if model.get("default")), {})
                 row.update(reasoning_metadata(default.get("supported_reasoning_efforts"), default.get("default_reasoning_effort")))
+            row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"]))
         for row in rows.values():
@@ -235,6 +251,13 @@ class ModelCatalog:
         except TypeError:
             rows = self.list_models()
         return next((row for row in rows if row["id"] == model_id), None)
+
+    def display_models(self):
+        return self.list_models(display_only=True)
+
+    def display_model(self, model_id):
+        return next((row for row in self.list_models(selected_model_id=model_id, display_only=True)
+                     if row["id"] == model_id), None)
 
     def refresh_destination(self, model_id):
         """Refresh metadata only; never send task text to repair discovery."""

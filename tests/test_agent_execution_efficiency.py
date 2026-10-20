@@ -46,8 +46,10 @@ def test_small_stream_chunks_are_coalesced_without_losing_first_or_final_text(
     runtime.run_once()
     done = AgentStore(tmp_path, key).read()["tasks"][created["id"]]
     deltas = [event for event in done["events"] if event["type"] == "text_delta"]
-    assert done["status"] == "completed" and done["result"] == text
-    assert done["messages"][-1]["content"] == text
+    # Final assistant text is normalized by the turn controller; recoverable
+    # deltas below must still preserve every streamed byte.
+    assert done["status"] == "completed" and done["result"] == text.strip()
+    assert done["messages"][-1]["content"] == text.strip()
     assert "".join(event["text"] for event in deltas) == text
     assert 1 < len(deltas) <= max_commits
     timing = next(event["timing"] for event in done["events"] if event["type"] == "assistant")
