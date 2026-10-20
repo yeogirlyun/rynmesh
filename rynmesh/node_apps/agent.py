@@ -27,7 +27,7 @@ SPECS = [
         "type": "function",
         "function": {
             "name": ACTION,
-            "description": "Read or change one node-app workspace using a listed operation. Always stages exact owner approval, including private reads and automatic mode. Approved results are sent to the selected model. No Ryncoin payment or host filesystem access.",
+            "description": "Read or change one node-app workspace using a listed operation. Stages exact owner approval, including private reads and automatic mode. Optional reviewed_context pins a specific workspace revision; if omitted, the current workspace context is resolved automatically.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -56,7 +56,7 @@ SPECS = [
                         "additionalProperties": False,
                     },
                 },
-                "required": ["app", "action", "arguments", "reviewed_context"],
+                "required": ["app", "action", "arguments"],
                 "additionalProperties": False,
             },
         },
@@ -94,7 +94,7 @@ class AppTools:
                     args["app"],
                     args["action"],
                     args["arguments"],
-                    args["reviewed_context"],
+                    args.get("reviewed_context"),
                 ),
                 "model_data_recipient": context["model_destination"],
             }
@@ -148,20 +148,21 @@ class AppTools:
             or receipt.get("app") != args["app"]
             or receipt.get("action") != args["action"]
             or receipt.get("arguments_hash") != fingerprint(args["arguments"])
-            or receipt.get("request_hash")
-            != fingerprint(
+        ):
+            return None
+        reviewed = args.get("reviewed_context")
+        if reviewed is not None:
+            expected_req_hash = fingerprint(
                 {
                     "app": args["app"],
                     "action": args["action"],
                     "arguments": args["arguments"],
                     "operation_id": operation_id,
-                    "preview_hash": preview_for(
-                        args["reviewed_context"], args["action"], args["arguments"]
-                    )["preview_hash"],
+                    "preview_hash": preview_for(reviewed, args["action"], args["arguments"])["preview_hash"],
                 }
             )
-        ):
-            return None
+            if receipt.get("request_hash") != expected_req_hash:
+                return None
         return receipt
 
     def reconcile(self, operation_id, context, cancelled):
@@ -178,9 +179,14 @@ class AppTools:
         try:
             receipt = self._receipt(args, operation_id)
             if receipt:
+                reviewed = args.get("reviewed_context")
+                preview_hash = (
+                    preview_for(reviewed, args["action"], args["arguments"])["preview_hash"]
+                    if reviewed is not None
+                    else ((operation.get("preview") or {}).get("app_preview") or {}).get("preview_hash", "")
+                )
                 command = {"app": args["app"], "action": args["action"], "arguments": args["arguments"],
-                           "operation_id": operation_id, "preview_hash": preview_for(
-                               args["reviewed_context"], args["action"], args["arguments"])["preview_hash"]}
+                           "operation_id": operation_id, "preview_hash": preview_hash}
                 receipt = self.service.confirm_receipt(args.get("provider_peer", ""), command, receipt)
         except (AppError, ValueError, OSError, TypeError, KeyError, AttributeError):
             return {"outcome": "unknown"}

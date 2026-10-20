@@ -642,6 +642,8 @@ class ExtensionToolAdapter:
         safe_task = _safe_segment(str(context.get("task_id") or "task"), "task")
         safe_op = _safe_segment(str(operation_id or "op"), "op")
         image_idx = 0
+        img_cap = context.get("_image_capability") if isinstance(context, dict) else None
+        route_supports_images = bool(isinstance(img_cap, dict) and img_cap.get("supports_image_input"))
 
         for block in blocks[:64]:
             if not isinstance(block, dict):
@@ -712,8 +714,9 @@ class ExtensionToolAdapter:
                             "type": "image",
                             **art_entry,
                             "note": (
-                                "Saved to workspace file; pixels have not been visually inspected "
-                                "by the model yet. Call ryn_image_inspect on path if visual inspection is needed."
+                                "Saved to workspace file; verified operation screenshot pixels are attached to the active turn on image-capable routes."
+                                if route_supports_images
+                                else "Saved to workspace file; pixels have not been visually inspected by the model yet. Call ryn_image_inspect on path if visual inspection is needed."
                             ),
                         }
                     )
@@ -758,8 +761,9 @@ class ExtensionToolAdapter:
             normalized["images"] = copy.deepcopy(artifacts)
             normalized["image_path"] = artifacts[0]["path"]
             normalized["image_note"] = (
-                "Image bytes were saved to the workspace and have not been visually inspected yet. "
-                "Use ryn_image_inspect with the saved path if the selected model supports image input."
+                "Image bytes were saved to the workspace and verified operation screenshot pixels are attached to the active turn on image-capable routes."
+                if route_supports_images
+                else "Image bytes were saved to the workspace and have not been visually inspected yet. Use ryn_image_inspect with the saved path if the selected model supports image input."
             )
         return normalized
 

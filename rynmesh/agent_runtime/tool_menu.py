@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import math
+import re
 
 from .store import AgentError, AgentToolRejected, encoded
 
@@ -15,13 +17,67 @@ PLUGIN_DISCOVERY_TOOLS = ("ryn_list_plugins",)
 CORE_TOOLS = ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_apply_patch", "ryn_file_edit",
               "ryn_file_write", "ryn_file_list", "ryn_process_read")
 BROWSER_TOOLS = ("ryn_browser_open", "ryn_browser_read", "ryn_browser_action")
+_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]")
+
 SPEC = {"type": "function", "function": {"name": NAME,
-    "description": "Load exact business-tool schemas by name. load adds tools to those already exposed (small context windows replace them instead); unload removes them; load [] clears loaded tools. Core workstation tools that are already exposed stay available and need no loading. Available names appear in load.items.enum when they fit. Optional cursor browses bounded brief descriptions; next_cursor continues. The least recently loaded schemas may be released for space; reload absent tools. Loading never grants permission.",
+    "description": "Search or load tool schemas. Pass query (BM25 keyword search) to find and load matching tools in one step, load to activate exact names (load [] clears), unload to remove, or cursor to page brief descriptions. Loading never grants permission.",
     "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "minLength": 1, "maxLength": 240},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 8},
         "cursor": {"type": "integer", "minimum": 0},
         "load": {"type": "array", "maxItems": 8, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 128}},
         "unload": {"type": "array", "maxItems": 8, "uniqueItems": True, "items": {"type": "string", "minLength": 1, "maxLength": 128}}},
         "additionalProperties": False}}}
+
+
+def _tokenize(text: str) -> list[str]:
+    tokens = _TOKEN_RE.findall((text or "").lower())
+    cjk = [t for t in tokens if "\u4e00" <= t <= "\u9fff"]
+    return tokens + [cjk[i] + cjk[i + 1] for i in range(len(cjk) - 1)]
+
+
+def _bm25_rank(names_map: dict[str, dict], metadata, query: str, limit: int = 8) -> list[str]:
+    q_tokens = _tokenize(query)
+    if not q_tokens or not names_map:
+        return []
+    docs: dict[str, list[str]] = {}
+    for name, spec in names_map.items():
+        fn = spec.get("function") or {}
+        desc = str(fn.get("description") or "")
+        params = (fn.get("parameters") or {}).get("properties") or {}
+        param_text = " ".join(
+            f"{k} {(v.get('description') or '') if isinstance(v, dict) else ''}"
+            for k, v in params.items()
+        )
+        try:
+            title = str((metadata(name) or {}).get("title") or "")
+        except Exception:
+            title = ""
+        docs[name] = _tokenize(f"{name} {name} {title} {param_text} {desc}")
+    n_docs = len(docs)
+    avgdl = max(1.0, sum(len(d) for d in docs.values()) / n_docs)
+    df = {q: sum(1 for d in docs.values() if q in d) for q in set(q_tokens)}
+    k1, b = 1.5, 0.75
+    q_lower = query.strip().lower()
+    scores: list[tuple[float, str]] = []
+    for name, doc_tokens in docs.items():
+        dl = len(doc_tokens)
+        counts: dict[str, int] = {}
+        for tok in doc_tokens:
+            counts[tok] = counts.get(tok, 0) + 1
+        score = 0.0
+        for q in q_tokens:
+            tf = counts.get(q, 0)
+            if tf <= 0:
+                continue
+            idf = math.log(1.0 + (n_docs - df.get(q, 0) + 0.5) / (df.get(q, 0) + 0.5))
+            score += idf * ((tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * (dl / avgdl))))
+        if q_lower and q_lower in name.lower():
+            score += 3.0
+        if score > 0:
+            scores.append((score, name))
+    scores.sort(key=lambda item: (-item[0], item[1]))
+    return [name for _, name in scores[: max(1, min(limit, 8))]]
 
 
 def capacity(max_context_bytes, authority_bytes):
@@ -96,8 +152,8 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     pins_changed = bool(prior.get("mode") == "directory" and prior_candidates != requested_pins)
     has_browser_pins = any(name in BROWSER_TOOLS for name in requested_pins)
     pinned = []
-    seed_cap = 20000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 16000
-    pin_floor = 18000 if has_browser_pins else 14000
+    seed_cap = 21000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000
+    pin_floor = 19000 if has_browser_pins else 15000
     seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
     if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
         seed_limit = min(limit, max(seed_limit, pin_floor))
@@ -150,7 +206,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
 
 
 def discover(business_specs, internal_specs, metadata, state, args, *, capacity_bytes):
-    """Paged catalog and exact replace, charged as an ordinary internal tool."""
+    """Paged catalog, BM25 query search, and exact load/replace, charged as an ordinary internal tool."""
     internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
     catalog = [*business_specs, *internal] if state.get("lazy_controls") else business_specs
     if state.get("mode") != "directory" or state.get("catalog_revision") != catalog_revision(catalog):
@@ -158,6 +214,17 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
     names = {spec["function"]["name"]: spec for spec in catalog}
     next_state = copy.deepcopy(state)
     pinned = [name for name in state.get("pinned_names", []) if name in names]
+
+    def size(selection):
+        return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog),
+                            *(names[name] for name in [*pinned, *selection])]))
+
+    query_text = args.get("query")
+    has_query = isinstance(query_text, str) and bool(query_text.strip())
+    matched_names: list[str] = []
+    if has_query:
+        matched_names = _bm25_rank(names, metadata, query_text, limit=int(args.get("limit") or 8))
+
     if "load" in args or "unload" in args:
         requested, removed = args.get("load", []), args.get("unload", [])
         if any(name not in names for name in [*requested, *removed]):
@@ -171,10 +238,6 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
             for name in requested:
                 if name not in pinned and name not in loaded:
                     loaded.append(name)
-
-        def size(selection):
-            return len(encoded([*([] if state.get("lazy_controls") else internal), directory_spec(catalog),
-                                *(names[name] for name in [*pinned, *selection])]))
         # Adding never silently drops what this call asked for: older loads
         # are released first, and an unloadable request is still refused.
         while size(loaded) > capacity_bytes:
@@ -185,17 +248,62 @@ def discover(business_specs, internal_specs, metadata, state, args, *, capacity_
         if next_state["loaded_names"] != loaded:
             next_state["loaded_names"] = loaded
             next_state["revision"] += 1
+    elif has_query and matched_names:
+        # Codex-aligned 1-step tool_search: automatically activate matched tools that fit capacity.
+        loaded = [] if capacity_bytes < ADDITIVE_CAPACITY else [
+            name for name in next_state["loaded_names"] if name not in pinned
+        ]
+        added: list[str] = []
+        for name in matched_names:
+            if name in pinned or name in loaded:
+                continue
+            candidate_loaded = [*loaded, name]
+            while size(candidate_loaded) > capacity_bytes:
+                victim = next((n for n in candidate_loaded if n not in added and n != name), None)
+                if victim is None:
+                    break
+                candidate_loaded.remove(victim)
+            if size(candidate_loaded) <= capacity_bytes:
+                loaded = candidate_loaded
+                added.append(name)
+        if next_state["loaded_names"] != loaded:
+            next_state["loaded_names"] = loaded
+            next_state["revision"] += 1
+
     cursor = args.get("cursor", 0)
     ordered = sorted(names)
     if cursor > len(ordered):
         raise AgentToolRejected("agent_invalid_tool_cursor")
-    browse = not ("load" in args or "unload" in args) or "cursor" in args
+    browse = (not ("load" in args or "unload" in args) and not has_query) or "cursor" in args
     result = {"tools": [], "cursor": cursor, "next_cursor": None,
               "total": len(ordered), "loaded_names": next_state["loaded_names"],
               "catalog_revision": next_state["catalog_revision"], "menu_revision": next_state["revision"],
               "permission_granted": False}
     if pinned:
         result["always_available"] = pinned
+    if has_query:
+        result["query"] = query_text.strip()
+        result["matches"] = matched_names
+    if has_query and not browse:
+        page_limit = max(256, capacity_bytes // 12)
+        for name in matched_names:
+            item = {"name": name, "description": names[name]["function"].get("description", "")[:80],
+                    "effect": metadata(name)["effect"], "schema_bytes": len(encoded(names[name]))}
+            with_params = {**item, "parameters": names[name]["function"].get("parameters", {})}
+            candidate_full = {**result, "tools": [*result["tools"], with_params]}
+            if len(encoded(candidate_full)) <= page_limit:
+                result["tools"].append(with_params)
+                continue
+            candidate = {**result, "tools": [*result["tools"], item]}
+            if len(encoded(candidate)) <= page_limit:
+                result["tools"].append(item)
+            elif not result["tools"]:
+                item["description"] = ""
+                result["tools"].append(item)
+                break
+            else:
+                break
+        return result, next_state
     # Up to eight tool calls share one indivisible model exchange. Reserve a
     # third of the available space for their envelopes/checkpoint and keep each
     # catalog result within the remainder; never repeat the full name index.

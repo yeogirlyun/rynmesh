@@ -61,13 +61,37 @@ def apply_edit(text, args, *, path: str | None = None):
 
     old, new = args["old_text"], args["new_text"]
     count = text.count(old)
+    eol = "\r\n" if text.count("\r\n") * 2 >= text.count("\n") and "\r\n" in text else "\n"
     if count == 0 and ("\n" in old):
-        eol = "\r\n" if text.count("\r\n") * 2 >= text.count("\n") and "\r\n" in text else "\n"
         old_n = old.replace("\r\n", "\n").replace("\n", eol)
         if old_n != old:
             count = text.count(old_n)
             if count:
                 old, new = old_n, new.replace("\r\n", "\n").replace("\n", eol)
+    if count == 0:
+        lines = text.replace("\r\n", "\n").split("\n") if text else []
+        if text.endswith("\n") and lines:
+            lines.pop()
+        old_lines = old.replace("\r\n", "\n").split("\n")
+        if old.endswith("\n") and old_lines:
+            old_lines.pop()
+        if old_lines:
+            fuzzy_matches = local_patch._find_matches(
+                lines,
+                old_lines,
+                0,
+                False,
+                normalizers=(str.rstrip, local_patch.normalize_unicode_punctuation),
+            )
+            if len(fuzzy_matches) == 1:
+                pos = fuzzy_matches[0]
+                candidate_old = eol.join(lines[pos:pos + len(old_lines)])
+                if old.endswith(("\r\n", "\n")) and (text.endswith(("\r\n", "\n")) or pos + len(old_lines) < len(lines)):
+                    candidate_old += eol
+                if candidate_old and text.count(candidate_old) == 1:
+                    old = candidate_old
+                    new = new.replace("\r\n", "\n").replace("\n", eol)
+                    count = 1
     if count == 0 or (count != 1 and not args.get("replace_all")):
         lines = text.replace("\r\n", "\n").split("\n") if text else []
         if text.endswith("\n") and lines:
@@ -243,6 +267,130 @@ def validate_configuration(values):
             raise AgentError("agent_workspace_not_directory")
     if "desktop_access" in values and type(values["desktop_access"]) is not bool:
         raise AgentError("agent_invalid_settings")
+
+
+def _line_indent(line: str) -> int | None:
+    stripped = line.lstrip(" \t")
+    if not stripped or stripped in {"\n", "\r\n", "\r"}:
+        return None
+    prefix = line[: len(line) - len(stripped)]
+    return sum(4 if ch == "\t" else 1 for ch in prefix)
+
+
+_HEADER_PREFIXES = ("#", "//", "/*", "*", "*/", "@", "#[", "///", "--")
+
+
+def _read_indentation_block(
+    lines: list[str],
+    args: dict,
+    path: Path,
+    raw_path: str,
+    total_lines: int,
+) -> tuple[int, list[str]]:
+    """Codex read_file.rs-aligned indentation block reader."""
+    anchor_1based = args.get("anchor_line") or args.get("start_line") or 1
+    anchor_idx = anchor_1based - 1
+    if anchor_idx >= max(len(lines), 1):
+        raise AgentToolRejected(
+            "agent_local_line_invalid",
+            correction=f"File '{raw_path}' has {total_lines} lines; anchor_line={anchor_1based} is out of range.",
+            details={"path": str(path), "total_lines": total_lines, "field_path": "anchor_line"},
+        )
+    if not lines:
+        return 0, []
+    max_lines = args.get("max_lines", 400)
+    max_levels = args.get("max_levels", 1)
+    include_siblings = bool(args.get("include_siblings", False))
+    include_header = bool(args.get("include_header", True))
+
+    anchor_indent = _line_indent(lines[anchor_idx])
+    if anchor_indent is None:
+        for offset in range(1, len(lines)):
+            if anchor_idx + offset < len(lines) and _line_indent(lines[anchor_idx + offset]) is not None:
+                anchor_indent = _line_indent(lines[anchor_idx + offset])
+                break
+            if anchor_idx - offset >= 0 and _line_indent(lines[anchor_idx - offset]) is not None:
+                anchor_indent = _line_indent(lines[anchor_idx - offset])
+                break
+        if anchor_indent is None:
+            anchor_indent = 0
+
+    next_nonblank_indent = None
+    for idx in range(anchor_idx + 1, len(lines)):
+        ind = _line_indent(lines[idx])
+        if ind is not None:
+            next_nonblank_indent = ind
+            break
+    anchor_is_block_opener = next_nonblank_indent is not None and next_nonblank_indent > anchor_indent
+
+    ancestors: list[tuple[int, int]] = [(anchor_idx, anchor_indent)]
+    current_min = anchor_indent
+    for idx in range(anchor_idx - 1, -1, -1):
+        ind = _line_indent(lines[idx])
+        if ind is not None and ind < current_min:
+            ancestors.append((idx, ind))
+            current_min = ind
+            if current_min == 0:
+                break
+
+    if max_levels == 0:
+        target_idx, min_indent = ancestors[-1]
+    else:
+        levels_to_climb = max(0, max_levels - 1) if anchor_is_block_opener else max_levels
+        level_idx = min(levels_to_climb, len(ancestors) - 1)
+        target_idx, min_indent = ancestors[level_idx]
+
+    if include_siblings:
+        start_idx = target_idx
+        while start_idx > 0:
+            ind = _line_indent(lines[start_idx - 1])
+            if ind is not None and ind < min_indent:
+                break
+            start_idx -= 1
+        end_idx = anchor_idx + 1
+        while end_idx < len(lines):
+            ind = _line_indent(lines[end_idx])
+            if ind is not None and ind < min_indent:
+                break
+            end_idx += 1
+    else:
+        start_idx = target_idx
+        if include_header:
+            while start_idx > 0:
+                prev_line = lines[start_idx - 1]
+                ind = _line_indent(prev_line)
+                if ind == min_indent and prev_line.lstrip(" \t").startswith(_HEADER_PREFIXES):
+                    start_idx -= 1
+                else:
+                    break
+        end_idx = target_idx + 1
+        has_deeper_body = False
+        while end_idx < len(lines):
+            ind = _line_indent(lines[end_idx])
+            if ind is None:
+                end_idx += 1
+                continue
+            if ind > min_indent:
+                has_deeper_body = True
+                end_idx += 1
+                continue
+            if has_deeper_body and ind == min_indent and lines[end_idx].lstrip(" \t").startswith(("}", ")", "]", "end")):
+                end_idx += 1
+            break
+        if not has_deeper_body and end_idx <= anchor_idx:
+            end_idx = min(len(lines), anchor_idx + max_lines)
+
+    while end_idx > max(start_idx + 1, anchor_idx + 1) and _line_indent(lines[end_idx - 1]) is None:
+        end_idx -= 1
+
+    selected = lines[start_idx:min(end_idx, start_idx + max_lines)]
+    chunk, size = [], 0
+    for line in selected:
+        if chunk and size + len(line) > MAX_READ_CHARS:
+            break
+        chunk.append(line)
+        size += len(line)
+    return start_idx, chunk
 
 
 class LocalTools:
@@ -797,10 +945,10 @@ class LocalTools:
                     )
                 before = self.raw(path) if path.exists() else None
                 expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path)
-                if before is not None and expected_sha != sha(before):
+                if before is not None and expected_sha is not None and expected_sha != sha(before):
                     raise AgentToolRejected(
                         "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or has not been read in this task yet). Call ryn_file_read on '{args['path']}' first.",
+                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
                         details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before), "field_path": "expected_sha256"},
                     )
                 if before is None and args.get("expected_sha256"):
@@ -834,10 +982,10 @@ class LocalTools:
                     if path.is_file():
                         raw = self.raw(path)
                         expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path)
-                        if expected_sha != sha(raw):
+                        if expected_sha is not None and expected_sha != sha(raw):
                             raise AgentToolRejected(
                                 "agent_local_file_changed_read_again",
-                                correction=f"File '{args['path']}' on disk does not match expected_sha256 (or has not been read in this task yet). Call ryn_file_read on '{args['path']}' first.",
+                                correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
                                 details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(raw), "field_path": "expected_sha256"},
                             )
                         preview["before_sha256"] = sha(raw)
@@ -1094,6 +1242,13 @@ class LocalTools:
                     unknown_err = AgentError("agent_write_outcome_unknown")
                     unknown_err.diagnostics = copy.deepcopy(diag)
                     raise unknown_err from exc
+                if (
+                    name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_process_write", "ryn_process_stop"}
+                    and not getattr(exc, "after_side_effect", False)
+                ):
+                    failure("local_rejected", exc)
+                    ledger.update(operation_id, "not_executed", error=str(exc), operation_classification=host_classification)
+                    raise
                 failure("local_execute", exc)
                 raise AgentError("agent_local_operation_unconfirmed") from exc
             except Exception as exc:
@@ -1352,6 +1507,17 @@ class LocalTools:
                 raw, text = self.text(path)
                 file_sha = sha(raw)
                 total_lines = text.count("\n") + (0 if not text or text.endswith("\n") else 1)
+                if args.get("mode") == "indentation":
+                    lines = text.splitlines(keepends=True)
+                    first, chunk = _read_indentation_block(lines, args, path, args["path"], total_lines)
+                    end_line = first + len(chunk)
+                    self._record_observed_files(context, {path: file_sha})
+                    return self._repeat_note(task_id, {
+                        "path": str(path), "text": "".join(chunk), "sha256": file_sha, "bytes": len(raw),
+                        "mode": "indentation", "anchor_line": args.get("anchor_line") or args.get("start_line") or 1,
+                        "start_line": (first + 1) if lines else 1, "end_line": max(first + 1, end_line) if lines else 1,
+                        "total_lines": total_lines,
+                        "next_start_line": end_line + 1 if end_line < len(lines) else None, "next_offset": None})
                 if args.get("start_line") is not None:
                     # Line-addressed paging: lines are never split and the page reports its line range.
                     lines = text.splitlines(keepends=True)
@@ -1520,13 +1686,14 @@ class LocalTools:
             return {"applied": True, "files": files}
         if name in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage"}:
             path = self.path(args["path"], context)
+            preview_before_sha = approved_preview.get("before_sha256") if isinstance(approved_preview, dict) else None
             if name in {"ryn_file_write", "ryn_file_edit"}:
                 before_bytes = self.raw(path) if path.exists() else None
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path)
-                if before_bytes is not None and expected_sha != sha(before_bytes):
+                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                if before_bytes is not None and expected_sha is not None and expected_sha != sha(before_bytes):
                     raise AgentToolRejected(
                         "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or has not been read in this task yet). Call ryn_file_read on '{args['path']}' first.",
+                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
                         details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
                     )
                 if before_bytes is None and args.get("expected_sha256"):
@@ -1537,11 +1704,11 @@ class LocalTools:
                     )
             elif args["action"] in {"delete", "move", "copy"} and path.is_file():
                 before_bytes = self.raw(path)
-                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path)
-                if expected_sha != sha(before_bytes):
+                expected_sha = args.get("expected_sha256") or self._get_observed_sha256(context, path) or preview_before_sha
+                if expected_sha is not None and expected_sha != sha(before_bytes):
                     raise AgentToolRejected(
                         "agent_local_file_changed_read_again",
-                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or has not been read in this task yet). Call ryn_file_read on '{args['path']}' first.",
+                        correction=f"File '{args['path']}' on disk does not match expected_sha256 (or changed since last read in this task). Call ryn_file_read on '{args['path']}' first.",
                         details={"path": str(path), "expected_sha256": expected_sha, "actual_sha256": sha(before_bytes), "field_path": "expected_sha256"},
                     )
             if name in {"ryn_file_write", "ryn_file_edit"} or args["action"] in {"delete", "move", "copy"}:
@@ -1603,7 +1770,12 @@ class LocalTools:
             item = self.processes.get(ident, task_id)
             if before is not None:
                 item["workspace_snapshot"] = (root, before)
-            result = self.processes.read(ident, task_id, wait_seconds=0) if args.get("background") else self.processes.wait(ident, task_id, cancelled)
+            if args.get("background"):
+                result = self.processes.read(ident, task_id, wait_seconds=0)
+            elif args.get("yield_seconds") is not None:
+                result = self.processes.wait(ident, task_id, cancelled, yield_seconds=args["yield_seconds"])
+            else:
+                result = self.processes.wait(ident, task_id, cancelled)
             still_running_now = set(self.processes.running_for_operation(task_id))
             active_other = [pid for pid in prior_running if pid != ident and pid in still_running_now]
             if active_other:

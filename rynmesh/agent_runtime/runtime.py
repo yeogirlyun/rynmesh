@@ -277,10 +277,10 @@ class AgentRuntime(AgentLoop):
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
-            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + desktop + skill_tools,
+            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools,
             initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
-                           "ryn_shell_execute", "ryn_file_write", "ryn_file_list") if row.get("project") else
-                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search")) + desktop + skill_tools), authority_bytes
+                           "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
+                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools), authority_bytes
 
     def _specs(self, row=None) -> list:
         specs = self.tools.specs()

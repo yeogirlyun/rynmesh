@@ -213,8 +213,16 @@ class StreamedReads:
                     if value.get("origin"):
                         reference["resource_origin"] = value["origin"]
                     row.setdefault("result_refs", []).append(reference)
-                    value.update(reference=reference, result={"result_ref": reference["id"], "output_sha256": reference["sha256"],
-                        "bytes": reference["bytes"], "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages."})
+                    value.update(
+                        reference=reference,
+                        result=results.format_reference_result(
+                            prepared["call"]["name"],
+                            value["result"],
+                            reference,
+                            max_bytes=self.selected["limits"]["max_output_chars"],
+                            note="Full output is encrypted locally. Use ryn_read_result for bounded pages.",
+                        ),
+                    )
                 except AgentError as exc:
                     value.update(failed=True, result={"error": _safe_error(exc), "not_executed": False, "no_mutation": True})
             entry.update(value, state="complete")

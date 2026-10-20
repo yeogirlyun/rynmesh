@@ -17,7 +17,19 @@ WORKSPACE_TOOLS = frozenset({
     "ryn_process_stop", "ryn_process_write", "ryn_browser_open",
     "ryn_browser_action", "ryn_computer_action", "ryn_craft_action",
 })
-SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background"})
+SHELL_ARGUMENT_KEYS = frozenset({"command", "shell", "cwd", "timeout_seconds", "background", "yield_seconds"})
+GIT_SAFE_SUBCOMMANDS = frozenset({"status", "diff", "log", "show", "rev-parse"})
+GIT_UNSAFE_FLAGS = (
+    "--output",
+    "-o",
+    "--ext-diff",
+    "--textconv",
+    "--exec",
+    "-c",
+    "--config-env",
+    "--git-dir",
+    "--work-tree",
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +86,7 @@ def literal_command(command, shell):
 def shell_read(arguments):
     if not isinstance(arguments, dict) or set(arguments) - SHELL_ARGUMENT_KEYS:
         return False
-    if arguments.get("background"):
+    if arguments.get("background") or arguments.get("yield_seconds") is not None:
         return False
     # The actual executor uses this same platform default.
     import os
@@ -87,6 +99,10 @@ def shell_read(arguments):
         # These ripgrep flags invoke external programs. Do not inspect the
         # pattern after -- as flags, but conservatively reject it if ambiguous.
         return not any(word.lower().startswith(("--pre", "--hostname-bin")) for word in words[1:])
+    if program in {"git", "git.exe"}:
+        if len(words) < 2 or words[1].lower() not in GIT_SAFE_SUBCOMMANDS:
+            return False
+        return not any(word.lower().startswith(GIT_UNSAFE_FLAGS) for word in words[2:])
     if shell == "powershell":
         return program in {"get-content", "get-childitem", "get-item", "get-location", "test-path", "select-string"}
     return program in {"pwd", "cat", "head", "tail", "wc", "ls"}

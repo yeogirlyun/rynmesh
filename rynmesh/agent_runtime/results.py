@@ -12,6 +12,67 @@ from .store import AgentError, encoded
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 CHANNEL = b"rynmesh-agent-result-v1"
+WORKSTATION_INLINE_PREVIEW_FIELDS = {
+    "ryn_file_read": "text",
+    "ryn_shell_execute": "output",
+    "ryn_process_read": "output",
+    "ryn_code_exec": "output",
+}
+
+
+def truncate_head_tail(text: str, max_chars: int, *, reference_id: str | None = None) -> str:
+    """Codex truncate.rs-aligned head + tail string truncation."""
+    if not isinstance(text, str) or len(text) <= max_chars or max_chars <= 0:
+        return text if isinstance(text, str) else ""
+    ref_hint = f"; full output in {reference_id}" if reference_id else ""
+    marker_reserve = 96 + len(ref_hint)
+    if max_chars <= marker_reserve:
+        return text[:max_chars]
+    budget = max_chars - marker_reserve
+    head_budget = budget // 2
+    tail_budget = budget - head_budget
+    omitted = max(0, len(text) - head_budget - tail_budget)
+    marker = f"\n... [{omitted} chars truncated{ref_hint}] ...\n"
+    return text[:head_budget] + marker + (text[len(text) - tail_budget:] if tail_budget > 0 else "")
+
+
+def format_reference_result(
+    tool_name: str,
+    result: object,
+    reference: dict,
+    *,
+    max_bytes: int,
+    note: str = "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome.",
+) -> dict:
+    base = {
+        "result_ref": reference["id"],
+        "output_sha256": reference["sha256"],
+        "bytes": reference["bytes"],
+        "note": note,
+    }
+    field = WORKSTATION_INLINE_PREVIEW_FIELDS.get(tool_name)
+    if not field or not isinstance(result, dict) or not isinstance(result.get(field), str):
+        return base
+    preview = {
+        key: value
+        for key, value in result.items()
+        if key != field and isinstance(value, (str, int, float, bool, type(None)))
+    }
+    preview.update(base)
+    preview["truncated_inline"] = True
+    overhead = len(encoded({**preview, field: ""}))
+    available_bytes = max_bytes - overhead - 64
+    if available_bytes < 128:
+        return base
+    raw_text = result[field]
+    char_limit = min(len(raw_text), available_bytes)
+    while char_limit >= 64:
+        candidate_text = truncate_head_tail(raw_text, char_limit, reference_id=reference["id"])
+        candidate = {**preview, field: candidate_text}
+        if len(encoded(candidate)) <= max_bytes:
+            return candidate
+        char_limit = int(char_limit * 0.75) - 16
+    return base
 
 
 def path(store, task_id, result_id):
