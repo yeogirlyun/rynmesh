@@ -413,6 +413,8 @@ class NativeComputerFacade:
     @property
     def bridge(self) -> NativeBridge:
         with self._lock:
+            if self._explicit_bridge is not None and not isinstance(self._explicit_bridge, NativeBridge):
+                return self._explicit_bridge
             return bind_node_native_bridge(self._owner, bridge=self._explicit_bridge)
 
     def _get_task_state_locked(
@@ -1503,17 +1505,27 @@ class NativeComputerFacade:
         try:
             obs_rec = self._require_observed_window_state(task_id, hwnd, context=context)
         except AgentToolRejected:
-            if action_name != "focus":
+            if legacy_local and action_name != "focus":
                 raise
-            # Focusing an enumerated window needs no model-chosen coordinates.
-            # Acquire its token read-only before preview; activation still goes
-            # through the normal authorized prepare/commit path.
+            # Any window already enumerated in this task via computer_observe_windows
+            # can acquire its initial state token on demand before preview; activation
+            # still goes through the normal authorized prepare/commit path.
             entry = self._require_observed_window_ref(task_id, hwnd, context=context)
             try:
-                observation = self.bridge.get_state(task_session_id=task_id, window=entry["window"],
-                                                    include_screenshot=False, include_text=False)
-                obs_rec, _ = self._ingest_observation(task_id=task_id, operation_id="focus_preview",
-                                                     obs=observation, window_meta=entry, context=context)
+                need_elements = bool(arguments.get("element_id") is not None)
+                observation = self.bridge.get_state(
+                    task_session_id=task_id,
+                    window=entry["window"],
+                    include_screenshot=False,
+                    include_text=need_elements,
+                )
+                obs_rec, _ = self._ingest_observation(
+                    task_id=task_id,
+                    operation_id="focus_preview",
+                    obs=observation,
+                    window_meta=entry,
+                    context=context,
+                )
             except NativeBridgeError as exc:
                 self._translate_bridge_exception(exc, is_write=False)
         win_rect = obs_rec.geometry["windowRect"]
@@ -1526,13 +1538,23 @@ class NativeComputerFacade:
 
         element_info: dict[str, Any] | None = None
         raw_action: dict[str, Any]
+        effective_action = (
+            "type"
+            if (
+                action_name == "click"
+                and not legacy_local
+                and isinstance(arguments.get("text"), str)
+                and bool(arguments.get("text"))
+            )
+            else action_name
+        )
 
-        if action_name == "focus":
+        if effective_action == "focus":
             raw_action = {
                 "type": "focus_window",
                 "restoreIfMinimized": True,
             }
-        elif action_name == "click":
+        elif effective_action == "click":
             has_xy = "x" in arguments or "y" in arguments
             has_el = arguments.get("element_id") is not None
             if has_xy and has_el:
@@ -1565,13 +1587,17 @@ class NativeComputerFacade:
                     "target": pt,
                     "element": None,
                 }
-        elif action_name == "type":
+        elif effective_action == "type":
             text = arguments.get("text")
             if not isinstance(text, str) or not text:
                 raise AgentToolRejected("agent_computer_text_required")
+            has_xy = "x" in arguments or "y" in arguments
+            has_el = arguments.get("element_id") is not None
+            if has_xy and has_el and not legacy_local:
+                raise AgentToolRejected("agent_tool_arguments_invalid")
             target_pt: dict[str, Any] | None = None
             target_el: dict[str, Any] | None = None
-            if arguments.get("element_id") is not None and not legacy_local:
+            if has_el and not legacy_local:
                 element_info = self._resolve_element_in_observation(
                     obs_rec,
                     arguments.get("element_id"),
@@ -1582,7 +1608,7 @@ class NativeComputerFacade:
                     "index": int(element_info["index"]),
                     "runtimeId": str(element_info["runtime_id"]),
                 }
-            elif ("x" in arguments or "y" in arguments) and not legacy_local:
+            elif has_xy and not legacy_local:
                 target_pt = self._screen_point_to_window_physical(
                     obs_rec, arguments.get("x"), arguments.get("y")
                 )
@@ -1672,6 +1698,26 @@ class NativeComputerFacade:
         else:
             raise AgentToolRejected("agent_computer_action_unsupported")
 
+        follow_up_action: dict[str, Any] | None = None
+        if (
+            not legacy_local
+            and action_name in {"type", "click", "set_value"}
+            and arguments.get("key") is not None
+        ):
+            raw_key_str = arguments.get("key")
+            if not isinstance(raw_key_str, str) or not raw_key_str.strip():
+                raise AgentToolRejected("agent_computer_keys_required")
+            parts = [p.strip() for p in raw_key_str.split("+") if p.strip()]
+            if not parts:
+                raise AgentToolRejected("agent_computer_keys_required")
+            norm_keys = [normalize_key_token(p) for p in parts]
+            follow_up_raw = (
+                {"type": "key_press", "key": norm_keys[0], "repeat": 1}
+                if len(norm_keys) == 1
+                else {"type": "key_chord", "keys": norm_keys}
+            )
+            follow_up_action = normalize_action_spec(follow_up_raw, phase="pre_dispatch")
+
         normalized_action = normalize_action_spec(raw_action, phase="pre_dispatch")
         fp = compute_action_fingerprint(
             task_id,
@@ -1679,7 +1725,7 @@ class NativeComputerFacade:
             obs_rec.state_token,
             normalized_action,
         )
-        return {
+        plan_out = {
             "task_id": task_id,
             "hwnd": hwnd,
             "sky_window_id": obs_rec.sky_window_id,
@@ -1693,6 +1739,9 @@ class NativeComputerFacade:
             "action_fingerprint": fp,
             "element": copy.deepcopy(element_info) if element_info is not None else None,
         }
+        if follow_up_action is not None:
+            plan_out["follow_up_action"] = follow_up_action
+        return plan_out
 
     # =========================================================================
     # Builtin MCP `computer-use` Entry Points
@@ -1778,6 +1827,13 @@ class NativeComputerFacade:
                         }
                     )
 
+            windows_out.sort(
+                key=lambda w: (
+                    not w.get("foreground", False),
+                    bool(w.get("minimized", False)),
+                    not bool(str(w.get("title") or "").strip()),
+                )
+            )
             fg_wref = raw_list.get("foregroundWindow")
             structured = {
                 "captured_at": raw_list["capturedAt"],
@@ -1785,12 +1841,22 @@ class NativeComputerFacade:
                 "count": len(windows_out),
                 "foreground_hwnd": int(fg_wref["hwnd"], 10) if isinstance(fg_wref, Mapping) else None,
             }
-            txt = (f"Observed {len(windows_out)} windows. Window metadata is in structuredContent. "
-                   "For a background window, use action='focus' first. Successful actions return a fresh "
-                   "observation and screenshot; use that state for the next action without a redundant read. "
-                   "Reuse the current UI: if the requested target is already open and visibly identified, "
-                   "continue there instead of repeating navigation or search. For custom-drawn apps, a sparse "
-                   "accessibility tree is normal; use the screenshot to select visible controls.")
+            summary_lines = [
+                f"- hwnd={w['hwnd']} title={w['title']!r} proc={w['process_name']} rect={w['rect']}"
+                + (" [foreground]" if w.get("foreground") else "")
+                + (" [minimized]" if w.get("minimized") else "")
+                for w in windows_out[:25]
+            ]
+            summary_block = ("\n".join(summary_lines) + "\n") if summary_lines else ""
+            txt = (
+                f"Observed {len(windows_out)} windows.\n{summary_block}"
+                "Next step: call computer_read_window(hwnd=..., include_screenshot=true) on the target hwnd to inspect "
+                "its controls and screenshot (works even on background windows; do NOT call action='focus' first). "
+                "When acting with computer_act_window, every click/type/key action automatically activates the window, "
+                "and you can combine clicking a field, typing text, and pressing a key (e.g. key='Enter') in ONE "
+                "computer_act_window call by passing action='type' with x, y (or element_id), text, and optional key. "
+                "Successful actions return a fresh observation and screenshot; use that state directly without a redundant read."
+            )
             return {
                 "server_id": str(binding["server_id"]),
                 "tool": str(binding["original_tool_name"]),
@@ -1857,7 +1923,7 @@ class NativeComputerFacade:
                 # Full runtime IDs and UIA metadata stay in the trusted observation.
                 # The model needs actionable IDs, labels, state and coordinates.
                 "elements": [{k: copy.deepcopy(v) for k, v in element.items()
-                              if k in {"id", "name", "type", "value", "password", "enabled",
+                              if k in {"id", "index", "name", "type", "value", "password", "enabled",
                                        "offscreen", "focused", "x", "y", "depth", "patterns", "bounds"}}
                              for element in obs_record.elements],
                 "element_count": len(obs_record.elements),
@@ -1869,7 +1935,7 @@ class NativeComputerFacade:
                     for item in public_artifacts
                 ]
 
-            txt = f"Read window {obs_record.hwnd}: {obs_record.window_title}. Controls are in structuredContent."
+            txt = f"Read window {obs_record.hwnd}: {obs_record.window_title[:48]}. Controls are in structuredContent."
             content_blocks: list[dict[str, Any]] = [{"type": "text", "text": txt}]
             for art in public_artifacts:
                 content_blocks.append(
@@ -1958,6 +2024,8 @@ class NativeComputerFacade:
         if plan["element"] is not None:
             preview_out["element"] = {("is_password" if k == "password" else k): v
                                       for k, v in plan["element"].items()}
+        if plan.get("follow_up_action") is not None:
+            preview_out["follow_up_action"] = copy.deepcopy(plan["follow_up_action"])
         return preview_out
 
     def execute_mcp_write(
@@ -2021,6 +2089,30 @@ class NativeComputerFacade:
         except NativeBridgeError as exc:
             self._translate_bridge_exception(exc, is_write=True)
 
+        follow_up_spec = approved_preview.get("follow_up_action")
+        if (
+            isinstance(follow_up_spec, Mapping)
+            and isinstance(commit_res.get("observation"), Mapping)
+            and commit_res["observation"].get("stateToken")
+            and not cancelled()
+        ):
+            next_token = str(commit_res["observation"]["stateToken"])
+            try:
+                follow_res = self.bridge.execute_action(
+                    task_session_id=task_id,
+                    operation_id=f"{operation_id}_followup",
+                    window=frozen_wref,
+                    expected_state_token=next_token,
+                    action=copy.deepcopy(dict(follow_up_spec)),
+                    on_ready=lambda _r: not cancelled(),
+                    cancelled=cancelled,
+                    post_observation={"enabled": True, "settleDelayMs": 40},
+                )
+                if isinstance(follow_res.get("observation"), Mapping):
+                    commit_res["observation"] = follow_res["observation"]
+            except NativeBridgeError:
+                pass
+
         with self._lock:
             tstate = self._tasks.get(task_id)
             if tstate is not None:
@@ -2057,14 +2149,14 @@ class NativeComputerFacade:
             "action_fingerprint": str(commit_res["actionFingerprint"]),
             "mutation": str(commit_res["mutation"]),
             "focus_recovery": copy.deepcopy(dict(commit_res["focusRecovery"])),
-            "next_step": ("Use the returned fresh observation and screenshot to verify the effect and choose "
-                          "the next action. Do not call computer_read_window again unless this observation is "
-                          "missing or a subsequent UI change requires it. After clicking a visible text field, "
-                          "use action='type' to enter the intended text; an empty accessibility tree does not "
-                          "require more focus clicks. If the target is already open, continue the requested "
-                          "work there. If an action did not help, change the approach instead of cycling the "
-                          "same clicks or Escape. Never replay an uncertain send.") if post_record else
-                         "The action committed but its new observation is unavailable. Read the window to verify; do not replay the action.",
+            "next_step": (
+                "The fresh post-action observation and screenshot are ALREADY attached to this result. "
+                "If the screenshot shows the user's goal is complete (e.g. message sent, UI updated), finish and reply "
+                "to the user IMMEDIATELY—do NOT call computer_read_window again to re-verify. "
+                "Otherwise use this observation directly for the next action (you can pass action='type' with x, y, "
+                "text, and optional key='Enter' in a single call). Never replay an uncertain send."
+            ) if post_record else
+            "The action committed but its new observation is unavailable. Read the window to verify; do not replay the action.",
         }
         if post_record:
             bounds = post_record.geometry["windowRect"]

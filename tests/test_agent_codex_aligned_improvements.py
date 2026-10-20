@@ -600,3 +600,56 @@ def test_phase2_upgrade5_codex_tools_markdown_fence_tolerance():
     assert msg["content"] == "Listing directory"
     assert len(msg["tool_calls"]) == 1
     assert msg["tool_calls"][0]["function"]["name"] == "ryn_file_list"
+
+
+def test_phase3_universal_mcp_and_computer_use_speed_optimizations(tmp_path: Path):
+    from rynmesh.agent_runtime import results
+    from rynmesh.agent_runtime.extensions import COMPUTER_USE_PLUGIN_ID, COMPUTER_USE_SERVER_ID, ExtensionStore
+    from rynmesh.services import peer_box
+
+    # 1. MCP / computer-use oversized results get inline structured_preview + text instead of bare blind-box
+    ref = {"id": "result_" + "b" * 32, "sha256": "c" * 64, "bytes": 16000}
+    mcp_payload = {
+        "server_id": "computer-use",
+        "tool": "computer_observe_windows",
+        "model_tool_name": "mcp__computer_use__computer_observe_windows__10ed2a80",
+        "is_error": False,
+        "text": "Observed 31 windows.\n- hwnd=2689908 title='微信' proc=Weixin.exe rect=[586, 93, 1445, 863]",
+        "structuredContent": {
+            "windows": [{"hwnd": 2689908, "title": "微信", "padding": "X" * 9000}],
+            "count": 31,
+        },
+    }
+    inline_mcp = results.format_reference_result(
+        "mcp__computer_use__computer_observe_windows__10ed2a80",
+        mcp_payload,
+        ref,
+        max_bytes=4000,
+    )
+    assert inline_mcp["result_ref"] == ref["id"]
+    assert inline_mcp.get("truncated_inline") is True
+    assert "2689908" in inline_mcp.get("text", "")
+    assert "structured_preview" in inline_mcp
+    assert "2689908" in inline_mcp["structured_preview"]
+
+    # 2. ExtensionStore caches decrypted state in memory by (mtime_ns, size)
+    key = peer_box.load_or_create_messaging_key(tmp_path / "messaging.key")
+    ext_store = ExtensionStore(tmp_path / "agent", key)
+    ext_store.set_plugin_enabled(COMPUTER_USE_PLUGIN_ID, True, desktop_access=True)
+    open_calls = 0
+    orig_open = peer_box.open_sealed
+
+    def counting_open(*a, **kw):
+        nonlocal open_calls
+        open_calls += 1
+        return orig_open(*a, **kw)
+
+    peer_box.open_sealed = counting_open
+    try:
+        for _ in range(5):
+            srvs = ext_store.list_enabled_mcp_servers_internal()
+            assert any(s["id"] == COMPUTER_USE_SERVER_ID for s in srvs)
+        assert open_calls == 0
+    finally:
+        peer_box.open_sealed = orig_open
+

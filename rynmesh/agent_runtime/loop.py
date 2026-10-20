@@ -813,7 +813,13 @@ class AgentLoop:
             if "extension_binding" in call and meta.get("extension_binding") != call["extension_binding"]:
                 raise AgentToolRejected("agent_tool_definition_changed")
             # Revalidate schema immediately before dispatch, not merely model output.
-            spec = next((item["function"] for item in self.tools.specs() if item["function"]["name"] == call["name"]), None)
+            spec = (
+                self.tools.spec(call["name"])
+                if hasattr(self.tools, "spec")
+                and getattr(getattr(self.tools, "specs", None), "__func__", None)
+                is getattr(type(self.tools), "specs", None)
+                else next((item["function"] for item in self.tools.specs() if item["function"]["name"] == call["name"]), None)
+            )
             if spec is None:
                 raise AgentError("agent_tool_unavailable")
             if "schema_snapshot" in call:  # Old queued sessions retain their previous validation path.

@@ -51,27 +51,68 @@ def format_reference_result(
         "note": note,
     }
     field = WORKSTATION_INLINE_PREVIEW_FIELDS.get(tool_name)
-    if not field or not isinstance(result, dict) or not isinstance(result.get(field), str):
+    if field and isinstance(result, dict) and isinstance(result.get(field), str):
+        preview = {
+            key: value
+            for key, value in result.items()
+            if key != field and isinstance(value, (str, int, float, bool, type(None)))
+        }
+        preview.update(base)
+        preview["truncated_inline"] = True
+        overhead = len(encoded({**preview, field: ""}))
+        available_bytes = max_bytes - overhead - 64
+        if available_bytes < 128:
+            return base
+        raw_text = result[field]
+        char_limit = min(len(raw_text), available_bytes)
+        while char_limit >= 64:
+            candidate_text = truncate_head_tail(raw_text, char_limit, reference_id=reference["id"])
+            candidate = {**preview, field: candidate_text}
+            if len(encoded(candidate)) <= max_bytes:
+                return candidate
+            char_limit = int(char_limit * 0.75) - 16
         return base
-    preview = {
-        key: value
-        for key, value in result.items()
-        if key != field and isinstance(value, (str, int, float, bool, type(None)))
-    }
-    preview.update(base)
-    preview["truncated_inline"] = True
-    overhead = len(encoded({**preview, field: ""}))
-    available_bytes = max_bytes - overhead - 64
-    if available_bytes < 128:
-        return base
-    raw_text = result[field]
-    char_limit = min(len(raw_text), available_bytes)
-    while char_limit >= 64:
-        candidate_text = truncate_head_tail(raw_text, char_limit, reference_id=reference["id"])
-        candidate = {**preview, field: candidate_text}
-        if len(encoded(candidate)) <= max_bytes:
-            return candidate
-        char_limit = int(char_limit * 0.75) - 16
+
+    if (
+        isinstance(result, dict)
+        and (tool_name.startswith("mcp__") or tool_name in {"ryn_computer_read", "ryn_computer_action"})
+    ):
+        preview = {
+            key: value
+            for key, value in result.items()
+            if key not in {"structuredContent", "content", "native_observation_artifacts"}
+            and isinstance(value, (str, int, float, bool, type(None)))
+        }
+        if isinstance(result.get("images"), list):
+            imgs_bytes = len(encoded(result["images"]))
+            if imgs_bytes <= max(1024, max_bytes // 3):
+                preview["images"] = result["images"]
+        preview.update(base)
+        preview["truncated_inline"] = True
+        if isinstance( preview.get("text"), str) and len(preview["text"]) > max(512, max_bytes // 3):
+            preview["text"] = truncate_head_tail(
+                preview["text"], max(256, max_bytes // 4), reference_id=reference["id"]
+            )
+        structured_obj = (
+            result.get("structuredContent")
+            if "structuredContent" in result
+            else {k: v for k, v in result.items() if k not in preview and k != "native_observation_artifacts"}
+        )
+        raw_structured = encoded(structured_obj).decode("utf-8", errors="replace")
+        overhead = len(encoded({**preview, "structured_preview": ""}))
+        available_bytes = max_bytes - overhead - 64
+        if available_bytes >= 128:
+            char_limit = min(len(raw_structured), available_bytes)
+            while char_limit >= 64:
+                candidate_preview = truncate_head_tail(
+                    raw_structured, char_limit, reference_id=reference["id"]
+                )
+                candidate = {**preview, "structured_preview": candidate_preview}
+                if len(encoded(candidate)) <= max_bytes:
+                    return candidate
+                char_limit = int(char_limit * 0.75) - 16
+        if len(encoded(preview)) <= max_bytes:
+            return preview
     return base
 
 
