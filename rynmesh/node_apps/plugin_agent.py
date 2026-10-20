@@ -45,7 +45,7 @@ SPECS += [
     }},
     {"type": "function", "function": {
         "name": ALL_INFO,
-        "description": "Inspect one verified enabled local plugin. For Resume, Recruit and Desk returns exact operation schemas and fresh workspace_context; copy that context into ryn_node_app_action.reviewed_context. NAS returns exact resource tools and scope guidance. Craft metadata does not edit documents or open an editor.",
+        "description": "Inspect one verified enabled local plugin. For Resume, Recruit and Desk returns exact operation schemas and fresh workspace_context; pass that context into ryn_node_app_action.reviewed_context (or omit reviewed_context to resolve fresh context automatically). NAS returns exact resource tools and scope guidance. Craft metadata does not edit documents or open an editor.",
         "parameters": {"type": "object", "properties": {"app": {"type": "string", "maxLength": 32}},
                        "required": ["app"], "additionalProperties": False},
     }},
@@ -100,6 +100,8 @@ class PluginTools:
                     else:
                         item.update(discovery_tool=ALL_INFO,
                                     execution_tool="ryn_node_app_action" if row["id"] in BUSINESS else "ryn_list_resource_roots")
+                        if row["id"] in BUSINESS and row["id"] in CATALOG:
+                            item["operations"] = list(CATALOG[row["id"]]["operations"])
                     plugins.append(item)
                 if name == LIST:
                     return {"plugins": plugins}
@@ -123,7 +125,7 @@ class PluginTools:
                             raise AgentToolRejected("agent_node_apps_unavailable")
                         info.update(operations=copy.deepcopy(CATALOG[row["id"]]["operations"]),
                                     workspace_context=service.call("", "context", {"app": row["id"]}),
-                                    operation_guidance="Load ryn_node_app_action if absent. Choose an operation and arguments from operations; copy this complete workspace_context into reviewed_context, and use this app. The runtime stages exact owner approval, including private reads and model data release. Fetch this info again after a write or apps_review_changed; never invent or reuse stale context.")
+                                    operation_guidance="Load ryn_node_app_action if absent. Choose an operation and arguments from operations; pass workspace_context into reviewed_context (or omit reviewed_context for automatic current context) and use this app. The runtime stages exact owner approval, including private reads and model data release. Fetch this info again after a write or apps_review_changed; never invent or reuse stale context.")
                     else:
                         info.update(execution_tools=copy.deepcopy(row["agent_tools"]),
                                     scope_guidance="Load and call ryn_list_resource_roots first. Only returned task-authorized resource_ref values grant access. If roots is empty, ask the owner to select NAS files or directories in the Agent resource scope and allow data release to the selected model. Use ryn_list_resources, ryn_read_resource and ryn_search_resource within those grants; create tools additionally require a writable create grant and operation approval. Enabling NAS alone grants no resource access.")

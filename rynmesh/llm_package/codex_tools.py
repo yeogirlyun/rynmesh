@@ -282,7 +282,7 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
         output_schema = _response_schema(tools, strict=True)
     except ValueError:
         output_schema = None
-    budget = body.get("max_tokens") or 512
+    budget = body.get("max_tokens") or 2048
     strict = output_schema is not None
     conversation = Conversation(body["messages"], tools,
                                 render=lambda update: _continuation(update, choice, budget, strict=strict), scope=scope)
@@ -314,7 +314,18 @@ def chat(adapter, body, *, task_id, timeout_s, model="", on_event=None, scope=No
 def _validated(result, tools, required, *, restore_omitted=False):
     reason = "response_json"
     try:
-        value = json.loads(result["text"])
+        raw_text = result["text"]
+        try:
+            value = json.loads(raw_text)
+        except (ValueError, TypeError):
+            stripped = raw_text.strip() if isinstance(raw_text, str) else ""
+            if stripped.startswith("```") and stripped.endswith("```"):
+                inner = stripped[3:-3].strip()
+                if inner.lower().startswith("json") and inner[4:5] in {"\n", "\r", " ", "\t"}:
+                    inner = inner[4:].strip()
+                value = json.loads(inner)
+            else:
+                raise
         reason = "response_shape"
         if not isinstance(value, dict) or set(value) != {"content", "tool_calls"} or not isinstance(value["content"], str):
             raise ValueError()

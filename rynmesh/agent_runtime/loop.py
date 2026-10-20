@@ -51,7 +51,9 @@ ALL_INTERNAL_NAMES = INTERNAL_NAMES | memory_integration.MEMORY_TOOL_NAMES
 
 # Side-effect-free workstation reads that one model response may run concurrently.
 PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search", "ryn_process_read",
-                            "ryn_project_inspect", "ryn_local_environment"})
+                            "ryn_project_inspect", "ryn_local_environment", "ryn_list_plugins",
+                            "ryn_plugin_info", "ryn_list_craft_plugins", "ryn_craft_editor_info",
+                            "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read"})
 MAX_PARALLEL_READS = 8
 # Streaming text has an immediate in-memory display projection. Keep recoverable
 # checkpoints coalesced instead of encrypting the task for every token.
@@ -965,8 +967,12 @@ class AgentLoop:
                 post_persistence_seconds += max(0.0, time.monotonic() - t0)
                 if origin:
                     reference["resource_origin"] = origin
-                result = {"result_ref": reference["id"], "output_sha256": reference["sha256"], "bytes": result_size,
-                          "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome."}
+                result = results.format_reference_result(
+                    call["name"],
+                    result,
+                    reference,
+                    max_bytes=selected["limits"]["max_output_chars"],
+                )
 
             store_persistence_seconds = claim_persistence_seconds + prep_persistence_seconds + post_persistence_seconds
             tool_timing = {"scheduler_wait_seconds": round(float(selected.get("_scheduler_wait_seconds", 0.0)), 4),
@@ -1177,8 +1183,12 @@ class AgentLoop:
                     if origin:
                         reference["resource_origin"] = origin
                     row.setdefault("result_refs", []).append(reference)
-                    result = {"result_ref": reference["id"], "output_sha256": reference["sha256"], "bytes": size,
-                              "note": "Full output is encrypted locally. Use ryn_read_result for bounded pages; this reference is not proof of the requested outcome."}
+                    result = results.format_reference_result(
+                        call["name"],
+                        result,
+                        reference,
+                        max_bytes=selected["limits"]["max_output_chars"],
+                    )
                 shown = {**result, "server_note": notice} if notice and index == len(batch) - 1 and isinstance(result, dict) else result
                 message = {"role": "tool", "tool_call_id": call["call_id"], "content": encoded(shown).decode(),
                            "context_epoch": selected.get("context_epoch", 0)}

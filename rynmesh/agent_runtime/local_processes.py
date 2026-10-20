@@ -320,12 +320,15 @@ class Processes:
             raise AgentError("agent_process_input_unconfirmed")
         return {"process_id": ident, "input_delivered": True, "eof": eof}
 
-    def wait(self, ident, task_id, cancelled):
+    def wait(self, ident, task_id, cancelled, *, yield_seconds=None):
         item = self.get(ident, task_id)
+        deadline = (time.monotonic() + float(yield_seconds)) if yield_seconds is not None else None
         while item["process"].poll() is None:
             if cancelled():
                 self.stop(ident, task_id)
                 break
+            if deadline is not None and time.monotonic() >= deadline:
+                return self.read(ident, task_id, wait_seconds=0)
             time.sleep(0.05)
         item["reader_done"].wait(2)
         return self.read(ident, task_id, wait_seconds=0)
@@ -353,6 +356,11 @@ def literal_read_command(arguments):
     shell = arguments.get("shell", "powershell" if os.name == "nt" else "sh")
     words = literal_command(arguments["command"], shell)
     program = words[0].lower()
+    if program in {"git", "git.exe"}:
+        executable = shutil.which("git") or (shutil.which("git.exe") if os.name == "nt" else None)
+        if not executable:
+            raise AgentToolRejected("agent_shell_unavailable")
+        return [executable, "--no-pager", *words[1:]]
     if program in {"rg", "rg.exe"} or shell == "sh":
         executable = resolve_rg_executable() if program in {"rg", "rg.exe"} else shutil.which(program)
         if not executable:

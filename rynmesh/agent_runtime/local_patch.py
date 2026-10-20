@@ -179,15 +179,44 @@ def parse(text: str) -> list[dict]:
     return operations
 
 
+_UNICODE_PUNCT_TABLE = str.maketrans({
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201a": "'",
+    "\u201b": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u201e": '"',
+    "\u201f": '"',
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2015": "-",
+    "\u2212": "-",
+    "\u00a0": " ",
+    "\u202f": " ",
+    "\u205f": " ",
+    "\u3000": " ",
+    "\u2026": "...",
+})
+
+
+def normalize_unicode_punctuation(value: str) -> str:
+    """Codex seek_sequence.rs-aligned Unicode punctuation normalization preserving leading indentation."""
+    return value.translate(_UNICODE_PUNCT_TABLE).rstrip()
+
+
 def _find_matches(
     lines: list[str],
     pattern: list[str],
     start: int,
     eof: bool,
     *,
-    normalizers=(lambda value: value, str.rstrip),
+    normalizers=(lambda value: value, str.rstrip, normalize_unicode_punctuation),
 ) -> list[int]:
-    """All matches at or after start on the immutable file lines: exact first, then trailing-whitespace normalized."""
+    """All matches at or after start on the immutable file lines: exact first, then trailing-whitespace, then Unicode-normalized."""
     last = len(lines) - len(pattern)
     if last < start:
         return []
@@ -273,7 +302,12 @@ def apply_hunks(text: str, hunks: list[dict], *, path: str | None = None) -> str
                 [hunk["anchor"]],
                 0,
                 False,
-                normalizers=(lambda value: value, str.rstrip, str.strip),
+                normalizers=(
+                    lambda value: value,
+                    str.rstrip,
+                    str.strip,
+                    lambda value: normalize_unicode_punctuation(value).lstrip(),
+                ),
             )
             if not anchor_matches:
                 hint = _best_hint_line(lines, [hunk["anchor"], *hunk["old"]], 0)

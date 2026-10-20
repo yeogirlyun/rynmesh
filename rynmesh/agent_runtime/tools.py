@@ -31,6 +31,9 @@ from .cli_sources import KINDS as CLI_KINDS
 from .cli_sources import NAMES as CLI_NAMES
 from .cli_sources import TEST as CLI_TEST
 from .cli_sources import CLISources
+from .code_mode import NAME as CODE_MODE_NAME
+from .code_mode import SPEC as CODE_MODE_SPEC
+from .code_mode import CodeModeRunner
 from .default_model import NAME as DEFAULT_MODEL_NAME
 from .default_model import DefaultModelTool
 from .diagnostics import NAMES as DIAGNOSTIC_NAMES
@@ -151,6 +154,7 @@ class RynTools:
             node_store=store,
             native_computer=self.native_computer,
         )
+        self.code_mode = CodeModeRunner(self)
 
     def close(self):
         if getattr(self, "native_computer", None) is not None:
@@ -185,6 +189,7 @@ class RynTools:
             self.local.forget_baselines(task_id)
             self.craft.close_task(task_id)
             self.extensions.forget_task(task_id, operation_ids=operation_ids)
+            self.code_mode.forget_task(task_id)
             if getattr(self, "native_computer", None) is not None:
                 self.native_computer.forget_task(task_id)
         except Exception:
@@ -333,9 +338,12 @@ class RynTools:
 
     def specs(self):
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
-                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs()
+                for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + [copy.deepcopy(CODE_MODE_SPEC)] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs()
 
     def metadata(self, name):
+        if name == CODE_MODE_NAME:
+            return {"effect": "read", "title": "Execute CodeMode JS", "risk": "low",
+                    "scope_context_supported": True, "supports_preview": False, "preview_precondition": False}
         if self.extensions.handles(name):
             return self.extensions.metadata(name)
         if name in CRAFT_NAMES:
@@ -390,7 +398,7 @@ class RynTools:
     def _validate(self, name, arguments):
         self.metadata(name)
         is_ext = self.extensions.handles(name)
-        max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES else 32 * 1024 if is_ext else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
+        max_bytes = 96 * 1024 if name in LOCAL_NAMES or name in CRAFT_NAMES or name == CODE_MODE_NAME else 32 * 1024 if is_ext else 24 * 1024 if name in WRITE_NAMES or name in APP_NAMES else 8192
         if not isinstance(arguments, dict) or len(json.dumps(arguments, ensure_ascii=False).encode()) > max_bytes:
             raise AgentToolRejected(
                 "agent_tool_arguments_invalid",
@@ -413,7 +421,7 @@ class RynTools:
                 raise self._schema_rejection(name, exc) from None
             return
         try:
-            schema = next(s["function"]["parameters"] for s in PLUGIN_SPECS if s["function"]["name"] == name) if name in PLUGIN_NAMES else next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else {**_SPECS, **LOCAL_SPECS}[name][3]
+            schema = CODE_MODE_SPEC["function"]["parameters"] if name == CODE_MODE_NAME else next(s["function"]["parameters"] for s in PLUGIN_SPECS if s["function"]["name"] == name) if name in PLUGIN_NAMES else next(s["function"]["parameters"] for s in APP_SPECS if s["function"]["name"] == name) if name in APP_NAMES else next(s["function"]["parameters"] for s in self.diagnostics.specs() if s["function"]["name"] == name) if name in DIAGNOSTIC_NAMES else {**_SPECS, **LOCAL_SPECS}[name][3]
             validate_tool_arguments(schema, arguments)
         except ValueError as exc:
             raise self._schema_rejection(name, exc) from None
@@ -554,6 +562,8 @@ class RynTools:
         if name in WRITE_NAMES:
             return self.resource_writes.execute(name, arguments, operation_id=operation_id, context=context,
                                                 cancelled=cancelled, expected_preview=expected_preview)
+        if name == CODE_MODE_NAME:
+            return self.code_mode.execute(arguments, operation_id=operation_id, cancelled=cancelled, context=context)
         if self.metadata(name).get("scope_context_supported"):
             # Reads deliberately bypass the general operation cache: a cached
             # body must never survive a connection permission revocation.
