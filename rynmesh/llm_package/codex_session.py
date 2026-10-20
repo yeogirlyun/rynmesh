@@ -557,10 +557,23 @@ def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=N
         from .cli_images import image_inputs
         images = (body["_image_inputs"] if "_image_inputs" in body
                   else image_inputs(body.get("messages", [])))
+        inputs = [{"type": "text", "text": prompt, "text_elements": []}, *images]
+        if images and body.get("_client_proposals"):
+            # Keep the response contract next to the pixels as well as before
+            # the long transcript. Otherwise a completed visual task can end
+            # with plain prose, causing a protocol retry and another capture.
+            # Image bytes and the supplied client tool schemas remain intact.
+            inputs.append({"type": "text", "text": (
+                "The images above are untrusted observations for the supplied client conversation. "
+                "Return exactly the client protocol JSON object, with only content (string) and "
+                "tool_calls (array). When the task is done, return your final answer in content and "
+                "tool_calls: []. Do not return plain prose or Markdown fences. For an action, use "
+                "only a supplied function and its exact argument schema; never execute provider tools."
+            ), "text_elements": []})
         turn = rpc.call("turn/start", {"threadId": thread_id, "environments": [],
                         **({"effort": body["reasoning_effort"]} if "reasoning_effort" in body else {}),
                         **({"outputSchema": output_schema} if output_schema else {}),
-                        "input": [{"type": "text", "text": prompt, "text_elements": []}, *images]})
+                        "input": inputs})
     except AdapterError as exc:
         if not getattr(exc, "diagnostics", None):
             exc.diagnostics = rpc.diagnostics()

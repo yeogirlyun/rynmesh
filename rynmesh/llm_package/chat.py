@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import math
 import re
@@ -14,6 +15,10 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
 
 from .adapters import actual_usage
+from .image_input_profile import (
+    current_internal_image_profile,
+    verify_messages_against_profile,
+)
 from .reasoning import validate_effort
 from .safety import MAX_REQUEST
 
@@ -100,8 +105,10 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("messages must be a non-empty array")
+    active_profile = current_internal_image_profile()
+    total_profile_images = 0
     pending: set[str] = set()
-    for message in messages:
+    for msg_idx, message in enumerate(messages):
         if not isinstance(message, dict) or message.get("role") not in {"system", "developer", "user", "assistant", "tool"}:
             raise ValueError("invalid message role")
         if set(message) - {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content", "provider_state", "is_error"}:
@@ -117,7 +124,7 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
         content = message.get("content")
         if isinstance(content, list):
             images = 0
-            for part in content:
+            for part_idx, part in enumerate(content):
                 if not isinstance(part, dict):
                     raise ValueError("invalid content part")
                 if part.get("type") == "text" and isinstance(part.get("text"), str) and not set(part) - {"type", "text"}:
@@ -128,15 +135,35 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
                 if not isinstance(image, dict) or set(image) - {"url", "detail"} or not isinstance(image.get("detail", "auto"), str) or image.get("detail", "auto") not in {"auto", "low", "high"}:
                     raise ValueError("invalid image part")
                 url = image.get("url")
-                if not isinstance(url, str) or len(url) > 180000 or not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", url):
-                    raise ValueError("images must be bounded inline data URLs")
-                try:
-                    raw = base64.b64decode(url.split(",", 1)[1], validate=True)
-                except ValueError:
-                    raise ValueError("invalid image data") from None
-                if not raw or len(raw) > 128 * 1024:
-                    raise ValueError("image size limit exceeded")
-                images += 1
+                if active_profile is not None:
+                    if total_profile_images >= len(active_profile.admitted_images):
+                        raise ValueError("image count limit exceeded")
+                    expected_ident = active_profile.admitted_images[total_profile_images]
+                    if (
+                        expected_ident.message_index != msg_idx
+                        or expected_ident.part_index != part_idx
+                        or image.get("detail") != expected_ident.explicit_detail
+                        or not isinstance(url, str)
+                    ):
+                        raise ValueError("images must be bounded inline data URLs")
+                    url_bytes = url.encode("utf-8")
+                    if (
+                        len(url_bytes) != expected_ident.raw_url_utf8_bytes
+                        or hashlib.sha256(url_bytes).hexdigest() != expected_ident.url_sha256
+                    ):
+                        raise ValueError("images must be bounded inline data URLs")
+                    images += 1
+                    total_profile_images += 1
+                else:
+                    if not isinstance(url, str) or len(url) > 180000 or not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", url):
+                        raise ValueError("images must be bounded inline data URLs")
+                    try:
+                        raw = base64.b64decode(url.split(",", 1)[1], validate=True)
+                    except ValueError:
+                        raise ValueError("invalid image data") from None
+                    if not raw or len(raw) > 128 * 1024:
+                        raise ValueError("image size limit exceeded")
+                    images += 1
             if images > 4:
                 raise ValueError("image count limit exceeded")
             if not images:
@@ -162,6 +189,8 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
             pending.add(call["id"])
     if pending:
         raise ValueError("missing tool results")
+    if active_profile is not None:
+        verify_messages_against_profile(messages, active_profile)
     tokens = body.get("max_tokens", 512)
     if type(tokens) is not int or not 1 <= tokens <= 131072:
         raise ValueError("max_tokens must be a positive integer <= 131072")
@@ -199,7 +228,8 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid tool_choice")
     if choice != "auto" and choice != "none" and not tools:
         raise ValueError("tool_choice requires tools")
-    if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_REQUEST:
+    raw_limit = min(MAX_REQUEST, active_profile.max_raw_request_bytes) if active_profile is not None else MAX_REQUEST
+    if len(json.dumps(body, ensure_ascii=False).encode()) > raw_limit:
         raise ValueError("chat exceeds request byte limit")
     return body
 

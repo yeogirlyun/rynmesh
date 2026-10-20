@@ -14,6 +14,13 @@ import math
 import re
 from typing import Any
 
+from .image_input_profile import (
+    current_internal_image_profile,
+    project_protocol_request_without_admitted_images,
+    verify_messages_against_profile,
+)
+from .safety import MAX_REQUEST
+
 RESPONSES = "openai_responses"
 MESSAGES = "anthropic_messages"
 _LIMIT = 4 * 1024 * 1024
@@ -74,6 +81,8 @@ def _parts(content, *, images=False):
         return [{"type": "text", "text": content}]
     if not isinstance(content, list):
         raise ValueError("invalid native message content")
+    active_profile = current_internal_image_profile() if images else None
+    max_image_bytes = active_profile.max_single_image_bytes if active_profile is not None else _LIMIT
     result = []
     for part in content:
         if not isinstance(part, dict):
@@ -91,7 +100,7 @@ def _parts(content, *, images=False):
                 decoded = base64.b64decode(match[2], validate=True)
             except ValueError:
                 raise ValueError("invalid native image data") from None
-            if not decoded or len(decoded) > _LIMIT:
+            if not decoded or len(decoded) > max_image_bytes:
                 raise ValueError("invalid native image data")
             detail = image.get("detail", "auto")
             if detail not in {"auto", "low", "high"}:
@@ -381,6 +390,9 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) ->
         raise ValueError("native thinking configuration is not supported")
     if enabled is True:
         raise ValueError("native thinking configuration is not supported")
+    active_profile = current_internal_image_profile()
+    if active_profile is not None:
+        verify_messages_against_profile(body.get("messages"), active_profile)
     items, system = _messages(body, protocol, scope)
     result = {"model": model, "stream": body.get("stream", False), "max_output_tokens" if protocol == RESPONSES else "max_tokens": maximum}
     for key in ("temperature", "top_p"):
@@ -418,6 +430,16 @@ def make_request(body: dict[str, Any], protocol: str, model: str, scope: str) ->
             if not isinstance(stop, str) and not (isinstance(stop, list) and all(isinstance(item, str) for item in stop)):
                 raise ValueError("invalid native stop sequences")
             result["stop_sequences"] = [stop] if isinstance(stop, str) else stop
+    if active_profile is not None:
+        non_image_projection = project_protocol_request_without_admitted_images(result, protocol, active_profile)
+        _copy(non_image_projection)
+        raw_limit = min(MAX_REQUEST, active_profile.max_raw_request_bytes)
+        try:
+            if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode()) > raw_limit:
+                raise ValueError("native protocol payload limit exceeded")
+            return copy.deepcopy(result)
+        except (TypeError, OverflowError, RecursionError):
+            raise ValueError("invalid native protocol data") from None
     return _copy(result)
 
 

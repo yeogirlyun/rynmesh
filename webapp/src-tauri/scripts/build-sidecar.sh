@@ -50,6 +50,7 @@ pyinstaller --onefile --noconfirm --clean \
   --collect-submodules pypdf \
   --hidden-import ifaddr \
   --hidden-import ryn_transport \
+  --hidden-import rynmesh.agent_runtime.extensions.computer_use_server \
   --collect-data rynmesh --copy-metadata rynmesh \
   --collect-data jsonschema_specifications \
   --hidden-import uvicorn.lifespan.on \

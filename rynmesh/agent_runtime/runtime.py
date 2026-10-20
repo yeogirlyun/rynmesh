@@ -7,6 +7,7 @@ request tools: this module alone decides whether those tools may execute.
 from __future__ import annotations
 
 import copy
+import re
 import threading
 import time
 import uuid
@@ -17,8 +18,12 @@ from . import (
     budget,
     credential_control,
     diagnostic_log,
+    image_capabilities,
     knowledge,
     lifecycle,
+    memory_integration,
+    memory_natural,
+    memory_runtime,
     model_switch,
     output_policy,
     projects,
@@ -39,7 +44,7 @@ from .control import (
     settle,
 )
 from .input_attachments import attach_to_message, parse_attachments
-from .loop import AgentLoop
+from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, AgentLoop
 from .prompt import (
     INTERNAL_NAMES,
     INTERNAL_SPECS,
@@ -131,7 +136,15 @@ def revision(row: dict, expected: Any) -> None:
 def write_permission_revoked(row: dict, settings: dict) -> bool:
     from .execution_policy import decide, verified_read_classification
     flight = row.get("in_flight") or {}
-    if str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_")) and not settings.get("desktop_access"):
+    has_computer_access = (
+        str(flight.get("name") or "").startswith(("ryn_browser_", "ryn_computer_"))
+        or bool(flight.get("computer_access"))
+        or bool((flight.get("extension_binding") or {}).get("computer_access"))
+    )
+    if has_computer_access and (
+        not settings.get("desktop_access")
+        or not (row.get("local_execution") or {}).get("desktop_access")
+    ):
         return True
     if flight.get("effect") != "write":
         return False
@@ -144,7 +157,9 @@ def write_permission_revoked(row: dict, settings: dict) -> bool:
     if settings["permission_mode"] == "read_only":
         return True
     if flight.get("authorization") == "automatic":
-        return decide(flight, {"effect": flight["effect"]}, row, settings).action != "execute"
+        return decide(flight, {"effect": flight["effect"],
+            "computer_access": flight.get("computer_access"),
+            "workstation_permission_tool": flight.get("workstation_permission_tool")}, row, settings).action != "execute"
     return False
 
 
@@ -158,7 +173,17 @@ class AgentRuntime(AgentLoop):
     def __init__(self, store: AgentStore, model: Any, tools: Any, catalog: Any, *, owner_id="local_owner", consumer_node_id=None):
         self.store, self.model, self.tools, self.catalog = store, model, tools, catalog
         if getattr(tools, "local", None) is not None:
+            from .native_computer import bind_owner_native_computer
+
             tools.local.store = store
+            tools.local.native_computer = bind_owner_native_computer(store, local_tools=tools.local)
+            if hasattr(tools, "native_computer"):
+                tools.native_computer = tools.local.native_computer
+        if getattr(tools, "extensions", None) is not None:
+            tools.extensions.bind_agent_store(store)
+            self.extensions = tools.extensions
+        else:
+            self.extensions = None
         self.owner_id, self.consumer_node_id = owner_id, consumer_node_id or store.pub
         # Keep the scheduler gate for atomic task registration/recovery. Only
         # external IO runs concurrently; claiming a task remains exclusive.
@@ -233,32 +258,40 @@ class AgentRuntime(AgentLoop):
         return output_policy.context_budget(model, row["limits"].get("max_context_chars"),
                                             provenance=row.get("context_budget_provenance"))
 
-    def _menu(self, row):
-        business_specs = self.tools.specs()
-        if any(spec["function"]["name"] in INTERNAL_NAMES for spec in business_specs):
+    def _menu(self, row, *, business_specs=None, max_context_bytes=None):
+        business_specs = self.tools.specs() if business_specs is None else business_specs
+        if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
             raise AgentError("agent_tool_definition_changed")
-        pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"], "context_checkpoint": None}
+        pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"],
+                  "context_checkpoint": None, "_exclude_optional_memory": True}
         authority_bytes = len(encoded(self._context(pinned)))
+        max_context_bytes = self._context_limit(row) if max_context_bytes is None else max_context_bytes
         desktop = tool_menu.BROWSER_TOOLS if (row.get("local_execution") or {}).get("desktop_access") else ()
-        return tool_menu.project(business_specs, INTERNAL_SPECS, row.get("tool_menu"),
-            max_context_bytes=self._context_limit(row), authority_bytes=authority_bytes,
+        if desktop:
+            # Expose installed desktop schemas immediately; dispatch still checks
+            # the provider binding and workstation grants on every operation.
+            desktop += tuple(spec["function"]["name"] for spec in business_specs
+                             if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
+        skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
+        return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
+            max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
-            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + desktop,
+            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + desktop + skill_tools,
             initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list") if row.get("project") else
-                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search")) + desktop), authority_bytes
+                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search")) + desktop + skill_tools), authority_bytes
 
     def _specs(self, row=None) -> list:
         specs = self.tools.specs()
-        if any(spec["function"]["name"] in INTERNAL_NAMES for spec in specs):
+        if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in specs):
             raise AgentError("agent_tool_definition_changed")
         if row is not None:
             return self._menu(row)[0][0]
-        return [*specs, *(copy.deepcopy(spec) for spec in INTERNAL_SPECS if spec["function"]["name"] != tool_menu.NAME)]
+        return [*specs, *(copy.deepcopy(spec) for spec in ALL_INTERNAL_SPECS if spec["function"]["name"] != tool_menu.NAME)]
 
     def _metadata(self, name: str) -> dict:
-        return {"effect": "read", "title": name, "internal": True} if name in INTERNAL_NAMES else self.tools.metadata(name)
+        return {"effect": "read", "title": name, "internal": True} if name in ALL_INTERNAL_NAMES else self.tools.metadata(name)
 
     def _history(self, row: dict) -> list[dict]:
         epoch = row.get("context_epoch", 0)
@@ -367,17 +400,41 @@ class AgentRuntime(AgentLoop):
         return self.tools.prepare_scope(selection, owner_id=self.owner_id, consumer_node_id=self.consumer_node_id,
                                         model_destination=destination)
 
-    def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None):
+    def _native_artifact_loader(self):
+        from .native_computer import NativeComputerFacade
+
+        # __init__ binds this facade to this exact store. Reading it here must not
+        # create a worker or reuse another runtime owner's registry.
+        facade = getattr(self.store, "_ryn_native_computer", None)
+        if isinstance(facade, NativeComputerFacade) and facade._owner is self.store:
+            return facade.verify_and_load_registered_artifact
+        return None
+
+    def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None, request_id=None, image_context=None):
         # Measure the final provider-visible projection, including JSON string
-        # escaping, for every stage before reserving or dispatching inference.
-        if len(encoded(messages)) + len(encoded(specs)) > self._context_limit(row):
-            raise AgentError("agent_context_limit")
+        # escaping and validated inline image bounds, before reserving or dispatching inference.
+        model = self._model_metadata(row["model_id"]) or {}
+        context_policy = self._context_policy(row)
+        output_policy.admit_request_context(
+            model,
+            messages,
+            specs,
+            manual_limit=row["limits"].get("max_context_chars"),
+            provenance=row.get("context_budget_provenance"),
+            context_policy=context_policy,
+        )
         context = self._execution_context(row)
         options = {}
+        discloses_memory = memory_integration.messages_disclose_memory(messages, row=row) or bool(row.get("memory_disclosed_in_epoch"))
         if self._requires_destination_binding(row, context):
             if not context["model_destination"].get("destination_revision") or getattr(self.model, "supports_destination_binding", False) is not True:
                 raise AgentError("agent_model_destination_unverifiable")
             options["expected_destination"] = context["model_destination"]
+        elif discloses_memory:
+            ok_dest, verified_dest, _ = memory_integration.verify_task_destination_for_memory(self, row)
+            if not ok_dest or verified_dest is None:
+                raise AgentError("agent_model_destination_unverifiable")
+            options["expected_destination"] = verified_dest
         if getattr(self.model, "supports_request_deadline", False) is True:
             if "_run_started" not in row or "_run_lifetime_remaining" not in row:
                 raise AgentError("agent_request_deadline_unavailable")
@@ -388,10 +445,16 @@ class AgentRuntime(AgentLoop):
             def record_request_policy(policy):
                 self.store.transaction(lambda data: budget.record_request_policy(task(data, row["id"]), policy))
             options["on_request_policy"] = record_request_policy
-        if row.get("_request_id") and getattr(self.model, "supports_request_id", False) is True:
-            options["request_id"] = row["_request_id"]
+        active_request_id = (
+            request_id
+            if isinstance(request_id, str) and request_id
+            else row.get("_request_id")
+            if not nested and isinstance(row.get("_request_id"), str) and row.get("_request_id")
+            else "req_" + uuid.uuid4().hex
+        )
+        if active_request_id and getattr(self.model, "supports_request_id", False) is True:
+            options["request_id"] = active_request_id
 
-        model = self._model_metadata(row["model_id"]) or {}
         if "reasoning_effort" in row:
             options["reasoning_effort"] = reasoning.validate(model, row["reasoning_effort"])
             if getattr(self.model, "supports_reasoning_effort", False) is not True:
@@ -399,15 +462,113 @@ class AgentRuntime(AgentLoop):
         # The window's own conversation may continue a provider thread across
         # turns. Summaries (no tools) and nested checks are separate requests.
         if not nested and specs and getattr(self.model, "supports_conversation_key", False) is True:
-            options["conversation"] = (row["id"] + ":edit:" + str(row["conversation_revision"])
-                                       if row.get("conversation_revision") else row["id"])
-        policy = output_policy.select(model, messages, specs, request_cap=output_cap)
-        return self._meter_model(row, lambda allowed: self.model.complete(
-            row["model_id"], messages, specs, cancelled, on_event,
-            **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {})),
-            input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"], output_policy_record=policy,
-            nested=nested, stage=stage,
-            can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
+            conv_key = (row["id"] + ":edit:" + str(row["conversation_revision"])
+                        if row.get("conversation_revision") else row["id"])
+            if row.get("memory_conversation_epoch"):
+                conv_key = f"{conv_key}:mem:{row['memory_conversation_epoch']}"
+            options["conversation"] = conv_key
+        dispatch_messages = messages
+        image_report = None
+        if not nested and stage is None:
+            dispatch_messages, image_report = image_capabilities.materialize_operation_images(
+                row,
+                messages,
+                model_row=model,
+                model_client=self.model,
+                native_artifact_loader=self._native_artifact_loader(),
+            )
+            output_policy.admit_request_context(
+                model,
+                dispatch_messages,
+                specs,
+                manual_limit=row["limits"].get("max_context_chars"),
+                provenance=row.get("context_budget_provenance"),
+                context_policy=context_policy,
+            )
+        if image_capabilities.message_has_image_input(dispatch_messages):
+            image_capabilities.require_route_image_support(model, model_client=self.model)
+        policy = output_policy.select(model, dispatch_messages, specs, request_cap=output_cap)
+        meter_row = {**row, "_request_id": active_request_id} if active_request_id else row
+        dispatched = False
+        def _invoke_model(allowed):
+            nonlocal dispatched
+            dispatched = True
+            return self.model.complete(
+                row["model_id"], dispatch_messages, specs, cancelled, on_event,
+                **options, **({"max_output_tokens": allowed} if getattr(self.model, "supports_output_token_limit", False) else {}))
+        try:
+            response = self._meter_model(meter_row, _invoke_model,
+                input_bound=policy["estimated_input_tokens"], output_bound=policy["effective_cap"], output_policy_record=policy,
+                nested=nested, stage=stage,
+                can_reduce_output=getattr(self.model, "supports_output_token_limit", False) is True)
+        except Exception:
+            if dispatched:
+                if image_report and image_report.get("has_candidate_artifacts") and image_report.get("image_prepared"):
+                    attempted_linkage = image_capabilities.build_image_request_linkage(
+                        request_id=active_request_id,
+                        model_id=row["model_id"],
+                        capability=image_report["route_capability"],
+                        messages=dispatch_messages,
+                        stage="main_loop_mcp_observation",
+                        source_artifacts=image_report["materialized_artifacts"],
+                        task_row=row,
+                        dispatch_status="attempted",
+                        semantic_response_received=False,
+                    )
+                    attempted_linkage["observation_status"] = image_report["status"]
+                    attempted_linkage["rejected_artifacts"] = list(image_report["rejected_artifacts"])[:4]
+                    self._record_image_request_linkage(row, attempted_linkage)
+                elif isinstance(image_context, dict):
+                    attempted_linkage = image_capabilities.build_image_request_linkage(
+                        request_id=active_request_id,
+                        model_id=row["model_id"],
+                        capability=image_context.get("capability") or image_capabilities.evaluate_image_capability(model, model_client=self.model),
+                        messages=dispatch_messages,
+                        stage=str(image_context.get("stage") or stage or "image_inspection"),
+                        operation_id=image_context.get("operation_id"),
+                        source_artifacts=image_context.get("source_artifacts") or [],
+                        task_row=row,
+                        dispatch_status="attempted",
+                        semantic_response_received=False,
+                    )
+                    self._record_image_request_linkage(row, attempted_linkage)
+                    if isinstance(image_context.get("linkage_out"), dict):
+                        image_context["linkage_out"].update(attempted_linkage)
+                elif image_capabilities.message_has_image_input(dispatch_messages):
+                    attempted_linkage = image_capabilities.build_image_request_linkage(
+                        request_id=active_request_id,
+                        model_id=row["model_id"],
+                        capability=image_capabilities.evaluate_image_capability(model, model_client=self.model),
+                        messages=dispatch_messages,
+                        stage=str(stage or "model"),
+                        task_row=row,
+                        dispatch_status="attempted",
+                        semantic_response_received=False,
+                    )
+                    self._record_image_request_linkage(row, attempted_linkage)
+            raise
+        if image_report and image_report.get("has_candidate_artifacts"):
+            dispatch_status = "submitted" if image_report.get("image_prepared") else "not_dispatched"
+            msg = response.get("message") if isinstance(response, dict) else None
+            semantic_ok = bool(
+                isinstance(msg, dict)
+                and ((isinstance(msg.get("content"), str) and msg["content"].strip()) or msg.get("tool_calls"))
+            )
+            linkage = image_capabilities.build_image_request_linkage(
+                request_id=active_request_id,
+                model_id=row["model_id"],
+                capability=image_report["route_capability"],
+                messages=dispatch_messages,
+                stage="main_loop_mcp_observation",
+                source_artifacts=image_report["materialized_artifacts"],
+                task_row=row,
+                dispatch_status=dispatch_status,
+                semantic_response_received=semantic_ok,
+            )
+            linkage["observation_status"] = image_report["status"]
+            linkage["rejected_artifacts"] = list(image_report["rejected_artifacts"])[:4]
+            self._record_image_request_linkage(row, linkage)
+        return response
 
     def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None):
         def admit(data):
@@ -473,17 +634,68 @@ class AgentRuntime(AgentLoop):
                     budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed)
         self.store.transaction(finish)
 
+    def _record_image_request_linkage(self, selected_row: dict, linkage: dict) -> None:
+        clean = copy.deepcopy(linkage)
+        task_id = selected_row["id"]
+        def record(data):
+            row = data["tasks"].get(task_id)
+            if row is not None:
+                clean["binding_current"] = bool(
+                    row.get("model_id") == selected_row.get("model_id")
+                    and (row.get("goal") or {}).get("revision") == (selected_row.get("goal") or {}).get("revision")
+                    and row.get("scope_revision") == selected_row.get("scope_revision")
+                    and row.get("control_revision") == selected_row.get("control_revision")
+                    and row.get("context_epoch", 0) == selected_row.get("context_epoch", 0)
+                )
+                links = list(row.get("image_request_links") or [])
+                links.append(clean)
+                row["image_request_links"] = links[-16:]
+        self.store.transaction(record)
+
     def _tool_context(self, selected, operation_id=None):
         context = self._execution_context(selected, operation_id)
-        def inspect_image(messages, cancelled):
+        context["selected_skills"] = copy.deepcopy(selected.get("skills") or [])
+        current_model = self._model_metadata(selected["model_id"]) or {}
+        context["_image_capability"] = image_capabilities.evaluate_image_capability(
+            current_model, model_client=self.model)
+        def inspect_image(messages, cancelled, *, source_artifact=None, linkage_out=None):
             model = self._model_metadata(selected["model_id"]) or {}
-            if getattr(self.model, "supports_image_input", False) is not True or model.get("source") != "local_api":
-                raise AgentToolRejected("agent_image_requires_api_model")
+            cap = image_capabilities.require_route_image_support(model, model_client=self.model)
             self._validate_context(selected)
+            nested_request_id = "req_" + uuid.uuid4().hex
+            nested_image_context = {
+                "capability": cap,
+                "stage": "image_inspection",
+                "operation_id": operation_id,
+                "source_artifacts": [source_artifact] if isinstance(source_artifact, dict) else [],
+                "linkage_out": linkage_out,
+            }
             response = self._complete(selected, messages, [], cancelled, lambda _event: None,
-                                      nested=True, stage="image_inspection", output_cap=1024)
+                                      nested=True, stage="image_inspection", output_cap=1024,
+                                      request_id=nested_request_id,
+                                      image_context=nested_image_context)
             message = response.get("message") or {}
-            if not isinstance(message.get("content"), str) or not message["content"].strip() or message.get("tool_calls"):
+            valid_observation = (
+                isinstance(message.get("content"), str)
+                and bool(message["content"].strip())
+                and not message.get("tool_calls")
+            )
+            linkage = image_capabilities.build_image_request_linkage(
+                request_id=nested_request_id,
+                model_id=selected["model_id"],
+                capability=cap,
+                messages=messages,
+                stage="image_inspection",
+                operation_id=operation_id,
+                source_artifacts=[source_artifact] if isinstance(source_artifact, dict) else [],
+                task_row=selected,
+                dispatch_status="submitted",
+                semantic_response_received=valid_observation,
+            )
+            self._record_image_request_linkage(selected, linkage)
+            if isinstance(linkage_out, dict):
+                linkage_out.update(linkage)
+            if not valid_observation:
                 raise AgentToolRejected("agent_image_observation_unavailable")
             return message["content"]
         context["_vision_inference"] = inspect_image
@@ -573,6 +785,9 @@ class AgentRuntime(AgentLoop):
             # excludes every old tool body, derived assistant text and summary.
             row["context_epoch"] = row.get("context_epoch", 0) + 1
             row.pop("context_checkpoint", None)
+            if row.get("memory_disclosed_in_epoch") or row.get("memory_projection_watermark"):
+                row["memory_conversation_epoch"] = int(row.get("memory_conversation_epoch", 0)) + 1
+                row["memory_disclosed_in_epoch"] = False
             row["plan"] = {"revision": row["plan"]["revision"] + 1, "goal_revision": row["goal"]["revision"], "steps": []}
             row["criteria_proposals"] = []
             row["outcome"].update(status="unverified", criteria_results=[], evidence_refs=[], uncertainties=["Resource permissions changed; prior results are not current verification."])
@@ -582,20 +797,24 @@ class AgentRuntime(AgentLoop):
             row["pending_control"] = {"kind": "scope", "remain_paused": row["status"] in {"paused", "completed", "failed", "interrupted"} or not data["settings"]["enabled"]}
             event(row, "scope_changed", scope_revision=row["scope_revision"])
             close_queue(row, event, "agent_scope_changed")
-            settle(row, event)
+            memory_integration.settle_in_tx(data, row, event)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(apply)
 
     def settings(self) -> dict:
-        snapshot = self.configuration_snapshot()
+        snapshot = self.configuration_snapshot(display_only=True)
         return {**snapshot["settings"], "context_budget_policy": snapshot["context_budget_policy"]}
 
     def list_projects(self) -> list[dict]:
         return [copy.deepcopy(item) for item in self.store.read().get("projects", {}).values() if item.get("enabled")]
 
     def load_project(self, value: dict) -> dict:
-        return self.store.transaction(lambda data: projects.register(data, value))
+        def register_and_sync(data):
+            res = projects.register(data, value)
+            memory_integration.propagate_memory_revocation_in_tx(data)
+            return res
+        return self.store.transaction(register_and_sync)
 
     def rename_project(self, project_id: str, value: dict) -> dict:
         return self.store.transaction(lambda data: projects.rename(data, project_id, value))
@@ -624,11 +843,12 @@ class AgentRuntime(AgentLoop):
             project["enabled"] = False
             if data.get("selected_project_id") == project_id:
                 data["selected_project_id"] = ""
+            memory_integration.propagate_memory_revocation_in_tx(data)
             for row in data["tasks"].values():
                 if (row.get("project") or {}).get("id") == project_id and row["status"] not in TERMINAL:
                     row.update(approved=None, pending_approval=None, pending_control={"kind": "pause"}, status="paused")
                     event(row, "permissions_changed", reason="agent_project_permission_revoked")
-                    settle(row, event)
+                    settle(row, event, data=data)
             return {"id": project_id, "removed": True}
         return self.store.transaction(remove)
 
@@ -674,11 +894,17 @@ class AgentRuntime(AgentLoop):
             return public_task(row, settings=data["settings"])
         return self.store.transaction(apply)
 
-    def configuration_snapshot(self) -> dict:
-        data = self.store.read()
+    def configuration_snapshot(self, *, display_only=False) -> dict:
+        data = self.store.inspect(lambda state: {key: state[key] for key in
+            ("settings", "settings_revision", "settings_context_budget_provenance") if key in state})
         settings = {**DEFAULT_SETTINGS, **data["settings"]}
-        policy = self._context_policy({"model_id": settings["model_id"], "limits": settings,
-                                       "context_budget_provenance": data.get("settings_context_budget_provenance")})
+        display_model = getattr(self.catalog, "display_model", None)
+        if display_only and callable(display_model):
+            policy = output_policy.context_budget(display_model(settings["model_id"]) or {},
+                settings.get("max_context_chars"), provenance=data.get("settings_context_budget_provenance"))
+        else:
+            policy = self._context_policy({"model_id": settings["model_id"], "limits": settings,
+                                           "context_budget_provenance": data.get("settings_context_budget_provenance")})
         return {"settings": settings, "settings_revision": data.get("settings_revision", 0), "context_budget_policy": policy}
 
     def update_settings(self, values: dict) -> dict:
@@ -745,7 +971,7 @@ class AgentRuntime(AgentLoop):
                         event(row, "permissions_changed")
                         if row.get("pending_input"):
                             row["pending_input"]["control_revision"] = row["control_revision"]
-                        settle(row, event)
+                        memory_integration.settle_in_tx(data, row, event)
             if values.get("enabled") is False:
                 for row in data["tasks"].values():
                     if (row.get("pending_control") or {}).get("kind") == "edit_message":
@@ -755,14 +981,14 @@ class AgentRuntime(AgentLoop):
                         row["status"] = "interrupted" if ambiguous(row) else "paused"
                         row["pending_control"] = {"kind": "pause"}
                         event(row, "paused", reason="agent_disabled")
-                        settle(row, event)
+                        memory_integration.settle_in_tx(data, row, event)
             return {**data["settings"], "context_budget_policy": self._context_policy({
                 "model_id": data["settings"].get("model_id", ""), "limits": {**DEFAULT_SETTINGS, **data["settings"]},
                 "context_budget_provenance": data.get("settings_context_budget_provenance")})}
         return self.store.transaction(update)
 
     def models(self) -> list[dict]:
-        return sanitized(self.catalog.list_models())
+        return sanitized(getattr(self.catalog, "display_models", self.catalog.list_models)())
 
     def _model_metadata(self, model_id: str) -> dict | None:
         if hasattr(self.catalog, "get_model"):
@@ -773,16 +999,131 @@ class AgentRuntime(AgentLoop):
         return model_switch.preview(self, task_id, model_id)
 
     def switch_model(self, task_id: str, value: dict) -> dict:
-        return model_switch.change(self, task_id, value)
+        res = model_switch.change(self, task_id, value)
+        def sync_after_switch(data):
+            row = data.get("tasks", {}).get(task_id)
+            if row is not None and (row.get("memory_disclosed_in_epoch") or row.get("memory_projection_watermark")):
+                row["memory_conversation_epoch"] = int(row.get("memory_conversation_epoch", 0)) + 1
+                row["memory_disclosed_in_epoch"] = False
+        self.store.transaction(sync_after_switch)
+        return res
 
     def skills(self) -> dict:
+        if self.extensions is not None:
+            return {"skills": self.extensions.store.enabled_skills_catalog()}
         return {"skills": knowledge.catalog()}
+
+    def _resolve_skills(
+        self,
+        explicit_ids: Any,
+        message_text_val: str = "",
+        *,
+        default_project: bool = False,
+    ) -> list[dict]:
+        selector = self.extensions.store.select_skills if self.extensions is not None else knowledge.select
+        enabled_catalog = (
+            self.extensions.store.enabled_skills_catalog()
+            if self.extensions is not None
+            else knowledge.catalog()
+        )
+        enabled_by_lower = {
+            str(item["id"]).lower(): str(item["id"])
+            for item in enabled_catalog
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        selected = selector(explicit_ids)
+        seen_ids = {str(item.get("id")) for item in selected if isinstance(item, dict)}
+
+        if isinstance(message_text_val, str) and "$" in message_text_val:
+            mentioned_ids: list[str] = []
+            for match in re.finditer(
+                r"(?<![A-Za-z0-9_-])\$([A-Za-z0-9][A-Za-z0-9_-]{0,63})(?![A-Za-z0-9_-])",
+                message_text_val,
+            ):
+                canonical_id = enabled_by_lower.get(match.group(1).lower())
+                if canonical_id and canonical_id not in seen_ids and canonical_id not in mentioned_ids:
+                    mentioned_ids.append(canonical_id)
+            if mentioned_ids:
+                for item in selector(mentioned_ids):
+                    if item["id"] not in seen_ids:
+                        selected.append(item)
+                        seen_ids.add(item["id"])
+
+        if default_project and not selected and "project-development" in enabled_by_lower.values():
+            try:
+                selected = selector(["project-development"])
+            except AgentError:
+                selected = []
+        return selected
+
+    @staticmethod
+    def _merge_task_skills(existing: list[dict] | None, additions: list[dict] | None) -> list[dict]:
+        merged = [copy.deepcopy(item) for item in (existing or []) if isinstance(item, dict)]
+        seen = {str(item.get("id")) for item in merged if item.get("id")}
+        for item in additions or []:
+            if isinstance(item, dict) and item.get("id") and str(item["id"]) not in seen:
+                if len(merged) >= 8:
+                    break
+                merged.append(copy.deepcopy(item))
+                seen.add(str(item["id"]))
+        return merged
 
     def preferences(self) -> dict:
         return knowledge.preferences(self.store.read())
 
     def update_preferences(self, value: dict) -> dict:
         return self.store.transaction(lambda data: knowledge.update_preferences(data, value))
+
+    def memory_snapshot(
+        self,
+        scope_kind: str | None = None,
+        project_id: str | None = None,
+        status: str = "active",
+    ) -> dict:
+        return memory_integration.get_memory_snapshot(
+            self,
+            scope_kind=scope_kind,
+            project_id=project_id,
+            status=status,
+        )
+
+    def memory_destinations(self) -> dict:
+        return memory_integration.list_memory_destinations(self)
+
+    def update_memory_settings(self, value: dict) -> dict:
+        return memory_integration.update_owner_memory_settings(self, value)
+
+    def create_memory_entry(self, value: dict) -> dict:
+        return memory_integration.create_owner_memory_entry(self, value)
+
+    def update_memory_entry(self, entry_id: str, value: dict) -> dict:
+        return memory_integration.update_owner_memory_entry(self, entry_id, value)
+
+    def delete_memory_entry(self, entry_id: str, value: dict) -> dict:
+        return memory_integration.delete_owner_memory_entry(self, entry_id, value)
+
+    def decide_memory_candidate(self, candidate_id: str, value: dict) -> dict:
+        return memory_integration.decide_owner_memory_candidate(self, candidate_id, value)
+
+    def search_memory(
+        self,
+        query: str = "",
+        scope_kind: str | None = None,
+        project_id: str | None = None,
+        category: str | None = None,
+        limit: int = 20,
+    ) -> dict:
+        return memory_integration.search_owner_memories(
+            self,
+            query=query,
+            scope_kind=scope_kind,
+            project_id=project_id,
+            category=category,
+            limit=limit,
+        )
+
+    def reset_memory(self, value: dict) -> dict:
+        return memory_integration.reset_owner_memory(self, value)
 
     def source_credential(self, task_id: str, value: dict, revoke=False) -> dict:
         return credential_control.change(self, task_id, value, revoke=revoke)
@@ -881,7 +1222,8 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(rename)
 
     def _lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
-        result = lifecycle.change(self.store, task_id, value, operation, event, now)
+        result = lifecycle.change(self.store, task_id, value, operation, event, now,
+                                  on_mutate=memory_integration.on_task_lifecycle_in_tx)
         if result.get("deleted"):
             pending = True
             try:
@@ -907,8 +1249,9 @@ class AgentRuntime(AgentLoop):
         pending = bool(collector(task_id)) if collector else False
         row = lifecycle.find(self.store, self.store.read(), task_id)
         for receipt in row.get("receipts", []):
-            if receipt.get("tool") not in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read",
-                                           "ryn_render_inspect", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"}:
+            tool_name = str(receipt.get("tool") or "")
+            if tool_name not in {"ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read",
+                                 "ryn_render_inspect", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"} and not tool_name.startswith("mcp__"):
                 continue
             result = receipt.get("result")
             if isinstance(result, dict) and result.get("result_ref"):
@@ -958,7 +1301,7 @@ class AgentRuntime(AgentLoop):
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
-        skills = knowledge.select(value.get("skill_ids"))
+        skills = self._resolve_skills(value.get("skill_ids"), content)
         budget_limits = budget.validate_limits(value.get("budget_limits", {}))
         request_id = value.get("client_request_id")
         if request_id is not None:
@@ -1027,8 +1370,8 @@ class AgentRuntime(AgentLoop):
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
                                               project_id=row["project"]["id"], project_generation=row["project"]["generation"])
-                if not value.get("skill_ids"):
-                    skills_for_task = knowledge.select(["project-development"])
+                if not skills:
+                    skills_for_task = self._resolve_skills(None, "", default_project=True)
                 else:
                     skills_for_task = skills
             else:
@@ -1054,6 +1397,8 @@ class AgentRuntime(AgentLoop):
                 if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                     raise AgentError("agent_context_limit")
             row["prompt_version"] = PROMPT_VERSION
+            memory_natural.stamp_task_owner_messages_in_tx(data, row)
+            memory_integration.apply_owner_turn_memory_in_tx(self, data, row)
             event(row, "created")
             data["tasks"][row["id"]] = row
             return public_task(row, settings=settings)
@@ -1063,12 +1408,13 @@ class AgentRuntime(AgentLoop):
         return created
 
     def add_message(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments"}:
+        if set(value) - {"message", "intent", "expected_revision", "expected_control_revision", "expected_goal_revision", "client_request_id", "reasoning_effort", "edit_message_index", "attachments", "skill_ids"}:
             raise AgentError("agent_invalid_request")
         prepared = parse_attachments(value.get("attachments"))
         content = message_text(value.get("message") or ("Please review the attached files." if prepared else ""))
+        added_skills = self._resolve_skills(value.get("skill_ids"), content)
         if "edit_message_index" in value:
-            return self._edit_message(task_id, value, content, prepared)
+            return self._edit_message(task_id, value, content, prepared, added_skills=added_skills)
         intent = value.get("intent")
         if intent not in {None, "steer", "information"}:
             raise AgentError("agent_invalid_request")
@@ -1099,14 +1445,17 @@ class AgentRuntime(AgentLoop):
             message = {"role": "user", "content": content, "message_id": "owner_" + uuid.uuid4().hex,
                        "ui": {"kind": "steer" if intent == "steer" else "information" if intent == "information" else "message", "text": content}}
             attach_to_message(self.store, row, message, prepared)
+            merged_skills = self._merge_task_skills(row.get("skills"), added_skills)
             owners = [message for message in [*row["messages"], *row.get("pending_user_messages", [])] if message["role"] == "user"]
-            prospective = {**row, "messages": [*owners, message],
+            prospective = {**row, "messages": [*owners, message], "skills": merged_skills,
                            "context_checkpoint": None, "tool_menu": None}
             (future_specs, _), authority_bytes = self._menu(prospective)
             if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                 raise AgentError("agent_context_limit")
             if len(encoded(row)) + len(encoded(message)) > 2 * 1024 * 1024:
                 raise AgentError("agent_task_limit")
+            memory_natural.stamp_single_owner_message_in_tx(data, message)
+            row["skills"] = merged_skills
             ended = row["status"] in {"completed", "failed"} or bool(row.get("turn_stopped"))
             if effort is not None:
                 # Running requests already own an immutable task snapshot.
@@ -1123,12 +1472,12 @@ class AgentRuntime(AgentLoop):
                 row.update(steps=0, elapsed_seconds=0.0)
             event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
             close_queue(row, event, "agent_owner_changed")
-            settle(row, event)
+            settle(row, event, data=data)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(add)
 
-    def _edit_message(self, task_id: str, value: dict, content: str, prepared=None) -> dict:
+    def _edit_message(self, task_id: str, value: dict, content: str, prepared=None, *, added_skills=None) -> dict:
         if value.get("intent") not in {None, "steer", "information"} or type(value["edit_message_index"]) is not int:
             raise AgentError("agent_invalid_request")
 
@@ -1155,20 +1504,23 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_task_limit")
             # Test the replacement owner's pinned floor before committing stop
             # intent. Discarded future constraints cannot consume its context.
+            merged_skills = self._merge_task_skills(row.get("skills"), added_skills)
             retained = [*row["messages"][:index], replacement]
             owner_ids = {message.get("message_id") for message in retained if message["role"] == "user"}
-            prospective = {**row, "messages": retained, "context_checkpoint": None, "tool_menu": None,
+            prospective = {**row, "messages": retained, "skills": merged_skills, "context_checkpoint": None, "tool_menu": None,
                            "goal": {**row["goal"], "constraints": [item for item in row["goal"]["constraints"] if item.get("message_id") in owner_ids]}}
             (future_specs, _), authority_bytes = self._menu(prospective)
             if authority_bytes + len(encoded(future_specs)) > self._context_limit(row):
                 raise AgentError("agent_context_limit")
+            memory_natural.stamp_single_owner_message_in_tx(data, replacement)
+            row["skills"] = merged_skills
             if "reasoning_effort" in value:
                 row["reasoning_effort"] = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"])
             row.update(status="paused", approved=None, pending_approval=None, pending_input=None,
                        pending_control={"kind": "edit_message", "message_index": index, "message": replacement})
             event(row, "message_edit_requested", message_index=index, operation_in_flight=bool(row["in_flight"]))
             close_queue(row, event, "agent_owner_changed")
-            settle(row, event)
+            settle(row, event, data=data)
             remember_request(row, value)
             return public_task(row, settings=data["settings"])
         return self.store.transaction(edit)
@@ -1189,7 +1541,7 @@ class AgentRuntime(AgentLoop):
                     row.update(status="cancelled", pending_approval=None, approved=None, pending_input=None, pending_control={"kind": "cancel"})
                     event(row, "cancelled", operation_in_flight=bool(row["in_flight"]))
                     close_queue(row, event, "agent_cancelled")
-                    settle(row, event)
+                    settle(row, event, data=data)
             elif action == "stop":
                 if ambiguous(row):
                     row["pending_control"] = {"kind": "stop"}
@@ -1205,7 +1557,7 @@ class AgentRuntime(AgentLoop):
                                pending_control={"kind": "stop"}, turn_stopped=True)
                     event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
                     close_queue(row, event, "agent_cancelled")
-                    settle(row, event)
+                    settle(row, event, data=data)
             elif action == "pause":
                 row.pop("turn_stopped", None)
                 if ambiguous(row):
@@ -1223,7 +1575,7 @@ class AgentRuntime(AgentLoop):
                 row["status"] = "paused"
                 row["pending_control"] = {"kind": "pause"}
                 event(row, "paused", operation_in_flight=bool(row["in_flight"]))
-                settle(row, event)
+                settle(row, event, data=data)
             elif action == "resume":
                 if row["status"] not in {"paused", "interrupted"}:
                     raise AgentError("agent_invalid_transition")
@@ -1242,7 +1594,7 @@ class AgentRuntime(AgentLoop):
                         self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
                     row["in_flight"] = None
                     row["approved"] = None
-                    settle(row, event)
+                    settle(row, event, data=data)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
                 event(row, "resumed")
@@ -1298,6 +1650,7 @@ class AgentRuntime(AgentLoop):
                            "ui": {"kind": "input_answer", "prompt": pending["prompt"], "pending_input_id": pending["id"],
                                   "fields": [{"label": fields[key]["label"], "value": next((option["label"] for option in fields[key].get("options", []) if option["value"] == answer), answer)}
                                              for key, answer in answers.items()]}}
+                memory_natural.stamp_single_owner_message_in_tx(data, message)
                 row["messages"].append(message)
                 budget.new_round(row)
                 row.update(pending_input=None, status="queued")
@@ -1325,7 +1678,7 @@ class AgentRuntime(AgentLoop):
                             outcome = self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
                         row["in_flight"] = None
                         row["approved"] = None
-                        settle(row, event)
+                        settle(row, event, data=data)
                         may_continue = self._read_may_continue_after_restart(row, flight, data)
                         row["reconciliation"] = {
                             "state": "executed" if outcome == "confirmed" else "not_executed",
@@ -1539,7 +1892,7 @@ class AgentRuntime(AgentLoop):
                         settled_outcome = self._settle_interrupted_read(row, flight, "agent_node_restarted", recovery=recovery)
                         row["in_flight"] = None
                         row["approved"] = None
-                        settle(row, event)
+                        settle(row, event, data=data)
                         if was_editing:
                             # The owner already committed the replacement turn.
                             # Its old flight settled above; do not overwrite the
@@ -1569,7 +1922,7 @@ class AgentRuntime(AgentLoop):
                     if not ambiguous_write:
                         if cleanup_ok:
                             row["in_flight"] = None
-                            settle(row, event)
+                            settle(row, event, data=data)
                         if not (was_editing and cleanup_ok):
                             row["status"] = "cancelled" if was_cancelled else "interrupted"
                     event(row, "interrupted", ambiguous_write=ambiguous_write)
@@ -1673,7 +2026,7 @@ class AgentRuntime(AgentLoop):
             row["in_flight"] = None
             close_queue(row, event, "agent_reconciliation_requires_review", keep_flight=False)
             was_cancelled = row["status"] == "cancelled" or row.get("pending_control", {}).get("kind") == "cancel"
-            settle(row, event)
+            settle(row, event, data=data)
             row.update(status="cancelled" if was_cancelled else "queued" if may_continue else "paused", error=None, approved=None, pending_approval=None)
             row["outcome"].update(status="unverified", uncertainties=["Original operation reconciled; complete goal verification is still required."])
             event(row, "reconciliation_finished", outcome=result["outcome"], operation_id=operation_id, continued=may_continue)
@@ -1732,7 +2085,7 @@ class AgentRuntime(AgentLoop):
                 }:
                     row.pop("pending_control", None)
                 if row.get("pending_control"):
-                    settle(row, event)
+                    settle(row, event, data=data)
                 elif row["status"] in {"running", "queued"}:
                     row.update(status="failed", error=code, approved=None)
                     event(row, "failed", error=code)
@@ -1787,7 +2140,7 @@ class AgentRuntime(AgentLoop):
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
                 if row.get("pending_control"):
-                    settle(row, event)
+                    settle(row, event, data=data)
                 elif row["status"] == "running" and row["control_revision"] == selected["_run_control_revision"]:
                     pending = row.get("verification") or {}
                     if (code == "agent_invalid_verification_response" and flight.get("kind") == "verification_model"
@@ -1839,7 +2192,7 @@ class AgentRuntime(AgentLoop):
                 row["elapsed_seconds"] += time.monotonic() - started
                 row["in_flight"] = None
                 if row.get("pending_control") and row["pending_control"].get("kind") != "permissions":
-                    settle(row, event)
+                    settle(row, event, data=data)
                     return True
                 if row["status"] != "running" or not data["settings"]["enabled"]:
                     row.pop("pending_control", None)
@@ -1990,7 +2343,7 @@ class AgentRuntime(AgentLoop):
                         event(row, "failed", error=code)
                     else:
                         row["status"] = "queued"
-                settle(row, event)
+                settle(row, event, data=data)
                 budget_state = budget.public(row)
                 b_limits = budget_state["limits"]
                 b_life = budget_state["lifetime"]
@@ -2054,13 +2407,21 @@ class AgentRuntime(AgentLoop):
             # second per worker cost more CPU than the work it was checking for.
             peek = self.store.inspect(lambda data: {
                 "enabled": data["settings"]["enabled"],
+                "computer_activity": {key: {"status": row["status"],
+                    "pending_control": bool(row.get("pending_control")),
+                    "kind": (row.get("in_flight") or {}).get("kind")}
+                    for key, row in data["tasks"].items()},
                 "queued": any(row["status"] == "queued" for row in data["tasks"].values()),
                 "waiting": any(row["status"] == "waiting_approval" and row.get("queue") for row in data["tasks"].values()),
                 "unresolved": next((row["id"] for row in data["tasks"].values()
                                     if ambiguous(row) and row.get("reconciliation", {}).get("state") == "pending"), None)})
+            native_computer = getattr(self.tools, "native_computer", None)
+            overlay = getattr(native_computer, "overlay", None)
+            if overlay is not None:
+                overlay.sync(peek["computer_activity"] if peek["enabled"] else {})
             if peek["enabled"]:
                 if peek["waiting"]:
-                    self._refresh_waiting_reads(self.store.read())
+                    self._refresh_waiting_reads(self._waiting_policy_snapshot())
                     # A released dialog is claimable in this same tick.
                     peek["queued"] = self.store.inspect(lambda data: any(row["status"] == "queued" for row in data["tasks"].values()))
                 unresolved = task(self.store.read(), peek["unresolved"]) if peek["unresolved"] else None
@@ -2305,7 +2666,7 @@ class AgentRuntime(AgentLoop):
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
                 if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
-                    settle(row, event)
+                    settle(row, event, data=data)
                     return
                 evidence_id = "evidence_" + uuid.uuid4().hex
                 row.setdefault("verification_evidence", []).append({"id": evidence_id, "criterion_id": criterion["id"], "receipt_id": receipt["id"],
@@ -2339,7 +2700,7 @@ class AgentRuntime(AgentLoop):
             if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
                 row["in_flight"] = None
                 row["elapsed_seconds"] += time.monotonic() - started
-                settle(row, event)
+                settle(row, event, data=data)
                 return False
             if row["steps"] >= row["limits"]["max_steps"]:
                 raise AgentError("agent_step_limit")
@@ -2388,7 +2749,7 @@ class AgentRuntime(AgentLoop):
             row["in_flight"] = None
             row["elapsed_seconds"] += time.monotonic() - started
             if row["status"] != "running" or row["control_revision"] != selected["_run_control_revision"]:
-                settle(row, event)
+                settle(row, event, data=data)
                 return
             if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
                 verification.finish(row, error="agent_time_limit")

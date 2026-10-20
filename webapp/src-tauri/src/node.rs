@@ -27,6 +27,14 @@ pub struct NodeState {
     pub lifecycle: Mutex<()>,
 }
 
+pub fn owned_child_running(state: &NodeState) -> bool {
+    let mut child = state.child.lock().unwrap();
+    match child.as_mut() {
+        Some(process) => matches!(process.try_wait(), Ok(None)),
+        None => false,
+    }
+}
+
 #[cfg(not(windows))]
 fn capture(program: &str, args: &[&str]) -> Option<String> {
     let out = hidden_command(program).args(args).output().ok()?;
@@ -189,14 +197,41 @@ fn open_log() -> std::io::Result<File> {
 /// `$RYNMESH_PYTHON|python3 -c ...` with PYTHONPATH=$RYNMESH_REPO_DIR.
 /// The bundled self-contained daemon: next to the app executable when
 /// packaged, or src-tauri/binaries/rynmesh-peer-<triple> in dev.
+fn installed_sidecar_path(exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = exe.parent()?;
+    let path = dir.join(if cfg!(windows) { "rynmesh-peer.exe" } else { "rynmesh-peer" });
+    if !path.is_file() { return None; }
+    #[cfg(windows)]
+    {
+        // MSIX filesystem virtualization can redirect AppData/Local to the
+        // caller's package cache. Spawn the physical sidecar path so its
+        // frozen bundle root agrees with native file-handle verification.
+        // Python's native-worker guard still rejects reparse/foreign files.
+        let resolved = path.canonicalize().ok()?;
+        ordinary_windows_launch_path(&resolved)
+    }
+    #[cfg(not(windows))]
+    { Some(path) }
+}
+
+#[cfg(windows)]
+fn ordinary_windows_launch_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let text = path.to_str()?;
+    if let Some(local) = text.strip_prefix(r"\\?\") {
+        let bytes = local.as_bytes();
+        // Strip only the extended prefix of a local drive path; keep UNC and
+        // device paths out of the packaged sidecar launch route.
+        return (bytes.len() > 3 && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':' && bytes[2] == b'\\')
+            .then(|| std::path::PathBuf::from(local));
+    }
+    if text.starts_with(r"\\") { return None; }
+    Some(path.to_path_buf())
+}
+
 fn sidecar_path() -> Option<std::path::PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join(if cfg!(windows) { "rynmesh-peer.exe" } else { "rynmesh-peer" });
-            if p.is_file() {
-                return Some(p);
-            }
-        }
+        if let Some(path) = installed_sidecar_path(&exe) { return Some(path); }
     }
     let bin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
     let path = bin_dir.join(format!("rynmesh-peer-{}{}", env!("RYN_TARGET"), if cfg!(windows) { ".exe" } else { "" }));
@@ -337,7 +372,7 @@ pub fn request_within(port: u16, method: &str, path: &str, body: &str, read_time
     serde_json::from_str(payload).map_err(|_| "invalid_response".into())
 }
 pub fn health_ok(port: u16) -> bool {
-    managed_health(|path| request(port, "GET", path, ""))
+    managed_health(|path| request_within(port, "GET", path, "", Duration::from_secs(5)))
 }
 
 fn managed_health(mut read: impl FnMut(&str) -> Result<serde_json::Value, String>) -> bool {
@@ -365,6 +400,16 @@ pub fn wait_healthy(port: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn packaged_sidecar_launch_uses_ordinary_physical_local_path() {
+        use std::path::{Path, PathBuf};
+        assert_eq!(ordinary_windows_launch_path(Path::new(r"\\?\C:\Users\子陵\AppData\Local\Packages\family\LocalCache\Local\Ryn\rynmesh-peer.exe")),
+            Some(PathBuf::from(r"C:\Users\子陵\AppData\Local\Packages\family\LocalCache\Local\Ryn\rynmesh-peer.exe")));
+        assert!(ordinary_windows_launch_path(Path::new(r"\\?\UNC\server\share\rynmesh-peer.exe")).is_none());
+        assert!(ordinary_windows_launch_path(Path::new(r"\\server\share\rynmesh-peer.exe")).is_none());
+    }
 
     #[test]
     fn liveness_uses_the_cheap_health_route() {

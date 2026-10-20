@@ -87,7 +87,12 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     if any(name not in by_name for name in loaded):
         raise AgentError("agent_tool_definition_changed")
     requested_pins = [name for name in dict.fromkeys(pinned_names) if name in by_name]
-    prior_candidates = prior.get("pinned_candidates", prior.get("pinned_names", []))
+    if "pinned_candidates" in prior:
+        prior_candidates = list(prior.get("pinned_candidates") or [])
+    elif prior.get("pins_released"):
+        prior_candidates = list(requested_pins)
+    else:
+        prior_candidates = list(prior.get("pinned_names") or [])
     pins_changed = bool(prior.get("mode") == "directory" and prior_candidates != requested_pins)
     has_browser_pins = any(name in BROWSER_TOOLS for name in requested_pins)
     pinned = []
@@ -135,9 +140,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
                   "revision": prior.get("revision", 0)}
     if pinned or prior.get("pinned_names"):
         next_state["pinned_names"] = pinned
-    if requested_pins != list(CORE_TOOLS) and (requested_pins or prior.get("pinned_candidates")):
-        next_state["pinned_candidates"] = requested_pins
-    elif prior.get("pinned_candidates"):
+    if requested_pins or prior.get("pinned_candidates"):
         next_state["pinned_candidates"] = requested_pins
     if released:
         next_state["pins_released"] = True

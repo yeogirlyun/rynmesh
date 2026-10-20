@@ -60,9 +60,27 @@ def test_http_fallback_requires_nonce_bound_signed_identity(monkeypatch):
     class Opener:
         def open(self, *_args, **_kwargs): return Response()
 
-    monkeypatch.setattr(urlrequest, "build_opener", lambda *_: Opener())
+    monkeypatch.setattr("rynmesh.lan_discovery._http_probe_opener", lambda: Opener())
     assert consumer._probe_http("192.168.50.11", nonce).public_key == provider.peer_id
     assert consumer._probe_http("192.168.50.11", "b" * 32) is None
+
+
+def test_http_probe_never_loads_tls_certificates_or_follows_redirects(monkeypatch):
+    import ssl
+    from urllib.error import HTTPError
+    from email.message import Message
+    from rynmesh.lan_discovery import _http_probe_opener
+
+    monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: pytest.fail("HTTP probe loaded TLS certificates"))
+    opener = _http_probe_opener()
+    assert not any(isinstance(h, urlrequest.HTTPSHandler) for h in opener.handlers)
+    headers = Message()
+    headers["Location"] = "https://unrelated.invalid/"
+    reply = SimpleNamespace(code=302, msg="Found", info=lambda: headers, close=lambda: None)
+    monkeypatch.setattr(urlrequest.HTTPHandler, "http_open", lambda self, request: reply)
+    with pytest.raises(HTTPError) as caught:
+        opener.open("http://192.168.50.11:8791/api/peer/lan-record", timeout=.35)
+    assert caught.value.code == 302
 
 
 @pytest.mark.parametrize("attack", ["signature", "identity", "nonce", "endpoint", "network"])

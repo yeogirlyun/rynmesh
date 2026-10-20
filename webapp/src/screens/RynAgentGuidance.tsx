@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link, useInRouterContext } from "react-router-dom";
 import { AgentAPIError, rynAgent, type AgentPreferences, type AgentSkill } from "../domain/rynAgent";
 
 function useText() {
@@ -23,6 +24,7 @@ export function TaskSkills({ skills }: { skills?: AgentSkill[] }) {
 
 export function SkillSelection({ value, onChange, disabled }: { value: string[]; onChange: (value: string[]) => void; disabled: boolean }) {
   const text = useText();
+  const inRouter = useInRouterContext();
   const [open, setOpen] = useState(false);
   const [skills, setSkills] = useState<AgentSkill[] | null>(null);
   const [error, setError] = useState(false);
@@ -30,11 +32,15 @@ export function SkillSelection({ value, onChange, disabled }: { value: string[];
     setError(false);
     try { setSkills((await rynAgent.skills()).skills); } catch { setError(true); }
   };
+  const manageLabel = text("管理技能", "Manage skills");
   return <div className="ra-guidance">
     <button className="ra-link" aria-expanded={open} onClick={() => { setOpen(!open); if (!open && !skills) void load(); }}>{text("技能", "Skills")}{value.length ? ` · ${value.length}` : ` · ${text("可选", "optional")}`}</button>
     {open && <fieldset className="ra-tool-permissions"><legend>{text("为新任务选择技能", "Choose skills for the new task")}</legend>
       <p>{text("技能提供处理步骤，不会增加工具权限。只对新任务生效。", "Skills offer workflow guidance without granting tool access. They apply to the new task only.")}</p>
       {error ? <button className="ra-link" onClick={() => void load()}>{text("加载失败，重试", "Load failed — retry")}</button> : skills === null ? <p role="status">{text("正在加载…", "Loading…")}</p> : skills.map(skill => <label key={skill.id}><input type="checkbox" checked={value.includes(skill.id)} disabled={disabled} onChange={event => onChange(event.target.checked ? [...value, skill.id] : value.filter(id => id !== skill.id))} /><span>{labels[skill.id] ? text(...labels[skill.id]) : skill.title}<small>v{skill.version}</small></span></label>)}
+      <div className="ra-skill-manage-row">
+        {inRouter ? <Link className="ra-link" to="/settings/extensions/skills">{manageLabel}</Link> : <a className="ra-link" href="/settings/extensions/skills">{manageLabel}</a>}
+      </div>
     </fieldset>}
   </div>;
 }
@@ -81,3 +87,6 @@ export function PreferencesEditor() {
     </section>}
   </div>;
 }
+
+export { MemoryEditor, type MemoryEditorProps } from "./RynAgentMemory";
+

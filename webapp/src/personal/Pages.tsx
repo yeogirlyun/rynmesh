@@ -682,6 +682,7 @@ export function PersonalSettings() {
         </div>
       </section>
       <section className="pf-setting-row"><div><h2>{t("nav.desktop")}</h2><p>{t("settings.desktopHelp")}</p></div><Link className="pf-button" to={href("/settings/desktop")}>{t("settings.desktopSettings")} <ChevronRight size={16} /></Link></section>
+      <section className="pf-setting-row"><div><h2>{t("nav.agentExtensions")}</h2><p>{t("settings.agentExtensionsHelp")}</p></div><Link className="pf-button" to={href("/settings/extensions")}>{t("settings.manageAgentExtensions")} <ChevronRight size={16} /></Link></section>
       <section>
         <div className="pf-setting-row">
           <div>

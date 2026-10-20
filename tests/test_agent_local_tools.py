@@ -158,18 +158,18 @@ def test_read_reports_lines_pages_on_line_boundaries_and_addresses_by_line(local
     assert "".join(pages) == body and len(pages) > 1
 
 
-@pytest.mark.parametrize(("bad_call", "expected"), [
-    (call("ryn_file_read", json.dumps({"start_line": 2}), "bad"), ["'ryn_file_read'", "schema", "required"]),
-    (call("ryn_file_read", "{not json", "bad"), ["'ryn_file_read'", "not valid JSON"]),
-    (call("ryn_does_not_exist", "{}", "bad"), ["'ryn_does_not_exist'", "not one of the available tools"]),
+@pytest.mark.parametrize(("bad_call", "expected_error", "expected_message"), [
+    (call("ryn_file_read", json.dumps({"start_line": 2}), "bad"), "agent_tool_arguments_invalid", "Tool arguments do not match the request-bound parameter schema."),
+    (call("ryn_file_read", "{not json", "bad"), "agent_tool_arguments_invalid", "Tool arguments must be a valid JSON object."),
+    (call("ryn_does_not_exist", "{}", "bad"), "agent_unknown_tool", "Choose a tool from the tools offered in this request."),
 ])
-def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected):
+def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(node, monkeypatch, tmp_path, bad_call, expected_error, expected_message):
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
     runtime = AgentRuntime(AgentStore(owner_store.home / "invalid-agent", peer_box.load_or_create_messaging_key(owner_store.home / "messaging.x25519")), bridge, tools, catalog)
     runtime.update_settings({"enabled": True, "model_id": model_id, "workspace_root": str(tmp_path)})
-    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf-8", newline="")
     requests = fake_upstream(monkeypatch, [
         call("ryn_discover_tools", json.dumps({"load": ["ryn_file_read"]}), "discover"),
         bad_call,
@@ -182,14 +182,83 @@ def test_invalid_tool_call_is_explained_on_the_retry_instead_of_repeated_blind(n
         if current["status"] in {"completed", "failed"}:
             break
     assert current["status"] == "completed", (current.get("error"), [(e["type"], e.get("detail"), e.get("error")) for e in current["events"][-10:]])
-    rejection = next(e for e in current["events"] if e["type"] == "model_response_rejected")
-    assert all(word in rejection["detail"] for word in expected), rejection
-    retried = requests[2]["messages"][-1]["content"]  # discovery, rejection, then retry
-    assert retried.startswith("Server note: your previous response was rejected and nothing in it was executed")
-    assert all(word in retried for word in expected)
-    assert not any("Server note" in str(m.get("content", "")) for m in requests[0]["messages"])
-    # The note is for one retry only: it is gone once a response is accepted.
-    assert not any("Server note" in str(m.get("content", "")) for m in requests[3]["messages"])
+    expected_payload = {"error": expected_error, "message": expected_message, "not_executed": True, "no_mutation": True}
+    rejection = next(e for e in current["events"] if e["type"] == "tool_rejected" and e.get("call_id") == "bad")
+    assert rejection["result"] == expected_payload
+    assert not [e for e in current["events"] if e["type"] in {"tool_started", "tool_execution_completed", "tool_result"} and e.get("call_id") == "bad"]
+    good_started = [e for e in current["events"] if e["type"] == "tool_started" and not e.get("internal")]
+    good_results = [e for e in current["events"] if e["type"] == "tool_result" and not e.get("internal")]
+    assert [e["call_id"] for e in good_started] == ["good"]
+    assert [e["call_id"] for e in good_results] == ["good"]
+    good_op_id = good_results[0]["operation_id"]
+    assert good_started[0]["operation_id"] == good_op_id
+    receipts = runtime.store.read()["tasks"][task["id"]].get("receipts", [])
+    assert [r["operation_id"] for r in receipts] == [good_op_id]
+    assert receipts[0]["tool"] == "ryn_file_read" and receipts[0]["status"] == "confirmed" and receipts[0]["arguments"] == {"path": "a.txt"}
+    raw_args = bad_call["tool_calls"][0]["function"]["arguments"]
+    assistant_bad = next(
+        tc for m in requests[2]["messages"] if m.get("role") == "assistant"
+        for tc in (m.get("tool_calls") or []) if tc.get("id") == "bad"
+    )
+    assert assistant_bad["function"]["arguments"] == raw_args
+    paired = requests[2]["messages"][-1]
+    assert paired["role"] == "tool" and paired["tool_call_id"] == "bad"
+    assert json.loads(paired["content"]) == expected_payload
+    good_tool = next(m for m in requests[3]["messages"] if m.get("role") == "tool" and m.get("tool_call_id") == "good")
+    assert json.loads(good_tool["content"])["text"] == "alpha\n"
+
+
+def test_mixed_valid_and_invalid_tool_calls_execute_valid_sibling_once_and_pair_rejection(node, monkeypatch, tmp_path):
+    app, owner_store = node
+    _, model_id = add_source(app)
+    bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
+    runtime = AgentRuntime(AgentStore(owner_store.home / "mixed-agent", peer_box.load_or_create_messaging_key(owner_store.home / "messaging.x25519")), bridge, tools, catalog)
+    runtime.update_settings({"enabled": True, "model_id": model_id, "workspace_root": str(tmp_path)})
+    (tmp_path / "a.txt").write_text("alpha\n", encoding="utf-8", newline="")
+    mixed = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": "good", "type": "function", "function": {"name": "ryn_file_read", "arguments": json.dumps({"path": "a.txt"})}},
+            {"id": "bad", "type": "function", "function": {"name": "ryn_file_read", "arguments": "{not json"}},
+        ],
+    }
+    requests = fake_upstream(monkeypatch, [
+        call("ryn_discover_tools", json.dumps({"load": ["ryn_file_read"]}), "discover"),
+        mixed,
+        {"role": "assistant", "content": "It says alpha."},
+        passed_checker,
+    ])
+    task = runtime.create({"message": "Read a.txt even if one sibling call is malformed."})
+    for _ in range(20):
+        runtime.run_once()
+        current = runtime.get(task["id"])
+        if current["status"] in {"completed", "failed"}:
+            break
+    assert current["status"] == "completed", current.get("error")
+    stored = runtime.store.read()["tasks"][task["id"]]
+    assert not [e for e in current["events"] if e["type"] in {"tool_started", "tool_execution_completed", "tool_result"} and e.get("call_id") == "bad"]
+    good_started = [e for e in current["events"] if e["type"] == "tool_started" and not e.get("internal")]
+    good_results = [e for e in current["events"] if e["type"] == "tool_result" and not e.get("internal")]
+    assert [e["call_id"] for e in good_started] == ["good"]
+    assert [e["call_id"] for e in good_results] == ["good"]
+    good_op_id = good_results[0]["operation_id"]
+    assert good_started[0]["operation_id"] == good_op_id
+    receipts = stored.get("receipts", [])
+    assert [r["operation_id"] for r in receipts] == [good_op_id]
+    assert receipts[0]["tool"] == "ryn_file_read" and receipts[0]["status"] == "confirmed" and receipts[0]["arguments"] == {"path": "a.txt"}
+    rejections = [e for e in current["events"] if e["type"] == "tool_rejected"]
+    assert len(rejections) == 1 and rejections[0]["call_id"] == "bad"
+    assert rejections[0]["result"] == {
+        "error": "agent_tool_arguments_invalid",
+        "message": "Tool arguments must be a valid JSON object.",
+        "not_executed": True,
+        "no_mutation": True,
+    }
+    followup = requests[2]["messages"]
+    tool_msgs = {m["tool_call_id"]: json.loads(m["content"]) for m in followup if m.get("role") == "tool" and m.get("tool_call_id") in {"good", "bad"}}
+    assert tool_msgs["good"]["text"] == "alpha\n"
+    assert tool_msgs["bad"] == rejections[0]["result"]
 
 
 def test_search_ranks_matching_files_so_a_broad_term_can_be_narrowed(local):
@@ -203,6 +272,8 @@ def test_search_ranks_matching_files_so_a_broad_term_can_be_narrowed(local):
 
 
 def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(node, monkeypatch, tmp_path):
+    from rynmesh.agent_runtime.streamed_reads import _publish, _stamp
+
     app, owner_store = node
     _, model_id = add_source(app)
     bridge, tools, catalog = build_agent_integrations(app, owner_store, owner_store.home)
@@ -223,6 +294,55 @@ def test_budget_notice_reaches_the_model_once_and_is_not_written_to_the_receipt(
     assert len(notices) == 1 and "5 of 7" in notices[0]["content"] and "Conclude from the evidence" in notices[0]["content"]
     assert "make the change now" not in notices[0]["content"]
     assert all("server_note" not in json.dumps(e.get("result", {})) for e in current["events"] if e["type"] == "tool_result")
+    stored_row = runtime.store.read()["tasks"][task["id"]]
+    assert all("server_note" not in json.dumps(r.get("result", {})) for r in stored_row.get("receipts", []))
+
+    # Verify multi-read streamed publication attaches server_note only to the last newly
+    # published tool message and never advances budget_notice_level on rejected/idempotent calls.
+    row = {
+        "id": "task-batch",
+        "status": "running",
+        "model_id": model_id,
+        "steps": 5,
+        "limits": {"max_steps": 7},
+        "goal": {"revision": 1},
+        "scope_revision": 1,
+        "control_revision": 1,
+        "context_epoch": 0,
+        "event_cursor": 0,
+        "revision": 1,
+        "model_destination": None,
+        "local_execution": {"workspace_root": str(tmp_path)},
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "r1", "type": "function", "function": {"name": "ryn_file_read", "arguments": "{}"}},
+                    {"id": "r2", "type": "function", "function": {"name": "ryn_file_read", "arguments": "{}"}},
+                ],
+            }
+        ],
+        "events": [],
+        "receipts": [],
+    }
+    stamp = _stamp(row)
+    records = [
+        {"index": 0, "stamp": {**stamp, "scope_revision": 99}, "call": {"call_id": "r1", "name": "ryn_file_read", "operation_id": "op1"}, "result": {"text": "one"}},
+        {"index": 1, "stamp": stamp, "call": {"call_id": "r2", "name": "ryn_file_read", "operation_id": "op2"}, "result": {"text": "two"}},
+    ]
+    assert _publish(row, records) is False
+    assert row.get("budget_notice_level", 0) == 0
+    records[0]["stamp"] = stamp
+    assert _publish(row, records) is True
+    assert row["budget_notice_level"] == 1
+    published_tools = [json.loads(m["content"]) for m in row["messages"] if m.get("role") == "tool"]
+    assert "server_note" not in published_tools[0] and "5 of 7" in published_tools[1]["server_note"]
+    assert all("server_note" not in r["result"] for r in records)
+    assert all("server_note" not in e["result"] for e in row["events"] if e["type"] == "tool_result")
+    row["steps"] = 6  # Crosses 85% threshold, but idempotent re-publish has no unanswered calls.
+    assert _publish(row, records) is True
+    assert row["budget_notice_level"] == 1
 
 
 def test_unchanged_range_read_twice_is_flagged_but_still_returned(local):

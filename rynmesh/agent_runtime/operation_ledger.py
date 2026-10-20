@@ -66,6 +66,32 @@ class OperationLedger:
             self._write(records)
             return copy.deepcopy(row), True
 
+    def begin_dispatched(self, binding, preview, *, operation_classification, host_pid, receipt_reserve=4096):
+        with file_transaction(self.lock):
+            records = self._read()
+            prior = records.get(binding["operation_id"])
+            if prior:
+                if prior.get("status") == "retired":
+                    raise AgentToolRejected("agent_operation_retired")
+                if prior["binding"] != binding:
+                    raise AgentToolRejected("agent_operation_id_conflict")
+                return copy.deepcopy(prior), False
+            if len(records) >= 5000:
+                raise AgentToolRejected("agent_operation_ledger_limit")
+            if type(receipt_reserve) is not int or not 4096 <= receipt_reserve <= 32768:
+                raise AgentError("agent_operation_receipt_reserve_invalid")
+            row = {
+                "binding": copy.deepcopy(binding),
+                "preview": copy.deepcopy(preview),
+                "status": "dispatched",
+                "receipt_reserve": receipt_reserve,
+                "operation_classification": copy.deepcopy(operation_classification),
+                "host_pid": host_pid,
+            }
+            records[binding["operation_id"]] = row
+            self._write(records)
+            return copy.deepcopy(row), True
+
     def update(self, operation_id, status, **values):
         with file_transaction(self.lock):
             records = self._read()

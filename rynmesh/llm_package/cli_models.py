@@ -13,6 +13,14 @@ from .process_guard import communicate_bounded, spawn, terminate
 _cache = {}
 _lock = threading.Lock()
 _cache_lock = threading.Lock()
+_discovery_locks = {}
+_DISCOVERY_TIMEOUT_SECONDS = 30
+
+
+def _discovery_lock(kind, executable):
+    # An unrelated CLI must not serialize all model-directory requests.
+    with _cache_lock:
+        return _discovery_locks.setdefault((kind, executable), threading.Lock())
 
 
 def context_metadata(models, model="", *, fallback=32768):
@@ -63,7 +71,7 @@ def parse_antigravity_models(output):
 def list_models(kind, executable, *, refresh=False):
     if kind == "codex_cli":
         from .codex_session import list_models as codex_models
-        with _lock:
+        with _discovery_lock(kind, executable):
             cached = _cache.get((kind, executable))
             if not refresh and cached and 0 <= time.monotonic() - cached[0] < 60:
                 return [dict(row) for row in cached[1]]
@@ -73,7 +81,7 @@ def list_models(kind, executable, *, refresh=False):
             return [dict(row) for row in models]
     if kind != "antigravity_cli":
         raise AdapterError("model discovery is unavailable for this CLI")
-    with _lock:
+    with _discovery_lock(kind, executable):
         cached = _cache.get(executable)
         if not refresh and cached and 0 <= time.monotonic() - cached[0] < 30:
             return [dict(row) for row in cached[1]]
@@ -82,8 +90,8 @@ def list_models(kind, executable, *, refresh=False):
             prepare_workspace(root, env)
             process = None
             try:
-                process = spawn([executable, "models"], cwd=str(root), env=env, timeout=15)
-                output = communicate_bounded(process, b"", timeout=15, root=root)
+                process = spawn([executable, "models"], cwd=str(root), env=env, timeout=_DISCOVERY_TIMEOUT_SECONDS)
+                output = communicate_bounded(process, b"", timeout=_DISCOVERY_TIMEOUT_SECONDS, root=root)
                 if process.returncode:
                     raise AdapterError("Antigravity model discovery failed; check local login and CLI version")
                 if isinstance(output, bytes):

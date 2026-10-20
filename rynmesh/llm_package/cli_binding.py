@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 import uuid
 from contextlib import nullcontext
 from pathlib import Path
@@ -22,6 +23,9 @@ class CLIModelDispatchAdapter:
         self._cached_binding_row = None
         self._metadata_fingerprint = None
         self._metadata_lock = threading.Lock()
+        self._display_refresh_lock = threading.Lock()
+        self._display_refresh_running = False
+        self._display_refresh_at = 0.0
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
@@ -61,6 +65,48 @@ class CLIModelDispatchAdapter:
             self._observe_models(models, fingerprint)
             self._metadata_fingerprint = fingerprint
             return models
+
+    def display_models(self):
+        """Passive UI metadata; admission always uses current_models instead.
+
+        The last observed inventory survives restarts in the binding record.
+        It is only a display fallback, never a model binding or dispatch grant.
+        """
+        from .cli_models import cached_models
+        command, fingerprint = self._configuration()
+        models = cached_models(self.inner.kind, command)
+        if self._metadata_fingerprint == fingerprint and models:
+            return models
+        self._refresh_display_models()
+        try:
+            rows = read_json(self.path, max_bytes=256 * 1024) if self.path.exists() else {}
+            row = rows.get(self.manifest.package_id, {})
+            if row.get("fingerprint") != fingerprint:
+                return []
+            default = row.get("models", {}).get("", {}).get("signature", {}).get("model")
+            return [{"id": model, "name": model or "CLI default", "default": model == default,
+                     **{key: signature[key] for key in ("context_window", "context_window_known") if key in signature}}
+                    for model, observation in row.get("models", {}).items()
+                    if isinstance(signature := observation.get("signature"), dict)
+                    and signature.get("available") is not False and model]
+        except (OSError, ValueError, TypeError):
+            return []
+
+    def _refresh_display_models(self):
+        with self._display_refresh_lock:
+            if self._display_refresh_running or time.monotonic() - self._display_refresh_at < 30:
+                return
+            self._display_refresh_running = True
+            self._display_refresh_at = time.monotonic()
+        def refresh():
+            try:
+                self.current_models()
+            except (ValueError, OSError, RuntimeError):
+                pass
+            finally:
+                with self._display_refresh_lock:
+                    self._display_refresh_running = False
+        threading.Thread(target=refresh, name="ryn-cli-directory-refresh", daemon=True).start()
 
     def context_metadata_for_model(self, model=""):
         from .cli_models import context_metadata, validate_model

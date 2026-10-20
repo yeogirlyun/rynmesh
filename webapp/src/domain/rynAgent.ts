@@ -194,7 +194,7 @@ export interface AgentResultPage { id: string; sha256: string; bytes: number; ch
 export interface AgentArtifact { id: string; name: string; bytes: number; sha256: string; created_at?: string; }
 /** A workspace file proven by this task's own confirmed file operations, re-checked against the disk. */
 export interface AgentFileArtifact {
-  id: string; name: string; path: string; absolute_path?: string; source?: "write" | "command" | "read"; media_type: string; preview: "image" | "text" | "download";
+  id: string; name: string; path: string; absolute_path?: string; operation_id?: string; source?: "write" | "command" | "read" | "computer_observation"; media_type: string; preview: "image" | "text" | "download";
   role: "deliverable" | "supporting"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
   bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
   attribution?: "observed_during_command";

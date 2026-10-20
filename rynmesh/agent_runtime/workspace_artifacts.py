@@ -130,6 +130,41 @@ def history(row) -> dict:
                 _touch(files, receipt, result["destination"], result.get("sha256"), True)
                 if action == "move":
                     _remove(files, receipt, result.get("path", ""))
+        elif str(tool or "").startswith("mcp__") and (
+            isinstance(result.get("mcp_artifacts"), list)
+            or isinstance(result.get("native_observation_artifacts"), list)
+        ):
+            native = isinstance(result.get("native_observation_artifacts"), list)
+            binding = receipt.get("extension_binding") or {}
+            if native and (binding.get("server_id") != "computer-use"
+                           or binding.get("instance_id") != "builtin-computer-use"):
+                continue
+            root_value = (row.get("local_execution") or {}).get("workspace_root") or ""
+            if root_value:
+                ws_root = Path(root_value).resolve()
+                safe_task = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row.get("id") or "task").strip()).strip("._")[:64] or "task"
+                safe_op = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(receipt.get("operation_id") or "op").strip()).strip("._")[:64] or "op"
+                expected_dir = (ws_root / ".ryn" / ("computer" if native else "mcp") / safe_task / safe_op).resolve()
+                for item in result.get("native_observation_artifacts" if native else "mcp_artifacts") or []:
+                    if not isinstance(item, dict) or not item.get("path") or not item.get("sha256"):
+                        continue
+                    if native:
+                        descriptor = item.get("native_descriptor") or {}
+                        if (descriptor.get("task_id") != row.get("id")
+                                or descriptor.get("operation_id") != receipt.get("operation_id")
+                                or descriptor.get("source_sha256") != item["sha256"]):
+                            continue
+                    raw_p = str(item["path"])
+                    if Path(raw_p).is_absolute():
+                        continue
+                    try:
+                        resolved_p = (ws_root / raw_p).resolve()
+                    except (OSError, ValueError):
+                        continue
+                    if not resolved_p.is_relative_to(expected_dir) or resolved_p == expected_dir:
+                        continue
+                    _touch(files, receipt, str(resolved_p), item["sha256"], True,
+                           "computer_observation" if native else "write")
     return files
 
 
@@ -249,7 +284,7 @@ def listing(row) -> dict:
             continue
         if relative.startswith("../"):
             continue
-        item = {"id": state["id"], "name": path.name, "path": relative, "absolute_path": str(path), "source": state["source"], "media_type": media_type(path.name),
+        item = {"id": state["id"], "name": path.name, "path": relative, "absolute_path": str(path), "source": state["source"], "operation_id": state["operation_id"], "media_type": media_type(path.name),
                 "preview": preview_kind(path.name), "created_by_task": bool(state["created_by_task"]),
                 "revisions": state["revisions"], "goal_revisions": state["goal_revisions"],
                 "created_at": state["first_at"], "updated_at": state["updated_at"], "receipt_sha256": state["sha256"],
@@ -279,6 +314,9 @@ def listing(row) -> dict:
     present = [item for item in items if item["status"] != "missing"]
     named = [item for item in present if item["mentioned_in_answer"]]
     for item in items:
+        if item["source"] == "computer_observation":
+            item["role"] = "supporting"
+            continue
         # Evidence first: an answer can only rank files that receipts already prove; it cannot add one.
         document = item["created_by_task"] and Path(item["name"]).suffix.lower() in DOCUMENT_TYPES
         item["role"] = ("deliverable" if item in named or (document and item in present) else "supporting") if named else ("deliverable" if item in present else "supporting")

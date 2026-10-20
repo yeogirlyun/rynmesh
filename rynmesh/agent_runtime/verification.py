@@ -91,15 +91,17 @@ def record(row, call, status, at, *, result=None, flight=None):
     receipts = row.setdefault("receipts", [])
     receipt = next((r for r in receipts if r["operation_id"] == call["operation_id"]), None)
     if receipt is None:
+        ext_binding = call.get("extension_binding") or (flight or {}).get("extension_binding")
         receipt = {"id": "receipt_" + call["operation_id"], "operation_id": call["operation_id"], "tool": call["name"],
                    "arguments": copy.deepcopy(call["arguments"]), "arguments_sha256": hashlib.sha256(encoded(call["arguments"])).hexdigest(),
                    "effect": call["effect"], "goal_revision": call.get("goal_revision", row["goal"]["revision"]),
                    "scope_revision": call.get("scope_revision", row["scope_revision"]), "context_epoch": call.get("context_epoch", 0),
-                   "started_at": at}
+                   "started_at": at,
+                   **({"extension_binding": copy.deepcopy(ext_binding)} if isinstance(ext_binding, dict) else {})}
         receipts.append(receipt)
     receipt["status"] = status
     if flight:
-        for key in ("authorization", "preview", "permission_record", "operation_classification"):
+        for key in ("authorization", "preview", "permission_record", "operation_classification", "extension_binding"):
             if key in flight:
                 receipt[key] = copy.deepcopy(flight[key])
     if result is not None:

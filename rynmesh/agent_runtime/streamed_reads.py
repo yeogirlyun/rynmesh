@@ -40,9 +40,11 @@ def _safe_error(exc):
     return code if isinstance(exc, AgentError) and re.fullmatch(r"agent_[a-z0-9_]{1,100}", code) else "agent_operation_failed"
 
 
-def _tool_message(record):
+def _tool_message(record, *, server_note=None):
+    result = record["result"]
+    shown = {**result, "server_note": server_note} if server_note and isinstance(result, dict) else result
     message = {"role": "tool", "tool_call_id": record["call"]["call_id"],
-               "content": encoded(record["result"]).decode(),
+               "content": encoded(shown).decode(),
                "context_epoch": record["stamp"]["context_epoch"]}
     if record.get("origin"):
         message["resource_origin"] = copy.deepcopy(record["origin"])
@@ -79,12 +81,13 @@ def _publish(row, records, *, recover=False):
         messages.append({"role": "assistant", "content": "Recovered completed read calls from a partial model response; the original response did not finish.",
                          "tool_calls": [copy.deepcopy(record["raw_call"]) for record in records],
                          "context_epoch": row.get("context_epoch", 0)})
-    for record in records:
-        if record["call"]["call_id"] not in answered:
-            messages.append(_tool_message(record))
-            _apply_observed(row, record)
-            event(row, "tool_result", tool=record["call"]["name"], call_id=record["call"]["call_id"],
-                  operation_id=record["call"]["operation_id"], result=record["result"], streamed=True)
+    unanswered = [record for record in records if record["call"]["call_id"] not in answered]
+    notice = budget.notice(row) if unanswered else None
+    for index, record in enumerate(unanswered):
+        messages.append(_tool_message(record, server_note=notice if index == len(unanswered) - 1 else None))
+        _apply_observed(row, record)
+        event(row, "tool_result", tool=record["call"]["name"], call_id=record["call"]["call_id"],
+              operation_id=record["call"]["operation_id"], result=record["result"], streamed=True)
     operations = {record["call"]["operation_id"] for record in records}
     row["stream_read_journal"] = [entry for entry in row.get("stream_read_journal", [])
                                   if entry["call"]["operation_id"] not in operations]
@@ -92,9 +95,10 @@ def _publish(row, records, *, recover=False):
 
 
 class StreamedReads:
-    def __init__(self, runtime, selected, specs, cancelled, parallel_reads):
+    def __init__(self, runtime, selected, specs, cancelled, parallel_reads, *, metadata=None):
         self.runtime, self.selected = runtime, copy.deepcopy(selected)
         self.specs, self.cancelled = copy.deepcopy(specs), cancelled
+        self.metadata = metadata or runtime._metadata
         self.stamp = _stamp(selected)
         self.authority = copy.deepcopy(selected.get("_model_retry_authority"))
         self.request_id = selected.get("_request_id")
@@ -106,7 +110,7 @@ class StreamedReads:
 
     def _normalize(self, raw):
         call = normalize_tool_calls([raw], self.specs, existing_call_ids=self.existing_ids,
-                                    metadata=self.runtime._metadata, internal_names=INTERNAL_NAMES)[0]
+                                    metadata=self.metadata, internal_names=INTERNAL_NAMES)[0]
         call["raw_arguments_sha256"] = call["arguments_sha256"]
         call["arguments_sha256"] = digest(call["arguments"])
         call.update(operation_id="op_" + uuid.uuid4().hex, internal=call["name"] in INTERNAL_NAMES,
@@ -124,9 +128,18 @@ class StreamedReads:
     def _check(self, data, row, call):
         if not self._authorized(data, row):
             return None
+        if "extension_binding" in call and hasattr(self.runtime.tools, "verify_extension_binding"):
+            self.runtime.tools.verify_extension_binding(call)
         meta = self.runtime.tools.metadata(call["name"])
         if meta.get("effect") != "read" or meta.get("requires_explicit_approval"):
             return None
+        if "extension_binding" in call and meta.get("extension_binding") != call["extension_binding"]:
+            return None
+        if bool(meta.get("computer_access")) != bool(call.get("computer_access")):
+            return None
+        if call.get("computer_access") or meta.get("computer_access") or (call.get("extension_binding") or {}).get("computer_access"):
+            if not data["settings"].get("desktop_access") or not (row.get("local_execution") or {}).get("desktop_access"):
+                return None
         spec = next((item["function"] for item in self.runtime.tools.specs()
                      if item["function"]["name"] == call["name"]), None)
         assert_schema_unchanged(call, spec)
@@ -234,6 +247,8 @@ class StreamedReads:
                 context.update(_deferred_observed_files=deferred,
                     _observed_files_snapshot=copy.deepcopy(self.selected.get("observed_files") or {}),
                     operation_classification=copy.deepcopy(prepared["classification"]), context_epoch=self.stamp["context_epoch"])
+                if "extension_binding" in call:
+                    context["extension_binding"] = copy.deepcopy(call["extension_binding"])
                 options["context"] = context
             with diagnostic_log.context_scope(task_id=self.selected["id"], operation_id=call["operation_id"]):
                 result = sanitized(self.runtime.tools.execute(call["name"], copy.deepcopy(call["arguments"]), **options))

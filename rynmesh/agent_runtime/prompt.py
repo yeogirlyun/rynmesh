@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import platform
 
 from .inference_context import GUIDANCE as INFERENCE_GUIDANCE
@@ -12,7 +13,7 @@ from .operation_permissions import projection as permission_projection
 from .output_policy import MAX_TOOL_CALLS
 from .tool_menu import SPEC as TOOL_MENU_SPEC
 
-PROMPT_VERSION = "ryn-agent-loop-v7"
+PROMPT_VERSION = "ryn-agent-loop-v9"
 
 SYSTEM = (
     "You are Ryn, the user's assistant on their computer. Reply concisely in their language. "
@@ -43,7 +44,8 @@ SYSTEM = (
     "Verify proportionally with relevant observations/tests. No mandatory independent reviewer or fixed finish workflow. "
     "Report actual results and material uncertainty; intention or a screenshot file alone proves no success. "
     "Use image/render inspection for visual claims and absolute file links for deliverables. "
-    "Credentials use secure references, never chat. File tools enforce workspace paths; shell uses OS account permissions, not a sandbox."
+    "Keep raw credentials out of chat and tool output. Local programs may consume values saved on this computer directly. "
+    "File tools enforce workspace paths; shell uses OS account permissions, not a sandbox."
 )
 
 
@@ -72,7 +74,7 @@ INPUT["allOf"] = [{"if": {"properties": {"kind": {"const": "credential_ref"}}},
 INTERNAL_SPECS = [
     TOOL_MENU_SPEC,
     {"type": "function", "function": {"name": "ryn_update_plan", "description": "Propose a brief plan if useful; never changes owner goals, permissions or verified outcomes.", "parameters": PLAN}},
-    {"type": "function", "function": {"name": "ryn_request_input", "description": "Structured input for essential work facts only; casual clarification uses chat. Generated files use the supplied workspace, no directory question. Input answers never authorize writes or external directories. Credentials: kind=credential_ref, only credential_ref fields; never ask keys in chat. Other facts: information/choice with text/choice fields.", "parameters": INPUT}},
+    {"type": "function", "function": {"name": "ryn_request_input", "description": "Structured input for essential work facts only; casual clarification uses chat. Input answers never authorize writes or external directories. kind=credential_ref opens a FULL Ryn source form asking for source type, URL, source ID and key. It cannot present a key-only prompt or fill known settings. Do not use it when the owner delegates setup and only needs to enter a key; author/run a local input program using file/shell/process tools instead, including for Ryn's own configuration. The full form is appropriate only when those connection facts also need owner input. Never ask keys in chat or return them in tool output. Other facts: information/choice with text/choice fields.", "parameters": INPUT}},
     {"type": "function", "function": {"name": "ryn_read_result", "description": "Read a bounded page of this task's encrypted large tool result. Old resource-scope epochs cannot be read into the model.",
      "parameters": obj({"result_id": text(64), "offset": {"type": "integer", "minimum": 0}}, ["result_id"])}},
 ]
@@ -136,6 +138,9 @@ def authority(row: dict) -> str:
                "inference_context": inference_projection(row)}
     context["local_execution"] = row.get("local_execution") or {"workspace_root": "", "desktop_access": False}
     context["os"] = platform.system()
+    port = os.environ.get("RYNMESH_PEER_PORT", "")
+    if 0 < len(port) <= 5 and port.isascii() and port.isdigit() and 0 < int(port) <= 65535:
+        context["local_control_api"] = {"origin": f"http://127.0.0.1:{int(port)}", "schema_path": "/openapi.json"}
     context["file_output_policy"] = (
         "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); binary files use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
@@ -149,7 +154,21 @@ def authority(row: dict) -> str:
             "Read operations, including recognized literal shell reads, run without a confirmation dialog. "
             "confirm_changes is the user's strict mode for other effects. Automatic mode uses the user's tool grants. "
             "External configuration/access changes retain their host approval boundary. "
-            "ryn_request_input: structured fields for concrete work only, never casual clarification or permission. Source credentials: kind=credential_ref; no keys in chat. "
+            "Choose tools for the user's actual target: Ryn settings/catalog tools configure Ryn itself, not arbitrary local software or projects. "
+            "General local work can compose file, shell and process tools: author a program, run it, wait for completion, and verify its saved result. "
+            "When the owner delegates all other setup and asks to enter only a missing value in a popup, author and run a local program "
+            "that asks for that value only, using a native window or loopback page. This also applies to configuring Ryn itself. "
+            "A full settings form asking the owner for already discoverable facts does not fulfill that request. "
+            "When local_control_api is present, it identifies this executing node's owner HTTP API; discover its normal endpoints/schema "
+            "and let the local program submit saved values directly to the intended API without exposing them to the model. "
+            "Use its ordinary authentication and permission checks; do not read node master keys or expand access. "
+            "Prepare discoverable settings yourself and request only missing values. The program should save/consume secrets locally and output only non-secret status; "
+            "do not read secrets back into model context. Keep the collecting process alive while waiting, use background execution and bounded process reads, "
+            "and distinguish save, cancel, timeout and failure before continuing. Existing tool permissions still apply. "
+            "ryn_request_input: structured fields for concrete work only, never casual clarification or permission. "
+            "kind=credential_ref is a full Ryn source form asking for connection facts AND a key; use it only if those facts also need owner input. "
+            "When only a key is missing, do not use this full form. Source draft tools requiring a credential slot are one optional integration path; "
+            "a local program can instead use the same owner HTTP APIs as the app to save and test configuration, returning only non-secret receipts. "
             "Source setup: follow discovered schemas. Connected models with an Agent tool bridge are ready to use; tool probes are optional diagnostics, never a selection prerequisite. Verify actual inference and sharing claims separately. CLI sources need no HTTP credentials. "
             "Text/waits prove no success. Claims need matching subject/scope/time: unknown/missing is not no/never; "
             "local grants are not remote policy; stale heartbeat proves no current reachability."

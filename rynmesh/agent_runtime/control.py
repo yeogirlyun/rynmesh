@@ -113,7 +113,7 @@ def close_queue(row, emit, reason, *, keep_flight=True):
     row["queue"] = retained
 
 
-def settle(row, emit):
+def settle(row, emit, data=None):
     """Called after an old operation has a known response and clears its flight."""
     control = row.get("pending_control")
     if not control or row.get("in_flight"):
@@ -123,10 +123,14 @@ def settle(row, emit):
         close_queue(row, emit, "agent_owner_changed" if control["kind"] in {"steer", "scope", "permissions"} else "agent_cancelled", keep_flight=False)
     if control["kind"] == "edit_message":
         from .conversation import rewrite
-        rewrite(row, control, emit)
+        rewrite(row, control, emit, data=data)
         row.pop("pending_control", None)
         return
-    row["messages"].extend(row.pop("pending_user_messages", []))
+    pending_users = row.pop("pending_user_messages", [])
+    row["messages"].extend(pending_users)
+    if pending_users and isinstance(data, dict):
+        from . import memory_integration
+        memory_integration.apply_owner_turn_memory_in_tx(None, data, row)
     if control["kind"] in {"steer", "scope", "permissions"}:
         row["status"] = "paused" if control.get("remain_paused") else "queued"
         row["error"] = None

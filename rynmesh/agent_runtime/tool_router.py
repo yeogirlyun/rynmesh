@@ -189,5 +189,9 @@ def normalize_tool_calls(calls, specs, *, existing_call_ids=(), metadata=None,
             if not isinstance(meta, dict) or meta.get("effect") not in {"read", "write"}:
                 raise AgentError("agent_tool_definition_changed")
             call["effect"] = meta["effect"]
+            if isinstance(meta.get("extension_binding"), dict):
+                call["extension_binding"] = copy.deepcopy(meta["extension_binding"])
+            if meta.get("computer_access"):
+                call["computer_access"] = True
         normalized.append(call)
     return normalized
