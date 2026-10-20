@@ -49,7 +49,10 @@ COMPUTER_USE_BUILTIN_TOOLS = [
     {
         "name": "computer_observe_windows",
         "title": "Observe Windows desktop windows",
-        "description": "List visible top-level windows and foreground window metadata on this computer.",
+        "description": (
+            "List visible top-level windows and foreground window metadata on this computer. "
+            "After finding the target hwnd, call computer_read_window directly (works even on background windows without focusing first)."
+        ),
         "input_schema": {
             "type": "object",
             "additionalProperties": False,
@@ -68,7 +71,10 @@ COMPUTER_USE_BUILTIN_TOOLS = [
     {
         "name": "computer_read_window",
         "title": "Read window controls and capture screenshot",
-        "description": "Inspect UI Automation controls, text, and optional screenshot of a specific window.",
+        "description": (
+            "Inspect UI Automation controls, text, and screenshot of a specific window (works on background windows; "
+            "do NOT call computer_act_window after an action just to verify, as computer_act_window already returns a fresh screenshot)."
+        ),
         "input_schema": {
             "type": "object",
             "additionalProperties": False,
@@ -88,7 +94,12 @@ COMPUTER_USE_BUILTIN_TOOLS = [
     {
         "name": "computer_act_window",
         "title": "Perform action on a window",
-        "description": "Focus, click, type text, press keys, invoke, or set value on a target window control.",
+        "description": (
+            "Focus, click, type text, press keys, invoke, or set value on a target window. "
+            "Every click/type/key action automatically brings the window to the foreground (do NOT call action='focus' first). "
+            "Supports combo execution in ONE call: pass action='type' (or 'click') with x, y (or element_id), text='...', and optional key='Enter' "
+            "to click the input, type text, and submit in a single step. Returns a fresh post-action screenshot and state."
+        ),
         "input_schema": {
             "type": "object",
             "additionalProperties": False,
@@ -292,6 +303,8 @@ class ExtensionStore:
             else peer_box.load_or_create_messaging_key(self.root / "messaging.key")
         )
         self.pub = peer_box.public_key_b64(self.key)
+        self._cached_stamp: tuple[int, int] | None = None
+        self._cached_state: dict[str, Any] | None = None
         with file_transaction(self.lock):
             if not self.path.exists():
                 self._write(self._default_state())
@@ -398,10 +411,16 @@ class ExtensionStore:
 
     def _read(self) -> dict[str, Any]:
         if not self.path.exists():
+            self._cached_stamp = None
+            self._cached_state = None
             state = self._default_state()
             self._write(state)
             return state
         try:
+            st = self.path.stat()
+            stamp = (st.st_mtime_ns, st.st_size)
+            if self._cached_stamp == stamp and self._cached_state is not None:
+                return copy.deepcopy(self._cached_state)
             envelope = read_json(self.path, max_bytes=MAX_BYTES)
             if not isinstance(envelope, dict) or envelope.get("version") != EXTENSIONS_VERSION:
                 raise AgentError("agent_state_unreadable")
@@ -421,7 +440,10 @@ class ExtensionStore:
             raise
         except (OSError, ValueError, KeyError, TypeError, InvalidTag):
             raise AgentError("agent_state_unreadable") from None
-        return self._normalize_state(state)
+        normalized = self._normalize_state(state)
+        self._cached_stamp = stamp
+        self._cached_state = copy.deepcopy(normalized)
+        return normalized
 
     def _normalize_state(self, state: dict[str, Any]) -> dict[str, Any]:
         defaults = self._default_state()
@@ -456,6 +478,13 @@ class ExtensionStore:
             cu_srv["args"] = self._computer_use_default_args()
             if not cu_srv.get("discovered_tools"):
                 cu_srv["discovered_tools"] = self._default_computer_use_tools()
+            else:
+                default_tools_by_name = {item["name"]: item for item in COMPUTER_USE_BUILTIN_TOOLS}
+                for tool_entry in cu_srv.get("discovered_tools") or []:
+                    if isinstance(tool_entry, dict) and tool_entry.get("name") in default_tools_by_name:
+                        src_tool = default_tools_by_name[tool_entry["name"]]
+                        tool_entry["title"] = src_tool["title"]
+                        tool_entry["description"] = src_tool["description"]
             cu_srv.setdefault("config_generation", 1)
             cu_srv["config_sha256"] = _mcp_config_fingerprint(cu_srv)
         for srv in servers.values():
@@ -474,6 +503,13 @@ class ExtensionStore:
             {"version": EXTENSIONS_VERSION, "nonce": nonce, "ciphertext": ciphertext},
             max_bytes=MAX_BYTES,
         )
+        try:
+            st = self.path.stat()
+            self._cached_stamp = (st.st_mtime_ns, st.st_size)
+            self._cached_state = copy.deepcopy(state)
+        except OSError:
+            self._cached_stamp = None
+            self._cached_state = None
         return state
 
     def revision(self) -> int:

@@ -340,6 +340,26 @@ class RynTools:
         return [{"type": "function", "function": {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}}
                 for name, row in {**_SPECS, **LOCAL_SPECS}.items()] + [copy.deepcopy(CODE_MODE_SPEC)] + self.diagnostics.specs() + (copy.deepcopy(APP_SPECS) if getattr(self.app.state, "node_apps", None) else []) + self.craft_plugins.specs() + self.craft.specs() + self.extensions.specs()
 
+    def spec(self, name):
+        if name == CODE_MODE_NAME:
+            return copy.deepcopy(CODE_MODE_SPEC["function"])
+        if self.extensions.handles(name):
+            return next((item["function"] for item in self.extensions.specs() if item["function"]["name"] == name), None)
+        if name in CRAFT_NAMES:
+            return next((item["function"] for item in self.craft.specs() if item["function"]["name"] == name), None)
+        if name in PLUGIN_NAMES:
+            return next((item["function"] for item in self.craft_plugins.specs() if item["function"]["name"] == name), None)
+        if name in APP_NAMES:
+            if not getattr(self.app.state, "node_apps", None):
+                return None
+            return next((copy.deepcopy(item["function"]) for item in APP_SPECS if item["function"]["name"] == name), None)
+        if name in DIAGNOSTIC_NAMES:
+            return next((item["function"] for item in self.diagnostics.specs() if item["function"]["name"] == name), None)
+        row = {**_SPECS, **LOCAL_SPECS}.get(name)
+        if row is not None:
+            return {"name": name, "description": row[0], "parameters": copy.deepcopy(row[3])}
+        return None
+
     def metadata(self, name):
         if name == CODE_MODE_NAME:
             return {"effect": "read", "title": "Execute CodeMode JS", "risk": "low",
