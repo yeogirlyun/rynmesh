@@ -40,7 +40,11 @@ def _resolve_node_binary() -> str:
     if found and Path(found).is_file():
         return str(Path(found).resolve())
     candidates = (
-        [Path(r"C:\Program Files\nodejs\node.exe"), Path(r"C:\Program Files (x86)\nodejs\node.exe")]
+        [
+            Path(r"C:\Program Files\nodejs\node.exe"),
+            Path(r"C:\Program Files (x86)\nodejs\node.exe"),
+            Path(r"C:\nvm4w\nodejs\node.exe"),
+        ]
         if os.name == "nt"
         else [Path("/usr/local/bin/node"), Path("/opt/homebrew/bin/node"), Path("/usr/bin/node")]
     )
