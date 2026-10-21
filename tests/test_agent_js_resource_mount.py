@@ -42,7 +42,6 @@ import rynmesh.agent_runtime.js_runtime.process_identity as pid_mod
 from rynmesh.agent_runtime.js_runtime.manager import (
     JsRuntimeDevelopmentConfig,
     JsRuntimeManager,
-    JsRuntimeSession,
     is_js_runtime_available,
     resolve_node_executable,
     sanitized_worker_env,
@@ -66,7 +65,6 @@ from rynmesh.agent_runtime.js_runtime.resources import (
     ExpectedJsRuntimeProfileSpec,
     JsResourceError,
     active_resource_lease_count,
-    compute_manifest_digest,
     expected_profile_directory_relpaths,
     is_verified_production_lease,
     open_development_js_runtime_lease,
@@ -253,12 +251,12 @@ def test_production_default_manager_fails_closed_with_zero_spawn_and_no_dev_or_e
     """Verify default production manager refuses non-frozen and missing-commitment states with 0 spawns."""
     spawn_calls = 0
 
-    def _ForbiddenPopen(*args: Any, **kwargs: Any) -> Any:
+    def _forbidden_popen(*args: Any, **kwargs: Any) -> Any:
         nonlocal spawn_calls
         spawn_calls += 1
         raise AssertionError("subprocess.Popen must never be called when production resolution fails")
 
-    monkeypatch.setattr(subprocess, "Popen", _ForbiddenPopen)
+    monkeypatch.setattr(subprocess, "Popen", _forbidden_popen)
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setenv("RYN_JS_NODE_EXECUTABLE", str(tmp_path / "node.exe"))
     monkeypatch.setenv("NODE_OPTIONS", "--inspect")
@@ -673,9 +671,9 @@ def test_ready_handshake_strictly_validates_session_generation_engine_variant_an
         def _make_popen(cmd: list[str], **kwargs: Any) -> _FakeSuspendedPopen:
             env = kwargs["env"]
             sid = env["RYN_JS_SESSION_ID"]
-            line = (json.dumps(frame_builder(sid)) + "\n").encode("utf-8")
+            line = (json.dumps(frame_builder(sid)) + "\n").encode("utf-8")  # noqa: B023 - this callback finishes within the current case.
             proc = _FakeSuspendedPopen(pid=60123, handle=0x5566, stdout_lines=[line])
-            spawned.append(proc)
+            spawned.append(proc)  # noqa: B023 - this callback finishes within the current case.
             return proc
 
         def _fake_job(proc: _FakeSuspendedPopen, *, before_resume: Any = None, **kwargs: Any) -> int:

@@ -382,6 +382,19 @@ function renderExtensions(initialEntry = "/settings/extensions") {
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   document.documentElement.dataset.theme = "light";
+  server.use(
+    http.get("*/api/local/agent/extensions/skills/recommended", () =>
+      HttpResponse.json({ skills: [], count: 0 }),
+    ),
+    http.get("*/api/local/agent/computer/status", () =>
+      HttpResponse.json({
+        enabled: true,
+        browser_running: false,
+        desktop_supported: true,
+        active_session: false,
+      }),
+    ),
+  );
 });
 
 describe("agentExtensions domain contract & helpers", () => {
@@ -1697,5 +1710,270 @@ describe("AgentExtensions UI", () => {
       }),
     );
     expect(await screen.findByRole("heading", { name: "Replacement instance B" })).toBeInTheDocument();
+  });
+
+  it("renders Codex MCP cards (Servers, From plugins, MCP Apps), supports env_vars passthrough, env_http_headers, per-row arguments, and Clear all app data", async () => {
+    const user = userEvent.setup();
+    let currentOverview = makeOverviewFixture();
+    let lastCreatePayload: Record<string, unknown> | null = null;
+    let clearDataCalled = 0;
+
+    server.use(
+      http.get("*/api/local/agent/extensions", () => HttpResponse.json(currentOverview)),
+      http.post("*/api/local/agent/extensions/mcp/servers", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        lastCreatePayload = body;
+        const created = {
+          id: "codex-custom-stdio",
+          instance_id: "inst-codex-stdio",
+          revision: 9,
+          config_generation: 9,
+          name: String(body.name || "Codex Custom"),
+          title: String(body.name || "Codex Custom"),
+          description: String(body.description || ""),
+          transport: (body.transport as "stdio" | "streamable_http") || "stdio",
+          builtin: false,
+          deletable: true,
+          plugin_id: null,
+          computer_access: false,
+          enabled: Boolean(body.enabled),
+          component_enabled: Boolean(body.enabled),
+          parent_enabled: true,
+          command: String(body.command || ""),
+          args: Array.isArray(body.args) ? body.args.map(String) : [],
+          cwd: String(body.cwd || ""),
+          env_keys: [],
+          masked_env: {},
+          env_vars: Array.isArray(body.env_vars) ? body.env_vars.map(String) : [],
+          url: String(body.url || ""),
+          bearer_token_env: String(body.bearer_token_env || ""),
+          header_keys: [],
+          masked_headers: {},
+          env_http_headers:
+            body.env_http_headers && typeof body.env_http_headers === "object"
+              ? (body.env_http_headers as Record<string, string>)
+              : {},
+          startup_timeout_ms: 10000,
+          tool_timeout_ms: 30000,
+          enabled_tools: null,
+          disabled_tools: [],
+          read_only_tools: [],
+          tools: [],
+          tools_count: 0,
+          enabled_tools_count: 0,
+          has_secrets: false,
+          status: "NeedsTest",
+          status_message: "",
+          last_tested_at: null,
+        };
+        currentOverview = {
+          ...currentOverview,
+          revision: 9,
+          mcp_servers: [
+            ...currentOverview.mcp_servers,
+            created as unknown as (typeof currentOverview.mcp_servers)[number],
+          ],
+        };
+        return HttpResponse.json(created);
+      }),
+      http.post("*/api/local/agent/extensions/mcp/apps/clear-data", () => {
+        clearDataCalled += 1;
+        return HttpResponse.json({
+          cleared: true,
+          overview: currentOverview,
+        });
+      }),
+    );
+
+    renderExtensions("/settings/extensions/mcp");
+
+    expect(await screen.findByRole("heading", { name: "Servers" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "From plugins" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "MCP Apps" })).toBeInTheDocument();
+
+    // Clear all app data button in MCP Apps card
+    await user.click(screen.getByRole("button", { name: "Clear all app data" }));
+    await waitFor(() => expect(clearDataCalled).toBe(1));
+    expect(await screen.findByText("Cleared MCP app data")).toBeInTheDocument();
+
+    // Open Add MCP server via Codex "Connect to a custom MCP" button
+    await user.click(screen.getByRole("button", { name: "Connect to a custom MCP" }));
+    const addDialog = await screen.findByRole("dialog", { name: "Add MCP server" });
+
+    await user.type(within(addDialog).getByLabelText("Server name"), "Codex Custom");
+    await user.type(within(addDialog).getByLabelText("Command"), "openai-dev-mcp");
+
+    // Add argument via Codex "+ Add argument" button
+    await user.click(within(addDialog).getByRole("button", { name: "Add argument" }));
+    await user.type(within(addDialog).getByLabelText("Argument 1"), "serve-sqlite");
+
+    // Add passthrough env var via Codex "+ Add passthrough variable" button
+    await user.click(within(addDialog).getByRole("button", { name: "Add passthrough variable" }));
+    await user.type(
+      within(addDialog).getByLabelText("Passthrough environment variable 1"),
+      "OPENAI_API_KEY",
+    );
+
+    await user.click(within(addDialog).getByRole("button", { name: "Save server" }));
+
+    await waitFor(() => expect(lastCreatePayload).not.toBeNull());
+    expect(lastCreatePayload).toMatchObject({
+      name: "Codex Custom",
+      transport: "stdio",
+      command: "openai-dev-mcp",
+      args: ["serve-sqlite"],
+      env_vars: ["OPENAI_API_KEY"],
+    });
+    expect(await screen.findByRole("heading", { name: "Codex Custom" })).toBeInTheDocument();
+  });
+
+  it("renders Codex Skills page with Scope filter tabs, Recommended skills one-click install, Refresh discovery, and reference file preview", async () => {
+    const user = userEvent.setup();
+    let currentOverview = makeOverviewFixture();
+    let refreshCalled = 0;
+    let installedRecommendedPayload: Record<string, unknown> | null = null;
+    let recommendedInstalled = false;
+
+    const makeRecommendedResponse = () => ({
+      count: 1,
+      skills: [
+        {
+          id: "playwright",
+          name: "playwright",
+          title: "Playwright",
+          description: "Automate real browsers from the terminal with Playwright CLI.",
+          short_description: "Automate real browsers with Playwright",
+          version: "1.0.0",
+          repo_path: "skills/.curated/playwright",
+          source_dir: "C:\\Users\\test\\.codex\\vendor_imports\\skills\\skills\\.curated\\playwright",
+          content: "# Playwright Skill\nRun automated browser workflows.",
+          installed: recommendedInstalled,
+          interface: {
+            display_name: "Playwright",
+            short_description: "Automate real browsers with Playwright",
+            icon_small: null,
+            icon_large: null,
+            brand_color: "#2EAD33",
+            default_prompt: "Use $playwright to automate this browser check.",
+          },
+          policy: {
+            allow_implicit_invocation: true,
+          },
+          files: [{ path: "SKILL.md", size: 49 }],
+        },
+      ],
+    });
+
+    server.use(
+      http.get("*/api/local/agent/extensions", () => HttpResponse.json(currentOverview)),
+      http.get("*/api/local/agent/extensions/skills/recommended", () =>
+        HttpResponse.json(makeRecommendedResponse()),
+      ),
+      http.post("*/api/local/agent/extensions/skills/refresh", () => {
+        refreshCalled += 1;
+        return HttpResponse.json({
+          synced_skill_ids: ["system-diagnostics"],
+          overview: currentOverview,
+        });
+      }),
+      http.post("*/api/local/agent/extensions/skills/recommended/install", async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        installedRecommendedPayload = body;
+        recommendedInstalled = true;
+        const newSkill = {
+          id: "playwright",
+          instance_id: "skill-playwright",
+          name: "playwright",
+          title: "Playwright",
+          description: "Automate real browsers from the terminal with Playwright CLI.",
+          short_description: "Automate real browsers with Playwright",
+          summary: "Automate real browsers with Playwright",
+          version: "1.0.0",
+          content: "# Playwright Skill\nRun automated browser workflows.",
+          builtin: false,
+          deletable: true,
+          enabled: true,
+          component_enabled: true,
+          parent_enabled: true,
+          source_format: "codex_skill",
+          scope: "user",
+          path: "C:\\Users\\test\\.codex\\skills\\playwright\\SKILL.md",
+          plugin_id: null,
+          interface: {
+            display_name: "Playwright",
+            short_description: "Automate real browsers with Playwright",
+            icon_small: null,
+            icon_large: null,
+            brand_color: "#2EAD33",
+            default_prompt: "Use $playwright to automate this browser check.",
+          },
+          policy: {
+            allow_implicit_invocation: true,
+          },
+          files: [{ path: "SKILL.md", size: 49 }],
+          warnings: [],
+          revision: 6,
+        };
+        currentOverview = {
+          ...currentOverview,
+          revision: 6,
+          skills: [
+            ...currentOverview.skills,
+            newSkill as unknown as (typeof currentOverview.skills)[number],
+          ],
+        };
+        return HttpResponse.json({
+          skill: newSkill,
+          overview: currentOverview,
+        });
+      }),
+      http.get("*/api/local/agent/extensions/skills/:id/files", ({ params, request }) => {
+        const url = new URL(request.url);
+        const relPath = url.searchParams.get("path") || "SKILL.md";
+        return HttpResponse.json({
+          skill_id: params.id,
+          path: relPath,
+          size: 32,
+          content: "# Reference Checklist\n1. Verify boundaries.",
+        });
+      }),
+    );
+
+    renderExtensions("/settings/extensions/skills");
+
+    expect(await screen.findByRole("heading", { name: /^Installed/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Recommended/i })).toBeInTheDocument();
+
+    // Filter by Scope tab ("System" shows system-diagnostics and hides plugin-scoped team-review)
+    const scopeGroup = screen.getByRole("group", { name: "Skill scope filter" });
+    await user.click(within(scopeGroup).getByRole("button", { name: /^System/i }));
+    expect(screen.getByRole("heading", { name: "System diagnostics" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Team Review Checklist" })).not.toBeInTheDocument();
+
+    await user.click(within(scopeGroup).getByRole("button", { name: /^All/i }));
+    expect(screen.getByRole("heading", { name: "Team Review Checklist" })).toBeInTheDocument();
+
+    // Click Refresh in the CodexSkillsView toolbar to trigger /skills/refresh
+    const refreshButtons = screen.getAllByRole("button", { name: "Refresh" });
+    await user.click(refreshButtons[refreshButtons.length - 1]);
+    await waitFor(() => expect(refreshCalled).toBe(1));
+
+    // One-click install a Recommended skill (Playwright)
+    await user.click(screen.getByRole("button", { name: "Install skill Playwright" }));
+    await waitFor(() => expect(installedRecommendedPayload).not.toBeNull());
+    expect(installedRecommendedPayload).toMatchObject({
+      skill_id: "playwright",
+      repo_path: "skills/.curated/playwright",
+    });
+    expect(await screen.findByRole("heading", { name: "Playwright" })).toBeInTheDocument();
+
+    // Open Team Review Checklist details and click reference file chip to preview its contents
+    const reviewCard = screen
+      .getByRole("heading", { name: "Team Review Checklist" })
+      .closest("article")!;
+    await user.click(within(reviewCard).getByRole("button", { name: "View details" }));
+    const detailDialog = await screen.findByRole("dialog", { name: "Team Review Checklist" });
+    await user.click(within(detailDialog).getByRole("button", { name: /references\/checklist\.md/i }));
+    expect(await within(detailDialog).findByText(/# Reference Checklist/i)).toBeInTheDocument();
   });
 });

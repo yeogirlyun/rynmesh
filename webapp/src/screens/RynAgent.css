@@ -369,3 +369,472 @@
 .ra-memory-text { margin: 0 0 6px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ra-memory-meta { display: block; margin-bottom: 8px; font-size: 11px; color: var(--pf-muted); overflow-wrap: anywhere; line-height: 1.55; }
 
+
+/* Scheduled Tasks (Automations) - Minimalist Codex-style UI */
+.ra-nav-automations {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 16px);
+  margin: 0 8px 6px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s, border-color 0.14s;
+}
+.ra-nav-automations:hover {
+  background: var(--pf-subtle);
+}
+.ra-nav-automations.is-active {
+  background: var(--pf-subtle);
+  border-color: var(--pf-line);
+  font-weight: 600;
+}
+.ra-nav-auto-badge {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--pf-panel);
+  border: 1px solid var(--pf-line);
+  color: var(--pf-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 70px Chat Pill Card (DisplayAutomation) */
+.ra-auto-chat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  margin: 8px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--pf-line);
+  border-radius: 16px;
+  background: var(--pf-panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ra-auto-chat-card:hover {
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.06);
+}
+.ra-auto-chat-card.is-paused {
+  opacity: 0.72;
+}
+.ra-auto-chat-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--pf-subtle);
+  border: 1px solid var(--pf-line);
+  color: var(--pf-text);
+  flex-shrink: 0;
+}
+.ra-auto-chat-card-body {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.ra-auto-chat-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pf-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ra-auto-chat-card-sub {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--pf-muted);
+}
+.ra-auto-status-pill {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--pf-subtle);
+  color: var(--pf-muted);
+}
+.ra-auto-chat-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ra-auto-card-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--pf-line);
+  border-radius: 8px;
+  background: var(--pf-subtle);
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ra-auto-card-btn:hover {
+  background: var(--pf-panel);
+}
+.ra-auto-card-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pf-muted);
+  cursor: pointer;
+}
+.ra-auto-card-icon-btn:hover {
+  background: var(--pf-subtle);
+  border-color: var(--pf-line);
+  color: var(--pf-text);
+}
+
+/* Scheduled Tasks Page (AutomationsPanel) */
+.ra-auto-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 24px 48px;
+}
+.ra-auto-page-inner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.ra-auto-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.ra-auto-page-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+.ra-auto-page-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--pf-muted);
+}
+.ra-auto-new-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--pf-text);
+  border-radius: 999px;
+  background: var(--pf-text);
+  color: var(--pf-panel);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ra-auto-filter-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.ra-auto-filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--pf-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pf-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.ra-auto-filter-tab.is-active {
+  background: var(--pf-subtle);
+  color: var(--pf-text);
+  font-weight: 600;
+}
+.ra-auto-list {
+  border: 1px solid var(--pf-line);
+  border-radius: 14px;
+  background: var(--pf-panel);
+  overflow: hidden;
+}
+.ra-auto-empty {
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--pf-muted);
+}
+.ra-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--pf-line);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ra-auto-row:last-child {
+  border-bottom: 0;
+}
+.ra-auto-row:hover {
+  background: var(--pf-subtle);
+}
+.ra-auto-row-icon {
+  color: var(--pf-muted);
+  flex-shrink: 0;
+  display: flex;
+}
+.ra-auto-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  overflow: hidden;
+}
+.ra-auto-row-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pf-text);
+  white-space: nowrap;
+}
+.ra-auto-row-prompt {
+  font-size: 13px;
+  color: var(--pf-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ra-auto-row-last {
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--pf-subtle);
+  color: var(--pf-muted);
+  white-space: nowrap;
+}
+.ra-auto-row-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.ra-auto-row-time {
+  font-size: 12.5px;
+  color: var(--pf-muted);
+}
+.ra-auto-row-actions {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+.ra-auto-row:hover .ra-auto-row-time {
+  display: none;
+}
+.ra-auto-row:hover .ra-auto-row-actions {
+  display: flex;
+}
+.ra-auto-row-btn {
+  padding: 4px 9px;
+  border: 1px solid var(--pf-line);
+  border-radius: 7px;
+  background: var(--pf-panel);
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ra-auto-row-btn.is-danger {
+  color: #d93025;
+}
+
+/* Suggestions Grid */
+.ra-auto-suggestions {
+  margin-top: 28px;
+}
+.ra-auto-suggestions-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pf-muted);
+  margin-bottom: 12px;
+}
+.ra-auto-suggestions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.ra-auto-suggestion-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--pf-line);
+  border-radius: 12px;
+  background: var(--pf-panel);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.14s, transform 0.14s;
+}
+.ra-auto-suggestion-card:hover {
+  background: var(--pf-subtle);
+}
+.ra-auto-suggestion-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ra-auto-suggestion-icon {
+  font-size: 16px;
+}
+.ra-auto-suggestion-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--pf-text);
+}
+.ra-auto-suggestion-desc {
+  font-size: 12px;
+  color: var(--pf-muted);
+  line-height: 1.45;
+}
+
+/* Simple 4-Field Editor Modal (AutomationDialog) */
+.ra-auto-dialog {
+  width: min(460px, calc(100vw - 32px));
+  padding: 22px 24px 20px;
+  border: 1px solid var(--pf-line);
+  border-radius: 18px;
+  background: var(--pf-panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.16);
+}
+.ra-auto-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.ra-auto-title-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 4px 0;
+  background: transparent;
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 600;
+  outline: none;
+}
+.ra-auto-title-input:focus {
+  border-bottom-color: var(--pf-line);
+}
+.ra-auto-status-toggle {
+  padding: 4px 10px;
+  border: 1px solid var(--pf-line);
+  border-radius: 999px;
+  background: var(--pf-subtle);
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ra-auto-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex: 1;
+}
+.ra-auto-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pf-muted);
+}
+.ra-auto-textarea,
+.ra-auto-select,
+.ra-auto-time-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--pf-line);
+  border-radius: 10px;
+  background: var(--pf-subtle);
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+.ra-auto-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+.ra-auto-schedule-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ra-auto-error {
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: #d93025;
+}
+.ra-auto-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pf-line);
+}
+.ra-auto-footer-right {
+  display: flex;
+  gap: 8px;
+}
+.ra-auto-delete-btn {
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #d93025;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ra-auto-cancel-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--pf-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pf-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ra-auto-save-btn {
+  padding: 7px 18px;
+  border: 1px solid var(--pf-text);
+  border-radius: 999px;
+  background: var(--pf-text);
+  color: var(--pf-panel);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}

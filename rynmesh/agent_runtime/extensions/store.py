@@ -270,9 +270,12 @@ def _mcp_config_fingerprint(server: dict[str, Any]) -> str:
         "args": server.get("args") or [],
         "cwd": server.get("cwd"),
         "secret_env": server.get("secret_env") or {},
+        "env_vars": server.get("env_vars") or [],
         "url": server.get("url"),
         "bearer_token_env": server.get("bearer_token_env"),
         "secret_headers": server.get("secret_headers") or {},
+        "env_http_headers": server.get("env_http_headers") or {},
+        "oauth_client_registration": server.get("oauth_client_registration") or "auto",
         "computer_access": bool(server.get("computer_access", False)),
     }
     return _canon_sha256(relevant)
@@ -490,6 +493,9 @@ class ExtensionStore:
         for srv in servers.values():
             srv.setdefault("instance_id", uuid.uuid4().hex)
             srv.setdefault("config_generation", 1)
+            srv.setdefault("env_vars", [])
+            srv.setdefault("env_http_headers", {})
+            srv.setdefault("oauth_client_registration", "auto")
         return state
 
     def _write(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -640,11 +646,13 @@ class ExtensionStore:
     ) -> dict[str, Any]:
         content = str(skill.get("content", ""))
         description = str(skill.get("description", ""))
+        short_description = str(skill.get("summary") or description)
         return {
             "id": skill["id"],
             "name": skill["id"],
             "title": skill["title"],
             "description": description,
+            "short_description": short_description,
             "summary": description,
             "version": str(skill["version"]),
             "content": content,
@@ -654,6 +662,17 @@ class ExtensionStore:
             "component_enabled": bool(enabled),
             "parent_enabled": True,
             "source_format": "builtin",
+            "scope": "system",
+            "path": f"builtin://{skill['id']}/SKILL.md",
+            "interface": {
+                "display_name": skill["title"],
+                "short_description": short_description,
+                "icon_small": None,
+                "icon_large": None,
+                "brand_color": None,
+                "default_prompt": f"Use ${skill['id']} to help with this task.",
+            },
+            "policy": {"allow_implicit_invocation": True},
             "plugin_id": None,
             "files": [{"path": "SKILL.md", "size": len(content.encode("utf-8"))}],
             "warnings": [],
@@ -664,23 +683,53 @@ class ExtensionStore:
         parent_enabled = self._is_parent_plugin_enabled(skill.get("plugin_id"), state)
         effective_enabled = self._is_skill_effectively_enabled(skill, state)
         description = str(skill.get("description") or skill.get("summary") or "")
+        raw_iface = skill.get("interface") if isinstance(skill.get("interface"), dict) else {}
+        short_description = str(
+            skill.get("short_description")
+            or raw_iface.get("short_description")
+            or skill.get("summary")
+            or description
+        )
+        title = skill.get("title") or skill.get("name") or skill["id"]
+        scope = str(skill.get("scope") or ("plugin" if skill.get("plugin_id") else "user"))
+        pkg_dir = skill.get("package_dir")
+        skill_path = str(
+            skill.get("skill_md_path")
+            or (str(Path(pkg_dir) / "SKILL.md") if pkg_dir else "")
+        )
+        raw_policy = skill.get("policy") if isinstance(skill.get("policy"), dict) else {}
         return {
             "id": skill["id"],
             "instance_id": skill.get("instance_id", ""),
             "name": skill.get("name") or skill["id"],
-            "title": skill.get("title") or skill.get("name") or skill["id"],
+            "title": title,
             "description": description,
+            "short_description": short_description,
             "summary": str(skill.get("summary") or description),
             "version": str(skill.get("version", "1")),
             "install_generation": int(skill.get("install_generation", 1)),
             "content": str(skill.get("content", "")),
             "manifest_sha256": skill.get("manifest_sha256"),
             "builtin": False,
-            "deletable": True,
+            "deletable": bool(skill.get("deletable", scope != "system")),
             "enabled": effective_enabled,
             "component_enabled": bool(skill.get("enabled", False)),
             "parent_enabled": parent_enabled,
             "source_format": skill.get("source_format", "skill_md"),
+            "scope": scope,
+            "path": skill_path,
+            "package_dir": str(pkg_dir or ""),
+            "interface": {
+                "display_name": raw_iface.get("display_name") or title,
+                "short_description": raw_iface.get("short_description") or short_description,
+                "icon_small": raw_iface.get("icon_small"),
+                "icon_large": raw_iface.get("icon_large"),
+                "brand_color": raw_iface.get("brand_color"),
+                "default_prompt": raw_iface.get("default_prompt"),
+            },
+            "policy": {
+                "allow_implicit_invocation": bool(raw_policy.get("allow_implicit_invocation", True)),
+            },
             "plugin_id": skill.get("plugin_id"),
             "files": [
                 {"path": f["path"], "size": f.get("size", 0)}
@@ -754,13 +803,31 @@ class ExtensionStore:
             )
         bearer_env = server.get("bearer_token_env")
         bearer_env_present = bool(bearer_env and os.environ.get(bearer_env))
+        env_vars = [str(v) for v in (server.get("env_vars") or []) if str(v).strip()]
+        env_http_headers = {
+            str(k): str(v)
+            for k, v in (server.get("env_http_headers") or {}).items()
+            if str(k).strip() and str(v).strip()
+        }
+        oauth_client_registration = str(server.get("oauth_client_registration") or "auto").lower()
+        if oauth_client_registration not in ("auto", "cimd", "dcr"):
+            oauth_client_registration = "auto"
+        auth_from_env_headers = bool(
+            env_http_headers.get("Authorization")
+            and os.environ.get(env_http_headers["Authorization"])
+        )
         status = server.get("status") or ("ready" if effective_enabled else "disabled")
         status_message = server.get("status_message") or ""
         if not effective_enabled:
             status = "disabled"
             if not parent_enabled and server.get("enabled"):
                 status_message = "Parent plugin is disabled."
-        elif bearer_env and not bearer_env_present and not secret_headers.get("Authorization"):
+        elif (
+            bearer_env
+            and not bearer_env_present
+            and not secret_headers.get("Authorization")
+            and not auth_from_env_headers
+        ):
             status = "NeedsAuth"
             status_message = f"Environment variable {bearer_env} is not set."
         elif server.get("computer_access") and not desktop_access:
@@ -785,11 +852,14 @@ class ExtensionStore:
             "cwd": server.get("cwd") or "",
             "env_keys": sorted(masked_env.keys()),
             "masked_env": masked_env,
+            "env_vars": env_vars,
             "url": server.get("url") or "",
             "bearer_token_env": bearer_env or "",
             "bearer_token_env_present": bearer_env_present,
             "header_keys": sorted(masked_headers.keys()),
             "masked_headers": masked_headers,
+            "env_http_headers": env_http_headers,
+            "oauth_client_registration": oauth_client_registration,
             "has_secrets": bool(masked_env or masked_headers),
             "startup_timeout_ms": int(server.get("startup_timeout_ms", 10000)),
             "tool_timeout_ms": int(server.get("tool_timeout_ms", 30000)),
@@ -944,6 +1014,7 @@ class ExtensionStore:
         expected_manifest_sha256: str | None = None,
         snapshot: dict[str, Any] | None = None,
         max_chars: int = 24000,
+        allow_disabled: bool = False,
     ) -> dict[str, Any]:
         """Read SKILL.md or a referenced file inside an enabled skill package.
 
@@ -962,7 +1033,7 @@ class ExtensionStore:
             state = self._read()
             builtin_enabled = state.get("builtin_skills_enabled", {})
             if skill_id in BUILTIN_SKILLS:
-                if not builtin_enabled.get(skill_id, True):
+                if not allow_disabled and not builtin_enabled.get(skill_id, True):
                     raise AgentError("agent_skill_disabled")
                 b_skill = BUILTIN_SKILLS[skill_id]
                 if expected_version is not None and str(expected_version) != str(b_skill["version"]):
@@ -983,7 +1054,7 @@ class ExtensionStore:
             skill = state["skills"].get(skill_id)
             if not skill:
                 raise AgentError("agent_skill_not_found")
-            if not self._is_skill_effectively_enabled(skill, state):
+            if not allow_disabled and not self._is_skill_effectively_enabled(skill, state):
                 raise AgentError("agent_skill_disabled")
             if expected_version is not None and str(expected_version) != str(skill.get("version", "1")):
                 raise AgentError("agent_skill_version_mismatch")
@@ -1360,6 +1431,8 @@ class ExtensionStore:
             skill = state["skills"].get(skill_id)
             if not skill:
                 raise AgentError("agent_skill_not_found")
+            if skill.get("deletable") is False or skill.get("scope") == "system":
+                raise AgentError("agent_extension_builtin_protected")
             self._check_expected_revision(expected_revision, int(skill.get("revision", 1)))
             plugin_id = skill.get("plugin_id")
             if plugin_id and plugin_id in state["plugins"]:
@@ -1367,6 +1440,10 @@ class ExtensionStore:
                 if skill_id in p_skills:
                     p_skills.remove(skill_id)
                 state["plugins"][plugin_id]["revision"] = _alloc_generation(state)
+            if skill.get("source_format") == "codex_local":
+                uninstalled = state.setdefault("uninstalled_discovered_skills", [])
+                if skill_id not in uninstalled:
+                    uninstalled.append(skill_id)
             pkg_dir = skill.get("package_dir")
             del state["skills"][skill_id]
             _alloc_generation(state)
@@ -1375,6 +1452,269 @@ class ExtensionStore:
             if pkg_dir and not plugin_id:
                 self._safe_rmtree(Path(pkg_dir))
             return {"deleted": True, "id": skill_id, "revision": state["revision"]}
+
+    def sync_discovered_skills(
+        self,
+        *,
+        roots: list[tuple[Path, str]] | None = None,
+        workspace_roots: list[Path] | None = None,
+        desktop_access: bool = False,
+        reset_uninstalled: bool = False,
+    ) -> dict[str, Any]:
+        """Discover local Codex/Agent skills (.codex/skills, .agents/skills) and sync into store."""
+        from .codex_skills import copy_codex_skill_bounded, discover_local_skills
+
+        discovered = discover_local_skills(roots=roots, workspace_roots=workspace_roots)
+        with file_transaction(self.lock):
+            state = self._read()
+            if reset_uninstalled:
+                state["uninstalled_discovered_skills"] = []
+            uninstalled = set(state.get("uninstalled_discovered_skills") or [])
+            now = _now()
+            mutated = False
+            synced_ids: list[str] = []
+
+            for disc in discovered:
+                sid = disc["id"]
+                if sid in BUILTIN_SKILLS or sid in uninstalled:
+                    continue
+                existing = state["skills"].get(sid)
+                if existing and existing.get("source_format") not in ("codex_local", None):
+                    if not existing.get("interface") and disc.get("interface"):
+                        existing["interface"] = disc["interface"]
+                        existing["short_description"] = disc.get("short_description") or existing.get("summary")
+                        existing["skill_md_path"] = disc.get("skill_md_path")
+                        mutated = True
+                    continue
+
+                ext_sha = disc.get("manifest_sha256")
+                existing_pkg = existing.get("package_dir") if existing else None
+                if (
+                    existing
+                    and existing.get("external_manifest_sha256") == ext_sha
+                    and existing_pkg
+                    and Path(existing_pkg).is_dir()
+                ):
+                    if existing.get("interface") != disc.get("interface"):
+                        existing["interface"] = disc.get("interface")
+                        existing["short_description"] = disc.get("short_description")
+                        existing["title"] = disc.get("title") or existing.get("title")
+                        mutated = True
+                    synced_ids.append(sid)
+                    continue
+
+                dest_pkg = self.allocate_package_dir("skill", sid)
+                copy_codex_skill_bounded(Path(disc["package_dir"]), dest_pkg)
+                pkg_manifest = compute_directory_manifest(dest_pkg)
+                gen = _alloc_generation(state)
+                install_gen = (int(existing.get("install_generation", 1)) + 1) if existing else 1
+                is_enabled = bool(existing.get("enabled", True)) if existing else True
+                explicitly_disabled = bool(existing.get("explicitly_disabled", False)) if existing else False
+
+                state["skills"][sid] = {
+                    "id": sid,
+                    "instance_id": existing.get("instance_id") if existing else uuid.uuid4().hex,
+                    "name": disc.get("name") or sid,
+                    "title": disc.get("title") or disc.get("name") or sid,
+                    "description": disc.get("description") or "",
+                    "short_description": disc.get("short_description") or disc.get("summary") or "",
+                    "summary": disc.get("summary") or disc.get("description") or "",
+                    "version": str(disc.get("version") or "1.0.0"),
+                    "install_generation": install_gen,
+                    "content": str(disc.get("content") or ""),
+                    "package_dir": str(dest_pkg),
+                    "skill_md_path": disc.get("skill_md_path") or str(dest_pkg / "SKILL.md"),
+                    "external_source_dir": disc.get("package_dir"),
+                    "external_manifest_sha256": ext_sha,
+                    "manifest_sha256": pkg_manifest["manifest_sha256"],
+                    "files": pkg_manifest["files"],
+                    "plugin_id": None,
+                    "scope": disc.get("scope") or "user",
+                    "deletable": (disc.get("scope") or "user") != "system",
+                    "source_format": "codex_local",
+                    "interface": disc.get("interface") or {},
+                    "policy": disc.get("policy") or {"allow_implicit_invocation": True},
+                    "warnings": [],
+                    "enabled": is_enabled,
+                    "explicitly_disabled": explicitly_disabled,
+                    "revision": gen,
+                    "updated_at": now,
+                }
+                if existing_pkg and existing_pkg != str(dest_pkg):
+                    self._safe_rmtree(Path(existing_pkg))
+                mutated = True
+                synced_ids.append(sid)
+
+            if mutated:
+                _alloc_generation(state)
+                state["updated_at"] = now
+                self._write(state)
+
+        return {
+            "synced_skill_ids": synced_ids,
+            "overview": self.overview(desktop_access=desktop_access),
+        }
+
+    def list_recommended_skills(
+        self,
+        *,
+        refresh: bool = False,
+        curated_roots: list[Path] | None = None,
+    ) -> dict[str, Any]:
+        """Return curated recommended skills from Codex vendor_imports or fallback catalog."""
+        from .codex_skills import discover_recommended_skills
+
+        curated = discover_recommended_skills(curated_roots=curated_roots)
+        with file_transaction(self.lock):
+            state = self._read()
+            installed_ids = set(BUILTIN_SKILLS.keys()) | set(state["skills"].keys())
+
+        items: list[dict[str, Any]] = []
+        for item in curated:
+            row = copy.deepcopy(item)
+            row["installed"] = row["id"] in installed_ids
+            items.append(row)
+        return {
+            "skills": items,
+            "count": len(items),
+            "refreshed": bool(refresh),
+        }
+
+    def install_recommended_skill(
+        self,
+        payload: dict[str, Any],
+        *,
+        curated_roots: list[Path] | None = None,
+        install_to_codex_home: bool = False,
+        desktop_access: bool = False,
+    ) -> dict[str, Any]:
+        """Install a recommended curated skill into ExtensionStore (and optionally ~/.codex/skills)."""
+        from .codex_skills import (
+            copy_codex_skill_bounded,
+            default_codex_home,
+            discover_recommended_skills,
+        )
+
+        if not isinstance(payload, dict):
+            raise AgentError("agent_invalid_request")
+        raw_id = str(payload.get("skill_id") or payload.get("id") or "").strip()
+        repo_path = str(payload.get("repo_path") or payload.get("repoPath") or "").strip()
+        if not raw_id and not repo_path:
+            raise AgentError("agent_invalid_request")
+
+        curated = discover_recommended_skills(curated_roots=curated_roots)
+        matched = next(
+            (
+                item
+                for item in curated
+                if (raw_id and item["id"] == raw_id)
+                or (repo_path and item.get("repo_path") == repo_path)
+            ),
+            None,
+        )
+        if not matched:
+            raise AgentError("agent_skill_not_found")
+
+        sid = matched["id"]
+        if sid in BUILTIN_SKILLS:
+            raise AgentError("agent_skill_builtin_conflict")
+
+        dest_pkg = self.allocate_package_dir("skill", sid)
+        src_dir_str = matched.get("source_dir")
+        if src_dir_str and Path(src_dir_str).is_dir():
+            copy_codex_skill_bounded(Path(src_dir_str), dest_pkg)
+            if install_to_codex_home:
+                try:
+                    codex_target = default_codex_home() / "skills" / sid
+                    if not codex_target.exists():
+                        copy_codex_skill_bounded(Path(src_dir_str), codex_target)
+                except Exception:
+                    pass
+        else:
+            dest_pkg.mkdir(parents=True, exist_ok=True)
+            (dest_pkg / "SKILL.md").write_text(str(matched.get("content") or ""), encoding="utf-8")
+
+        pkg_manifest = compute_directory_manifest(dest_pkg)
+        with file_transaction(self.lock):
+            state = self._read()
+            existing = state["skills"].get(sid)
+            old_pkg = existing.get("package_dir") if existing else None
+            install_gen = (int(existing.get("install_generation", 1)) + 1) if existing else 1
+            now = _now()
+            gen = _alloc_generation(state)
+            uninstalled = state.get("uninstalled_discovered_skills")
+            if isinstance(uninstalled, list) and sid in uninstalled:
+                uninstalled.remove(sid)
+
+            record = {
+                "id": sid,
+                "instance_id": existing.get("instance_id") if existing else uuid.uuid4().hex,
+                "name": matched.get("name") or sid,
+                "title": matched.get("title") or matched.get("name") or sid,
+                "description": matched.get("description") or "",
+                "short_description": matched.get("short_description") or matched.get("summary") or "",
+                "summary": matched.get("summary") or matched.get("description") or "",
+                "version": str(matched.get("version") or "1.0.0"),
+                "install_generation": install_gen,
+                "content": str(matched.get("content") or ""),
+                "package_dir": str(dest_pkg),
+                "skill_md_path": str((dest_pkg / "SKILL.md").resolve()),
+                "manifest_sha256": pkg_manifest["manifest_sha256"],
+                "files": pkg_manifest["files"],
+                "plugin_id": None,
+                "scope": "user",
+                "deletable": True,
+                "source_format": "codex_curated",
+                "interface": matched.get("interface") or {},
+                "policy": matched.get("policy") or {"allow_implicit_invocation": True},
+                "warnings": [],
+                "enabled": True,
+                "explicitly_disabled": False,
+                "revision": gen,
+                "updated_at": now,
+            }
+            state["skills"][sid] = record
+            _alloc_generation(state)
+            state["updated_at"] = now
+            self._write(state)
+            if old_pkg and old_pkg != str(dest_pkg):
+                self._safe_rmtree(Path(old_pkg))
+            skill_view = self._public_imported_skill(record, state)
+
+        return {
+            "skill": skill_view,
+            "overview": self.overview(desktop_access=desktop_access),
+        }
+
+    def open_skill_path(self, skill_id: str, *, action: str = "open") -> dict[str, Any]:
+        """Open SKILL.md in editor or reveal in File Explorer for a builtin or installed skill."""
+        from .codex_skills import open_or_reveal_skill_path
+
+        with file_transaction(self.lock):
+            state = self._read()
+            if skill_id in BUILTIN_SKILLS:
+                b_skill = BUILTIN_SKILLS[skill_id]
+                b_dir = (self.pkgs_dir / "builtin" / _slugify(skill_id)).resolve()
+                b_dir.mkdir(parents=True, exist_ok=True)
+                target = b_dir / "SKILL.md"
+                target.write_text(str(b_skill.get("content") or ""), encoding="utf-8")
+            else:
+                skill = state["skills"].get(skill_id)
+                if not skill:
+                    raise AgentError("agent_skill_not_found")
+                raw_path = skill.get("skill_md_path")
+                pkg_dir = skill.get("package_dir")
+                if raw_path and Path(raw_path).exists():
+                    target = Path(raw_path).resolve()
+                elif pkg_dir and (Path(pkg_dir) / "SKILL.md").exists():
+                    target = (Path(pkg_dir) / "SKILL.md").resolve()
+                else:
+                    fallback_dir = (self.pkgs_dir / "skill" / _slugify(skill_id) / "preview").resolve()
+                    fallback_dir.mkdir(parents=True, exist_ok=True)
+                    target = fallback_dir / "SKILL.md"
+                    target.write_text(str(skill.get("content") or ""), encoding="utf-8")
+
+        return open_or_reveal_skill_path(target, action=action)
 
     def upsert_mcp_server(
         self,
@@ -1467,11 +1807,16 @@ class ExtensionStore:
                 if "url" in payload
                 else (existing.get("url") if existing else "")
             ).strip()
-            bearer_token_env = str(
+            raw_bearer_env = (
                 payload.get("bearer_token_env")
                 if "bearer_token_env" in payload
-                else (existing.get("bearer_token_env") if existing else "")
-            ).strip() or None
+                else (
+                    payload.get("bearer_token_env_var")
+                    if "bearer_token_env_var" in payload
+                    else (existing.get("bearer_token_env") if existing else "")
+                )
+            )
+            bearer_token_env = str(raw_bearer_env or "").strip() or None
             if bearer_token_env and not ENV_KEY_RE.match(bearer_token_env):
                 raise AgentError("agent_mcp_invalid_bearer_token_env")
 
@@ -1481,6 +1826,29 @@ class ExtensionStore:
             else:
                 if not url or not (url.startswith("http://") or url.startswith("https://")):
                     raise AgentError("agent_mcp_url_required")
+
+            raw_env_vars = (
+                payload.get("env_vars")
+                if "env_vars" in payload
+                else (
+                    payload.get("envVars")
+                    if "envVars" in payload
+                    else (existing.get("env_vars") if existing else [])
+                )
+            )
+            if raw_env_vars is None:
+                raw_env_vars = []
+            if not isinstance(raw_env_vars, list) or any(not isinstance(item, str) for item in raw_env_vars):
+                raise AgentError("agent_mcp_invalid_env_key")
+            env_vars: list[str] = []
+            for item in raw_env_vars[:64]:
+                var_name = str(item).strip()
+                if not var_name:
+                    continue
+                if not ENV_KEY_RE.match(var_name):
+                    raise AgentError("agent_mcp_invalid_env_key")
+                if var_name not in env_vars:
+                    env_vars.append(var_name)
 
             secret_env = copy.deepcopy(existing.get("secret_env") or {}) if existing else {}
             for remove_key in payload.get("remove_env_keys") or []:
@@ -1502,7 +1870,13 @@ class ExtensionStore:
             for remove_key in payload.get("remove_header_keys") or []:
                 secret_headers.pop(str(remove_key), None)
             incoming_headers = (
-                payload.get("headers") if "headers" in payload else payload.get("secret_headers")
+                payload.get("headers")
+                if "headers" in payload
+                else (
+                    payload.get("http_headers")
+                    if "http_headers" in payload
+                    else payload.get("secret_headers")
+                )
             )
             if isinstance(incoming_headers, dict):
                 if payload.get("replace_headers") is True:
@@ -1515,6 +1889,55 @@ class ExtensionStore:
                         secret_headers.pop(key_str, None)
                     elif v != MASKED_VALUE and v != "__KEEP__":
                         secret_headers[key_str] = str(v)
+
+            has_incoming_env_headers = (
+                "env_http_headers" in payload or "envHttpHeaders" in payload
+            )
+            raw_env_http_headers = (
+                payload.get("env_http_headers")
+                if "env_http_headers" in payload
+                else (
+                    payload.get("envHttpHeaders")
+                    if "envHttpHeaders" in payload
+                    else (existing.get("env_http_headers") if existing else {})
+                )
+            )
+            if raw_env_http_headers is None:
+                raw_env_http_headers = {}
+            if not isinstance(raw_env_http_headers, dict):
+                raise AgentError("agent_mcp_invalid_header_key")
+            env_http_headers: dict[str, str] = (
+                {}
+                if has_incoming_env_headers
+                else copy.deepcopy(existing.get("env_http_headers") or {}) if existing else {}
+            )
+            if has_incoming_env_headers:
+                for k, v in raw_env_http_headers.items():
+                    key_str = str(k).strip()
+                    if not key_str:
+                        continue
+                    if not HEADER_KEY_RE.match(key_str):
+                        raise AgentError("agent_mcp_invalid_header_key")
+                    if v is None or str(v).strip() == "":
+                        env_http_headers.pop(key_str, None)
+                    else:
+                        env_var_str = str(v).strip()
+                        if not ENV_KEY_RE.match(env_var_str):
+                            raise AgentError("agent_mcp_invalid_env_key")
+                        env_http_headers[key_str] = env_var_str
+
+            raw_oauth_reg = (
+                payload.get("oauth_client_registration")
+                if "oauth_client_registration" in payload
+                else (
+                    payload.get("oauthClientRegistration")
+                    if "oauthClientRegistration" in payload
+                    else (existing.get("oauth_client_registration") if existing else "auto")
+                )
+            )
+            oauth_client_registration = str(raw_oauth_reg or "auto").strip().lower()
+            if oauth_client_registration not in ("auto", "cimd", "dcr"):
+                oauth_client_registration = "auto"
 
             enabled = bool(
                 payload["enabled"]
@@ -1546,9 +1969,12 @@ class ExtensionStore:
                 "args": args if transport == "stdio" else [],
                 "cwd": cwd_str if transport == "stdio" else None,
                 "secret_env": secret_env,
+                "env_vars": env_vars if transport == "stdio" else [],
                 "url": url if transport == "streamable_http" else None,
                 "bearer_token_env": bearer_token_env if transport == "streamable_http" else None,
                 "secret_headers": secret_headers,
+                "env_http_headers": env_http_headers if transport == "streamable_http" else {},
+                "oauth_client_registration": oauth_client_registration,
                 "startup_timeout_ms": int(existing.get("startup_timeout_ms", 10000) if existing else 10000),
                 "tool_timeout_ms": int(existing.get("tool_timeout_ms", 30000) if existing else 30000),
                 "enabled_tools": existing.get("enabled_tools") if existing else None,
@@ -1710,6 +2136,24 @@ class ExtensionStore:
             self._write(state)
             return {"deleted": True, "id": server_id, "revision": state["revision"]}
 
+    def clear_mcp_app_data(
+        self,
+        *,
+        desktop_access: bool = False,
+    ) -> dict[str, Any]:
+        """Clear cached MCP app session metadata without removing configured servers."""
+        with file_transaction(self.lock):
+            state = self._read()
+            now = _now()
+            state["mcp_app_data_cleared_at"] = now
+            state["updated_at"] = now
+            self._write(state)
+        return {
+            "cleared": True,
+            "cleared_at": now,
+            "overview": self.overview(desktop_access=desktop_access),
+        }
+
     # ------------------------------------------------------------------
     # Import Commit Persistence (creates disabled entries)
     # ------------------------------------------------------------------
@@ -1771,21 +2215,36 @@ class ExtensionStore:
                 else:
                     manifest_sha256 = expected_manifest_sha256
                 description = str(skill.get("description") or skill.get("summary") or "")
+                uninstalled = state.get("uninstalled_discovered_skills")
+                if isinstance(uninstalled, list) and sid in uninstalled:
+                    uninstalled.remove(sid)
                 state["skills"][sid] = {
                     "id": sid,
                     "instance_id": uuid.uuid4().hex,
                     "name": skill.get("name") or sid,
                     "title": skill.get("title") or skill.get("name") or sid,
                     "description": description,
+                    "short_description": str(
+                        skill.get("short_description")
+                        or (skill.get("interface") or {}).get("short_description")
+                        or skill.get("summary")
+                        or description
+                    ),
                     "summary": str(skill.get("summary") or description),
                     "version": version_str,
                     "install_generation": install_gen,
                     "content": str(skill.get("content", "")),
                     "package_dir": pkg_dir,
+                    "skill_md_path": skill.get("skill_md_path")
+                    or (str(Path(pkg_dir) / "SKILL.md") if pkg_dir else None),
                     "manifest_sha256": manifest_sha256,
                     "files": files_list,
                     "plugin_id": skill.get("plugin_id"),
+                    "scope": skill.get("scope") or ("plugin" if skill.get("plugin_id") else "user"),
+                    "deletable": bool(skill.get("deletable", True)),
                     "source_format": skill.get("source_format", "skill_md"),
+                    "interface": dict(skill.get("interface") or {}),
+                    "policy": dict(skill.get("policy") or {"allow_implicit_invocation": True}),
                     "warnings": list(skill.get("warnings", [])),
                     "enabled": False,
                     "explicitly_disabled": False,
@@ -1827,9 +2286,14 @@ class ExtensionStore:
                     "args": list(srv.get("args") or []),
                     "cwd": srv.get("cwd"),
                     "secret_env": dict(srv.get("secret_env") or srv.get("env") or {}),
+                    "env_vars": list(srv.get("env_vars") or []),
                     "url": srv.get("url"),
-                    "bearer_token_env": srv.get("bearer_token_env"),
-                    "secret_headers": dict(srv.get("secret_headers") or srv.get("headers") or {}),
+                    "bearer_token_env": srv.get("bearer_token_env") or srv.get("bearer_token_env_var"),
+                    "secret_headers": dict(
+                        srv.get("secret_headers") or srv.get("headers") or srv.get("http_headers") or {}
+                    ),
+                    "env_http_headers": dict(srv.get("env_http_headers") or {}),
+                    "oauth_client_registration": str(srv.get("oauth_client_registration") or "auto"),
                     "startup_timeout_ms": int(srv.get("startup_timeout_ms", 10000)),
                     "tool_timeout_ms": int(srv.get("tool_timeout_ms", 30000)),
                     "enabled_tools": enabled_tools,

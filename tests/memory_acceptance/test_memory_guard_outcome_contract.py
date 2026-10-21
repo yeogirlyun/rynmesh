@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import importlib
 import os
-from pathlib import Path
 import socket
 import sys
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey

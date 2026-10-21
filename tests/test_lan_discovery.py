@@ -67,8 +67,9 @@ def test_http_fallback_requires_nonce_bound_signed_identity(monkeypatch):
 
 def test_http_probe_never_loads_tls_certificates_or_follows_redirects(monkeypatch):
     import ssl
-    from urllib.error import HTTPError
     from email.message import Message
+    from urllib.error import HTTPError
+
     from rynmesh.lan_discovery import _http_probe_opener
 
     monkeypatch.setattr(ssl, "create_default_context", lambda *a, **k: pytest.fail("HTTP probe loaded TLS certificates"))

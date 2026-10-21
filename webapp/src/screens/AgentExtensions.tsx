@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  ExternalLink,
   FileCode2,
   LoaderCircle,
   Monitor,
@@ -17,6 +18,7 @@ import {
   RotateCcw,
   Search,
   Server,
+  Settings,
   ShieldAlert,
   Trash2,
   Upload,
@@ -25,6 +27,8 @@ import {
 } from "lucide-react";
 import {
   AgentExtensionError,
+  ENV_KEY_RE,
+  HEADER_KEY_RE,
   MASKED_SECRET_PLACEHOLDER,
   agentExtensions,
   buildNewSecretMap,
@@ -39,6 +43,7 @@ import {
   type ExtensionImportKind,
   type ExtensionImportPreview,
   type ExtensionImportPreviewRequest,
+  type ExtensionMcpOauthClientRegistration,
   type ExtensionMcpServer,
   type ExtensionMcpTool,
   type ExtensionMcpTransport,
@@ -49,6 +54,7 @@ import {
 } from "../domain/agentExtensions";
 import { rynAgent } from "../domain/rynAgent";
 import { AgentComputerStatusPanel } from "./AgentComputerStatusPanel";
+import { CodexSkillsView } from "./CodexSkillsView";
 import "./AgentExtensions.css";
 
 export type ExtensionSection = "plugins" | "skills" | "mcp";
@@ -490,7 +496,10 @@ function getServerConfigSignature(server: ExtensionMcpServer): string {
     server.url,
     server.bearer_token_env,
     server.env_keys,
+    server.env_vars ?? [],
     server.header_keys,
+    server.env_http_headers ?? {},
+    server.oauth_client_registration ?? "auto",
     server.startup_timeout_ms,
     server.tool_timeout_ms,
     server.computer_access,
@@ -643,6 +652,9 @@ export default function AgentExtensions() {
   } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [mcpModifiedSinceRestart, setMcpModifiedSinceRestart] = useState(false);
+  const [mcpRestartingAll, setMcpRestartingAll] = useState(false);
+  const [clearingMcpAppData, setClearingMcpAppData] = useState(false);
 
   const invalidateServerProbe = useCallback((serverId: string) => {
     probeReqGenRef.current[serverId] = (probeReqGenRef.current[serverId] ?? 0) + 1;
@@ -893,6 +905,7 @@ export default function AgentExtensions() {
         enabled: nextEnabled,
         expected_revision: server.revision,
       });
+      setMcpModifiedSinceRestart(true);
       mutationEpochRef.current += 1;
       setOverview(prev => {
         if (!prev) return prev;
@@ -1244,6 +1257,88 @@ export default function AgentExtensions() {
     }
   };
 
+  const handleUpdateServerOauthRegistration = async (
+    server: ExtensionMcpServer,
+    nextMethod: ExtensionMcpOauthClientRegistration,
+  ) => {
+    const key = `oauth:${server.id}`;
+    markBusy(key, true);
+    setActionNotice(null);
+    mutationEpochRef.current += 1;
+    try {
+      const updated = await agentExtensions.updateMcpServer(server.id, {
+        oauth_client_registration: nextMethod,
+        expected_revision: server.revision,
+      });
+      setMcpModifiedSinceRestart(true);
+      mutationEpochRef.current += 1;
+      setOverview(prev =>
+        prev
+          ? {
+              ...prev,
+              mcp_servers: prev.mcp_servers.map(m => (m.id === updated.id ? updated : m)),
+              plugins: prev.plugins.map(p => ({
+                ...p,
+                mcp_servers: p.mcp_servers?.map(m => (m.id === updated.id ? updated : m)),
+              })),
+            }
+          : prev,
+      );
+      await reconcileOverviewAfterMutation();
+    } catch (error) {
+      mutationEpochRef.current += 1;
+      if (isRevisionConflictError(error)) {
+        await reconcileOverviewAfterMutation();
+      }
+      setActionNotice({ tone: "error", text: describeError(error, tx) });
+    } finally {
+      markBusy(key, false);
+    }
+  };
+
+  const handleRestartAllMcpServers = async () => {
+    setMcpRestartingAll(true);
+    setActionNotice(null);
+    mutationEpochRef.current += 1;
+    try {
+      const nextOverview = await agentExtensions.restartAllMcpServers();
+      mutationEpochRef.current += 1;
+      setOverview(prev => mergeReconciledOverview(prev, nextOverview));
+      setMcpModifiedSinceRestart(false);
+      setActionNotice({
+        tone: "info",
+        text: tx("已重启所有 MCP 服务器会话。", "Restarted MCP server sessions."),
+      });
+      await reconcileOverviewAfterMutation();
+    } catch (error) {
+      mutationEpochRef.current += 1;
+      setActionNotice({ tone: "error", text: describeError(error, tx) });
+    } finally {
+      setMcpRestartingAll(false);
+    }
+  };
+
+  const handleClearMcpAppData = async () => {
+    setClearingMcpAppData(true);
+    setActionNotice(null);
+    mutationEpochRef.current += 1;
+    try {
+      const nextOverview = await agentExtensions.clearMcpAppData();
+      mutationEpochRef.current += 1;
+      setOverview(prev => mergeReconciledOverview(prev, nextOverview));
+      setActionNotice({
+        tone: "info",
+        text: tx("已清除 MCP 应用数据", "Cleared MCP app data"),
+      });
+      await reconcileOverviewAfterMutation();
+    } catch (error) {
+      mutationEpochRef.current += 1;
+      setActionNotice({ tone: "error", text: describeError(error, tx) });
+    } finally {
+      setClearingMcpAppData(false);
+    }
+  };
+
   // Filtered lists
   const filteredPlugins = useMemo(() => {
     const q = pluginSearch.trim().toLowerCase();
@@ -1557,174 +1652,37 @@ export default function AgentExtensions() {
       ) : null}
 
       {overview && activeSection === "skills" ? (
-        <section aria-label={tx("技能", "Skills")}>
-          <div className="ae-toolbar">
-            <div className="ae-toolbar-left">
-              <label className="ae-search">
-                <Search size={16} />
-                <input
-                  type="search"
-                  aria-label={tx("搜索技能", "Search skills")}
-                  placeholder={tx("搜索技能标题、ID 或说明…", "Search skills by title, ID, or description…")}
-                  value={skillSearch}
-                  onChange={event => setSkillSearch(event.target.value)}
-                />
-              </label>
-            </div>
-            <div className="ae-toolbar-right">
-              <button
-                type="button"
-                className="ae-btn ae-btn-primary"
-                disabled={createActionsBlocked}
-                onClick={() => setImportModalKind("skill")}
-              >
-                <Upload size={15} />
-                <span>{tx("导入技能", "Import skill")}</span>
-              </button>
-            </div>
-          </div>
-
-          {filteredSkills.length === 0 ? (
-            <div className="ae-empty">
-              <BookOpen size={26} />
-              <p>{tx("没有匹配的技能。", "No matching skills.")}</p>
-            </div>
-          ) : (
-            <div className="ae-list">
-              {filteredSkills.map(skill => {
-                const parentPlugin = skill.plugin_id ? pluginsById.get(skill.plugin_id) : undefined;
-                const isBusy = Boolean(busyIds[`skill:${skill.id}`]);
-                const parentBlocked = !skill.parent_enabled && skill.component_enabled;
-
-                return (
-                  <article key={skill.id} className="ae-row">
-                    <div className="ae-row-main">
-                      <div className="ae-plugin-icon">
-                        <BookOpen size={18} />
-                      </div>
-                      <div className="ae-row-body">
-                        <div className="ae-row-title">
-                          <h3>{skill.title}</h3>
-                          <code>${skill.id}</code>
-                          <span className="ae-badge">v{skill.version}</span>
-                          <span className="ae-badge ae-badge-info">
-                            {skill.builtin
-                              ? tx("内置", "Built-in")
-                              : formatSourceLabel(skill.source_format, false, tx)}
-                          </span>
-                          {parentPlugin ? (
-                            <span className="ae-badge">
-                              {tx(`插件：${parentPlugin.title}`, `Plugin: ${parentPlugin.title}`)}
-                            </span>
-                          ) : null}
-                          {parentBlocked ? (
-                            <span className="ae-badge ae-badge-warning">
-                              {tx(
-                                "实际已停用（父插件关闭 · 技能偏好：开启）",
-                                "Effective: Disabled (parent plugin off · skill preference: on)",
-                              )}
-                            </span>
-                          ) : skill.enabled ? (
-                            <span className="ae-badge ae-badge-success">
-                              <span className="ae-dot" />
-                              {tx("已启用", "Enabled")}
-                            </span>
-                          ) : (
-                            <span className="ae-badge">{tx("已停用", "Disabled")}</span>
-                          )}
-                        </div>
-                        <p className="ae-row-desc">{skill.description}</p>
-                        <div className="ae-row-sub">
-                          <span>
-                            {tx(
-                              `${skill.files.length} 个文件`,
-                              `${skill.files.length} file${skill.files.length === 1 ? "" : "s"}`,
-                            )}
-                          </span>
-                          {skill.warnings.length > 0 ? (
-                            <span className="ae-badge ae-badge-warning">
-                              <AlertTriangle size={12} />
-                              {tx(`${skill.warnings.length} 条提示`, `${skill.warnings.length} warnings`)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="ae-row-actions">
-                      <button
-                        type="button"
-                        className="ae-btn ae-btn-sm"
-                        onClick={() => setSelectedSkillId(skill.id)}
-                      >
-                        {tx("查看详情", "View details")}
-                      </button>
-                      <SwitchButton
-                        checked={skill.component_enabled}
-                        disabled={isBusy}
-                        label={tx(`启用技能 ${skill.title}`, `Enable skill ${skill.title}`)}
-                        onChange={next => void handleToggleSkill(skill, next)}
-                      />
-                      <details
-                        className="ae-menu"
-                        onKeyDown={event => {
-                          if (event.key === "Escape") {
-                            event.currentTarget.open = false;
-                          }
-                        }}
-                      >
-                        <summary
-                          className="ae-icon-btn"
-                          aria-label={tx(
-                            `${skill.title} 的更多操作`,
-                            `More actions for ${skill.title}`,
-                          )}
-                        >
-                          <MoreHorizontal size={16} />
-                        </summary>
-                        <div className="ae-menu-panel">
-                          <button
-                            type="button"
-                            onClick={event => {
-                              const details = event.currentTarget.closest("details");
-                              if (details) details.open = false;
-                              setSelectedSkillId(skill.id);
-                            }}
-                          >
-                            <FileCode2 size={14} />
-                            <span>{tx("查看 SKILL.md 与文件", "View SKILL.md & files")}</span>
-                          </button>
-                          {skill.deletable && !skill.builtin ? (
-                            <button
-                              type="button"
-                              className="ae-menu-danger"
-                              onClick={event => {
-                                const details = event.currentTarget.closest("details");
-                                if (details) details.open = false;
-                                openConfirmDelete({
-                                  kind: "skill",
-                                  id: skill.id,
-                                  name: skill.title,
-                                  revision: skill.revision,
-                                });
-                              }}
-                            >
-                              <Trash2 size={14} />
-                              <span>{tx("移除技能", "Remove skill")}</span>
-                            </button>
-                          ) : null}
-                        </div>
-                      </details>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+        <CodexSkillsView
+          overview={overview}
+          busyIds={busyIds}
+          createActionsBlocked={createActionsBlocked}
+          onToggleSkill={(skill, next) => handleToggleSkill(skill, next)}
+          onRequestRemoveSkill={skill =>
+            openConfirmDelete({
+              kind: "skill",
+              id: skill.id,
+              name: skill.title,
+              revision: skill.revision,
+            })
+          }
+          onOpenImportModal={() => setImportModalKind("skill")}
+          onOverviewChange={nextOverview => {
+            mutationEpochRef.current += 1;
+            setOverview(nextOverview);
+            setOverviewRevisionStale(false);
+          }}
+        />
       ) : null}
 
       {overview && activeSection === "mcp" ? (
         <section aria-label={tx("MCP 服务器", "MCP servers")}>
+          <div className="ae-codex-mcp-header">
+            <div>
+              <h2>{tx("MCP 服务器", "MCP servers")}</h2>
+              <p>{tx("连接外部工具和数据来源", "Connect external tools and data sources")}</p>
+            </div>
+          </div>
+
           <div className="ae-toolbar">
             <div className="ae-toolbar-left">
               <label className="ae-search">
@@ -1732,7 +1690,7 @@ export default function AgentExtensions() {
                 <input
                   type="search"
                   aria-label={tx("搜索 MCP 服务器", "Search MCP servers")}
-                  placeholder={tx("搜索服务器名称、命令或 URL…", "Search servers by name, command, or URL…")}
+                  placeholder={tx("搜索 MCP 服务器", "Search MCP servers")}
                   value={mcpSearch}
                   onChange={event => setMcpSearch(event.target.value)}
                 />
@@ -1760,228 +1718,392 @@ export default function AgentExtensions() {
             </div>
           </div>
 
-          {filteredServers.length === 0 ? (
-            <div className="ae-empty">
-              <Server size={26} />
-              <p>{tx("没有匹配的 MCP 服务器。", "No matching MCP servers.")}</p>
-            </div>
-          ) : (
-            <div className="ae-list">
-              {filteredServers.map(server => {
-                const isTesting = Boolean(testingServerIds[server.id]);
-                const isBusy = Boolean(busyIds[`mcp:${server.id}`]) || isTesting;
-                const badge = getServerObservedBadge(
-                  server,
-                  isTesting,
-                  tx,
-                  overview.desktop_access,
-                );
-                const statusNotice = getServerStatusNotice(server, tx);
-                const parentPlugin = server.plugin_id ? pluginsById.get(server.plugin_id) : undefined;
-                const endpointSummary =
-                  server.transport === "streamable_http"
-                    ? server.url
-                    : [server.command, ...server.args].filter(Boolean).join(" ");
+          {(() => {
+            const customServers = filteredServers.filter(server => !server.plugin_id);
+            const pluginServers = filteredServers.filter(server => Boolean(server.plugin_id));
+            const hasSearch = mcpSearch.trim().length > 0;
 
-                return (
-                  <article key={server.id} className="ae-row">
-                    <div className="ae-row-main">
-                      <div className="ae-plugin-icon">
-                        <Server size={18} />
-                      </div>
-                      <div className="ae-row-body">
-                        <div className="ae-row-title">
-                          <h3>{server.name}</h3>
-                          <code>{server.id}</code>
+            const renderMcpServerRow = (server: ExtensionMcpServer) => {
+              const isTesting = Boolean(testingServerIds[server.id]);
+              const isBusy =
+                Boolean(busyIds[`mcp:${server.id}`]) ||
+                Boolean(busyIds[`oauth:${server.id}`]) ||
+                isTesting;
+              const badge = getServerObservedBadge(
+                server,
+                isTesting,
+                tx,
+                overview.desktop_access,
+              );
+              const statusNotice = getServerStatusNotice(server, tx);
+              const parentPlugin = server.plugin_id ? pluginsById.get(server.plugin_id) : undefined;
+              const endpointSummary =
+                server.transport === "streamable_http"
+                  ? server.url
+                  : [server.command, ...server.args].filter(Boolean).join(" ");
+              const needsAuth = server.status === "NeedsAuth";
+
+              return (
+                <article key={server.id} className="ae-row">
+                  <div className="ae-row-main">
+                    <div className="ae-plugin-icon">
+                      <Server size={18} />
+                    </div>
+                    <div className="ae-row-body">
+                      <div className="ae-row-title">
+                        <h3>{server.name}</h3>
+                        <code>{server.id}</code>
+                        <span className="ae-badge">
+                          {server.transport === "streamable_http" ? "HTTP" : "STDIO"}
+                        </span>
+                        {server.builtin ? (
+                          <span className="ae-badge ae-badge-info">
+                            {tx("内置", "Built-in")}
+                          </span>
+                        ) : parentPlugin ? (
                           <span className="ae-badge">
-                            {server.transport === "streamable_http" ? "HTTP" : "STDIO"}
+                            {tx(`插件：${parentPlugin.title}`, `Plugin: ${parentPlugin.title}`)}
                           </span>
-                          {server.builtin ? (
-                            <span className="ae-badge ae-badge-info">
-                              {tx("内置", "Built-in")}
-                            </span>
-                          ) : parentPlugin ? (
-                            <span className="ae-badge">
-                              {tx(`插件：${parentPlugin.title}`, `Plugin: ${parentPlugin.title}`)}
-                            </span>
-                          ) : null}
-                          <span
-                            className={`ae-badge ${
-                              badge.tone === "success"
-                                ? "ae-badge-success"
-                                : badge.tone === "warning"
-                                  ? "ae-badge-warning"
-                                  : badge.tone === "danger"
-                                    ? "ae-badge-danger"
-                                    : badge.tone === "info"
-                                      ? "ae-badge-info"
-                                      : ""
-                            }`}
-                          >
-                            <span className="ae-dot" />
-                            {badge.label}
-                          </span>
-                        </div>
-                        { server.description ? (
-                          <p className="ae-row-desc">{server.description}</p>
-                        ) : null }
-                        <div className="ae-row-sub">
-                          {endpointSummary ? <code>{endpointSummary}</code> : null}
+                        ) : null}
+                        <span
+                          className={`ae-badge ${
+                            badge.tone === "success"
+                              ? "ae-badge-success"
+                              : badge.tone === "warning"
+                                ? "ae-badge-warning"
+                                : badge.tone === "danger"
+                                  ? "ae-badge-danger"
+                                  : badge.tone === "info"
+                                    ? "ae-badge-info"
+                                    : ""
+                          }`}
+                        >
+                          <span className="ae-dot" />
+                          {badge.label}
+                        </span>
+                      </div>
+                      {server.description ? (
+                        <p className="ae-row-desc">{server.description}</p>
+                      ) : null}
+                      <div className="ae-row-sub">
+                        {endpointSummary ? <code>{endpointSummary}</code> : null}
+                        <span>
+                          {tx(
+                            `已发现 ${server.tools_count} 个工具`,
+                            `${server.tools_count} tool${server.tools_count === 1 ? "" : "s"} discovered`,
+                          )}
+                        </span>
+                        {server.env_keys.length > 0 ? (
                           <span>
                             {tx(
-                              `已发现 ${server.tools_count} 个工具`,
-                              `${server.tools_count} tool${server.tools_count === 1 ? "" : "s"} discovered`,
+                              `${server.env_keys.length} 个加密环境变量`,
+                              `${server.env_keys.length} saved env var${server.env_keys.length === 1 ? "" : "s"}`,
                             )}
                           </span>
-                          {server.env_keys.length > 0 ? (
-                            <span>
-                              {tx(
-                                `${server.env_keys.length} 个加密环境变量`,
-                                `${server.env_keys.length} saved env var${server.env_keys.length === 1 ? "" : "s"}`,
-                              )}
-                            </span>
-                          ) : null}
-                          {server.header_keys.length > 0 ? (
-                            <span>
-                              {tx(
-                                `${server.header_keys.length} 个加密请求头`,
-                                `${server.header_keys.length} saved header${server.header_keys.length === 1 ? "" : "s"}`,
-                              )}
-                            </span>
-                          ) : null}
-                        </div>
-                        {statusNotice ? (
-                          <div
-                            className={
-                              statusNotice.tone === "error"
-                                ? "ae-row-error"
-                                : statusNotice.tone === "warning"
-                                  ? "ae-row-warning"
-                                  : "ae-row-notice"
-                            }
-                            role={statusNotice.tone === "error" ? "alert" : "status"}
-                          >
-                            <span>{statusNotice.text}</span>
-                            {statusNotice.showRetry ? (
-                              <button
-                                type="button"
-                                className="ae-btn ae-btn-sm"
-                                disabled={isBusy}
-                                onClick={() => void handleTestOrRestartServer(server, "test")}
-                              >
-                                <RotateCcw size={13} />
-                                <span>{tx("重试连接", "Retry connection")}</span>
-                              </button>
-                            ) : null}
-                          </div>
+                        ) : null}
+                        {(server.env_vars?.length ?? 0) > 0 ? (
+                          <span>
+                            {tx(
+                              `${server.env_vars!.length} 个传递环境变量`,
+                              `${server.env_vars!.length} passthrough env var${server.env_vars!.length === 1 ? "" : "s"}`,
+                            )}
+                          </span>
+                        ) : null}
+                        {server.header_keys.length > 0 ? (
+                          <span>
+                            {tx(
+                              `${server.header_keys.length} 个加密请求头`,
+                              `${server.header_keys.length} saved header${server.header_keys.length === 1 ? "" : "s"}`,
+                            )}
+                          </span>
+                        ) : null}
+                        {Object.keys(server.env_http_headers ?? {}).length > 0 ? (
+                          <span>
+                            {tx(
+                              `${Object.keys(server.env_http_headers!).length} 个环境变量标头`,
+                              `${Object.keys(server.env_http_headers!).length} env header${
+                                Object.keys(server.env_http_headers!).length === 1 ? "" : "s"
+                              }`,
+                            )}
+                          </span>
                         ) : null}
                       </div>
-                    </div>
-
-                    <div className="ae-row-actions">
-                      <button
-                        type="button"
-                        className="ae-btn ae-btn-sm"
-                        disabled={isBusy}
-                        onClick={() => void handleTestOrRestartServer(server, "test")}
-                      >
-                        <Play size={13} />
-                        <span>{isTesting ? tx("正在测试…", "Testing…") : tx("测试连接", "Test connection")}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="ae-btn ae-btn-sm"
-                        onClick={() => selectServer(server.id)}
-                      >
-                        {tx("查看详情", "View details")}
-                      </button>
-                      <SwitchButton
-                        checked={server.component_enabled}
-                        disabled={isBusy}
-                        label={tx(`启用服务器 ${server.name}`, `Enable server ${server.name}`)}
-                        onChange={next => void handleToggleServer(server, next)}
-                      />
-                      <details
-                        className="ae-menu"
-                        onKeyDown={event => {
-                          if (event.key === "Escape") {
-                            event.currentTarget.open = false;
+                      {statusNotice ? (
+                        <div
+                          className={
+                            statusNotice.tone === "error"
+                              ? "ae-row-error"
+                              : statusNotice.tone === "warning"
+                                ? "ae-row-warning"
+                                : "ae-row-notice"
                           }
-                        }}
-                      >
-                        <summary
-                          className="ae-icon-btn"
-                          aria-label={tx(
-                            `${server.name} 的更多操作`,
-                            `More actions for ${server.name}`,
-                          )}
+                          role={statusNotice.tone === "error" ? "alert" : "status"}
                         >
-                          <MoreHorizontal size={16} />
-                        </summary>
-                        <div className="ae-menu-panel">
-                          <button
-                            type="button"
-                            onClick={event => {
-                              const details = event.currentTarget.closest("details");
-                              if (details) details.open = false;
-                              selectServer(server.id);
-                            }}
-                          >
-                            <Wrench size={14} />
-                            <span>{tx("工具与详情", "Tools & details")}</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={event => {
-                              const details = event.currentTarget.closest("details");
-                              if (details) details.open = false;
-                              void handleTestOrRestartServer(server, "restart");
-                            }}
-                          >
-                            <RotateCcw size={14} />
-                            <span>{tx("重启并检测", "Restart & probe")}</span>
-                          </button>
-                          {!server.builtin ? (
+                          <span>{statusNotice.text}</span>
+                          {statusNotice.showRetry ? (
                             <button
                               type="button"
-                              onClick={event => {
-                                const details = event.currentTarget.closest("details");
-                                if (details) details.open = false;
-                                setServerEditorState({ mode: "edit", server });
-                              }}
+                              className="ae-btn ae-btn-sm"
+                              disabled={isBusy}
+                              onClick={() => void handleTestOrRestartServer(server, "test")}
                             >
-                              <FileCode2 size={14} />
-                              <span>{tx("编辑配置", "Edit configuration")}</span>
-                            </button>
-                          ) : null}
-                          {server.deletable && !server.builtin ? (
-                            <button
-                              type="button"
-                              className="ae-menu-danger"
-                              onClick={event => {
-                                const details = event.currentTarget.closest("details");
-                                if (details) details.open = false;
-                                openConfirmDelete({
-                                  kind: "mcp",
-                                  id: server.id,
-                                  name: server.name,
-                                  revision: server.revision,
-                                });
-                              }}
-                            >
-                              <Trash2 size={14} />
-                              <span>{tx("移除服务器", "Remove server")}</span>
+                              <RotateCcw size={13} />
+                              <span>{tx("重试连接", "Retry connection")}</span>
                             </button>
                           ) : null}
                         </div>
-                      </details>
+                      ) : null}
                     </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
+                  </div>
+
+                  <div className="ae-row-actions">
+                    {needsAuth && !server.builtin ? (
+                      <>
+                        <select
+                          className="ae-select-sm"
+                          aria-label={tx(
+                            `${server.name} OAuth 客户端注册方式`,
+                            `${server.name} OAuth client registration`,
+                          )}
+                          value={server.oauth_client_registration ?? "auto"}
+                          disabled={isBusy}
+                          onChange={event =>
+                            void handleUpdateServerOauthRegistration(
+                              server,
+                              event.target.value as ExtensionMcpOauthClientRegistration,
+                            )
+                          }
+                        >
+                          <option value="auto">{tx("自动", "Auto")}</option>
+                          <option value="cimd">
+                            {tx(
+                              "客户端 ID 元数据文档 (CIMD)",
+                              "Client ID Metadata Document (CIMD)",
+                            )}
+                          </option>
+                          <option value="dcr">
+                            {tx("动态客户端注册 (DCR)", "Dynamic Client Registration (DCR)")}
+                          </option>
+                        </select>
+                        <button
+                          type="button"
+                          className="ae-btn ae-btn-sm"
+                          disabled={isBusy}
+                          onClick={() => setServerEditorState({ mode: "edit", server })}
+                        >
+                          <span>
+                            {isTesting
+                              ? tx("启动中…", "Starting…")
+                              : tx("进行身份验证", "Authenticate")}
+                          </span>
+                        </button>
+                      </>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="ae-btn ae-btn-sm"
+                      disabled={isBusy}
+                      onClick={() => void handleTestOrRestartServer(server, "test")}
+                    >
+                      <Play size={13} />
+                      <span>
+                        {isTesting ? tx("正在测试…", "Testing…") : tx("测试连接", "Test connection")}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ae-btn ae-btn-sm"
+                      onClick={() => selectServer(server.id)}
+                    >
+                      {tx("查看详情", "View details")}
+                    </button>
+                    {!server.builtin ? (
+                      <button
+                        type="button"
+                        className="ae-icon-btn"
+                        title={tx("设置", "Settings")}
+                        aria-label={tx(`${server.name} 设置`, `${server.name} settings`)}
+                        disabled={isBusy}
+                        onClick={() => setServerEditorState({ mode: "edit", server })}
+                      >
+                        <Settings size={15} />
+                      </button>
+                    ) : null}
+                    <SwitchButton
+                      checked={server.component_enabled}
+                      disabled={isBusy}
+                      label={tx(`启用服务器 ${server.name}`, `Enable server ${server.name}`)}
+                      onChange={next => void handleToggleServer(server, next)}
+                    />
+                    <details
+                      className="ae-menu"
+                      onKeyDown={event => {
+                        if (event.key === "Escape") {
+                          event.currentTarget.open = false;
+                        }
+                      }}
+                    >
+                      <summary
+                        className="ae-icon-btn"
+                        aria-label={tx(
+                          `${server.name} 的更多操作`,
+                          `More actions for ${server.name}`,
+                        )}
+                      >
+                        <MoreHorizontal size={16} />
+                      </summary>
+                      <div className="ae-menu-panel">
+                        <button
+                          type="button"
+                          onClick={event => {
+                            const details = event.currentTarget.closest("details");
+                            if (details) details.open = false;
+                            selectServer(server.id);
+                          }}
+                        >
+                          <Wrench size={14} />
+                          <span>{tx("工具与详情", "Tools & details")}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={event => {
+                            const details = event.currentTarget.closest("details");
+                            if (details) details.open = false;
+                            void handleTestOrRestartServer(server, "restart");
+                          }}
+                        >
+                          <RotateCcw size={14} />
+                          <span>{tx("重启并检测", "Restart & probe")}</span>
+                        </button>
+                        {!server.builtin ? (
+                          <button
+                            type="button"
+                            onClick={event => {
+                              const details = event.currentTarget.closest("details");
+                              if (details) details.open = false;
+                              setServerEditorState({ mode: "edit", server });
+                            }}
+                          >
+                            <FileCode2 size={14} />
+                            <span>{tx("编辑配置", "Edit configuration")}</span>
+                          </button>
+                        ) : null}
+                        {server.deletable && !server.builtin ? (
+                          <button
+                            type="button"
+                            className="ae-menu-danger"
+                            onClick={event => {
+                              const details = event.currentTarget.closest("details");
+                              if (details) details.open = false;
+                              openConfirmDelete({
+                                kind: "mcp",
+                                id: server.id,
+                                name: server.name,
+                                revision: server.revision,
+                              });
+                            }}
+                          >
+                            <Trash2 size={14} />
+                            <span>{tx("移除服务器", "Remove server")}</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    </details>
+                  </div>
+                </article>
+              );
+            };
+
+            if (filteredServers.length === 0 && hasSearch) {
+              return (
+                <div className="ae-empty">
+                  <Server size={26} />
+                  <p>{tx("未找到 MCP 服务器", "No MCP servers found")}</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="ae-codex-mcp-stack">
+                {/* Card 1: Servers (settings.mcp.myServers) */}
+                <div className="ae-codex-card">
+                  <div className="ae-codex-card-head">
+                    <h3>{tx("服务器", "Servers")}</h3>
+                    <div className="ae-codex-card-actions">
+                      {mcpModifiedSinceRestart ? (
+                        <button
+                          type="button"
+                          className="ae-btn ae-btn-sm"
+                          disabled={mcpRestartingAll}
+                          onClick={() => void handleRestartAllMcpServers()}
+                        >
+                          <RotateCcw size={13} />
+                          <span>{mcpRestartingAll ? tx("正在重启…", "Restarting…") : tx("重启", "Restart")}</span>
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="ae-btn ae-btn-sm"
+                        disabled={createActionsBlocked}
+                        onClick={() => setServerEditorState({ mode: "create" })}
+                      >
+                        <Plus size={13} />
+                        <span>{tx("连接至自定义 MCP", "Connect to a custom MCP")}</span>
+                      </button>
+                    </div>
+                  </div>
+                  {customServers.length === 0 ? (
+                    <div className="ae-codex-empty-row">
+                      <span>{tx("未连接 MCP 服务器", "No MCP servers connected")}</span>
+                    </div>
+                  ) : (
+                    <div className="ae-list">{customServers.map(renderMcpServerRow)}</div>
+                  )}
+                </div>
+
+                {/* Card 2: From plugins (settings.mcp.fromPlugins) */}
+                {pluginServers.length > 0 ? (
+                  <div className="ae-codex-card">
+                    <div className="ae-codex-card-head">
+                      <h3>{tx("来自插件", "From plugins")}</h3>
+                    </div>
+                    <div className="ae-list">{pluginServers.map(renderMcpServerRow)}</div>
+                  </div>
+                ) : null}
+
+                {/* Card 3: MCP Apps (settings.mcp.apps.title) */}
+                <div className="ae-codex-card">
+                  <div className="ae-codex-card-head">
+                    <h3>{tx("MCP 应用", "MCP Apps")}</h3>
+                  </div>
+                  <div className="ae-codex-app-data-row">
+                    <div className="ae-setting-copy">
+                      <strong>{tx("应用数据", "App data")}</strong>
+                      <small>
+                        {tx(
+                          "清除所有 MCP 应用的站点数据和缓存",
+                          "Clear site data and cache from all MCP apps",
+                        )}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className="ae-btn ae-btn-sm"
+                      disabled={clearingMcpAppData}
+                      onClick={() => void handleClearMcpAppData()}
+                    >
+                      <span>
+                        {clearingMcpAppData
+                          ? tx("正在清除…", "Clearing…")
+                          : tx("清除所有应用数据", "Clear all app data")}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </section>
       ) : null}
 
@@ -2076,12 +2198,30 @@ export default function AgentExtensions() {
           onClose={() => setServerEditorState(null)}
           onSaved={async (savedServer, runTestAfter) => {
             invalidateServerProbe(savedServer.id);
+            setMcpModifiedSinceRestart(true);
             setServerEditorState(null);
             await reconcileOverviewAfterMutation();
             if (runTestAfter) {
               await handleTestOrRestartServer(savedServer, "test");
             }
           }}
+          onRequestDelete={
+            serverEditorState.mode === "edit" &&
+            serverEditorState.server &&
+            serverEditorState.server.deletable &&
+            !serverEditorState.server.builtin
+              ? () => {
+                  const target = serverEditorState.server!;
+                  setServerEditorState(null);
+                  openConfirmDelete({
+                    kind: "mcp",
+                    id: target.id,
+                    name: target.name,
+                    revision: target.revision,
+                  });
+                }
+              : undefined
+          }
           onConflictRefetch={async () => {
             const latest = await reconcileOverviewAfterMutation();
             if (!latest) return null;
@@ -2732,6 +2872,16 @@ function McpServerDetailsModal({
                 ))}
               </div>
             ) : null}
+            {(server.env_vars?.length ?? 0) > 0 ? (
+              <div>
+                <strong>{tx("环境变量传递：", "Environment variable passthrough: ")}</strong>
+                {server.env_vars!.map(v => (
+                  <span key={v} className="ae-badge" style={{ marginRight: 6 }}>
+                    {v}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -2751,6 +2901,18 @@ function McpServerDetailsModal({
                 {server.header_keys.map(k => (
                   <span key={k} className="ae-badge" style={{ marginRight: 6 }}>
                     {k}: {server.masked_headers[k]?.masked || MASKED_SECRET_PLACEHOLDER}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {Object.keys(server.env_http_headers ?? {}).length > 0 ? (
+              <div>
+                <strong>
+                  {tx("来自环境变量的标头：", "Headers from environment variables: ")}
+                </strong>
+                {Object.entries(server.env_http_headers!).map(([hk, hv]) => (
+                  <span key={hk} className="ae-badge" style={{ marginRight: 6 }}>
+                    {hk} &larr; ${hv}
                   </span>
                 ))}
               </div>
@@ -2924,6 +3086,7 @@ function McpServerFormModal({
   overviewRevision,
   onClose,
   onSaved,
+  onRequestDelete,
   onConflictRefetch,
 }: {
   mode: "create" | "edit";
@@ -2931,6 +3094,7 @@ function McpServerFormModal({
   overviewRevision: number;
   onClose: () => void;
   onSaved: (server: ExtensionMcpServer, runTestAfter: boolean) => Promise<void>;
+  onRequestDelete?: () => void;
   onConflictRefetch: () => Promise<{
     overview: ExtensionOverview;
     server: ExtensionMcpServer | null;
@@ -2968,9 +3132,23 @@ function McpServerFormModal({
       ? createInitialSecretEntries(initialServer.masked_env, initialServer.env_keys)
       : [],
   );
+  const [envVarPassthrough, setEnvVarPassthrough] = useState<string[]>(() =>
+    initialServer?.env_vars ? [...initialServer.env_vars] : [],
+  );
   const [headerEntries, setHeaderEntries] = useState<SecretEntryDraft[]>(() =>
     initialServer
       ? createInitialSecretEntries(initialServer.masked_headers, initialServer.header_keys)
+      : [],
+  );
+  const [envHttpHeaderEntries, setEnvHttpHeaderEntries] = useState<
+    Array<{ id: string; key: string; value: string }>
+  >(() =>
+    initialServer?.env_http_headers
+      ? Object.entries(initialServer.env_http_headers).map(([key, value], index) => ({
+          id: `envhdr-${index}-${key}`,
+          key,
+          value,
+        }))
       : [],
   );
   const [expectedRevision, setExpectedRevision] = useState<number>(
@@ -2982,6 +3160,13 @@ function McpServerFormModal({
   const [rebasedFieldNotes, setRebasedFieldNotes] = useState<string[]>([]);
   const [overlappingConflictFields, setOverlappingConflictFields] = useState<string[]>([]);
 
+  const parsedArgsPreview = useMemo(() => parseMcpArgsInput(argsText), [argsText]);
+  const argRows = parsedArgsPreview.ok ? parsedArgsPreview.args : [];
+
+  const updateArgRows = (nextArgs: string[]) => {
+    setArgsText(nextArgs.length === 0 ? "" : JSON.stringify(nextArgs));
+  };
+
   const applyServerSnapshotToAllScalarFields = (srv: ExtensionMcpServer) => {
     setName(srv.name);
     setDescription(srv.description ?? "");
@@ -2992,6 +3177,16 @@ function McpServerFormModal({
     setCwd(srv.cwd);
     setUrl(srv.url);
     setBearerTokenEnv(srv.bearer_token_env);
+    setEnvVarPassthrough(srv.env_vars ? [...srv.env_vars] : []);
+    setEnvHttpHeaderEntries(
+      srv.env_http_headers
+        ? Object.entries(srv.env_http_headers).map(([key, value], index) => ({
+            id: `envhdr-${index}-${key}`,
+            key,
+            value,
+          }))
+        : [],
+    );
     setStartupTimeout(String(srv.startup_timeout_ms));
     setToolTimeout(String(srv.tool_timeout_ms));
     setComputerAccess(Boolean(srv.computer_access));
@@ -3091,6 +3286,54 @@ function McpServerFormModal({
     const resolvedCwd =
       mode === "edit" && currentBase && cwd === currentBase.cwd ? currentBase.cwd : cwd.trim();
 
+    const normalizedEnvVars: string[] = [];
+    if (transport === "stdio") {
+      for (const rawVar of envVarPassthrough) {
+        const trimmedVar = rawVar.trim();
+        if (!trimmedVar) continue;
+        if (!ENV_KEY_RE.test(trimmedVar)) {
+          setFormError(
+            tx(
+              `传递环境变量名称格式无效：${trimmedVar}`,
+              `Invalid passthrough environment variable name: ${trimmedVar}`,
+            ),
+          );
+          return;
+        }
+        if (!normalizedEnvVars.includes(trimmedVar)) {
+          normalizedEnvVars.push(trimmedVar);
+        }
+      }
+    }
+
+    const normalizedEnvHttpHeaders: Record<string, string> = {};
+    if (transport === "streamable_http") {
+      for (const row of envHttpHeaderEntries) {
+        const hk = row.key.trim();
+        const hv = row.value.trim();
+        if (!hk && !hv) continue;
+        if (!hk || !HEADER_KEY_RE.test(hk)) {
+          setFormError(
+            tx(
+              `环境变量标头名称格式无效：${hk || "(空)"}`,
+              `Invalid environment header name: ${hk || "(empty)"}`,
+            ),
+          );
+          return;
+        }
+        if (!hv || !ENV_KEY_RE.test(hv)) {
+          setFormError(
+            tx(
+              `标头「${hk}」对应的环境变量名称格式无效：${hv || "(空)"}`,
+              `Invalid environment variable name for header "${hk}": ${hv || "(empty)"}`,
+            ),
+          );
+          return;
+        }
+        normalizedEnvHttpHeaders[hk] = hv;
+      }
+    }
+
     setSubmitting(true);
     try {
       let savedServer: ExtensionMcpServer;
@@ -3109,11 +3352,15 @@ function McpServerFormModal({
                 args: parsedArgs,
                 ...(resolvedCwd ? { cwd: resolvedCwd } : {}),
                 ...(envMap ? { env: envMap } : {}),
+                ...(normalizedEnvVars.length > 0 ? { env_vars: normalizedEnvVars } : {}),
               }
             : {
                 url: url.trim(),
                 ...(bearerTokenEnv.trim() ? { bearer_token_env: bearerTokenEnv.trim() } : {}),
                 ...(headerMap ? { headers: headerMap } : {}),
+                ...(Object.keys(normalizedEnvHttpHeaders).length > 0
+                  ? { env_http_headers: normalizedEnvHttpHeaders }
+                  : {}),
               }),
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
@@ -3148,11 +3395,13 @@ function McpServerFormModal({
                 args: parsedArgs,
                 cwd: resolvedCwd,
                 ...(envPatch ? { env: envPatch } : {}),
+                env_vars: normalizedEnvVars,
               }
             : {
                 url: url.trim(),
                 bearer_token_env: bearerTokenEnv.trim(),
                 ...(headerPatch ? { headers: headerPatch } : {}),
+                env_http_headers: normalizedEnvHttpHeaders,
               }),
           startup_timeout_ms: startupMs,
           tool_timeout_ms: toolMs,
@@ -3404,6 +3653,50 @@ function McpServerFormModal({
         </div>
       ) : null}
 
+      <div className="ae-codex-detail-banner">
+        <div>
+          <strong>
+            {mode === "create"
+              ? tx("连接至自定义 MCP", "Connect to a custom MCP")
+              : tx(
+                  `更新 ${baselineServer?.name ?? initialServer?.name ?? ""} MCP`,
+                  `Update ${baselineServer?.name ?? initialServer?.name ?? ""} MCP`,
+                )}
+          </strong>
+          {mode === "create" ? (
+            <a
+              className="ae-codex-docs-link"
+              href="https://developers.openai.com/codex/mcp"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span>{tx("文档", "Docs")}</span>
+              <ExternalLink size={12} />
+            </a>
+          ) : null}
+        </div>
+        {mode === "edit" && onRequestDelete ? (
+          <button
+            type="button"
+            className="ae-btn ae-btn-sm ae-btn-danger"
+            disabled={submitting}
+            onClick={onRequestDelete}
+          >
+            <Trash2 size={13} />
+            <span>{tx("卸载", "Uninstall")}</span>
+          </button>
+        ) : null}
+      </div>
+
+      {mode === "edit" ? (
+        <div className="ae-codex-switch-notice">
+          {tx(
+            "如需切换 MCP 服务器类型，请先卸载当前配置。",
+            "If you would like to switch MCP server type, please uninstall first.",
+          )}
+        </div>
+      ) : null}
+
       <div className="ae-form-grid">
         <div className="ae-field">
           <label htmlFor="ae-mcp-name">{tx("服务器名称", "Server name")}</label>
@@ -3417,15 +3710,35 @@ function McpServerFormModal({
         </div>
         <div className="ae-field">
           <label htmlFor="ae-mcp-transport">{tx("传输类型", "Transport")}</label>
-          <select
-            id="ae-mcp-transport"
-            value={transport}
-            disabled={submitting || replacedOrDeleted}
-            onChange={event => setTransport(event.target.value as ExtensionMcpTransport)}
-          >
-            <option value="stdio">{tx("STDIO", "STDIO")}</option>
-            <option value="streamable_http">{tx("Streamable HTTP", "Streamable HTTP")}</option>
-          </select>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select
+              id="ae-mcp-transport"
+              value={transport}
+              disabled={submitting || replacedOrDeleted}
+              onChange={event => setTransport(event.target.value as ExtensionMcpTransport)}
+            >
+              <option value="stdio">{tx("STDIO", "STDIO")}</option>
+              <option value="streamable_http">{tx("Streamable HTTP", "Streamable HTTP")}</option>
+            </select>
+            <div className="ae-segmented" role="group" aria-label={tx("类型切换", "Transport type toggle")}>
+              <button
+                type="button"
+                aria-pressed={transport === "stdio"}
+                disabled={submitting || replacedOrDeleted}
+                onClick={() => setTransport("stdio")}
+              >
+                STDIO
+              </button>
+              <button
+                type="button"
+                aria-pressed={transport === "streamable_http"}
+                disabled={submitting || replacedOrDeleted}
+                onClick={() => setTransport("streamable_http")}
+              >
+                {tx("流式 HTTP", "Streamable HTTP")}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -3485,23 +3798,65 @@ function McpServerFormModal({
             </div>
           </div>
 
-          <div className="ae-field">
-            <label htmlFor="ae-mcp-args">
-              {tx("启动参数（JSON 字符串数组）", "Arguments (JSON string array)")}
-            </label>
-            <textarea
-              id="ae-mcp-args"
-              value={argsText}
-              disabled={submitting || replacedOrDeleted}
-              placeholder={'["-y", "@modelcontextprotocol/server-filesystem"]'}
-              onChange={event => setArgsText(event.target.value)}
-            />
-            <small>
-              {tx(
-                '使用 JSON 字符串数组以原样保留首尾空格与空字符串参数，例如：["--label", "  spaced  ", ""]',
-                'Use a JSON string array to preserve exact whitespace and empty arguments, e.g. ["--label", "  spaced  ", ""]',
-              )}
-            </small>
+          <div className="ae-section-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3>{tx("参数 (Arguments)", "Arguments")}</h3>
+              <button
+                type="button"
+                className="ae-btn ae-btn-sm ae-codex-dashed-btn"
+                disabled={submitting || replacedOrDeleted || !parsedArgsPreview.ok}
+                onClick={() => updateArgRows([...argRows, ""])}
+              >
+                <Plus size={13} />
+                <span>{tx("添加参数", "Add argument")}</span>
+              </button>
+            </div>
+            {argRows.length > 0 ? (
+              <div className="ae-secret-list">
+                {argRows.map((argVal, idx) => (
+                  <div key={`arg-${idx}`} className="ae-codex-single-row">
+                    <input
+                      aria-label={tx(`参数 ${idx + 1}`, `Argument ${idx + 1}`)}
+                      placeholder={tx(`参数 ${idx + 1}`, `Argument ${idx + 1}`)}
+                      value={argVal}
+                      disabled={submitting || replacedOrDeleted}
+                      onChange={event => {
+                        const next = [...argRows];
+                        next[idx] = event.target.value;
+                        updateArgRows(next);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="ae-btn ae-btn-sm ae-btn-danger"
+                      aria-label={tx(`移除参数 ${idx + 1}`, `Remove argument ${idx + 1}`)}
+                      disabled={submitting || replacedOrDeleted}
+                      onClick={() => updateArgRows(argRows.filter((_, i) => i !== idx))}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="ae-field" style={{ marginTop: 6 }}>
+              <label htmlFor="ae-mcp-args">
+                {tx("启动参数（JSON 字符串数组）", "Arguments (JSON string array)")}
+              </label>
+              <textarea
+                id="ae-mcp-args"
+                value={argsText}
+                disabled={submitting || replacedOrDeleted}
+                placeholder={'["-y", "@modelcontextprotocol/server-filesystem"]'}
+                onChange={event => setArgsText(event.target.value)}
+              />
+              <small>
+                {tx(
+                  '使用 JSON 字符串数组以原样保留首尾空格与空字符串参数，例如：["--label", "  spaced  ", ""]',
+                  'Use a JSON string array to preserve exact whitespace and empty arguments, e.g. ["--label", "  spaced  ", ""]',
+                )}
+              </small>
+            </div>
           </div>
 
           <div className="ae-section-card">
@@ -3602,6 +3957,68 @@ function McpServerFormModal({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+          <div className="ae-section-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3>
+                {tx(
+                  "环境变量传递 (Environment variable passthrough)",
+                  "Environment variable passthrough",
+                )}
+              </h3>
+              <button
+                type="button"
+                className="ae-btn ae-btn-sm ae-codex-dashed-btn"
+                disabled={submitting || replacedOrDeleted}
+                onClick={() => setEnvVarPassthrough(prev => [...prev, ""])}
+              >
+                <Plus size={13} />
+                <span>{tx("添加传递变量", "Add passthrough variable")}</span>
+              </button>
+            </div>
+            {envVarPassthrough.length === 0 ? (
+              <small style={{ color: "var(--pf-muted)" }}>
+                {tx(
+                  "可选：指定直接从本机环境传递给 STDIO 进程的环境变量名（如 OPENAI_API_KEY）。",
+                  "Optional: list host environment variable names to pass through to the STDIO process (e.g. OPENAI_API_KEY).",
+                )}
+              </small>
+            ) : (
+              <div className="ae-secret-list">
+                {envVarPassthrough.map((varName, idx) => (
+                  <div key={`envpassthrough-${idx}`} className="ae-codex-single-row">
+                    <input
+                      aria-label={tx(
+                        `传递环境变量 ${idx + 1}`,
+                        `Passthrough environment variable ${idx + 1}`,
+                      )}
+                      placeholder="ENV_VAR_NAME"
+                      value={varName}
+                      disabled={submitting || replacedOrDeleted}
+                      onChange={event =>
+                        setEnvVarPassthrough(prev =>
+                          prev.map((item, i) => (i === idx ? event.target.value : item)),
+                        )
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="ae-btn ae-btn-sm ae-btn-danger"
+                      aria-label={tx(
+                        `移除传递环境变量 ${varName || idx + 1}`,
+                        `Remove passthrough environment variable ${varName || idx + 1}`,
+                      )}
+                      disabled={submitting || replacedOrDeleted}
+                      onClick={() =>
+                        setEnvVarPassthrough(prev => prev.filter((_, i) => i !== idx))
+                      }
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -3720,6 +4137,100 @@ function McpServerFormModal({
                         disabled={submitting || replacedOrDeleted}
                         onClick={() =>
                           setHeaderEntries(prev => prev.filter(row => row.id !== entry.id))
+                        }
+                      >
+                        <Trash2 size={13} />
+                        <span>{tx("移除", "Remove")}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="ae-section-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3>
+                {tx(
+                  "来自环境变量的标头 (Headers from environment variables)",
+                  "Headers from environment variables",
+                )}
+              </h3>
+              <button
+                type="button"
+                className="ae-btn ae-btn-sm ae-codex-dashed-btn"
+                disabled={submitting || replacedOrDeleted}
+                onClick={() =>
+                  setEnvHttpHeaderEntries(prev => [
+                    ...prev,
+                    {
+                      id: `envhdr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      key: "",
+                      value: "",
+                    },
+                  ])
+                }
+              >
+                <Plus size={13} />
+                <span>{tx("添加环境变量标头", "Add environment header")}</span>
+              </button>
+            </div>
+            {envHttpHeaderEntries.length === 0 ? (
+              <small style={{ color: "var(--pf-muted)" }}>
+                {tx(
+                  "可选：从本机环境变量读取 HTTP 标头值（键为标头名，值为环境变量名）。",
+                  "Optional: source HTTP headers from host environment variables (Key = header name, Value = env var name).",
+                )}
+              </small>
+            ) : (
+              <div className="ae-secret-list">
+                {envHttpHeaderEntries.map((row, idx) => {
+                  const indexLabel = idx + 1;
+                  return (
+                    <div key={row.id} className="ae-secret-row">
+                      <input
+                        aria-label={tx(
+                          `环境变量请求头 ${indexLabel} 名称`,
+                          `Environment header ${indexLabel} name`,
+                        )}
+                        placeholder={tx("键 (如 X-Org-Token)", "Key (e.g. X-Org-Token)")}
+                        value={row.key}
+                        disabled={submitting || replacedOrDeleted}
+                        onChange={event =>
+                          setEnvHttpHeaderEntries(prev =>
+                            prev.map(item =>
+                              item.id === row.id ? { ...item, key: event.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                      <input
+                        aria-label={tx(
+                          `环境变量请求头 ${indexLabel} 变量名`,
+                          `Environment header ${indexLabel} variable`,
+                        )}
+                        placeholder={tx("值 (ENV_VAR_NAME)", "Value (ENV_VAR_NAME)")}
+                        value={row.value}
+                        disabled={submitting || replacedOrDeleted}
+                        onChange={event =>
+                          setEnvHttpHeaderEntries(prev =>
+                            prev.map(item =>
+                              item.id === row.id ? { ...item, value: event.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="ae-btn ae-btn-sm ae-btn-danger"
+                        aria-label={tx(
+                          `移除环境变量请求头 ${row.key || indexLabel}`,
+                          `Remove environment header ${row.key || indexLabel}`,
+                        )}
+                        disabled={submitting || replacedOrDeleted}
+                        onClick={() =>
+                          setEnvHttpHeaderEntries(prev => prev.filter(item => item.id !== row.id))
                         }
                       >
                         <Trash2 size={13} />

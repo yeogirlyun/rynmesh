@@ -4,6 +4,7 @@ No product monkey-import, no implementation code copied, and no skips for a
 missing guard. Root runs this only after stage1-ready.json / import repair.
 """
 from __future__ import annotations
+
 import copy
 import inspect
 import os
@@ -17,10 +18,17 @@ ACCEPTANCE = Path(__file__).resolve().parent
 sys.path.insert(0, str(TARGET / "tests"))
 sys.path.insert(0, str(TARGET))
 
-import pytest
-from rynmesh.agent_runtime import knowledge, memory
-from rynmesh.agent_runtime.store import AgentError, AgentStore
-from test_agent_runtime import make_runtime
+import pytest  # noqa: E402 - imports use the checkout selected above.
+from test_agent_runtime import make_runtime  # noqa: E402 - imports use the checkout selected above.
+
+from rynmesh.agent_runtime import (  # noqa: E402 - imports use the checkout selected above.
+    knowledge,
+    memory,
+)
+from rynmesh.agent_runtime.store import (  # noqa: E402 - imports use the checkout selected above.
+    AgentError,
+    AgentStore,
+)
 
 assert Path(memory.__file__).resolve().is_relative_to(TARGET), "Imported memory.py from wrong checkout"
 

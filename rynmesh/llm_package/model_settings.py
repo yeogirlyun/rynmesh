@@ -9,6 +9,33 @@ import uuid
 FIELDS = {"context_window", "max_output_tokens", "request_defaults", "max_concurrent", "requests_per_day", "share_scope"}
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
 FALLBACK_CONTEXT_WINDOW = 32768
+KNOWN_VENDOR_CONTEXT_WINDOWS = (
+    ("deepseek-", 128000),
+    ("gpt-5", 272000),
+    ("gpt-4.1", 1047576),
+    ("gpt-4o", 128000),
+    ("o1-", 200000),
+    ("o3-", 200000),
+    ("o4-", 200000),
+    ("claude-", 200000),
+    ("qwen-", 128000),
+    ("qwen2.5", 128000),
+    ("qwen3", 128000),
+    ("glm-4", 128000),
+    ("glm-5", 128000),
+    ("kimi-", 128000),
+    ("moonshot-", 128000),
+)
+
+
+def _known_vendor_context_window(model) -> int | None:
+    if not isinstance(model, str) or not model:
+        return None
+    normalized = model.strip().lower().rsplit("/", 1)[-1]
+    for prefix, window in KNOWN_VENDOR_CONTEXT_WINDOWS:
+        if normalized.startswith(prefix):
+            return window
+    return None
 
 
 def context_metadata(record, model=None, *, overrides=True):
@@ -25,6 +52,9 @@ def context_metadata(record, model=None, *, overrides=True):
     window = metadata.get("context_window")
     if type(window) is int and 256 <= window <= 2000000:
         return {"context_window": window, "context_window_basis": "provider_model_metadata", "context_window_known": True}
+    inferred = _known_vendor_context_window(model)
+    if inferred is not None:
+        return {"context_window": inferred, "context_window_basis": "vendor_family_default", "context_window_known": True}
     return {"context_window": FALLBACK_CONTEXT_WINDOW, "context_window_basis": "unknown_fallback", "context_window_known": False}
 
 

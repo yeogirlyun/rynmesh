@@ -14,11 +14,11 @@ import hashlib
 import importlib
 import json
 import os
-from pathlib import Path
 import socket
 import sys
-from types import SimpleNamespace
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey

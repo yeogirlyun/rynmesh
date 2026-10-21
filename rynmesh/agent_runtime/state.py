@@ -99,6 +99,8 @@ def migrate(data: dict) -> dict:
         context_mode(row, row.setdefault("limits", {}), "context_budget_provenance")
     from . import memory
     memory.ensure_memory_state(data)
+    from . import automations
+    automations.ensure_automation_state(data)
     data["context_budget_version"] = 2
     data["schema_version"] = SCHEMA_VERSION
     return data

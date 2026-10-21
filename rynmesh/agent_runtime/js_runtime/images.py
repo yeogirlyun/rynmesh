@@ -20,7 +20,11 @@ from typing import Any
 
 from ..computer.protocol import (
     NativeBridgeError,
+)
+from ..computer.protocol import (
     validate_window_ref as _computer_validate_window_ref,
+)
+from ..computer.protocol import (
     window_refs_equal as _computer_window_refs_equal,
 )
 from .protocol import (

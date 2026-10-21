@@ -1,8 +1,8 @@
 """Bundled desktop operations inherit workstation grants, not MCP annotations."""
 import pytest
 
-from rynmesh.agent_runtime.execution_policy import decide
 from rynmesh.agent_runtime.computer_overlay import ComputerOverlay
+from rynmesh.agent_runtime.execution_policy import decide
 
 
 def policy(mode="workspace", desktop=True, grants=()):
@@ -56,6 +56,7 @@ def test_automatic_builtin_grant_survives_dispatch_and_is_revoked_with_desktop_a
 
 def test_native_ready_gate_retains_task_desktop_authority(tmp_path):
     from types import SimpleNamespace
+
     from rynmesh.agent_runtime.local_tools import LocalTools
     local = LocalTools(SimpleNamespace(home=tmp_path), lambda: None)
     workspace = str(tmp_path.resolve())
@@ -71,6 +72,7 @@ def test_native_ready_gate_retains_task_desktop_authority(tmp_path):
 
 def test_idle_approval_refresh_does_not_copy_transcripts():
     from types import SimpleNamespace
+
     from rynmesh.agent_runtime.loop import AgentLoop
     class NotCopyable:
         def __deepcopy__(self, memo):
@@ -88,7 +90,12 @@ def test_idle_approval_refresh_does_not_copy_transcripts():
 
 def test_alias_is_issued_only_for_verified_enabled_builtin(tmp_path):
     from types import SimpleNamespace
-    from rynmesh.agent_runtime.extensions import ExtensionStore, ExtensionToolAdapter, COMPUTER_USE_PLUGIN_ID
+
+    from rynmesh.agent_runtime.extensions import (
+        COMPUTER_USE_PLUGIN_ID,
+        ExtensionStore,
+        ExtensionToolAdapter,
+    )
     from rynmesh.services import peer_box
     store = ExtensionStore(tmp_path / "agent", peer_box.load_or_create_messaging_key(tmp_path / "messaging.key"))
     adapter = ExtensionToolAdapter(SimpleNamespace(), lambda: None, extension_store=store)

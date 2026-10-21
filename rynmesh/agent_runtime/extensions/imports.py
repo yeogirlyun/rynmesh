@@ -578,7 +578,9 @@ class ExtensionImportManager:
                         "enabled_tools": m.get("enabled_tools"),
                         "disabled_tools": list(m.get("disabled_tools") or []),
                         "env_keys": sorted((m.get("secret_env") or {}).keys()),
+                        "env_vars": list(m.get("env_vars") or []),
                         "header_keys": sorted((m.get("secret_headers") or {}).keys()),
+                        "env_http_headers": dict(m.get("env_http_headers") or {}),
                         "has_secrets": bool(m.get("secret_env") or m.get("secret_headers")),
                     }
                     for m in parsed["mcp_servers"]
@@ -948,6 +950,20 @@ class ExtensionImportManager:
                     if v is not None:
                         secret_env[k_str] = _substitute_plugin_root_token(str(v), package_root)
 
+            raw_env_vars = cfg.get("env_vars") if "env_vars" in cfg else cfg.get("envVars")
+            env_vars: list[str] = []
+            if raw_env_vars is not None:
+                if not isinstance(raw_env_vars, list) or any(not isinstance(item, str) for item in raw_env_vars):
+                    raise AgentError("agent_mcp_invalid_env_key")
+                for item in raw_env_vars[:64]:
+                    var_name = str(item).strip()
+                    if not var_name:
+                        continue
+                    if not ENV_KEY_RE.match(var_name):
+                        raise AgentError("agent_mcp_invalid_env_key")
+                    if var_name not in env_vars:
+                        env_vars.append(var_name)
+
             secret_headers: dict[str, str] = {}
             hdr_dict = cfg.get("headers") or cfg.get("http_headers")
             if isinstance(hdr_dict, dict):
@@ -957,6 +973,25 @@ class ExtensionImportManager:
                         raise AgentError("agent_mcp_invalid_header_key")
                     if v is not None:
                         secret_headers[k_str] = str(v)
+
+            raw_env_http_headers = (
+                cfg.get("env_http_headers") if "env_http_headers" in cfg else cfg.get("envHttpHeaders")
+            )
+            env_http_headers: dict[str, str] = {}
+            if raw_env_http_headers is not None:
+                if not isinstance(raw_env_http_headers, dict):
+                    raise AgentError("agent_mcp_invalid_header_key")
+                for k, v in raw_env_http_headers.items():
+                    k_str = str(k).strip()
+                    if not k_str:
+                        continue
+                    if not HEADER_KEY_RE.match(k_str):
+                        raise AgentError("agent_mcp_invalid_header_key")
+                    if v is not None and str(v).strip():
+                        env_name = str(v).strip()
+                        if not ENV_KEY_RE.match(env_name):
+                            raise AgentError("agent_mcp_invalid_env_key")
+                        env_http_headers[k_str] = env_name
 
             bearer_token_env = str(
                 cfg.get("bearer_token_env") or cfg.get("bearer_token_env_var") or ""
@@ -1006,9 +1041,11 @@ class ExtensionImportManager:
                     "args": args,
                     "cwd": cwd,
                     "secret_env": secret_env,
+                    "env_vars": env_vars if transport == "stdio" else [],
                     "url": url if transport == "streamable_http" else None,
                     "bearer_token_env": bearer_token_env if transport == "streamable_http" else None,
                     "secret_headers": secret_headers,
+                    "env_http_headers": env_http_headers if transport == "streamable_http" else {},
                     "startup_timeout_ms": max(1000, min(60000, startup_timeout_ms)),
                     "tool_timeout_ms": max(1000, min(120000, tool_timeout_ms)),
                     "enabled_tools": enabled_tools,
@@ -1076,9 +1113,11 @@ class ExtensionImportManager:
         if not skill_md_path.is_file():
             raise AgentError("agent_invalid_skill_package")
         manifest = compute_directory_manifest(pkg_root)
-        parsed_md = parse_skill_markdown(
-            skill_md_path.read_text(encoding="utf-8"), fallback_id=fallback_id
-        )
+        raw_md_text = skill_md_path.read_text(encoding="utf-8")
+        parsed_md = parse_skill_markdown(raw_md_text, fallback_id=fallback_id)
+        from .codex_skills import extract_codex_skill_metadata
+
+        codex_meta = extract_codex_skill_metadata(pkg_root, raw_md_text, fallback_id=fallback_id)
         present_files = {f["path"] for f in manifest["files"]}
         for ref in parsed_md["referenced_paths"]:
             if ref not in present_files:
@@ -1089,6 +1128,7 @@ class ExtensionImportManager:
             "name": parsed_md["name"],
             "title": parsed_md["title"],
             "description": parsed_md["description"],
+            "short_description": codex_meta.get("short_description") or parsed_md["summary"],
             "summary": parsed_md["summary"],
             "version": parsed_md["version"],
             "content": parsed_md["content"],
@@ -1096,6 +1136,9 @@ class ExtensionImportManager:
             "manifest_sha256": manifest["manifest_sha256"],
             "staged_package_dir": str(pkg_root),
             "source_format": "skill_md",
+            "scope": "user",
+            "interface": codex_meta.get("interface") or {},
+            "policy": codex_meta.get("policy") or {"allow_implicit_invocation": True},
             "warnings": warnings,
         }
         return {
@@ -1300,8 +1343,16 @@ class ExtensionImportManager:
         seen_skill_ids: set[str] = set()
         for s_dir, rel_dir in skill_md_locations:
             s_manifest = compute_directory_manifest(s_dir)
+            s_md_text = (s_dir / "SKILL.md").read_text(encoding="utf-8")
             s_parsed = parse_skill_markdown(
-                (s_dir / "SKILL.md").read_text(encoding="utf-8"),
+                s_md_text,
+                fallback_id=s_dir.name or plugin_id,
+            )
+            from .codex_skills import extract_codex_skill_metadata
+
+            s_codex_meta = extract_codex_skill_metadata(
+                s_dir,
+                s_md_text,
                 fallback_id=s_dir.name or plugin_id,
             )
             orig_sid = s_parsed["id"]
@@ -1327,6 +1378,7 @@ class ExtensionImportManager:
                     "name": s_parsed["name"],
                     "title": s_parsed["title"],
                     "description": s_parsed["description"],
+                    "short_description": s_codex_meta.get("short_description") or s_parsed["summary"],
                     "summary": s_parsed["summary"],
                     "version": s_parsed["version"] or version,
                     "content": s_parsed["content"],
@@ -1335,6 +1387,9 @@ class ExtensionImportManager:
                     "plugin_id": plugin_id,
                     "plugin_rel_dir": rel_dir,
                     "source_format": source_format,
+                    "scope": "plugin",
+                    "interface": s_codex_meta.get("interface") or {},
+                    "policy": s_codex_meta.get("policy") or {"allow_implicit_invocation": True},
                     "warnings": [],
                 }
             )

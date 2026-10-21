@@ -494,16 +494,21 @@ def test_win32_native_edit_and_password_control_isolation(tmp_path: Path) -> Non
         "hwnd": "100100",
         "windowKey": "win_100100_1",
         "pid": 4242,
-        "processStartKey": "4242:100",
+        "processStarted": "100",
         "generation": 1,
         "workerInstance": "worker_inst_pwd",
     }
+    dispatched_actions: list[dict] = []
 
     class _FakeBridge:
         owner_id = "owner_pwd_test"
         _client = SimpleNamespace(active_session_info=lambda: (1, "worker_inst_pwd", 4242))
         _lock = threading.Lock()
         _tasks: dict = {}
+
+        def execute_action(self, **kwargs):
+            dispatched_actions.append(kwargs)
+            raise AssertionError("Password isolation must reject before dispatch")
 
         def list_windows(self, **_kwargs):
             return {
@@ -607,15 +612,15 @@ def test_win32_native_edit_and_password_control_isolation(tmp_path: Path) -> Non
         context=ctx,
     )
     elements = read_out["structuredContent"]["elements"]
-    normal_row = next(row for row in elements if row["index"] == 0)
-    pwd_row = next(row for row in elements if row["index"] == 1)
+    normal_row = next(row for row in elements if row["id"] == "el-0")
+    pwd_row = next(row for row in elements if row["id"] == "el-1")
     assert normal_row["value"] == "READ_MARKER"
-    assert normal_row["password"] is False
+    assert normal_row.get("password", False) is False
     assert pwd_row["password"] is True
     assert pwd_row["value"] == ""
     assert secret_canary not in json.dumps(read_out)
 
-    # Normal control preview succeeds; password control preview fails closed with agent_computer_password_field
+    # Normal control preview succeeds; both local and MCP password writes fail closed.
     ok_preview = facade.preview_local_action(
         {"window_id": 100100, "action": "set_value", "element_id": 0, "text": "WRITE_MARKER"},
         "task_pwd",
@@ -629,7 +634,21 @@ def test_win32_native_edit_and_password_control_isolation(tmp_path: Path) -> Non
             "task_pwd",
             context=ctx,
         )
-    assert exc_info.value.args == ("agent_computer_password_field",)
+    assert exc_info.value.args == ("agent_computer_element_required",)
+
+    with pytest.raises(AgentToolRejected) as mcp_exc:
+        facade.preview_mcp_write(
+            "computer_act_window",
+            {"hwnd": 100100, "action": "set_value", "element_id": pwd_row["id"], "text": "SHOULD_REJECT"},
+            binding={**binding, "original_tool_name": "computer_act_window"},
+            policy=ctx["local_execution"],
+            server={"id": "computer-use", "name": "Ryn Computer Use"},
+            tool={"name": "computer_act_window"},
+            context=ctx,
+        )
+    assert mcp_exc.value.args == ("agent_computer_password_field",)
+    assert secret_canary not in str(mcp_exc.value)
+    assert dispatched_actions == []
 
 
 def test_stdio_reusable_session_survives_completed_request_cancellation_and_replaces_dead_cache(
@@ -1247,8 +1266,8 @@ for raw in sys.stdin:
         orig_create_r = mgr_r._create_session
 
         def _track_create(server, **kwargs):
-            s = orig_create_r(server, **kwargs)
-            retire_sessions.append(s)
+            s = orig_create_r(server, **kwargs)  # noqa: B023 - this callback finishes within the current case.
+            retire_sessions.append(s)  # noqa: B023 - this callback finishes within the current case.
             return s
 
         mgr_r._create_session = _track_create
@@ -1257,22 +1276,22 @@ for raw in sys.stdin:
 
         def _retiring_call(c_cb=cancel_cb):
             try:
-                mgr_r.call_tool(
-                    f"srv-{mode_suffix}",
+                mgr_r.call_tool(  # noqa: B023 - this callback finishes within the current case.
+                    f"srv-{mode_suffix}",  # noqa: B023 - this callback finishes within the current case.
                     "echo",
-                    {"label": f"never-{mode_suffix}"},
-                    expected_revision=srv_r["revision"],
-                    expected_config_generation=srv_r["config_generation"],
-                    expected_instance_id=srv_r["instance_id"],
-                    expected_schema_hash=srv_r["discovered_tools"][0]["schema_sha256"],
+                    {"label": f"never-{mode_suffix}"},  # noqa: B023 - this callback finishes within the current case.
+                    expected_revision=srv_r["revision"],  # noqa: B023 - this callback finishes within the current case.
+                    expected_config_generation=srv_r["config_generation"],  # noqa: B023 - this callback finishes within the current case.
+                    expected_instance_id=srv_r["instance_id"],  # noqa: B023 - this callback finishes within the current case.
+                    expected_schema_hash=srv_r["discovered_tools"][0]["schema_sha256"],  # noqa: B023 - this callback finishes within the current case.
                     session_scope="task-retire",
-                    before_dispatch=lambda: dispatched_flag.update(called=True),
+                    before_dispatch=lambda: dispatched_flag.update(called=True),  # noqa: B023 - this callback finishes within the current case.
                     cancelled=c_cb,
                 )
-                retire_outcome["ok"] = True
+                retire_outcome["ok"] = True  # noqa: B023 - this callback finishes within the current case.
             except BaseException as exc:
-                retire_outcome["ok"] = False
-                retire_outcome["dispatched"] = getattr(exc, "dispatched", None)
+                retire_outcome["ok"] = False  # noqa: B023 - this callback finishes within the current case.
+                retire_outcome["dispatched"] = getattr(exc, "dispatched", None)  # noqa: B023 - this callback finishes within the current case.
 
         try:
             t_r = threading.Thread(target=_retiring_call, daemon=True)

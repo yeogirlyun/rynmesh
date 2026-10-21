@@ -8,8 +8,20 @@ import json
 import re
 
 from test_memory_integration_contract import (
-    BASE, CORRECT, FORGET, MARKER, SAVE, finish, front_requests, integrated,
-    prohibit_network, seed_bound_memory,
+    BASE,
+    CORRECT,
+    FORGET,
+    MARKER,
+    SAVE,
+    finish,
+    front_requests,
+    seed_bound_memory,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 

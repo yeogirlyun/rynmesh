@@ -121,7 +121,7 @@ if os.name == "nt":
             ("dwHighDateTime", wintypes.DWORD),
         ]
 
-    class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+    class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):  # noqa: N801 - matches the Win32 structure name.
         _fields_ = [
             ("dwFileAttributes", wintypes.DWORD),
             ("ftCreationTime", _FILETIME),

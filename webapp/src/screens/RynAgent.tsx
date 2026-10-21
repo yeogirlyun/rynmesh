@@ -3,7 +3,7 @@ import RynAgentProgress, { groupAgentMessages, RynAgentTurnDuration } from "./Ry
 import { Fragment, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate as useRouterNavigate } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
-import { ArrowUp, LoaderCircle, MoreHorizontal, Square, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock3, LoaderCircle, MoreHorizontal, Square, Check, CircleAlert, ListChecks, Monitor, Network, PanelLeftClose, PanelLeftOpen, Pause, Play, Settings, SlidersHorizontal, Share2, Sparkles, SquarePen, X } from "lucide-react";
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, mergeAgentTaskSnapshot, agentMessageModelID, agentActionBody, agentAnswerBody, agentMessageBody, agentScopeBody, agentToolResultState, canContinueAgentTask, canResumeAgentTask, canUseAgentModel, canUseAgentAction, agentTaskState, isAgentActive, isAgentLateToolResult, pendingAgentText, sortAgentTasks, rynAgent, type AgentAction, type AgentApproval, type AgentMessageIntent, type AgentModel, type AgentProject, type AgentScopeSelection, type AgentScopeSnapshot, type AgentSettings, type AgentTask, type AgentTaskSummary, type AgentTool } from "../domain/rynAgent";
 import { AgentNavigationContext } from "../personal/agentNavigation";
 import { craftAgentPluginID } from "../domain/craftPlugins";
@@ -26,6 +26,9 @@ import RynAgentBudget from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
 import { TaskArtifacts } from "./RynAgentArtifacts";
 import AgentTaskComputerStatus from "./AgentTaskComputerStatus";
+import { AutomationChatCard, AutomationDialog, AutomationsPanel, extractTurnAutomations } from "./RynAgentAutomations";
+import { CodexSkillsView, consumePendingSkillPrefill } from "./CodexSkillsView";
+import type { AgentAutomation } from "../domain/rynAgent";
 import "./rynAgentText";
 import "./RynAgent.css";
 
@@ -126,6 +129,14 @@ export default function RynAgent() {
   const [controlUncertain, setControlUncertain] = useState(() => Boolean(saved(CONTROL_KEY)));
   const [tasksCollapsed, setTasksCollapsed] = useState(() => saved("ryn.agent.tasks") === "closed" || (window.innerWidth <= 760 && saved("ryn.agent.tasks") !== "open"));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [automationsList, setAutomationsList] = useState<AgentAutomation[]>([]);
+  const [showAutomationsView, setShowAutomationsView] = useState(false);
+  const [showSkillsView, setShowSkillsView] = useState(false);
+  const [editingAutomation, setEditingAutomation] = useState<Partial<AgentAutomation> | null>(null);
+  const [automationDialogOpen, setAutomationDialogOpen] = useState(false);
+  const refreshAutomations = useCallback(() => {
+    void rynAgent.automations().then(snap => setAutomationsList(snap.items || [])).catch(() => undefined);
+  }, []);
   const [taskModelOpen, setTaskModelOpen] = useState(false);
   const [taskModelTarget, setTaskModelTarget] = useState("");
   const [reasoningEffort, setReasoningEffort] = useState("");
@@ -137,6 +148,9 @@ export default function RynAgent() {
   const navigate = () => {
     const revision = ++navigationRef.current;
     setNavigationRevision(revision); save(NAVIGATION_KEY, String(revision));
+    setShowAutomationsView(false);
+    setShowSkillsView(false);
+    refreshAutomations();
   };
   const chooseProject = (id: string) => {
     navigate();
@@ -163,6 +177,21 @@ export default function RynAgent() {
   const draftAttachments = attachmentsByDraft[draftKey] || [];
   const [attachmentsBusy, setAttachmentsBusy] = useState(false);
   useEffect(() => { setAttachmentsBusy(false); }, [draftKey]);
+  useEffect(() => {
+    const pendingPrefill = consumePendingSkillPrefill();
+    if (!pendingPrefill) return;
+    setShowSkillsView(false);
+    setShowAutomationsView(false);
+    selectedRef.current = "";
+    setSelected("");
+    setTask(null);
+    const targetKey = pluginDraftKey || newDraftKey(projectID);
+    setDrafts(current => ({ ...current, [targetKey]: pendingPrefill.prompt }));
+    if (pendingPrefill.skillId) {
+      setSkillIDs(current => (current.includes(pendingPrefill.skillId!) ? current : [...current, pendingPrefill.skillId!]));
+    }
+    setTimeout(() => input.current?.focus(), 0);
+  }, [location.key]);
   const finishAttachments = (key: string, ids: string[], nextKey?: string) => setAttachmentsByDraft(current => {
     const remaining = (current[key] || []).filter(file => !ids.includes(file.id));
     return { ...current, [key]: nextKey ? [] : remaining, ...(nextKey && remaining.length ? { [nextKey]: [...(current[nextKey] || []), ...remaining] } : {}) };
@@ -248,6 +277,7 @@ export default function RynAgent() {
     const controller = new AbortController();
     refreshAbort.current = controller;
     setPollRevision(current => current + 1);
+    refreshAutomations();
     const recordsVersion = recordMutationRevision.current;
     const currentID = selectedRef.current;
     // Apply each response independently. A slow catalog must not hold settings,
@@ -706,17 +736,20 @@ export default function RynAgent() {
     {loading ? <div className="ra-empty" role="status">{t("loading")}</div> : <div className="ra-layout">
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
         <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
+        <button type="button" className={`ra-nav-automations${showAutomationsView ? " is-active" : ""}`} onClick={() => { refreshAutomations(); setShowSkillsView(false); setShowAutomationsView(v => !v); }}><Clock3 size={16} /><span>{t("automations")}</span>{automationsList.filter(a => a.status !== "PAUSED").length > 0 && <span className="ra-nav-auto-badge">{automationsList.filter(a => a.status !== "PAUSED").length}</span>}</button>
+        <button type="button" className={`ra-nav-automations${showSkillsView ? " is-active" : ""}`} onClick={() => { setShowAutomationsView(false); setShowSkillsView(v => !v); }}><BookOpen size={16} /><span>{i18n.language.startsWith("zh") ? "技能" : "Skills"}</span></button>
         <div className="ra-task-items"><RynAgentProject value={currentProject?.id || projectID} onChange={chooseProject} navigationRevision={navigationRevision} tasks={tasks} activeTaskID={selected} onSelectTask={chooseTask} onNewTask={chooseProject} onProjectsChange={setProjects} restoreSelection={!pluginEntry && !saved(PROJECT_KEY)} renderTask={item => taskMenu.renderTask(item, true)} /><div className="ra-recent-heading"><small>{t("recent")}</small><button className="ra-icon" aria-label={t("projectGeneralTask")} title={t("projectGeneralTask")} onClick={chooseGeneralProject}><SquarePen size={14} /></button></div>{generalTasks.length ? generalTasks.map(item => taskMenu.renderTask(item)) : <p>{t("emptyTasks")}</p>}</div>
         <ArchivedTasks enabled={recordsSupported} selected={selected} onChoose={chooseTask} revision={recordsRevision} renderTask={item => taskMenu.renderTask(item)} />
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
       <div className="ra-chat">
+        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ repeat: "daily", time: "22:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => chooseTask(id)} /> : <>
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
           {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task}>
-            {transcript.map((entry, index) => { if (entry.kind === "progress") return <RynAgentProgress key={`${task.id}-progress-${index}`} messages={entry.messages} task={task} />; const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : <ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown>}</>}{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
+            {transcript.map((entry, index) => { if (entry.kind === "progress") { const callIds = new Set(entry.messages.flatMap(m => m.tool_calls?.map(c => c.id) || [])); const autoCards = extractTurnAutomations(task.events.filter(ev => typeof ev.call_id === "string" && callIds.has(ev.call_id))); return <Fragment key={`${task.id}-progress-${index}`}><RynAgentProgress messages={entry.messages} task={task} />{autoCards.map(autoItem => <AutomationChatCard key={autoItem.id} automation={automationsList.find(a => a.id === autoItem.id) || autoItem} zh={i18n.language.startsWith("zh")} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onRunNow={async item => { const res = await rynAgent.runAutomationNow(item.id).catch(() => null); refreshAutomations(); if (res?.task_id) chooseTask(res.task_id); }} />)}</Fragment>; } const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : <ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown>}</>}{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
             {streamedText && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><RynAgentStream text={streamedText} streamKey={`${task.id}/${streamStart?.seq}`} active={selectedExecuting} /></div>}
             {pendingFeedback}
             {!visiblePending && <ExecutionProgress task={task} />}
@@ -747,11 +780,12 @@ export default function RynAgent() {
           }} />}
           <RynAgentComposer key={`composer/${draftKey}`} attachments={draftAttachments} onAttachmentsChange={attachments => setAttachmentsByDraft(current => ({ ...current, [draftKey]: attachments }))} onAttachmentsBusyChange={setAttachmentsBusy} project={currentProject} workspace={settings?.workspace_root} value={draft} inputRef={input} inputDisabled={(!task?.allowed_actions && !enabled) || detailLoading} busy={busy} onChange={changeDraft} onSend={() => void send()} onProject={() => { setTasksCollapsed(false); save("ryn.agent.tasks", "open"); }} onSettings={() => setSettingsOpen(true)} settingsDisabled={!settingsReady} permissionMode={task ? task.permission_mode || "unknown" : settings?.permission_mode || "workspace"} permissionLocked={Boolean(selected)} onPermission={permission_mode => void updateSettings({ permission_mode })} modelPicker={modelSelect()} options={<>          {!selected && enabled && <RynAgentScope key="new-scope" task={null} modelID={model} modelName={selectedModel?.name || model} destinationRevision={selectedModel?.destination_revision} sourceName={selectedModel?.source_name} sourceID={selectedModel?.source_id} providerID={selectedModel?.peer_id} initialSelection={scopeDraft?.scope} busy={busy || uncertain || controlUncertain} onSelect={(scope, model_id, destination_revision) => setScopeDraft({ scope, model_id, destination_revision })} />}{!selected && <SkillSelection value={skillIDs} onChange={setSkillIDs} disabled={busy || uncertain} />}<p className="ra-model-context">{task ? t("taskModel") : t("newTaskModel")}: {selectedModel?.name || task?.model_id || model || t("chooseModel")}{settings && <span> · {t("defaultModel")}: {models.find(item => item.id === settings.model_id)?.name || settings.model_id || t("chooseModel")}</span>}</p>{messageIntents.length > 1 && <select aria-label={t("messageIntent")} value={effectiveIntent} disabled={busy} onChange={event => setMessageIntent(event.target.value as AgentMessageIntent)}><option value="steer">{t("intentSteer")}</option><option value="information">{t("intentInformation")}</option></select>}{task?.allowed_actions && messageIntents.length > 0 && <p className="ra-model-context">{t(effectiveIntent === "steer" ? "steerHelp" : "informationHelp")}</p>}</>} sendButton={<>{stopButton}{(!stopButton || Boolean(draft.trim() || draftAttachments.length)) && <button type="button" className="ra-primary ra-send" aria-label={t(sendLabel)} disabled={!canSend} onClick={() => void send()}>{visiblePending?.phase === "sending" ? <LoaderCircle size={18} className="ra-spinner" /> : <ArrowUp size={18} />}</button>}</>} />
 
-        </div>}
+        </div>}</>}
       </div>
     </div>}
     {taskModelOpen && task && <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) setTaskModelOpen(false); }}><section className="ra-modal ra-model-dialog" role="dialog" aria-modal="true" aria-label={t("taskModel")} onKeyDown={event => { if (event.key === "Escape" && !busy) setTaskModelOpen(false); }}><div className="ra-modal-head"><h2>{t("taskModel")}</h2><button type="button" className="ra-icon" aria-label={t("close")} disabled={busy} onClick={() => setTaskModelOpen(false)}><X size={18} /></button></div><RynAgentModel key={`model/${task.id}/${taskModelTarget}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} expanded initialModelID={taskModelTarget} onChange={next => { acceptTask(next); setTaskModelOpen(false); }} /></section></div>}
     {settingsOpen && settings && <AgentSettingsDialog settings={settings} projects={projects} currentProject={currentProject} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
+    <AutomationDialog open={automationDialogOpen} initial={editingAutomation} zh={i18n.language.startsWith("zh")} onClose={() => setAutomationDialogOpen(false)} onSaved={() => refreshAutomations()} onDeleted={() => refreshAutomations()} />
   </section>;
 }
 

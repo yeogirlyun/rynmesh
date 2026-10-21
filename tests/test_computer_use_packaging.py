@@ -15,13 +15,13 @@ import hashlib
 import importlib.util
 import io
 import json
-from pathlib import Path
 import re
 import shutil
 import struct
 import sys
-from typing import Any, Sequence
 import zlib
+from pathlib import Path
+from typing import Any, Sequence
 
 import pytest
 

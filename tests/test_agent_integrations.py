@@ -850,3 +850,20 @@ def test_friend_mutation_uses_real_revision_guard_and_revocation_recheck(node):
                            expected_preview=tools.preview("ryn_set_friend_model_access", revoke))
     assert result["grant"]["revision"] == 2 and not result["grant"]["effective"]
     assert cancelled == [True]
+
+
+def test_openai_compatible_adapter_supplies_empty_reasoning_content_on_synthetic_assistant_messages(node, monkeypatch):
+    app, store = node
+    _, model_id = add_source(app)
+    model, _, _ = build_agent_integrations(app, store, store.home)
+    requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "done", "reasoning_content": "final"}])
+    messages = [
+        {"role": "user", "content": "check"},
+        {"role": "assistant", "content": "Historical checkpoint: summary"},
+        {**call(), "content": "", "reasoning_content": "step 1 thought"},
+        {"role": "tool", "tool_call_id": "call-real", "content": "ok"},
+    ]
+    model.complete(model_id, messages, [], lambda: False)
+    sent_assistants = [m for m in requests[0]["messages"] if m["role"] == "assistant"]
+    assert [m.get("reasoning_content") for m in sent_assistants] == ["", "step 1 thought"]
+    assert "reasoning_content" not in messages[1]

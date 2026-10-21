@@ -1,6 +1,14 @@
 """Opt-in automatic capture starts after an actual successful owner turn ends."""
 from test_memory_integration_contract import (
-    finish, integrated, packed, prohibit_network, tick_memory_workers,
+    finish,
+    packed,
+    tick_memory_workers,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 

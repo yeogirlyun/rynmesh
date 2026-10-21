@@ -90,7 +90,7 @@ class _ExtensionHarnessTools:
         node_store = SimpleNamespace(home=home)
         self.local = LocalTools(node_store, lambda: self.ledger)
         self.local.store = agent_store
-        self.extensions = ExtensionToolAdapter(self.local, lambda: self.ledger, node_store=node_store)
+        self.extensions = ExtensionToolAdapter(self.local, lambda: self.ledger)
         self.extensions.bind_agent_store(agent_store)
 
     def specs(self) -> list[dict]:
@@ -1449,27 +1449,27 @@ for raw in sys.stdin:
             store = _Ctrl()
 
             def policy(self, context):
-                return {"desktop_access": True, "workspace_root": str(workspace)}
+                return {"desktop_access": True, "workspace_root": str(workspace)}  # noqa: B023 - this callback finishes within the current case.
 
         local = _Local()
         ledger = OperationLedger(case_root)
         spawned: list = []
 
-        def _make_adapter() -> tuple[ExtensionToolAdapter, McpSessionManager]:
-            mgr = McpSessionManager(ext)
+        def _make_adapter(local=local) -> tuple[ExtensionToolAdapter, McpSessionManager]:
+            mgr = McpSessionManager(ext)  # noqa: B023 - this callback finishes within the current case.
             orig_create = mgr._create_session
 
             def _create(server, **kwargs):
                 srv_copy = dict(server)
                 srv_copy["command"] = sys.executable
-                srv_copy["args"] = ["-u", str(fixture_script), str(log_dir), mode, canary]
+                srv_copy["args"] = ["-u", str(fixture_script), str(log_dir), mode, canary]  # noqa: B023 - this callback finishes within the current case.
                 sess = orig_create(srv_copy, **kwargs)
-                spawned.append(sess)
+                spawned.append(sess)  # noqa: B023 - this callback finishes within the current case.
                 return sess
 
             mgr._create_session = _create
             return (
-                ExtensionToolAdapter(local, lambda: ledger, extension_store=ext, session_manager=mgr),
+                ExtensionToolAdapter(local, lambda: ledger, extension_store=ext, session_manager=mgr),  # noqa: B023 - this callback finishes within the current case.
                 mgr,
             )
 

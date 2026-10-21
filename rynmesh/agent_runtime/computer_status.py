@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import re
 import sys
 import threading
-from typing import Any
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from fastapi import Request
@@ -29,11 +29,14 @@ from .extensions.store import (
     COMPUTER_USE_SERVER_ID,
     EXTENSIONS_CHANNEL,
     EXTENSIONS_VERSION,
+)
+from .extensions.store import (
     MAX_BYTES as EXT_MAX_BYTES,
+)
+from .extensions.store import (
     MAX_PLAINTEXT as EXT_MAX_PLAINTEXT,
 )
 from .store import AgentError
-
 
 SCHEMA_VERSION = 1
 

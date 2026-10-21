@@ -24,7 +24,7 @@ from rynmesh.agent_runtime.local_tools import LocalTools
 from rynmesh.agent_runtime.models import ModelCatalog
 from rynmesh.agent_runtime.operation_ledger import OperationLedger
 from rynmesh.agent_runtime.runtime import AgentRuntime
-from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejected, encoded
+from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejected
 from rynmesh.llm_package import codex_session
 from rynmesh.llm_package.cli_images import image_inputs
 

@@ -11,9 +11,9 @@ import copy
 import importlib
 import json
 import os
-from pathlib import Path
 import socket
 import sys
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -311,7 +311,7 @@ def test_extractor_reads_real_job_manifest_and_rejects_non_strict_json(node):
     for invalid in ("not JSON", "```json\n" + valid + "\n```", valid + " trailing prose"):
         with pytest.raises(ValueError, match="^invalid_extraction_json$"):
             runtime.store.transaction(lambda data: host.parse_extraction_response(
-                invalid, data["memory"]["jobs"][job["id"]], data["tasks"][task_id]))
+                invalid, data["memory"]["jobs"][job["id"]], data["tasks"][task_id]))  # noqa: B023 - this callback finishes within the current case.
         assert runtime.store.read() == before, "Invalid extraction must not mutate the real store or create candidates"
 
 

@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..background_workers import BackgroundWorkerSpec, BackoffPolicy, WorkerRunResult
+from .automation_worker import AUTOMATION_WORKER_NAME, AutomationSchedulerWorker
 from .computer_status import get_computer_status_response
 from .diagnostic_log import failure
 from .memory_worker import MEMORY_WORKER_NAME, MemoryExtractionWorker
@@ -60,10 +61,13 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     app.state.agent_startup_error = startup_error
     memory_worker = MemoryExtractionWorker(runtime)
     app.state.agent_memory_worker = memory_worker
+    automation_worker = AutomationSchedulerWorker(runtime)
+    app.state.agent_automation_worker = automation_worker
     workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
     for slot in (2, 3):
         workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
     workers.register(BackgroundWorkerSpec(name=MEMORY_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else memory_worker.run_once, policy=BackoffPolicy.fixed(1.0)), replace=True)
+    workers.register(BackgroundWorkerSpec(name=AUTOMATION_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else automation_worker.run_once, policy=BackoffPolicy.fixed(2.0)), replace=True)
 
     @app.middleware("http")
     async def prevent_agent_caching(request: Request, call_next):
@@ -81,7 +85,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
             code = str(exc)
             if code == "agent_task_deleted":
                 status = 410
-            elif code in {"agent_task_not_found", "agent_memory_not_found", "agent_memory_candidate_not_found", "agent_preference_not_found"}:
+            elif code in {"agent_task_not_found", "agent_memory_not_found", "agent_memory_candidate_not_found", "agent_preference_not_found", "agent_automation_not_found"}:
                 status = 404
             elif code in {"agent_memory_revision_conflict", "agent_memory_generation_conflict", "agent_memory_idempotency_conflict", "agent_memory_candidate_not_pending", "agent_memory_candidate_stale"} or code.startswith("agent_memory_candidate_source_stale"):
                 status = 409
@@ -92,7 +96,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
             if (
                 status == 409
                 and not code.startswith("agent_memory_")
-                and not method.endswith(("_memory", "_memory_settings", "_memory_entry", "_memory_candidate"))
+                and not method.endswith(("_memory", "_memory_settings", "_memory_entry", "_memory_candidate", "_automation", "_automations", "_automation_now"))
                 and args
                 and isinstance(args[0], str)
             ):
@@ -220,6 +224,29 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     @app.post("/api/local/agent/memory/reset")
     async def reset_memory(request: Request):
         return await call("reset_memory", await body(request))
+
+    @app.get("/api/local/agent/automations")
+    async def list_automations(request: Request):
+        local_control(request)
+        return await call("list_automations")
+
+    @app.post("/api/local/agent/automations")
+    async def create_automation(request: Request):
+        return await call("create_automation", await body(request))
+
+    @app.patch("/api/local/agent/automations/{automation_id}")
+    async def update_automation(automation_id: str, request: Request):
+        return await call("update_automation", automation_id, await body(request))
+
+    @app.delete("/api/local/agent/automations/{automation_id}")
+    async def delete_automation(automation_id: str, request: Request):
+        local_control(request)
+        return await call("delete_automation", automation_id)
+
+    @app.post("/api/local/agent/automations/{automation_id}/run-now")
+    async def run_automation_now(automation_id: str, request: Request):
+        local_control(request)
+        return await call("run_automation_now", automation_id)
 
     @app.put("/api/local/agent/tasks/{task_id}/budget")
     async def update_budget(task_id: str, request: Request):

@@ -1,11 +1,8 @@
 """One bounded generation policy, independent of visible answer byte limits."""
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
-import io
-import re
 
 from ..llm_package.image_input_profile import (
     MAX_INTERNAL_RAW_REQUEST_BYTES,

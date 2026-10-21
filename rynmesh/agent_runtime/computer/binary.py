@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
-from dataclasses import dataclass, field
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import struct
 import sys
 import threading
-from typing import Any, Callable, Sequence
 import uuid
 import weakref
+from ctypes import wintypes
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Sequence
 
 from .protocol import (
     EXPECTED_WORKER_NAME,
@@ -94,7 +94,7 @@ def resolve_owner_id(owner: Any) -> str:
             return cached
         new_id = f"own_{uuid.uuid4().hex}"
         try:
-            setattr(owner, "_ryn_native_bridge_owner_id", new_id)
+            owner._ryn_native_bridge_owner_id = new_id
         except Exception:
             try:
                 _OWNER_IDS[owner] = new_id
@@ -849,7 +849,7 @@ class _FILETIME(ctypes.Structure):
     ]
 
 
-class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):  # noqa: N801 - matches the Win32 structure name.
     _fields_ = [
         ("dwFileAttributes", wintypes.DWORD),
         ("ftCreationTime", _FILETIME),
@@ -864,7 +864,7 @@ class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
     ]
 
 
-class _FILE_ID_INFO(ctypes.Structure):
+class _FILE_ID_INFO(ctypes.Structure):  # noqa: N801 - matches the Win32 structure name.
     _fields_ = [
         ("VolumeSerialNumber", ctypes.c_uint64),
         ("FileId", ctypes.c_ubyte * 16),
@@ -1549,7 +1549,7 @@ class ArtifactLease:
         with self._lock:
             self.process_identity = ident
         try:
-            setattr(process, "_ryn_verified_identity", ident)
+            process._ryn_verified_identity = ident
         except Exception:
             pass
         return ident

@@ -8,11 +8,11 @@ the first byte and after flushing.
 from __future__ import annotations
 
 import ctypes
+import os
+import stat
 from ctypes import wintypes
 from dataclasses import dataclass
-import os
 from pathlib import Path
-import stat
 from typing import Any
 
 from .computer.binary import (
@@ -25,11 +25,11 @@ from .computer.binary import (
     _FILE_SHARE_READ,
     _FILE_SHARE_WRITE,
     _GENERIC_READ,
-    _HandleIdentity,
     _INVALID_HANDLE_VALUES,
     _OPEN_EXISTING,
     _close_win32_handle,
     _get_kernel32,
+    _HandleIdentity,
     _query_handle_identity,
     validate_lexical_windows_path,
 )
@@ -78,7 +78,7 @@ def _configure_write_kernel32(k32: Any) -> Any:
         k32.DeleteFileW.argtypes = [wintypes.LPCWSTR]
         k32.RemoveDirectoryW.restype = wintypes.BOOL
         k32.RemoveDirectoryW.argtypes = [wintypes.LPCWSTR]
-        setattr(k32, "_ryn_write_configured", True)
+        k32._ryn_write_configured = True
     return k32
 
 
@@ -361,10 +361,6 @@ def exclusive_write_verified_png(
                     created_file_ident,
                     ws_resolved=ws_resolved,
                 )
-            if isinstance(
-                created_exc := None, BaseException
-            ):  # pragma: no cover - keep explicit exception translation
-                pass
             raise
         finally:
             for h in reversed(pinned_handles):

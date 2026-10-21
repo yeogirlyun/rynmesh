@@ -15,6 +15,8 @@ from typing import Any
 
 from ..background_workers import WorkerRunResult
 from . import (
+    automation_worker,
+    automations,
     budget,
     credential_control,
     diagnostic_log,
@@ -23,7 +25,6 @@ from . import (
     lifecycle,
     memory_integration,
     memory_natural,
-    memory_runtime,
     model_switch,
     output_policy,
     projects,
@@ -47,7 +48,6 @@ from .input_attachments import attach_to_message, parse_attachments
 from .loop import ALL_INTERNAL_NAMES, ALL_INTERNAL_SPECS, AgentLoop
 from .prompt import (
     INTERNAL_NAMES,
-    INTERNAL_SPECS,
     PROMPT_VERSION,
     select_base_instructions,
 )
@@ -81,7 +81,7 @@ RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_fai
 PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
                  "messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
-                 "conversation_revision", "conversation_event_cursor", *PUBLIC_STATE_FIELDS)
+                 "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -105,6 +105,7 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
         message.pop("reasoning_content", None)
         message.pop("provider_state", None)
         message.pop("resource_origin", None)
+        message.pop("owner_source_seq", None)
     for reference in result.get("result_refs", []):
         reference.pop("resource_origin", None)
     if settings is not None:
@@ -409,6 +410,17 @@ class AgentRuntime(AgentLoop):
         if isinstance(facade, NativeComputerFacade) and facade._owner is self.store:
             return facade.verify_and_load_registered_artifact
         return None
+
+    def _prepare_dispatch_messages(self, row: dict, messages: list[dict] | None = None):
+        msgs = self._context(row) if messages is None else messages
+        model = self._model_metadata(row["model_id"]) or {}
+        return image_capabilities.materialize_operation_images(
+            row,
+            msgs,
+            model_row=model,
+            model_client=self.model,
+            native_artifact_loader=self._native_artifact_loader(),
+        )
 
     def _complete(self, row: dict, messages: list, specs: list, cancelled, on_event, *, nested=False, stage=None, output_cap=None, request_id=None, image_context=None):
         # Measure the final provider-visible projection, including JSON string
@@ -1124,6 +1136,44 @@ class AgentRuntime(AgentLoop):
 
     def reset_memory(self, value: dict) -> dict:
         return memory_integration.reset_owner_memory(self, value)
+
+    def list_automations(self) -> dict:
+        return self.store.transaction(lambda data: automations.list_automations_in_tx(self.store, data))
+
+    def create_automation(self, value: dict) -> dict:
+        if not isinstance(value, dict):
+            raise AgentError("agent_invalid_request")
+        item = self.store.transaction(lambda data: automations.create_or_update_automation_in_tx(self.store, data, value))
+        return {"automation": item}
+
+    def update_automation(self, automation_id: str, value: dict) -> dict:
+        if not isinstance(value, dict) or not str(automation_id or "").strip():
+            raise AgentError("agent_invalid_request")
+        def _upd(data):
+            automations.ensure_automation_state(data)
+            if automation_id not in data["automations"]:
+                raise AgentError("agent_automation_not_found")
+            return automations.create_or_update_automation_in_tx(self.store, data, value, automation_id=automation_id)
+        item = self.store.transaction(_upd)
+        return {"automation": item}
+
+    def delete_automation(self, automation_id: str) -> dict:
+        if not str(automation_id or "").strip():
+            raise AgentError("agent_invalid_request")
+        deleted = self.store.transaction(lambda data: automations.delete_automation_in_tx(self.store, data, automation_id))
+        if not deleted:
+            raise AgentError("agent_automation_not_found")
+        return {"deleted": True, "id": automation_id}
+
+    def run_automation_now(self, automation_id: str) -> dict:
+        if not str(automation_id or "").strip():
+            raise AgentError("agent_invalid_request")
+        outcome = self.store.transaction(
+            lambda data: automation_worker.trigger_automation_in_tx(self, data, automation_id, force=True)
+        )
+        if outcome.get("task_id"):
+            self._queued_since[str(outcome["task_id"])] = time.monotonic()
+        return outcome
 
     def source_credential(self, task_id: str, value: dict, revoke=False) -> dict:
         return credential_control.change(self, task_id, value, revoke=revoke)

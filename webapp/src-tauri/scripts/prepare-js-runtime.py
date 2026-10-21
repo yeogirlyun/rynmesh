@@ -62,7 +62,6 @@ from rynmesh.agent_runtime.js_runtime.resources import (  # noqa: E402
     JsResourceError,
     JsRuntimeResourceManifest,
     JsRuntimeResourceProfile,
-    compute_manifest_digest,
     expected_node_executable_relpath,
     is_symlink_or_reparse,
     parse_strict_bounded_json,

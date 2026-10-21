@@ -6,8 +6,12 @@ fixture input, not a patch to product behavior. Existing acceptance is unchanged
 from test_memory_integration_contract import (
     finish,
     front_requests,
-    integrated,
-    prohibit_network,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 

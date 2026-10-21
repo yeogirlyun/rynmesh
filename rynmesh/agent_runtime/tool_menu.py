@@ -15,7 +15,7 @@ ADDITIVE_CAPACITY = 48000
 # Exposed on every step while they fit, in priority order when space is tight.
 PLUGIN_DISCOVERY_TOOLS = ("ryn_list_plugins",)
 CORE_TOOLS = ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_apply_patch", "ryn_file_edit",
-              "ryn_file_write", "ryn_file_list", "ryn_process_read")
+              "ryn_file_write", "ryn_file_list", "ryn_process_read", "ryn_web_search")
 BROWSER_TOOLS = ("ryn_browser_open", "ryn_browser_read", "ryn_browser_action")
 _TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]")
 
@@ -183,7 +183,11 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
                 if len(encoded(candidate)) <= seed_limit:
                     loaded.append(name)
     def exposure(names):
-        return all_specs if mode == "full" else [*base, *(by_name[name] for name in [*pinned, *names])]
+        if mode == "full":
+            if max_context_bytes <= 16000:
+                return [s for s in all_specs if s["function"]["name"] != "ryn_automation_update"]
+            return all_specs
+        return [*base, *(by_name[name] for name in [*pinned, *names])]
     # Loaded schemas are a reloadable cache: release the least recently loaded
     # before refusing, as pinned core tools now share the same space.
     while mode == "directory" and loaded and len(encoded(exposure(loaded))) > limit:

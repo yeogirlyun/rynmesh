@@ -24,12 +24,12 @@ from typing import Any
 import pytest
 
 from rynmesh.agent_runtime.computer import (
+    PARITY_ACTION_KINDS,
     BoundedJsonlReader,
     NativeBridge,
     NativeBridgeError,
     NativeBridgeRejected,
     NativeWorkerClient,
-    PARITY_ACTION_KINDS,
     bind_node_native_bridge,
     compute_action_fingerprint,
     parse_strict_json,
@@ -38,7 +38,7 @@ from rynmesh.agent_runtime.computer import (
     validate_screenshot_artifact,
 )
 from rynmesh.agent_runtime.computer.client import _spawn_guarded_worker, _worker_environment
-from rynmesh.agent_runtime.store import AgentError, AgentToolRejected
+from rynmesh.agent_runtime.store import AgentToolRejected
 
 
 def _make_valid_png_bytes(width: int = 4, height: int = 3) -> bytes:
@@ -1793,7 +1793,7 @@ def test_control_cancellation_during_prepare_and_task_session_isolation(
         win_list = bridge.list_windows(task_session_id="task_a")
         target_win = win_list["windows"][0]["window"]
         obs_a = bridge.get_state(task_session_id="task_a", window=target_win)
-        obs_b = bridge.get_state(task_session_id="task_b", window=target_win)
+        bridge.get_state(task_session_id="task_b", window=target_win)
 
         # Cross-task token misuse must be rejected before commit
         with pytest.raises(NativeBridgeRejected) as exc_cross:

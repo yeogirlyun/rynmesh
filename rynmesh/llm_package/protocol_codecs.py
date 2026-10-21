@@ -341,6 +341,10 @@ def _messages(body, protocol, scope):
         if native is not None:
             if protocol == RESPONSES:
                 output.extend(native)
+            elif output and output[-1]["role"] == "assistant":
+                thinking_blocks = [b for b in native if b.get("type") in {"thinking", "redacted_thinking"}]
+                other_blocks = [b for b in native if b.get("type") not in {"thinking", "redacted_thinking"}]
+                output[-1]["content"] = [*thinking_blocks, *output[-1]["content"], *other_blocks]
             else:
                 output.append({"role": "assistant", "content": native})
             continue

@@ -4,15 +4,18 @@ Imports the same real FastAPI/Runtime/RecordingBridge fixture. Existing acceptan
 cases are unchanged. No product patch, helper substitute, or model request.
 """
 from test_memory_integration_contract import (
-    BASE,
     FORGET,
     MARKER,
     finish,
     front_requests,
-    integrated,
     packed,
-    prohibit_network,
     seed_bound_memory,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 

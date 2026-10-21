@@ -1,7 +1,9 @@
 """Every new capture enable requires an explicit current destination choice."""
 import uuid
 
-from test_memory_integration_contract import MEM, integrated, prohibit_network
+from test_memory_integration_contract import MEM
+from test_memory_integration_contract import integrated as integrated
+from test_memory_integration_contract import prohibit_network as prohibit_network
 
 
 def test_reenabling_capture_requires_destination_in_this_owner_write(integrated):
