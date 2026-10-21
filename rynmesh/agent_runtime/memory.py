@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import hmac
-import json
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 from .protocol import digest, sanitized
@@ -869,9 +869,6 @@ def _write_tombstone(
     }
     mem["tombstones"][entry["id"]] = tomb
     return tomb
-
-
-from contextlib import contextmanager
 
 
 @contextmanager

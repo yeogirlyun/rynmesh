@@ -4,13 +4,19 @@ Clock injection is confined to worker/foundation memory modules. No process-wide
 clock patch, sleep, real model, manufactured lease, or canonical candidate.
 """
 import importlib
-from types import SimpleNamespace
 import time
+from types import SimpleNamespace
 
 import pytest
-
 from test_memory_integration_contract import (
-    finish, integrated, prohibit_network, tick_memory_workers,
+    finish,
+    tick_memory_workers,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 
@@ -82,7 +88,10 @@ def test_capture_off_cancels_a_slow_actual_extraction_without_candidate(integrat
 
 def test_a_provider_past_the_bounded_deadline_still_cannot_commit(integrated, monkeypatch):
     env = integrated
-    observations = prepare_delayed_provider(env, monkeypatch, 150.0)
+    worker = importlib.import_module("rynmesh.agent_runtime.memory_worker")
+    elapsed = worker.DEFAULT_EXTRACTION_TIMEOUT_SECONDS + 1.0
+    assert elapsed < worker.DEFAULT_WORKER_LEASE_SECONDS
+    observations = prepare_delayed_provider(env, monkeypatch, elapsed)
     tick_memory_workers(env)
     assert observations[0]["cancelled"] is True and observations[0]["deadline_expired"] is True
     assert observations[0]["reason"] == "extraction_timeout"

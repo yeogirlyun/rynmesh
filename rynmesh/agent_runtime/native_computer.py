@@ -7,18 +7,16 @@ from __future__ import annotations
 
 import base64
 import binascii
-from collections import OrderedDict
 import copy
-from dataclasses import dataclass, field
 import hashlib
-import json
-from pathlib import Path
 import threading
-from typing import Any, Callable, Mapping, NoReturn
 import weakref
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Mapping, NoReturn
 
 from .computer.binary import resolve_owner_id
-from .computer_overlay import ComputerOverlay
 from .computer.coordinator import (
     NativeBridge,
     bind_node_native_bridge,
@@ -31,6 +29,7 @@ from .computer.protocol import (
     validate_window_ref,
     window_refs_equal,
 )
+from .computer_overlay import ComputerOverlay
 from .image_capabilities import (
     MAX_IMAGE_PIXELS,
     MAX_NATIVE_IMAGE_SOURCE_BYTES,
@@ -97,6 +96,28 @@ def _core_window_ref_for_descriptor(wref: Mapping[str, Any]) -> dict[str, Any]:
         "processStarted": str(wref["processStarted"]),
         "generation": int(wref["generation"]),
     }
+
+
+def _compact_public_element(element: Mapping[str, Any]) -> dict[str, Any]:
+    """Serialize actionable UIA element fields without redundant default boolean/tree noise."""
+    out: dict[str, Any] = {
+        "id": element["id"],
+        "name": element["name"],
+        "type": element["type"],
+        "value": element["value"],
+        "x": element["x"],
+        "y": element["y"],
+        "bounds": copy.deepcopy(element["bounds"]),
+    }
+    if element.get("password"):
+        out["password"] = True
+    if not element.get("enabled", True):
+        out["enabled"] = False
+    if element.get("offscreen"):
+        out["offscreen"] = True
+    if element.get("focused"):
+        out["focused"] = True
+    return out
 
 
 def normalize_key_token(raw_key: Any) -> str:
@@ -393,12 +414,12 @@ class NativeComputerFacade:
             if alias_owner is self._local_tools or self._local_tools is None:
                 self._local_tools = alias_owner
             try:
-                setattr(alias_owner, "_ryn_native_computer", self)
+                alias_owner._ryn_native_computer = self
             except AttributeError:
                 pass
             if hasattr(alias_owner, "native_computer"):
                 try:
-                    setattr(alias_owner, "native_computer", self)
+                    alias_owner.native_computer = self
                 except AttributeError:
                     pass
 
@@ -786,8 +807,10 @@ class NativeComputerFacade:
                 and not exc.callback_uncertain):
             rej = AgentToolRejected(exc.code, details=copy.deepcopy(exc.diagnostics),
                 correction="Window activation or target hit testing failed. Only window activation was attempted; "
-                           "no click or text input was delivered. Focus the target, read a fresh screenshot, "
-                           "then choose the correct current target. Do not reuse stale coordinates.")
+                           "no click or text input was delivered. Because activation mutated window state, your "
+                           "previous state_token is now stale. Call computer_read_window(hwnd=..., include_screenshot=true) "
+                           "first to read a fresh screenshot and fresh state_token before calling computer_act_window "
+                           "(including action='focus'). Then choose the correct current target and do not reuse stale coordinates.")
             rej.diagnostics = copy.deepcopy(exc.diagnostics)
             rej.input_not_delivered = True
             rej.pre_dispatch = False
@@ -806,7 +829,15 @@ class NativeComputerFacade:
                 if isinstance(cause, AgentToolRejected) and str(cause).strip()
                 else exc.code
             )
-            rej = AgentToolRejected(rej_code, details=copy.deepcopy(exc.diagnostics))
+            rej_correction = None
+            if rej_code == "agent_computer_state_token_stale":
+                rej_correction = (
+                    "The window state_token is stale because window or desktop state changed. "
+                    "Call computer_read_window(hwnd=..., include_screenshot=true) on the target window "
+                    "to obtain a fresh state_token and fresh screenshot before calling computer_act_window again. "
+                    "Note that computer_observe_windows only lists windows and does not issue a state_token."
+                )
+            rej = AgentToolRejected(rej_code, details=copy.deepcopy(exc.diagnostics), correction=rej_correction)
             rej.diagnostics = copy.deepcopy(exc.diagnostics)
             rej.pre_dispatch = True
             rej.dispatched = False
@@ -1922,10 +1953,7 @@ class NativeComputerFacade:
                 "accessibility": copy.deepcopy(obs_record.accessibility),
                 # Full runtime IDs and UIA metadata stay in the trusted observation.
                 # The model needs actionable IDs, labels, state and coordinates.
-                "elements": [{k: copy.deepcopy(v) for k, v in element.items()
-                              if k in {"id", "index", "name", "type", "value", "password", "enabled",
-                                       "offscreen", "focused", "x", "y", "depth", "patterns", "bounds"}}
-                             for element in obs_record.elements],
+                "elements": [_compact_public_element(element) for element in obs_record.elements],
                 "element_count": len(obs_record.elements),
                 "incomplete": bool(obs_record.accessibility.get("truncated", False)),
             }
@@ -2166,10 +2194,7 @@ class NativeComputerFacade:
                 "captured_at": post_record.captured_at,
                 "rect": [bounds["left"], bounds["top"], bounds["right"], bounds["bottom"]],
                 "accessibility": copy.deepcopy(post_record.accessibility),
-                "elements": [{k: copy.deepcopy(v) for k, v in el.items()
-                              if k in {"id", "name", "type", "value", "password", "enabled", "offscreen",
-                                       "focused", "x", "y", "depth", "patterns", "bounds"}}
-                             for el in post_record.elements],
+                "elements": [_compact_public_element(el) for el in post_record.elements[:45]],
             }
         txt = f"{arguments.get('action')} committed. " + structured["next_step"]
         out: dict[str, Any] = {
@@ -2497,7 +2522,7 @@ def bind_owner_native_computer(
 
         facade = NativeComputerFacade(owner, local_tools=local_tools, bridge=bridge)
         try:
-            setattr(owner, "_ryn_native_computer", facade)
+            owner._ryn_native_computer = facade
         except AttributeError:
             try:
                 _OWNER_FACADES[owner] = facade

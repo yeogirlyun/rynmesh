@@ -1736,7 +1736,7 @@ def _lookup_bound_bridge_locked(owner: Any) -> NativeBridge | None:
 
 def _store_bound_bridge_locked(owner: Any, instance: NativeBridge) -> None:
     try:
-        setattr(owner, "_ryn_native_bridge", instance)
+        owner._ryn_native_bridge = instance
     except AttributeError:
         _OWNER_BRIDGES[owner] = instance
 

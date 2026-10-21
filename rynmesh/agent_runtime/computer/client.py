@@ -21,10 +21,7 @@ from .binary import (
     ArtifactLease,
     BridgeConfigIdentity,
     CachedBinding,
-    DevelopmentBinaryResolver,
-    PACKAGE_MANIFEST_PATH,
     ProductionBinaryResolver,
-    VerifiedArtifact,
     VerifiedProcessIdentity,
     build_bridge_config_identity,
     open_dev_executable_lease,
@@ -221,7 +218,7 @@ def _spawn_guarded_worker(
             phase="pre_dispatch",
         )
         try:
-            setattr(proc, "_ryn_verified_identity", ident)
+            proc._ryn_verified_identity = ident
         except Exception:
             pass
 
@@ -1697,7 +1694,7 @@ class NativeWorkerClient:
                 except Exception:
                     pass
 
-            def _abort_check() -> bool:
+            def _abort_check(*, my_epoch=my_epoch, attempt_token=attempt_token) -> bool:
                 with self._lock:
                     return (
                         self._closed

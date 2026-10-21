@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from . import memory
-from .protocol import digest, now, sanitized
+from .protocol import sanitized
 from .store import AgentError, AgentToolRejected, encoded
 
 MEMORY_SEARCH_TOOL = "ryn_memory_search"

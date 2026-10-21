@@ -604,7 +604,11 @@ def test_phase2_upgrade5_codex_tools_markdown_fence_tolerance():
 
 def test_phase3_universal_mcp_and_computer_use_speed_optimizations(tmp_path: Path):
     from rynmesh.agent_runtime import results
-    from rynmesh.agent_runtime.extensions import COMPUTER_USE_PLUGIN_ID, COMPUTER_USE_SERVER_ID, ExtensionStore
+    from rynmesh.agent_runtime.extensions import (
+        COMPUTER_USE_PLUGIN_ID,
+        COMPUTER_USE_SERVER_ID,
+        ExtensionStore,
+    )
     from rynmesh.services import peer_box
 
     # 1. MCP / computer-use oversized results get inline structured_preview + text instead of bare blind-box
@@ -653,3 +657,74 @@ def test_phase3_universal_mcp_and_computer_use_speed_optimizations(tmp_path: Pat
     finally:
         peer_box.open_sealed = orig_open
 
+
+def test_phase4_vendor_context_window_and_compact_computer_observation():
+    from rynmesh.agent_runtime import results
+    from rynmesh.agent_runtime.native_computer import _compact_public_element
+    from rynmesh.llm_package import model_settings
+
+    auto_record = {
+        "context_window_mode": "auto",
+        "models": ["deepseek-flash", "deepseek-v4-pro", "gpt-5.4", "claude-sonnet-4-5", "unknown"],
+        "model_metadata": {},
+    }
+    assert model_settings.context_metadata(auto_record, "deepseek-flash") == {
+        "context_window": 128000,
+        "context_window_basis": "vendor_family_default",
+        "context_window_known": True,
+    }
+    assert model_settings.context_metadata(auto_record, "deepseek-v4-pro")["context_window"] == 128000
+    assert model_settings.context_metadata(auto_record, "gpt-5.4")["context_window"] == 272000
+    assert model_settings.context_metadata(auto_record, "claude-sonnet-4-5")["context_window"] == 200000
+    assert model_settings.context_metadata(auto_record, "unknown") == {
+        "context_window": 32768,
+        "context_window_basis": "unknown_fallback",
+        "context_window_known": False,
+    }
+
+    compact = _compact_public_element({
+        "id": "el-0",
+        "index": 0,
+        "name": "搜索",
+        "type": "Edit",
+        "value": "test",
+        "password": False,
+        "enabled": True,
+        "offscreen": False,
+        "focused": False,
+        "x": 100,
+        "y": 200,
+        "depth": 6,
+        "patterns": ["ValuePattern"],
+        "bounds": {"left": 80, "top": 190, "width": 40, "height": 20},
+    })
+    assert set(compact.keys()) == {"id", "name", "type", "value", "x", "y", "bounds"}
+
+    ref = {"id": "result_" + "d" * 32, "sha256": "e" * 64, "bytes": 22000}
+    act_payload = {
+        "server_id": "computer-use",
+        "tool": "computer_act_window",
+        "model_tool_name": "mcp__computer_use__computer_act_window__10ed2a80",
+        "is_error": False,
+        "text": "click committed.",
+        "structuredContent": {
+            "status": "committed",
+            "hwnd": 100100,
+            "observation": {
+                "hwnd": 100100,
+                "title": "Demo",
+                "state_token": "st_after_act",
+                "observation_id": "obs_after_act",
+                "rect": [0, 0, 800, 600],
+                "elements": [{"id": f"el-{i}", "name": "X" * 200} for i in range(80)],
+            },
+        },
+    }
+    inline_act = results.format_reference_result(
+        "mcp__computer_use__computer_act_window__10ed2a80",
+        act_payload,
+        ref,
+        max_bytes=4000,
+    )
+    assert inline_act["structuredContent"]["observation"]["state_token"] == "st_after_act"
+    assert "elements" not in inline_act["structuredContent"]["observation"]

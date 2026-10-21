@@ -5,16 +5,21 @@ memory mutation helpers, and actual persisted Store reloads. No algorithm or
 serialized fence-key parser is copied into the tests.
 """
 from __future__ import annotations
+
 import copy
 import sys
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_stage1_memory_boundaries as boundary
-import pytest
-from rynmesh.agent_runtime import memory
-from rynmesh.agent_runtime.store import AgentError, AgentStore
+import pytest  # noqa: E402 - imports use the checkout selected above.
+import test_stage1_memory_boundaries as boundary  # noqa: E402 - imports use the checkout selected above.
+
+from rynmesh.agent_runtime import memory  # noqa: E402 - imports use the checkout selected above.
+from rynmesh.agent_runtime.store import (  # noqa: E402 - imports use the checkout selected above.
+    AgentError,
+    AgentStore,
+)
 
 sandbox = boundary.sandbox
 
@@ -52,7 +57,7 @@ def test_legacy_colon_message_id_fence_survives_real_store_compaction(sandbox):
         text = f"My camera is LEGACY_SOURCE_CAMERA_{index}"
         created = runtime.create({"message": text})
         def legacy_owner_fixture(data):
-            row = data["tasks"][created["id"]]
+            row = data["tasks"][created["id"]]  # noqa: B023 - this callback finishes within the current case.
             row["status"] = "completed"
             row["conversation_revision"] = 7
             row["model_destination"] = copy.deepcopy(boundary.DEST_A)
@@ -64,16 +69,16 @@ def test_legacy_colon_message_id_fence_survives_real_store_compaction(sandbox):
         message = row["messages"][0]
         src = _source_from_persisted_row(row, message)
         before = store.inspect(lambda data: memory.verify_source_ref_against_state(
-            data, src, for_background_job=True))
+            data, src, for_background_job=True))  # noqa: B023 - this callback finishes within the current case.
         assert before[0] is True, ("Positive-control source invalid before deletion", before)
         made = store.transaction(lambda data: memory.upsert_active_entry(
-            data, {"category": "photography", "fact_key": f"audit.legacy.camera.{index}",
-                   "text": text, "sources": [src],
+            data, {"category": "photography", "fact_key": f"audit.legacy.camera.{index}",  # noqa: B023 - this callback finishes within the current case.
+                   "text": text, "sources": [src],  # noqa: B023 - this callback finishes within the current case.
                    "exposure_policy": {"mode": "destinations", "allowed_destinations": [boundary.DEST_A]}},
             origin="explicit_owner_chat"))
-        store.transaction(lambda data: memory.delete_memory_entry(data, made["entry"]["id"]))
+        store.transaction(lambda data: memory.delete_memory_entry(data, made["entry"]["id"]))  # noqa: B023 - this callback finishes within the current case.
         denied = store.inspect(lambda data: memory.verify_source_ref_against_state(
-            data, src, for_background_job=True))
+            data, src, for_background_job=True))  # noqa: B023 - this callback finishes within the current case.
         assert denied[0] is False, "The delete operation did not fence its owner source"
         if index == 0:
             protected_source = src

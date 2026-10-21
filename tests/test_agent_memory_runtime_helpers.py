@@ -8,7 +8,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from rynmesh.agent_runtime import memory, memory_runtime
-from rynmesh.agent_runtime.store import AgentStore, AgentToolRejected
+from rynmesh.agent_runtime.store import AgentStore
 
 
 def _make_store(tmp_path):
@@ -478,7 +478,7 @@ def test_background_extraction_manifest_and_strict_json_parsing(tmp_path):
             conversation_revision=0,
             destination=dest,
         )
-        enq = memory.enqueue_extraction_job(data, task_id="t-ext-1")
+        memory.enqueue_extraction_job(data, task_id="t-ext-1")
         leased = memory.claim_extraction_job(data, worker_id="ext-worker")
         return leased
 

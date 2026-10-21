@@ -780,7 +780,17 @@ def test_model_reviews_and_repairs_its_changes_in_the_same_conversation(node, mo
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows desktop capability")
 def test_windows_accessibility_write_and_readback(local):
+    import sys
+
+    from rynmesh.agent_runtime.computer.binary import PACKAGE_MANIFEST_PATH
     from rynmesh.agent_runtime.local_processes import shell_command
+
+    if (
+        not getattr(sys, "frozen", False)
+        and not PACKAGE_MANIFEST_PATH.exists()
+        and not PACKAGE_MANIFEST_PATH.is_symlink()
+    ):
+        pytest.skip("Requires the packaged native worker and computer-use manifest, absent in this source checkout")
     tools, context, workspace, state = local
     context["local_execution"]["desktop_access"] = True
     state.transaction(lambda data: data["settings"].update(desktop_access=True))

@@ -293,10 +293,22 @@ class OpenAICompatibleAdapter:
         from .chat import ChatAccumulator, validate_chat
 
         body = {**self.request_defaults, **validate_chat(body)}
+        model_id = str(body.get("model") or self.model or "").lower()
+        base_url = str(self.base_url or "").lower()
+        thinking_cfg = body.get("thinking")
+        has_reasoning = (
+            any("reasoning_content" in m for m in body["messages"] if m.get("role") == "assistant")
+            or (isinstance(thinking_cfg, dict) and thinking_cfg.get("type") == "enabled")
+            or bool(body.get("reasoning_effort"))
+            or "deepseek" in model_id
+            or "deepseek" in base_url
+        )
         for message in body["messages"]:
             # Native protocol continuation is never a Chat Completions field.
             message.pop("provider_state", None)
             message.pop("is_error", None)
+            if has_reasoning and message.get("role") == "assistant" and message.get("reasoning_content") is None:
+                message["reasoning_content"] = ""
         if task_id in self._cancelled:
             raise AdapterError("task_cancelled")
         if not self.model and not self.health().get("ok"):

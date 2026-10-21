@@ -361,3 +361,21 @@ def test_server_tools_are_rejected_instead_of_dropped(protocol, native):
     raw["output" if protocol == RESPONSES else "content"].append({"type": "web_search_call" if protocol == RESPONSES else "server_tool_use", "id": "server_1"})
     with pytest.raises(ValueError, match="unsupported"):
         parse_response(raw, protocol, MODEL, SCOPE)
+
+
+def test_messages_merges_synthetic_assistant_checkpoint_with_native_thinking_continuation():
+    parsed = parse_response(message(), MESSAGES, MODEL, SCOPE)
+    assistant = parsed["message"]
+    history = [
+        {"role": "user", "content": "check"},
+        {"role": "assistant", "content": "Historical checkpoint: summary"},
+        assistant,
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+    ]
+    wire = make_request(body(history), MESSAGES, MODEL, SCOPE)
+    assert [m["role"] for m in wire["messages"]] == ["user", "assistant", "user"]
+    blocks = wire["messages"][1]["content"]
+    assert blocks[0]["type"] == "thinking"
+    assert blocks[1]["type"] == "redacted_thinking"
+    assert any(b.get("type") == "text" and b.get("text") == "Historical checkpoint: summary" for b in blocks)
+    assert blocks[-1]["type"] == "tool_use"

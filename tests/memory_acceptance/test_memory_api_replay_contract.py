@@ -5,7 +5,9 @@ network retry. It does not change any existing acceptance oracle.
 """
 import uuid
 
-from test_memory_integration_contract import MEM, integrated, prohibit_network
+from test_memory_integration_contract import MEM
+from test_memory_integration_contract import integrated as integrated
+from test_memory_integration_contract import prohibit_network as prohibit_network
 
 
 def test_idempotent_old_request_replay_returns_fresh_state_without_reapplying(integrated):

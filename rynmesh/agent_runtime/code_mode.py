@@ -29,7 +29,7 @@ from jsonschema import ValidationError, validate
 
 from .js_runtime.manager import sanitized_worker_env
 from .protocol import sanitized
-from .store import AgentError, AgentToolRejected, encoded
+from .store import AgentToolRejected, encoded
 
 
 def _resolve_node_binary() -> str:
@@ -723,8 +723,13 @@ class CodeModeRunner:
         text_parts: list[str] = []
         content_items: list[dict[str, Any]] = []
         local_tools = getattr(self.parent_tools, "local", None)
-        from .image_capabilities import ALLOWED_IMAGE_MIMES, safe_segment, verify_original_image_bytes
         import base64
+
+        from .image_capabilities import (
+            ALLOWED_IMAGE_MIMES,
+            safe_segment,
+            verify_original_image_bytes,
+        )
         safe_task = safe_segment(task_id or "task", "task")
         safe_op = safe_segment(operation_id or "op", "op")
         img_idx = 0

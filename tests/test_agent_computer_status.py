@@ -1,20 +1,20 @@
 """Tests for read-only Computer Use status endpoint and projection."""
 from __future__ import annotations
 
-from datetime import datetime
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import threading
+from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-import pytest
 
 from rynmesh.agent_runtime import image_capabilities, verification
 from rynmesh.agent_runtime.computer.coordinator import NativeBridge
@@ -34,7 +34,6 @@ from rynmesh.atomic_io import atomic_write_json
 from rynmesh.background_workers import BackgroundWorkerRegistry
 from rynmesh.llm_package.sources import SourceStore
 from rynmesh.services import peer_box
-
 
 CANARY_SECRET = "sk-proj-canary9876543210secretvalue"
 CANARY_WIN_PATH = r"C:\Users\Administrator\AppData\Local\Ryn\ryn-computer-use.exe"
@@ -1332,7 +1331,7 @@ def test_observation_requires_correlated_receipts_and_tracks_selection_epoch(tmp
         },
         source_record=rec,
     )
-    data_Url = "data:image/png;base64,ZmFrZS1wbmctYnl0ZXM="  # base64("fake-png-bytes")
+    data_url = "data:image/png;base64,ZmFrZS1wbmctYnl0ZXM="  # base64("fake-png-bytes")
 
     def record_genuine_receipt_and_link(data: dict[str, Any]) -> None:
         t = data["tasks"]["task_correlated"]
@@ -1355,7 +1354,7 @@ def test_observation_requires_correlated_receipts_and_tracks_selection_epoch(tmp
             request_id="req_101",
             model_id=model_a,
             capability=cap_a,
-            messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_Url}}]}],
+            messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url}}]}],
             stage="image_inspection",
             operation_id="op_shot_1",
             source_artifacts=[
@@ -1415,14 +1414,14 @@ def test_observation_requires_correlated_receipts_and_tracks_selection_epoch(tmp
 
         # 3. Dynamic negative cases on correlated linkage / destination / revisions
         def mutate_task_links(mut_fn: Any) -> dict[str, Any]:
-            snapshot_Holder: dict[str, Any] = {}
+            snapshot_holder: dict[str, Any] = {}
 
             def save_orig(data: dict[str, Any]) -> None:
-                snapshot_Holder["orig"] = json.loads(json.dumps(data["tasks"]["task_correlated"]))
+                snapshot_holder["orig"] = json.loads(json.dumps(data["tasks"]["task_correlated"]))
                 mut_fn(data["tasks"]["task_correlated"])
 
             def restore_orig(data: dict[str, Any]) -> None:
-                data["tasks"]["task_correlated"] = snapshot_Holder["orig"]
+                data["tasks"]["task_correlated"] = snapshot_holder["orig"]
 
             runtime.store.transaction(save_orig)
             try:

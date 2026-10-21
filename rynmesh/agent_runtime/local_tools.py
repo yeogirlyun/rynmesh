@@ -406,6 +406,7 @@ class LocalTools:
         self._browser = None
         self._desktop = None
         self._renderer = None
+        self._web_search = None
         self._reads = {}
         self.native_computer = bind_owner_native_computer(
             store if store is not None else self, local_tools=self
@@ -606,6 +607,8 @@ class LocalTools:
                 pass
         if getattr(self, "native_computer", None) is not None:
             self.native_computer.forget_task(task_id)
+        if getattr(self, "_web_search", None) is not None:
+            self._web_search.forget_task(task_id)
 
     def change_review(self, task_id, workspace_root=""):
         """Net change of every file this task changed through file tools, against the original.
@@ -677,6 +680,13 @@ class LocalTools:
             from .local_browser import Browser
             self._browser = Browser(self.home, self.processes)
         return self._browser
+
+    def web_search(self, context=None):
+        if self._web_search is None:
+            from .web_search import WebSearchEngine
+            base = Path(self.home) if self.home else (Path.cwd() / ".ryn_agent")
+            self._web_search = WebSearchEngine(base / "web_search_cache")
+        return self._web_search
 
     def desktop(self, context):
         if not self.policy(context)["desktop_access"]:
@@ -1814,6 +1824,8 @@ class LocalTools:
                 context=context,
                 on_ready_host_gate=on_ready_host_gate,
             )
+        if name == "ryn_web_search":
+            return self.web_search(context).execute(args, context=context, cancelled=cancelled)
         raise AgentToolRejected("agent_unknown_tool")
 
     def verification_specs(self):

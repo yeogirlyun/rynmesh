@@ -9,9 +9,18 @@ import importlib
 import json
 
 import pytest
-
 from test_memory_integration_contract import (
-    BASE, CORRECT, SAVE, finish, front_requests, integrated, prohibit_network,
+    BASE,
+    CORRECT,
+    SAVE,
+    finish,
+    front_requests,
+)
+from test_memory_integration_contract import (
+    integrated as integrated,
+)
+from test_memory_integration_contract import (
+    prohibit_network as prohibit_network,
 )
 
 

@@ -20,20 +20,23 @@ from typing import Any
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from rynmesh.agent_runtime import budget, control, js_integration, js_state, results, tool_delivery, verification
+from rynmesh.agent_runtime import (
+    budget,
+    control,
+    js_integration,
+    js_state,
+    results,
+    tool_delivery,
+    verification,
+)
 from rynmesh.agent_runtime.js_integration import (
-    DeliveryPlan,
     capture_capability_catalog,
     complete_delivery,
     deliver_committed_token,
-    derive_child_identities,
-    dispatch_delivery_plan,
     plan_child_call,
     select_delivery,
 )
 from rynmesh.agent_runtime.js_runtime.protocol import (
-    MAX_OUTPUT_BYTES,
-    MAX_RESULT_BYTES,
     JsRuntimeError,
     PendingHostCallEnvelope,
     canonical_arguments_sha256,
@@ -42,38 +45,29 @@ from rynmesh.agent_runtime.js_runtime.protocol import (
 from rynmesh.agent_runtime.js_state import (
     CONTAINER_TOOL_NAME,
     JS_STATE_VERSION,
-    MAX_ADMITTED_CALLBACKS,
-    MAX_JS_STATE_BYTES,
     MAX_PARENT_CODE_BYTES,
     MAX_STATE_DEPTH,
     JsStateValidationError,
-    build_authority_stamp,
     create_js_execution_state,
     plan_cancellation_js_state,
-    plan_continuation_lost_js_state,
-    plan_fatal_fence_js_state,
     plan_terminal_js_state,
     project_js_control,
     project_public_js_summary,
     validate_callback_status_transition,
     validate_delivery_transition,
-    validate_js_parent_stamp,
     validate_js_state,
     validate_phase_transition,
     validate_task_js_state,
 )
-from rynmesh.agent_runtime.protocol import digest, now
+from rynmesh.agent_runtime.protocol import now
 from rynmesh.agent_runtime.state import initialize
 from rynmesh.agent_runtime.store import AgentError, AgentStore, encoded
 from rynmesh.agent_runtime.tool_delivery import (
     DeliveryToken,
-    derive_outbox_id,
-    is_js_child_call,
     stage_child_completion,
     stage_tool_completion,
 )
 from rynmesh.agent_runtime.tool_router import normalize_tool_calls
-
 
 HOST_METHOD_MAPPING: dict[str, str] = {
     "list_apps": "ryn_computer_observe_windows",
@@ -848,7 +842,7 @@ def test_plan_child_call_stable_ids_host_recomputation_and_catalog_checks(tmp_pa
     ):
         bad_env = PendingHostCallEnvelope(**{**envelope.to_dict(), **bad_field})
         with pytest.raises(AgentError, match=expected_err):
-            store.transaction(lambda data: plan_child_call(data["tasks"]["task_js_phase_a"], bad_env, catalog, HOST_METHOD_MAPPING))
+            store.transaction(lambda data: plan_child_call(data["tasks"]["task_js_phase_a"], bad_env, catalog, HOST_METHOD_MAPPING))  # noqa: B023 - this callback finishes within the current case.
 
     # 6. Changed catalog after container creation fails closed.
     changed_catalog = copy.deepcopy(catalog)

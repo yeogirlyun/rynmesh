@@ -172,7 +172,8 @@ class MemoryExtractionWorker:
         return "extraction_destination_drifted"
 
     def _stored_attempt_reason(self, job: dict[str, Any], *, expected_state: str | None = None) -> str | None:
-        view = lambda data: self._attempt_reason(data, job, expected_state=expected_state)
+        def view(data):
+            return self._attempt_reason(data, job, expected_state=expected_state)
         return self.runtime.store.inspect(view) if hasattr(self.runtime.store, "inspect") else view(self.runtime.store.read())
 
     @staticmethod
@@ -460,7 +461,6 @@ class MemoryExtractionWorker:
     ) -> None:
         def mutate(data: dict[str, Any]) -> None:
             mem = memory.ensure_memory_state(data)
-            usage = mem["daily_usage"]
             self._settle_stage(data, job, stage, actual_tokens)
             live_job = (mem.get("jobs") or {}).get(job["id"])
             if not isinstance(live_job, dict):

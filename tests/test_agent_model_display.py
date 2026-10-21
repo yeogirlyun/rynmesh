@@ -2,7 +2,7 @@
 import threading
 import time
 
-from test_agent_cli_models import cli_metadata_catalog
+from test_agent_cli_models import cli_metadata_catalog as cli_metadata_catalog
 from test_agent_runtime import make_runtime
 
 

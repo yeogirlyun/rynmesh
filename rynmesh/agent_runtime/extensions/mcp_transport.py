@@ -90,7 +90,11 @@ class McpTransportError(AgentError):
         self.session_pid = session_pid
 
 
-def _stdio_environment(private_dir: str, secret_env: dict[str, str] | None) -> dict[str, str]:
+def _stdio_environment(
+    private_dir: str,
+    secret_env: dict[str, str] | None,
+    env_vars: list[str] | None = None,
+) -> dict[str, str]:
     keep = {
         "PATH",
         "SYSTEMROOT",
@@ -115,6 +119,10 @@ def _stdio_environment(private_dir: str, secret_env: dict[str, str] | None) -> d
         PYTHONIOENCODING="utf-8",
         PYTHONUTF8="1",
     )
+    if isinstance(env_vars, list):
+        for var_name in env_vars:
+            if isinstance(var_name, str) and var_name in os.environ:
+                env[var_name] = os.environ[var_name]
     if isinstance(secret_env, dict):
         for k, v in secret_env.items():
             if isinstance(k, str) and k and v is not None:
@@ -184,7 +192,11 @@ class StdioMcpSession:
         self.private_dir = tempfile.TemporaryDirectory(
             prefix=".ryn-mcp-", dir=str(cwd_path), ignore_cleanup_errors=True
         )
-        env = _stdio_environment(self.private_dir.name, server.get("secret_env"))
+        env = _stdio_environment(
+            self.private_dir.name,
+            server.get("secret_env"),
+            server.get("env_vars"),
+        )
         if (
             getattr(sys, "frozen", False)
             and self.server_id == COMPUTER_USE_SERVER_ID
@@ -584,6 +596,13 @@ class StreamableHttpMcpSession:
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
         }
+        env_http_headers = server.get("env_http_headers") or {}
+        if isinstance(env_http_headers, dict):
+            for k, env_name in env_http_headers.items():
+                if isinstance(k, str) and k and isinstance(env_name, str) and env_name:
+                    env_val = os.environ.get(env_name)
+                    if env_val:
+                        headers[k] = str(env_val)
         secret_headers = server.get("secret_headers") or {}
         if isinstance(secret_headers, dict):
             for k, v in secret_headers.items():
@@ -1156,6 +1175,19 @@ class McpSessionManager:
             self._pending.clear()
         for session in sessions:
             session.close()
+
+    def restart_all(self, *, desktop_access: bool = False) -> dict[str, Any]:
+        """Close all active MCP client sessions so servers reconnect with fresh state."""
+        self.close()
+        return {
+            "restarted": True,
+            "overview": self.store.overview(desktop_access=desktop_access),
+        }
+
+    def clear_app_data(self, *, desktop_access: bool = False) -> dict[str, Any]:
+        """Close active MCP sessions and clear cached MCP app data."""
+        self.close()
+        return self.store.clear_mcp_app_data(desktop_access=desktop_access)
 
     def test_server(
         self,

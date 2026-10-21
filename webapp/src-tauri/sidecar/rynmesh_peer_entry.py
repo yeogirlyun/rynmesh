@@ -3,8 +3,8 @@
 This is the unmodified rynmesh peer (`rynmesh.peer_http:main`); freezing only
 removes the system-Python/rynmesh install requirement. Behavior is identical.
 """
-import sys
 import multiprocessing
+import sys
 
 
 def _run_computer_use_package_check(

@@ -460,3 +460,87 @@ def test_skill_semver_reimport_version_binding_and_bounded_file_reads(tmp_path: 
     with pytest.raises(AgentError) as exc_info:
         compute_directory_manifest(pkg_v2)
     assert exc_info.value.args == ("agent_skill_file_too_large",)
+
+
+def test_codex_mcp_fields_and_app_data_management(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from rynmesh.agent_runtime.extensions import ExtensionImportManager
+    from rynmesh.agent_runtime.extensions.mcp_transport import _stdio_environment
+
+    store = ExtensionStore(tmp_path / "agent")
+    monkeypatch.setenv("HOST_PASSTHROUGH_VAR", "from-host-env")
+    monkeypatch.setenv("ORG_HEADER_TOKEN", "org-token-val")
+
+    ov0 = store.overview()
+    stdio_srv = store.upsert_mcp_server(
+        {
+            "name": "Codex Stdio Server",
+            "transport": "stdio",
+            "command": "python",
+            "args": ["-m", "mcp_demo"],
+            "env": {"EXPLICIT_KEY": "secret-val"},
+            "env_vars": ["HOST_PASSTHROUGH_VAR", "MISSING_HOST_VAR"],
+            "enabled": True,
+        },
+        expected_revision=ov0["revision"],
+    )
+    assert stdio_srv["env_vars"] == ["HOST_PASSTHROUGH_VAR", "MISSING_HOST_VAR"]
+    assert stdio_srv["env_keys"] == ["EXPLICIT_KEY"]
+
+    internal_stdio = store.get_mcp_server_internal(stdio_srv["id"], require_enabled=False)
+    child_env = _stdio_environment(
+        str(store.root),
+        internal_stdio.get("secret_env"),
+        internal_stdio.get("env_vars"),
+    )
+    assert child_env["HOST_PASSTHROUGH_VAR"] == "from-host-env"
+    assert "MISSING_HOST_VAR" not in child_env
+    assert child_env["EXPLICIT_KEY"] == "secret-val"
+
+    ov1 = store.overview()
+    http_srv = store.upsert_mcp_server(
+        {
+            "name": "Codex HTTP Server",
+            "transport": "streamable_http",
+            "url": "https://mcp.example.com/mcp",
+            "bearer_token_env_var": "UNSET_BEARER_TOKEN",
+            "http_headers": {"X-Static": "static-secret"},
+            "env_http_headers": {"X-Org-Auth": "ORG_HEADER_TOKEN"},
+            "oauth_client_registration": "cimd",
+            "enabled": True,
+        },
+        expected_revision=ov1["revision"],
+    )
+    assert http_srv["bearer_token_env"] == "UNSET_BEARER_TOKEN"
+    assert http_srv["header_keys"] == ["X-Static"]
+    assert http_srv["env_http_headers"] == {"X-Org-Auth": "ORG_HEADER_TOKEN"}
+    assert http_srv["oauth_client_registration"] == "cimd"
+    assert http_srv["status"] == "NeedsAuth"
+
+    # Importing Codex config.toml with env_vars and env_http_headers preserves both fields
+    imp = ExtensionImportManager(store)
+    toml_text = """
+[mcp_servers.imported_codex_stdio]
+command = "npx"
+args = ["-y", "codex-mcp"]
+env_vars = ["HOST_PASSTHROUGH_VAR"]
+
+[mcp_servers.imported_codex_http]
+url = "https://api.example.com/mcp"
+env_http_headers = { "X-Env-Header" = "ORG_HEADER_TOKEN" }
+"""
+    preview = imp.preview({"kind": "mcp", "filename": "config.toml", "config_text": toml_text})
+    assert preview["can_import"] is True
+    by_id = {m["id"]: m for m in preview["mcp_servers"]}
+    assert by_id["imported_codex_stdio"]["env_vars"] == ["HOST_PASSTHROUGH_VAR"]
+    assert by_id["imported_codex_http"]["env_http_headers"] == {"X-Env-Header": "ORG_HEADER_TOKEN"}
+
+    committed = imp.commit(preview["preview_id"], expected_revision=preview["expected_revision"])
+    committed_by_id = {m["id"]: m for m in committed["mcp_servers"]}
+    assert committed_by_id["imported_codex_stdio"]["env_vars"] == ["HOST_PASSTHROUGH_VAR"]
+    assert committed_by_id["imported_codex_http"]["env_http_headers"] == {
+        "X-Env-Header": "ORG_HEADER_TOKEN"
+    }
+
+    cleared = store.clear_mcp_app_data()
+    assert cleared["cleared"] is True
+    assert len(cleared["overview"]["mcp_servers"]) == len(committed["mcp_servers"])

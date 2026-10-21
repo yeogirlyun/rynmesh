@@ -3,51 +3,45 @@
 from __future__ import annotations
 
 import base64
-from collections import deque
 import copy
 import dataclasses
 import hashlib
 import io
 import json
-from pathlib import Path
 import random
 import sys
 import tempfile
 import threading
+from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-import uuid
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from PIL import Image
-import pytest
 
-from rynmesh.agent_runtime import image_capabilities, output_policy
+from rynmesh.agent_runtime import output_policy
 from rynmesh.agent_runtime.bridge import AgentModelBridge
 from rynmesh.agent_runtime.runtime import AgentRuntime
 from rynmesh.agent_runtime.store import AgentError, AgentStore, AgentToolRejected, encoded
 from rynmesh.llm_package import codex_session, codex_threads, peer_binding
-from rynmesh.llm_package.adapters import AdapterError, OpenAICompatibleAdapter
+from rynmesh.llm_package.adapters import OpenAICompatibleAdapter
 from rynmesh.llm_package.chat import validate_chat
 from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 from rynmesh.llm_package.image_input_profile import (
     LEGACY_PUBLIC_MAX_IMAGE_BYTES,
     LEGACY_PUBLIC_MAX_URL_CHARS,
     MAX_INTERNAL_RAW_REQUEST_BYTES,
-    MAX_INTERNAL_REQUEST_IMAGES,
     MAX_INTERNAL_SINGLE_IMAGE_BYTES,
-    MAX_INTERNAL_SINGLE_IMAGE_PIXELS,
     MAX_INTERNAL_TOTAL_IMAGE_BYTES,
-    MAX_INTERNAL_TOTAL_IMAGE_PIXELS,
     ImagePartIdentity,
     InternalImageProfile,
-    RouteImageIdentity,
     check_legacy_public_carrier_compatible,
     current_internal_image_profile,
     inspect_canonical_user_image,
     internal_image_scope,
     prepare_internal_image_profile,
-    project_protocol_request_without_admitted_images,
     verify_messages_against_profile,
 )
 from rynmesh.llm_package.protocol_adapter import NativeProtocolAdapter
@@ -1001,7 +995,7 @@ def test_profile_rejects_moved_duplicated_assistant_mutated_and_detail_changed_p
         make_request({"messages": messages, "max_tokens": 32}, RESPONSES, "own-model", scope)
         make_request({"messages": messages, "max_tokens": 32}, MESSAGES, "own-model", scope)
 
-        for name, bad_messages in mutations.items():
+        for _name, bad_messages in mutations.items():
             with pytest.raises(ValueError), pytest.MonkeyPatch.context():
                 validate_chat({"messages": bad_messages, "max_tokens": 32})
             with pytest.raises(ValueError):

@@ -13,7 +13,6 @@ import re
 from typing import Any
 
 from .js_runtime.protocol import (
-    MAX_ARGUMENTS_BYTES,
     MAX_CODE_BYTES,
     MAX_JSON_DEPTH,
     MAX_OUTPUT_BYTES,

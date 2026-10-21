@@ -9,17 +9,17 @@ and NEVER executes target PE binaries.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import struct
 import subprocess
 import sys
-from typing import Any, Callable, Sequence
 import zlib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Sequence
 
 try:
     import tomllib  # Python 3.11+

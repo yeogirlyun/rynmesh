@@ -380,6 +380,11 @@ export const rynAgent = {
   updateBudget: (id: string, body: { limits: AgentBudgetLimits; run_max_seconds?: number; expected_control_revision: number; client_request_id: string }) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/budget`, "PUT", body),
   previewModel: (id: string, modelID: string, signal?: AbortSignal) => request<AgentModelSwitchPreview>(`/tasks/${encodeURIComponent(id)}/model?model_id=${encodeURIComponent(modelID)}`, "GET", undefined, signal),
   switchModel: (id: string, body: AgentModelSwitchRequest) => request<AgentTask>(`/tasks/${encodeURIComponent(id)}/model`, "PUT", body),
+  automations: (signal?: AbortSignal) => request<AgentAutomationsSnapshot>("/automations", "GET", undefined, signal),
+  createAutomation: (body: Record<string, unknown>) => request<{ automation: AgentAutomation }>("/automations", "POST", body),
+  updateAutomation: (id: string, body: Record<string, unknown>) => request<{ automation: AgentAutomation }>(`/automations/${encodeURIComponent(id)}`, "PATCH", body),
+  deleteAutomation: (id: string) => request<{ deleted: boolean; id: string }>(`/automations/${encodeURIComponent(id)}`, "DELETE"),
+  runAutomationNow: (id: string) => request<{ triggered: boolean; deferred: boolean; task_id?: string; automation: AgentAutomation }>(`/automations/${encodeURIComponent(id)}/run-now`, "POST", {}),
 };
 
 export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[]): Record<string, unknown> {
@@ -468,4 +473,54 @@ export function agentMessageModelID(task: Pick<AgentTask, "model_id" | "events">
 
 export function isAgentLateToolResult(event: AgentEvent, events: AgentEvent[]): boolean {
   return event.type === "tool_result" && events.some(previous => previous.type === "cancelled" && previous.seq < event.seq);
+}
+
+export interface AgentAutomation {
+  id: string;
+  name: string;
+  prompt: string;
+  status: "ACTIVE" | "PAUSED";
+  rrule: string;
+  kind: "cron" | "heartbeat";
+  repeat: "daily" | "weekdays" | "weekly" | "hourly" | "once";
+  time: string;
+  weekday: string;
+  weekdays: string[];
+  interval_hours: number;
+  schedule_label: string;
+  schedule_label_zh: string;
+  schedule_label_en: string;
+  desktop_access: boolean;
+  workspace_root: string;
+  target_task_id: string;
+  execution_environment: string;
+  next_run_at: number | null;
+  next_run_at_iso: string;
+  last_run_at: number | null;
+  last_run_at_iso: string;
+  last_run_status: string;
+  last_run_summary: string;
+  last_task_id: string;
+  run_count: number;
+  memory_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentAutomationRun {
+  id: string;
+  automation_id: string;
+  automation_name: string;
+  task_id: string;
+  status: string;
+  inbox_title: string;
+  inbox_summary: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface AgentAutomationsSnapshot {
+  items: AgentAutomation[];
+  runs: AgentAutomationRun[];
 }

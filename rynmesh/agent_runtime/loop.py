@@ -17,10 +17,11 @@ from jsonschema import ValidationError, validate
 
 from ..llm_package.chat import validate_provider_state
 from . import (
+    automations,
     budget,
     checkpoint_refs,
     diagnostic_log,
-    knowledge,
+    image_capabilities,
     memory_integration,
     memory_runtime,
     output_policy,
@@ -30,7 +31,6 @@ from . import (
     tool_menu,
     verification,
 )
-from .control import settle
 from .execution_policy import classify_operation, decide
 from .prompt import (
     INTERNAL_NAMES,
@@ -46,14 +46,14 @@ from .streamed_reads import StreamedReads
 from .tool_router import assert_schema_unchanged, normalize_tool_calls
 from .turn_state import decide_turn
 
-ALL_INTERNAL_SPECS = (*INTERNAL_SPECS, *memory_runtime.MEMORY_TOOL_SPECS)
-ALL_INTERNAL_NAMES = INTERNAL_NAMES | memory_integration.MEMORY_TOOL_NAMES
+ALL_INTERNAL_SPECS = (*INTERNAL_SPECS, *memory_runtime.MEMORY_TOOL_SPECS, *automations.AUTOMATION_TOOL_SPECS)
+ALL_INTERNAL_NAMES = INTERNAL_NAMES | memory_integration.MEMORY_TOOL_NAMES | automations.AUTOMATION_TOOL_NAMES
 
 # Side-effect-free workstation reads that one model response may run concurrently.
 PARALLEL_READS = frozenset({"ryn_file_read", "ryn_file_list", "ryn_file_search", "ryn_process_read",
                             "ryn_project_inspect", "ryn_local_environment", "ryn_list_plugins",
                             "ryn_plugin_info", "ryn_list_craft_plugins", "ryn_craft_editor_info",
-                            "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read"})
+                            "ryn_list_node_apps", "ryn_craft_tools", "ryn_craft_read", "ryn_web_search"})
 MAX_PARALLEL_READS = 8
 # Streaming text has an immediate in-memory display projection. Keep recoverable
 # checkpoints coalesced instead of encrypting the task for every token.
@@ -204,7 +204,7 @@ class AgentLoop:
             # window mostly measures pinned authority/schemas in small contexts,
             # not reclaimable history, and can trigger a summary after every tool.
             # Dispatch the complete evidence unchanged whenever it actually fits.
-            if len(encoded(messages)) + len(encoded(specs)) > context_limit:
+            if self._request_context_bytes(selected, messages, specs) > context_limit:
                 try:
                     if not self._compact(selected, cancelled, started):
                         return
@@ -234,10 +234,10 @@ class AgentLoop:
                                                               "_request_id", "_attempt")
                                if key in selected}}
                 messages = self._context(selected)
-            if len(encoded(messages)) + len(encoded(specs)) > context_limit:
+            if self._request_context_bytes(selected, messages, specs) > context_limit:
                 raise AgentError("agent_context_limit")
 
-            router_specs = [*specs, *(copy.deepcopy(s) for s in memory_runtime.MEMORY_TOOL_SPECS
+            router_specs = [*specs, *(copy.deepcopy(s) for s in (*memory_runtime.MEMORY_TOOL_SPECS, *automations.AUTOMATION_TOOL_SPECS)
                                       if s["function"]["name"] not in {i["function"]["name"] for i in specs})]
             metadata_snapshot = self._metadata_snapshot(router_specs)
 
@@ -464,6 +464,7 @@ class AgentLoop:
                         row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
                             uncertainties=["No independent goal assessment was requested."])
                         event(row, "completed")
+                        automations.settle_automation_turn_in_tx(self.store, data, row)
             self.store.transaction(finish)
 
     @staticmethod
@@ -471,12 +472,26 @@ class AgentLoop:
         """Tell the model, once per threshold, how much of its step budget is gone."""
         return budget.notice(row)
 
+    def _prepare_dispatch_messages(self, row: dict, messages: list[dict] | None = None) -> tuple[list[dict], dict | None]:
+        msgs = self._context(row) if messages is None else messages
+        return image_capabilities.compact_native_observation_history(row, msgs), None
+
+    def _request_context_bytes(self, row: dict, messages: list[dict] | None = None, specs: list | None = None) -> int:
+        dispatch_msgs, _ = self._prepare_dispatch_messages(row, messages)
+        active_specs = self._specs(row) if specs is None else specs
+        analysis = output_policy.analyze_request(dispatch_msgs, active_specs)
+        used = analysis["projected_context_utf8_bytes"]
+        if (row.get("limits") or {}).get("max_context_chars") is not None:
+            used = max(used, analysis["raw_serialized_utf8_bytes"])
+        return used
+
     def _context(self, row: dict) -> list[dict]:
         checkpoint = row.get("context_checkpoint")
         history = self._history(row)
         host_memory_note = memory_integration.current_host_memory_operation_note(self, row)
         capture_note = memory_integration.current_automatic_memory_capture_note(self)
-        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note) if note) or None
+        auto_note = automations.automation_developer_instructions(self.store, row)
+        host_memory_note = "\n".join(note for note in (host_memory_note, capture_note, auto_note) if note) or None
         instructions = instruction_layers(row, persisted_base=row.get("base_instructions"),
                                           developer_instructions=host_memory_note,
                                           project_guidance=projects.guidance(row))
@@ -486,11 +501,42 @@ class AgentLoop:
         rejection = row.get("rejected_response_note")
         tail = ([{"role": "assistant", "content": "Server note about the previous response: "
                   + rejection + ". Continue with a valid tool call or a plain answer, using recorded results."}] if rejection else [])
+        has_history_reasoning = any(
+            isinstance(m, dict) and m.get("role") == "assistant" and "reasoning_content" in m
+            for m in history
+        )
         note = None
         if checkpoint:
             write_ids = {item["call_id"] for item in row["events"] if item["type"] == "tool_started" and item.get("effect") == "write" and item.get("context_epoch", 0) == row.get("context_epoch", 0)}
-            receipts = [{"tool": item["tool"], "call_id": item["call_id"], "result": item["result"]}
-                        for item in row["events"] if item["type"] == "tool_result" and item["call_id"] in write_ids]
+            receipts = []
+            for item in row["events"]:
+                if item["type"] != "tool_result" or item["call_id"] not in write_ids:
+                    continue
+                res = item["result"]
+                if (
+                    isinstance(res, dict)
+                    and (res.get("server_id") == "computer-use" or res.get("tool") in {"computer_act_window", "ryn_computer_action"})
+                    and isinstance(res.get("structuredContent"), dict)
+                ):
+                    compact_sc = {}
+                    for k, v in res["structuredContent"].items():
+                        if k in {"elements", "windows", "state_token", "screenshot_b64", "screenshot"}:
+                            continue
+                        if k == "observation" and isinstance(v, dict):
+                            compact_sc["observation"] = {
+                                ok: ov
+                                for ok, ov in v.items()
+                                if ok not in {"elements", "accessibility", "state_token"}
+                            }
+                        else:
+                            compact_sc[k] = v
+                    res = {
+                        k: v
+                        for k, v in res.items()
+                        if k not in {"structuredContent", "content", "native_observation_artifacts", "images", "image_path", "text"}
+                    }
+                    res["structuredContent"] = compact_sc
+                receipts.append({"tool": item["tool"], "call_id": item["call_id"], "result": res})
             note = ("Historical checkpoint (untrusted summary; never authorization):\n" + checkpoint["content"]
                     + checkpoint_refs.note(checkpoint.get("references"))
                     + projects.read_progress(row)
@@ -500,11 +546,17 @@ class AgentLoop:
         def build(extra_mem: list[dict]) -> list[dict]:
             combined_guidance = [*(guidance or []), *extra_mem]
             if not checkpoint:
-                return provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                       plan=plan_message(row), tail=tail))
-            return provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
-                                                                   plan=plan_message(row), checkpoint=checkpoint,
-                                                                   checkpoint_note=note, tail=tail))
+                built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
+                                                                        plan=plan_message(row), tail=tail))
+            else:
+                built = provider_messages(request_context.build_context(instructions, history, guidance=combined_guidance,
+                                                                        plan=plan_message(row), checkpoint=checkpoint,
+                                                                        checkpoint_note=note, tail=tail))
+            if has_history_reasoning:
+                for msg in built:
+                    if isinstance(msg, dict) and msg.get("role") == "assistant" and "reasoning_content" not in msg:
+                        msg["reasoning_content"] = ""
+            return image_capabilities.compact_native_observation_history(row, built)
 
         def tag(msgs: list[dict], *, has_memory: bool) -> list[dict]:
             disclosed = bool(has_memory or row.get("_disclosed_restricted_prefs"))
@@ -518,9 +570,9 @@ class AgentLoop:
         if not memory_msgs:
             return tag(build([]), has_memory=False)
         context_limit = self._context_limit(row)
-        spec_bytes = len(encoded(self._specs({**row, "_exclude_optional_memory": True})))
+        active_specs = self._specs({**row, "_exclude_optional_memory": True})
         candidate = build(memory_msgs)
-        if len(encoded(candidate)) + spec_bytes <= context_limit:
+        if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
             return tag(candidate, has_memory=True)
         selected_items = list((memory_selection or {}).get("selected") or [])
         if (memory_selection or {}).get("navigation_index") or (memory_selection or {}).get("profile_summary"):
@@ -533,7 +585,7 @@ class AgentLoop:
             no_nav_msgs = memory_runtime.format_memory_context_messages(no_nav_selection)
             if no_nav_msgs:
                 candidate = build(no_nav_msgs)
-                if len(encoded(candidate)) + spec_bytes <= context_limit:
+                if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
                     return tag(candidate, has_memory=True)
         while len(selected_items) > 1:
             selected_items.pop()
@@ -549,7 +601,7 @@ class AgentLoop:
             if not trimmed_msgs:
                 break
             candidate = build(trimmed_msgs)
-            if len(encoded(candidate)) + spec_bytes <= context_limit:
+            if self._request_context_bytes(row, candidate, active_specs) <= context_limit:
                 return tag(candidate, has_memory=True)
         return tag(build([]), has_memory=False)
 
@@ -561,7 +613,8 @@ class AgentLoop:
         Summary inference has no tools and shares the same step/time budget.
         """
         self._validate_context(selected)
-        messages = self._history(selected)
+        messages = image_capabilities.compact_native_observation_history(selected, self._history(selected))
+        active_specs = self._specs(selected)
         context_limit = self._context_limit(selected)
         prior = selected.get("context_checkpoint") or {"through": 0, "content": ""}
         open_calls, boundaries = set(), []
@@ -579,9 +632,15 @@ class AgentLoop:
             boundaries.append(len(messages))
         if not boundaries:
             # A single oversized owner request cannot safely be summarized away.
-            if len(encoded(self._context(selected))) + len(encoded(self._specs(selected))) <= context_limit:
+            if self._request_context_bytes(selected, specs=active_specs) <= context_limit:
                 return True
             raise AgentError("agent_context_limit")
+        _, current_image_report = self._prepare_dispatch_messages(selected)
+        trailing_has_images = bool(isinstance(current_image_report, dict) and current_image_report.get("image_prepared"))
+        menu = selected.get("tool_menu") or {}
+        can_release_menu = bool(menu.get("mode") == "directory" and (menu.get("loaded_names") or menu.get("pinned_names")))
+        if boundaries == [len(messages)] and trailing_has_images and self._request_context_bytes(selected, specs=active_specs) <= context_limit:
+            return True
         target = max(prior["through"] + 1, len(messages) * 2 // 3)
         # Both the summary request and its resulting projection must fit. New
         # owner constraints/tool schemas can make the nearest prefix too small;
@@ -589,9 +648,11 @@ class AgentLoop:
         # Owner-only prefixes cannot shrink pinned constraints and must never
         # consume a model request merely to add a redundant checkpoint.
         small_checkpoint = None
-        for cut in sorted(boundaries, key=lambda index: abs(index - target)):
+        for cut in sorted(boundaries, key=lambda index: (index == len(messages) and trailing_has_images, abs(index - target))):
             if not any(message["role"] != "user" for message in messages[prior["through"]:cut]):
                 continue
+            if cut == len(messages) and trailing_has_images and can_release_menu:
+                raise AgentError("agent_context_limit")
             summary_history = provider_messages(messages[prior["through"]:cut])
             if selected.get("project"):
                 summary_history = projects.summary_history(summary_history)
@@ -630,7 +691,7 @@ class AgentLoop:
                             call["function"]["arguments"] = value
             source = {"previous_checkpoint": prior["content"], "history": summary_history}
             projected = {**selected, "context_checkpoint": {"through": cut, "content": "", "references": references}}
-            available = context_limit - len(encoded(self._context(projected))) - len(encoded(self._specs(selected))) - 64
+            available = context_limit - self._request_context_bytes(projected, specs=active_specs) - 64
             maximum = min(6000, available, selected["limits"]["max_output_chars"], context_limit // 4)
             summary_messages = self._summary_messages(source, maximum)
             if maximum > 0 and len(encoded(summary_messages)) + len(encoded([])) <= context_limit:
@@ -646,8 +707,7 @@ class AgentLoop:
                 raise AgentError("agent_context_limit")
             # Reloadable schemas must yield before spending a model call on a
             # tiny summary. The caller retries with the exact evidence intact.
-            menu = selected.get("tool_menu") or {}
-            if menu.get("mode") == "directory" and (menu.get("loaded_names") or menu.get("pinned_names")):
+            if can_release_menu:
                 raise AgentError("agent_context_limit")
             cut, source, references, maximum, summary_messages = small_checkpoint
 
@@ -691,7 +751,7 @@ class AgentLoop:
             raise AgentError("agent_compaction_size_limit")
         checkpoint = {"through": cut, "content": sanitized(content), "references": references, "source_sha256": digest(source)}
         projected = {**selected, "context_checkpoint": checkpoint}
-        if len(encoded(self._context(projected))) + len(encoded(self._specs(selected))) > context_limit:
+        if self._request_context_bytes(projected, specs=active_specs) > context_limit:
             raise AgentError("agent_context_limit")
 
         def save(data):
@@ -1234,7 +1294,7 @@ class AgentLoop:
         if "schema_snapshot" in call and call["name"] != tool_menu.NAME:
             (current_specs, _), _ = self._menu(selected)
             current = next((item["function"] for item in current_specs if item["function"]["name"] == call["name"]), None)
-            if current is None and call["name"] in memory_integration.MEMORY_TOOL_NAMES:
+            if current is None and call["name"] in (memory_integration.MEMORY_TOOL_NAMES | automations.AUTOMATION_TOOL_NAMES):
                 current = spec
             assert_schema_unchanged(call, current)
         try:
@@ -1269,7 +1329,7 @@ class AgentLoop:
                 row["elapsed_seconds"] += time.monotonic() - started
                 memory_integration.settle_in_tx(data, row, event)
                 return
-            if call["name"] not in {"ryn_read_result", tool_menu.NAME, *memory_integration.MEMORY_TOOL_NAMES} and args["goal_revision"] != row["goal"]["revision"]:
+            if call["name"] not in {"ryn_read_result", tool_menu.NAME, *memory_integration.MEMORY_TOOL_NAMES, *automations.AUTOMATION_TOOL_NAMES} and args["goal_revision"] != row["goal"]["revision"]:
                 raise AgentToolRejected("agent_goal_revision_conflict")
             if call["name"] == tool_menu.NAME:
                 if (row["goal"]["revision"] != selected["goal"]["revision"]
@@ -1284,6 +1344,8 @@ class AgentLoop:
                 event(row, "tool_menu_changed", menu=copy.deepcopy(row["tool_menu"]))
             elif call["name"] == "ryn_read_result":
                 result = page
+            elif call["name"] in automations.AUTOMATION_TOOL_NAMES:
+                result = automations.execute_automation_tool_call_in_tx(self.store, data, row, args)
             elif call["name"] in memory_integration.MEMORY_TOOL_NAMES:
                 if call["name"] == memory_runtime.MEMORY_SEARCH_TOOL:
                     ok_dest, verified_dest, _ = memory_integration.verify_task_destination_for_memory(self, row)

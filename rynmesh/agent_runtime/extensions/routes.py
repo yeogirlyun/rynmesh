@@ -191,6 +191,20 @@ def install_extension_routes(
 
         return await _run("restart_mcp_server", _op)
 
+    @app.post("/api/local/agent/extensions/mcp/restart")
+    async def restart_all_mcp_servers():
+        return await _run(
+            "restart_all_mcp_servers",
+            lambda: extensions.manager.restart_all(desktop_access=_desktop_access()),
+        )
+
+    @app.post("/api/local/agent/extensions/mcp/apps/clear-data")
+    async def clear_mcp_app_data():
+        return await _run(
+            "clear_mcp_app_data",
+            lambda: extensions.manager.clear_app_data(desktop_access=_desktop_access()),
+        )
+
     @app.patch("/api/local/agent/extensions/plugins/{plugin_id}")
     async def update_plugin(plugin_id: str, request: Request):
         payload = await _body(request)
@@ -225,6 +239,73 @@ def install_extension_routes(
             return result
 
         return await _run("delete_plugin", _op)
+
+    @app.get("/api/local/agent/extensions/skills/recommended")
+    async def list_recommended_skills(request: Request):
+        local_control(request)
+        raw_refresh = str(request.query_params.get("refresh") or "").strip().lower()
+        refresh = raw_refresh in ("1", "true", "yes")
+        return await _run(
+            "list_recommended_skills",
+            lambda: extensions.store.list_recommended_skills(refresh=refresh),
+        )
+
+    @app.post("/api/local/agent/extensions/skills/recommended/install")
+    async def install_recommended_skill(request: Request):
+        payload = await _body(request)
+        return await _run(
+            "install_recommended_skill",
+            lambda: extensions.store.install_recommended_skill(
+                payload,
+                desktop_access=_desktop_access(),
+            ),
+        )
+
+    @app.post("/api/local/agent/extensions/skills/refresh")
+    async def refresh_discovered_skills(request: Request):
+        local_control(request)
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 16 * 1024:
+                raise HTTPException(413, detail="agent_request_limit")
+        payload: dict[str, Any] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except Exception:
+                pass
+        return await _run(
+            "refresh_discovered_skills",
+            lambda: extensions.store.sync_discovered_skills(
+                desktop_access=_desktop_access(),
+                reset_uninstalled=bool(payload.get("reset_uninstalled", False)),
+            ),
+        )
+
+    @app.get("/api/local/agent/extensions/skills/{skill_id}/files")
+    async def read_skill_package_file(skill_id: str, request: Request):
+        local_control(request)
+        rel_path = str(request.query_params.get("path") or "SKILL.md").strip() or "SKILL.md"
+        return await _run(
+            "read_skill_package_file",
+            lambda: extensions.store.read_skill_file(
+                skill_id,
+                rel_path,
+                allow_disabled=True,
+            ),
+        )
+
+    @app.post("/api/local/agent/extensions/skills/{skill_id}/open")
+    async def open_skill_path(skill_id: str, request: Request):
+        payload = await _body(request)
+        action = str(payload.get("action") or "open").strip().lower()
+        return await _run(
+            "open_skill_path",
+            lambda: extensions.store.open_skill_path(skill_id, action=action),
+        )
 
     @app.patch("/api/local/agent/extensions/skills/{skill_id}")
     async def update_skill(skill_id: str, request: Request):

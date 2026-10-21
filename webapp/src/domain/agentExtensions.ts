@@ -11,6 +11,7 @@ export type ExtensionSourceFormat =
   | string;
 
 export type ExtensionMcpTransport = "stdio" | "streamable_http";
+export type ExtensionMcpOauthClientRegistration = "auto" | "cimd" | "dcr";
 export type ExtensionMcpStatus =
   | "disabled"
   | "ready"
@@ -77,11 +78,14 @@ export interface ExtensionMcpServer {
   cwd: string;
   env_keys: string[];
   masked_env: Record<string, ExtensionMaskedSecret>;
+  env_vars?: string[];
   url: string;
   bearer_token_env: string;
   bearer_token_env_present?: boolean;
   header_keys: string[];
   masked_headers: Record<string, ExtensionMaskedSecret>;
+  env_http_headers?: Record<string, string>;
+  oauth_client_registration?: ExtensionMcpOauthClientRegistration;
   has_secrets?: boolean;
   startup_timeout_ms: number;
   tool_timeout_ms: number;
@@ -103,6 +107,21 @@ export interface ExtensionSkillFile {
   size: number;
 }
 
+export type ExtensionSkillScope = "user" | "repo" | "system" | "plugin" | "curated" | string;
+
+export interface ExtensionSkillInterface {
+  display_name?: string;
+  short_description?: string;
+  icon_small?: string | null;
+  icon_large?: string | null;
+  brand_color?: string | null;
+  default_prompt?: string | null;
+}
+
+export interface ExtensionSkillPolicy {
+  allow_implicit_invocation?: boolean;
+}
+
 export interface ExtensionSkill {
   id: string;
   instance_id?: string;
@@ -110,6 +129,7 @@ export interface ExtensionSkill {
   name: string;
   title: string;
   description: string;
+  short_description?: string;
   summary?: string;
   version: string;
   install_generation?: number;
@@ -124,10 +144,33 @@ export interface ExtensionSkill {
   /** True when the skill is standalone or its parent plugin is enabled. */
   parent_enabled: boolean;
   source_format: ExtensionSourceFormat;
+  scope?: ExtensionSkillScope;
+  path?: string;
+  package_dir?: string;
+  interface?: ExtensionSkillInterface;
+  policy?: ExtensionSkillPolicy;
   plugin_id: string | null;
   files: ExtensionSkillFile[];
   warnings: string[];
   updated_at?: string | null;
+}
+
+export interface RecommendedSkill {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  short_description: string;
+  summary?: string;
+  version: string;
+  repo_path: string;
+  source_dir?: string | null;
+  path: string;
+  scope: ExtensionSkillScope;
+  content: string;
+  installed: boolean;
+  interface?: ExtensionSkillInterface;
+  policy?: ExtensionSkillPolicy;
 }
 
 export interface ExtensionPluginCapabilities {
@@ -206,9 +249,12 @@ export interface ExtensionMcpServerCreateInput {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  env_vars?: string[];
   url?: string;
   bearer_token_env?: string;
   headers?: Record<string, string>;
+  env_http_headers?: Record<string, string>;
+  oauth_client_registration?: ExtensionMcpOauthClientRegistration;
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
@@ -227,9 +273,12 @@ export interface ExtensionMcpServerUpdateInput {
   args?: string[];
   cwd?: string;
   env?: Record<string, string | null>;
+  env_vars?: string[];
   url?: string;
   bearer_token_env?: string;
   headers?: Record<string, string | null>;
+  env_http_headers?: Record<string, string | null>;
+  oauth_client_registration?: ExtensionMcpOauthClientRegistration;
   startup_timeout_ms?: number;
   tool_timeout_ms?: number;
   computer_access?: boolean;
@@ -571,6 +620,17 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
   const enabled = raw.enabled !== undefined ? Boolean(raw.enabled) : componentEnabled && parentEnabled;
   const maskedEnvRaw = raw.masked_env && typeof raw.masked_env === "object" ? (raw.masked_env as Record<string, ExtensionMaskedSecret>) : {};
   const maskedHeadersRaw = raw.masked_headers && typeof raw.masked_headers === "object" ? (raw.masked_headers as Record<string, ExtensionMaskedSecret>) : {};
+  const envHttpHeadersRaw: Record<string, string> = {};
+  if (raw.env_http_headers && typeof raw.env_http_headers === "object") {
+    for (const [k, v] of Object.entries(raw.env_http_headers as Record<string, unknown>)) {
+      if (typeof k === "string" && k.trim() && typeof v === "string" && v.trim()) {
+        envHttpHeadersRaw[k.trim()] = v.trim();
+      }
+    }
+  }
+  const oauthRegRaw = typeof raw.oauth_client_registration === "string" ? raw.oauth_client_registration.toLowerCase() : "auto";
+  const oauthClientRegistration: ExtensionMcpOauthClientRegistration =
+    oauthRegRaw === "cimd" || oauthRegRaw === "dcr" ? oauthRegRaw : "auto";
   const tools = Array.isArray(raw.tools)
     ? raw.tools.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object")).map(normalizeMcpTool)
     : [];
@@ -597,11 +657,14 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
     cwd: typeof raw.cwd === "string" ? raw.cwd : "",
     env_keys: Array.isArray(raw.env_keys) ? raw.env_keys.map(String) : Object.keys(maskedEnvRaw),
     masked_env: maskedEnvRaw,
+    env_vars: Array.isArray(raw.env_vars) ? raw.env_vars.map(String).filter(Boolean) : [],
     url: typeof raw.url === "string" ? raw.url : "",
     bearer_token_env: typeof raw.bearer_token_env === "string" ? raw.bearer_token_env : "",
     bearer_token_env_present: typeof raw.bearer_token_env_present === "boolean" ? raw.bearer_token_env_present : undefined,
     header_keys: Array.isArray(raw.header_keys) ? raw.header_keys.map(String) : Object.keys(maskedHeadersRaw),
     masked_headers: maskedHeadersRaw,
+    env_http_headers: envHttpHeadersRaw,
+    oauth_client_registration: oauthClientRegistration,
     has_secrets: typeof raw.has_secrets === "boolean" ? raw.has_secrets : Boolean(Object.keys(maskedEnvRaw).length || Object.keys(maskedHeadersRaw).length),
     startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : 10000,
     tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : 30000,
@@ -618,11 +681,63 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
   };
 }
 
+function normalizeSkillInterface(
+  raw: unknown,
+  fallbackTitle: string,
+  fallbackShortDesc: string,
+): ExtensionSkillInterface {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    display_name:
+      typeof obj.display_name === "string" && obj.display_name
+        ? obj.display_name
+        : typeof obj.displayName === "string" && obj.displayName
+          ? obj.displayName
+          : fallbackTitle,
+    short_description:
+      typeof obj.short_description === "string" && obj.short_description
+        ? obj.short_description
+        : typeof obj.shortDescription === "string" && obj.shortDescription
+          ? obj.shortDescription
+          : fallbackShortDesc,
+    icon_small:
+      typeof obj.icon_small === "string" && obj.icon_small
+        ? obj.icon_small
+        : typeof obj.iconSmall === "string" && obj.iconSmall
+          ? obj.iconSmall
+          : null,
+    icon_large:
+      typeof obj.icon_large === "string" && obj.icon_large
+        ? obj.icon_large
+        : typeof obj.iconLarge === "string" && obj.iconLarge
+          ? obj.iconLarge
+          : null,
+    brand_color:
+      typeof obj.brand_color === "string" && obj.brand_color
+        ? obj.brand_color
+        : typeof obj.brandColor === "string" && obj.brandColor
+          ? obj.brandColor
+          : null,
+    default_prompt:
+      typeof obj.default_prompt === "string" && obj.default_prompt
+        ? obj.default_prompt
+        : typeof obj.defaultPrompt === "string" && obj.defaultPrompt
+          ? obj.defaultPrompt
+          : null,
+  };
+}
+
 export function normalizeSkill(raw: Record<string, unknown>): ExtensionSkill {
   const id = String(raw.id ?? "");
   const name = typeof raw.name === "string" && raw.name ? raw.name : id;
   const title = typeof raw.title === "string" && raw.title ? raw.title : name;
   const description = typeof raw.description === "string" ? raw.description : typeof raw.summary === "string" ? raw.summary : "";
+  const shortDescription =
+    typeof raw.short_description === "string" && raw.short_description
+      ? raw.short_description
+      : typeof raw.summary === "string" && raw.summary
+        ? raw.summary
+        : description;
   const parentEnabled = raw.parent_enabled !== undefined ? Boolean(raw.parent_enabled) : true;
   const componentEnabled = raw.component_enabled !== undefined ? Boolean(raw.component_enabled) : Boolean(raw.enabled);
   const enabled = raw.enabled !== undefined ? Boolean(raw.enabled) : componentEnabled && parentEnabled;
@@ -631,6 +746,15 @@ export function normalizeSkill(raw: Record<string, unknown>): ExtensionSkill {
         .filter((f): f is Record<string, unknown> => Boolean(f && typeof f === "object" && typeof f.path === "string"))
         .map(f => ({ path: String(f.path), size: typeof f.size === "number" ? f.size : 0 }))
     : [];
+  const scope: ExtensionSkillScope =
+    typeof raw.scope === "string" && raw.scope
+      ? raw.scope
+      : raw.builtin
+        ? "system"
+        : raw.plugin_id
+          ? "plugin"
+          : "user";
+  const policyObj = raw.policy && typeof raw.policy === "object" ? (raw.policy as Record<string, unknown>) : {};
   return {
     id,
     instance_id: typeof raw.instance_id === "string" ? raw.instance_id : undefined,
@@ -638,21 +762,68 @@ export function normalizeSkill(raw: Record<string, unknown>): ExtensionSkill {
     name,
     title,
     description,
+    short_description: shortDescription,
     summary: typeof raw.summary === "string" ? raw.summary : description,
     version: typeof raw.version === "string" ? raw.version : "1.0.0",
     install_generation: typeof raw.install_generation === "number" ? raw.install_generation : undefined,
     content: typeof raw.content === "string" ? raw.content : "",
     manifest_sha256: typeof raw.manifest_sha256 === "string" ? raw.manifest_sha256 : null,
     builtin: Boolean(raw.builtin),
-    deletable: raw.deletable !== undefined ? Boolean(raw.deletable) : !raw.builtin,
+    deletable: raw.deletable !== undefined ? Boolean(raw.deletable) : !raw.builtin && scope !== "system",
     enabled,
     component_enabled: componentEnabled,
     parent_enabled: parentEnabled,
     source_format: typeof raw.source_format === "string" && raw.source_format ? raw.source_format : raw.builtin ? "builtin" : "skill_md",
+    scope,
+    path: typeof raw.path === "string" ? raw.path : "",
+    package_dir: typeof raw.package_dir === "string" ? raw.package_dir : "",
+    interface: normalizeSkillInterface(raw.interface, title, shortDescription),
+    policy: {
+      allow_implicit_invocation:
+        policyObj.allow_implicit_invocation !== undefined
+          ? Boolean(policyObj.allow_implicit_invocation)
+          : true,
+    },
     plugin_id: typeof raw.plugin_id === "string" && raw.plugin_id ? raw.plugin_id : null,
     files,
     warnings: Array.isArray(raw.warnings) ? raw.warnings.map(String) : [],
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,
+  };
+}
+
+export function normalizeRecommendedSkill(raw: Record<string, unknown>): RecommendedSkill {
+  const id = String(raw.id ?? "");
+  const name = typeof raw.name === "string" && raw.name ? raw.name : id;
+  const title = typeof raw.title === "string" && raw.title ? raw.title : name;
+  const description = typeof raw.description === "string" ? raw.description : "";
+  const shortDescription =
+    typeof raw.short_description === "string" && raw.short_description
+      ? raw.short_description
+      : typeof raw.summary === "string" && raw.summary
+        ? raw.summary
+        : description;
+  const policyObj = raw.policy && typeof raw.policy === "object" ? (raw.policy as Record<string, unknown>) : {};
+  return {
+    id,
+    name,
+    title,
+    description,
+    short_description: shortDescription,
+    summary: typeof raw.summary === "string" ? raw.summary : shortDescription,
+    version: typeof raw.version === "string" ? raw.version : "1.0.0",
+    repo_path: typeof raw.repo_path === "string" ? raw.repo_path : `skills/.curated/${id}`,
+    source_dir: typeof raw.source_dir === "string" ? raw.source_dir : null,
+    path: typeof raw.path === "string" ? raw.path : `skills/.curated/${id}`,
+    scope: typeof raw.scope === "string" && raw.scope ? raw.scope : "curated",
+    content: typeof raw.content === "string" ? raw.content : "",
+    installed: Boolean(raw.installed),
+    interface: normalizeSkillInterface(raw.interface, title, shortDescription),
+    policy: {
+      allow_implicit_invocation:
+        policyObj.allow_implicit_invocation !== undefined
+          ? Boolean(policyObj.allow_implicit_invocation)
+          : true,
+    },
   };
 }
 
@@ -782,6 +953,20 @@ export const agentExtensions = {
     };
   },
 
+  restartAllMcpServers: async (): Promise<ExtensionOverview> => {
+    const raw = await extensionRequest<Record<string, unknown>>("/mcp/restart", "POST", {});
+    const overviewPayload =
+      raw.overview && typeof raw.overview === "object" ? (raw.overview as Record<string, unknown>) : raw;
+    return normalizeOverview(overviewPayload);
+  },
+
+  clearMcpAppData: async (): Promise<ExtensionOverview> => {
+    const raw = await extensionRequest<Record<string, unknown>>("/mcp/apps/clear-data", "POST", {});
+    const overviewPayload =
+      raw.overview && typeof raw.overview === "object" ? (raw.overview as Record<string, unknown>) : raw;
+    return normalizeOverview(overviewPayload);
+  },
+
   updatePlugin: async (id: string, body: { enabled: boolean; expected_revision: number }): Promise<ExtensionPlugin> =>
     normalizePlugin(
       await extensionRequest<Record<string, unknown>>(`/plugins/${encodeURIComponent(id)}`, "PATCH", body),
@@ -803,6 +988,54 @@ export const agentExtensions = {
       `/skills/${encodeURIComponent(id)}?expected_revision=${encodeURIComponent(String(expectedRevision))}`,
       "DELETE",
     ),
+
+  recommendedSkills: async (refresh = false, signal?: AbortSignal): Promise<RecommendedSkill[]> => {
+    const query = refresh ? "?refresh=1" : "";
+    const raw = await extensionRequest<Record<string, unknown>>(`/skills/recommended${query}`, "GET", undefined, signal);
+    const list = Array.isArray(raw.skills) ? raw.skills : [];
+    return list
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      .map(normalizeRecommendedSkill);
+  },
+
+  installRecommendedSkill: async (body: {
+    skill_id: string;
+    repo_path?: string;
+  }): Promise<{ skill: ExtensionSkill; overview: ExtensionOverview }> => {
+    const raw = await extensionRequest<{ skill: Record<string, unknown>; overview: Record<string, unknown> }>(
+      "/skills/recommended/install",
+      "POST",
+      body,
+    );
+    return {
+      skill: normalizeSkill(raw.skill ?? {}),
+      overview: normalizeOverview(raw.overview ?? {}),
+    };
+  },
+
+  refreshSkills: async (body?: { reset_uninstalled?: boolean }): Promise<ExtensionOverview> => {
+    const raw = await extensionRequest<Record<string, unknown>>("/skills/refresh", "POST", body ?? {});
+    const overviewPayload =
+      raw.overview && typeof raw.overview === "object" ? (raw.overview as Record<string, unknown>) : raw;
+    return normalizeOverview(overviewPayload);
+  },
+
+  openSkillPath: (id: string, action: "open" | "reveal" = "open") =>
+    extensionRequest<{ ok: boolean; action: string; path: string }>(
+      `/skills/${encodeURIComponent(id)}/open`,
+      "POST",
+      { action },
+    ),
+
+  readSkillFile: (id: string, relativePath = "SKILL.md") =>
+    extensionRequest<{
+      skill_id: string;
+      version: string;
+      path: string;
+      content: string;
+      truncated: boolean;
+      files: string[];
+    }>(`/skills/${encodeURIComponent(id)}/files?path=${encodeURIComponent(relativePath)}`, "GET"),
 
   previewImport: (body: ExtensionImportPreviewRequest) =>
     extensionRequest<ExtensionImportPreview>("/import/preview", "POST", body),

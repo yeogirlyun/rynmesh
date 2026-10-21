@@ -23,18 +23,12 @@ from rynmesh.agent_runtime.js_runtime import (
 from rynmesh.agent_runtime.js_runtime.images import (
     CAPABILITY_TOKEN_HEX_LEN,
     CAPABILITY_URL_PREFIX,
-    MAX_ACTIVE_PINNED_IMAGES,
     MAX_GUEST_INLINE_BASE64_BYTES,
-    MAX_IMAGE_PIXELS,
     MAX_NATIVE_IMAGE_BYTES,
-    MAX_PROMOTION_QUEUE_ENTRIES,
     MAX_SCREENSHOT_DESCRIPTOR_BYTES,
     MAX_SESSION_IMAGE_ENTRIES,
-    MAX_SESSION_ORIGINAL_BYTES,
-    MAX_TOTAL_PROMOTION_BYTES,
     HostImageIssuanceContext,
     HostImageRegistry,
-    ImagePromotionResult,
     PromotedImageAttachment,
     VerifiedHostImageArtifact,
     native_window_refs_equal,
@@ -45,7 +39,6 @@ from rynmesh.agent_runtime.js_runtime.images import (
     seal_verified_host_artifact,
 )
 from rynmesh.agent_runtime.js_runtime.protocol import (
-    MAX_AGGREGATE_EVENT_BYTES,
     MAX_FRAME_BYTES,
     MAX_RESULT_BYTES,
     REDACTED_CAPABILITY_PLACEHOLDER,
@@ -312,6 +305,7 @@ class TestAgentJsImages(unittest.TestCase):
         dev_profile_root = _resolve_test_dev_profile_root(_DEV_PROFILE_CANDIDATE)
         if dev_profile_root is None:
             self.skipTest("Explicit development JS runtime profile not prepared")
+        self.dev_profile_root = dev_profile_root
         self._tmp = tempfile.TemporaryDirectory(prefix="ryn_js_img_test_")
         self.root = Path(self._tmp.name).resolve(strict=True)
         self.verifier = StrictFixtureArtifactVerifier(self.root)
@@ -907,7 +901,7 @@ class TestAgentJsImages(unittest.TestCase):
 
         # 5. Manager without HostImageRegistry marks drained promotions unavailable (ryn_js_image_registry_unavailable).
         plain_manager = JsRuntimeManager(
-            development_profile_root=_DEV_PROFILE_ROOT,
+            development_profile_root=self.dev_profile_root,
             image_registry=None,
         )
         try:

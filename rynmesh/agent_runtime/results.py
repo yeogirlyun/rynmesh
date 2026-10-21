@@ -83,10 +83,27 @@ def format_reference_result(
             if key not in {"structuredContent", "content", "native_observation_artifacts"}
             and isinstance(value, (str, int, float, bool, type(None)))
         }
-        if isinstance(result.get("images"), list):
-            imgs_bytes = len(encoded(result["images"]))
-            if imgs_bytes <= max(1024, max_bytes // 3):
-                preview["images"] = result["images"]
+        for art_key in ("images", "native_observation_artifacts", "image_artifacts", "mcp_artifacts"):
+            if isinstance(result.get(art_key), list):
+                art_bytes = len(encoded(result[art_key]))
+                if art_bytes <= max(2048, max_bytes // 3):
+                    preview[art_key] = result[art_key]
+        sc = result.get("structuredContent")
+        if isinstance(sc, dict):
+            scalar_sc = {}
+            for k, v in sc.items():
+                if isinstance(v, list) and k != "rect":
+                    continue
+                if k in {"screenshot_b64", "screenshot"}:
+                    continue
+                if k == "observation" and isinstance(v, dict):
+                    scalar_sc["observation"] = {
+                        ok: ov for ok, ov in v.items() if ok != "elements"
+                    }
+                else:
+                    scalar_sc[k] = v
+            if len(encoded(scalar_sc)) <= max(1024, max_bytes // 4):
+                preview["structuredContent"] = scalar_sc
         preview.update(base)
         preview["truncated_inline"] = True
         if isinstance( preview.get("text"), str) and len(preview["text"]) > max(512, max_bytes // 3):

@@ -7,7 +7,6 @@ processes, modify environment variables, or query PATH/cwd/temp in production mo
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -1119,7 +1118,7 @@ class VerifiedJsResourceLease:
                     "ryn_js_resource_file_missing",
                     "Lease pinned file set does not match full manifest file inventory",
                 )
-            for rel_path, entry in file_map.items():
+            for rel_path, _entry in file_map.items():
                 pin = self._pinned_files.get(rel_path)
                 if pin is None:
                     raise JsResourceError("ryn_js_resource_file_missing", f"Missing pinned handle for {rel_path}")
@@ -1905,7 +1904,7 @@ def _verify_no_unexpected_files_in_root(
     expected_dir_rel_paths: set[str] | None = None,
 ) -> None:
     """Walk `root_resolved` without following symlinks and reject any unexpected files, directories, or reparse points."""
-    allowed_Meta = {MANIFEST_FILENAME, BUILD_RECEIPT_FILENAME}
+    allowed_meta = {MANIFEST_FILENAME, BUILD_RECEIPT_FILENAME}
     seen_files: set[str] = set()
     seen_dirs: set[str] = set()
 
@@ -1938,7 +1937,7 @@ def _verify_no_unexpected_files_in_root(
                     f"File inside resource profile is a symlink or reparse point: {fpath}",
                 )
             rel = fpath.relative_to(root_resolved).as_posix()
-            if rel in allowed_Meta:
+            if rel in allowed_meta:
                 continue
             if rel not in expected_rel_paths:
                 raise JsResourceError(

@@ -634,11 +634,11 @@ def test_ready_time_authority_and_approval_guards_yield_zero_commit(tmp_path: Pa
 
             def _mut(data: dict[str, Any]) -> bool:
                 target = data["tasks"]["task_owned"]
-                if change == "desktop":
+                if change == "desktop":  # noqa: B023 - this callback finishes within the current case.
                     data["settings"]["desktop_access"] = False
-                elif change == "task":
+                elif change == "task":  # noqa: B023 - this callback finishes within the current case.
                     target["status"] = "paused"
-                elif change == "control":
+                elif change == "control":  # noqa: B023 - this callback finishes within the current case.
                     target["control_revision"] += 1
                 return True
 
@@ -646,23 +646,23 @@ def test_ready_time_authority_and_approval_guards_yield_zero_commit(tmp_path: Pa
 
             def _instrument(*a: Any, on_ready: Callable[[dict[str, Any]], Any], **kw: Any) -> Any:
                 def _ready(payload: dict[str, Any]) -> Any:
-                    ready_calls.append("ready")
-                    if change == "cancel":
-                        flag["cancelled"] = True
-                    elif change in {"desktop", "task", "control"}:
-                        store.transaction(_mut)
-                    elif change == "binding":
-                        ext.set_plugin_enabled(COMPUTER_USE_PLUGIN_ID, False, desktop_access=True)
-                    elif change == "preview":
-                        adapter.execute(
+                    ready_calls.append("ready")  # noqa: B023 - this callback finishes within the current case.
+                    if change == "cancel":  # noqa: B023 - this callback finishes within the current case.
+                        flag["cancelled"] = True  # noqa: B023 - this callback finishes within the current case.
+                    elif change in {"desktop", "task", "control"}:  # noqa: B023 - this callback finishes within the current case.
+                        store.transaction(_mut)  # noqa: B023 - this callback finishes within the current case.
+                    elif change == "binding":  # noqa: B023 - this callback finishes within the current case.
+                        ext.set_plugin_enabled(COMPUTER_USE_PLUGIN_ID, False, desktop_access=True)  # noqa: B023 - this callback finishes within the current case.
+                    elif change == "preview":  # noqa: B023 - this callback finishes within the current case.
+                        adapter.execute(  # noqa: B023 - this callback finishes within the current case.
                             read_name,
                             {"hwnd": 100100, "include_screenshot": False},
                             operation_id="op_changed_read",
-                            context=ctx,
+                            context=ctx,  # noqa: B023 - this callback finishes within the current case.
                         )
                     return on_ready(payload)
 
-                return real_execute(*a, on_ready=_ready, **kw)
+                return real_execute(*a, on_ready=_ready, **kw)  # noqa: B023 - this callback finishes within the current case.
 
             bridge.execute_action = _instrument  # type: ignore[method-assign]
 
@@ -674,7 +674,7 @@ def test_ready_time_authority_and_approval_guards_yield_zero_commit(tmp_path: Pa
                         operation_id="op_write",
                         context=ctx,
                         expected_preview=preview,
-                        cancelled=lambda: flag["cancelled"],
+                        cancelled=lambda: flag["cancelled"],  # noqa: B023 - this callback finishes within the current case.
                     )
                 else:
                     local.execute(
@@ -683,7 +683,7 @@ def test_ready_time_authority_and_approval_guards_yield_zero_commit(tmp_path: Pa
                         operation_id="op_write",
                         context=ctx,
                         expected_preview=preview,
-                        cancelled=lambda: flag["cancelled"],
+                        cancelled=lambda: flag["cancelled"],  # noqa: B023 - this callback finishes within the current case.
                     )
 
             ev = env["events"]()
