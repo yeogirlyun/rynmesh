@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Copy, Download, ExternalLink, FileText, FolderOpen, Image as ImageIcon, File as FileIcon, RefreshCw, Sheet, TriangleAlert } from "lucide-react";
 import { AgentAPIError, agentReadBackoff, isTransientAgentReadError, agentFileUrl, agentTaskState, isAgentActive, rynAgent, type AgentArtifact, type AgentArtifactListing, type AgentFileArtifact, type AgentTask } from "../domain/rynAgent";
@@ -11,6 +11,24 @@ import "../personal/nas.css";
 // Tool results that can add, change or remove a task's workspace files or their render evidence.
 const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
 const EMPTY_FILES: AgentFileArtifact[] = [];
+const HELPER_SCRIPT_RE = /\.(?:py|pyc|pyo|json|jsonl|sh|bash|zsh|ps1|bat|cmd|js|mjs|cjs|ts|tsx|yaml|yml|toml|ini|cfg|log|tmp|bak)$/i;
+
+function fileTurnIndex(file: AgentFileArtifact, maxTurnIndex: number): number {
+  if (typeof file.turn_index === "number" && Number.isFinite(file.turn_index)) {
+    return Math.max(0, Math.min(file.turn_index, maxTurnIndex));
+  }
+  if (file.goal_revisions?.length) {
+    return Math.max(0, Math.min(file.goal_revisions[file.goal_revisions.length - 1] - 1, maxTurnIndex));
+  }
+  return 0;
+}
+
+const TaskTurnDeliverablesContext = createContext<{
+  task: AgentTask;
+  maxTurnIndex: number;
+  deliverablesByTurn: Map<number, AgentFileArtifact[]>;
+  openFile: (file: AgentFileArtifact) => void;
+} | null>(null);
 
 function size(bytes = 0): string {
   return bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1048576).toFixed(1)} MiB`;
@@ -49,8 +67,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
     <span className="ra-file-icon" data-format={format}><Icon size={22} strokeWidth={1.6} /></span>
     <div className="ra-file-meta">
       <button className="ra-file-name" title={path} aria-label={t("openArtifact", { name: file.name })} disabled={!openable} onClick={() => onOpen(file)}>{file.name}</button>
-      <small>{format}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</small>
-      {file.attribution === "observed_during_command" && <small>{t("fileCommandObservation")}</small>}
+      <small>{format}{file.bytes ? ` · ${size(file.bytes)}` : ""}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</small>
       {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{t(`fileStatus_${file.status}`)}</small>
         : null}
       {saveError && <small role="alert" className="ra-file-warning">{t("artifactReadError")}</small>}
@@ -77,7 +94,20 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
   </div>;
 }
 
-export function TaskArtifacts({ task, children }: { task: AgentTask; children?: ReactNode }) {
+export function TurnDeliverables({ turnIndex }: { turnIndex: number }) {
+  const ctx = useContext(TaskTurnDeliverablesContext);
+  const { t } = useTranslation("rynAgent");
+  if (!ctx || turnIndex >= ctx.maxTurnIndex) return null;
+  const turnFiles = ctx.deliverablesByTurn.get(turnIndex);
+  if (!turnFiles?.length) return null;
+  const available = turnFiles.filter(f => f.status !== "missing").length;
+  return <section className="ra-files ra-turn-files" aria-label={t("resultFiles")}>
+    <div className="ra-files-head"><span role="status" aria-live="polite">{available ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!available ? "filesUnavailable" : "filesReady", { count: available })}</span></div>
+    {turnFiles.map(item => <FileCard key={item.id} task={ctx.task} file={item} onOpen={ctx.openFile} />)}
+  </section>;
+}
+
+export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: AgentTask; maxTurnIndex?: number; children?: ReactNode }) {
   const { t } = useTranslation("rynAgent");
   const [listing, setListing] = useState<AgentArtifactListing | null>(null);
   const [chosen, setChosen] = useState<AgentArtifact | null>(null);
@@ -118,6 +148,7 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
         else if (!finished) timer = setTimeout(load, Math.min(30000, 5000 * 2 ** Math.min(unchanged, 3)));
       } catch (reason) {
         if (controller.signal.aborted) return;
+        if (reason instanceof AgentAPIError && (reason.code === "agent_task_deleted" || reason.code === "agent_task_not_found" || reason.status === 404 || reason.status === 410)) return;
         setError(true);
         if (isTransientAgentReadError(reason)) {
           timer = setTimeout(load, agentReadBackoff(++failures));
@@ -159,21 +190,36 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
     }
   }, [task.id, file?.id, file?.sha256, t]);
   const items = listing?.artifacts || [];
-  const resultFiles = files.filter(item => item.source !== "computer_observation" && !item.path.replaceAll("\\", "/").startsWith(".ryn/computer/"));
-  const deliverables = resultFiles.filter(item => item.role === "deliverable");
-  const supporting = resultFiles.filter(item => item.role !== "deliverable");
+  const resultFiles = files.filter(item => item.source !== "computer_observation" && !item.path.replaceAll("\\", "/").startsWith(".ryn/computer/") && !item.path.replaceAll("\\", "/").startsWith(".ryn/attachments/"));
+  const deliverablesByTurn = useMemo(() => {
+    const map = new Map<number, AgentFileArtifact[]>();
+    for (const item of resultFiles) {
+      if (item.role !== "deliverable") continue;
+      const tIdx = fileTurnIndex(item, maxTurnIndex);
+      const list = map.get(tIdx) || [];
+      list.push(item);
+      map.set(tIdx, list);
+    }
+    return map;
+  }, [resultFiles, maxTurnIndex]);
+  const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile }), [task, maxTurnIndex, deliverablesByTurn, openFile]);
+  const currentTurnFiles = resultFiles.filter(item => fileTurnIndex(item, maxTurnIndex) === maxTurnIndex);
+  const deliverables = currentTurnFiles.filter(item => item.role === "deliverable");
+  const supporting = currentTurnFiles.filter(item => item.role !== "deliverable" && item.source !== "command" && !HELPER_SCRIPT_RE.test(item.name));
+  const showResultFiles = deliverables.length > 0 || supporting.length > 0;
   const unbacked = listing?.unbacked_mentions || [];
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
-  const availableCount = deliverables.filter(file => file.status !== "missing").length || resultFiles.filter(file => file.status !== "missing").length;
+  const availableCount = deliverables.filter(file => file.status !== "missing").length || supporting.filter(file => file.status !== "missing").length;
   useEffect(() => {
     if (!chosenFile && !chosen) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") { setChosenFile(""); setChosen(null); } };
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
   }, [chosenFile, chosen]);
-  return <AgentFileContext.Provider value={fileContext}>
+  return <AgentFileContext.Provider value={fileContext}><TaskTurnDeliverablesContext.Provider value={turnContext}>
     {children}
-    {resultFiles.length > 0 && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
+    {showResultFiles && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
+      {error && items.length === 0 && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       <div className="ra-files-head"><span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : partial ? "filesSavedPartial" : "filesReady", { count: availableCount })}</span>
         <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button></div>
       {deliverables.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}
@@ -187,8 +233,8 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
         loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
-    {!files.length && finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
-    {(items.length > 0 || error) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
+    {!showResultFiles && finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
+    {(items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
       {items.length > 0 && <div className="ra-files-head" role="status"><Check size={15} />{t(partial ? "filesSavedPartial" : "filesReady", { count: items.length })}</div>}
       {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={22} strokeWidth={1.6} /></span>
@@ -198,5 +244,5 @@ export function TaskArtifacts({ task, children }: { task: AgentTask; children?: 
         entry={{ name: chosen.name, path: chosen.name, directory: false, size: chosen.bytes, modified: chosen.created_at || "" }}
         onClose={() => setChosen(null)} download={() => {}} askAi={() => {}} busy={false} readText={readText} readOnly /></div>}
     </section>}
-  </AgentFileContext.Provider>;
+  </TaskTurnDeliverablesContext.Provider></AgentFileContext.Provider>;
 }

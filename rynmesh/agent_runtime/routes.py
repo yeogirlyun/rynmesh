@@ -64,7 +64,7 @@ def install_agent(app: Any, *, store: Any, home: str | Path, workers: Any,
     automation_worker = AutomationSchedulerWorker(runtime)
     app.state.agent_automation_worker = automation_worker
     workers.register(BackgroundWorkerSpec(name="ryn-agent", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
-    for slot in (2, 3):
+    for slot in range(2, 7):
         workers.register(BackgroundWorkerSpec(name=f"ryn-agent-{slot}", run_once=(lambda: WorkerRunResult()) if startup_error else runtime.run_continuously, policy=BackoffPolicy.fixed(0.5)), replace=True)
     workers.register(BackgroundWorkerSpec(name=MEMORY_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else memory_worker.run_once, policy=BackoffPolicy.fixed(1.0)), replace=True)
     workers.register(BackgroundWorkerSpec(name=AUTOMATION_WORKER_NAME, run_once=(lambda: WorkerRunResult()) if startup_error else automation_worker.run_once, policy=BackoffPolicy.fixed(2.0)), replace=True)

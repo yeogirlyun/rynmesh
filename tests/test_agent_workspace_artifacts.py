@@ -276,3 +276,62 @@ def test_temporarily_locked_output_is_retained_then_becomes_openable(tmp_path, m
     available = workspace_artifacts.listing(row)["files"][0]
     assert available["id"] == item["id"] and available["status"] == "unverified"
     assert workspace_artifacts.read(row, item["id"])["bytes"] == b"workbook"
+
+
+def test_unmentioned_shell_scratch_files_are_supporting_until_named_in_answer(tmp_path):
+    before = workspace_artifacts.snapshot(tmp_path)
+    brief = tmp_path / "skills_brief.txt"
+    listing_json = tmp_path / "skills_list.json"
+    brief.write_text("brief", encoding="utf-8")
+    listing_json.write_text("[]", encoding="utf-8")
+    files = workspace_artifacts.command_files(tmp_path, before)
+    row = {"local_execution": {"workspace_root": str(tmp_path)},
+           "receipts": [receipt("op1", "ryn_shell_execute", {}, {"workspace_files": files})],
+           "result": "", "messages": []}
+    roles = {item["name"]: item["role"] for item in workspace_artifacts.listing(row)["files"]}
+    assert roles == {"skills_brief.txt": "supporting", "skills_list.json": "supporting"}
+    row["result"] = "See skills_brief.txt for the summary."
+    roles_after = {item["name"]: item["role"] for item in workspace_artifacts.listing(row)["files"]}
+    assert roles_after == {"skills_brief.txt": "deliverable", "skills_list.json": "supporting"}
+
+
+def test_helper_scripts_stay_supporting_and_turn_deliverables_survive_multi_turn(tmp_path):
+    attach_dir = tmp_path / ".ryn" / "attachments" / "task-1"
+    attach_dir.mkdir(parents=True)
+    (attach_dir / "Payoneer.pdf").write_bytes(b"%PDF-1.4 input")
+    before = workspace_artifacts.snapshot(tmp_path)
+    probe_py = tmp_path / "geom_probe2.py"
+    probe_json = tmp_path / "verify_payoneer.json"
+    out_pdf = tmp_path / "Payoneer_fixed.pdf"
+    probe_py.write_text("import fitz", encoding="utf-8")
+    probe_json.write_text('{"ok": true}', encoding="utf-8")
+    out_pdf.write_bytes(b"%PDF-1.4 fixed")
+    files = workspace_artifacts.command_files(tmp_path, before)
+    row = {
+        "local_execution": {"workspace_root": str(tmp_path)},
+        "receipts": [
+            receipt("op_py", "ryn_file_write", {"path": str(probe_py)}, {"path": str(probe_py), "sha256": sha(probe_py.read_bytes())}),
+            receipt("op_cmd", "ryn_shell_execute", {}, {"running": False, "exit_code": 0, "workspace_files": files}),
+        ],
+        "messages": [
+            {"role": "user", "content": "Fix Payoneer.pdf"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "ryn_file_write"}}, {"id": "c2", "function": {"name": "ryn_shell_execute"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "{}"},
+            {"role": "tool", "tool_call_id": "c2", "content": "{}"},
+            {"role": "assistant", "content": "Generated Payoneer_fixed.pdf (verified via geom_probe2.py and verify_payoneer.json)."},
+            {"role": "user", "content": "Why did the other files show up?"},
+            {"role": "assistant", "content": "Those were helper scripts used during verification."},
+        ],
+        "events": [
+            {"seq": 1, "type": "tool_result", "call_id": "c1", "operation_id": "op_py"},
+            {"seq": 2, "type": "tool_result", "call_id": "c2", "operation_id": "op_cmd"},
+        ],
+        "result": "Those were helper scripts used during verification.",
+    }
+    listed = {item["name"]: item for item in workspace_artifacts.listing(row)["files"]}
+    assert "Payoneer.pdf" not in listed
+    assert listed["Payoneer_fixed.pdf"]["role"] == "deliverable"
+    assert listed["Payoneer_fixed.pdf"]["mentioned_in_answer"] is True
+    assert listed["Payoneer_fixed.pdf"]["turn_index"] == 0
+    assert listed["geom_probe2.py"]["role"] == "supporting"
+    assert listed["verify_payoneer.json"]["role"] == "supporting"

@@ -10,32 +10,80 @@ FIELDS = {"context_window", "max_output_tokens", "request_defaults", "max_concur
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
 FALLBACK_CONTEXT_WINDOW = 32768
 KNOWN_VENDOR_CONTEXT_WINDOWS = (
-    ("deepseek-", 128000),
+    ("deepseek-", 1048576),
+    ("glm-5.3", 1048576),
+    ("glm-5", 202752),
+    ("glm-4", 128000),
+    ("gpt-6.1", 872000),
+    ("gpt-6", 872000),
+    ("gpt-5.6", 872000),
     ("gpt-5", 272000),
     ("gpt-4.1", 1047576),
     ("gpt-4o", 128000),
+    ("gpt-oss-", 131072),
     ("o1-", 200000),
     ("o3-", 200000),
     ("o4-", 200000),
+    ("gemini-", 1048576),
+    ("claude-opus-5", 1000000),
+    ("claude-sonnet-5", 1000000),
     ("claude-", 200000),
     ("qwen-", 128000),
     ("qwen2.5", 128000),
     ("qwen3", 128000),
-    ("glm-4", 128000),
-    ("glm-5", 128000),
     ("kimi-", 128000),
     ("moonshot-", 128000),
 )
+KNOWN_VENDOR_MAX_OUTPUT_TOKENS = (
+    ("deepseek-", 393216),
+    ("glm-5", 131072),
+    ("glm-4", 128000),
+    ("gpt-6", 128000),
+    ("gpt-5", 128000),
+    ("gpt-4.1", 32768),
+    ("gpt-4o", 16384),
+    ("gpt-oss-", 131072),
+    ("o1-", 100000),
+    ("o3-", 100000),
+    ("o4-", 100000),
+    ("gemini-", 65536),
+    ("claude-opus-5", 128000),
+    ("claude-sonnet-5", 128000),
+    ("claude-", 64000),
+    ("qwen3", 65536),
+    ("qwen-", 32768),
+    ("kimi-", 65536),
+    ("moonshot-", 65536),
+)
+KNOWN_VENDOR_MAX_CONCURRENT = (
+    ("deepseek-flash", 2500),
+    ("deepseek-v4-pro", 500),
+    ("deepseek-", 500),
+    ("glm-5.3-flash", 200),
+    ("glm-", 50),
+)
 
 
-def _known_vendor_context_window(model) -> int | None:
+def _known_vendor_value(model, table) -> int | None:
     if not isinstance(model, str) or not model:
         return None
     normalized = model.strip().lower().rsplit("/", 1)[-1]
-    for prefix, window in KNOWN_VENDOR_CONTEXT_WINDOWS:
+    for prefix, value in table:
         if normalized.startswith(prefix):
-            return window
+            return value
     return None
+
+
+def _known_vendor_context_window(model) -> int | None:
+    return _known_vendor_value(model, KNOWN_VENDOR_CONTEXT_WINDOWS)
+
+
+def _known_vendor_max_output_tokens(model) -> int | None:
+    return _known_vendor_value(model, KNOWN_VENDOR_MAX_OUTPUT_TOKENS)
+
+
+def _known_vendor_max_concurrent(model) -> int | None:
+    return _known_vendor_value(model, KNOWN_VENDOR_MAX_CONCURRENT)
 
 
 def context_metadata(record, model=None, *, overrides=True):
@@ -59,16 +107,31 @@ def context_metadata(record, model=None, *, overrides=True):
 
 
 def defaults(record, model=None):
-    return {"context_window": context_metadata(record, model, overrides=False)["context_window"],
-            "max_output_tokens": record.get("max_output_tokens", 4096),
+    model = model if model is not None else next(iter(record.get("models", [])), "")
+    window = context_metadata(record, model, overrides=False)["context_window"]
+    metadata = record.get("model_metadata", {}).get(model, {})
+    meta_output = metadata.get("max_output_tokens") if isinstance(metadata, dict) else None
+    vendor_output = _known_vendor_max_output_tokens(model)
+    source_output = record.get("max_output_tokens")
+    if type(source_output) is int and source_output != 4096:
+        max_output = source_output
+    elif type(meta_output) is int and 1 <= meta_output <= min(393216, window):
+        max_output = meta_output
+    elif vendor_output is not None and vendor_output <= window:
+        max_output = vendor_output
+    else:
+        max_output = source_output if type(source_output) is int else 4096
+    return {"context_window": window,
+            "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
-            "max_concurrent": 1, "requests_per_day": None, "share_scope": "personal_space"}
+            "max_concurrent": _known_vendor_max_concurrent(model) or 1,
+            "requests_per_day": None, "share_scope": "personal_space"}
 
 
 def validate(values):
     if not isinstance(values, dict) or set(values) - FIELDS:
         raise ValueError("model_configuration_invalid")
-    for key, low, high in (("context_window", 256, 2000000), ("max_output_tokens", 1, 256000), ("max_concurrent", 1, 4)):
+    for key, low, high in (("context_window", 256, 2000000), ("max_output_tokens", 1, 393216), ("max_concurrent", 1, 2500)):
         if key in values and (type(values[key]) is not int or not low <= values[key] <= high):
             raise ValueError("model_" + key + "_invalid")
     quota = values.get("requests_per_day")

@@ -192,8 +192,8 @@ def validate_chat(value: dict[str, Any]) -> dict[str, Any]:
     if active_profile is not None:
         verify_messages_against_profile(messages, active_profile)
     tokens = body.get("max_tokens", 512)
-    if type(tokens) is not int or not 1 <= tokens <= 131072:
-        raise ValueError("max_tokens must be a positive integer <= 131072")
+    if type(tokens) is not int or not 1 <= tokens <= 393216:
+        raise ValueError("max_tokens must be a positive integer <= 393216")
     body["max_tokens"] = tokens
     if type(body.get("stream", False)) is not bool:
         raise ValueError("stream must be boolean")

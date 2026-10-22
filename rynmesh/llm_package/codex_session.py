@@ -409,12 +409,13 @@ def _model_windows(models, cache_path=None):
         result = []
         for row in models:
             cached = details.get(row["id"], {})
-            window = cached.get("context_window")
+            windows = [w for w in (cached.get("context_window"), cached.get("max_context_window"))
+                       if type(w) is int and 256 <= w <= 2000000]
+            window = max(windows) if windows else None
             # The live model/list response wins; the fresh private cache only
             # supplements versions whose response omits reasoning metadata.
             reasoning = reasoning_metadata(cached.get("supported_reasoning_levels"), cached.get("default_reasoning_level"))
-            result.append({**reasoning, **row, **({"context_window": window} if type(window) is int
-                           and 256 <= window <= 2000000 else {})})
+            result.append({**reasoning, **row, **({"context_window": window} if window is not None else {})})
         return result
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return models

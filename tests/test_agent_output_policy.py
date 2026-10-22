@@ -14,8 +14,8 @@ from rynmesh.agent_runtime.store import AgentError, AgentModelResponseError, Age
 
 @pytest.mark.parametrize("configured,window,request_cap,expected,reason", [
     (128, 1000000, None, 128, None), (128000, 1000000, None, 128000, None),
-    (256000, 1000000, None, 131072, "transport"), (128000, 1000000, 9000, 9000, "request"),
-    (128000, 1024, None, 510, "context"),
+    (393216, 1048576, None, 393216, None), (500000, 1000000, None, 393216, "transport"),
+    (128000, 1000000, 9000, 9000, "request"), (128000, 1024, None, 510, "context"),
 ])
 def test_shared_policy_clamps(configured, window, request_cap, expected, reason):
     result = output_policy.select({"max_output_tokens": configured, "context_window": window}, [], [], request_cap=request_cap)
@@ -36,12 +36,12 @@ def test_invalid_explicit_request_fails_closed(cap):
         output_policy.select({}, [], [], request_cap=cap)
 
 
-@pytest.mark.parametrize("configured,requested", [(128, None), (128000, None), (256000, None), (128000, 7000)])
+@pytest.mark.parametrize("configured,requested", [(128, None), (128000, None), (393216, None), (128000, 7000)])
 def test_real_bridge_and_outer_dispatch_gate_use_configured_bound(node, monkeypatch, configured, requested):  # noqa: F811
     app, store = node
     source, model_id = add_source(app)
     sources = app.state.llm_agent_services["source_store"]
-    source.update(context_window=1000000, max_output_tokens=configured)
+    source.update(context_window=1048576, max_output_tokens=configured)
     # Generation changes invalidate the probe evidence; tests explicitly supply
     # the synthetic verified result before rebuilding the provider.
     sources.save(source)
@@ -50,7 +50,7 @@ def test_real_bridge_and_outer_dispatch_gate_use_configured_bound(node, monkeypa
     bridge, _, _ = build_agent_integrations(app, store, store.home)
     requests = fake_upstream(monkeypatch, [{"role": "assistant", "content": "ok"}], json_only=True)
     result = bridge.complete(model_id, [{"role": "user", "content": "test"}], [], lambda: False, max_output_tokens=requested)
-    assert requests[0]["max_tokens"] == min(configured, 131072, requested or configured)
+    assert requests[0]["max_tokens"] == min(configured, 393216, requested or configured)
     assert result["output_policy"]["effective_cap"] == requests[0]["max_tokens"]
 
 

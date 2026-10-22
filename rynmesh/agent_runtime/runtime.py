@@ -81,7 +81,8 @@ RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_fai
 PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
                  "messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
-                 "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", *PUBLIC_STATE_FIELDS)
+                 "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
+                 "latest_turn_is_silent_heartbeat", "automation_notification", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
@@ -189,7 +190,7 @@ class AgentRuntime(AgentLoop):
         # Keep the scheduler gate for atomic task registration/recovery. Only
         # external IO runs concurrently; claiming a task remains exclusive.
         self._run_lock = threading.Lock()
-        self._run_slots = threading.BoundedSemaphore(3)
+        self._run_slots = threading.BoundedSemaphore(6)
         self._active_lock = threading.Lock()
         self._active_runs = {}
         self._queued_since = {}
@@ -271,8 +272,9 @@ class AgentRuntime(AgentLoop):
         if desktop:
             # Expose installed desktop schemas immediately; dispatch still checks
             # the provider binding and workstation grants on every operation.
-            desktop += tuple(spec["function"]["name"] for spec in business_specs
-                             if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
+            computer_use = tuple(spec["function"]["name"] for spec in business_specs
+                                 if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
+            desktop = computer_use + desktop
         skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
         return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
@@ -301,7 +303,7 @@ class AgentRuntime(AgentLoop):
     def _execution_context(self, row: dict, operation_id=None) -> dict:
         origins = {}
         for message in self._history(row):
-            if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict):
+            if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict) and "grant_id" in message["resource_origin"]:
                 origins[digest(message["resource_origin"])] = copy.deepcopy(message["resource_origin"])
         return {"task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
@@ -1061,11 +1063,6 @@ class AgentRuntime(AgentLoop):
                         selected.append(item)
                         seen_ids.add(item["id"])
 
-        if default_project and not selected and "project-development" in enabled_by_lower.values():
-            try:
-                selected = selector(["project-development"])
-            except AgentError:
-                selected = []
         return selected
 
     @staticmethod
@@ -1420,13 +1417,7 @@ class AgentRuntime(AgentLoop):
                 row["project"] = copy.deepcopy(projects.selected(data, value["project_id"], refresh=True))
                 row["local_execution"].update(workspace_root=row["project"]["path"],
                                               project_id=row["project"]["id"], project_generation=row["project"]["generation"])
-                if not skills:
-                    skills_for_task = self._resolve_skills(None, "", default_project=True)
-                else:
-                    skills_for_task = skills
-            else:
-                skills_for_task = skills
-            row["skills"] = skills_for_task
+            row["skills"] = skills
             row["verify_text_responses"] = settings.get("verify_text_responses", False)
             row["response_language"] = value.get("response_language") or "en"
             budget.initialize(row)["limits"] = budget_limits
@@ -1514,7 +1505,8 @@ class AgentRuntime(AgentLoop):
             budget.new_round(row)
             if intent != "information" or ended:
                 owner_update(row, message)
-            row.update(approved=None, pending_approval=None, pending_input=None, result="")
+            row.update(approved=None, pending_approval=None, pending_input=None, result="",
+                       latest_turn_is_silent_heartbeat=False, automation_run_id=None)
             row.setdefault("pending_user_messages", []).append(message)
             was_stopped = row.pop("turn_stopped", False)
             row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and intent is not None and not was_stopped}
@@ -2529,6 +2521,13 @@ class AgentRuntime(AgentLoop):
             selected = self.store.transaction(claim)
             if selected is None:
                 return WorkerRunResult()
+            if overlay is not None:
+                peek["computer_activity"][selected["id"]] = {
+                    "status": selected.get("status"),
+                    "pending_control": bool(selected.get("pending_control")),
+                    "kind": (selected.get("in_flight") or {}).get("kind"),
+                }
+                overlay.sync(peek["computer_activity"])
             selected["_claim_persistence_seconds"] = max(0.0, time.monotonic() - claim_started)
             self._run_lock.release()
             gate_owned = False
@@ -2627,6 +2626,13 @@ class AgentRuntime(AgentLoop):
                         self._queued_since[selected["id"]] = time.monotonic()
                     else:
                         self._queued_since.pop(selected["id"], None)
+                    if overlay is not None and post:
+                        peek["computer_activity"][selected["id"]] = {
+                            "status": post.get("status"),
+                            "pending_control": bool(post.get("pending_control")),
+                            "kind": (post.get("in_flight") or {}).get("kind"),
+                        }
+                        overlay.sync(peek["computer_activity"])
                 except Exception:
                     pass
             if scope_cm is not None:

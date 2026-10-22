@@ -150,10 +150,13 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     else:
         prior_candidates = list(prior.get("pinned_names") or [])
     pins_changed = bool(prior.get("mode") == "directory" and prior_candidates != requested_pins)
-    has_browser_pins = any(name in BROWSER_TOOLS for name in requested_pins)
+    has_browser_pins = any(
+        name in BROWSER_TOOLS or name.startswith("mcp__computer_use__computer_")
+        for name in requested_pins
+    )
     pinned = []
-    seed_cap = 21000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000
-    pin_floor = 19000 if has_browser_pins else 15000
+    seed_cap = 26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000
+    pin_floor = 24000 if has_browser_pins else 15000
     seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
     if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
         seed_limit = min(limit, max(seed_limit, pin_floor))

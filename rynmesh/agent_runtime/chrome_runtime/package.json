@@ -1,0 +1,8 @@
+{
+  "name": "@rynmesh/chrome-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "classic-level": "3.0.0"
+  }
+}

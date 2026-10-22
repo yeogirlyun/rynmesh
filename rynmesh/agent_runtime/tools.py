@@ -65,7 +65,7 @@ _SOURCE_CONFIG = _schema({"name": {"type": "string", "minLength": 1, "maxLength"
     "provider": {"type": "string", "maxLength": 80}, "base_url": {"type": "string", "minLength": 1, "maxLength": 2048},
     "models": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 160}},
     "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
-    "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 256000},
+    "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
     "request_defaults": _schema({"thinking": {"type": ["object", "boolean"]}, "reasoning_effort": {"type": "string", "maxLength": 32},
         "temperature": {"type": "number"}, "top_p": {"type": "number"}}), "enabled": {"type": "boolean"}}, ["name", "kind", "base_url", "models"])
 _SPECS = {

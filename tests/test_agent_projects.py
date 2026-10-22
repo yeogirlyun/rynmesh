@@ -44,7 +44,7 @@ def test_project_selection_is_task_local_restart_safe_and_does_not_change_other_
     assert runtime.load_project({"path": str(root)})["id"] == selected["id"]
     task = runtime.create({"message": "Inspect the project", "project_id": selected["id"]})
     assert task["local_execution"]["workspace_root"] == str(root)
-    assert task["skills"][0]["id"] == "project-development"
+    assert task["skills"] == []
     assert runtime.get(ordinary["id"])["local_execution"]["workspace_root"] != str(root)
     assert runtime.settings()["workspace_root"] == ""
     restored = AgentRuntime(AgentStore(runtime.store.root, key), model, tools, runtime.catalog)
@@ -53,7 +53,7 @@ def test_project_selection_is_task_local_restart_safe_and_does_not_change_other_
     restored.select_project({"project_id": ""})
     assert restored.project_selection() == ""
     assert restored.get(task["id"])["project"]["id"] == selected["id"]
-    assert restored.get(task["id"])["project"]["test_isolation_entry"] == "test/support/runIsolated.cjs"
+    assert "test_isolation_entry" not in restored.get(task["id"])["project"]
     context = restored._context(restored.store.read()["tasks"][task["id"]])
     assert any(message["role"] == "user" and "AGENTS.md" in message["content"] for message in context)
     assert not any(message["role"] in {"developer", "system"} and "Run isolated tests." in message["content"] for message in context)

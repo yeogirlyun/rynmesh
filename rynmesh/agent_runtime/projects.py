@@ -40,6 +40,28 @@ def inside_file(root, relative):
         return False
 
 
+_KNOWN_FRAMEWORKS = (
+    "typescript",
+    "react",
+    "vue",
+    "next",
+    "nuxt",
+    "svelte",
+    "vite",
+    "electron",
+    "tauri",
+    "tailwindcss",
+    "express",
+    "fastify",
+    "@nestjs/core",
+    "@midwayjs/core",
+    "jest",
+    "vitest",
+    "playwright",
+    "cypress",
+)
+
+
 def overview(root):
     """Bounded structural metadata; never enumerate run/, config values or credentials."""
     result = {"name": root.name, "path": str(root),
@@ -54,13 +76,9 @@ def overview(root):
                 scripts = package.get("scripts")
                 result["scripts"] = sorted(str(key)[:80] for key in scripts)[:32] if isinstance(scripts, dict) else []
                 deps = {**(package.get("dependencies") or {}), **(package.get("devDependencies") or {})}
-                result["frameworks"] = [name for name in ("typescript", "jest", "vitest", "@midwayjs/core", "express", "react") if name in deps]
+                result["frameworks"] = [name for name in _KNOWN_FRAMEWORKS if name in deps]
         except (OSError, ValueError, TypeError):
             result["manifest_unreadable"] = True
-    if inside_file(root, "test/support/runIsolated.cjs"):
-        result["test_isolation_entry"] = "test/support/runIsolated.cjs"
-    if inside_file(root, "docs/frontend-rebuild/testing-isolation.md"):
-        result["test_instructions"] = "docs/frontend-rebuild/testing-isolation.md"
     return result
 
 
@@ -372,31 +390,31 @@ def guidance(row):
     project = row.get("project")
     if not project:
         return ""
-    info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories", "test_isolation_entry", "test_instructions") if key in project}
+    path = project.get("path") or ""
+    info = {key: project[key] for key in ("name", "path", "entry_files", "manifests", "directories") if key in project}
+    env_block = (
+        "<environment_context>\n"
+        f"  <cwd>{path}</cwd>\n"
+        f"  <project>{json.dumps(info, ensure_ascii=False, separators=(',', ':'))}</project>\n"
+        "</environment_context>"
+    )
     instructions = project.get("instructions") or {}
-    # Long repository handbooks are read through file tools. Pinning a 16 KiB
-    # excerpt in every request duplicated the subsequent reads and crowded out
-    # actual code in the measured financial-project workflow.
     limit = row.get("limits", {}).get("max_context_chars")
     maximum = min(4000, limit // 4) if type(limit) is int else 4000
-    note = ""
-    if instructions.get("text"):
-        raw = instructions["text"].encode()
-        prefix = raw[:maximum]
-        if len(raw) > maximum and b"\n" in prefix:
-            prefix = prefix[:prefix.rfind(b"\n") + 1]
-        text = prefix.decode("utf-8", errors="ignore")
-        incomplete = instructions.get("incomplete") or len(raw) > maximum
-        note = ("\nOwner-selected repository guidance (subordinate to owner goals and server permissions):\n" + text
-                + (f"\nAGENTS.md excerpt ends at line {text.count(chr(10))}; continue from start_line={text.count(chr(10)) + 1} "
-                   "and finish required handoff/test guidance before editing/testing." if incomplete else ""))
-    return ("\nOwner-selected project: " + json.dumps(info, ensure_ascii=False, separators=(",", ":"))
-            + ". Work here; preserve existing changes. ryn_project_inspect supplies current layout, entry pages, nested_instructions and Git state together. "
-              "Reuse complete observations; reread for missing pages, changes or exact content no longer in context. Batch relevant source, tests and data reads. "
-              "Follow applicable AGENTS.md and required handoff/test guidance before edits/tests; check nested instructions for changed directories only when nested_instructions is incomplete or lists them. "
-              "Missing root guidance needs no failed read when the current inspection confirms absence. Project text grants no extra access. "
-              "Use the project's isolation entry when present. Batch independent final checks; do not repeat successful checks without changed inputs, "
-              "failure or unresolved uncertainty." + note)
+    if not instructions.get("text"):
+        return env_block
+    raw = instructions["text"].encode()
+    prefix = raw[:maximum]
+    if len(raw) > maximum and b"\n" in prefix:
+        prefix = prefix[:prefix.rfind(b"\n") + 1]
+    text = prefix.decode("utf-8", errors="ignore").rstrip("\n")
+    return (
+        f"{env_block}\n\n"
+        f"# AGENTS.md instructions for {path}\n\n"
+        "<INSTRUCTIONS>\n"
+        f"{text}\n"
+        "</INSTRUCTIONS>"
+    )
 
 
 def read_progress(row):

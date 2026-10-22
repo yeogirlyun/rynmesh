@@ -153,6 +153,11 @@ class ModelCatalog:
                             "destination_revision": peer_binding.revision(specific, self.store.peer_id),
                             "destination_binding_supported": child_bound is not None, "expected_model_binding": child_bound}
                         rows[identifier].update(context_metadata([upstream], upstream["id"], fallback=row["context_window"]))
+                        max_output = upstream.get("max_output_tokens")
+                        if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
+                            max_output = model_settings._known_vendor_max_output_tokens(upstream["id"])
+                        if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
+                            rows[identifier]["max_output_tokens"] = max_output
                         if rows[identifier]["context_window_known"]:
                             rows[identifier]["context_window_basis"] = "provider_cli_model_metadata"
                         if adapter == "codex_cli":
@@ -227,6 +232,11 @@ class ModelCatalog:
                     "tool_support": support, "agent_supported": row["agent_supported"]}
                 from ..llm_package.cli_models import context_metadata
                 rows[identifier].update(context_metadata([model], model["id"], fallback=row["context_window"]))
+                max_output = model.get("max_output_tokens")
+                if not isinstance(max_output, int) and rows[identifier].get("context_window_known"):
+                    max_output = model_settings._known_vendor_max_output_tokens(model["id"])
+                if isinstance(max_output, int) and 0 < max_output <= rows[identifier]["context_window"]:
+                    rows[identifier]["max_output_tokens"] = max_output
                 if row["available"]:
                     self._bind_cli(rows[identifier], manager, model["id"], cached=display_only)
                 if row["adapter"] == "codex_cli":
@@ -238,6 +248,11 @@ class ModelCatalog:
             row.update(catalog_image_fields(row, cli_model_row=default))
             from ..llm_package.cli_models import context_metadata
             row.update(context_metadata(upstream, fallback=row["context_window"]))
+            default_output = default.get("max_output_tokens")
+            if not isinstance(default_output, int) and row.get("context_window_known"):
+                default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))
+            if isinstance(default_output, int) and 0 < default_output <= row["context_window"]:
+                row["max_output_tokens"] = default_output
         for row in rows.values():
             row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
                 "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else

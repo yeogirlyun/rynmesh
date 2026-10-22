@@ -376,3 +376,114 @@ def test_heartbeat_deferral_and_once_auto_pause(tmp_path: Path):
     deferred_item = next(i for i in runtime.list_automations()["items"] if i["id"] == hb_res["id"])
     assert deferred_item["run_count"] == 0
     assert deferred_item["next_run_at"] >= due_ts + 55_000
+
+
+def test_codex_heartbeat_notify_vs_dont_notify_and_auto_pause_archived(tmp_path: Path):
+    app, runtime, model, client = _build_test_env(tmp_path)
+
+    # 1. Start a conversation and finish the initial turn
+    model.responses = [
+        {
+            "message": {"role": "assistant", "content": "好的，我会每隔5分钟帮你检查构建状态。"},
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 20, "output_tokens": 15},
+        }
+    ]
+    base_task = runtime.create({"message": "帮我监控构建状态，好了提醒我"})
+    runtime.run_once()
+    assert runtime.get(base_task["id"])["status"] == "completed"
+
+    # 2. Create a minutely heartbeat automation attached to base_task["id"]
+    hb_auto = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "构建状态监控",
+            "prompt": "检查构建是否完成，如果没完成请使用 DONT_NOTIFY 保持静默，完成了则 NOTIFY 提醒我。",
+            "repeat": "minutely",
+            "interval_minutes": 5,
+            "kind": "heartbeat",
+            "target_task_id": base_task["id"],
+        },
+    ).json()["automation"]
+    auto_id = hb_auto["id"]
+    assert hb_auto["kind"] == "heartbeat"
+    assert hb_auto["repeat"] == "minutely"
+    assert hb_auto["interval_minutes"] == 5
+    assert "FREQ=MINUTELY;INTERVAL=5" in hb_auto["rrule"]
+
+    # 3. First heartbeat run returns DONT_NOTIFY -> should be silent, strip <heartbeat>, and mark ui.kind == "silent_heartbeat"
+    model.responses = [
+        {
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "构建仍在进行中（45%）。\n"
+                    "<heartbeat>\n"
+                    f"<automation_id>{auto_id}</automation_id>\n"
+                    "<decision>DONT_NOTIFY</decision>\n"
+                    "<message>Still building</message>\n"
+                    "</heartbeat>"
+                ),
+            },
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 30, "output_tokens": 25},
+        }
+    ]
+    runtime.store.transaction(lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000))
+    worker: automation_worker.AutomationSchedulerWorker = app.state.agent_automation_worker
+    worker.run_once()
+    runtime.run_once()
+
+    after_silent = runtime.get(base_task["id"])
+    assert after_silent["status"] == "completed"
+    assert after_silent["latest_turn_is_silent_heartbeat"] is True
+    assert "<heartbeat>" not in after_silent["result"]
+    assert after_silent["messages"][-1]["ui"]["kind"] == "silent_heartbeat"
+    assert after_silent["messages"][-2]["ui"]["kind"] == "silent_heartbeat"
+    runs_after_silent = runtime.list_automations()["runs"]
+    assert runs_after_silent[0]["decision"] == "DONT_NOTIFY"
+    assert runs_after_silent[0]["status"] == "ARCHIVED"
+
+    # 4. Second heartbeat run returns NOTIFY -> strips <heartbeat>, sets latest_turn_is_silent_heartbeat=False, populates automation_notification
+    model.responses = [
+        {
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "🎉 构建已经全部通过！\n"
+                    "<heartbeat>\n"
+                    f"<automation_id>{auto_id}</automation_id>\n"
+                    "<decision>NOTIFY</decision>\n"
+                    "<message>构建已成功完成，所有测试通过</message>\n"
+                    "</heartbeat>"
+                ),
+            },
+            "finish_reason": "stop",
+            "usage": {"input_tokens": 35, "output_tokens": 25},
+        }
+    ]
+    runtime.store.transaction(lambda d: d["automations"][auto_id].update(next_run_at=automations.now_ms() - 1000))
+    worker.run_once()
+    runtime.run_once()
+
+    after_notify = runtime.get(base_task["id"])
+    assert after_notify["status"] == "completed"
+    assert after_notify["latest_turn_is_silent_heartbeat"] is False
+    assert "<heartbeat>" not in after_notify["result"]
+    assert "构建已经全部通过" in after_notify["result"]
+    notif = after_notify.get("automation_notification")
+    assert isinstance(notif, dict)
+    assert notif["decision"] == "NOTIFY"
+    assert notif["task_id"] == base_task["id"]
+    assert "构建已成功完成" in notif["message"]
+
+    # 5. If the target conversation is archived or deleted, next scheduled tick automatically pauses the heartbeat automation
+    def _archive_target(d):
+        d.setdefault("archives", {})[base_task["id"]] = d["tasks"].pop(base_task["id"])
+        d["automations"][auto_id]["next_run_at"] = automations.now_ms() - 1000
+
+    runtime.store.transaction(_archive_target)
+    worker.run_once()
+    paused_auto = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
+    assert paused_auto["status"] == "PAUSED"
+    assert paused_auto["next_run_at"] is None

@@ -669,11 +669,15 @@ def test_phase4_vendor_context_window_and_compact_computer_observation():
         "model_metadata": {},
     }
     assert model_settings.context_metadata(auto_record, "deepseek-flash") == {
-        "context_window": 128000,
+        "context_window": 1048576,
         "context_window_basis": "vendor_family_default",
         "context_window_known": True,
     }
-    assert model_settings.context_metadata(auto_record, "deepseek-v4-pro")["context_window"] == 128000
+    assert model_settings.context_metadata(auto_record, "deepseek-v4-pro")["context_window"] == 1048576
+    assert model_settings.defaults(auto_record, "deepseek-flash")["max_output_tokens"] == 393216
+    assert model_settings.defaults(auto_record, "deepseek-flash")["max_concurrent"] == 2500
+    assert model_settings.defaults(auto_record, "deepseek-v4-pro")["max_output_tokens"] == 393216
+    assert model_settings.defaults(auto_record, "deepseek-v4-pro")["max_concurrent"] == 500
     assert model_settings.context_metadata(auto_record, "gpt-5.4")["context_window"] == 272000
     assert model_settings.context_metadata(auto_record, "claude-sonnet-4-5")["context_window"] == 200000
     assert model_settings.context_metadata(auto_record, "unknown") == {

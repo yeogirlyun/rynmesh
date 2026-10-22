@@ -108,7 +108,8 @@ class SharedSlots:
     """Per-service and process-wide admission; callers cannot enlarge either."""
 
     def __init__(self, capacity, path):
-        self.local = threading.BoundedSemaphore(min(capacity, 4))
+        self._global_bounded = capacity <= 4
+        self.local = threading.BoundedSemaphore(capacity if capacity > 4 else min(capacity, 4))
         self.path = path
 
     def acquire(self, blocking=False):
@@ -118,16 +119,18 @@ class SharedSlots:
             return False
         if not pressure_ok():
             return False
-        if not NODE_SLOTS.acquire(blocking=False):
+        if self._global_bounded and not NODE_SLOTS.acquire(blocking=False):
             return False
         if not self.local.acquire(blocking=False):
-            NODE_SLOTS.release()
+            if self._global_bounded:
+                NODE_SLOTS.release()
             return False
         return True
 
     def release(self):
         self.local.release()
-        NODE_SLOTS.release()
+        if self._global_bounded:
+            NODE_SLOTS.release()
 
 
 def check_disk(path: str | Path):

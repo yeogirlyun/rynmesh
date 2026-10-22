@@ -18,6 +18,7 @@ pip install -q --upgrade pip
 # Source archives can carry older mtimes than a previous setuptools build/lib
 # cache. Refresh mtimes so build_py copies the current source, then verify it.
 find "$ROOT/rynmesh" -type f -name '*.py' -exec touch {} +
+npm ci --omit=dev --prefix "$ROOT/rynmesh/agent_runtime/chrome_runtime"
 pip install -q "${ROOT}[documents]" 'pyinstaller==6.22.3'
 # Native P2P transport (hole punching + QUIC in Rust); maturin builds it with cargo.
 PATH="$HOME/.cargo/bin:$PATH" pip install -q "$ROOT/native/ryn_transport"

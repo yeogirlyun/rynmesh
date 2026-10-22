@@ -25,8 +25,8 @@ export default function NativeModelParameters({ status, busy, onBusy, onUpdate }
   const changed = snapshot.id !== status.id || settings.rule_revision !== status.model_settings?.rule_revision;
   const stale = uncertain || changed;
   const fields: Array<[Field, string, number, number]> = [
-    ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, Math.min(settings.context_window || 256000, 256000)],
-    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 4],
+    ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, Math.min(settings.context_window || 393216, 393216)],
+    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 2500],
     ["requests_per_day", text("每日请求上限", "Daily request limit"), 1, 1000000],
   ];
   const adopt = (next: NativeModelStatus) => {

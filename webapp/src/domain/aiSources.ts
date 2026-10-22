@@ -23,7 +23,7 @@ export const sourcePresets = [
   { id: "zai", name: "Z.ai · GLM", url: "https://api.z.ai/api/paas/v4", model: "glm-5.3-flash" },
   { id: "openai", name: "OpenAI", url: "https://api.openai.com/v1", model: "" },
   { id: "anthropic", name: "Anthropic · Claude", url: "https://api.anthropic.com/v1", model: "" },
-  { id: "deepseek", name: "DeepSeek", url: "https://api.deepseek.com", model: "deepseek-chat" },
+  { id: "deepseek", name: "DeepSeek", url: "https://api.deepseek.com", model: "deepseek-flash" },
   { id: "qwen", get name() { return tr("通义千问"); }, url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "" },
   { id: "openrouter", name: "OpenRouter", url: "https://openrouter.ai/api/v1", model: "" },
   { id: "custom", get name() { return tr("自定义兼容 API"); }, url: "", model: "" },
@@ -34,8 +34,8 @@ export function newSource(provider = "zai"): AISource {
   const preset = sourcePresets.find(p => p.id === provider)!;
   return { id: "new", name: preset.name, kind: ["ollama", "lmstudio"].includes(provider) ? "local" : "api",
     provider, protocol: provider === "anthropic" ? "anthropic_messages" : "openai_chat",
-    base_url: preset.url, models: preset.model ? [preset.model] : [],
-    context_window: 32768, context_window_mode: "auto", max_output_tokens: 4096,
+    base_url: preset.url, models: provider === "deepseek" ? ["deepseek-flash", "deepseek-v4-pro"] : preset.model ? [preset.model] : [],
+    context_window: (provider === "deepseek" || provider === "zai") ? 1048576 : 32768, context_window_mode: "auto", max_output_tokens: provider === "deepseek" ? 393216 : provider === "zai" ? 131072 : 4096,
     request_defaults: provider === "zai" ? { thinking: { type: "enabled" }, reasoning_effort: "max" } : {},
     enabled: true, sharing: false, status: "untested", has_key: false };
 }
