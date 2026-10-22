@@ -73,12 +73,14 @@ KEY_DEFINITIONS = {
 
 
 def find_browser():
-    for name in ("msedge", "chrome", "chromium", "chromium-browser", "google-chrome"):
+    for name in ("chrome", "google-chrome", "chromium", "chromium-browser", "msedge"):
         if executable := shutil.which(name):
             return executable
     if os.name == "nt":
-        for base in (os.environ.get("PROGRAMFILES(X86)", ""), os.environ.get("PROGRAMFILES", ""), os.environ.get("LOCALAPPDATA", "")):
-            for relative in ("Microsoft/Edge/Application/msedge.exe", "Google/Chrome/Application/chrome.exe"):
+        for relative in ("Google/Chrome/Application/chrome.exe", "Microsoft/Edge/Application/msedge.exe"):
+            for base in (os.environ.get("PROGRAMFILES", ""), os.environ.get("PROGRAMFILES(X86)", ""), os.environ.get("LOCALAPPDATA", "")):
+                if not base:
+                    continue
                 path = Path(base) / relative
                 if path.is_file():
                     return str(path)
@@ -785,9 +787,15 @@ class Browser:
                 "(() => ({url: String(location.href || ''), ready: String(document.readyState || ''), has_body: Boolean(document.body), pre_nav: Boolean(window.__rynPreNav)}))()",
                 timeout=0.5,
                 mutating=False,
+                guard=lambda: self._check_guards(allowed, cancelled),
             )
+        except AgentToolRejected as exc:
+            if str(exc) in {"agent_cancelled", "agent_desktop_access_required"}:
+                raise
+            return
         except Exception:
             return
+        self._check_guards(allowed, cancelled)
         if isinstance(state, dict) and (state.get("ready") == "loading" or not state.get("has_body") or state.get("pre_nav")):
             try:
                 self._wait_for_navigation_ready(

@@ -148,7 +148,7 @@ def test_owner_update_changes_only_camera_and_forget_changes_only_lens(node, mon
     second = owner_task(runtime, "请把我的机身改成富士 X-H2")
     assert explicit(runtime, second)["applied"] is True
     facts = active(runtime)
-    body = [e for e in facts if e["fact_key"].endswith("gear.camera_body")]
+    body = [e for e in facts if e["fact_key"].endswith("profile.机身")]
     assert len(body) == 1 and "X-H2" in body[0]["text"] and "X-T5" not in body[0]["text"]
     assert any("XF16-55mm" in e["text"] for e in facts)
     selection = runtime.store.inspect(lambda data: memory.select_memories_for_task(

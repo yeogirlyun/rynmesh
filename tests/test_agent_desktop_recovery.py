@@ -316,3 +316,105 @@ def test_full_history_checkpoint_preserves_reasoning_content_and_oversized_read_
     assert assistants[0].get("reasoning_content") == ""
     assert "wecom_0" not in assistants[0]["content"]
     assert '"status":"committed"' in assistants[0]["content"]
+
+
+def test_computer_use_all_three_tools_stay_pinned_with_project_inspect():
+    from rynmesh.agent_runtime import code_mode, local_specs, projects, tool_menu
+    from rynmesh.agent_runtime.extensions.store import COMPUTER_USE_BUILTIN_TOOLS
+    from rynmesh.agent_runtime.loop import ALL_INTERNAL_SPECS
+
+    business = [
+        {"type": "function", "function": {"name": name, "description": desc, "parameters": schema}}
+        for name, (desc, _eff, _risk, schema) in local_specs.SPECS.items()
+    ]
+    business.append(code_mode.SPEC)
+    business.append(
+        {"type": "function", "function": {"name": "ryn_list_plugins", "description": "List plugins", "parameters": {"type": "object", "properties": {}}}}
+    )
+    cu_names = []
+    for item in COMPUTER_USE_BUILTIN_TOOLS:
+        mname = f"mcp__computer_use__{item['name']}__12345678"
+        cu_names.append(mname)
+        business.append(
+            {"type": "function", "function": {"name": mname, "description": item["description"], "parameters": item["input_schema"]}}
+        )
+    pinned_request = (
+        tool_menu.PLUGIN_DISCOVERY_TOOLS
+        + ("ryn_project_inspect",)
+        + tool_menu.CORE_TOOLS
+        + ("ryn_code_exec",)
+        + tuple(cu_names)
+        + tool_menu.BROWSER_TOOLS
+    )
+    exposed, state = tool_menu.project(
+        business,
+        ALL_INTERNAL_SPECS,
+        {},
+        max_context_bytes=120000,
+        authority_bytes=4500,
+        epoch=0,
+        goal_revision=1,
+        pinned_names=pinned_request,
+    )
+    exposed_names = {s["function"]["name"] for s in exposed}
+    assert set(cu_names) <= exposed_names
+    assert set(cu_names) <= set(state["pinned_names"])
+    assert set(tool_menu.BROWSER_TOOLS) <= exposed_names
+    guidance = projects.guidance({"project": {"name": "rynmesh", "path": "D:/code/rynmesh"}})
+    assert "<environment_context>" in guidance
+    assert "<cwd>D:/code/rynmesh</cwd>" in guidance
+
+
+def test_computer_read_window_auto_restores_minimized_window_and_refreshes_tray_hwnd(tmp_path):
+    import copy
+
+    from test_agent_native_computer_integration import (
+        COMPUTER_USE_SERVER_ID,
+        _cleanup_owned_fixture,
+        _create_owned_fixture,
+        compute_model_tool_name,
+    )
+
+    env = _create_owned_fixture(tmp_path / "case_minimized")
+    try:
+        adapter = env["adapter"]
+        ctx = env["ctx"]
+        bridge = env["bridge"]
+        observe_name = compute_model_tool_name(COMPUTER_USE_SERVER_ID, "computer_observe_windows")
+        read_name = compute_model_tool_name(COMPUTER_USE_SERVER_ID, "computer_read_window")
+
+        # 1. Observe initial windows
+        obs_res = adapter.execute(observe_name, {}, operation_id="op_obs", context=ctx)
+        assert obs_res["is_error"] is False
+
+        # 2. Simulate window 100100 being minimized offscreen (-32000) on initial get_state,
+        #    and verify computer_read_window automatically invokes execute_action(focus) to restore it.
+        orig_get_state = bridge.get_state
+        orig_execute = bridge.execute_action
+        calls = {"execute": 0}
+
+        def minimized_get_state(**kwargs):
+            state = orig_get_state(**kwargs)
+            state_min = copy.deepcopy(state)
+            state_min["geometry"]["windowRect"] = {"left": -32000, "top": -32000, "right": -31840, "bottom": -31970, "width": 160, "height": 30}
+            return state_min
+
+        def tracked_execute(**kwargs):
+            calls["execute"] += 1
+            assert kwargs["action"] == {"type": "focus_window", "restoreIfMinimized": True}
+            return orig_execute(**kwargs)
+
+        bridge.get_state = minimized_get_state
+        bridge.execute_action = tracked_execute
+
+        read_res = adapter.execute(
+            read_name,
+            {"hwnd": 100100, "include_screenshot": True},
+            operation_id="op_read_min",
+            context=ctx,
+        )
+        assert read_res["is_error"] is False
+        assert calls["execute"] == 1
+        assert read_res["structuredContent"]["rect"][0] >= 0
+    finally:
+        _cleanup_owned_fixture(env)

@@ -29,7 +29,7 @@ from .computer.protocol import (
     validate_window_ref,
     window_refs_equal,
 )
-from .computer_overlay import ComputerOverlay
+from .computer_overlay import ESCAPE_STOP_MESSAGE, ComputerOverlay
 from .image_capabilities import (
     MAX_IMAGE_PIXELS,
     MAX_NATIVE_IMAGE_SOURCE_BYTES,
@@ -400,7 +400,8 @@ class NativeComputerFacade:
         self._explicit_bridge = bridge
         self._tasks: OrderedDict[str, _TaskComputerState] = OrderedDict()
         self._workspace_roots_by_task: OrderedDict[str, set[Path]] = OrderedDict()
-        self.overlay = ComputerOverlay()
+        self._escaped_tasks: dict[str, int | None] = {}
+        self.overlay = ComputerOverlay(on_escape=self._on_overlay_escape)
 
     @property
     def owner_id(self) -> str:
@@ -513,18 +514,169 @@ class NativeComputerFacade:
                 return fallback.resolve(strict=True)
         raise AgentToolRejected("agent_workspace_required")
 
-    def _read_fresh_task_authority(
-        self, task_id: str
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        """Read fresh `(settings, task_row)` from the authoritative owner store when available."""
-        store_obj = None
+    def _find_store_object(self) -> Any:
         for cand in (
             self._owner,
             getattr(self._local_tools, "store", None) if self._local_tools is not None else None,
         ):
-            if cand is not None and (hasattr(cand, "inspect") or hasattr(cand, "read_control")):
-                store_obj = cand
-                break
+            if cand is not None and (
+                hasattr(cand, "inspect")
+                or hasattr(cand, "read_control")
+                or hasattr(cand, "transaction")
+            ):
+                return cand
+        return None
+
+    def _on_overlay_escape(self, task_ids: list[str]) -> None:
+        """Handle physical Esc key press while computer-use overlay is active (Codex-style turn stop)."""
+        clean_ids = [str(tid).strip() for tid in (task_ids or []) if str(tid or "").strip()]
+        if not clean_ids:
+            return
+        with self._lock:
+            for tid in clean_ids:
+                _, row = self._read_fresh_task_authority(tid)
+                ctrl_rev = (
+                    int(row["control_revision"])
+                    if isinstance(row, Mapping) and type(row.get("control_revision")) is int
+                    else None
+                )
+                self._escaped_tasks[tid] = ctrl_rev
+
+        store_obj = self._find_store_object()
+        if store_obj is not None and hasattr(store_obj, "transaction"):
+            try:
+                from .control import ambiguous, close_queue, settle
+                from .protocol import event
+
+                def _stop_on_escape(data: dict[str, Any]) -> None:
+                    tasks_map = data.get("tasks")
+                    if not isinstance(tasks_map, dict):
+                        return
+                    for tid in clean_ids:
+                        row = tasks_map.get(tid)
+                        if not isinstance(row, dict):
+                            continue
+                        if ambiguous(row):
+                            row["pending_control"] = {"kind": "stop"}
+                            event(
+                                row,
+                                "paused",
+                                operation_in_flight=True,
+                                reason="user_escape_stopped",
+                            )
+                        elif row.get("status") in {
+                            "queued",
+                            "running",
+                            "waiting_approval",
+                            "waiting_input",
+                        }:
+                            row.update(
+                                status="paused",
+                                pending_approval=None,
+                                approved=None,
+                                pending_input=None,
+                                pending_control={"kind": "stop"},
+                                turn_stopped=True,
+                            )
+                            event(
+                                row,
+                                "paused",
+                                operation_in_flight=bool(row.get("in_flight")),
+                                reason="user_escape_stopped",
+                            )
+                            close_queue(row, event, "agent_cancelled")
+                            settle(row, event, data=data)
+                        if type(row.get("control_revision")) is int:
+                            with self._lock:
+                                self._escaped_tasks[tid] = int(row["control_revision"])
+
+                store_obj.transaction(_stop_on_escape)
+            except Exception:
+                pass
+
+    def clear_escaped_task(self, task_id: str) -> None:
+        if not isinstance(task_id, str) or not task_id.strip():
+            return
+        with self._lock:
+            self._escaped_tasks.pop(task_id.strip(), None)
+
+    def _is_task_escaped(
+        self, task_id: str, context: Mapping[str, Any] | None = None
+    ) -> bool:
+        with self._lock:
+            if task_id not in self._escaped_tasks:
+                return False
+            escaped_rev = self._escaped_tasks.get(task_id)
+
+        _, row = self._read_fresh_task_authority(task_id)
+        if row is not None:
+            row_rev = (
+                int(row["control_revision"])
+                if type(row.get("control_revision")) is int
+                else None
+            )
+            status = row.get("status")
+            if (
+                status == "running"
+                and not row.get("turn_stopped")
+                and not row.get("pending_control")
+                and escaped_rev is not None
+                and row_rev is not None
+                and row_rev > escaped_rev
+            ):
+                ctx_rev = (
+                    context.get("control_revision")
+                    if isinstance(context, Mapping)
+                    else None
+                )
+                if ctx_rev is None or (type(ctx_rev) is int and ctx_rev > escaped_rev):
+                    with self._lock:
+                        self._escaped_tasks.pop(task_id, None)
+                    return False
+        return True
+
+    def _wrap_cancelled(
+        self,
+        task_id: str,
+        cancelled: Callable[[], bool] | None,
+        context: Mapping[str, Any] | None = None,
+    ) -> Callable[[], bool]:
+        base = cancelled if callable(cancelled) else (lambda: False)
+
+        def _wrapped() -> bool:
+            if self._is_task_escaped(task_id, context=context):
+                _wrapped.reason = "agent_cancelled"  # type: ignore[attr-defined]
+                _wrapped.escape_stopped = True  # type: ignore[attr-defined]
+                return True
+            if base():
+                _wrapped.reason = getattr(base, "reason", None) or "agent_cancelled"  # type: ignore[attr-defined]
+                _wrapped.escape_stopped = bool(getattr(base, "escape_stopped", False))  # type: ignore[attr-defined]
+                return True
+            return False
+
+        _wrapped.reason = getattr(base, "reason", None)  # type: ignore[attr-defined]
+        _wrapped.escape_stopped = False  # type: ignore[attr-defined]
+        return _wrapped
+
+    def _maybe_suppress_self_escape(self, action_spec: Mapping[str, Any] | None) -> None:
+        if not isinstance(action_spec, Mapping):
+            return
+        atype = str(action_spec.get("type") or "")
+        if atype == "key_press":
+            if str(action_spec.get("key") or "").strip().lower() in {"escape", "esc"}:
+                self.overlay.suppress_escape(1.0)
+        elif atype == "key_chord":
+            keys = action_spec.get("keys")
+            if isinstance(keys, list) and any(
+                str(k or "").strip().lower() in {"escape", "esc"} for k in keys
+            ):
+                self.overlay.suppress_escape(1.0)
+
+    def _read_fresh_task_authority(
+        self, task_id: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Read fresh `(settings, task_row)` from the authoritative owner store when available."""
+        store_obj = self._find_store_object()
         if store_obj is None:
             return None, None
         if hasattr(store_obj, "inspect"):
@@ -539,6 +691,7 @@ class NativeComputerFacade:
                         "id",
                         "status",
                         "pending_control",
+                        "turn_stopped",
                         "control_revision",
                         "context_epoch",
                         "scope_revision",
@@ -837,6 +990,8 @@ class NativeComputerFacade:
                     "to obtain a fresh state_token and fresh screenshot before calling computer_act_window again. "
                     "Note that computer_observe_windows only lists windows and does not issue a state_token."
                 )
+            elif rej_code == "agent_cancelled" and bool(self._escaped_tasks):
+                rej_correction = ESCAPE_STOP_MESSAGE
             rej = AgentToolRejected(rej_code, details=copy.deepcopy(exc.diagnostics), correction=rej_correction)
             rej.diagnostics = copy.deepcopy(exc.diagnostics)
             rej.pre_dispatch = True
@@ -1412,11 +1567,44 @@ class NativeComputerFacade:
         hwnd: int,
         *,
         context: Mapping[str, Any] | None = None,
+        allow_refresh: bool = False,
+        cancelled: Callable[[], bool] = lambda: False,
     ) -> dict[str, Any]:
         """Resolve a bare integer HWND strictly from this task's previously observed WindowRefs."""
         if type(hwnd) is not int or hwnd < 1:
             raise AgentToolRejected("agent_tool_arguments_invalid")
         gen, worker_inst, _ = self.bridge._client.active_session_info()
+        need_refresh = False
+        with self._lock:
+            tstate = self._get_task_state_locked(
+                task_id,
+                worker_instance=worker_inst,
+                worker_generation=gen,
+                context=context,
+            )
+            win_entry = tstate.windows_by_hwnd.get(hwnd)
+            if win_entry is None and allow_refresh and bool(tstate.windows_by_hwnd):
+                need_refresh = True
+        if need_refresh:
+            try:
+                raw_list = self.bridge.list_windows(
+                    task_session_id=task_id,
+                    include_minimized=True,
+                    max_windows=50,
+                    cancelled=cancelled,
+                )
+                gen, worker_inst, _ = self.bridge._client.active_session_info()
+                with self._lock:
+                    tstate = self._get_task_state_locked(
+                        task_id,
+                        worker_instance=worker_inst,
+                        worker_generation=gen,
+                        context=context,
+                    )
+                    for entry in raw_list.get("windows") or []:
+                        tstate.record_window_entry(entry)
+            except Exception:
+                pass
         with self._lock:
             tstate = self._get_task_state_locked(
                 task_id,
@@ -1426,10 +1614,16 @@ class NativeComputerFacade:
             )
             win_entry = tstate.windows_by_hwnd.get(hwnd)
             if win_entry is None:
-                raise AgentToolRejected("agent_computer_window_changed_read_again")
+                raise AgentToolRejected(
+                    "agent_computer_window_changed_read_again",
+                    correction="Call computer_observe_windows first to list current windows and register their hwnd handles before calling computer_read_window.",
+                )
             wref = copy.deepcopy(win_entry["window"])
             if worker_inst is not None and wref.get("workerInstance") != worker_inst:
-                raise AgentToolRejected("agent_computer_window_changed_read_again")
+                raise AgentToolRejected(
+                    "agent_computer_window_changed_read_again",
+                    correction="Call computer_observe_windows first to refresh window handles before calling computer_read_window.",
+                )
             return copy.deepcopy(win_entry)
 
     def _require_observed_window_state(
@@ -1788,9 +1982,14 @@ class NativeComputerFacade:
         context: Mapping[str, Any],
         cancelled: Callable[[], bool] = lambda: False,
     ) -> dict[str, Any]:
-        if cancelled():
-            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
         task_id = str(context.get("task_id") or "").strip()
+        if task_id:
+            cancelled = self._wrap_cancelled(task_id, cancelled, context=context)
+        if cancelled():
+            raise AgentToolRejected(
+                getattr(cancelled, "reason", None) or "agent_cancelled",
+                correction=ESCAPE_STOP_MESSAGE if getattr(cancelled, "escape_stopped", False) else None,
+            )
         if not task_id:
             raise AgentError("agent_scope_context_required")
         eff_op_id = str(operation_id or context.get("operation_id") or "op_read").strip() or "op_read"
@@ -1908,17 +2107,47 @@ class NativeComputerFacade:
             if type(inc_shot) is not bool:
                 raise AgentToolRejected("agent_tool_arguments_invalid")
 
-            win_entry = self._require_observed_window_ref(task_id, hwnd, context=context)
+            win_entry = self._require_observed_window_ref(
+                task_id, hwnd, context=context, allow_refresh=True, cancelled=cancelled
+            )
             wref = win_entry["window"]
 
+            pre_minimized = bool(win_entry.get("minimized"))
             try:
                 obs = self.bridge.get_state(
                     task_session_id=task_id,
                     window=wref,
-                    include_screenshot=inc_shot,
-                    include_text=True,
+                    include_screenshot=False if pre_minimized else inc_shot,
+                    include_text=not pre_minimized,
                     cancelled=cancelled,
                 )
+                win_rect_raw = (obs.get("geometry") or {}).get("windowRect") or {}
+                is_minimized_obs = (
+                    pre_minimized
+                    or int(win_rect_raw.get("left", 0)) <= -30000
+                    or int(win_rect_raw.get("top", 0)) <= -30000
+                )
+                if is_minimized_obs:
+                    try:
+                        restore_op_id = f"{eff_op_id}_restore"
+                        restore_res = self.bridge.execute_action(
+                            task_session_id=task_id,
+                            operation_id=restore_op_id,
+                            window=obs.get("window") or wref,
+                            expected_state_token=str(obs["stateToken"]),
+                            action={"type": "focus_window", "restoreIfMinimized": True},
+                            on_ready=lambda _r: not cancelled(),
+                            cancelled=cancelled,
+                            post_observation={"enabled": True, "settleDelayMs": 40},
+                        )
+                        post_state = restore_res.get("observation")
+                        if isinstance(post_state, Mapping) and post_state.get("stateToken"):
+                            obs = dict(post_state)
+                            if not inc_shot:
+                                obs["screenshots"] = []
+                            win_entry = {**win_entry, "minimized": False, "foreground": True}
+                    except Exception:
+                        pass
                 obs_record, public_artifacts = self._ingest_observation(
                     task_id=task_id,
                     operation_id=eff_op_id,
@@ -2074,6 +2303,12 @@ class NativeComputerFacade:
         task_id = str(context.get("task_id") or "").strip()
         if not task_id:
             raise AgentError("agent_scope_context_required")
+        cancelled = self._wrap_cancelled(task_id, cancelled, context=context)
+        if cancelled():
+            raise AgentToolRejected(
+                getattr(cancelled, "reason", None) or "agent_cancelled",
+                correction=ESCAPE_STOP_MESSAGE if getattr(cancelled, "escape_stopped", False) else None,
+            )
 
         stamp = self.capture_trusted_write_authority(
             task_id=task_id,
@@ -2103,6 +2338,7 @@ class NativeComputerFacade:
             on_ready_host_gate(validated_ready)
             return True
 
+        self._maybe_suppress_self_escape(frozen_action)
         try:
             commit_res = self.bridge.execute_action(
                 task_session_id=task_id,
@@ -2125,6 +2361,7 @@ class NativeComputerFacade:
             and not cancelled()
         ):
             next_token = str(commit_res["observation"]["stateToken"])
+            self._maybe_suppress_self_escape(follow_up_spec)
             try:
                 follow_res = self.bridge.execute_action(
                     task_session_id=task_id,
@@ -2262,8 +2499,12 @@ class NativeComputerFacade:
         context: Mapping[str, Any] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> dict[str, Any]:
+        cancelled = self._wrap_cancelled(task_id, cancelled, context=context)
         if cancelled():
-            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+            raise AgentToolRejected(
+                getattr(cancelled, "reason", None) or "agent_cancelled",
+                correction=ESCAPE_STOP_MESSAGE if getattr(cancelled, "escape_stopped", False) else None,
+            )
         if args.get("screenshot_path"):
             # Whole-screen screenshot_path has no v1 native equivalent and must never
             # silently become a single-window screenshot or fall back to ImageGrab.
@@ -2349,8 +2590,12 @@ class NativeComputerFacade:
         cancelled: Callable[[], bool] = lambda: False,
         on_ready_host_gate: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        cancelled = self._wrap_cancelled(task_id, cancelled, context=context)
         if cancelled():
-            raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
+            raise AgentToolRejected(
+                getattr(cancelled, "reason", None) or "agent_cancelled",
+                correction=ESCAPE_STOP_MESSAGE if getattr(cancelled, "escape_stopped", False) else None,
+            )
         current_preview = self.preview_local_action(args, task_id, context=context)
         self.overlay.touch(task_id, "正在操作窗口")
         if approved_preview is not None:
@@ -2396,6 +2641,7 @@ class NativeComputerFacade:
                 on_ready_host_gate(validated_ready)
             return True
 
+        self._maybe_suppress_self_escape(frozen_action)
         try:
             commit_res = self.bridge.execute_action(
                 task_session_id=task_id,
@@ -2439,6 +2685,7 @@ class NativeComputerFacade:
         self.overlay.forget(clean_task)
         tracked_files: list[tuple[Path, VerifiedFileIdentity | None, Path]] = []
         with self._lock:
+            self._escaped_tasks.pop(clean_task, None)
             tstate = self._tasks.pop(clean_task, None)
             ws_roots = self._workspace_roots_by_task.pop(clean_task, set())
             if tstate is not None:
@@ -2468,6 +2715,7 @@ class NativeComputerFacade:
     def close(self) -> None:
         self.overlay.close()
         with self._lock:
+            self._escaped_tasks.clear()
             for tstate in self._tasks.values():
                 tstate.tracked_files.clear()
                 tstate.retire_all_observations()

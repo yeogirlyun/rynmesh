@@ -24,13 +24,41 @@ import RynAgentVerification from "./RynAgentVerification";
 import { MemoryEditor, PreferencesEditor, SkillSelection, TaskSkills } from "./RynAgentGuidance";
 import RynAgentBudget from "./RynAgentBudget";
 import { ArchivedTasks, TaskRecords, TaskResultFiles } from "./RynAgentRecords";
-import { TaskArtifacts } from "./RynAgentArtifacts";
+import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import AgentTaskComputerStatus from "./AgentTaskComputerStatus";
-import { AutomationChatCard, AutomationDialog, AutomationsPanel, extractTurnAutomations } from "./RynAgentAutomations";
+import { AutomationChatCard, AutomationDialog, AutomationsPanel, extractTurnAutomations, HeartbeatWakeupDivider } from "./RynAgentAutomations";
 import { CodexSkillsView, consumePendingSkillPrefill } from "./CodexSkillsView";
-import type { AgentAutomation } from "../domain/rynAgent";
+import type { AgentAutomation, AgentAutomationRun } from "../domain/rynAgent";
+
+function playAutomationChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.38);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch { /* Ignore audio autoplay restrictions */ }
+}
 import "./rynAgentText";
 import "./RynAgent.css";
+
+function isMissingAgentTaskError(reason: unknown): boolean {
+  return reason instanceof AgentAPIError && (
+    reason.code === "agent_task_deleted" ||
+    reason.code === "agent_task_not_found" ||
+    reason.status === 404 ||
+    reason.status === 410
+  );
+}
 
 function mutationErrorKey(reason: unknown): string {
   if (!(reason instanceof AgentAPIError)) return "mutationError";
@@ -130,12 +158,15 @@ export default function RynAgent() {
   const [tasksCollapsed, setTasksCollapsed] = useState(() => saved("ryn.agent.tasks") === "closed" || (window.innerWidth <= 760 && saved("ryn.agent.tasks") !== "open"));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationsList, setAutomationsList] = useState<AgentAutomation[]>([]);
+  const [automationRuns, setAutomationRuns] = useState<AgentAutomationRun[]>([]);
+  const [activeAutoToast, setActiveAutoToast] = useState<NonNullable<AgentTaskSummary["automation_notification"]> | null>(null);
+  const seenAutoNotifIds = useRef<Set<string> | null>(null);
   const [showAutomationsView, setShowAutomationsView] = useState(false);
   const [showSkillsView, setShowSkillsView] = useState(false);
   const [editingAutomation, setEditingAutomation] = useState<Partial<AgentAutomation> | null>(null);
   const [automationDialogOpen, setAutomationDialogOpen] = useState(false);
   const refreshAutomations = useCallback(() => {
-    void rynAgent.automations().then(snap => setAutomationsList(snap.items || [])).catch(() => undefined);
+    void rynAgent.automations().then(snap => { setAutomationsList(snap.items || []); setAutomationRuns(snap.runs || []); }).catch(() => undefined);
   }, []);
   const [taskModelOpen, setTaskModelOpen] = useState(false);
   const [taskModelTarget, setTaskModelTarget] = useState("");
@@ -218,6 +249,32 @@ export default function RynAgent() {
     return () => { window.removeEventListener("focus", update); window.removeEventListener("blur", update); document.removeEventListener("visibilitychange", update); };
   }, []);
   const taskAttention = useAgentTaskAttention({ tasks, selected, openedTask: detailLoading ? null : task, visible: attentionVisible, ready: tasksReady });
+  useEffect(() => {
+    if (!tasksReady) return;
+    const allTasks = task ? [task, ...tasks.filter(tItem => tItem.id !== task.id)] : tasks;
+    if (seenAutoNotifIds.current === null) {
+      seenAutoNotifIds.current = new Set(allTasks.map(tItem => tItem.automation_notification?.id).filter((id): id is string => Boolean(id)));
+      return;
+    }
+    for (const tItem of allTasks) {
+      const notif = tItem.automation_notification;
+      if (!notif?.id || seenAutoNotifIds.current.has(notif.id)) continue;
+      seenAutoNotifIds.current.add(notif.id);
+      if (notif.decision === "DONT_NOTIFY") continue;
+      setActiveAutoToast(notif);
+      playAutomationChime();
+      try {
+        if ("Notification" in window) {
+          const fireDesktopNotif = () => {
+            const n = new Notification(`⏰ ${notif.title}`, { body: notif.message || notif.automation_name, tag: notif.id });
+            n.onclick = () => { window.focus(); if (notif.task_id) chooseTask(notif.task_id); n.close(); };
+          };
+          if (Notification.permission === "granted") fireDesktopNotif();
+          else if (Notification.permission === "default") void Notification.requestPermission().then(p => { if (p === "granted") fireDesktopNotif(); });
+        }
+      } catch { /* Ignore Notification API restrictions */ }
+    }
+  }, [tasksReady, tasks, task]);
   const selectedExecuting = Boolean(task?.id === selected && ["queued", "running", "pausing", "reconciling"].includes(agentTaskState(task)));
 
   const acceptTask = useCallback((incoming: AgentTask) => {
@@ -316,8 +373,10 @@ export default function RynAgent() {
       currentID ? rynAgent.task(currentID, controller.signal).then(detail => {
         if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
         acceptTask(detail); setResourceErrors(current => ({ ...current, detail: "" }));
-      }).catch(() => {
-        if (refreshID === refreshRevision.current && currentID === selectedRef.current) setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
+      }).catch(reason => {
+        if (refreshID !== refreshRevision.current || currentID !== selectedRef.current) return;
+        if (isMissingAgentTaskError(reason)) { deleteRecord(currentID); return; }
+        setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
       }) : Promise.resolve(),
     ]);
   }, [acceptTask, acceptTaskList, recoverCreate]);
@@ -378,7 +437,11 @@ export default function RynAgent() {
     setTask(cachedTask || null);
     setDetailLoading(!cachedTask);
     void rynAgent.task(selected, abort.signal).then(incoming => { if (!abort.signal.aborted) { acceptTask(incoming); setResourceErrors(current => ({ ...current, detail: "" })); } })
-      .catch(() => { if (!abort.signal.aborted) setResourceErrors(current => ({ ...current, detail: "detailLoadError" })); })
+      .catch(reason => {
+        if (abort.signal.aborted) return;
+        if (isMissingAgentTaskError(reason)) { deleteRecord(selected); return; }
+        setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
+      })
       .finally(() => { if (!abort.signal.aborted) setDetailLoading(false); });
     return () => abort.abort();
   }, [selected, acceptTask]);
@@ -432,6 +495,7 @@ export default function RynAgent() {
         else if (isAgentActive(agentTaskState(detail))) delay = 1200;
       } catch (reason) {
         if (stopped || selectedRef.current !== selected) return;
+        if (isMissingAgentTaskError(reason)) { deleteRecord(selected); return; }
         const transient = isTransientAgentReadError(reason);
         failures++;
         if (!transient || !cached || failures > 1) setResourceErrors(current => ({ ...current, detail: "detailLoadError" }));
@@ -671,6 +735,7 @@ export default function RynAgent() {
     && !(task.result && index === messages.length - 1 && message.role === "assistant" && message.content === task.result),
   ) || [];
   const transcript = groupAgentMessages(visibleMessages);
+  const maxTurnIndex = transcript.reduce((max, entry) => Math.max(max, entry.turnIndex), 0);
   const streamedText = task ? pendingAgentText(task) : "";
   const streamStart = task && [...task.events].reverse().find(event => event.type === "model_started");
   const legacySend = enabled && selectedModel && canUseAgentModel(selectedModel) && (!selected || (task && canContinueAgentTask(task)));
@@ -681,7 +746,7 @@ export default function RynAgent() {
   const visiblePending = pendingMessage && pendingMessage.phase !== "rejected" && (pendingMessage.taskID ? pendingMessage.taskID === selected : !selected && pendingMessage.draftKey === draftKey && (pendingMessage.navigationRevision ?? initialNavigationRef.current) === navigationRevision) ? pendingMessage : null;
   const pendingRecorded = Boolean(visiblePending && task?.messages.slice(visiblePending.baseMessageCount).some(message => message.role === "user" && (message.ui?.text ?? message.content)?.trim() === visiblePending.message));
   const pendingFeedback = visiblePending && <>
-    {!pendingRecorded && <div className="ra-message ra-user ra-message-pending"><ChatMarkdown>{visiblePending.message}</ChatMarkdown></div>}
+    {!pendingRecorded && <div className="ra-message ra-user ra-message-pending"><div className="ra-user-bubble"><ChatMarkdown>{visiblePending.message}</ChatMarkdown></div></div>}
     <div className="ra-execution-progress ra-send-progress" role="status" aria-live="polite">{visiblePending.phase === "sending" ? <LoaderCircle size={16} className="ra-spinner" /> : <CircleAlert size={16} />}<span>{t(visiblePending.phase === "sending" ? "sendingMessage" : "messageReceiptPending")}</span></div>
   </>;
   useEffect(() => {
@@ -733,6 +798,7 @@ export default function RynAgent() {
     {Object.values(resourceErrors).filter(Boolean).map(key => <div key={key} role="alert" className="ra-banner"><CircleAlert size={17} /><span>{t(key)}</span><button onClick={() => void reload()} disabled={busy}>{t("retry")}</button></div>)}
     {uncertain && <div role="alert" className="ra-banner">{t("uncertain")}<button disabled={busy} onClick={() => void recoverRequest()}>{t("recoverRequest")}</button></div>}
     {controlUncertain && <div role="alert" className="ra-banner">{t("controlUncertain")}<button disabled={busy} onClick={() => void recoverControl()}>{t("recoverControl")}</button></div>}
+    {activeAutoToast && <div className="ra-auto-toast-wrap" role="status"><div className="ra-auto-toast" onClick={() => { const tid = activeAutoToast.task_id; setActiveAutoToast(null); if (tid) chooseTask(tid); }}><div className="ra-auto-toast-left"><div className="ra-auto-toast-icon" aria-hidden="true"><Clock3 size={16} /></div><div className="ra-auto-toast-content"><span className="ra-auto-toast-title">⏰ {activeAutoToast.title}</span>{activeAutoToast.message && <><span className="ra-auto-toast-sep">|</span><span className="ra-auto-toast-msg">{activeAutoToast.message}</span></>}<span className="ra-auto-toast-live-pill">{i18n.language.startsWith("zh") ? "刚刚" : "Just now"}</span></div></div><div className="ra-auto-toast-right"><button type="button" className="ra-auto-toast-action" onClick={e => { e.stopPropagation(); const tid = activeAutoToast.task_id; setActiveAutoToast(null); if (tid) chooseTask(tid); }}><span>{i18n.language.startsWith("zh") ? "查看对话" : "Open"}</span><span>→</span></button><button type="button" className="ra-auto-toast-close" aria-label={t("close")} onClick={e => { e.stopPropagation(); setActiveAutoToast(null); }}>✕</button></div></div></div>}
     {loading ? <div className="ra-empty" role="status">{t("loading")}</div> : <div className="ra-layout">
       <aside id="ryn-agent-task-list" className="ra-tasks" aria-label={t("tasks")} hidden={tasksCollapsed}>
         <button className="ra-new" onClick={newTask}><SquarePen size={17} />{t("newTask")}</button>
@@ -743,13 +809,13 @@ export default function RynAgent() {
         <small className="ra-local"><Monitor size={14} />{t("localHistory")}</small>
       </aside>
       <div className="ra-chat">
-        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ repeat: "daily", time: "22:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => chooseTask(id)} /> : <>
+        {showSkillsView ? <CodexSkillsView embeddedInAgent onTrySkillPrompt={(prefillPrompt, skillId) => { setShowSkillsView(false); setShowAutomationsView(false); selectedRef.current = ""; setSelected(""); setTask(null); const targetKey = pluginDraftKey || newDraftKey(projectID); setDrafts(current => ({ ...current, [targetKey]: prefillPrompt })); if (skillId) { setSkillIDs(current => (current.includes(skillId) ? current : [...current, skillId])); } setTimeout(() => input.current?.focus(), 0); }} /> : showAutomationsView ? <AutomationsPanel automations={automationsList} runs={automationRuns} tasks={tasks} activeTaskId={selected} zh={i18n.language.startsWith("zh")} onRefresh={refreshAutomations} onCreateNew={() => { setEditingAutomation({ kind: selected ? "heartbeat" : "cron", target_task_id: selected || "", repeat: "daily", time: "09:00", status: "ACTIVE" }); setAutomationDialogOpen(true); }} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onSelectTask={id => { setShowAutomationsView(false); chooseTask(id); }} /> : <>
 
         {settingsReady && !enabled && task && <div className="ra-disabled-banner"><span>{t("historyDisabled")}</span><button disabled={busy} onClick={() => void updateSettings({ enabled: true, ...(model ? { model_id: model } : {}) })}>{t("enable")}</button></div>}
         <div ref={scroll} className="ra-scroll" aria-busy={detailLoading}>
 
-          {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task}>
-            {transcript.map((entry, index) => { if (entry.kind === "progress") { const callIds = new Set(entry.messages.flatMap(m => m.tool_calls?.map(c => c.id) || [])); const autoCards = extractTurnAutomations(task.events.filter(ev => typeof ev.call_id === "string" && callIds.has(ev.call_id))); return <Fragment key={`${task.id}-progress-${index}`}><RynAgentProgress messages={entry.messages} task={task} />{autoCards.map(autoItem => <AutomationChatCard key={autoItem.id} automation={automationsList.find(a => a.id === autoItem.id) || autoItem} zh={i18n.language.startsWith("zh")} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onRunNow={async item => { const res = await rynAgent.runAutomationNow(item.id).catch(() => null); refreshAutomations(); if (res?.task_id) chooseTask(res.task_id); }} />)}</Fragment>; } const message = entry.message; if (message.role === "assistant" && message.ui?.kind === "change_review") return <details key={`${task.id}-${index}`} className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : <ChatMarkdown fileLinks={message.role === "assistant"}>{message.role === "user" ? message.ui?.text ?? message.content ?? "" : message.content || ""}</ChatMarkdown>}</>}{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}</Fragment>; })}
+          {detailLoading ? <div className="ra-empty" role="status">{t("loading")}</div> : task ? <div key={`thread/${task.id}`} className="ra-thread"><TaskArtifacts key={`artifacts/${task.id}`} task={task} maxTurnIndex={maxTurnIndex}>
+            {transcript.map((entry, index) => { const isTurnEnd = entry.turnIndex >= 0 && entry.turnIndex < maxTurnIndex && transcript[index + 1]?.turnIndex !== entry.turnIndex; if (entry.kind === "progress") { const callIds = new Set(entry.messages.flatMap(m => m.tool_calls?.map(c => c.id) || [])); const autoCards = extractTurnAutomations(task.events.filter(ev => typeof ev.call_id === "string" && callIds.has(ev.call_id))); return <Fragment key={`${task.id}-progress-${index}`}><RynAgentProgress messages={entry.messages} task={task} />{autoCards.map(autoItem => <AutomationChatCard key={autoItem.id} automation={automationsList.find(a => a.id === autoItem.id) || autoItem} zh={i18n.language.startsWith("zh")} onEdit={item => { setEditingAutomation(item); setAutomationDialogOpen(true); }} onRunNow={async item => { const res = await rynAgent.runAutomationNow(item.id).catch(() => null); refreshAutomations(); if (res?.task_id) chooseTask(res.task_id); }} />)}{isTurnEnd && <TurnDeliverables turnIndex={entry.turnIndex} />}</Fragment>; } const message = entry.message; if (message.ui?.kind === "silent_heartbeat" || message.ui?.hidden === true) return isTurnEnd ? <TurnDeliverables key={`${task.id}-${index}-files`} turnIndex={entry.turnIndex} /> : null; if (message.role === "user" && message.ui?.kind === "heartbeat") return <Fragment key={`${task.id}-${index}`}><HeartbeatWakeupDivider text={message.ui.text || message.content || ""} automationName={message.ui.automation_name} zh={i18n.language.startsWith("zh")} /><RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />{isTurnEnd && <TurnDeliverables turnIndex={entry.turnIndex} />}</Fragment>; if (message.role === "assistant" && message.ui?.kind === "change_review") return <Fragment key={`${task.id}-${index}`}><details className="ra-review-note"><summary>{t("completionReview")}</summary><pre>{message.content}</pre></details>{isTurnEnd && <TurnDeliverables turnIndex={entry.turnIndex} />}</Fragment>; return <Fragment key={`${task.id}-${index}`}><div className={`ra-message ra-${message.role}`}>{message.role === "user" && <AgentMessageAttachments attachments={message.attachments} />}{message.role === "assistant" && !message.tool_calls?.length && message.ui?.kind !== "verification_feedback" &&<div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{models.find(item => item.id === agentMessageModelID(task, message))?.name || agentMessageModelID(task, message) || t("replyModelUnknown")}</small></div>}{message.role === "assistant" && message.ui?.kind === "verification_feedback" ? <RynAgentVerification content={message.content} /> : message.role === "user" && message.ui?.kind === "source_credential" ? <section className="ra-user-bubble" aria-label={t("credentialConfigured")}><strong>{t("credentialConfigured")}</strong><dl className="ra-answer-record"><div><dt>{t("sourceEndpoint")}</dt><dd>{message.ui.endpoint || t("unknownState")}</dd></div><div><dt>{t("credential")}</dt><dd>{t(message.ui.has_credential === true ? "credentialConfigured" : "unknownState")}</dd></div></dl></section> : message.role === "user" && message.ui?.kind === "input_answer" ? <section className="ra-user-bubble" aria-label={t("answerRecorded")}><strong>{t("answerRecorded")}</strong><dl className="ra-answer-record">{message.ui.fields?.map((field, fieldIndex) => <div key={fieldIndex}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl></section> : <><strong className="ra-message-kind">{message.role === "user" && message.ui?.kind === "steer" ? t("requirementsRecorded") : message.role === "user" && message.ui?.kind === "information" ? t("informationRecorded") : ""}</strong>{message.role === "user" && task.allowed_actions?.edit_message ? <RynAgentMessageEditor key={`${message.message_id || index}/${message.content}`} text={message.ui?.text ?? message.content ?? ""} disabled={busy || uncertain || controlUncertain || Boolean(task.archived) || !canUseAgentAction(task, "edit_message")} onSend={text => editMessage(task.messages.indexOf(message), text)}><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></RynAgentMessageEditor> : message.role === "user" ? <div className="ra-user-bubble"><ChatMarkdown>{message.ui?.text ?? message.content ?? ""}</ChatMarkdown></div> : <ChatMarkdown fileLinks>{message.content || ""}</ChatMarkdown>}</>}</div>{message.role === "user" && <RynAgentTurnDuration task={task} turnIndex={entry.turnIndex} />}{isTurnEnd && <TurnDeliverables turnIndex={entry.turnIndex} />}</Fragment>; })}
             {streamedText && <div className="ra-message ra-assistant" aria-live="polite"><div className="ra-reply-label"><Sparkles size={16} /><strong>Ryn</strong><small>{t("partialResponse")}</small></div><RynAgentStream text={streamedText} streamKey={`${task.id}/${streamStart?.seq}`} active={selectedExecuting} /></div>}
             {pendingFeedback}
             {!visiblePending && <ExecutionProgress task={task} />}
@@ -785,7 +851,7 @@ export default function RynAgent() {
     </div>}
     {taskModelOpen && task && <div className="ra-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !busy) setTaskModelOpen(false); }}><section className="ra-modal ra-model-dialog" role="dialog" aria-modal="true" aria-label={t("taskModel")} onKeyDown={event => { if (event.key === "Escape" && !busy) setTaskModelOpen(false); }}><div className="ra-modal-head"><h2>{t("taskModel")}</h2><button type="button" className="ra-icon" aria-label={t("close")} disabled={busy} onClick={() => setTaskModelOpen(false)}><X size={18} /></button></div><RynAgentModel key={`model/${task.id}/${taskModelTarget}`} task={task} models={models} defaultModelID={settings?.model_id} busy={busy || controlUncertain} expanded initialModelID={taskModelTarget} onChange={next => { acceptTask(next); setTaskModelOpen(false); }} /></section></div>}
     {settingsOpen && settings && <AgentSettingsDialog settings={settings} projects={projects} currentProject={currentProject} busy={busy} onClose={() => setSettingsOpen(false)} onSave={async update => { if (await updateSettings(update)) setSettingsOpen(false); }} />}
-    <AutomationDialog open={automationDialogOpen} initial={editingAutomation} zh={i18n.language.startsWith("zh")} onClose={() => setAutomationDialogOpen(false)} onSaved={() => refreshAutomations()} onDeleted={() => refreshAutomations()} />
+    <AutomationDialog open={automationDialogOpen} initial={editingAutomation} activeTaskId={selected} tasks={tasks} runs={automationRuns} zh={i18n.language.startsWith("zh")} onClose={() => setAutomationDialogOpen(false)} onSaved={() => refreshAutomations()} onDeleted={() => refreshAutomations()} />
   </section>;
 }
 

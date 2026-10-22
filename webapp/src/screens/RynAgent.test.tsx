@@ -1317,3 +1317,22 @@ it("keeps a restored task visible when an older active-list request omitted it",
   await act(async () => { release(); await gate; });
   expect(activeRows.getByRole("button", { name: "Restored history" })).toBeVisible();
 });
+
+
+it("evicts a selected task and returns to the new-task composer when the server reports it deleted", async () => {
+  await i18n.changeLanguage("en");
+  const running = controlled({ id: "deleted-task", title: "Deleted conversation", status: "running", run_state: "running" });
+  api(true, [running]);
+  const user = userEvent.setup(); mount();
+  await user.click(await screen.findByRole("button", { name: "Deleted conversation" }));
+  await screen.findByRole("button", { name: "Pause" });
+  server.use(
+    http.get("*/api/local/agent/tasks", () => HttpResponse.json({ tasks: [] })),
+    http.get("*/api/local/agent/tasks/deleted-task", () => HttpResponse.json({ detail: "agent_task_deleted" }, { status: 410 })),
+    http.get("*/api/local/agent/tasks/deleted-task/artifacts", () => HttpResponse.json({ detail: "agent_task_deleted" }, { status: 410 })),
+  );
+  await screen.findByRole("heading", { name: "What would you like me to do?" }, { timeout: 3500 });
+  expect(screen.queryByText(/Could not refresh this task/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Could not load created files/)).not.toBeInTheDocument();
+  expect(agentTaskCache().has("deleted-task")).toBe(false);
+});

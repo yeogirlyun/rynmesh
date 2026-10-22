@@ -18,8 +18,8 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
   });
   if (!settings) return null;
   const fields: Array<[keyof AIModelParameters, string, number, number]> = [
-    ["context_window", text("上下文窗口", "Context window"), 256, 2000000], ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, 256000],
-    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 4], ["requests_per_day", text("每日请求上限", "Daily request limit"), 1, 1000000],
+    ["context_window", text("上下文窗口", "Context window"), 256, 2000000], ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, 393216],
+    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 2500], ["requests_per_day", text("每日请求上限", "Daily request limit"), 1, 1000000],
   ];
   const edit = (name: keyof AIModelParameters, value: string) => { setDraft(current => ({ ...current, [name]: value })); setChangedFields(current => current.includes(name) ? current : [...current, name]); };
   const reset = (name: keyof AIModelParameters) => edit(name, "");
@@ -35,7 +35,7 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
       }
       configuration.request_defaults = draft.request_defaults.trim() ? JSON.parse(draft.request_defaults) : null;
       const inheritedContext = inheritedSource.context_window_mode === "auto"
-        ? inheritedSource.model_metadata?.[modelID]?.context_window || 32768 : inheritedSource.context_window;
+        ? inheritedSource.model_metadata?.[modelID]?.context_window || settings.effective.context_window || 32768 : inheritedSource.context_window;
       const context = Number(configuration.context_window || inheritedContext);
       const output = Number(configuration.max_output_tokens || inheritedSource.max_output_tokens);
       if (output > context) throw new Error(text("最大输出不能超过上下文窗口。", "Maximum output cannot exceed the context window."));

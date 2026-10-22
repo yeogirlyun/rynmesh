@@ -178,7 +178,7 @@ def test_photography_explicit_save_update_forget_and_context_formatting(tmp_path
     assert len(res_forget["deleted_ids"]) == 2
     snap = store.inspect(memory.list_memories_snapshot)
     assert len(snap["entries"]) == 1
-    assert snap["entries"][0]["fact_key"] == "personal.preference.photography"
+    assert snap["entries"][0]["fact_key"] == "personal.preference.摄影"
 
 
 @pytest.mark.parametrize(
@@ -526,7 +526,7 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
 
     save_sentence = "请记住这三条我的个人信息：我喜欢摄影；我的机身是富士 X-T5；我的镜头是 XF16-55mm F2.8。请分别保存为三条记忆。"
     correct_sentence = "把我的机身改成富士 X-H2，X-T5 已经卖掉了。请更新已有机身记忆，保留镜头信息。"
-    forget_sentence = "忘记我的相机和镜头信息，保留摄影爱好。请实际删除这些器材记忆，并如实说明结果。"
+    forget_sentence = "忘记我的机身和镜头信息，保留摄影爱好。请实际删除这些器材记忆，并如实说明结果。"
 
     def run_wrapper_and_retention_checks(data):
         row = _seed_task(
@@ -543,20 +543,20 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
         assert r_save["intent"] == "remember"
         snap1 = memory.list_memories_snapshot(data)["entries"]
         assert {e["fact_key"] for e in snap1} == {
-            "personal.preference.photography",
-            "personal.gear.camera_body",
-            "personal.gear.lens",
+            "personal.preference.摄影",
+            "personal.profile.机身",
+            "personal.profile.镜头",
         }
         by_key1 = {e["fact_key"]: e for e in snap1}
-        assert by_key1["personal.preference.photography"]["text"] == "喜欢摄影"
-        assert "X-T5" in by_key1["personal.gear.camera_body"]["text"]
-        assert "XF16-55mm F2.8" in by_key1["personal.gear.lens"]["text"]
+        assert by_key1["personal.preference.摄影"]["text"] == "喜欢摄影"
+        assert "X-T5" in by_key1["personal.profile.机身"]["text"]
+        assert "XF16-55mm F2.8" in by_key1["personal.profile.镜头"]["text"]
         for wrapper in ("这三条我的个人信息", "保存为三条", "请分别", "为三条记忆"):
             assert all(wrapper not in e["text"] for e in snap1)
         # Original owner message and source hash must remain untouched
         assert row["messages"][0]["content"] == save_sentence
 
-        # 2. CORRECT updates only camera_body and preserves lens + photography
+        # 2. CORRECT updates only 机身 and preserves 镜头 + 摄影
         row["conversation_revision"] = 1
         row["messages"].append(
             {
@@ -573,25 +573,25 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
         snap2 = memory.list_memories_snapshot(data)["entries"]
         by_key2 = {e["fact_key"]: e for e in snap2}
         assert set(by_key2.keys()) == {
-            "personal.preference.photography",
-            "personal.gear.camera_body",
-            "personal.gear.lens",
+            "personal.preference.摄影",
+            "personal.profile.机身",
+            "personal.profile.镜头",
         }
-        assert "X-H2" in by_key2["personal.gear.camera_body"]["text"]
-        assert "X-T5" not in by_key2["personal.gear.camera_body"]["text"]
-        assert "XF16-55mm F2.8" in by_key2["personal.gear.lens"]["text"]
-        assert by_key2["personal.preference.photography"]["text"] == "喜欢摄影"
+        assert "X-H2" in by_key2["personal.profile.机身"]["text"]
+        assert "X-T5" not in by_key2["personal.profile.机身"]["text"]
+        assert "XF16-55mm F2.8" in by_key2["personal.profile.镜头"]["text"]
+        assert by_key2["personal.preference.摄影"]["text"] == "喜欢摄影"
 
         # 3. Partial forget with '保留镜头和摄影爱好' / '不要删除镜头' must not include lens or hobby in forget targets
         partial_forget_text = "忘记我的机身，保留镜头和摄影爱好"
         partial_intent = memory_runtime.analyze_owner_memory_intent(partial_forget_text, row)
         assert partial_intent["is_explicit"] is True
         assert partial_intent["intent"] == "forget"
-        assert [op["fact_key"] for op in partial_intent["operations"]] == ["personal.gear.camera_body"]
+        assert [op["fact_key"] for op in partial_intent["operations"]] == ["personal.slot.机身"]
 
         dont_delete_lens_intent = memory_runtime.analyze_owner_memory_intent("忘记我的机身，不要删除镜头", row)
         assert dont_delete_lens_intent["is_explicit"] is True
-        assert [op["fact_key"] for op in dont_delete_lens_intent["operations"]] == ["personal.gear.camera_body"]
+        assert [op["fact_key"] for op in dont_delete_lens_intent["operations"]] == ["personal.slot.机身"]
 
         # Contradictory forget ('忘记我的镜头，但保留镜头') fails closed
         contradictory = memory_runtime.analyze_owner_memory_intent("忘记我的镜头，但保留镜头", row)
@@ -615,9 +615,9 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
         )
         assert bad_tool_forget["applied"] is False
         assert bad_tool_forget["reason"] == "forget_target_not_grounded_in_owner_message"
-        assert "personal.gear.lens" in {e["fact_key"] for e in memory.list_memories_snapshot(data)["entries"]}
+        assert "personal.profile.镜头" in {e["fact_key"] for e in memory.list_memories_snapshot(data)["entries"]}
 
-        # 4. Exact FORGET deletes camera_body and lens while preserving photography hobby
+        # 4. Exact FORGET deletes 机身 and 镜头 while preserving 摄影 hobby
         row["conversation_revision"] = 2
         row["messages"].append(
             {
@@ -632,7 +632,7 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
         assert r_forget["applied"] is True
         assert r_forget["intent"] == "forget"
         snap3 = memory.list_memories_snapshot(data)["entries"]
-        assert [e["fact_key"] for e in snap3] == ["personal.preference.photography"]
+        assert [e["fact_key"] for e in snap3] == ["personal.preference.摄影"]
         assert snap3[0]["text"] == "喜欢摄影"
 
         # 5. True negative save/remember commands remain non-mutating
@@ -648,6 +648,53 @@ def test_owner_wrapper_stripping_negation_word_boundaries_and_forget_retention_i
     store.transaction(run_wrapper_and_retention_checks)
     reopened = AgentStore(tmp_path, key)
     final_entries = reopened.inspect(memory.list_memories_snapshot)["entries"]
-    assert [e["fact_key"] for e in final_entries] == ["personal.preference.photography"]
+    assert [e["fact_key"] for e in final_entries] == ["personal.preference.摄影"]
     assert final_entries[0]["text"] == "喜欢摄影"
+
+
+def test_generic_multilingual_preference_and_llm_propose_grounding(tmp_path):
+    store, _ = _make_store(tmp_path)
+    dest = _dest()
+
+    def run_generic_checks(data):
+        # 1. Free-form Chinese skill/preference ("记住我会弹钢琴")
+        row_zh = _seed_task(
+            data,
+            task_id="t-piano-zh",
+            message_id="m-piano-zh",
+            text="请记住我会弹钢琴",
+            conversation_revision=0,
+            destination=dest,
+        )
+        r_zh = memory_runtime.execute_explicit_owner_intent_in_tx(data, row_zh)
+        assert r_zh["applied"] is True
+        assert any("弹钢琴" in e["text"] for e in r_zh["entries"])
+
+        # 2. Free-form English preference via LLM tool call ("I play the violin")
+        row_en = _seed_task(
+            data,
+            task_id="t-violin-en",
+            message_id="m-violin-en",
+            text="By the way, I play the violin in a local orchestra.",
+            conversation_revision=0,
+            destination=dest,
+        )
+        r_en = memory_runtime.execute_memory_tool_call_in_tx(
+            data,
+            row_en,
+            memory_runtime.MEMORY_PROPOSE_TOOL,
+            {
+                "operation": "remember",
+                "scope_kind": "personal",
+                "category": "preference",
+                "fact_key": "personal.preference.violin",
+                "text": "Plays the violin in a local orchestra",
+                "keywords": ["violin", "orchestra"],
+            },
+        )
+        assert r_en["saved"] is True
+        assert r_en["entry"]["fact_key"] == "personal.preference.violin"
+        assert r_en["entry"]["category"] == "preference"
+
+    store.transaction(run_generic_checks)
 

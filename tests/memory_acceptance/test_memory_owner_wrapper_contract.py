@@ -29,8 +29,8 @@ for module in (host, memory, runtime_module, store_module):
 
 SAVE = "请记住这三条我的个人信息：我喜欢摄影；我的机身是富士 X-T5；我的镜头是 XF16-55mm F2.8。请分别保存为三条记忆。"
 CORRECT = "把我的机身改成富士 X-H2，X-T5 已经卖掉了。请更新已有机身记忆，保留镜头信息。"
-FORGET = "忘记我的相机和镜头信息，保留摄影爱好。请实际删除这些器材记忆，并如实说明结果。"
-KEYS = {"personal.preference.photography", "personal.gear.camera_body", "personal.gear.lens"}
+FORGET = "忘记我的机身和镜头信息，保留摄影爱好。请实际删除这些器材记忆，并如实说明结果。"
+KEYS = {"personal.preference.摄影", "personal.profile.机身", "personal.profile.镜头"}
 WRAPPERS = ("这三条我的个人信息", "保存为三条", "请分别", "为三条记忆")
 
 
@@ -91,8 +91,8 @@ def append_owner(runtime, task_id, text):
 
 @pytest.mark.parametrize("sentence,intent,expected_keys", [
     (SAVE, "remember", KEYS),
-    (CORRECT, "update", {"personal.gear.camera_body"}),
-    (FORGET, "forget", {"personal.gear.camera_body", "personal.gear.lens"}),
+    (CORRECT, "update", {"personal.profile.机身"}),
+    (FORGET, "forget", {"personal.slot.机身", "personal.slot.镜头"}),
 ])
 def test_exact_three_owner_sentences_parse_only_their_requested_slots(node, sentence, intent, expected_keys):
     runtime, _key, task_id = node
@@ -130,9 +130,9 @@ def test_real_store_exact_save_then_full_correction_and_gear_forget_preserves_ho
     assert len(saved) == 3 and {entry["fact_key"] for entry in saved} == KEYS, saved
     assert not any(wrapper in entry["text"] for entry in saved for wrapper in WRAPPERS), saved
     mapping = {entry["fact_key"]: entry for entry in saved}
-    assert mapping["personal.preference.photography"]["text"] == "喜欢摄影"
-    assert "X-T5" in mapping["personal.gear.camera_body"]["text"]
-    assert "XF16-55mm F2.8" in mapping["personal.gear.lens"]["text"]
+    assert mapping["personal.preference.摄影"]["text"] == "喜欢摄影"
+    assert "X-T5" in mapping["personal.profile.机身"]["text"]
+    assert "XF16-55mm F2.8" in mapping["personal.profile.镜头"]["text"]
     original = runtime.store.read()["tasks"][task_id]["messages"][0]
     expected_hash = hashlib.sha256(SAVE.encode("utf-8")).hexdigest()
     assert original["role"] == "user" and original["content"] == SAVE
@@ -152,14 +152,14 @@ def test_real_store_exact_save_then_full_correction_and_gear_forget_preserves_ho
     corrected = facts(runtime)
     assert len(corrected) == 3 and {entry["fact_key"] for entry in corrected} == KEYS, corrected
     mapping = {entry["fact_key"]: entry for entry in corrected}
-    assert "X-H2" in mapping["personal.gear.camera_body"]["text"]
-    assert "X-T5" not in mapping["personal.gear.camera_body"]["text"]
-    assert "XF16-55mm F2.8" in mapping["personal.gear.lens"]["text"]
-    assert mapping["personal.preference.photography"]["text"] == "喜欢摄影"
+    assert "X-H2" in mapping["personal.profile.机身"]["text"]
+    assert "X-T5" not in mapping["personal.profile.机身"]["text"]
+    assert "XF16-55mm F2.8" in mapping["personal.profile.镜头"]["text"]
+    assert mapping["personal.preference.摄影"]["text"] == "喜欢摄影"
     assert all(source["message_id"] == correct_source["message_id"]
                and source["content_sha256"] == correct_source["content_sha256"]
-               for source in mapping["personal.gear.camera_body"]["sources"])
-    for fact_key in ("personal.preference.photography", "personal.gear.lens"):
+               for source in mapping["personal.profile.机身"]["sources"])
+    for fact_key in ("personal.preference.摄影", "personal.profile.镜头"):
         assert all(source["message_id"] == save_source["message_id"]
                    and source["content_sha256"] == save_source["content_sha256"]
                    for source in mapping[fact_key]["sources"])
@@ -173,7 +173,7 @@ def test_real_store_exact_save_then_full_correction_and_gear_forget_preserves_ho
     assert_original_owner_sentence_source(runtime, task_id, FORGET)
     final = restored.inspect(memory.list_memories_snapshot)["entries"]
     assert len(final) == 1
-    assert {entry["fact_key"] for entry in final} == {"personal.preference.photography"}, final
+    assert {entry["fact_key"] for entry in final} == {"personal.preference.摄影"}, final
     assert any(entry["text"] == "喜欢摄影" for entry in final)
     assert not any("XF16-55" in entry["text"] or "X-T5" in entry["text"] or "X-H2" in entry["text"] for entry in final)
     assert all(source["message_id"] == save_source["message_id"]

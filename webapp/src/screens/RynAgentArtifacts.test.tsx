@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
 import { rynAgent, type AgentTask } from "../domain/rynAgent";
-import { TaskArtifacts } from "./RynAgentArtifacts";
+import { TaskArtifacts, TurnDeliverables } from "./RynAgentArtifacts";
 import RynAgentProgress from "./RynAgentProgress";
 import ChatMarkdown from "./ChatMarkdown";
 import { findAgentFile } from "./RynAgentFileContext";
@@ -329,4 +329,66 @@ it("keeps native open/reveal available for a file above the preview limit", asyn
   expect(screen.getByRole("button", { name: "Show in folder" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Default application" }));
   await waitFor(() => expect(actions).toEqual([{ action: "open" }]));
+});
+
+
+it("does not render a ready-files card for unmentioned shell command scratch files and keeps refresh errors in the same section", async () => {
+  const scratch1 = {
+    ...helper, id: "file_brief", name: "skills_brief.txt", path: "skills_brief.txt",
+    source: "command", attribution: "observed_during_command", role: "supporting", mentioned_in_answer: false,
+  } as AgentFileArtifact;
+  const scratch2 = {
+    ...helper, id: "file_list", name: "skills_list.json", path: "skills_list.json",
+    source: "command", attribution: "observed_during_command", role: "supporting", mentioned_in_answer: false,
+  } as AgentFileArtifact;
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [scratch1, scratch2] })));
+  const view = render(<TaskArtifacts task={{ ...done, status: "running", result: "" }} />);
+  await waitFor(() => expect(screen.queryByText(/files? ready/i)).not.toBeInTheDocument());
+  expect(view.container.querySelector("section.ra-files")).toBeNull();
+
+  // When a real deliverable exists and a subsequent refresh fails, only one section is rendered.
+  let fail = false;
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => fail
+    ? HttpResponse.json({ detail: "agent_unavailable" }, { status: 503 })
+    : HttpResponse.json({ artifacts: [], files: [pelican, scratch1] })));
+  view.rerender(<TaskArtifacts task={{ ...done, file_artifact_revision: 1 }} />);
+  expect(await screen.findByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+  fail = true;
+  view.rerender(<TaskArtifacts task={{ ...done, file_artifact_revision: 2 }} />);
+  expect(await screen.findByText("Could not load created files.")).toBeVisible();
+  expect(view.container.querySelectorAll("section.ra-files")).toHaveLength(1);
+});
+
+it("hides helper scripts and places earlier turn deliverables inline at their turn", async () => {
+  const turn0Pdf = {
+    ...pelican, id: "file_pdf0", name: "Payoneer_fixed.pdf", path: "Payoneer_fixed.pdf",
+    media_type: "application/pdf", preview: "download", role: "deliverable",
+    source: "command", attribution: "observed_during_command", turn_index: 0,
+  } as AgentFileArtifact;
+  const helperPy = {
+    ...helper, id: "file_py", name: "geom_probe2.py", path: "geom_probe2.py",
+    role: "supporting", turn_index: 0,
+  } as AgentFileArtifact;
+  const helperJson = {
+    ...helper, id: "file_json", name: "verify_payoneer.json", path: "verify_payoneer.json",
+    role: "supporting", source: "command", attribution: "observed_during_command", turn_index: 0,
+  } as AgentFileArtifact;
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () =>
+    HttpResponse.json({ artifacts: [], files: [turn0Pdf, helperPy, helperJson] })));
+  const view = render(
+    <TaskArtifacts task={done} maxTurnIndex={1}>
+      <div data-testid="turn-0">
+        <p>Turn 0 response</p>
+        <TurnDeliverables turnIndex={0} />
+      </div>
+      <div data-testid="turn-1">
+        <p>Turn 1 response</p>
+      </div>
+    </TaskArtifacts>,
+  );
+  const pdfBtn = await screen.findByRole("button", { name: "Open Payoneer_fixed.pdf" });
+  expect(view.getByTestId("turn-0")).toContainElement(pdfBtn);
+  expect(screen.queryByText(/geom_probe2\.py|verify_payoneer\.json/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Observed during command|命令运行期间发现/)).not.toBeInTheDocument();
+  expect(view.container.querySelectorAll("section.ra-files")).toHaveLength(1);
 });

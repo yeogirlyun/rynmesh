@@ -28,6 +28,11 @@ TEXT_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", 
 DOCUMENT_TYPES = {".pdf": "application/pdf", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                   ".xls": "application/vnd.ms-excel", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation", ".zip": "application/zip"}
+HELPER_TYPES = frozenset({
+    ".py", ".pyc", ".pyo", ".json", ".jsonl", ".sh", ".bash", ".zsh",
+    ".ps1", ".bat", ".cmd", ".js", ".mjs", ".cjs", ".ts", ".tsx",
+    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".log", ".tmp", ".bak",
+})
 # Served bytes never run with the application's privileges: no scripts, no requests, a unique origin.
 CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox"
 # Names that look like a file in an answer: word characters, dots and dashes (no spaces), then a known
@@ -172,7 +177,7 @@ def snapshot(root) -> dict:
     """Bounded metadata inventory around a command; do not read unrelated file contents."""
     found, pending, visited, readable, directories = {}, [Path(root)], 0, True, set()
     deadline = time.monotonic() + 1.0
-    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", ".next"}
+    skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "target", ".next", ".ryn", ".codex_scratch"}
     while pending and visited < 5000 and time.monotonic() < deadline:
         directory = pending.pop()
         complete_directory = True
@@ -254,6 +259,43 @@ def final_text(row) -> str:
     return ""
 
 
+def _turn_answers(row) -> dict[int, str]:
+    """Map each 0-based user turn index to public assistant answer text produced in that turn."""
+    by_turn: dict[int, list[str]] = {}
+    turn_idx = -1
+    for message in row.get("messages", []):
+        if message.get("role") == "user":
+            turn_idx += 1
+        elif (message.get("role") == "assistant" and message.get("content")
+              and not message.get("tool_calls")
+              and (message.get("ui") or {}).get("kind") not in {"change_review", "verification_feedback"}):
+            by_turn.setdefault(max(0, turn_idx), []).append(message["content"])
+    latest_turn = max(0, turn_idx)
+    if row.get("result"):
+        existing = by_turn.setdefault(latest_turn, [])
+        if row["result"] not in existing:
+            existing.append(row["result"])
+    return {idx: "\n".join(parts) for idx, parts in by_turn.items()}
+
+
+def _operation_turns(row) -> dict[str, int]:
+    """Map operation_id to the 0-based user turn index where the tool call was dispatched."""
+    call_to_turn: dict[str, int] = {}
+    turn_idx = -1
+    for message in row.get("messages", []):
+        if message.get("role") == "user":
+            turn_idx += 1
+        elif message.get("role") == "assistant" and message.get("tool_calls"):
+            for call in message["tool_calls"]:
+                if isinstance(call, dict) and call.get("id"):
+                    call_to_turn[str(call["id"])] = max(0, turn_idx)
+    op_to_turn: dict[str, int] = {}
+    for event in row.get("events", []):
+        if isinstance(event, dict) and event.get("operation_id") and event.get("call_id") in call_to_turn:
+            op_to_turn[str(event["operation_id"])] = call_to_turn[str(event["call_id"])]
+    return op_to_turn
+
+
 def inspections(row) -> dict:
     """sha256 -> latest confirmed render inspection of exactly those bytes."""
     found = {}
@@ -272,6 +314,8 @@ def listing(row) -> dict:
     root = Path(root_value)
     answer = final_text(row)
     lowered = answer.casefold()
+    answers_by_turn = _turn_answers(row)
+    op_turns = _operation_turns(row)
     checked = inspections(row)
     items = []
     for state in history(row).values():
@@ -282,13 +326,23 @@ def listing(row) -> dict:
             relative = os.path.relpath(path, root).replace("\\", "/")
         except ValueError:
             continue
-        if relative.startswith("../"):
+        if relative.startswith("../") or relative.startswith(".ryn/attachments/"):
             continue
+        mentioned_turns = [
+            t_idx for t_idx, text in sorted(answers_by_turn.items())
+            if path.name.casefold() in text.casefold() or relative.casefold() in text.casefold()
+        ]
+        mentioned = bool(mentioned_turns) or path.name.casefold() in lowered or relative.casefold() in lowered
+        valid_goals = [g for g in state["goal_revisions"] if isinstance(g, int) and g >= 1]
+        turn_index = op_turns.get(state["operation_id"])
+        if turn_index is None:
+            turn_index = mentioned_turns[-1] if mentioned_turns else ((valid_goals[-1] - 1) if valid_goals else 0)
         item = {"id": state["id"], "name": path.name, "path": relative, "absolute_path": str(path), "source": state["source"], "operation_id": state["operation_id"], "media_type": media_type(path.name),
                 "preview": preview_kind(path.name), "created_by_task": bool(state["created_by_task"]),
                 "revisions": state["revisions"], "goal_revisions": state["goal_revisions"],
+                "turn_index": turn_index,
                 "created_at": state["first_at"], "updated_at": state["updated_at"], "receipt_sha256": state["sha256"],
-                "mentioned_in_answer": path.name.casefold() in lowered or relative.casefold() in lowered}
+                "mentioned_in_answer": mentioned}
         if state["source"] == "command":
             item["attribution"] = "observed_during_command"
             # Modified original project files are audit evidence, not automatic
@@ -313,13 +367,29 @@ def listing(row) -> dict:
         items.append(item)
     present = [item for item in items if item["status"] != "missing"]
     named = [item for item in present if item["mentioned_in_answer"]]
+    has_non_helper = any(
+        Path(item["name"]).suffix.lower() not in HELPER_TYPES
+        and item["source"] not in {"computer_observation", "read"}
+        for item in present
+    )
     for item in items:
+        suffix = Path(item["name"]).suffix.lower()
+        is_helper = suffix in HELPER_TYPES
         if item["source"] == "computer_observation":
             item["role"] = "supporting"
             continue
+        if is_helper and (item["source"] == "command" or has_non_helper or item not in named):
+            item["role"] = "supporting"
+            continue
         # Evidence first: an answer can only rank files that receipts already prove; it cannot add one.
-        document = item["created_by_task"] and Path(item["name"]).suffix.lower() in DOCUMENT_TYPES
-        item["role"] = ("deliverable" if item in named or (document and item in present) else "supporting") if named else ("deliverable" if item in present else "supporting")
+        document = (item["created_by_task"] or item["source"] == "command") and suffix in DOCUMENT_TYPES
+        if item["source"] == "command":
+            # Shell directory diffs observe side effects (such as scratch files), not explicit file-tool
+            # deliverables. Following Codex's turn-artifact rules, command-observed files become
+            # deliverables only when named in the assistant's answer or produced as binary documents.
+            item["role"] = "deliverable" if (item in named if named else (document and item in present)) else "supporting"
+        else:
+            item["role"] = ("deliverable" if item in named else "supporting") if named else ("deliverable" if item in present else "supporting")
     # Deliverables first, then most recently updated; the sorts are stable.
     items.sort(key=lambda item: item["updated_at"] or "", reverse=True)
     items.sort(key=lambda item: (item["role"] != "deliverable", item["status"] == "missing"))

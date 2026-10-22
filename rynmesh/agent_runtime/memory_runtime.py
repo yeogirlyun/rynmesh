@@ -34,8 +34,8 @@ MEMORY_TOOL_SPECS = (
             "description": (
                 "Read-only search over active owner memories permitted for the current task's "
                 "project scope and model destination. Use this when the owner's request may relate "
-                "to topics, slots, or cues in the memory navigation index (e.g. gear advice, "
-                "lightweight street setup, workflow preferences) even without literal keywords."
+                "to topics, slots, or cues in the memory navigation index (e.g. user profile, "
+                "skills, preferences, environment setup, or workflow conventions) even without literal keywords."
             ),
             "parameters": {
                 "type": "object",
@@ -65,8 +65,9 @@ MEMORY_TOOL_SPECS = (
             "name": MEMORY_PROPOSE_TOOL,
             "description": (
                 "Propose a structured memory operation (remember, update, or forget) when the owner's "
-                "current message explicitly asks to remember, update/correct, or forget a durable fact. "
-                "The host deterministically verifies owner intent and source grounding before committing."
+                "current message states or updates a durable personal/project fact, skill, or preference, "
+                "or asks to remember, update/correct, or forget a memory (in any language). "
+                "The host verifies authentic owner origin and source grounding before committing."
             ),
             "parameters": {
                 "type": "object",
@@ -344,113 +345,62 @@ def _classify_fact_clause(clause: str, *, scope_kind: str = "personal") -> dict[
 
     prefix = "project" if scope_kind == "project" else "personal"
 
-    # Camera body detection
-    body_match = re.search(
-        r"(?:我的)?(?:主力)?(?:相机|机身)(?:是|为|改成|改为|更新为|换成|修正为|现在是|用)\s*([^，,。；;]+)",
-        cleaned,
-        re.I,
-    )
-    if body_match:
-        val = body_match.group(1).strip()
-        return {
-            "category": "equipment",
-            "fact_key": f"{prefix}.gear.camera_body",
-            "text": f"机身是{val}" if not val.startswith("机身") else val,
-            "keywords": ["摄影", "器材", "相机", "机身", val],
-            "raw_clause": cleaned,
-        }
-
-    # Backup camera detection
-    backup_match = re.search(
-        r"(?:我的)?(?:备用机|备机|随身机)(?:是|为|改成|改为|更新为|换成|修正为)\s*([^，,。；;]+)",
-        cleaned,
-        re.I,
-    )
-    if backup_match:
-        val = backup_match.group(1).strip()
-        return {
-            "category": "equipment",
-            "fact_key": f"{prefix}.gear.backup_camera",
-            "text": f"备用机是{val}",
-            "keywords": ["摄影", "器材", "备用机", val],
-            "raw_clause": cleaned,
-        }
-
-    # Lens detection
-    lens_match = re.search(
-        r"(?:我的)?(?:常用|挂机|主力)?镜头(?:是|为|改成|改为|更新为|换成|修正为|有|用)\s*([^，,。；;]+)",
-        cleaned,
-        re.I,
-    )
-    if lens_match:
-        val = lens_match.group(1).strip()
-        return {
-            "category": "equipment",
-            "fact_key": f"{prefix}.gear.lens",
-            "text": f"镜头是 {val}" if not val.startswith("镜头") else val,
-            "keywords": ["摄影", "器材", "镜头", val],
-            "raw_clause": cleaned,
-        }
-
-    # Tripod detection
-    tripod_match = re.search(
-        r"(?:我的)?三脚架(?:是|为|改成|改为|更新为|换成|修正为|用)\s*([^，,。；;]+)",
-        cleaned,
-        re.I,
-    )
-    if tripod_match:
-        val = tripod_match.group(1).strip()
-        return {
-            "category": "equipment",
-            "fact_key": f"{prefix}.gear.tripod",
-            "text": f"三脚架是{val}",
-            "keywords": ["摄影", "器材", "三脚架", val],
-            "raw_clause": cleaned,
-        }
-
-    # Hobby / preference detection (e.g., 我喜欢摄影)
-    like_match = re.search(r"^(?:我)?(?:平时|非常|很)?(?:喜欢|热爱|偏好)(.+)$", cleaned)
-    if like_match:
-        hobby = like_match.group(1).strip()
-        if "摄影" in hobby or "拍照" in hobby or "风光" in hobby or "人像" in hobby or "街拍" in hobby:
-            key_suffix = "photography" if hobby == "摄影" else _slug_key(hobby, fallback="photography")
-            return {
-                "category": "photography",
-                "fact_key": f"{prefix}.preference.{key_suffix}",
-                "text": f"喜欢{hobby}",
-                "keywords": ["摄影", "爱好", hobby],
-                "raw_clause": cleaned,
-            }
-        slug = _slug_key(hobby, fallback="preference")
-        return {
-            "category": "preference",
-            "fact_key": f"{prefix}.preference.{slug}",
-            "text": f"喜欢{hobby}",
-            "keywords": [hobby],
-            "raw_clause": cleaned,
-        }
-
     # Project convention / stack detection
-    if scope_kind == "project" or re.search(r"(?:本项目|当前项目|这个项目|项目使用|项目采用)", cleaned):
+    if scope_kind == "project" or re.search(r"(?:本项目|当前项目|这个项目|项目使用|项目采用|in\s+this\s+project|this\s+project\s+uses)", cleaned, re.I):
         slug = _slug_key(cleaned, fallback="convention")
         return {
             "category": "project",
             "fact_key": f"project.fact.{slug}",
             "text": cleaned,
-            "keywords": ["项目", cleaned[:24]],
+            "keywords": ["project", cleaned[:24]],
             "raw_clause": cleaned,
         }
 
-    # Generic durable owner statement when explicitly requested to remember
-    slug = _slug_key(cleaned, fallback="fact")
-    category = (
-        "photography"
-        if any(k in cleaned for k in ("摄影", "相机", "机身", "镜头", "富士", "佳能", "尼康", "索尼"))
-        else "general"
+    # Preference / habit / skill detection (Chinese & English)
+    pref_match = re.search(
+        r"^(?:我|i\s+)?(?:平时|非常|很|比较|一般|通常|默认|can\s+|usually\s+|always\s+|really\s+)?(?:喜欢|热爱|偏好|习惯|倾向于|擅长|会|prefer|like|love|enjoy|use|play|speak)\s*(.+)$",
+        cleaned,
+        re.I,
     )
+    if pref_match:
+        target = pref_match.group(1).strip()
+        slug = _slug_key(target, fallback="preference")
+        norm_text = re.sub(
+            r"^我(?=(?:平时|非常|很|比较|一般|通常|默认)?(?:喜欢|热爱|偏好|习惯|倾向于|擅长|会))",
+            "",
+            cleaned,
+        ).strip()
+        return {
+            "category": "preference",
+            "fact_key": f"{prefix}.preference.{slug}",
+            "text": norm_text or cleaned,
+            "keywords": [target[:24]],
+            "raw_clause": cleaned,
+        }
+
+    # Attribute-value statement (e.g., 我的X是Y / X是Y / My X is Y)
+    attr_match = re.search(
+        r"^(?:我的|本项目(?:的)?|当前项目(?:的)?|my\s+)?(?:主力|常用|默认|备用|当前|main\s+|primary\s+|default\s+|favorite\s+)?([a-z0-9_\-\s\u4e00-\u9fff]{1,24}?)\s*(?:是|为|改成|改为|更新为|换成|修正为|现在是|用|is|are|was\s+changed\s+to)\s*(.+)$",
+        cleaned,
+        re.I,
+    )
+    if attr_match:
+        attr_name = attr_match.group(1).strip()
+        attr_val = attr_match.group(2).strip()
+        if attr_name.lower() not in {"我", "我们", "你", "他", "她", "它", "这", "那", "i", "we", "you", "it", "this", "that"}:
+            slug = _slug_key(attr_name, fallback="attribute")
+            return {
+                "category": "profile",
+                "fact_key": f"{prefix}.profile.{slug}",
+                "text": f"{attr_name}是{attr_val}" if not attr_name.isascii() else f"{attr_name}: {attr_val}",
+                "keywords": [attr_name[:24], attr_val[:24]],
+                "raw_clause": cleaned,
+            }
+
+    slug = _slug_key(cleaned, fallback="fact")
     return {
-        "category": category,
-        "fact_key": f"{prefix}.{category}.{slug}",
+        "category": "general",
+        "fact_key": f"{prefix}.general.{slug}",
         "text": cleaned,
         "keywords": [cleaned[:24]],
         "raw_clause": cleaned,
@@ -458,17 +408,24 @@ def _classify_fact_clause(clause: str, *, scope_kind: str = "personal") -> dict[
 
 
 def _extract_mentioned_slot_specs(span: str, scope_kind: str) -> list[tuple[str, str, str]]:
+    cleaned = re.sub(
+        r"^(?:请|帮我)?(?:实际|一并|分别)?(?:忘记|忘掉|删掉|删除|清除|抹掉|保留|留下|维持|forget|delete|remove|keep|retain)\s*(?:关于|本项目的|当前项目的|这个项目的|项目的|我的|所有|这些|那些|my|about|the\s+project'?s)?",
+        "",
+        (span or "").strip(),
+        flags=re.I,
+    )
+    cleaned = re.sub(r"(?:的)?(?:相关)?(?:信息|记忆|数据|内容|记录|facts?|memory|memories|info|information)$", "", cleaned, flags=re.I).strip()
+    if not cleaned:
+        return []
+    parts = [p.strip() for p in re.split(r"(?:和|与|及|以及|、|,|，|；|;|\band\b)", cleaned, flags=re.I) if p.strip()]
     found: list[tuple[str, str, str]] = []
-    if any(k in span for k in ("相机", "机身", "camera", "body")):
-        found.append((f"{scope_kind}.gear.camera_body", "equipment", "相机 机身"))
-    if any(k in span for k in ("镜头", "lens")):
-        found.append((f"{scope_kind}.gear.lens", "equipment", "镜头"))
-    if any(k in span for k in ("三脚架", "tripod")):
-        found.append((f"{scope_kind}.gear.tripod", "equipment", "三脚架"))
-    if any(k in span for k in ("备用机", "备机")):
-        found.append((f"{scope_kind}.gear.backup_camera", "equipment", "备用机"))
-    if any(k in span for k in ("摄影爱好", "喜欢摄影", "爱好")):
-        found.append((f"{scope_kind}.preference.photography", "photography", "摄影 爱好"))
+    for part in parts:
+        term = re.sub(r"^(?:本项目的|当前项目的|这个项目的|项目的|我的|关于我的|关于|my\s+|the\s+project'?s\s+)", "", part, flags=re.I).strip()
+        term = re.sub(r"(?:信息|记忆|数据|内容|记录|info|memory)$", "", term, flags=re.I).strip()
+        if not term or len(term) > 32:
+            continue
+        slug = _slug_key(term, fallback="slot")
+        found.append((f"{scope_kind}.slot.{slug}", "general", term))
     return found
 
 
@@ -664,13 +621,8 @@ def extract_implicit_owner_candidates(text: str, row: dict[str, Any] | None = No
     clauses = [c.strip() for c in re.split(r"[，,。；;！!\n]", raw) if c.strip()]
     proposals: list[dict[str, Any]] = []
     for cl in clauses:
-        if not re.search(
-            r"(?:我的(?:相机|机身|镜头|备用机|三脚架)|我(?:平时|很|非常)?(?:喜欢|常用|使用)|本项目(?:使用|采用))",
-            cl,
-        ):
-            continue
         parsed = _classify_fact_clause(cl, scope_kind=scope_kind)
-        if parsed and parsed["category"] in {"equipment", "photography", "preference", "project"}:
+        if parsed and parsed["category"] in {"profile", "preference", "environment", "workflow", "project"}:
             proposals.append(
                 {
                     "scope": scope,
@@ -690,24 +642,6 @@ _GENERIC_GROUNDING_PREFIXES = (
     "记一下",
     "记下",
     "保存记忆",
-    "我的主力相机是",
-    "我的相机是",
-    "我的主力机身是",
-    "我的机身是",
-    "主力机身是",
-    "相机是",
-    "机身是",
-    "我的常用镜头是",
-    "我的挂机镜头是",
-    "我的主力镜头是",
-    "我的镜头是",
-    "常用镜头是",
-    "镜头是",
-    "我的备用机是",
-    "备用机是",
-    "备机是",
-    "我的三脚架是",
-    "三脚架是",
     "我平时喜欢",
     "我非常喜欢",
     "我很喜欢",
@@ -715,6 +649,9 @@ _GENERIC_GROUNDING_PREFIXES = (
     "喜欢",
     "我偏好",
     "偏好",
+    "我习惯",
+    "我会",
+    "我擅长",
     "本项目",
     "当前项目",
     "这个项目",
@@ -730,12 +667,12 @@ def _extract_substantive_grounding_tokens(text: str) -> tuple[list[str], list[st
     latin_tokens = [
         tok
         for tok in re.findall(r"[a-z0-9][a-z0-9._\-]{1,24}", cleaned)
-        if tok not in {"personal", "project", "gear", "camera", "body", "lens", "is", "the", "my", "to", "that", "remember"}
+        if tok not in {"personal", "project", "profile", "preference", "is", "are", "the", "my", "to", "that", "remember", "can", "i"}
     ]
     cjk_runs = [
         run
         for run in re.findall(r"[\u4e00-\u9fff]{2,}", cleaned)
-        if run not in {"记住", "请记", "我的", "喜欢", "偏好", "相机", "机身", "镜头", "备用机", "三脚架", "现在", "改成", "改为", "换成", "更新"}
+        if run not in {"记住", "请记", "我的", "喜欢", "偏好", "习惯", "现在", "改成", "改为", "换成", "更新"}
     ]
     return latin_tokens, cjk_runs
 
@@ -754,7 +691,8 @@ def verify_proposal_grounding_in_owner_message(proposal_text: str, owner_content
         return False
 
     for tok in latin_tokens:
-        if tok not in o_unquoted:
+        stem = tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok
+        if tok not in o_unquoted and stem not in o_unquoted:
             return False
 
     for run in cjk_runs:
@@ -926,22 +864,11 @@ def execute_explicit_owner_intent_in_tx(
     return receipt
 
 
-_KNOWN_TYPED_SLOT_SUFFIXES = (
-    ".gear.camera_body",
-    ".gear.lens",
-    ".gear.tripod",
-    ".gear.backup_camera",
-    ".preference.photography",
-)
-
-
 def _is_other_typed_slot(entry_key: str, target_key: str) -> bool:
     if not target_key or not entry_key or entry_key == target_key:
         return False
-    if any(entry_key.endswith(sfx) for sfx in _KNOWN_TYPED_SLOT_SUFFIXES):
-        return True
-    if ".preference." in entry_key and not target_key.endswith(entry_key):
-        return True
+    if ".slot." not in target_key and ("." in entry_key and "." in target_key):
+        return entry_key != target_key
     return False
 
 
@@ -973,6 +900,7 @@ def _forget_matching_memories_in_tx(
                     continue
             ekey = str(entry.get("fact_key") or "").strip().lower()
             etext = str(entry.get("text") or "").strip().lower()
+            esuffix = ekey.rsplit(".", 1)[-1] if "." in ekey else ekey
             if target_key and ekey == target_key:
                 to_delete.append(eid)
                 continue
@@ -980,7 +908,12 @@ def _forget_matching_memories_in_tx(
                 continue
             if query:
                 q_terms = [t for t in re.split(r"[\s，,。；;和与及]+", query) if t]
-                if q_terms and any(term in ekey or term in etext for term in q_terms):
+                if q_terms and any(
+                    term in ekey
+                    or term in etext
+                    or (len(esuffix) >= 2 and esuffix in term)
+                    for term in q_terms
+                ):
                     to_delete.append(eid)
         for eid in to_delete:
             if eid not in deleted_ids and eid in entries:
@@ -1093,21 +1026,28 @@ def execute_memory_tool_call_in_tx(
 
         msg_id = owner_msg["message_id"]
         conv_rev = owner_msg["conversation_revision"]
+        owner_content = owner_msg["content"]
 
-        intent_info = analyze_owner_memory_intent(owner_msg["content"], row)
-        if not intent_info["is_explicit"] or not intent_info["operations"]:
-            receipt = {
-                "saved": False,
-                "applied": False,
-                "status": "rejected",
-                "message_id": msg_id,
-                "conversation_revision": conv_rev,
-                "reason": intent_info.get("disqualified_reason") or "owner_explicit_intent_required",
-            }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
-            return receipt
+        for reason, patterns in (
+            ("negation", _NEGATION_PATTERNS),
+            ("hypothetical", _HYPOTHETICAL_PATTERNS),
+            ("quoted_or_third_party", _QUOTE_OR_THIRD_PARTY_PATTERNS),
+            ("meta_question", _META_QUESTION_PATTERNS),
+        ):
+            if _matches_any(owner_content, patterns):
+                receipt = {
+                    "saved": False,
+                    "applied": False,
+                    "status": "rejected",
+                    "message_id": msg_id,
+                    "conversation_revision": conv_rev,
+                    "reason": reason,
+                }
+                row["memory_last_receipt"] = copy.deepcopy(receipt)
+                return receipt
 
-        host_scope = _infer_scope_from_text(owner_msg["content"], row)
+        intent_info = analyze_owner_memory_intent(owner_content, row)
+        host_scope = _infer_scope_from_text(owner_content, row)
         req_scope_kind = str(arguments.get("scope_kind") or "").strip().lower()
         if req_scope_kind and req_scope_kind != host_scope["kind"]:
             receipt = {
@@ -1124,7 +1064,11 @@ def execute_memory_tool_call_in_tx(
         src_ref = build_task_owner_source_ref(row, owner_msg)
 
         if operation == "forget":
-            if intent_info["intent"] != "forget":
+            if intent_info["intent"] != "forget" and not re.search(
+                r"(?:忘记|忘掉|删掉|删除|清除|抹掉|别记|forget|delete|remove|erase)",
+                owner_content,
+                re.I,
+            ):
                 receipt = {
                     "saved": False,
                     "applied": False,
@@ -1136,41 +1080,25 @@ def execute_memory_tool_call_in_tx(
                 row["memory_last_receipt"] = copy.deepcopy(receipt)
                 return receipt
 
-            # Never allow the model to expand forget targets beyond host-parsed owner operations
-            host_ops = intent_info["operations"]
             req_key = str(arguments.get("fact_key") or "").strip().lower()
             req_text = str(arguments.get("text") or "").strip()
-            if req_key:
-                matched_ops = [op for op in host_ops if str(op.get("fact_key") or "").lower() == req_key]
-                if not matched_ops:
-                    receipt = {
-                        "saved": False,
-                        "applied": False,
-                        "status": "rejected",
-                        "message_id": msg_id,
-                        "conversation_revision": conv_rev,
-                        "reason": "forget_target_not_grounded_in_owner_message",
-                    }
-                    row["memory_last_receipt"] = copy.deepcopy(receipt)
-                    return receipt
-                host_ops = matched_ops
-            elif req_text:
-                if not verify_proposal_grounding_in_owner_message(req_text, owner_msg["content"]):
-                    receipt = {
-                        "saved": False,
-                        "applied": False,
-                        "status": "rejected",
-                        "message_id": msg_id,
-                        "conversation_revision": conv_rev,
-                        "reason": "forget_target_not_grounded_in_owner_message",
-                    }
-                    row["memory_last_receipt"] = copy.deepcopy(receipt)
-                    return receipt
-                req_specs = _extract_mentioned_slot_specs(req_text, host_scope["kind"])
-                if req_specs:
-                    allowed_fks = {str(op.get("fact_key") or "").lower() for op in host_ops}
-                    req_fks = {fk.lower() for fk, _c, _q in req_specs}
-                    if not req_fks.issubset(allowed_fks):
+            host_ops = list(intent_info.get("operations") or [])
+            if host_ops:
+                if req_key or req_text:
+                    req_suffix = req_key.rsplit(".", 1)[-1] if "." in req_key else req_key
+                    matched_ops = []
+                    for op in host_ops:
+                        op_key = str(op.get("fact_key") or "").strip().lower()
+                        op_suffix = op_key.rsplit(".", 1)[-1] if "." in op_key else op_key
+                        op_q = str(op.get("query") or "").strip().lower()
+                        key_match = bool(req_key and (req_key == op_key or (req_suffix and req_suffix == op_suffix) or (req_suffix and req_suffix in op_q)))
+                        text_match = bool(req_text and op_q and (req_text.lower() in op_q or op_q in req_text.lower()))
+                        if key_match or text_match:
+                            merged_op = dict(op)
+                            if req_key and ".slot." in op_key and ".slot." not in req_key:
+                                merged_op["fact_key"] = req_key
+                            matched_ops.append(merged_op)
+                    if not matched_ops:
                         receipt = {
                             "saved": False,
                             "applied": False,
@@ -1181,7 +1109,28 @@ def execute_memory_tool_call_in_tx(
                         }
                         row["memory_last_receipt"] = copy.deepcopy(receipt)
                         return receipt
-                    host_ops = [op for op in host_ops if str(op.get("fact_key") or "").lower() in req_fks]
+                    host_ops = matched_ops
+            else:
+                if not req_text or not verify_proposal_grounding_in_owner_message(req_text, owner_content):
+                    receipt = {
+                        "saved": False,
+                        "applied": False,
+                        "status": "rejected",
+                        "message_id": msg_id,
+                        "conversation_revision": conv_rev,
+                        "reason": "forget_target_not_grounded_in_owner_message",
+                    }
+                    row["memory_last_receipt"] = copy.deepcopy(receipt)
+                    return receipt
+                host_ops = [
+                    {
+                        "operation": "forget",
+                        "scope": host_scope,
+                        "fact_key": req_key,
+                        "category": str(arguments.get("category") or ""),
+                        "query": req_text,
+                    }
+                ]
 
             try:
                 with memory._atomic_mutation(data):
@@ -1211,8 +1160,8 @@ def execute_memory_tool_call_in_tx(
             row["memory_last_receipt"] = copy.deepcopy(receipt)
             return receipt
 
-        # operation is remember or update
-        if intent_info["intent"] not in {"remember", "update"}:
+        # operation is remember or update: trust the LLM's semantic extraction once grounded in the owner's message
+        if intent_info["intent"] == "forget":
             receipt = {
                 "saved": False,
                 "applied": False,
@@ -1237,7 +1186,7 @@ def execute_memory_tool_call_in_tx(
             row["memory_last_receipt"] = copy.deepcopy(receipt)
             return receipt
 
-        if not verify_proposal_grounding_in_owner_message(proposed_text, owner_msg["content"]):
+        if not verify_proposal_grounding_in_owner_message(proposed_text, owner_content):
             receipt = {
                 "saved": False,
                 "applied": False,
@@ -1250,52 +1199,19 @@ def execute_memory_tool_call_in_tx(
             return receipt
 
         inferred = _classify_fact_clause(proposed_text, scope_kind=host_scope["kind"]) or {}
-        matched_host_op = None
-        for op in intent_info["operations"]:
-            if inferred.get("fact_key") and op.get("fact_key") == inferred.get("fact_key"):
-                matched_host_op = op
-                break
-            if verify_proposal_grounding_in_owner_message(proposed_text, str(op.get("raw_clause") or op.get("text") or "")):
-                matched_host_op = op
-                break
-
-        if matched_host_op is None:
-            receipt = {
-                "saved": False,
-                "applied": False,
-                "status": "rejected",
-                "message_id": msg_id,
-                "conversation_revision": conv_rev,
-                "reason": "proposal_not_grounded_in_owner_message",
-            }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
-            return receipt
-
-        req_fact_key = str(arguments.get("fact_key") or "").strip().lower()
-        if req_fact_key and req_fact_key != str(matched_host_op["fact_key"]).lower():
-            receipt = {
-                "saved": False,
-                "applied": False,
-                "status": "rejected",
-                "message_id": msg_id,
-                "conversation_revision": conv_rev,
-                "reason": "fact_key_mismatch_with_owner_intent",
-            }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
-            return receipt
-
         req_category = str(arguments.get("category") or "").strip().lower()
-        if req_category and memory.normalize_category(req_category) != matched_host_op["category"]:
-            receipt = {
-                "saved": False,
-                "applied": False,
-                "status": "rejected",
-                "message_id": msg_id,
-                "conversation_revision": conv_rev,
-                "reason": "category_mismatch_with_owner_intent",
-            }
-            row["memory_last_receipt"] = copy.deepcopy(receipt)
-            return receipt
+        final_category = memory.normalize_category(req_category or inferred.get("category") or "general")
+        req_fact_key = str(arguments.get("fact_key") or "").strip().lower()
+        final_fact_key = memory.normalize_fact_key(
+            req_fact_key or inferred.get("fact_key") or "",
+            category=final_category,
+            text=proposed_text,
+        )
+        raw_keywords = arguments.get("keywords")
+        if isinstance(raw_keywords, list):
+            final_keywords = [str(k).strip() for k in raw_keywords if isinstance(k, str) and str(k).strip()]
+        else:
+            final_keywords = list(inferred.get("keywords") or [])
 
         try:
             with memory._atomic_mutation(data):
@@ -1304,9 +1220,10 @@ def execute_memory_tool_call_in_tx(
                     _build_explicit_owner_upsert_payload(
                         data,
                         scope=host_scope,
-                        category=matched_host_op["category"],
-                        fact_key=matched_host_op["fact_key"],
-                        text=matched_host_op["text"],
+                        category=final_category,
+                        fact_key=final_fact_key,
+                        text=proposed_text,
+                        keywords=final_keywords,
                         sources=[src_ref],
                     ),
                     origin="explicit_owner_chat",
@@ -1563,10 +1480,10 @@ def build_extraction_messages(job: dict[str, Any]) -> list[dict[str, Any]]:
             "role": "system",
             "content": (
                 "You are Ryn's background memory extractor. Extract ONLY durable, self-referential owner facts "
-                "(such as photography gear, personal preferences, or explicit project conventions) stated directly "
-                "by the owner in the provided owner_messages. Ignore hypotheticals, questions, negations, quotes, "
-                "or temporary task instructions. Respond ONLY with strict JSON matching: "
-                '{"candidates": [{"category": "equipment|photography|preference|project|general", '
+                "(such as user profile, skills, personal preferences, environment/tools, workflow habits, or explicit "
+                "project conventions) stated directly by the owner in the provided owner_messages. Ignore hypotheticals, "
+                "questions, negations, quotes, or temporary task instructions. Respond ONLY with strict JSON matching: "
+                '{"candidates": [{"category": "profile|preference|environment|workflow|project|general", '
                 '"fact_key": "string", "text": "string", "keywords": ["string"], "source_message_ids": ["string"]}]}. '
                 'If there are no durable facts, return {"candidates": []}.'
             ),

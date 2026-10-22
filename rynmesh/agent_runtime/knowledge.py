@@ -9,9 +9,9 @@ from .store import AgentError, encoded
 SKILLS = {
     "project-development": {"id": "project-development", "version": "2", "title": "Project development",
         "description": "Load project instructions, locate code, make focused changes and run the project's tests.",
-        "content": "Use the project inspection's layout and included entry pages; read only missing guidance and relevant source/test/data ranges together. "
+        "content": "When working on code or tests in this repository, use the project layout and entry pages; read only missing guidance and relevant source/test/data ranges together. "
                    "Read applicable nested AGENTS.md before edits. Preserve existing Git changes. Reuse unchanged observations and successful checks. "
-                   "Use the actual declared build/test commands and mandatory isolation runner; do not start production services or migrations. "
+                   "Use the actual declared build/test commands; do not start production services or migrations. "
                    "Make the smallest coherent change, retain existing checks, then run focused tests. Distinguish test failures from "
                    "missing dependencies. Batch independent final checks in one response; repeat only after changes, failure or unresolved uncertainty. "
                    "Review the final diff and report actual results, changed files and remaining limits."},

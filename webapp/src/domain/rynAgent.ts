@@ -138,7 +138,7 @@ export interface AgentMessage {
   content: string | null;
   tool_call_id?: string;
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean };
+  ui?: { kind: "input_answer" | "source_credential" | "verification_feedback" | "change_review" | "steer" | "information" | "message" | "heartbeat" | "silent_heartbeat"; text?: string; prompt?: string; pending_input_id?: string; fields?: Array<{ label: string; value: string }>; endpoint?: string; has_credential?: boolean; hidden?: boolean; automation_id?: string; automation_name?: string };
 }
 export interface AgentEvent {
   seq: number;
@@ -187,6 +187,12 @@ export interface AgentTaskSummary {
   budget?: AgentBudget;
   run_timing?: AgentRunTiming;
   skills?: AgentSkill[];
+  source?: string;
+  automation_id?: string | null;
+  automation_run_id?: string | null;
+  automation_kind?: "cron" | "heartbeat";
+  latest_turn_is_silent_heartbeat?: boolean;
+  automation_notification?: { id: string; automation_id: string; automation_name: string; kind: "cron" | "heartbeat"; decision: string; title: string; message: string; task_id: string; status?: string; created_at: string } | null;
 }
 export interface AgentResultRef { id: string; task_id: string; tool: string; operation_id: string; goal_revision: number; scope_revision: number; context_epoch: number; sha256: string; bytes: number; }
 export interface AgentProject { id: string; name: string; path: string; generation: number; entry_files: string[]; manifests: string[]; directories: string[]; }
@@ -197,7 +203,7 @@ export interface AgentFileArtifact {
   id: string; name: string; path: string; absolute_path?: string; operation_id?: string; source?: "write" | "command" | "read" | "computer_observation"; media_type: string; preview: "image" | "text" | "download";
   role: "deliverable" | "supporting"; status: "current" | "changed_outside_task" | "missing" | "too_large" | "unavailable" | "unverified";
   bytes?: number; sha256?: string | null; receipt_sha256?: string | null; created_by_task: boolean; revisions: number;
-  attribution?: "observed_during_command";
+  attribution?: "observed_during_command"; turn_index?: number;
   goal_revisions: number[]; created_at?: string; updated_at?: string; mentioned_in_answer: boolean;
   render_inspected?: { at?: string; findings: number };
 }
@@ -482,11 +488,12 @@ export interface AgentAutomation {
   status: "ACTIVE" | "PAUSED";
   rrule: string;
   kind: "cron" | "heartbeat";
-  repeat: "daily" | "weekdays" | "weekly" | "hourly" | "once";
+  repeat: "daily" | "weekdays" | "weekly" | "hourly" | "minutely" | "once";
   time: string;
   weekday: string;
   weekdays: string[];
   interval_hours: number;
+  interval_minutes?: number;
   schedule_label: string;
   schedule_label_zh: string;
   schedule_label_en: string;
@@ -494,6 +501,8 @@ export interface AgentAutomation {
   workspace_root: string;
   target_task_id: string;
   execution_environment: string;
+  notification_policy?: "all_runs" | "failed_runs_only" | "never";
+  auto_archive?: boolean;
   next_run_at: number | null;
   next_run_at_iso: string;
   last_run_at: number | null;
@@ -513,6 +522,8 @@ export interface AgentAutomationRun {
   automation_name: string;
   task_id: string;
   status: string;
+  kind?: "cron" | "heartbeat";
+  decision?: string;
   inbox_title: string;
   inbox_summary: string;
   created_at: string;

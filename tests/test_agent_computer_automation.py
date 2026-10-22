@@ -117,3 +117,96 @@ def test_overlay_hides_on_pause_failure_completion_and_keeps_other_running_task(
     overlay.sync({"b": {"status": "running", "pending_control": True}})
     assert overlay._text() == ""
     overlay.close()
+
+
+def test_overlay_renders_feathered_halo_and_three_phase_hud_capsules():
+    from rynmesh.agent_runtime.computer_overlay import (
+        HALO_BREADTH,
+        render_hud_capsule,
+        render_overlay_frame,
+    )
+
+    for phase in ("正在查看屏幕", "正在操作窗口", "正在思考下一步"):
+        capsule = render_hud_capsule(phase, pulse_step=1)
+        assert capsule.mode == "RGBA"
+        assert capsule.width >= 420 and capsule.height >= 60
+
+    frame = render_overlay_frame(640, 360, "正在操作窗口", pulse_step=2)
+    assert frame.size == (640, 360)
+    # Screen edge has soft glow (alpha > 0) that feathers smoothly inward to 0
+    edge_alpha = frame.getpixel((4, 180))[3]
+    mid_halo_alpha = frame.getpixel((HALO_BREADTH // 2, 180))[3]
+    center_alpha = frame.getpixel((320, 180))[3]
+    assert edge_alpha > mid_halo_alpha > 0
+    assert center_alpha == 0
+
+
+def test_overlay_escape_stops_active_task_and_blocks_turn_until_resumed(tmp_path):
+    from types import SimpleNamespace
+
+    from rynmesh.agent_runtime.computer_overlay import ESCAPE_STOP_MESSAGE
+    from rynmesh.agent_runtime.native_computer import NativeComputerFacade
+    from rynmesh.agent_runtime.store import AgentToolRejected
+
+    data = {
+        "settings": {**policy(), "enabled": True, "workspace_root": str(tmp_path)},
+        "tasks": {
+            "task-esc": {
+                "id": "task-esc",
+                "status": "running",
+                "control_revision": 3,
+                "revision": 3,
+                "event_cursor": 0,
+                "events": [],
+                "messages": [],
+                "queue": [],
+                "in_flight": {"kind": "tool", "name": "computer_observe_windows"},
+                "local_execution": {"desktop_access": True, "workspace_root": str(tmp_path)},
+            }
+        },
+    }
+
+    def _inspect(fn):
+        return fn(data)
+
+    def _transaction(fn):
+        return fn(data)
+
+    owner_store = SimpleNamespace(
+        home=tmp_path,
+        root=tmp_path,
+        inspect=_inspect,
+        transaction=_transaction,
+    )
+    facade = NativeComputerFacade(owner_store)
+    try:
+        facade.overlay._tasks["task-esc"] = "正在操作窗口"
+        assert "Esc" in facade.overlay._text()
+        assert "退出控制" in facade.overlay._text()
+
+        # Self-injected Escape action suppresses false-positive user Esc detection
+        facade._maybe_suppress_self_escape({"type": "key_press", "key": "Escape"})
+        assert facade.overlay._suppress_escape_until > 0.0
+
+        # Physical Esc press hides overlay, pauses task in store, and blocks further turn calls
+        escaped = facade.overlay.trigger_escape()
+        assert escaped == ["task-esc"]
+        assert facade.overlay._text() == ""
+        row = data["tasks"]["task-esc"]
+        assert row["status"] == "paused"
+        assert row["turn_stopped"] is True
+        assert any(e.get("reason") == "user_escape_stopped" for e in row["events"])
+
+        with pytest.raises(AgentToolRejected) as exc_info:
+            facade.execute_local_read({}, "task-esc", context={"control_revision": 3})
+        assert str(exc_info.value) == "agent_cancelled"
+        assert exc_info.value.correction == ESCAPE_STOP_MESSAGE
+
+        # Once the owner resumes the task in a new turn, the escape latch clears automatically
+        row["status"] = "running"
+        row.pop("turn_stopped", None)
+        row.pop("pending_control", None)
+        row["control_revision"] += 1
+        assert not facade._is_task_escaped("task-esc", context={"control_revision": row["control_revision"]})
+    finally:
+        facade.close()

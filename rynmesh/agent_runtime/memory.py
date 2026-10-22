@@ -52,12 +52,11 @@ _STOPWORDS = {
 }
 
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
-    "photography": ("摄影", "拍照", "拍摄", "人像", "风光", "街拍", "人文", "旅行", "快门", "光圈", "iso", "photo", "photography", "camera", "lens", "portrait", "street", "shoot"),
-    "equipment": ("器材", "设备", "机身", "镜头", "相机", "三脚架", "脚架", "硬件", "camera", "lens", "body", "gear", "equipment", "device", "hardware", "setup", "kit"),
-    "gear": ("器材", "设备", "机身", "镜头", "相机", "camera", "lens", "body", "gear", "equipment", "setup", "kit"),
-    "hobby": ("爱好", "喜欢", "兴趣", "摄影", "拍照", "hobby", "interest", "like", "photography"),
-    "workflow": ("工作流", "习惯", "流程", "代码", "测试", "workflow", "process", "habit", "testing"),
-    "project": ("项目", "仓库", "架构", "模块", "构建", "project", "repo", "architecture", "module", "build"),
+    "profile": ("个人", "身份", "职业", "技能", "特长", "擅长", "语言", "背景", "profile", "identity", "role", "skill", "language", "background"),
+    "preference": ("偏好", "喜好", "爱好", "喜欢", "习惯", "风格", "倾向", "preference", "prefer", "hobby", "interest", "like", "style", "habit"),
+    "environment": ("环境", "设备", "电脑", "系统", "软件", "工具", "编辑器", "终端", "配置", "硬件", "environment", "device", "system", "os", "tool", "editor", "setup", "config", "hardware"),
+    "workflow": ("工作流", "习惯", "流程", "代码", "测试", "规范", "约定", "workflow", "process", "habit", "testing", "convention"),
+    "project": ("项目", "仓库", "架构", "模块", "构建", "目录", "project", "repo", "architecture", "module", "build", "workspace"),
 }
 
 _SECRET_PATTERN = re.compile(
@@ -2425,8 +2424,8 @@ def _expand_query_categories(query_tokens: set[str], raw_query: str) -> set[str]
             for alias in aliases
         ):
             matched_cats.add(cat)
-    if matched_cats & {"photography", "equipment", "gear"}:
-        matched_cats.update({"photography", "equipment", "gear", "hobby"})
+    if matched_cats & {"profile", "preference"}:
+        matched_cats.update({"profile", "preference"})
     return matched_cats
 
 
@@ -2696,7 +2695,7 @@ def search_memories(
                     ecat_low != norm_cat
                     and norm_cat not in ekey_low.split(".")
                     and norm_cat not in kw_list
-                    and not ({ecat_low, norm_cat} <= {"equipment", "gear", "photography"})
+                    and not ({ecat_low, norm_cat} <= {"profile", "preference"})
                 ):
                     continue
             elif ecat_low != norm_cat:

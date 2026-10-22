@@ -1021,7 +1021,7 @@ class AgentLoop:
                 t0 = time.monotonic()
                 self._settle_usage(selected["id"], usage_reservation["id"], elapsed=time.monotonic() - started)
                 post_persistence_seconds += max(0.0, time.monotonic() - t0)
-            origin = copy.deepcopy(result.get("origin")) if meta.get("scope_context_supported") and isinstance(result.get("origin"), dict) else None
+            origin = copy.deepcopy(result.get("origin")) if meta.get("scope_context_supported") and isinstance(result.get("origin"), dict) and "grant_id" in result["origin"] else None
             reference = None
             result_size = len(encoded(result))
             if result_size > selected["limits"]["max_output_chars"]:
@@ -1242,7 +1242,7 @@ class AgentLoop:
             for index, (call, (result, failed, call_exec_seconds)) in enumerate(zip(batch, outcomes, strict=True)):
                 reference = None
                 origin = (copy.deepcopy(result.get("origin")) if metas[call["call_id"]].get("scope_context_supported")
-                          and isinstance(result.get("origin"), dict) else None)
+                          and isinstance(result.get("origin"), dict) and "grant_id" in result["origin"] else None)
                 size = len(encoded(result))
                 if size > selected["limits"]["max_output_chars"]:
                     reference = results.save(self.store, row, call, result)

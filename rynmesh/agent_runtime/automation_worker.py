@@ -12,7 +12,7 @@ from ..background_workers import WorkerRunResult
 from . import automations, budget
 from .prompt import PROMPT_VERSION, select_base_instructions
 from .protocol import event, now
-from .state import initialize
+from .state import initialize, owner_update
 from .store import DEFAULT_SETTINGS, AgentError
 
 AUTOMATION_WORKER_NAME = "ryn-agent-automations"
@@ -96,11 +96,28 @@ def trigger_automation_in_tx(
     settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
     target_task_id = str(item.get("target_task_id") or "").strip()
     tasks = data.get("tasks") or {}
+    archives = data.get("archives") or {}
+    deleted_tasks = data.get("deleted_tasks") or {}
+    now_str = now()
+
+    if kind == "heartbeat" and target_task_id:
+        if (target_task_id in archives or target_task_id in deleted_tasks or target_task_id not in tasks) and not force:
+            item["status"] = "PAUSED"
+            item["next_run_at"] = None
+            item["next_run_at_iso"] = ""
+            item["updated_at"] = now_str
+            automations.write_automation_files(runtime.store, item)
+            return {
+                "triggered": False,
+                "deferred": False,
+                "paused": True,
+                "automation": automations.public_automation(runtime.store, item),
+            }
 
     if kind == "heartbeat" and target_task_id and isinstance(tasks.get(target_task_id), dict):
         target_row = tasks[target_task_id]
         is_busy = (
-            target_row.get("status") in {"queued", "running", "waiting_approval", "waiting_input"}
+            target_row.get("status") in {"queued", "running", "stopping", "waiting_approval", "waiting_input"}
             or bool(target_row.get("in_flight"))
             or bool(target_row.get("pending_approval"))
             or bool(target_row.get("pending_input"))
@@ -115,21 +132,48 @@ def trigger_automation_in_tx(
                 "automation": automations.public_automation(runtime.store, item),
             }
 
+        auto_name = str(item.get("name") or "定时提醒").strip()
         hb_msg = {
             "role": "user",
-            "content": f'<heartbeat automation_id="{target_id}">\n{prompt_text}\n</heartbeat>',
+            "content": automations.format_heartbeat_user_message(
+                automation_id=target_id,
+                instructions=prompt_text,
+                current_time_iso=now_str,
+            ),
+            "message_id": f"msg-hb-{run_id}",
+            "ui": {
+                "kind": "heartbeat",
+                "text": f"⏰ {auto_name}：{prompt_text}",
+                "automation_id": target_id,
+                "automation_name": auto_name,
+            },
         }
+        budget.new_round(target_row)
         target_row.setdefault("messages", []).append(hb_msg)
+        owner_update(target_row, hb_msg)
         target_row["status"] = "queued"
+        target_row["steps"] = 0
+        target_row["elapsed_seconds"] = 0.0
+        target_row["result"] = ""
+        target_row["error"] = None
+        target_row["pending_approval"] = None
+        target_row["pending_input"] = None
         target_row["source"] = "automation"
+        target_row["automation_kind"] = "heartbeat"
         target_row["automation_id"] = target_id
         target_row["automation_run_id"] = run_id
-        target_row["updated_at"] = now()
-        target_row["revision"] = int(target_row.get("revision", 0)) + 1
-        if isinstance(target_row.get("goal"), dict):
-            target_row["goal"]["text"] = prompt_text
-            target_row["goal"]["revision"] = int(target_row["goal"].get("revision", 0)) + 1
-        event(target_row, "automation_triggered", automation_id=target_id, run_id=run_id)
+        target_row["latest_turn_is_silent_heartbeat"] = False
+        target_row["updated_at"] = now_str
+        goal_rev = int((target_row.get("goal") or {}).get("revision", 1))
+        event(
+            target_row,
+            "message_added",
+            goal_revision=goal_rev,
+            source="automation",
+            automation_id=target_id,
+            run_id=run_id,
+            automation_kind="heartbeat",
+        )
         spawned_task_id = target_task_id
         spawned_row = target_row
     else:
@@ -149,11 +193,13 @@ def trigger_automation_in_tx(
             "model_id": model_id,
             "status": "queued",
             "source": "automation",
+            "automation_kind": "cron",
             "automation_id": target_id,
             "automation_run_id": run_id,
+            "latest_turn_is_silent_heartbeat": False,
             "revision": 0,
-            "created_at": now(),
-            "updated_at": now(),
+            "created_at": now_str,
+            "updated_at": now_str,
             "messages": [{"role": "user", "content": prompt_text}],
             "events": [],
             "pending_approval": None,
@@ -182,7 +228,7 @@ def trigger_automation_in_tx(
         if destination is not None:
             spawned_row["model_destination"] = copy.deepcopy(destination)
         spawned_row["prompt_version"] = PROMPT_VERSION
-        event(spawned_row, "created", source="automation", automation_id=target_id, run_id=run_id)
+        event(spawned_row, "created", source="automation", automation_id=target_id, run_id=run_id, automation_kind="cron")
         data.setdefault("tasks", {})[spawned_task_id] = spawned_row
 
     run_count = int(item.get("run_count") or 0) + 1
@@ -191,7 +237,7 @@ def trigger_automation_in_tx(
     item["last_run_at_iso"] = automations.ms_to_iso(current_ms)
     item["last_run_status"] = "running"
     item["last_task_id"] = spawned_task_id
-    item["updated_at"] = now()
+    item["updated_at"] = now_str
 
     salt = automations.ensure_jitter_salt(runtime.store)
     next_ms = automations.compute_next_run_at(
@@ -205,21 +251,23 @@ def trigger_automation_in_tx(
         item["status"] = "PAUSED"
         item["next_run_at"] = None
         item["next_run_at_iso"] = ""
-        automations.write_automation_files(runtime.store, item)
     elif str(item.get("status") or "ACTIVE") == "ACTIVE":
         item["next_run_at"] = next_ms
         item["next_run_at_iso"] = automations.ms_to_iso(next_ms)
+    automations.write_automation_files(runtime.store, item)
 
     run_record = {
         "id": run_id,
         "automation_id": target_id,
         "automation_name": str(item.get("name") or ""),
+        "kind": kind if (kind == "heartbeat" and target_task_id) else "cron",
         "task_id": spawned_task_id,
         "status": "IN_PROGRESS",
+        "decision": "",
         "inbox_title": str(item.get("name") or ""),
         "inbox_summary": "",
-        "created_at": now(),
-        "updated_at": now(),
+        "created_at": now_str,
+        "updated_at": now_str,
     }
     data["automation_runs"][run_id] = run_record
 

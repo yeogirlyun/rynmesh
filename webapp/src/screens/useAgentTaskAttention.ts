@@ -90,7 +90,7 @@ function observe(store: AttentionStore, task: AgentTaskSummary): AttentionStore 
     completionRevision = incoming.revision;
     // Establish a quiet baseline for history on the first connection. Entries
     // already observed running still notify when they subsequently complete.
-    if (!previous && !store.initialized) read = completion;
+    if ((!previous && !store.initialized) || (task.latest_turn_is_silent_heartbeat === true && read === (previous?.completion ?? 0))) read = completion;
   }
   const next: Observation = { ...incoming, completion, completionRevision, read };
   return { ...store, entries: { ...store.entries, [task.id]: next } };

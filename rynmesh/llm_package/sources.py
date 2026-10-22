@@ -36,7 +36,7 @@ SOURCE_HTTP_SCHEMA = {
         "shared_models": {"type": "array", "items": {"type": "string"}, "default": []},
         "context_window_mode": {"type": "string", "enum": ["auto", "manual"]},
         "context_window": {"type": "integer", "minimum": 256, "maximum": 2000000},
-        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 256000},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 393216},
         "request_defaults": {"type": "object"},
     },
 }
@@ -150,9 +150,12 @@ class SourceStore:
             if isinstance(value, str) and value.strip().isascii() and value.strip().isdecimal():
                 return int(value)
             raise ValueError("上下文或输出上限不正确")
-        context = integer(body.get("context_window", old.get("context_window", model_settings.FALLBACK_CONTEXT_WINDOW)))
-        output = integer(body.get("max_output_tokens", old.get("max_output_tokens", 4096)))
-        if not 256 <= context <= 2000000 or not 1 <= output <= 256000 or (mode == "manual" and output > context):
+        provider_name = str(body.get("provider", old.get("provider", "custom")))[:80]
+        default_context = 1048576 if provider_name == "deepseek" else model_settings.FALLBACK_CONTEXT_WINDOW
+        default_output = 393216 if provider_name == "deepseek" else 4096
+        context = integer(body.get("context_window", old.get("context_window", default_context)))
+        output = integer(body.get("max_output_tokens", old.get("max_output_tokens", default_output)))
+        if not 256 <= context <= 2000000 or not 1 <= output <= 393216 or (mode == "manual" and output > context):
             raise ValueError("上下文或输出上限不正确")
         defaults = body.get("request_defaults", old.get("request_defaults", {}))
         if not isinstance(defaults, dict) or set(defaults) - {"thinking", "reasoning_effort", "temperature", "top_p"}:
@@ -187,7 +190,7 @@ class SourceStore:
         if _same_configuration(record, old, (k for k in fields if k != "models")):
             record["tool_support"] = {m: v for m, v in old.get("tool_support", {}).items() if m in models}
         model_settings.reconcile(record, old)
-        if not models and output > (context if mode == "manual" else model_settings.FALLBACK_CONTEXT_WINDOW):
+        if not models and output > (context if mode == "manual" else default_context):
             raise ValueError("model_output_exceeds_context")
         return record
 
@@ -293,6 +296,13 @@ class SourceStore:
                 window = next((value for value in values if type(value) is int and 256 <= value <= 2000000), None)
                 if window is not None:
                     metadata[identifier] = {"context_window": window}
+                out_values = [item.get(key) for key in ("max_output_tokens", "max_completion_tokens")]
+                max_out = next((value for value in out_values if type(value) is int and 1 <= value <= 393216), None)
+                if max_out is not None:
+                    metadata.setdefault(identifier, {})["max_output_tokens"] = max_out
+                modalities = item.get("input_modalities")
+                if isinstance(modalities, list) and 0 < len(modalities) <= 8 and all(isinstance(m, str) and m.strip() for m in modalities):
+                    metadata.setdefault(identifier, {})["input_modalities"] = [m.strip().lower() for m in modalities]
             with self.lock:
                 key = self._metadata_key(record)
                 if len(self._model_metadata_cache) >= 64 and key not in self._model_metadata_cache:

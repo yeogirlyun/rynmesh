@@ -50,6 +50,7 @@ def validate_model(model):
 
 
 def parse_antigravity_models(output):
+    from .model_settings import _known_vendor_context_window, _known_vendor_max_output_tokens
     models, seen = [], set()
     for line in output.splitlines():
         identifier, separator, name = line.partition("\t")
@@ -60,12 +61,26 @@ def parse_antigravity_models(output):
         if not identifier or not name:
             raise AdapterError("Antigravity returned an invalid model list")
         if identifier not in seen:
-            models.append({"id": identifier, "name": name, "default": False})
+            row = {"id": identifier, "name": name, "default": False}
+            window = _known_vendor_context_window(identifier)
+            if window is not None:
+                row["context_window"] = window
+            max_output = _known_vendor_max_output_tokens(identifier)
+            if max_output is not None:
+                row["max_output_tokens"] = max_output
+            models.append(row)
             seen.add(identifier)
     if not models:
         raise AdapterError("Antigravity returned no models; run agy locally to check login and model access")
     # No default model is advertised by `agy models`; preserve the CLI's choice.
-    return [{"id": "", "name": "CLI default", "default": True}, *models]
+    default_row = {"id": "", "name": "CLI default", "default": True}
+    default_windows = [row["context_window"] for row in models if "context_window" in row]
+    if default_windows:
+        default_row["context_window"] = max(default_windows)
+    default_outputs = [row["max_output_tokens"] for row in models if "max_output_tokens" in row]
+    if default_outputs:
+        default_row["max_output_tokens"] = max(default_outputs)
+    return [default_row, *models]
 
 
 def list_models(kind, executable, *, refresh=False):

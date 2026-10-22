@@ -28,8 +28,8 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": AUTOMATION_UPDATE_TOOL,
             "description": (
-                "Create, update, pause, resume, delete, or list scheduled tasks (automations). "
-                "Call with action='create' whenever the user asks to run a task at a scheduled/recurring time (e.g. 22:00 daily)."
+                "Create, update, pause, resume, delete, or list scheduled tasks/reminders (automations). "
+                "Default kind='heartbeat' to wake up this chat thread for reminders/monitors; use kind='cron' only when each run should start a new chat."
             ),
             "parameters": {
                 "type": "object",
@@ -40,12 +40,18 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
                     },
                     "id": {"type": "string"},
                     "name": {"type": "string", "description": "Short task title"},
-                    "prompt": {"type": "string", "description": "Task instructions to execute on schedule"},
+                    "prompt": {"type": "string", "description": "Task or reminder instructions"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["heartbeat", "cron"],
+                    },
                     "repeat": {
                         "type": "string",
-                        "enum": ["daily", "weekdays", "weekly", "hourly", "once"],
+                        "enum": ["daily", "weekdays", "weekly", "hourly", "minutely", "once"],
                     },
-                    "time": {"type": "string", "description": "24h HH:MM in local time, e.g. 22:00"},
+                    "time": {"type": "string", "description": "24h HH:MM local time, e.g. 22:00"},
+                    "delay_minutes": {"type": "integer", "description": "Minutes from now for once/relative reminder"},
+                    "interval_minutes": {"type": "integer"},
                     "weekday": {
                         "type": "string",
                         "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"],
@@ -53,6 +59,10 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
                     "interval_hours": {"type": "integer"},
                     "rrule": {"type": "string", "description": "Optional RFC 5545 RRULE"},
                     "desktop_access": {"type": "boolean"},
+                    "notification_policy": {
+                        "type": "string",
+                        "enum": ["default", "failed_runs_only"],
+                    },
                 },
                 "required": ["action"],
             },
@@ -92,6 +102,99 @@ DECISION_BLOCK_RE = re.compile(
     r"<decision>\s*(\{.*?\})\s*</decision>",
     re.IGNORECASE | re.DOTALL,
 )
+HEARTBEAT_FENCED_RE = re.compile(
+    r"```(?:xml)?\s*<heartbeat>[\s\S]*?</heartbeat>\s*```",
+    re.IGNORECASE,
+)
+HEARTBEAT_BLOCK_RE = re.compile(
+    r"<heartbeat(?:\s+[^>]*)?>[\s\S]*?</heartbeat>",
+    re.IGNORECASE,
+)
+HEARTBEAT_DECISION_RE = re.compile(
+    r"<decision>\s*(NOTIFY|DONT_NOTIFY)\s*</decision>",
+    re.IGNORECASE,
+)
+HEARTBEAT_MESSAGE_RE = re.compile(
+    r"<message>\s*([\s\S]*?)\s*</message>",
+    re.IGNORECASE,
+)
+
+
+def format_heartbeat_user_message(
+    automation_id: str,
+    prompt_text: str = "",
+    *,
+    instructions: str | None = None,
+    current_time_iso: str | None = None,
+) -> str:
+    ts = current_time_iso or now_iso()
+    body = instructions if instructions is not None else prompt_text
+    return (
+        "<heartbeat>\n"
+        f"  <automation_id>{automation_id}</automation_id>\n"
+        f"  <current_time_iso>{ts}</current_time_iso>\n"
+        "  <instructions>\n"
+        f"{body}\n"
+        "  </instructions>\n"
+        "</heartbeat>"
+    )
+
+
+def parse_heartbeat_response(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return {
+            "has_heartbeat_tag": False,
+            "decision": "",
+            "message": "",
+            "visible_text": "",
+            "notification_message": None,
+            "cleaned_text": "",
+        }
+    cdata_match = re.match(r"^<!\[CDATA\[\s*([\s\S]*?)\s*\]\]>$", raw)
+    unwrapped = (cdata_match.group(1) if cdata_match else raw).strip()
+    if unwrapped.upper() == "DONT_NOTIFY":
+        return {
+            "has_heartbeat_tag": True,
+            "decision": "DONT_NOTIFY",
+            "message": "",
+            "visible_text": "",
+            "notification_message": None,
+            "cleaned_text": "",
+        }
+    blocks = list(HEARTBEAT_BLOCK_RE.finditer(raw))
+    if not blocks:
+        return {
+            "has_heartbeat_tag": False,
+            "decision": "",
+            "message": "",
+            "visible_text": raw,
+            "notification_message": None,
+            "cleaned_text": raw,
+        }
+    last_block = blocks[-1].group(0)
+    decision_match = HEARTBEAT_DECISION_RE.search(last_block)
+    decision_val = (
+        ("NOTIFY" if decision_match.group(1).upper() == "NOTIFY" else "DONT_NOTIFY")
+        if decision_match
+        else "NOTIFY"
+    )
+    msg_match = HEARTBEAT_MESSAGE_RE.search(last_block)
+    notif_msg = msg_match.group(1).strip() if msg_match else ""
+    if notif_msg:
+        inner_cdata = re.match(r"^<!\[CDATA\[\s*([\s\S]*?)\s*\]\]>$", notif_msg)
+        if inner_cdata:
+            notif_msg = inner_cdata.group(1).strip()
+    visible = HEARTBEAT_FENCED_RE.sub("", raw)
+    visible = HEARTBEAT_BLOCK_RE.sub("", visible).strip()
+    return {
+        "has_heartbeat_tag": True,
+        "decision": decision_val,
+        "message": notif_msg,
+        "visible_text": visible,
+        "notification_message": notif_msg if notif_msg else None,
+        "cleaned_text": visible,
+    }
 
 
 def now_ms() -> int:
@@ -207,6 +310,8 @@ def build_rrule(
     weekday: str | None = None,
     weekdays: list[str] | None = None,
     interval_hours: int | None = None,
+    interval_minutes: int | None = None,
+    delay_minutes: int | None = None,
     raw_rrule: str | None = None,
 ) -> str:
     if raw_rrule and str(raw_rrule).strip():
@@ -216,8 +321,23 @@ def build_rrule(
         if "FREQ=" in cleaned.upper():
             return cleaned.upper()
 
-    mode = str(repeat or "daily").strip().lower()
+    if delay_minutes is not None and int(delay_minutes or 0) > 0 and not repeat:
+        mode = "once"
+    else:
+        mode = str(repeat or "daily").strip().lower()
+
+    if delay_minutes is not None and int(delay_minutes or 0) > 0 and mode == "once":
+        target_dt = dt.datetime.now(_local_tz()) + dt.timedelta(minutes=max(1, int(delay_minutes)))
+        return (
+            f"FREQ=DAILY;BYHOUR={target_dt.hour};BYMINUTE={target_dt.minute};"
+            f"BYSECOND={target_dt.second};COUNT=1"
+        )
+
     hour, minute = parse_hhmm(time_str, default_hour=9, default_minute=0)
+
+    if mode == "minutely":
+        interval = max(1, min(1440, int(interval_minutes or 5)))
+        return f"FREQ=MINUTELY;INTERVAL={interval};BYSECOND=0"
 
     if mode == "hourly":
         interval = max(1, min(24, int(interval_hours or 1)))
@@ -261,7 +381,7 @@ def parse_rrule_parts(rrule_str: str | None) -> dict[str, Any]:
         parts[k.strip().upper()] = v.strip().upper()
 
     freq = parts.get("FREQ", "DAILY")
-    if freq not in {"DAILY", "WEEKLY", "HOURLY"}:
+    if freq not in {"DAILY", "WEEKLY", "HOURLY", "MINUTELY"}:
         freq = "DAILY"
 
     def _int_part(key: str, default: int, lo: int, hi: int) -> int:
@@ -273,7 +393,7 @@ def parse_rrule_parts(rrule_str: str | None) -> dict[str, Any]:
     byhour = _int_part("BYHOUR", 9, 0, 23)
     byminute = _int_part("BYMINUTE", 0, 0, 59)
     bysecond = _int_part("BYSECOND", 0, 0, 59)
-    interval = _int_part("INTERVAL", 1, 1, 168)
+    interval = _int_part("INTERVAL", 1, 1, 1440)
     count = _int_part("COUNT", 0, 0, 10000)
 
     byday_raw = parts.get("BYDAY", "")
@@ -284,7 +404,9 @@ def parse_rrule_parts(rrule_str: str | None) -> dict[str, Any]:
             if code in WEEKDAY_TO_INDEX and code not in byday:
                 byday.append(code)
 
-    if freq == "HOURLY":
+    if freq == "MINUTELY":
+        repeat = "minutely"
+    elif freq == "HOURLY":
         repeat = "hourly"
     elif count == 1:
         repeat = "once"
@@ -312,6 +434,7 @@ def parse_rrule_parts(rrule_str: str | None) -> dict[str, Any]:
         "time": format_hhmm(byhour, byminute),
         "weekday": primary_weekday,
         "interval_hours": interval if freq == "HOURLY" else 1,
+        "interval_minutes": interval if freq == "MINUTELY" else 15,
     }
 
 
@@ -322,7 +445,14 @@ def format_schedule_labels(rrule_str: str | None) -> dict[str, Any]:
     byday: list[str] = parsed["byday"]
     interval = parsed["interval"]
 
-    if repeat == "hourly":
+    if repeat == "minutely":
+        if interval <= 1:
+            zh = "每分钟"
+            en = "Every minute"
+        else:
+            zh = f"每 {interval} 分钟"
+            en = f"Every {interval} minutes"
+    elif repeat == "hourly":
         if interval <= 1:
             zh = "每小时"
             en = "Every hour"
@@ -354,6 +484,7 @@ def format_schedule_labels(rrule_str: str | None) -> dict[str, Any]:
         "weekday": parsed["weekday"],
         "weekdays": byday or ([parsed["weekday"]] if repeat == "weekly" else []),
         "interval_hours": parsed["interval_hours"],
+        "interval_minutes": parsed["interval_minutes"],
         "schedule_label_zh": zh,
         "schedule_label_en": en,
         "schedule_label": zh,
@@ -368,7 +499,7 @@ def compute_deterministic_jitter_ms(
     rrule_str: str,
 ) -> int:
     parsed = parse_rrule_parts(rrule_str)
-    # Exact clock-time reminders (daily/weekdays/weekly/once) fire strictly on time (0ms jitter).
+    # Exact clock-time reminders (daily/weekdays/weekly/once/minutely) fire strictly on time (0ms jitter).
     # Hourly background checks get up to 45s deterministic jitter like Codex.
     if parsed["freq"] != "HOURLY":
         return 0
@@ -404,7 +535,12 @@ def compute_next_run_at(
     interval = parsed["interval"]
     byday = parsed["byday"]
 
-    if freq == "HOURLY":
+    if freq == "MINUTELY":
+        candidate = base_dt.replace(second=bysecond, microsecond=0)
+        while int(candidate.timestamp() * 1000) <= base_ms:
+            candidate = candidate + dt.timedelta(minutes=max(1, interval))
+        slot_ms = int(candidate.timestamp() * 1000)
+    elif freq == "HOURLY":
         candidate = base_dt.replace(minute=byminute, second=bysecond, microsecond=0)
         while int(candidate.timestamp() * 1000) <= base_ms:
             candidate = candidate + dt.timedelta(hours=max(1, interval))
@@ -467,6 +603,8 @@ def serialize_automation_toml(item: dict[str, Any]) -> str:
         f"workspace_root = {_toml_quote(str(item.get('workspace_root') or ''))}",
         f"target_task_id = {_toml_quote(str(item.get('target_task_id') or ''))}",
         f"execution_environment = {_toml_quote(str(item.get('execution_environment') or 'local'))}",
+        f"notification_policy = {_toml_quote(str(item.get('notification_policy') or 'default'))}",
+        f"auto_archive = {'true' if bool(item.get('auto_archive', False)) else 'false'}",
         f"created_at = {_toml_quote(str(item.get('created_at') or ''))}",
         f"updated_at = {_toml_quote(str(item.get('updated_at') or ''))}",
     ]
@@ -597,12 +735,29 @@ def normalize_automation_record(
     if status not in {"ACTIVE", "PAUSED"}:
         status = "ACTIVE"
 
-    kind = str(raw.get("kind") if "kind" in raw else base.get("kind") or "cron").strip().lower()
+    target_task_id = str(
+        raw.get("target_task_id")
+        if "target_task_id" in raw
+        else base.get("target_task_id") or ""
+    ).strip()
+
+    default_kind = "heartbeat" if target_task_id else "cron"
+    kind = str(raw.get("kind") if "kind" in raw else base.get("kind") or default_kind).strip().lower()
     if kind not in {"cron", "heartbeat"}:
-        kind = "cron"
+        kind = default_kind
 
     has_schedule_change = any(
-        k in raw for k in ("rrule", "repeat", "time", "weekday", "weekdays", "interval_hours")
+        k in raw
+        for k in (
+            "rrule",
+            "repeat",
+            "time",
+            "weekday",
+            "weekdays",
+            "interval_hours",
+            "interval_minutes",
+            "delay_minutes",
+        )
     )
     if has_schedule_change or not base.get("rrule"):
         existing_parts = parse_rrule_parts(str(base.get("rrule") or ""))
@@ -612,6 +767,8 @@ def normalize_automation_record(
             weekday=str(raw.get("weekday") or existing_parts["weekday"]),
             weekdays=raw.get("weekdays") if isinstance(raw.get("weekdays"), list) else None,
             interval_hours=int(raw.get("interval_hours") or existing_parts["interval_hours"]),
+            interval_minutes=int(raw.get("interval_minutes") or existing_parts.get("interval_minutes", 5)),
+            delay_minutes=int(raw.get("delay_minutes") or 0) if raw.get("delay_minutes") is not None else None,
             raw_rrule=str(raw.get("rrule") or "") if "rrule" in raw else None,
         )
     else:
@@ -627,16 +784,25 @@ def normalize_automation_record(
         if "workspace_root" in raw
         else base.get("workspace_root") or ""
     ).strip()
-    target_task_id = str(
-        raw.get("target_task_id")
-        if "target_task_id" in raw
-        else base.get("target_task_id") or ""
-    ).strip()
     execution_environment = str(
         raw.get("execution_environment")
         if "execution_environment" in raw
         else base.get("execution_environment") or "local"
     ).strip() or "local"
+
+    notification_policy = str(
+        raw.get("notification_policy")
+        if "notification_policy" in raw
+        else base.get("notification_policy") or "all_runs"
+    ).strip()
+    if notification_policy not in {"all_runs", "failed_runs_only", "never"}:
+        notification_policy = "all_runs"
+
+    auto_archive = bool(
+        raw.get("auto_archive")
+        if "auto_archive" in raw
+        else base.get("auto_archive", False)
+    )
 
     run_count = int(raw.get("run_count", base.get("run_count", 0)) or 0)
     last_run_at = raw.get("last_run_at", base.get("last_run_at"))
@@ -674,6 +840,7 @@ def normalize_automation_record(
         "weekday": labels["weekday"],
         "weekdays": labels["weekdays"],
         "interval_hours": labels["interval_hours"],
+        "interval_minutes": labels.get("interval_minutes", 5),
         "schedule_label": labels["schedule_label"],
         "schedule_label_zh": labels["schedule_label_zh"],
         "schedule_label_en": labels["schedule_label_en"],
@@ -681,6 +848,8 @@ def normalize_automation_record(
         "workspace_root": workspace_root,
         "target_task_id": target_task_id,
         "execution_environment": execution_environment,
+        "notification_policy": notification_policy,
+        "auto_archive": auto_archive,
         "next_run_at": next_run_at,
         "next_run_at_iso": ms_to_iso(next_run_at),
         "last_run_at": last_run_at,
@@ -714,6 +883,7 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
         "weekday": labels["weekday"],
         "weekdays": labels["weekdays"],
         "interval_hours": labels["interval_hours"],
+        "interval_minutes": labels.get("interval_minutes", 5),
         "schedule_label": labels["schedule_label"],
         "schedule_label_zh": labels["schedule_label_zh"],
         "schedule_label_en": labels["schedule_label_en"],
@@ -721,6 +891,8 @@ def public_automation(store: Any, item: dict[str, Any]) -> dict[str, Any]:
         "workspace_root": str(item.get("workspace_root") or ""),
         "target_task_id": str(item.get("target_task_id") or ""),
         "execution_environment": str(item.get("execution_environment") or "local"),
+        "notification_policy": str(item.get("notification_policy") or "all_runs"),
+        "auto_archive": bool(item.get("auto_archive", False)),
         "next_run_at": next_ms if isinstance(next_ms, int) else None,
         "next_run_at_iso": ms_to_iso(next_ms if isinstance(next_ms, int) else None),
         "last_run_at": last_ms if isinstance(last_ms, int) else None,
@@ -763,7 +935,17 @@ def sync_automations_from_disk_in_tx(store: Any, data: dict[str, Any]) -> bool:
             changed = True
         else:
             # Check if key fields in TOML differ from store
-            for key in ("name", "prompt", "status", "rrule", "kind", "desktop_access"):
+            for key in (
+                "name",
+                "prompt",
+                "status",
+                "rrule",
+                "kind",
+                "desktop_access",
+                "target_task_id",
+                "notification_policy",
+                "auto_archive",
+            ):
                 if key in parsed and parsed[key] != existing.get(key):
                     merged = normalize_automation_record(store, parsed, existing=existing)
                     automations[auto_id] = merged
@@ -861,12 +1043,16 @@ def execute_automation_tool_call_in_tx(
     target_id = str(args.get("id") or "").strip()
     target_name = str(args.get("name") or "").strip()
 
-    # Allow matching by name if id wasn't provided for update/pause/resume/delete
+    # Allow matching by name or current turn's automation_id if id wasn't provided
     if not target_id and target_name and action in {"update", "pause", "resume", "delete"}:
         for aid, item in automations.items():
             if isinstance(item, dict) and str(item.get("name") or "").strip() == target_name:
                 target_id = aid
                 break
+    if not target_id and action in {"update", "pause", "resume", "delete"}:
+        active_auto_id = str(row.get("automation_id") or "").strip()
+        if active_auto_id and active_auto_id in automations:
+            target_id = active_auto_id
 
     if action == "list":
         listed = list_automations_in_tx(store, data)
@@ -918,11 +1104,16 @@ def execute_automation_tool_call_in_tx(
         "weekday",
         "weekdays",
         "interval_hours",
+        "interval_minutes",
+        "delay_minutes",
         "rrule",
         "status",
         "kind",
         "desktop_access",
         "workspace_root",
+        "target_task_id",
+        "notification_policy",
+        "auto_archive",
     ):
         if key in args and args[key] is not None:
             payload[key] = args[key]
@@ -932,15 +1123,23 @@ def execute_automation_tool_call_in_tx(
     if "desktop_access" not in payload:
         payload["desktop_access"] = True
 
+    is_update = action == "update" and bool(target_id)
+    if not is_update:
+        row_task_id = str(row.get("id") or "").strip()
+        if "kind" not in payload:
+            payload["kind"] = "heartbeat" if row_task_id else "cron"
+        if payload.get("kind") == "heartbeat" and "target_task_id" not in payload and row_task_id:
+            payload["target_task_id"] = row_task_id
+
     saved = create_or_update_automation_in_tx(
         store,
         data,
         payload,
-        automation_id=target_id if (action == "update" and target_id) else None,
+        automation_id=target_id if is_update else None,
     )
     return {
         "ok": True,
-        "action": "update" if (action == "update" and target_id) else "create",
+        "action": "update" if is_update else "create",
         "automation": saved,
         **saved,
     }
@@ -952,15 +1151,44 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
     auto_id = str(row.get("automation_id") or "").strip()
     if not auto_id:
         return ""
+    kind = str(row.get("automation_kind") or "").strip().lower()
     mem_path = automation_memory_path(store, auto_id)
     mem_preview = read_automation_memory(store, auto_id, max_chars=2000)
+
+    if kind == "heartbeat":
+        lines = [
+            "# Heartbeat wakeups",
+            "User messages wrapped in `<heartbeat>` tags are scheduled wakeups for this thread.",
+            "Each `<heartbeat>` message includes `<automation_id>`, `<current_time_iso>`, and `<instructions>`.",
+            "The user is not interactively watching the screen right now. Execute the scheduled instructions or tools directly without asking for confirmation.",
+            f"Persistent memory file across runs: {mem_path}",
+            "",
+            "# Stopping completed reminders or monitors",
+            "If this wakeup is a one-off reminder (e.g. 'remind me in 10 minutes') or a monitor whose condition has now been satisfied ('notify me once X finishes'), call `ryn_automation_update` with `action=\"delete\"` (or `action=\"pause\"`) and `id=\"<automation_id>\"` before finishing so it does not keep firing.",
+            "",
+            "# Heartbeat response format",
+            "Write normal visible text for the user first, then end your final response with a `<heartbeat>` block:",
+            "<heartbeat>",
+            f"<automation_id>{auto_id}</automation_id>",
+            "<decision>NOTIFY or DONT_NOTIFY</decision>",
+            "<message>concise summary or notification banner text</message>",
+            "</heartbeat>",
+            "- Use `NOTIFY` for reminders, completed scheduled actions, or monitors that found something the user should see.",
+            "- Use `DONT_NOTIFY` only when polling/monitoring a condition and nothing noteworthy happened (keeps the thread quiet and unread-free).",
+            '- You may also include `::inbox-item{title="..." summary="..."}` if you want to set a custom run title.',
+        ]
+        if mem_preview:
+            lines.append("\nCurrent memory.md contents:\n```markdown\n" + mem_preview + "\n```")
+        return "\n".join(lines)
+
     lines = [
         "<automation_context>",
-        f"This task is an automated scheduled run (automation_id={auto_id}).",
+        f"mode: Automation (automation_id={auto_id})",
         "The user is not interactively watching the screen right now. Execute the scheduled instructions directly without asking for confirmation.",
-        f"Persistent memory file across runs: {mem_path}",
+        f"memory_file: {mem_path}",
+        "Before starting work, review the memory notes below to understand what happened on previous runs.",
         "If you need to record state for the next scheduled run, update that memory.md file or include a concise summary.",
-        'At the end of your final response, you may include `::inbox-item{title="..." summary="..."}` to summarize the outcome.',
+        'At the end of your final response, include `::inbox-item{title="..." summary="..."}` to summarize the outcome.',
     ]
     if mem_preview:
         lines.append("\nCurrent memory.md contents:\n```markdown\n" + mem_preview + "\n```")
@@ -978,6 +1206,8 @@ def parse_automation_completion_output(text: str) -> dict[str, Any]:
         inbox_title = str(attrs.get("title") or "").strip()
         inbox_summary = str(attrs.get("summary") or "").strip()
 
+    hb = parse_heartbeat_response(raw)
+
     decision: dict[str, Any] = {}
     d_match = DECISION_BLOCK_RE.search(raw)
     if d_match:
@@ -987,13 +1217,21 @@ def parse_automation_completion_output(text: str) -> dict[str, Any]:
                 decision = loaded
         except Exception:
             pass
+    if hb["decision"] and "heartbeat_decision" not in decision:
+        decision["heartbeat_decision"] = hb["decision"]
 
-    cleaned = INBOX_ITEM_RE.sub("", raw).strip()
-    summary = inbox_summary or (cleaned.splitlines()[0][:140].strip() if cleaned else "")
+    cleaned = INBOX_ITEM_RE.sub("", hb["cleaned_text"]).strip()
+    summary = (
+        inbox_summary
+        or hb["message"]
+        or (cleaned.splitlines()[0][:140].strip() if cleaned else "")
+    )
     return {
         "inbox_title": inbox_title,
         "inbox_summary": summary,
         "decision": decision,
+        "heartbeat": hb,
+        "cleaned_text": cleaned,
     }
 
 
@@ -1008,30 +1246,89 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
     if status not in {"completed", "failed", "cancelled"}:
         return
 
+    assistant_msg: dict[str, Any] | None = None
     assistant_text = ""
     for msg in reversed(row.get("messages") or []):
         if isinstance(msg, dict) and msg.get("role") == "assistant":
             assistant_text = str(msg.get("content") or "").strip()
             if assistant_text:
+                assistant_msg = msg
                 break
 
     parsed = parse_automation_completion_output(assistant_text)
+    hb = parsed["heartbeat"]
     summary = parsed["inbox_summary"] or str((row.get("error") or {}).get("message") or status)
     now_str = now_iso()
 
+    # Strip raw <heartbeat> and ::inbox-item tags from the visible assistant message & result
+    if assistant_msg is not None and (hb["has_heartbeat_tag"] or INBOX_ITEM_RE.search(assistant_text)):
+        display_text = parsed["cleaned_text"] or hb["message"] or summary
+        assistant_msg["content"] = display_text
+        if isinstance(row.get("result"), str) and row.get("result"):
+            row["result"] = display_text
+
+    auto_item = data["automations"].get(auto_id) if auto_id else None
+    policy = str((auto_item or {}).get("notification_policy") or "all_runs").strip()
+    hb_decision = str(hb.get("decision") or "").upper()
+    is_silent = (
+        hb_decision == "DONT_NOTIFY"
+        or policy == "never"
+        or (policy == "failed_runs_only" and status == "completed")
+    )
+    row["latest_turn_is_silent_heartbeat"] = bool(is_silent)
+
+    if is_silent and str(row.get("automation_kind") or "") == "heartbeat":
+        # Mark the latest heartbeat user & assistant messages as silent so UI hides them like Codex
+        if assistant_msg is not None:
+            ui_meta = dict(assistant_msg.get("ui") or {}) if isinstance(assistant_msg.get("ui"), dict) else {}
+            ui_meta["kind"] = "silent_heartbeat"
+            ui_meta["hidden"] = True
+            assistant_msg["ui"] = ui_meta
+        for msg in reversed(row.get("messages") or []):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                ui_meta = dict(msg.get("ui") or {}) if isinstance(msg.get("ui"), dict) else {}
+                if ui_meta.get("kind") == "heartbeat" or "<heartbeat>" in str(msg.get("content") or ""):
+                    ui_meta["kind"] = "silent_heartbeat"
+                    ui_meta["hidden"] = True
+                    msg["ui"] = ui_meta
+                break
+    elif not is_silent:
+        auto_name = str((auto_item or {}).get("name") or row.get("title") or "定时提醒")
+        notif_title = parsed["inbox_title"] or auto_name
+        notif_body = hb["message"] or parsed["cleaned_text"] or summary
+        row["automation_notification"] = {
+            "id": run_id or f"notif-{now_ms()}",
+            "automation_id": auto_id,
+            "automation_name": auto_name,
+            "kind": str(row.get("automation_kind") or "heartbeat"),
+            "decision": hb_decision or "NOTIFY",
+            "title": notif_title,
+            "message": str(notif_body or "")[:240],
+            "task_id": str(row.get("id") or ""),
+            "status": status,
+            "created_at": now_str,
+        }
+
     if run_id and isinstance(data["automation_runs"].get(run_id), dict):
         run_rec = data["automation_runs"][run_id]
-        run_rec["status"] = "ACCEPTED" if status == "completed" else status.upper()
+        run_rec["status"] = (
+            "ARCHIVED"
+            if is_silent
+            else ("ACCEPTED" if status == "completed" else status.upper())
+        )
+        run_rec["decision"] = hb_decision or ("DONT_NOTIFY" if is_silent else "NOTIFY")
         run_rec["inbox_title"] = parsed["inbox_title"] or str(row.get("title") or "")
         run_rec["inbox_summary"] = summary
         run_rec["completed_at"] = now_str
         run_rec["updated_at"] = now_str
 
-    if auto_id and isinstance(data["automations"].get(auto_id), dict):
-        item = data["automations"][auto_id]
-        item["last_run_status"] = "completed" if status == "completed" else status
-        item["last_run_summary"] = summary
-        item["last_task_id"] = str(row.get("id") or "")
-        item["updated_at"] = now_str
+    if auto_id and isinstance(auto_item, dict):
+        auto_item["last_run_status"] = "completed" if status == "completed" else status
+        auto_item["last_run_summary"] = summary
+        auto_item["last_task_id"] = str(row.get("id") or "")
+        auto_item["updated_at"] = now_str
+        if auto_item.get("next_run_at") is None and str(auto_item.get("repeat") or "") == "once":
+            auto_item["status"] = "PAUSED"
+        write_automation_files(store, auto_item)
         if summary:
             append_automation_memory_note(store, auto_id, f"({status}) {summary}")
