@@ -6,7 +6,7 @@ authors = ["Rynmesh Contributors"]
 license = "MIT"
 repository = "https://github.com/yeogirlyun/rynmesh"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,16 +15,17 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri = { version = "2.12.5", features = ["tray-icon"] }
 tauri-plugin-log = "2.9.0"
 tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-notification = "2.3.3"
+tauri-plugin-updater = "=2.14.0"
 libc = "0.2"
 rfd = "0.15"
 base64 = "0.22"

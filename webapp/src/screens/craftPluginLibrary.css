@@ -16,6 +16,12 @@
 .pf-shell .craft-center .craft-library h1 { font-size:32px; font-weight:630; line-height:1.2; letter-spacing:-.9px; margin:0; }
 .craft-center .craft-library-heading p { font-size:14px; line-height:1.6; color:var(--library-muted); margin:11px 0 0; }
 .craft-library .craft-library-add { display:inline-flex; align-items:center; justify-content:center; gap:8px; flex-shrink:0; background:var(--pf-text); color:var(--pf-panel); padding:11px 17px; border:1px solid var(--pf-text); border-radius:10px; font-size:13px; font-weight:550; box-shadow:0 2px 3px #14233b0a; }
+.craft-library-ext-banner { display:flex; flex-direction:column; gap:10px; margin-bottom:20px; }
+.craft-library-ext-row { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; padding:16px 20px; border:1px solid var(--pf-line); border-radius:14px; background:var(--pf-panel); }
+.craft-library-ext-row strong { display:block; font-size:15px; font-weight:600; color:var(--pf-text); }
+.craft-library-ext-row p { margin:4px 0 0; font-size:12.5px; color:var(--library-muted); }
+.craft-library-ext-actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.craft-library-ext-actions a { text-decoration:none; }
 .craft-library-toolbar { display:flex; align-items:center; justify-content:space-between; gap:20px; border-bottom:1px solid var(--pf-line); margin-bottom:24px; }
 .craft-library-tabs { display:flex; align-self:stretch; gap:27px; }
 .craft-library .craft-library-tabs button { display:flex; align-items:center; gap:8px; background:none; border:0; border-bottom:2px solid transparent; padding:16px 0; color:var(--library-muted); font-size:14px; }

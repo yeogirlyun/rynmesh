@@ -511,6 +511,7 @@ class StreamDecoder:
         _check(protocol, model, scope)
         self.protocol, self.model, self.scope = protocol, model, scope
         self.usage = {"prompt_tokens": None, "completion_tokens": None}
+        self.cached_tokens = None
         self.finish_reason = None
         self._native_usage = {}
         self._final = None
@@ -531,6 +532,13 @@ class StreamDecoder:
             self._native_usage.update(raw)
             mapped = _usage(self._native_usage, self.protocol)
             self.usage = {key: value if value is not None else self.usage[key] for key, value in mapped.items()}
+            if self.protocol == MESSAGES:
+                cached = _count(self._native_usage.get("cache_read_input_tokens"))
+            else:
+                details = self._native_usage.get("input_tokens_details")
+                cached = _count(details.get("cached_tokens")) if isinstance(details, dict) else None
+            if cached is not None:
+                self.cached_tokens = cached
 
     def _delta(self, text):
         if not isinstance(text, str) or len((self._text + text).encode()) > _LIMIT:

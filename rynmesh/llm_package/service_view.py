@@ -39,6 +39,8 @@ def presence_from_probe(peer_id: str, *, self_id: str, probe: Mapping[str, Any] 
 def _relationship(peer_id: str, row: Mapping[str, Any], *, self_id: str, members: frozenset[str]) -> str:
     if peer_id == self_id or row.get("local_only") is True or row.get("access") == "self":
         return "self"
+    if row.get("access") == "provider":
+        return "provider"
     if peer_id in members:
         return "space_member"
     if row.get("access") == "friend":
@@ -81,6 +83,8 @@ def annotate_services(
             allowed[peer_id] = bool(allows_ai(peer_id)) if relationship == "space_member" else False
         entitled, reason = _entitlement(row, relationship, allows_ai=allowed[peer_id])
         presence = presence_from_probe(peer_id, self_id=self_id, probe=probe_for(peer_id))
+        if relationship == "provider":
+            presence = dict(row.get("presence") or {"state": "unconfirmed", "basis": "none"})
         claim = bool(row.get("online"))
         if not entitled:
             state = NEEDS_CONNECTION

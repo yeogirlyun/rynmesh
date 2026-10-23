@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import CraftApps from "./CraftApps";
+import { agentExtensions, normalizeMcpServer, normalizePlugin } from "../domain/agentExtensions";
 import { craftPlugins, verifiedPluginPath, type CraftCatalog, type CraftLaunch, type CraftPlugin } from "../domain/craftPlugins";
 import { setLanguagePreference } from "../i18n";
 import en from "../locales/craft.en.json";
@@ -47,6 +48,14 @@ beforeEach(() => {
   vi.restoreAllMocks(); setLanguagePreference("en");
   vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
   state = { node_id: "this-node", plugins: ids.map(plugin), defaults: ids, selection: ids, setup_completed: false, storage_path: "C:/Local/Ryn/plugins/node" };
+  vi.spyOn(agentExtensions, "overview").mockResolvedValue({
+    revision: 1,
+    desktop_access: false,
+    windows_supported: true,
+    plugins: [],
+    skills: [],
+    mcp_servers: [],
+  });
   vi.spyOn(craftPlugins, "catalog").mockImplementation(async () => clone());
   vi.spyOn(craftPlugins, "setup").mockImplementation(async () => { state.setup_completed = true; return clone(); });
   vi.spyOn(craftPlugins, "install").mockImplementation(async id => { const p = state.plugins.find(p => p.id === id)!; p.installed = true; p.enabled = true; p.agent_tools = ["editor_info"]; return clone(); });
@@ -350,4 +359,59 @@ it("rejects forged built-in launch routes and explains NAS resource permissions"
   await user.click(screen.getByRole("button", { name: "Agent" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("File access keeps existing resource scope and permissions");
   expect(craftPlugins.launch).not.toHaveBeenCalled();
+});
+
+it("opens an installed manifest-driven workspace and exposes its declared peer provider", async () => {
+  present();
+  setLanguagePreference("zh-CN");
+  vi.mocked(agentExtensions.overview).mockResolvedValue({
+    revision: 5,
+    desktop_access: false,
+    windows_supported: true,
+    plugins: [
+      normalizePlugin({
+        id: "sample-notes",
+        title: "研究资料",
+        version: "1.1.0",
+        description: "已安装插件提供的资料页面和成员目录。",
+        enabled: true,
+        component_enabled: true,
+        mcp_server_ids: ["sample-notes-reader"],
+        peer_provider: { url: "https://provider.example/connect", oauth: { clientId: "desktop", scopes: ["peer.connect"] } },
+        views: [
+          {
+            id: "notes",
+            title: "资料",
+            mcpServer: "sample-notes-reader",
+            tool: "read_notes",
+            inputs: [],
+            columns: [],
+            rowsPath: "data.rows",
+            summaryFields: [],
+          },
+        ],
+      }),
+    ],
+    skills: [],
+    mcp_servers: [
+      normalizeMcpServer({
+        id: "sample-notes-reader",
+        plugin_id: "sample-notes",
+        enabled: true,
+        transport: "streamable_http",
+        oauth: { state: "logged_out" },
+        tools: [],
+      }),
+    ],
+  });
+  mount();
+  const heading = await screen.findByRole("heading", { name: "研究资料" });
+  const card = heading.closest("article")!;
+  expect(card).toHaveAttribute("data-extension-plugin", "sample-notes");
+  expect(within(card).getByText("已安装插件提供的资料页面和成员目录。")).toBeInTheDocument();
+  expect(within(card).getByText("需要登录")).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "打开" })).toBeEnabled();
+  expect(within(card).getByRole("button", { name: "成员与模型" })).toBeEnabled();
+  await userEvent.setup().click(within(card).getByRole("button", { name: "打开" }));
+  expect(screen.getByTestId("location")).toHaveTextContent("/apps/plugins/sample-notes");
 });

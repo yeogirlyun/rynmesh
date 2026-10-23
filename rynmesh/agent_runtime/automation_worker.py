@@ -10,6 +10,8 @@ from typing import Any
 
 from ..background_workers import WorkerRunResult
 from . import automations, budget
+from .data_policy import merge_state
+from .memory import invalidate_task_policy_in_tx
 from .prompt import PROMPT_VERSION, select_base_instructions
 from .protocol import event, now
 from .state import initialize, owner_update
@@ -132,6 +134,8 @@ def trigger_automation_in_tx(
                 "automation": automations.public_automation(runtime.store, item),
             }
 
+        target_row["data_policy_state"] = merge_state(target_row.get("data_policy_state"), item.get("data_policy_state"))
+        invalidate_task_policy_in_tx(data, target_row)
         auto_name = str(item.get("name") or "定时提醒").strip()
         hb_msg = {
             "role": "user",
@@ -215,6 +219,7 @@ def trigger_automation_in_tx(
             "elapsed_seconds": 0.0,
             "base_instructions": select_base_instructions(),
             "context_budget_provenance": data.get("settings_context_budget_provenance", "default_auto"),
+            "data_policy_state": merge_state(None, item.get("data_policy_state")),
         }
         initialize(spawned_row)
         spawned_row["local_execution"] = {
@@ -231,6 +236,7 @@ def trigger_automation_in_tx(
         event(spawned_row, "created", source="automation", automation_id=target_id, run_id=run_id, automation_kind="cron")
         data.setdefault("tasks", {})[spawned_task_id] = spawned_row
 
+    automations.inherit_task_policy_in_tx(data, spawned_row)
     run_count = int(item.get("run_count") or 0) + 1
     item["run_count"] = run_count
     item["last_run_at"] = current_ms

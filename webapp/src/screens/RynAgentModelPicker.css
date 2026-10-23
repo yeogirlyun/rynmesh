@@ -16,6 +16,8 @@
 .ra-model-option[aria-disabled="true"] .ra-model-option-text { color: var(--pf-muted); }
 .ra-model-option[aria-selected="true"] .ra-model-option-text > span { color: var(--pf-text); }
 .ra-model-option > svg { flex-shrink: 0; }
+.ra-model-option-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ra-model-usage-pill { font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; background: var(--pf-subtle); color: var(--pf-muted); font-variant-numeric: tabular-nums; }
 .ra-model-option-text { display: flex; flex-direction: column; min-width: 0; }
 .ra-model-option-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ra-model-option-text > small { color: var(--pf-muted); font-size: 10px; line-height: 15px; }

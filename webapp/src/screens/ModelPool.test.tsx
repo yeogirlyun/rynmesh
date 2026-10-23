@@ -248,3 +248,67 @@ it("reports a rejected default reselection without claiming success", async () =
   expect(settingsWrites).toHaveBeenCalledExactlyOnceWith({ model_id: "local/a" });
   expect(screen.getByText("可选功能")).toBeInTheDocument();
 });
+
+
+it("displays Codex-style daily token usage chart and per-model counter for both local and shared peer models", async () => {
+  const localUsage = {
+    usage_key: "source/s1/gpt-4.1",
+    today: { day: "2026-10-22", requests: 8, completed_requests: 8, input_tokens: 14000, output_tokens: 4400, cached_tokens: 9000, total_tokens: 18400, cache_hit_rate: 0.64 },
+    total: { requests: 80, completed_requests: 80, input_tokens: 600000, output_tokens: 260000, cached_tokens: 400000, total_tokens: 860000, cache_hit_rate: 0.66 },
+    daily: [
+      { day: "2026-10-21", requests: 6, total_tokens: 12000, tokens: 12000 },
+      { day: "2026-10-22", requests: 8, total_tokens: 18400, tokens: 18400 },
+    ],
+  };
+  const peerUsage = {
+    usage_key: "peer/abc/shared-deepseek",
+    today: { day: "2026-10-22", requests: 5, completed_requests: 5, input_tokens: 6000, output_tokens: 1500, cached_tokens: 4500, total_tokens: 7500, cache_hit_rate: 0.75 },
+    total: { requests: 20, completed_requests: 20, input_tokens: 24000, output_tokens: 6000, cached_tokens: 18000, total_tokens: 30000, cache_hit_rate: 0.75 },
+    daily: [
+      { day: "2026-10-22", requests: 5, total_tokens: 7500, tokens: 7500 },
+    ],
+  };
+  server.use(
+    http.get("*/api/local/agent/models", () => HttpResponse.json({
+      models: [
+        { ...catalog[0], usage: localUsage },
+        catalog[1],
+        { id: "peer/abc/shared-deepseek", peer_id: "peer-1", service_id: "shared-deepseek", name: "Shared DeepSeek", source: "peer", available: true, agent_supported: true, usage: peerUsage },
+      ],
+    })),
+    http.get("*/api/local/agent/settings", () => HttpResponse.json({ enabled: false, model_id: "local/a", permission_mode: "confirm_changes" })),
+  );
+  const context = { client: makeFixtureNodeClient() } as AppOutletContext;
+  const peerRecord = {
+    peer_id: "peer-1",
+    node_name: "Friend Mac",
+    online: true,
+    usage: peerUsage,
+    service: { package_id: "shared-deepseek", model_alias: "Shared DeepSeek", capabilities: ["chat"], context_window: 64000, max_output_tokens: 4096, pricing: { currency: "USD", input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 0 }, privacy: {} },
+  };
+  const srcWithUsage = {
+    ...source(),
+    model_usage: { "gpt-4.1": localUsage },
+  };
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={["/models"]}>
+      <Routes>
+        <Route element={<Outlet context={context} />}>
+          <Route path="/models" element={<ModelPool sources={[srcWithUsage]} cli={null} native={null} peers={[peerRecord]} loading={false} error="" onRefresh={vi.fn().mockResolvedValue(undefined)} onEditSource={vi.fn()} onCLI={vi.fn()} onNative={vi.fn()} />} />
+        </Route>
+      </Routes>
+    </MemoryRouter>,
+  );
+  const peerRow = (await screen.findByText("Shared DeepSeek")).closest(".mp-model") as HTMLElement;
+  expect(within(peerRow).getByTestId("model-usage-peer-1/shared-deepseek")).toHaveTextContent("今日 7.5K·累计 30K");
+
+  // Top Codex daily usage card aggregates all models by default (18.4K + 7.5K = 25.9K today)
+  expect(screen.getByTestId("codex-usage-today")).toHaveTextContent("25.9K");
+  expect(screen.getByTestId("codex-usage-total")).toHaveTextContent("890K");
+
+  // Clicking the peer model's inline counter filters the daily chart to that model
+  await user.click(within(peerRow).getByTestId("model-usage-peer-1/shared-deepseek"));
+  expect(screen.getByTestId("codex-usage-today")).toHaveTextContent("7.5K");
+  expect(screen.getByTestId("codex-usage-total")).toHaveTextContent("30K");
+});

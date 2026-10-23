@@ -424,3 +424,26 @@ def test_post_save_validation_failure_keeps_the_write_unknown_and_cannot_replay(
     assert (craft.workspace / args["arguments"]["path"]).is_file()
     assert sum(name == "save_document" for _, name, _ in craft.backend.calls) == 1
     assert craft.tools.resource_writes.ledger.get("post-save-failed")["status"] == "dispatched"
+
+
+def test_craft_tools_discovery_includes_compact_schema_and_normalizes_alias_keys(craft):
+    runtime, _ = craft.runtime()
+    context = _context(runtime.create({"message": "测试工具Schema内联与别名自动归一化"}))
+    discovery = craft.tools.execute(TOOLS, {"app": "wordcraft"}, context=context,
+                                    operation_id="discover-all", cancelled=lambda: False)
+    by_name = {item["name"]: item for item in discovery["tools"]}
+    assert "inputSchema" in by_name["type_text"]
+    assert by_name["type_text"]["inputSchema"]["required"] == ["text"]
+    assert "text" in by_name["type_text"]["inputSchema"]["properties"]
+
+    _act(craft, context, "new_document", operation="alias-new")
+    _act(craft, context, "type_text", {"query": "通过query别名写入"}, operation="alias-type")
+    selected = _act(craft, context, "select_text", {"query": "别名"}, operation="alias-select")
+    assert selected["data"]["selected"] is True
+    saved = _act(craft, context, "save_document", {"file_path": "aliased.docx"}, operation="alias-save")
+    assert saved["ok"] is True and (craft.workspace / "aliased.docx").is_file()
+
+    with pytest.raises(AgentToolRejected) as exc_info:
+        craft.tools.preview(ACTION, _args("type_text", {"unknown_field": 123}), context=context)
+    assert set(exc_info.value.details.get("properties") or []) == {"paragraphs", "text"}
+    assert exc_info.value.correction

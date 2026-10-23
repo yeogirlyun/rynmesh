@@ -1362,12 +1362,93 @@
 /* ============================================================================
    Codex Desktop Conversation UI: User Bubble, Crisp Prose & Per-Turn Files
    ============================================================================ */
+.ra-workspace .ra-tasks {
+  padding: 14px 10px;
+  background: #f9f9f9;
+  border-right: 1px solid #eeeeee;
+  gap: 4px;
+}
+[data-theme="dark"] .ra-workspace .ra-tasks {
+  background: var(--pf-subtle);
+  border-right-color: var(--pf-line);
+}
+.ra-workspace .ra-tasks > .ra-new,
+.ra-workspace .ra-tasks > .ra-nav-automations {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.ra-workspace .ra-tasks > .ra-new svg,
+.ra-workspace .ra-tasks > .ra-nav-automations svg {
+  color: #525252;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-tasks > .ra-new:hover,
+.ra-workspace .ra-tasks > .ra-nav-automations:hover {
+  background: #eeeeee;
+}
+.ra-workspace .ra-tasks > .ra-nav-automations.is-active {
+  background: #eaeaea;
+  color: #0d0d0d;
+  font-weight: 600;
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations {
+  color: var(--pf-text);
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new svg,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations svg {
+  color: var(--pf-muted);
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new:hover,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations:hover,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations.is-active {
+  background: var(--pf-selection);
+}
+.ra-workspace .ra-recent-heading {
+  margin: 14px 0 4px;
+  padding: 0 8px;
+  color: #8e8e93;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.ra-workspace .ra-chat {
+  position: relative;
+  background: #ffffff;
+}
+[data-theme="dark"] .ra-workspace .ra-chat {
+  background: var(--pf-panel);
+}
+.ra-workspace .ra-scroll {
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+.ra-workspace .ra-thread,
+.ra-workspace .ra-composer-area {
+  max-width: 760px;
+}
+
 .ra-workspace .ra-message,
 .ra-workspace .ra-result {
   font-size: 15px;
   line-height: 1.68;
   color: #0d0d0d;
   -webkit-font-smoothing: antialiased;
+  max-width: 100%;
 }
 .ra-workspace .ra-message p,
 .ra-workspace .ra-message li,
@@ -1394,6 +1475,125 @@
   color: #171717;
   font: 13px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
 }
+
+/* Codex-style inline file/code links with solid micro-badge */
+.ra-workspace .ra-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 5px 1px 3px;
+  margin: 0 1px;
+  border-radius: 6px;
+  color: #0066cc;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-decoration: none;
+  vertical-align: baseline;
+  transition: background 0.12s ease;
+}
+.ra-workspace .ra-file-link:hover {
+  background: rgba(0, 102, 204, 0.08);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ra-workspace .ra-file-link-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 3.5px;
+  background: #0066cc;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-file-link > svg {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 0;
+  color: #0066cc;
+  flex-shrink: 0;
+}
+
+/* Codex minimalist horizontal-rule tables inside messages */
+.ra-workspace .ra-message table,
+.ra-workspace .ra-result table {
+  display: table;
+  width: 100%;
+  max-width: 100%;
+  margin: 14px 0 18px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.ra-workspace .ra-message th,
+.ra-workspace .ra-result th {
+  border: 0;
+  border-bottom: 1px solid #e5e5e5;
+  padding: 8px 12px 8px 0;
+  text-align: left;
+  font-weight: 600;
+  color: #0d0d0d;
+  background: transparent;
+}
+.ra-workspace .ra-message td,
+.ra-workspace .ra-result td {
+  border: 0;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 12px 10px 0;
+  vertical-align: top;
+  color: #262626;
+}
+.ra-workspace .ra-message tr:last-child td,
+.ra-workspace .ra-result tr:last-child td {
+  border-bottom: 0;
+}
+[data-theme="dark"] .ra-workspace .ra-message th,
+[data-theme="dark"] .ra-workspace .ra-result th {
+  border-bottom-color: var(--pf-line);
+  color: var(--pf-text);
+}
+[data-theme="dark"] .ra-workspace .ra-message td,
+[data-theme="dark"] .ra-workspace .ra-result td {
+  border-bottom-color: var(--pf-line);
+  color: var(--pf-text);
+}
+
+/* Constrain inline images inside messages so they never overflow */
+.ra-workspace .ra-message img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.ra-workspace .ra-inline-image {
+  display: inline-flex;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 0;
+  margin: 6px 0;
+  overflow: hidden;
+  background: #f9f9f9;
+  cursor: zoom-in;
+  width: auto;
+  max-width: min(320px, 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.ra-workspace .ra-inline-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 240px;
+  object-fit: contain;
+}
+
 .ra-workspace .ra-message.ra-assistant,
 .ra-workspace .ra-thread .ra-result {
   margin: 14px 0 18px;
@@ -1410,7 +1610,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   max-width: 100%;
   margin: 20px 0 8px;
@@ -1418,6 +1618,7 @@
   background: transparent;
   border: 0;
   border-radius: 0;
+  scroll-margin-top: 20px;
 }
 .ra-workspace .ra-user-bubble {
   max-width: min(72%, 560px);
@@ -1455,6 +1656,28 @@
 .ra-workspace .ra-file-card:hover {
   background: #f3f3f3;
   border-color: #dcdcdc;
+}
+.ra-workspace .ra-file-hover-hint {
+  font-size: 12px;
+  color: #8e8e93;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ra-workspace .ra-file-card:hover .ra-file-hover-hint {
+  opacity: 1;
+}
+.ra-workspace .ra-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 .ra-workspace .ra-file-icon {
   width: 38px;

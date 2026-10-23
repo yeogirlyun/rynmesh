@@ -11,7 +11,8 @@ from .routes import install_drop
 
 
 def install_device_drop(app: FastAPI, *, store: Any, messaging_key: Any, personal_space: Any,
-                        network_id: Callable[[], str], local_control: Callable) -> DropEngine:
+                        network_id: Callable[[], str], local_control: Callable,
+                        peer_providers: Any = None) -> DropEngine:
     """Own devices come from the personal space, friends from the friends store.
 
     Nearby (LAN-discovered, unpaired) devices are handled inside the engine and
@@ -42,5 +43,7 @@ def install_device_drop(app: FastAPI, *, store: Any, messaging_key: Any, persona
         return [str(row.get("endpoint") or "") for row in friend_rows() if row.get("peer_id") == peer_id]
 
     engine = DropEngine(node=store, home=store.home, messaging_key=messaging_key, network_id=network_id,
-                        own_peers=own_peers, friend_peers=friend_peers, peer_endpoints=peer_endpoints)
+                        own_peers=own_peers, friend_peers=friend_peers, peer_endpoints=peer_endpoints,
+                        provider_peers=peer_providers.cached_peers if peer_providers is not None else None,
+                        provider_authorize=peer_providers.sync_authorize if peer_providers is not None else None)
     return install_drop(app, engine=engine, local_control=local_control)

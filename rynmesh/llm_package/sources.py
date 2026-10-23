@@ -15,6 +15,7 @@ from ..atomic_io import atomic_write_bytes
 from ..file_transactions import file_transaction
 from . import model_settings
 from .adapters import AdapterError, OpenAICompatibleAdapter, validate_local_url
+from .model_usage import ModelUsageStore
 
 PROTOCOLS = {"openai_chat", "openai_responses", "anthropic_messages"}
 
@@ -69,6 +70,7 @@ class SourceAdapter(OpenAICompatibleAdapter):
 class SourceStore:
     def __init__(self, home: Path, private_key: bytes, *, migrate: bool = True):
         self.path = home / "llm" / "sources.enc"
+        self.usage_store = ModelUsageStore(home / "llm" / "model-usage.json")
         self.cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"ryn-ai-sources-v1" + private_key).digest()))
         self.lock_path = home / "llm" / ".sharing.lock"
         self._active_models = {}
@@ -98,12 +100,27 @@ class SourceStore:
     def _write(self, records):
         atomic_write_bytes(self.path, self.cipher.encrypt(json.dumps(records).encode()))
 
-    @staticmethod
-    def public(record):
+    def public(self, record=None):
+        if record is None and isinstance(self, dict):
+            record, usage_store = self, None
+        else:
+            usage_store = getattr(self, "usage_store", None)
+        snapshot = usage_store.read_cached() if usage_store is not None else None
+        settings_map = {}
+        usage_map = {}
+        for m in record["models"]:
+            pub = model_settings.public(record, m)
+            if usage_store is not None:
+                sid = SourceStore.model_service_id(record, m)
+                usage = usage_store.public_usage("local/" + sid, policy=pub["effective"], snapshot=snapshot)
+                pub["usage"] = usage
+                usage_map[m] = usage
+            settings_map[m] = pub
         return {**{k: v for k, v in record.items() if k != "api_key" and not k.startswith("_")},
                 "protocol": source_protocol(record),
                 "shared_models": SourceStore.shared_models(record),
-                "model_settings": {m: model_settings.public(record, m) for m in record["models"]},
+                "model_settings": settings_map,
+                "model_usage": usage_map,
                 "tool_support": record.get("tool_support", {}), "has_key": bool(record.get("api_key"))}
 
     @staticmethod
@@ -268,7 +285,7 @@ class SourceStore:
                 raise ValueError("model_configuration_invalid")
             overrides = copy.deepcopy(row.get("overrides", {}))
             for key, value in patch.items():
-                if value is None and key != "requests_per_day":
+                if value is None and key not in {"requests_per_day", "tokens_per_day", "shared_tokens_per_day"}:
                     overrides.pop(key, None)
                 else:
                     overrides[key] = value

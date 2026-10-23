@@ -1,5 +1,6 @@
 import { nodeControlUrl } from "./nodeUrl";
 import type { AgentAttachmentInput, AgentMessageAttachment } from "./agentAttachments";
+import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
 export type AgentRunState = "queued" | "running" | "pausing" | "paused" | "waiting_input" | "waiting_approval" | "reconciling" | "ended";
@@ -108,6 +109,7 @@ export interface AgentModel {
   source_id?: string;
   source_name?: string;
   peer_id?: string;
+  usage?: ModelTokenUsage;
 }
 export interface AgentTool { name: string; title: string; effect: "read" | "write"; description?: string; }
 export interface AgentSkill { id: string; version: string; title: string; description: string; }

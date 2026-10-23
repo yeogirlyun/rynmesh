@@ -54,7 +54,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
 
   const threads = useMemo(() => {
     const ids = new Set<string>();
-    for (const peer of Object.values(data.peers)) if (peer.relationship === "own" || peer.relationship === "friend" || peer.last || peer.unread > 0) ids.add(peer.peer_id);
+    for (const peer of Object.values(data.peers)) if (peer.relationship === "own" || peer.relationship === "friend" || peer.relationship === "external" || peer.last || peer.unread > 0) ids.add(peer.peer_id);
     for (const transfer of drop.transfers) ids.add(transfer.peer_id);
     if (activeId) ids.add(activeId);
     return Array.from(ids).map(id => byId.get(id)).filter((d): d is DropDevice => Boolean(d) && !d!.self)
@@ -87,6 +87,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
   useEffect(() => { body.current?.scrollTo?.({ top: body.current.scrollHeight }); }, [timeline.length, activeId]);
 
   const canMessage = Boolean(active?.meta) && active!.relationship !== "other" && active!.meta!.send_mode !== "unavailable";
+  const canFiles = canMessage && active?.relationship !== "external" && active?.meta?.file_sendable !== false;
   const needsVerify = active?.meta?.send_mode === "verify" && !active.meta.verification.verified;
   const draft = drafts[activeId] || "";
   const submit = async () => {
@@ -174,12 +175,13 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
             <h3>{active.name}</h3>
             <DeviceConnection self={self} peer={active} onDetails={() => onDetails(active.id)} />
           </div>
-          <button type="button" className="pf-button pf-drop-header-send" disabled={!canMessage} onClick={() => onSendFiles(active)}><Paperclip size={15} />{t("drop.sendFile")}</button>
+          <button type="button" className="pf-button pf-drop-header-send" disabled={!canFiles} onClick={() => onSendFiles(active)}><Paperclip size={15} />{t("drop.sendFile")}</button>
           <button type="button" className="pf-icon-button" aria-haspopup="menu" aria-label={t("drop.moreActions", { name: active.name })}
             onClick={event => onMenu(active, event.currentTarget)}><Ellipsis size={18} /></button>
         </header>
         <div className="pf-drop-chatbody" ref={body}>
-          {active.online === false && canMessage && <p className="pf-drop-status">{t("drop.offlineNotice")}</p>}
+          {active.relationship === "external" && <p className="pf-drop-status">{t("drop.externalMessageTarget", { defaultValue: "Text to this device only. Delivery requires a reachable device and an active connection." })} · {relationshipLabel(t, active)}</p>}
+          {active.online === false && canMessage && active.relationship !== "external" && <p className="pf-drop-status">{t("drop.offlineNotice")}</p>}
           {loadError && <p className="pf-error" role="alert">{loadError}</p>}
           {timeline.map(entry)}
           {conv?.loaded && !timeline.length && <div className="pf-drop-empty"><h3>{t("drop.startConversation")}</h3><p>{t("drop.startConversationHint")}</p></div>}
@@ -189,6 +191,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
           onDragOver={event => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
+            if (!canFiles) { event.dataTransfer.dropEffect = "none"; return; }
             event.dataTransfer.dropEffect = "copy";
             setDragId(active.id);
           }}
@@ -197,6 +200,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
             setDragId("");
+            if (!canFiles) return;
             onDropFiles?.(active, event);
           }}
           onSubmit={event => { event.preventDefault(); void submit(); }}>
@@ -210,7 +214,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
             onKeyDown={event => { if (isSendKey(event, composing.current)) { event.preventDefault(); void submit(); } }} />
           <div className="pf-drop-composer-bottom">
             <div className="pf-drop-row">
-              <button type="button" className="pf-drop-textbutton" disabled={active.meta?.send_mode === "unavailable"} onClick={() => onSendFiles(active)}><Paperclip size={15} aria-hidden="true" />{t("drop.files")}</button>
+              <button type="button" className="pf-drop-textbutton" disabled={!canFiles} onClick={() => onSendFiles(active)}><Paperclip size={15} aria-hidden="true" />{t("drop.files")}</button>
               <small className="pf-drop-composer-tip">{t("drop.composerTip")}</small>
             </div>
             <button type="submit" className="pf-button primary" disabled={!draft.trim() || needsVerify}><ArrowUp size={15} aria-hidden="true" />{t("drop.send")}</button>
@@ -222,4 +226,5 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
 }
 
 export const firstThreadId = (list: DropDevice[]) => list.find(device => !device.self && (device.meta?.last || (device.meta?.unread ?? 0) > 0))?.id
-  || list.find(device => !device.self && device.online === true && (device.relationship === "own" || device.relationship === "friend"))?.id || "";
+  || list.find(device => !device.self && device.online === true && (device.relationship === "own" || device.relationship === "friend"))?.id
+  || list.find(device => !device.self && device.relationship === "external")?.id || "";

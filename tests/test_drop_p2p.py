@@ -22,7 +22,7 @@ from rynmesh.drop import codec, p2p_link
 from rynmesh.drop.p2p_link import _allowed_target, is_p2p_endpoint
 
 pytest.importorskip("aioquic")
-pytest.importorskip("aioice")
+ice = pytest.importorskip("aioice.ice")
 
 
 class SignalBus:
@@ -105,6 +105,8 @@ def p2p_pair(tmp_path: Path, monkeypatch, request):
     monkeypatch.setenv("RYNMESH_P2P_NATIVE", "auto" if request.param == "native" else "off")
     # No STUN traffic from tests: host candidates on this machine suffice.
     monkeypatch.setenv("RYNMESH_P2P_STUN", "off")
+    if request.param == "aioice":
+        monkeypatch.setattr(ice, "get_host_addresses", lambda **kwargs: ["127.0.0.1"])
     bus = SignalBus()
     a = p2p_node(tmp_path, "alpha", bus).start()
     b = p2p_node(tmp_path, "beta", bus).start()

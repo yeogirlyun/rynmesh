@@ -64,6 +64,14 @@ describe("Drop state consistency", () => {
     expect(next.seq).toBe(1);
     expect(next.transfers.t1.status).toBe("paused");
   });
+  it("does not reconcile an optimistic message from another source", () => {
+    const data = emptyDropData();
+    data.messages["local:shared"] = message({ message_id: "local:shared", peer_id: "provider:first", client_id: "shared", version: -1 });
+    data.convs["provider:first"] = { loaded: true, refs: ["m:local:shared"] };
+    const next = applyEvents(data, [{ seq: 1, type: "message", message: message({ peer_id: "provider:second", client_id: "shared" }) }]);
+    expect(next.messages["local:shared"]).toBeDefined();
+    expect(next.convs["provider:first"].refs).toEqual(["m:local:shared"]);
+  });
   it("does not put failures under Completed and keeps space errors reachable for acceptance", () => {
     expect(isDoneTransfer(transfer({ status: "failed" }))).toBe(false);
     expect(isDoneTransfer(transfer({ status: "completed" }))).toBe(true);
@@ -97,6 +105,27 @@ it("right-clicking another conversation does not retarget the draft, and IME Ent
   expect(state.sendMessage).not.toHaveBeenCalled();
   fireEvent.compositionEnd(input); fireEvent.keyDown(input, { key: "Enter" });
   expect(state.sendMessage).toHaveBeenCalledWith("NAS", "发给 NAS");
+});
+
+it("shows provider members as explicit device targets and only allows text", () => {
+  const id = "provider:source-scoped-device";
+  state.data.peers[id] = peer(id, { relationship: "external", name: "Work laptop", member_name: "Alex",
+    plugin_id: "Sample plugin", device_peer_id: "actual-node-key", provider_resource: "https://provider.test/connect",
+    file_sendable: false, last: null, online: null });
+  state.data.convs[id] = { loaded: true, refs: [] };
+  const files = vi.fn(), dropped = vi.fn();
+  renderWithStore(<DeviceConversation activeId={id} onActiveChange={vi.fn()} onMenu={vi.fn()}
+    onSendFiles={files} onDropFiles={dropped} onDetails={vi.fn()} handlers={{}} mobileChat={false} onMobileBack={vi.fn()} />);
+  expect(screen.getByRole("button", { name: /Alex · Work laptop.*Sample plugin/ })).toBeInTheDocument();
+  expect(screen.getByText(/Text to this device only/)).toBeInTheDocument();
+  for (const button of screen.getAllByRole("button", { name: /^(Send files|Files)$/ })) expect(button).toBeDisabled();
+  const input = screen.getByRole("textbox", { name: "Message Alex · Work laptop" });
+  fireEvent.change(input, { target: { value: "hello target device" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(state.sendMessage).toHaveBeenCalledWith(id, "hello target device");
+  fireEvent.drop(input.closest("form")!, { dataTransfer: { types: ["Files"], files: [new File(["x"], "file.txt")] } });
+  expect(files).not.toHaveBeenCalled();
+  expect(dropped).not.toHaveBeenCalled();
 });
 
 it("network and offline context menus open device history with the correct filter", () => {

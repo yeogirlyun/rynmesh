@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
+from .data_release import urlopen as model_urlopen
+
 
 def actual_usage(result: Any) -> dict[str, int | None]:
     """Reported metadata wins by presence, including an explicit unknown value.
@@ -33,6 +35,23 @@ def actual_usage(result: Any) -> dict[str, int | None]:
 def _openai_usage(usage):
     usage = usage if isinstance(usage, dict) else {}
     return actual_usage({"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")})
+
+
+def cached_input_tokens(payload: Any) -> int | None:
+    """Extract reported cached input token count across OpenAI, DeepSeek, Responses, and Anthropic formats."""
+    payload = payload if isinstance(payload, dict) else {}
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else payload
+    for key in ("cached_tokens", "cached_input_tokens", "prompt_cache_hit_tokens", "cache_read_input_tokens"):
+        val = usage.get(key)
+        if type(val) is int and val >= 0:
+            return val
+    for details_key in ("prompt_tokens_details", "input_tokens_details"):
+        details = usage.get(details_key)
+        if isinstance(details, dict):
+            val = details.get("cached_tokens")
+            if type(val) is int and val >= 0:
+                return val
+    return None
 
 
 class AdapterError(RuntimeError):
@@ -159,7 +178,7 @@ class OpenAICompatibleAdapter:
             headers=self._headers(), method="POST" if payload is not None else "GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            with model_urlopen(request, timeout=timeout_s) as response:
                 if task_id:
                     with self._lock:
                         self._active_responses[task_id] = response
@@ -232,7 +251,7 @@ class OpenAICompatibleAdapter:
             headers=self._headers(), method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(15.0, self.timeout_s)) as response:
+            with model_urlopen(request, timeout=min(15.0, self.timeout_s)) as response:
                 sample = response.read(16 * 1024).decode("utf-8", errors="replace")
             streaming = "data:" in sample or "text/event-stream" in sample.lower()
         except (OSError, urllib.error.HTTPError):
@@ -270,6 +289,7 @@ class OpenAICompatibleAdapter:
                 raise AdapterError("local API returned no completion text")
             usage = result.get("usage") or {}
             counts = _openai_usage(usage)
+            cached = cached_input_tokens(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
@@ -278,7 +298,9 @@ class OpenAICompatibleAdapter:
                 self._metrics.unknown_usage_requests += any(value is None for value in counts.values())
                 self._metrics.total_duration_ms += duration_ms
             return {"text": text, "model": self.model, **counts,
-                    "reported_usage": counts, "duration_ms": duration_ms}
+                    "reported_usage": counts,
+                    **({"cached_tokens": cached} if cached is not None else {}),
+                    "duration_ms": duration_ms}
         except Exception:
             with self._lock:
                 self._metrics.failures += 1
@@ -344,7 +366,7 @@ class OpenAICompatibleAdapter:
                 request = urllib.request.Request(self._endpoint("/v1/chat/completions"),
                                                  data=json.dumps(body).encode(), headers=self._headers())
                 accumulator = ChatAccumulator()
-                with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                with model_urlopen(request, timeout=timeout_s) as response:
                     is_sse = "text/event-stream" in response.headers.get("content-type", "")
                     with self._lock:
                         self._active_responses[task_id] = response
@@ -411,8 +433,10 @@ class OpenAICompatibleAdapter:
             if not message.get("content") and not message.get("tool_calls") and not message.get("reasoning_content"):
                 raise AdapterError("upstream_empty_completion")
             counts = observed_usage(usage)
+            cached = cached_input_tokens(usage)
             return {"text": message.get("content") or "", "message": message, "finish_reason": finish,
                     **counts, "reported_usage": counts,
+                    **({"cached_tokens": cached} if cached is not None else {}),
                     "duration_ms": int((time.monotonic() - started) * 1000)}
         except AdapterError as exc:
             if received_usage is not None:
@@ -475,7 +499,7 @@ class OpenAICompatibleAdapter:
         finished = False
         response: Any = None
         try:
-            response = urllib.request.urlopen(
+            response = model_urlopen(
                 request, timeout=min(float(timeout_s), self.timeout_s),
             )
             with self._lock:
@@ -563,6 +587,7 @@ class OpenAICompatibleAdapter:
             if not text:
                 raise AdapterError("local API returned no completion text")
             counts = _openai_usage(usage)
+            cached = cached_input_tokens(usage)
             duration_ms = int((time.monotonic() - started) * 1000)
             with self._lock:
                 self._metrics.requests += 1
@@ -574,6 +599,7 @@ class OpenAICompatibleAdapter:
                 "text": text,
                 "model": self.model,
                 **counts, "reported_usage": counts,
+                **({"cached_tokens": cached} if cached is not None else {}),
                 "duration_ms": duration_ms,
             }
         except AdapterError:

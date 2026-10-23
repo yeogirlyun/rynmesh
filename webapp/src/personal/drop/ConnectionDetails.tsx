@@ -19,6 +19,7 @@ export function ConnectionDetails({ device, onClose }: { device: DropDevice; onC
   const [copied, setCopied] = useState(false);
   const caps = drop.capabilities;
   const meta = device.meta;
+  const deviceId = meta?.device_peer_id || device.id;
   const relay = caps?.relay;
   if (edit && device.device) return <EditDevice device={device.device} onClose={() => setEdit(false)} />;
   if (share && device.device) return <ShareServices device={device.device} onClose={() => setShare(false)} />;
@@ -32,9 +33,9 @@ export function ConnectionDetails({ device, onClose }: { device: DropDevice; onC
       <dt>{t("drop.latencyLabel")}</dt><dd>{device.latency !== null ? t("drop.latency", { ms: Math.round(device.latency) }) : t("drop.unknown")}</dd>
       <dt>{t("drop.relationship")}</dt><dd>{relationshipLabel(t, device)}</dd>
       <dt>{t("drop.deviceId")}</dt>
-      <dd className="pf-drop-idline"><code title={device.id}>{shortId(device.id)}</code>
+      <dd className="pf-drop-idline"><code title={deviceId}>{shortId(deviceId)}</code>
         <button type="button" className="pf-icon-button" aria-label={t("drop.copy")} onClick={async () => {
-          try { await navigator.clipboard.writeText(device.id); setCopied(true); } catch { /* Clipboard may be blocked. */ }
+          try { await navigator.clipboard.writeText(deviceId); setCopied(true); } catch { /* Clipboard may be blocked. */ }
         }}><Copy size={14} /></button>{copied && <small role="status">{t("drop.copied")}</small>}</dd>
       {meta?.platform && <><dt>{t("drop.operatingSystem")}</dt><dd>{meta.platform}</dd></>}
       <dt>{t("drop.sizeLimit")}</dt><dd>{caps ? (caps.direct_size_limit === null ? t("drop.noLimit") : formatBytes(caps.direct_size_limit)) : t("drop.unknown")}</dd>
@@ -50,7 +51,7 @@ export function ConnectionDetails({ device, onClose }: { device: DropDevice; onC
         <button type="button" className="pf-button primary" disabled={!meta.verification.code || drop.isPending(verifyKey)} onClick={() => void drop.run(verifyKey, () => drop.verifyPeer(device.id, true)).catch(() => undefined)}>{t("drop.codesMatch")}</button>
       </div>
     </div>}
-    {meta && !device.self && device.relationship !== "other" && <label className="pf-drop-check">
+    {meta && !device.self && device.relationship !== "other" && device.relationship !== "external" && <label className="pf-drop-check">
       <input type="checkbox" checked={meta.auto_accept} disabled={drop.isPending(autoKey)}
         onChange={event => { const value = event.target.checked; void drop.run(autoKey, () => drop.setAutoAccept(device.id, value)).catch(() => undefined); }} />
       {t("drop.autoAcceptToggle")}

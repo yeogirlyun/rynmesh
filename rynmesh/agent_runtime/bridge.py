@@ -13,16 +13,17 @@ import uuid
 from fastapi import HTTPException
 
 from ..llm_package import codex_threads, model_settings, peer_binding
-from ..llm_package.adapters import AdapterError, actual_usage
+from ..llm_package.adapters import AdapterError, actual_usage, cached_input_tokens
 from ..llm_package.api_formats import normalize
 from ..llm_package.chat import validate_chat
+from ..llm_package.data_release import DataReleaseError, model_request_scope
 from ..llm_package.image_input_profile import (
     check_legacy_public_carrier_compatible,
     cleared_internal_image_scope,
     internal_image_scope,
     prepare_internal_image_profile,
 )
-from . import image_capabilities, output_policy, reasoning
+from . import data_policy, image_capabilities, output_policy, reasoning
 from .model_events import (
     ModelEventError,
     ModelEventStream,
@@ -42,6 +43,7 @@ from .tools import RynTools
 class AgentModelBridge:
     supports_image_input = True
     supports_destination_binding = True
+    supports_data_policy = True
     supports_output_token_limit = True
     supports_request_deadline = True
     supports_request_id = True
@@ -53,6 +55,68 @@ class AgentModelBridge:
 
     def __init__(self, services, catalog):
         self.services, self.catalog = services, catalog
+
+    def _data_policy_context(self, target, expected_destination, manager=None):
+        """Use host-owned records and the actual adapter, never display claims."""
+        destination = self.catalog.destination(target)
+        if (not target.get("destination_revision") or expected_destination != destination
+                or target.get("destination_binding_supported") is not True):
+            raise AgentError("agent_model_destination_changed")
+        consumer = self.catalog.store.peer_id
+        context = {"consumer_node_id": consumer, "model": copy.deepcopy(target),
+                   "model_destination": destination, "model_destination_verified": False}
+        source = target.get("source")
+        if source == "local_api":
+            sources = self.services["source_store"]
+            with sources.lock:
+                record = sources.read().get(target.get("source_id"), {})
+                if (not record or not record.get("enabled") or record.get("status") != "ready"
+                        or target.get("model_id") not in record.get("models", [])
+                        or target.get("peer_id") != consumer
+                        or self.catalog.source_destination_revision(record, target["model_id"]) != destination["destination_revision"]
+                        or manager is None
+                        or getattr(manager, "_source_revision", None) != model_settings.fingerprint(record, target["model_id"])):
+                    raise AgentError("agent_model_destination_changed")
+                context["api_source"] = {"base_url": record["base_url"],
+                                         "destination_revision": destination["destination_revision"]}
+        elif source == "local_service":
+            binding = target.get("local_model_binding")
+            manifest = getattr(manager, "manifest", None)
+            if manager is not None and target.get("adapter") in {"codex_cli", "antigravity_cli"}:
+                method = getattr(manager.adapter, "binding_for_model", None)
+                actual = method(target.get("cli_model", "")) if callable(method) else None
+            else:
+                actual = getattr(manager.adapter, "model_binding", None) if manager else None
+            if (target.get("peer_id") != consumer or manager is None or binding != actual
+                    or getattr(manifest, "package_id", None) != target.get("service_id")
+                    or getattr(manifest, "runtime", None) != target.get("runtime")
+                    or not peer_binding.valid(binding, target.get("service_id"))
+                    or peer_binding.local_revision(binding, consumer) != destination["destination_revision"]):
+                raise AgentError("agent_model_destination_changed")
+        elif source == "peer":
+            binding = target.get("expected_model_binding")
+            if not isinstance(binding, dict) or target.get("consumer_peer_id") != consumer:
+                raise AgentError("agent_model_destination_changed")
+            record = {**binding, "binding_verified": True, "service_id": target["service_id"],
+                      "peer_id": target["peer_id"]}
+            if (peer_binding.expected(record, consumer) != binding
+                    or peer_binding.revision(record, consumer) != destination["destination_revision"]
+                    or (target.get("provider_resource") and
+                        binding.get("external_permission") != {"resource": target["provider_resource"]})):
+                raise AgentError("agent_model_destination_changed")
+        else:
+            raise AgentError("agent_extension_model_not_allowed")
+        context["model_destination_verified"] = True
+        return context
+
+    def data_policy_context(self, model_id, expected_destination=None):
+        try:
+            target = self.catalog.resolve(model_id)
+            manager = self.services["provider_for"](target["service_id"]) if target["source"] != "peer" else None
+            destination = self.catalog.destination(target) if expected_destination is None else expected_destination
+            return self._data_policy_context(target, destination, manager)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise AgentError("agent_model_destination_changed") from None
 
     @staticmethod
     def _response_metadata(result, target):
@@ -97,9 +161,12 @@ class AgentModelBridge:
             error.detail = detail
             raise error from None
         finish = finish if isinstance(finish, str) and finish in {"stop", "length", "tool_calls", "content_filter", "cancelled"} else "unknown"
+        cached = cached_input_tokens(data) if "reported_usage" in data or target["source"] != "peer" else None
+        if cached is not None:
+            flags["cached_tokens"] = cached
         return {"message": message, "finish_reason": finish, "usage": usage, "output_policy": policy, **flags}
 
-    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, request_id=None):
+    def complete(self, model_id, messages, tool_specs, cancelled, on_event=None, *, expected_destination=None, max_output_tokens=None, deadline=None, on_request_policy=None, reasoning_effort=None, conversation=None, request_id=None, data_policy_state=None):
         if cancelled():
             raise AgentError(cancellation_reason(cancelled))
         if deadline is not None:
@@ -108,6 +175,9 @@ class AgentModelBridge:
             if time.monotonic() >= deadline:
                 raise AgentError("agent_inference_timeout")
         target = self.catalog.resolve(model_id)
+        restricted = data_policy.task_requires_model_restriction(data_policy_state)
+        if restricted and expected_destination is None:
+            raise AgentError("agent_extension_model_not_allowed")
         if expected_destination is not None and (not target.get("destination_revision") or
                 expected_destination != self.catalog.destination(target)):
             raise AgentError("agent_model_destination_changed")
@@ -208,10 +278,24 @@ class AgentModelBridge:
                 raise AgentError("agent_model_destination_changed")
         if target["source"] != "peer" and manager is None:
             raise ValueError("agent_model_unavailable")
+
+        def check_data_release():
+            context = None
+            if restricted:
+                try:
+                    current = self.catalog.resolve(model_id)
+                    context = self._data_policy_context(current, expected_destination, manager)
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    raise AgentError("agent_model_destination_changed") from None
+            if not data_policy.allows_task(data_policy_state, context):
+                raise AgentError("agent_extension_model_not_allowed")
+
+        check_data_release()
         adapter = manager.adapter if manager else None
         if (target.get("adapter") in {"openai_responses", "anthropic_messages"}
                 and target["source"] == "peer"
-                and (expected_destination is None or target.get("destination_binding_supported") is not True)):
+                and ((expected_destination is None and not target.get("provider_resource"))
+                     or target.get("destination_binding_supported") is not True)):
             raise AgentError("agent_model_destination_unverifiable")
         supports_developer = (target.get("supports_developer_role") is True
                               or getattr(adapter, "supports_developer_role", False) is True
@@ -265,8 +349,20 @@ class AgentModelBridge:
         acquired = False
         try:
             if manager:
-                acquired = manager._slots.acquire(blocking=False)
+                slot_wait_deadline = time.monotonic() + min(
+                    2.5,
+                    max(0.0, (request_deadline - time.monotonic()) if request_deadline is not None else 2.5),
+                )
+                while True:
+                    acquired = manager._slots.acquire(blocking=False)
+                    if acquired or cancelled() or expired() or time.monotonic() >= slot_wait_deadline:
+                        break
+                    time.sleep(0.05)
                 if not acquired:
+                    if cancelled():
+                        raise AgentError(cancellation_reason(cancelled))
+                    if expired():
+                        raise AgentError("agent_inference_timeout")
                     raise ValueError("agent_model_busy")
                 with manager._lock:
                     manager._running += 1
@@ -286,6 +382,7 @@ class AgentModelBridge:
                     on_request_policy(request_policy)
             if expired():
                 raise AgentError("agent_inference_timeout")
+            check_data_release()
             if manager:
                 options = {"task_id": task_id, "timeout_s": request_policy["effective_timeout_seconds"], "on_event": emit if streaming else None}
                 if target.get("cli_model"):
@@ -297,9 +394,9 @@ class AgentModelBridge:
                 if getattr(manager.adapter, "supports_conversation_scope", False) is True:
                     # This process is the authenticated requester of its own adapter.
                     options["conversation_scope"] = codex_threads.scope("local", window)
-                with internal_image_scope(image_profile):
+                with internal_image_scope(image_profile), model_request_scope(restricted=restricted, before_dispatch=check_data_release):
                     if expected_destination is not None and target["source"] == "local_service":
-                        result = manager.adapter.call_bound("chat", target["local_model_binding"], lambda: None, chat, **options)
+                        result = manager.adapter.call_bound("chat", target["local_model_binding"], check_data_release, chat, **options)
                     else:
                         result = manager.adapter.chat(chat, **options)
             else:
@@ -312,7 +409,7 @@ class AgentModelBridge:
                     **({"conversation_key": window} if window else {})}
                 if target.get("cli_model"):
                     request["cli_model"] = target["cli_model"]
-                if expected_destination is not None:
+                if expected_destination is not None or target.get("provider_resource"):
                     if target.get("destination_binding_supported") is not True or not target.get("expected_model_binding"):
                         raise AgentError("agent_model_destination_unverifiable")
                     request["expected_model_binding"] = target["expected_model_binding"]
@@ -337,6 +434,8 @@ class AgentModelBridge:
                 usage, finish = self._response_metadata(result, target)
                 raise AgentModelResponseError(usage, finish) from None
             return response
+        except DataReleaseError as exc:
+            raise AgentError(str(exc)) from None
         except HTTPException as exc:
             if cancelled():
                 raise AgentError(cancellation_reason(cancelled)) from None
@@ -368,6 +467,7 @@ class AgentModelBridge:
                     "source_protocol_parameters_unsupported": "agent_model_protocol_unsupported",
                     "source_protocol_response_invalid": "agent_model_protocol_invalid",
                     "runtime_busy": "agent_model_busy",
+                    "ai_permission_denied": "agent_model_destination_changed",
                     "model_configuration_changed": "agent_model_destination_changed",
                     "model_daily_quota_exhausted": "agent_model_quota_exhausted",
                     "model_not_ready": "agent_model_unavailable",

@@ -1,6 +1,7 @@
 """Immutable encrypted large tool outputs; references confer no resource access."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -147,14 +148,110 @@ def save(store, row, call, value):
     reference = {"id": result_id, "task_id": row["id"], "tool": call["name"], "operation_id": call["operation_id"],
                  "goal_revision": row["goal"]["revision"], "scope_revision": row["scope_revision"], "context_epoch": row.get("context_epoch", 0),
                  "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+    state = store.inspect(lambda data: copy.deepcopy((data.get("tasks", {}).get(row["id"]) or row).get("data_policy_state")))
+    if state:
+        reference["data_policy_state"] = state
     nonce, ciphertext = peer_box.seal(store.key, store.pub, raw, info=CHANNEL)
     atomic_write_json(path(store, row["id"], result_id), {"nonce": nonce, "ciphertext": ciphertext}, max_bytes=3 * MAX_RESULT_BYTES)
     return reference
 
 
+def checkpoint_note(row: dict) -> str:
+    """List active large result_refs across checkpoints so their IDs remain discoverable."""
+    if not isinstance(row, dict) or not row.get("context_checkpoint"):
+        return ""
+    epoch = row.get("context_epoch", 0)
+    active = [
+        {"result_id": ref["id"], "tool": ref.get("tool", ""), "bytes": ref.get("bytes", 0)}
+        for ref in (row.get("result_refs") or [])
+        if isinstance(ref, dict) and ref.get("context_epoch", 0) == epoch and isinstance(ref.get("id"), str)
+    ]
+    if not active:
+        return ""
+    return (
+        "\nRetained large result references (use ryn_read_result): "
+        + json.dumps(active[:16], ensure_ascii=False, separators=(",", ":"))
+    )
+
+
+def _compacted_history_slice(row: dict) -> list[dict]:
+    checkpoint = row.get("context_checkpoint") if isinstance(row, dict) else None
+    if not isinstance(checkpoint, dict):
+        return []
+    through = int(checkpoint.get("through") or 0)
+    if through <= 0:
+        return []
+    epoch = row.get("context_epoch", 0)
+    history = [
+        msg for msg in (row.get("messages") or [])
+        if isinstance(msg, dict) and (msg.get("role") == "user" or msg.get("context_epoch", 0) == epoch)
+    ]
+    return history[:through]
+
+
+def _read_compacted_entry(row: dict, result_id: str) -> tuple[object, dict]:
+    compacted = _compacted_history_slice(row)
+    if not compacted:
+        raise AgentError("agent_result_not_found")
+    epoch = row.get("context_epoch", 0)
+    call_tools: dict[str, str] = {}
+    for msg in compacted:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                if isinstance(tc, dict) and isinstance(tc.get("id"), str):
+                    fn = tc.get("function") or {}
+                    call_tools[tc["id"]] = str(fn.get("name") or "")
+    if result_id in {"checkpoint_index", "compacted"}:
+        items = []
+        for msg in compacted:
+            if msg.get("role") == "tool" and msg.get("context_epoch", 0) == epoch:
+                cid = str(msg.get("tool_call_id") or "")
+                raw_content = str(msg.get("content") or "")
+                items.append({
+                    "call_id": cid,
+                    "tool": call_tools.get(cid, ""),
+                    "bytes": len(raw_content.encode("utf-8")),
+                })
+        refs = [
+            {"result_id": ref["id"], "tool": ref.get("tool", ""), "bytes": ref.get("bytes", 0)}
+            for ref in (row.get("result_refs") or [])
+            if isinstance(ref, dict) and ref.get("context_epoch", 0) == epoch and isinstance(ref.get("id"), str)
+        ]
+        value = {"compacted_tool_results": items, "result_refs": refs}
+        raw = encoded(value)
+        return value, {"id": result_id, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw), "context_epoch": epoch}
+
+    for msg in compacted:
+        if msg.get("role") != "tool":
+            continue
+        cid = str(msg.get("tool_call_id") or "")
+        if cid and (result_id == cid or result_id == f"call_{cid}"):
+            if msg.get("context_epoch", 0) != epoch:
+                raise AgentError("agent_result_scope_changed")
+            raw_text = str(msg.get("content") or "")
+            try:
+                value = json.loads(raw_text)
+            except (ValueError, TypeError):
+                value = {"content": raw_text}
+            raw = encoded(value)
+            ref = {
+                "id": result_id,
+                "tool": call_tools.get(cid, ""),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+                "context_epoch": epoch,
+            }
+            if isinstance(msg.get("resource_origin"), dict):
+                ref["resource_origin"] = msg["resource_origin"]
+            return value, ref
+    raise AgentError("agent_result_not_found")
+
+
 def read(store, row, result_id, *, provider=False):
     reference = next((ref for ref in row.get("result_refs", []) if ref["id"] == result_id), None)
     if reference is None:
+        if provider and isinstance(result_id, str) and row.get("context_checkpoint"):
+            return _read_compacted_entry(row, result_id)
         raise AgentError("agent_result_not_found")
     if provider and reference["context_epoch"] != row.get("context_epoch", 0):
         raise AgentError("agent_result_scope_changed")

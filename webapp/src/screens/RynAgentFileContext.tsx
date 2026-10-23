@@ -21,12 +21,32 @@ export function findAgentFile(files: AgentFileArtifact[], value: string): AgentF
   return named.length === 1 ? named[0] : undefined;
 }
 
+function fileBadgeLabel(name: string): string | null {
+  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() || "" : "";
+  if (/^(js|mjs|cjs|jsx)$/.test(ext)) return "JS";
+  if (/^(ts|tsx)$/.test(ext)) return "TS";
+  if (ext === "py") return "PY";
+  if (ext === "rs") return "RS";
+  if (ext === "go") return "GO";
+  if (ext === "md") return "MD";
+  if (ext === "json") return "JSON";
+  if (/^(css|scss)$/.test(ext)) return "CSS";
+  if (/^(html|htm)$/.test(ext)) return "HTML";
+  if (ext === "sql") return "SQL";
+  if (/^(sh|bash|ps1)$/.test(ext)) return "SH";
+  return null;
+}
+
 export function AgentFileLink({ file, children }: { file: AgentFileArtifact; children: ReactNode }) {
   const context = useContext(AgentFileContext);
   const path = file.absolute_path || file.path;
   if (!context || !fileAvailable(file)) return <span title={path}>{children}</span>;
+  const badge = fileBadgeLabel(file.name);
   return <a className="ra-file-link" href={agentFileUrl(context.taskID, file)} title={path}
-    onClick={event => { event.preventDefault(); context.open(file); }}><FileText size={14} aria-hidden="true" />{children}</a>;
+    onClick={event => { event.preventDefault(); context.open(file); }}>
+    {badge ? <span className="ra-file-link-badge" data-badge={badge} aria-hidden="true">{badge}</span> : <FileText size={13} aria-hidden="true" />}
+    {children}
+  </a>;
 }
 
 export function AgentFileImage({ file, alt }: { file: AgentFileArtifact; alt?: string }) {

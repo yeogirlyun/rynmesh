@@ -257,9 +257,20 @@ def install_drop(app: FastAPI, *, engine: DropEngine, local_control: Callable[[R
     def envelope_route(path: str, handler: Callable[[Any, str | None], dict[str, Any]]) -> None:
         async def endpoint(request: Request):
             try:
-                body = await request.json()
+                if path == "message":
+                    raw = bytearray()
+                    async for chunk in request.stream():
+                        raw.extend(chunk)
+                        if len(raw) > 256 * 1024:
+                            return JSONResponse({"detail": "Message is too large.", "code": "too_large"}, status_code=413)
+                    body = json.loads(raw)
+                else:
+                    body = await request.json()
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                 return JSONResponse({"detail": "invalid body", "code": "bad_request"}, status_code=400)
+            if (path != "message" and isinstance(body, dict) and isinstance(body.get("payload"), dict)
+                    and "provider_resource" in body["payload"]):
+                return JSONResponse({"detail": "Text messages only.", "code": "capability_denied"}, status_code=403)
             source = _source(request)
             return await run_async(lambda: handler(body, source))
 

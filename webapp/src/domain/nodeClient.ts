@@ -1,5 +1,6 @@
 import type { ConsumptionRecord } from "./digestClient";
 import type { DirectorySnapshot } from "./directory";
+import type { ModelTokenUsage } from "./aiSources";
 import type {
   ContentFilters,
   ContentBody,
@@ -45,6 +46,7 @@ export interface CLIServiceStatus {
   online: boolean;
   api_text_only: boolean;
   service_id: string;
+  usage?: ModelTokenUsage;
 }
 
 export interface CLIServicesStatus {
@@ -58,7 +60,8 @@ export interface CLIServicesStatus {
 export type ServiceAvailability = "ready" | "needs_connection" | "offline";
 
 export interface LLMServiceRecord {
-  cli_models?: { id: string; name: string; default: boolean }[];
+  cli_models?: { id: string; name: string; default: boolean; usage?: ModelTokenUsage }[];
+  usage?: ModelTokenUsage;
   network_id?: string;
   local_only?: boolean;
   peer_id: string;

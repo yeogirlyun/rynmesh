@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { tr } from "../uiI18n";
 import {
   Box,
+  Building2,
   CheckSquare,
   ChevronDown,
   Compass,
@@ -23,6 +24,7 @@ import { DeviceArt, Empty, Modal, ServiceArt } from "./components";
 import { personalHref, usePersonal } from "./model";
 import { AgentNavigationContext } from "./agentNavigation";
 import { DropActivity } from "./drop/DropActivity";
+import { pinnedPluginWorkspaces, PIN_CHANGE_EVENT, pluginWorkspacePath } from "../screens/pluginWorkspaceNavigation";
 import "../screens/rynAgentText";
 export function PersonalShell({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -31,18 +33,30 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pinnedPlugins, setPinnedPlugins] = useState(pinnedPluginWorkspaces);
   const [agentNavCollapsed, setAgentNavCollapsed] = useState(() => {
     try { return sessionStorage.getItem("ryn.agent.navigation") === "closed" || (window.innerWidth <= 760 && sessionStorage.getItem("ryn.agent.navigation") !== "open"); }
     catch { return window.innerWidth <= 760; }
   });
   const navigate = useNavigate();
   const location = useLocation();
+  const isStandalone = new URLSearchParams(location.search).get("standalone") === "1";
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const syncPin = () => setPinnedPlugins(pinnedPluginWorkspaces());
+    window.addEventListener(PIN_CHANGE_EVENT, syncPin);
+    window.addEventListener("storage", syncPin);
+    return () => {
+      window.removeEventListener(PIN_CHANGE_EVENT, syncPin);
+      window.removeEventListener("storage", syncPin);
+    };
+  }, []);
   const primary = [
     { to: "/", label: t("nav.home"), icon: Home },
     { to: "/services", label: t("nav.services"), icon: Box },
     { to: "/agent", label: agentText("title"), icon: MessageCircle },
     { to: "/apps", label: tr("Apps"), icon: Box },
+    ...pinnedPlugins.map(plugin => ({ to: pluginWorkspacePath(plugin.id), label: plugin.title, icon: Building2 })),
     { to: "/devices", label: t("nav.devices"), icon: Network },
     { to: "/tasks", label: t("nav.tasks"), icon: CheckSquare },
     { to: "/drives", label: t("drive.title"), icon: HardDrive },
@@ -76,7 +90,9 @@ export function PersonalShell({ children }: { children: ReactNode }) {
           ? [["/settings", t("nav.preferences")], ["/settings/desktop", t("nav.desktop")], ["/settings/space", t("nav.personalSpace")], ["/settings/plugins", t("nav.plugins")], ["/settings/extensions", t("nav.agentExtensions")], ["/settings/advanced", t("nav.advancedSettings")]]
           : [];
   const title =
-    (inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
+    (location.pathname.startsWith("/apps/plugins/")
+      ? pinnedPlugins.find(plugin => location.pathname === pluginWorkspacePath(plugin.id))?.title || tr("Apps")
+      : inServices ? t("nav.services") : inExplore ? t("nav.explore") : location.pathname === "/peers" ? t("nav.devices") : [...primary, ...more, { to: "/settings", label: t("nav.settings") }].find(
       (item) => item.to !== "/" && location.pathname.startsWith(item.to),
     )?.label) || t("nav.home");
   const href = (path: string) => personalHref(path, demo);
@@ -99,7 +115,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
   }, [searchOpen]);
   const link = (item: (typeof primary)[number]) => (
     <NavLink
-      end={item.to === "/"}
+      end={item.to === "/" || item.to === "/apps"}
       key={item.to}
       to={href(item.to)}
       className={({ isActive }) => (isActive || (item.to === "/explore" && inExplore) || (item.to === "/devices" && location.pathname === "/peers") ? "active" : "")}
@@ -112,8 +128,8 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     <AgentNavigationContext.Provider value={{ collapsed: agentNavCollapsed, toggle: () => {
       setAgentNavCollapsed(current => { const next = !current; try { sessionStorage.setItem("ryn.agent.navigation", next ? "closed" : "open"); } catch { /* Preferences are optional. */ } return next; });
     } }}>
-    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inAgent ? " pf-agent-shell" : ""}${inAgent && agentNavCollapsed ? " pf-agent-nav-collapsed" : ""}`}>
-      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={inAgent && agentNavCollapsed}>
+    <div className={`pf-shell${menuOpen ? " menu-open" : ""}${inAgent ? " pf-agent-shell" : ""}${(inAgent && agentNavCollapsed) || isStandalone ? " pf-agent-nav-collapsed" : ""}`}>
+      <aside className="pf-sidebar" aria-label={t("shell.mainNavigation")} hidden={(inAgent && agentNavCollapsed) || isStandalone}>
         <NavLink className="pf-brand" to={href("/")} aria-label={`Ryn ${t("nav.home")}`}>
           <svg viewBox="0 0 30 34" aria-hidden="true">
             <path
@@ -153,7 +169,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
         />
       )}
       <div className="pf-main-column">
-        {!inAgent && <header className="pf-topbar">
+        {!inAgent && !isStandalone && <header className="pf-topbar">
           <button
             className="pf-icon-button pf-menu-toggle"
             aria-label={t("shell.toggleNavigation")}

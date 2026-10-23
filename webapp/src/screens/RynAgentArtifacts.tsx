@@ -12,6 +12,19 @@ import "../personal/nas.css";
 const FILE_TOOLS = new Set(["ryn_file_write", "ryn_file_edit", "ryn_file_manage", "ryn_apply_patch", "ryn_file_read", "ryn_render_inspect", "ryn_shell_execute", "ryn_process_read", "ryn_process_stop"]);
 const EMPTY_FILES: AgentFileArtifact[] = [];
 const HELPER_SCRIPT_RE = /\.(?:py|pyc|pyo|json|jsonl|sh|bash|zsh|ps1|bat|cmd|js|mjs|cjs|ts|tsx|yaml|yml|toml|ini|cfg|log|tmp|bak)$/i;
+const INTERMEDIATE_RENDER_RE = /(?:^|[/_-])(?:page|slide|render|preview|crop|tmp|temp|check)[-_]?\d*\.(?:png|jpe?g|webp|ppm|pgm|pbm)$/i;
+
+function deduplicateByName(items: AgentFileArtifact[]): AgentFileArtifact[] {
+  const byName = new Map<string, AgentFileArtifact>();
+  for (const item of items) {
+    const key = item.name.trim().toLowerCase();
+    const existing = byName.get(key);
+    if (!existing || (item.status === "current" && existing.status !== "current") || item.revisions >= existing.revisions) {
+      byName.set(key, item);
+    }
+  }
+  return [...byName.values()];
+}
 
 function fileTurnIndex(file: AgentFileArtifact, maxTurnIndex: number): number {
   if (typeof file.turn_index === "number" && Number.isFinite(file.turn_index)) {
@@ -44,7 +57,8 @@ async function saveCopy(task: AgentTask, file: AgentFileArtifact) {
 }
 
 function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArtifact; onOpen: (file: AgentFileArtifact) => void }) {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
   const [saveError, setSaveError] = useState(false);
   const [copied, setCopied] = useState(false);
   const menu = useRef<HTMLDetailsElement>(null);
@@ -64,10 +78,13 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
     try { await run(); } catch { setSaveError(true); }
   }
   return <div className="ra-file-card" data-role={file.role} data-status={file.status}>
-    <span className="ra-file-icon" data-format={format}><Icon size={22} strokeWidth={1.6} /></span>
+    <span className="ra-file-icon" data-format={format}><Icon size={20} strokeWidth={1.7} /></span>
     <div className="ra-file-meta">
       <button className="ra-file-name" title={path} aria-label={t("openArtifact", { name: file.name })} disabled={!openable} onClick={() => onOpen(file)}>{file.name}</button>
-      <small>{format}{file.bytes ? ` · ${size(file.bytes)}` : ""}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</small>
+      <small className="ra-file-sub">
+        {openable && <span className="ra-file-hover-hint" aria-hidden="true">{zh ? "打开预览 · " : "Open preview · "}</span>}
+        <span>{format}{file.bytes ? ` · ${size(file.bytes)}` : ""}{file.revisions > 1 ? ` · ${t("fileVersions", { count: file.revisions })}` : ""}</span>
+      </small>
       {file.status !== "current" ? <small className="ra-file-warning"><TriangleAlert size={13} />{t(`fileStatus_${file.status}`)}</small>
         : null}
       {saveError && <small role="alert" className="ra-file-warning">{t("artifactReadError")}</small>}
@@ -78,7 +95,7 @@ function FileCard({ task, file, onOpen }: { task: AgentTask; file: AgentFileArti
         const element = event.currentTarget;
         element.dataset.placement = window.innerHeight - element.getBoundingClientRect().bottom < 240 ? "up" : "down";
       }}>
-        <summary aria-label={t("openWaysNamed", { name: file.name })}>{t("openWays")}<ChevronDown size={14} /></summary>
+        <summary aria-label={t("openWaysNamed", { name: file.name })}>{t("openWays")}<ChevronDown size={13} /></summary>
         <div className="ra-file-open-options">
           <button disabled={!openable} onClick={() => { menu.current?.removeAttribute("open"); onOpen(file); }}><FileText size={15} />{t("previewFile")}</button>
           {isTauriDesktop() ? <><button disabled={!onDisk} onClick={() => void action(() => rynAgent.openFile(task.id, file.id, "open"))}><ExternalLink size={15} />{t("openDefaultApp")}</button>
@@ -102,7 +119,7 @@ export function TurnDeliverables({ turnIndex }: { turnIndex: number }) {
   if (!turnFiles?.length) return null;
   const available = turnFiles.filter(f => f.status !== "missing").length;
   return <section className="ra-files ra-turn-files" aria-label={t("resultFiles")}>
-    <div className="ra-files-head"><span role="status" aria-live="polite">{available ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!available ? "filesUnavailable" : "filesReady", { count: available })}</span></div>
+    {!available && <div className="ra-files-head"><span role="status" aria-live="polite"><TriangleAlert size={15} />{t("filesUnavailable", { count: 0 })}</span></div>}
     {turnFiles.map(item => <FileCard key={item.id} task={ctx.task} file={item} onOpen={ctx.openFile} />)}
   </section>;
 }
@@ -200,14 +217,25 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
       list.push(item);
       map.set(tIdx, list);
     }
+    for (const [tIdx, list] of map.entries()) {
+      map.set(tIdx, deduplicateByName(list));
+    }
     return map;
   }, [resultFiles, maxTurnIndex]);
   const turnContext = useMemo(() => ({ task, maxTurnIndex, deliverablesByTurn, openFile }), [task, maxTurnIndex, deliverablesByTurn, openFile]);
   const currentTurnFiles = resultFiles.filter(item => fileTurnIndex(item, maxTurnIndex) === maxTurnIndex);
-  const deliverables = currentTurnFiles.filter(item => item.role === "deliverable");
-  const supporting = currentTurnFiles.filter(item => item.role !== "deliverable" && item.source !== "command" && !HELPER_SCRIPT_RE.test(item.name));
+  const deliverables = useMemo(() => deduplicateByName(currentTurnFiles.filter(item => item.role === "deliverable")), [currentTurnFiles]);
+  const deliverableNames = useMemo(() => new Set(deliverables.map(item => item.name.trim().toLowerCase())), [deliverables]);
+  const supporting = useMemo(() => deduplicateByName(
+    currentTurnFiles.filter(item =>
+      item.role !== "deliverable" &&
+      item.source !== "command" &&
+      !HELPER_SCRIPT_RE.test(item.name) &&
+      !INTERMEDIATE_RENDER_RE.test(item.path.replaceAll("\\", "/")) &&
+      !deliverableNames.has(item.name.trim().toLowerCase()),
+    ),
+  ), [currentTurnFiles, deliverableNames]);
   const showResultFiles = deliverables.length > 0 || supporting.length > 0;
-  const unbacked = listing?.unbacked_mentions || [];
   const partial = ["failed", "cancelled", "interrupted", "paused"].includes(agentTaskState(task));
   const availableCount = deliverables.filter(file => file.status !== "missing").length || supporting.filter(file => file.status !== "missing").length;
   useEffect(() => {
@@ -220,12 +248,11 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
     {children}
     {showResultFiles && <section className="ra-files" aria-label={t(finished ? "resultFiles" : "filesSoFar")}>
       {error && items.length === 0 && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
-      <div className="ra-files-head"><span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : partial ? "filesSavedPartial" : "filesReady", { count: availableCount })}</span>
-        <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button></div>
+      {(!availableCount || partial) && <div className="ra-files-head"><span role="status" aria-live="polite">{availableCount ? <Check size={15} /> : <TriangleAlert size={15} />}{t(!availableCount ? "filesUnavailable" : "filesSavedPartial", { count: availableCount })}</span>
+        <button className="ra-icon" aria-label={t("refreshFiles")} title={t("refreshFiles")} onClick={() => setReload(n => n + 1)}><RefreshCw size={13} /></button></div>}
       {deliverables.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}
-      {supporting.length > 0 && <details className="ra-files-supporting"><summary>{t("supportingFiles", { count: supporting.length })}</summary>
+      {supporting.length > 0 && <details className={`ra-files-supporting${deliverables.length > 0 ? " ra-sr-only" : ""}`}><summary>{t("supportingFiles", { count: supporting.length })}</summary>
         {supporting.map(item => <FileCard key={item.id} task={task} file={item} onOpen={openFile} />)}</details>}
-      {finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
     </section>}
       {file && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${file.id}/${file.sha256}`} source={{ id: task.id, name: t("taskFilesSource"), allow_ai: false }}
         entry={{ name: file.name, path: file.path, directory: false, size: file.bytes || 0, modified: file.updated_at || "" }}
@@ -233,11 +260,10 @@ export function TaskArtifacts({ task, maxTurnIndex = 0, children }: { task: Agen
         loadImage={file.preview === "image" ? loadFile : undefined} readText={file.preview === "text" ? readFileText : undefined}
         loadPdf={/\.pdf$/i.test(file.name) ? loadFile : undefined}
         loadDocument={isOfficePreview(file.name) ? readDocument : undefined} /></div>}
-    {!showResultFiles && finished && unbacked.map(name => <p key={name} className="ra-file-warning" role="note"><TriangleAlert size={13} />{t("unbackedMention", { name })}</p>)}
     {(items.length > 0 || (error && !showResultFiles)) && <section className="ra-files ra-artifacts" aria-label={t("artifacts")}>
       {error && <p role="alert">{t("artifactListError")} <button onClick={() => setReload(n => n + 1)}>{t("retry")}</button></p>}
-      {items.length > 0 && <div className="ra-files-head" role="status"><Check size={15} />{t(partial ? "filesSavedPartial" : "filesReady", { count: items.length })}</div>}
-      {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={22} strokeWidth={1.6} /></span>
+      {items.length > 0 && partial && <div className="ra-files-head" role="status"><Check size={15} />{t("filesSavedPartial", { count: items.length })}</div>}
+      {items.map(item => <div className="ra-file-card" key={item.id}><span className="ra-file-icon"><FileText size={20} strokeWidth={1.7} /></span>
         <div className="ra-file-meta"><button className="ra-file-name" aria-label={t("openArtifact", { name: item.name })} onClick={() => setChosen(item)}>{item.name}</button><small>{item.name.split(".").pop()?.toUpperCase()}</small></div>
         <button onClick={() => setChosen(item)}>{t("previewFile")}</button></div>)}
       {chosen && <div className="ra-artifact-preview"><NasPreview key={`${task.id}/${task.control_revision}/${task.scope_revision}/${chosen.id}`} source={{ id: task.id, name: t("artifacts"), allow_ai: false }}

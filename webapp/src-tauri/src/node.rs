@@ -337,6 +337,15 @@ pub fn stop(state: &NodeState) {
     stop_child(state);
 }
 
+/// The caller holds RuntimeState.action_busy, so the watchdog must not restart
+/// this child. Unlike permanent shutdown, a failed installer can resume it.
+pub fn stop_for_update(state: &NodeState) -> Result<(), String> {
+    let _operation = state.lifecycle.lock().unwrap();
+    if state.child.lock().unwrap().is_none() { return Err("update_node_not_owned".into()); }
+    stop_child(state);
+    Ok(())
+}
+
 pub fn restart(state: &NodeState) -> std::io::Result<()> {
     let _operation = state.lifecycle.lock().unwrap();
     if state.stopping.load(Ordering::SeqCst) { return Ok(()); }

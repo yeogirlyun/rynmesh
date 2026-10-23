@@ -112,3 +112,43 @@ it("does not pair old unsaved edits with a rule version changed during a probe",
   await user.click(screen.getByRole("button", { name: "Reload" }));
   await waitFor(() => expect(screen.getByLabelText("Maximum output tokens")).toHaveValue(2500));
 });
+
+it("displays Codex-style daily token usage summary and resets today's usage", async () => {
+  const resets = vi.fn();
+  const usage = {
+    usage_key: "local/src-a-model-a",
+    today: { day: "2026-10-22", requests: 14, completed_requests: 14, input_tokens: 14000, output_tokens: 4200, cached_tokens: 10700, total_tokens: 18200, cache_hit_rate: 0.764 },
+    total: { requests: 120, completed_requests: 120, input_tokens: 110000, output_tokens: 32000, cached_tokens: 82000, total_tokens: 142000, cache_hit_rate: 0.745 },
+    daily: [
+      { day: "2026-10-21", requests: 10, total_tokens: 25000, tokens: 25000 },
+      { day: "2026-10-22", requests: 14, total_tokens: 18200, tokens: 18200 },
+    ],
+  };
+  const withUsage: AISource = {
+    ...source,
+    model_settings: {
+      "model-a": {
+        ...source.model_settings!["model-a"],
+        usage,
+      },
+    },
+  };
+  server.use(
+    http.post("*/api/local/llm/models/usage/reset", async ({ request }) => {
+      resets(await request.json());
+      return HttpResponse.json({
+        ok: true,
+        usage_key: "local/src-a-model-a",
+        scope: "today",
+        usage: { ...usage, today: { ...usage.today, requests: 0, total_tokens: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0 } },
+      });
+    }),
+  );
+  const user = userEvent.setup();
+  render(<ModelPoolSettings source={withUsage} modelID="model-a" onClose={vi.fn()} onSaved={vi.fn().mockResolvedValue(undefined)} />);
+  expect(screen.getAllByText("18.2K").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByText("43.2K")).toBeVisible();
+  expect(screen.getByText("142K")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Reset today" }));
+  await waitFor(() => expect(resets).toHaveBeenCalledWith({ usage_key: "local/src-a-model-a", scope: "today" }));
+});

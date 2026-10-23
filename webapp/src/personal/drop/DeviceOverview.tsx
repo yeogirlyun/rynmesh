@@ -26,6 +26,7 @@ export function DeviceOverview({ devices, selected, onSelect, onMenu, onSend, on
   const [share, setShare] = useState<DropDevice | null>(null);
   const [dragId, setDragId] = useState("");
   const offered = (services || []).filter(service => service.deviceId === selected?.id);
+  const selectedDeviceId = selected?.meta?.device_peer_id || selected?.id || "";
   const openMenu = (device: DropDevice, anchor: MapAnchor) => { onSelect(device.id); onMenu(device, anchor); };
   return <div className="pf-devices-layout pf-drop-overview">
     <div className="pf-device-list" aria-label={t("drop.tabDevices")}>
@@ -54,9 +55,9 @@ export function DeviceOverview({ devices, selected, onSelect, onMenu, onSend, on
         <div className="pf-detail-lockup"><DeviceArt kind={selected.kind} />
           <div className="pf-drop-grow"><div className="pf-inline"><h2>{selected.name}</h2><Status online={selected.online} self={selected.self} /></div>
             <p>{relationshipLabel(t, selected)}</p>
-            <div className="pf-device-id">{t("personal.deviceID")} <code title={selected.id}>{shortId(selected.id)}</code>
+            <div className="pf-device-id">{t("personal.deviceID")} <code title={selectedDeviceId}>{shortId(selectedDeviceId)}</code>
               <button type="button" className="pf-icon-button" aria-label={t("personal.copyDeviceID")} onClick={async () => {
-                try { await navigator.clipboard.writeText(selected.id); drop.notify("ok", t("personal.deviceIDCopied")); }
+                try { await navigator.clipboard.writeText(selectedDeviceId); drop.notify("ok", t("personal.deviceIDCopied")); }
                 catch { drop.notify("warn", t("personal.couldNotCopyTheDeviceID")); }
               }}><Copy size={14} /></button>
             </div>

@@ -19,6 +19,7 @@ from . import (
     automations,
     budget,
     credential_control,
+    data_policy,
     diagnostic_log,
     image_capabilities,
     knowledge,
@@ -260,8 +261,69 @@ class AgentRuntime(AgentLoop):
         return output_policy.context_budget(model, row["limits"].get("max_context_chars"),
                                             provenance=row.get("context_budget_provenance"))
 
+    def _business_specs(self, row=None):
+        if row is not None and getattr(self.tools, "supports_model_context", False) is True:
+            return self.tools.specs(context=self._execution_context(row))
+        return self.tools.specs()
+
+    def _policy_context(self, row):
+        destination = copy.deepcopy(row.get("model_destination") or {})
+        context = {"consumer_node_id": self.consumer_node_id, "model_destination": destination,
+                   "model_destination_verified": False}
+        inspect_destination = getattr(self.model, "data_policy_context", None)
+        if callable(inspect_destination):
+            try:
+                context.update(inspect_destination(row["model_id"], destination))
+            except (AgentError, ValueError, KeyError):
+                pass  # Unverifiable destinations never match an allowlist.
+        return context
+
+    def _admit_extension_policy(self, selected, snapshot, *, persist=True):
+        # This host-only callback is carried through ordinary and Code Mode calls.
+        # Persist before dispatch, even when the eventual tool call fails.
+        current = self.store.inspect(lambda data: copy.deepcopy(task(data, selected["id"])))
+        if (current.get("control_revision") != selected.get("control_revision")
+                or current["model_id"] != selected["model_id"]
+                or current.get("model_destination") != selected.get("model_destination")):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        context = self._policy_context(current)
+        merged = data_policy.merge_state(current.get("data_policy_state"), snapshot)
+        if not data_policy.allows_task(merged, context):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        if not persist:
+            return
+        def update(data):
+            row = task(data, selected["id"])
+            if (row.get("control_revision") != current.get("control_revision")
+                    or row["model_id"] != current["model_id"]
+                    or row.get("model_destination") != current.get("model_destination")):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            state = data_policy.merge_state(row.get("data_policy_state"), snapshot)
+            if not data_policy.allows_task(state, context):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            changed = row.get("data_policy_state") != state
+            row["data_policy_state"] = state
+            automations.inherit_task_policy_in_tx(data, row)
+            if data_policy.memory_denied(state) or data_policy.task_requires_model_restriction(state):
+                from .memory import invalidate_task_policy_in_tx
+                invalidate_task_policy_in_tx(data, row)
+            if changed:
+                event(row, "data_policy_restricted", policy_revision=state["revision"])
+        self.store.transaction(update)
+
+    def extension_model_availability(self, model_id):
+        model = self._model_metadata(model_id)
+        if not model:
+            raise AgentError("agent_model_unavailable")
+        context = self._policy_context({"model_id": model_id, "model_destination": self._destination(model)})
+        extensions = getattr(self.tools, "extensions", None)
+        servers = extensions.store.list_enabled_mcp_servers_internal() if extensions else []
+        return {"servers": [{"id": server["id"], "name": server.get("name") or server["id"],
+                             "allowed": data_policy.allows(server.get("data_policy"), context)}
+                            for server in servers]}
+
     def _menu(self, row, *, business_specs=None, max_context_bytes=None):
-        business_specs = self.tools.specs() if business_specs is None else business_specs
+        business_specs = self._business_specs(row) if business_specs is None else business_specs
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
             raise AgentError("agent_tool_definition_changed")
         pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"],
@@ -276,17 +338,23 @@ class AgentRuntime(AgentLoop):
                                  if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
             desktop = computer_use + desktop
         skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
+        resource_tools = (
+            ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
+            if (not row["scope"].get("resource_grants") and "selection" not in row["scope"]
+                and self._execution_context(row).get("resource_grants"))
+            else ()
+        )
         return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
-            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools,
+            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools + resource_tools,
             initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
-                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools), authority_bytes
+                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools + resource_tools), authority_bytes
 
     def _specs(self, row=None) -> list:
-        specs = self.tools.specs()
+        specs = self._business_specs(row)
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in specs):
             raise AgentError("agent_tool_definition_changed")
         if row is not None:
@@ -305,13 +373,36 @@ class AgentRuntime(AgentLoop):
         for message in self._history(row):
             if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict) and "grant_id" in message["resource_origin"]:
                 origins[digest(message["resource_origin"])] = copy.deepcopy(message["resource_origin"])
-        return {"task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
+        model_destination = copy.deepcopy(row.get("model_destination") or {"catalog_model_id": row["model_id"], "provider_peer_id": "", "source_id": "", "destination_revision": ""})
+        resource_grants = copy.deepcopy(row["scope"]["resource_grants"])
+        egress_grants = copy.deepcopy(row["scope"]["egress_grants"])
+        if (not resource_grants and "selection" not in row["scope"]
+                and hasattr(self.tools, "default_scope")
+                and getattr(self.model, "supports_destination_binding", False) is True
+                and model_destination.get("destination_revision")):
+            try:
+                if self._current_destination(row["model_id"], require_bound=True) == model_destination:
+                    auto_scope = self.tools.default_scope(
+                        task_id=row["id"],
+                        owner_id=self.owner_id,
+                        consumer_node_id=self.consumer_node_id,
+                        model_destination=model_destination,
+                        scope_revision=row["scope_revision"],
+                    )
+                    if auto_scope.get("resource_grants"):
+                        resource_grants = auto_scope["resource_grants"]
+                        egress_grants = auto_scope["egress_grants"]
+            except Exception:
+                pass
+        return {**self._policy_context(row),
+                "_admit_extension_policy": lambda snapshot, persist=True: self._admit_extension_policy(row, snapshot, persist=persist),
+                "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
-                "model_destination": copy.deepcopy(row.get("model_destination") or {"catalog_model_id": row["model_id"], "provider_peer_id": "", "source_id": "", "destination_revision": ""}),
-                "resource_grants": copy.deepcopy(row["scope"]["resource_grants"]),
-                "egress_grants": copy.deepcopy(row["scope"]["egress_grants"]), "resource_origins": list(origins.values())}
+                "model_destination": model_destination,
+                "resource_grants": resource_grants,
+                "egress_grants": egress_grants, "resource_origins": list(origins.values())}
 
     @staticmethod
     def _requires_destination_binding(row: dict, context: dict) -> bool:
@@ -379,6 +470,7 @@ class AgentRuntime(AgentLoop):
             bound = model.get("expected_model_binding")
             if isinstance(bound, dict) and set(bound) in (
                     {"model_binding", "ai_permission", "consumer_peer_id"},
+                    {"model_binding", "external_permission", "consumer_peer_id"},
                     {"model_binding", "space_permission", "consumer_peer_id", "consumer_access_generation"}):
                 record = {**bound, "binding_verified": True, "peer_id": model.get("peer_id"),
                           "service_id": model.get("service_id")}
@@ -506,6 +598,19 @@ class AgentRuntime(AgentLoop):
         dispatched = False
         def _invoke_model(allowed):
             nonlocal dispatched
+            # Read live state, including restrictions added by overlapped reads.
+            state = self.store.inspect(lambda data: copy.deepcopy(task(data, row["id"]).get("data_policy_state")))
+            if not data_policy.allows_task(state, self._policy_context(row)):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            if data_policy.task_requires_model_restriction(state):
+                if getattr(self.model, "supports_data_policy", False) is not True:
+                    raise AgentToolRejected("agent_extension_model_not_allowed")
+                options["data_policy_state"] = state
+                options["expected_destination"] = self._bound_destination(model)
+                if options["expected_destination"] != context["model_destination"]:
+                    raise AgentToolRejected("agent_extension_model_not_allowed")
+                if "conversation" in options:
+                    options["conversation"] += ":policy:" + str(state["revision"])
             dispatched = True
             return self.model.complete(
                 row["model_id"], dispatch_messages, specs, cancelled, on_event,
@@ -629,6 +734,10 @@ class AgentRuntime(AgentLoop):
             raise
         finally:
             usage = response.get("reported_usage", response.get("usage")) if isinstance(response, dict) else None
+            if isinstance(usage, dict) and isinstance(response, dict):
+                cached = response.get("cached_tokens")
+                if type(cached) is int and cached >= 0:
+                    usage = {**usage, "cached_tokens": cached}
             self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started)
 
     def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None):
@@ -684,10 +793,24 @@ class AgentRuntime(AgentLoop):
                 "source_artifacts": [source_artifact] if isinstance(source_artifact, dict) else [],
                 "linkage_out": linkage_out,
             }
-            response = self._complete(selected, messages, [], cancelled, lambda _event: None,
-                                      nested=True, stage="image_inspection", output_cap=1024,
-                                      request_id=nested_request_id,
-                                      image_context=nested_image_context)
+            for attempt in range(2):
+                try:
+                    response = self._complete(selected, messages, [], cancelled, lambda _event: None,
+                                              nested=True, stage="image_inspection",
+                                              output_cap=min(output_policy.configured_output(model), 16384),
+                                              request_id=nested_request_id,
+                                              image_context=nested_image_context)
+                    break
+                except AgentError as exc:
+                    if attempt == 0 and str(exc) in {
+                        "agent_invalid_model_response",
+                        "agent_model_busy",
+                        "agent_model_connection_failed",
+                        "agent_model_upstream_failed",
+                    } and not cancelled():
+                        nested_request_id = "req_" + uuid.uuid4().hex
+                        continue
+                    raise
             message = response.get("message") or {}
             valid_observation = (
                 isinstance(message.get("content"), str)
