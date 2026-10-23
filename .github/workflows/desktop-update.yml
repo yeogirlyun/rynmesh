@@ -4,9 +4,6 @@ on:
   push:
     tags: ["v*"]
     branches: ["codex/desktop-update-release"]
-  push:
-    tags: ["v*"]
-    branches: ["codex/desktop-update-release"]
   workflow_dispatch:
     inputs:
       tag:
