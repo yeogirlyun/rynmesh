@@ -13,6 +13,7 @@ import shutil
 import ssl
 import stat
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -125,16 +126,18 @@ def extract(archive_path, destination):
     return candidates[0].parent
 
 
-def _location(cache, slug):
-    spec = specification(slug)
+def _location(cache, slug, spec=None):
+    spec = spec or specification(slug)
     return Path(cache).expanduser().resolve() / slug / spec["tag"]
 
 
-def _upstream_installed(cache, slug):
+def _upstream_installed(cache, slug, spec=None):
     """Verify every installed file before starting a server; never trust saved paths."""
-    spec = specification(slug)
-    root = _location(cache, slug)
+    spec = spec or specification(slug)
+    root = _location(cache, slug, spec)
     try:
+        if root.is_symlink() or root.parent.is_symlink() or (root / "payload").is_symlink():
+            raise ValueError
         raw = (root / "receipt.json").read_bytes()
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError
@@ -164,29 +167,34 @@ def _upstream_installed(cache, slug):
         raise CraftError("craft_build_not_verified") from None
 
 
-def installed(cache, slug):
+def installed(cache, slug, *, spec=None):
     """Verify the original release before selecting a separately pinned compatibility build."""
     from . import craft_compat
 
+    if spec is not None:
+        return _upstream_installed(cache, slug, spec)
     web = _upstream_installed(cache, slug)
     return craft_compat.installed(cache, slug) or web
 
 
-def install(cache, slug, *, download=download_to):
-    spec = specification(slug)
+def install(cache, slug, *, download=download_to, spec=None):
+    override = spec
+    spec = spec or specification(slug)
     if not spec["web"]:
         raise CraftError("craft_native_only")
-    root = _location(cache, slug)
+    root = _location(cache, slug, spec)
+    if root.is_symlink() or root.parent.is_symlink() or not root.resolve().is_relative_to(Path(cache).resolve()):
+        raise CraftError("plugin_unsafe_path")
     root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_transaction(root.parent / ".install.lock"):
         if root.exists():
-            web = installed(cache, slug)
+            web = installed(cache, slug, spec=override)
             return {"app": slug, "version": spec["tag"], "state": "ready", "web_dir": str(web)}
         stage = Path(tempfile.mkdtemp(prefix=".install-", dir=root.parent))
         os.chmod(stage, 0o700)
         try:
             archive = stage / "release.zip"
-            url = f"https://github.com/storytold/{slug}/releases/download/{spec['tag']}/{spec['web_asset']}"
+            url = spec.get("download_url") or f"https://github.com/storytold/{slug}/releases/download/{spec['tag']}/{spec['web_asset']}"
             download(url, archive)
             if archive.stat().st_size > MAX_ARCHIVE or digest(archive) != spec["web_sha256"]:
                 raise CraftError("craft_checksum_mismatch")
@@ -207,7 +215,16 @@ def install(cache, slug, *, download=download_to):
             }
             (stage / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
             archive.unlink()
-            stage.rename(root)
+            # Windows scanners may briefly hold newly extracted files open.
+            # Keep the atomic rename and fail closed if the lock persists.
+            for attempt in range(6):
+                try:
+                    stage.rename(root)
+                    break
+                except PermissionError:
+                    if os.name != "nt" or attempt == 5:
+                        raise
+                    time.sleep(0.1 * (attempt + 1))
         finally:
             if stage.exists():
                 shutil.rmtree(stage)
@@ -215,13 +232,13 @@ def install(cache, slug, *, download=download_to):
         "app": slug,
         "version": spec["tag"],
         "state": "ready",
-        "web_dir": str(installed(cache, slug)),
+        "web_dir": str(installed(cache, slug, spec=override)),
     }
 
 
-def create_editor(cache, slug, *, public_host="127.0.0.1"):
+def create_editor(cache, slug, *, public_host="127.0.0.1", spec=None):
     """Dedicated static origin: no node-app/control routes, state, token or cookies."""
-    web = installed(cache, slug)
+    web = installed(cache, slug, spec=spec)
     app = FastAPI(
         title=specification(slug)["name"], docs_url=None, redoc_url=None, openapi_url=None
     )
