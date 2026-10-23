@@ -46,11 +46,19 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft > release-state.json; then
+            python -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Release already published"'
+            gh release upload "$GITHUB_REF_NAME" dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes --draft
+          fi
 
   macos-desktop:
     name: macOS desktop (${{ matrix.arch }})
     needs: python-package
+    env:
+      RYN_DESKTOP_UPDATE_PUBLIC_KEY: ${{ vars.RYN_DESKTOP_UPDATE_PUBLIC_KEY }}
     strategy:
       fail-fast: false
       matrix:
