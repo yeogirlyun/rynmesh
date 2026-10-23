@@ -117,7 +117,7 @@ it("presents receipt-backed result files and opens an SVG only as an inert image
   const section = await screen.findByRole("region", { name: "Result files" });
   expect(section).toHaveTextContent("Ryn checked how this version renders");
   expect(section).toHaveTextContent("Other files from this task (1)");
-  expect(section).toHaveTextContent("The answer mentions ghost.svg, but no file operation in this task produced it.");
+  expect(section).not.toHaveTextContent("ghost.svg");
   await user.click(screen.getByLabelText("Open with · pelican.svg"));
   const tab = screen.getByRole("link", { name: "Open pelican.svg in a new tab" });
   expect(tab.getAttribute("href")).toMatch(/\/agent\/tasks\/file-task\/files\/file_pelican\?v=v1$/);

@@ -12,7 +12,9 @@ import time
 import urllib.error
 import urllib.request
 
-from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage
+from .adapters import AdapterError, OpenAICompatibleAdapter, _openai_usage, cached_input_tokens
+from .data_release import DataReleaseError
+from .data_release import urlopen as model_urlopen
 
 
 class NativeProtocolAdapter(OpenAICompatibleAdapter):
@@ -79,7 +81,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 or not math.isfinite(timeout_s) or timeout_s <= 0):
             raise AdapterError("invalid request timeout", code="inference_timeout")
         deadline = started + min(timeout_s, self.timeout_s)
-        received_usage = received_finish = None
+        received_usage = received_finish = received_cached = None
         decoder = None
 
         def check():
@@ -112,7 +114,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
             path = "/v1/responses" if self.protocol == "openai_responses" else "/v1/messages"
             request = urllib.request.Request(self._endpoint(path), data=json.dumps(payload).encode("utf-8"),
                                              headers=self._headers(), method="POST")
-            with urllib.request.urlopen(request, timeout=max(.001, deadline-time.monotonic())) as response:
+            with model_urlopen(request, timeout=max(.001, deadline-time.monotonic())) as response:
                 with self._lock:
                     self._active_responses[task_id] = response
                 check()
@@ -124,6 +126,7 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     decoded = json.loads(raw)
                     if isinstance(decoded, dict):
                         received_usage = _openai_usage(_usage(decoded.get("usage"), self.protocol))
+                        received_cached = cached_input_tokens(decoded.get("usage"))
                         try:
                             received_finish = _finish(decoded, self.protocol)
                         except ValueError:
@@ -138,13 +141,14 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                     data = []
 
                     def frame():
-                        nonlocal received_usage, received_finish
+                        nonlocal received_usage, received_finish, received_cached
                         value = "\n".join(data)
                         if value == "[DONE]":
                             return
                         event = json.loads(value)
                         chunks = decoder.feed(event)
                         received_usage = _openai_usage(decoder.usage)
+                        received_cached = decoder.cached_tokens
                         received_finish = decoder.finish_reason
                         for chunk in chunks:
                             check()
@@ -170,6 +174,8 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                         elif line.startswith("data:"):
                             data.append(line[5:].removeprefix(" "))
                     result = decoder.result()
+                    if received_cached is None:
+                        received_cached = decoder.cached_tokens
             check()
             received_usage = _openai_usage(result.get("usage"))
             received_finish = result.get("finish_reason")
@@ -185,7 +191,11 @@ class NativeProtocolAdapter(OpenAICompatibleAdapter):
                 self._metrics.total_duration_ms += duration
             return {"text": message.get("content") or "", "message": message,
                     "finish_reason": received_finish, **received_usage,
-                    "reported_usage": received_usage, "duration_ms": duration}
+                    "reported_usage": received_usage,
+                    **({"cached_tokens": received_cached} if received_cached is not None else {}),
+                    "duration_ms": duration}
+        except DataReleaseError:
+            raise
         except Exception as exc:
             if decoder is not None:
                 received_usage = _openai_usage(decoder.usage)

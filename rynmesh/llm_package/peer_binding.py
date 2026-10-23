@@ -27,6 +27,21 @@ def expected(record, consumer_peer_id):
     if record.get("binding_verified") is not True or record.get("consumer_peer_id") != consumer_peer_id or not valid(binding, service_id):
         return None
     space = record.get("space_permission")
+    external = record.get("external_permission")
+    if external is not None:
+        from urllib.parse import urlsplit
+        if (space is not None or permission is not None or not isinstance(external, dict)
+                or set(external) != {"resource"} or not isinstance(external["resource"], str)):
+            return None
+        try:
+            url = urlsplit(external["resource"])
+            if (url.scheme != "https" or not url.hostname or url.username or url.password
+                    or url.query or url.fragment or len(external["resource"]) > 2048):
+                return None
+        except ValueError:
+            return None
+        return {"model_binding": binding, "external_permission": external,
+                "consumer_peer_id": consumer_peer_id}
     if space is not None:
         if (permission is not None or not isinstance(space, dict) or set(space) != {"space_id", "snapshot_revision", "access_generation"}
                 or type(space["snapshot_revision"]) is not int or space["snapshot_revision"] < 1

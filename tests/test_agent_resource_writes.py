@@ -284,3 +284,114 @@ def test_runtime_restart_queries_business_ledger_without_replaying(confirmed, wr
         assert recovered["status"] == "interrupted" and recovered["reconciliation"]["state"] == "unknown"
         assert stored["in_flight"] and recovered["outcome"]["status"] == "unknown"
     assert len([e for e in server.audit if e["method"] == "PUT"]) == 1
+
+
+def test_baidu_netdisk_default_scope_creates_folder_and_uploads_workspace_file(tmp_path, monkeypatch):
+    home = tmp_path / "node"
+    workspace = tmp_path / "workspace"
+    (workspace / "qa_test").mkdir(parents=True)
+    excel_bytes = b"PK\x03\x04fake-xlsx-binary-payload-12345"
+    (workspace / "qa_test" / "qa_budget.xlsx").write_bytes(excel_bytes)
+
+    nas = NasPlugin(home)
+    nas.enable(True)
+    baidu_source = {
+        "id": "baidu1",
+        "name": "百度",
+        "system": "baidu",
+        "protocol": "baidu",
+        "root": "",
+        "username": "user",
+        "writable": True,
+        "write_authorized": True,
+        "allow_ai": True,
+    }
+    nas.state["sources"] = [baidu_source]
+    nas.save()
+
+    remote_dirs = {"": []}
+    remote_files = {}
+
+    class FakeBaiduConnector:
+        def list(self, rel):
+            return list(remote_dirs.get(rel, []))
+
+        def mkdir(self, rel):
+            parent, _, name = rel.rpartition("/")
+            remote_dirs.setdefault(parent, []).append({
+                "name": name,
+                "path": rel,
+                "directory": True,
+                "size": 0,
+                "modified": "2026-10-22T00:00:00+00:00",
+            })
+            remote_dirs.setdefault(rel, [])
+
+        def write(self, rel, data):
+            parent, _, name = rel.rpartition("/")
+            remote_files[rel] = bytes(data)
+            remote_dirs.setdefault(parent, []).append({
+                "name": name,
+                "path": rel,
+                "directory": False,
+                "size": len(data),
+                "modified": "2026-10-22T00:00:00+00:00",
+            })
+
+        def read(self, rel, _limit):
+            return remote_files[rel]
+
+        def close(self):
+            pass
+
+    nas.connectors["baidu"] = lambda _cfg: FakeBaiduConnector()
+
+    app, store = SimpleNamespace(state=SimpleNamespace(nas_plugin=nas)), SimpleNamespace(home=home)
+    tools = RynTools(app, store, {}, None)
+
+    class BoundModel:
+        supports_destination_binding = True
+        def complete(self, model_id, messages, specs, cancelled, on_event, *, expected_destination):
+            return assistant("Done.")
+
+    catalog = SimpleNamespace(list_models=lambda: [{
+        "id": "fixture", "source": "local_api", "available": True, "agent_supported": True,
+        "peer_id": "local", "source_id": "fixture", "destination_revision": "rev1",
+    }])
+    key = peer_box.load_or_create_messaging_key(home / "messaging.x25519")
+    runtime = AgentRuntime(AgentStore(home / "agent", key), BoundModel(), tools, catalog, consumer_node_id="local")
+    runtime.update_settings({"enabled": True, "model_id": "fixture"})
+
+    task = runtime.create({"message": "这个表格，能存到我的百度网盘吗？创建一个ryn文件夹，存进去"})
+    runtime.store.transaction(lambda data: data["tasks"][task["id"]]["local_execution"].update(workspace_root=str(workspace)))
+    row = runtime.store.read()["tasks"][task["id"]]
+
+    exposed_names = {spec["function"]["name"] for spec in runtime._specs(row)}
+    assert {"ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file"} <= exposed_names
+
+    ctx = runtime._execution_context(row)
+    assert len(ctx["resource_grants"]) == 1
+
+    roots = tools.execute("ryn_list_resource_roots", {}, operation_id="op-roots", context=ctx, cancelled=lambda: False)
+    root_ref = roots["roots"][0]["resource_ref"]
+    assert roots["roots"][0]["connection_name"] == "百度"
+    assert "create_file" in roots["roots"][0]["actions"] and "create_directory" in roots["roots"][0]["actions"]
+
+    mkdir_args = {"directory_ref": root_ref, "name": "ryn"}
+    mkdir_res = execute(tools, ctx, mkdir_args, operation_id="op-mkdir", name="ryn_create_directory")
+    ryn_dir_ref = mkdir_res["resource_ref"]
+    assert mkdir_res["created"] == "directory" and mkdir_res["name"] == "ryn"
+
+    upload_args = {"directory_ref": ryn_dir_ref, "workspace_path": "qa_test/qa_budget.xlsx"}
+    upload_res = execute(tools, ctx, upload_args, operation_id="op-upload", name="ryn_upload_resource_file")
+    assert upload_res["created"] == "file" and upload_res["name"] == "qa_budget.xlsx"
+    assert upload_res["bytes"] == len(excel_bytes)
+    assert remote_files["ryn/qa_budget.xlsx"] == excel_bytes
+
+    checked = tools.verify(
+        operation(upload_args, op="op-upload", tool="ryn_upload_resource_file"),
+        [{"verifier": "uploaded_resource_file_state"}],
+        context=ctx,
+        cancelled=lambda: False,
+    )
+    assert checked["status"] == "passed" and checked["evidence"]["current_state_matches"]

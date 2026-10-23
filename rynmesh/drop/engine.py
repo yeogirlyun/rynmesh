@@ -36,10 +36,13 @@ from .codec import CHUNK_BYTES, FRAME_PLAINTEXT_BYTES, DropProtocolError, json_b
 from .p2p_link import DropP2P, is_p2p_endpoint, peer_of
 from .peers import (
     PeerDirectory,
+    Probe,
     make_hello,
     network_headers,
     platform_label,
 )
+from .provider_targets import PREFIX as PROVIDER_PREFIX
+from .provider_targets import parse_provider_target, provider_target
 from .store import ACTIVE_OUT, FINAL, DropStore, now_iso
 
 SPACE_MARGIN = 16 * 1024 * 1024
@@ -242,6 +245,8 @@ class DropEngine:
         own_peers: Callable[[], dict[str, str]],
         friend_peers: Callable[[], dict[str, str]],
         peer_endpoints: Callable[[str], list[str]] | None = None,
+        provider_peers: Callable[[], list[dict[str, Any]]] | None = None,
+        provider_authorize: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.node = node
         self.home = Path(home)
@@ -250,8 +255,13 @@ class DropEngine:
         self.msg_pub = base64.b64encode(messaging_key.public_key().public_bytes_raw()).decode("ascii")
         self._own_peers = own_peers
         self._friend_peers = friend_peers
+        self._provider_peers = provider_peers
+        self._provider_authorize = provider_authorize
+        self._provider_dirs: dict[str, PeerDirectory] = {}
+        self._network_id = network_id
         self.p2p = DropP2P(store=node, network_id=network_id,
                            allowed=lambda peer_id: self.relationship(peer_id) in ("own", "friend")
+                           or any(row["peer_id"] == peer_id for row in self._provider_rows())
                            ) if DropP2P.supported(node) else None
         self.dir = PeerDirectory(store=node, network_id=network_id, relationship=self.relationship,
                                  extra_endpoints=peer_endpoints, p2p=self.p2p)
@@ -321,6 +331,82 @@ class DropEngine:
     def _needs_verification(self, peer_id: str, relation: str | None = None) -> bool:
         relation = relation or self.relationship(peer_id)
         return relation == "nearby" and not self.db.prefs(peer_id).get("verified")
+
+    def _provider_rows(self) -> list[dict[str, Any]]:
+        """Read only the host's cached, configured providers. No remote discovery."""
+        if self._provider_peers is None:
+            return []
+        try:
+            rows = self._provider_peers()
+            return [row for row in rows if isinstance(row, dict) and row.get("peer_id") != self.me
+                    and parse_provider_target(provider_target(row["provider_resource"], row["peer_id"]))]
+        except Exception:
+            return []
+
+    def _provider_row(self, resource: str, peer_id: str) -> dict[str, Any]:
+        for row in self._provider_rows():
+            if row["provider_resource"] == resource and row["peer_id"] == peer_id:
+                return row
+        raise DropError("provider_unavailable", "This connection is unavailable.", 403)
+
+    def _provider_permission(self, resource: str, sender: str, receiver: str) -> None:
+        """Every send and receive checks the host's own live session, never a peer token."""
+        target = provider_target(resource, receiver if sender == self.me else sender)
+        if self.db.prefs(target).get("blocked") or self._provider_authorize is None:
+            raise DropError("provider_denied", "Message permission is unavailable.", 403)
+        try:
+            result = self._provider_authorize(resource, sender, receiver, "message.text")
+            if (not isinstance(result, dict) or result.get("allowed") is not True
+                    or result.get("resource") != resource or result.get("from_peer_id") != sender
+                    or result.get("to_peer_id") != receiver or result.get("capability") != "message.text"):
+                raise ValueError
+        except Exception:
+            raise DropError("provider_denied", "Message permission is unavailable.", 403) from None
+
+    def _provider_directory(self, resource: str) -> PeerDirectory:
+        with self._lock:
+            if resource not in self._provider_dirs:
+                self._provider_dirs[resource] = PeerDirectory(
+                    store=self.node, network_id=self._network_id, p2p=self.p2p, network_auth=False,
+                    relationship=lambda peer: "external" if any(
+                        row["provider_resource"] == resource and row["peer_id"] == peer
+                        for row in self._provider_rows()) else "other",
+                    extra_endpoints=lambda peer: list(self._provider_row(resource, peer).get("endpoints") or []),
+                )
+            return self._provider_dirs[resource]
+
+    def provider_probe(self, resource: str, peer_id: str, *, fresh: bool = False) -> Probe:
+        """Probe a configured source using HTTP/P2P, proving its bound message key.
+
+        Reachability grants no operation permission. Every consumer still checks
+        its own capability with the provider before releasing any user content.
+        """
+        member = self._provider_row(resource, peer_id)
+        probe = self._provider_directory(resource).probe(peer_id, fresh=fresh)
+        if probe.online and probe.messaging_pub != member.get("messaging_pub"):
+            raise DropError("identity_mismatch", "The target device identity changed.", 403)
+        return probe
+
+    def _provider_meta(self, target: str, resource: str, peer_id: str) -> dict[str, Any]:
+        try:
+            row = self._provider_row(resource, peer_id)
+        except DropError:
+            row = {}
+        prefs = self.db.prefs(target)
+        probe = self._provider_directory(resource).cached(peer_id) if row else None
+        available = bool(row) and not prefs.get("blocked")
+        return {
+            "peer_id": target, "device_peer_id": peer_id, "provider_resource": resource,
+            "member_name": str(row.get("member_name") or ""), "plugin_id": str(row.get("plugin_id") or ""),
+            "relationship": "external", "name": str(row.get("name") or f"device-{peer_id[:6]}"),
+            "online": probe.online if probe else None, "route": probe.route if probe and probe.online else None,
+            "address": probe.endpoint if probe and probe.online else "", "latency_ms": probe.latency_ms if probe else None,
+            "sendable": available, "file_sendable": False,
+            "send_mode": "send" if available else "unavailable", "reason": "" if available else "provider_unavailable",
+            "verification": {"required": False, "code": None, "verified": False}, "auto_accept": False,
+            "unread": self.db.unread(target, str(prefs.get("last_read_at") or "")),
+            "last": self.db.last_activity(target), "last_seen": None, "platform": probe.platform if probe else "",
+        }
 
     # ---- events ---------------------------------------------------------
     def subscribe(self, loop: Any, wake: Any) -> None:
@@ -462,6 +548,9 @@ class DropEngine:
 
     @staticmethod
     def message_api(row: dict[str, Any]) -> dict[str, Any]:
+        client_id = row.get("client_id")
+        if row["peer_id"].startswith(PROVIDER_PREFIX) and client_id:
+            client_id = client_id.split(":", 2)[-1]
         return {
             "message_id": row["message_id"],
             "peer_id": row["peer_id"],
@@ -473,7 +562,7 @@ class DropEngine:
             "delivered_at": row["delivered_at"],
             "error": row["error"],
             "version": row["version"],
-            "client_id": row.get("client_id"),
+            "client_id": client_id,
         }
 
     def _set(self, tid: str, *, emit: bool = True, force: bool = True, **values: Any) -> dict[str, Any]:
@@ -528,9 +617,19 @@ class DropEngine:
         for peer_id in self.db.conversation_peers():
             if peer_id != self.me and peer_id not in ids:
                 ids.append(peer_id)
+        for row in self._provider_rows():
+            target = provider_target(row["provider_resource"], row["peer_id"])
+            if target not in ids:
+                ids.append(target)
         return ids
 
     def peer_meta(self, peer_id: str) -> dict[str, Any]:
+        try:
+            external = parse_provider_target(peer_id)
+        except ValueError:
+            raise DropError("invalid_target", "Invalid message target.", 400) from None
+        if external:
+            return self._provider_meta(peer_id, *external)
         relation = self.relationship(peer_id)
         prefs = self.db.prefs(peer_id)
         probe = self.dir.cached(peer_id)
@@ -563,6 +662,7 @@ class DropEngine:
             "address": address,
             "latency_ms": probe.latency_ms if probe and probe.online else None,
             "sendable": sendable,
+            "file_sendable": sendable,
             "send_mode": mode,
             "reason": reason,
             "verification": {
@@ -740,13 +840,18 @@ class DropEngine:
     def _probe_peers(self) -> None:
         def probe(peer_id: str) -> None:
             try:
-                self.dir.probe(peer_id)
+                external = parse_provider_target(peer_id)
+                if external:
+                    resource, device_id = external
+                    self.provider_probe(resource, device_id)
+                else:
+                    self.dir.probe(peer_id)
                 self.emit_peer(peer_id)
             except Exception:
                 pass
 
         for peer_id in self.known_peers():
-            if self.relationship(peer_id) != "other":
+            if peer_id.startswith(PROVIDER_PREFIX) or self.relationship(peer_id) != "other":
                 self._pool.submit(probe, peer_id)
 
     def _expire_offers(self) -> None:
@@ -877,6 +982,8 @@ class DropEngine:
 
     def preflight(self, body: dict[str, Any]) -> dict[str, Any]:
         peer_id = str(body.get("peer_id") or "")
+        if peer_id.startswith(PROVIDER_PREFIX) or "provider_resource" in body:
+            raise DropError("capability_denied", "This connection only supports text messages.", 403)
         files, items, issues, _kind, _batch = self._gather(body)
         meta = self.peer_meta(peer_id)
         if not meta["sendable"]:
@@ -898,6 +1005,8 @@ class DropEngine:
 
     # ---- outgoing transfers ------------------------------------------------
     def create_transfer(self, body: dict[str, Any]) -> dict[str, Any]:
+        if str(body.get("peer_id") or "").startswith(PROVIDER_PREFIX) or "provider_resource" in body:
+            raise DropError("capability_denied", "This connection only supports text messages.", 403)
         client_id = str(body.get("client_id") or "").strip() or None
         if client_id:
             existing = self.db.transfer_by_client(client_id)
@@ -1030,11 +1139,12 @@ class DropEngine:
                 backoff = min(backoff * 2, 30.0)
 
     # peer calls
-    def _call(self, endpoint: str, kind: str, peer_id: str, payload: dict[str, Any], timeout: float = 20.0
+    def _call(self, endpoint: str, kind: str, peer_id: str, payload: dict[str, Any], timeout: float = 20.0,
+              directory: PeerDirectory | None = None
               ) -> dict[str, Any]:
         envelope = codec.make_envelope(kind, payload, sender=self.me, to=peer_id,
                                        private_key_bytes=self.node.private_key_bytes)
-        status, body = self.dir.request(endpoint, "POST", f"/api/peer/drop/{kind}", envelope, timeout=timeout)
+        status, body = (directory or self.dir).request(endpoint, "POST", f"/api/peer/drop/{kind}", envelope, timeout=timeout)
         if status >= 500 or status == 0:
             raise ConnectionError(f"peer returned {status}")
         if status >= 400:
@@ -1458,6 +1568,8 @@ class DropEngine:
 
     def handle_offer(self, envelope: Any, source_ip: str | None) -> dict[str, Any]:
         payload = codec.open_envelope(envelope, kind="offer", me=self.me)
+        if "provider_resource" in payload:
+            raise DropError("capability_denied", "This connection only supports text messages.", 403)
         sender = payload["from"]
         relation = self._authorize(sender, source_ip)
         tid = str(payload.get("transfer_id") or "")
@@ -1775,12 +1887,30 @@ class DropEngine:
 
     # ---- messages ---------------------------------------------------------
     def send_message(self, body: dict[str, Any]) -> dict[str, Any]:
+        peer_id = str(body.get("peer_id") or "")
+        # A local conversation target selects a registered source; a free-form
+        # resource alongside a raw peer id cannot silently select another path.
+        if "provider_resource" in body:
+            raise DropError("invalid_target", "Select a message target from the directory.", 400)
+        try:
+            external = parse_provider_target(peer_id)
+        except ValueError:
+            raise DropError("invalid_target", "Invalid message target.", 400) from None
+        if external:
+            if set(body) - {"peer_id", "text", "client_id"}:
+                raise DropError("bad_request", "This connection only supports text messages.", 400)
+            resource, device_id = external
+            self._provider_row(resource, device_id)
+            self._provider_permission(resource, self.me, device_id)
         client_id = str(body.get("client_id") or "").strip() or None
+        if external and client_id:
+            client_id = "provider:" + hashlib.sha256(peer_id.encode()).hexdigest() + ":" + client_id
         if client_id:
             existing = self.db.message_by_client(client_id)
             if existing:
+                if external and (existing["peer_id"] != peer_id or existing["text"] != str(body.get("text") or "")):
+                    raise DropError("message_conflict", "This send attempt has different content.", 409)
                 return self.message_api(existing)
-        peer_id = str(body.get("peer_id") or "")
         text = str(body.get("text") or "")
         if not text.strip():
             raise DropError("empty", "Message is empty.", 400)
@@ -1808,6 +1938,11 @@ class DropEngine:
         row = self.db.message(message_id)
         if not row or row["direction"] != "out":
             raise DropError("not_found", "Message not found.", 404)
+        external = parse_provider_target(row["peer_id"])
+        if external:
+            resource, peer_id = external
+            self._provider_row(resource, peer_id)
+            self._provider_permission(resource, self.me, peer_id)
         if row["status"] in ("failed", "waiting_online"):
             row = self.db.update_message(message_id, status="sending", error="")
             self.emit_message(row)
@@ -1827,6 +1962,10 @@ class DropEngine:
         try:
             row = self.db.message(message_id)
             if not row or row["status"] not in ("sending", "waiting_online"):
+                return
+            external = parse_provider_target(row["peer_id"])
+            if external:
+                self._deliver_provider(row, *external)
                 return
             peer_id = row["peer_id"]
             probe = self.dir.probe(peer_id)
@@ -1855,9 +1994,38 @@ class DropEngine:
             with self._lock:
                 self._delivering.discard(message_id)
 
+    def _deliver_provider(self, row: dict[str, Any], resource: str, peer_id: str) -> None:
+        """One direct attempt; failed authorization/reachability needs an explicit retry."""
+        message_id = row["message_id"]
+        try:
+            self._provider_row(resource, peer_id)
+            self._provider_permission(resource, self.me, peer_id)
+            directory = self._provider_directory(resource)
+            probe = self.provider_probe(resource, peer_id, fresh=True)
+            if not probe.online:
+                raise DropError("peer_unreachable", "The target device is not reachable.", 503)
+            secret = json.dumps({"text": row["text"], "kind": row["kind"], "created_at": row["created_at"]}).encode()
+            payload = {"message_id": message_id, "from_pub": self.msg_pub, "provider_resource": resource,
+                       "sealed": codec.seal_for(self.msg_priv, probe.messaging_pub, secret, codec.MESSAGE_INFO)}
+            # Recheck after the network probe and before releasing the message.
+            self._provider_permission(resource, self.me, peer_id)
+            response = self._call(probe.endpoint, "message", peer_id, payload, timeout=15, directory=directory)
+            if (response.get("ok") is not True or response.get("message_id") != message_id
+                    or response.get("provider_resource") != resource):
+                raise DropProtocolError("invalid message receipt")
+            self._provider_permission(resource, self.me, peer_id)
+            self.emit_message(self.db.update_message(message_id, status="delivered", delivered_at=now_iso(), error=""))
+        except (DropError, _PeerRefused, ConnectionError, DropProtocolError, OSError):
+            # Neither provider exceptions nor remote response bodies reach UI/logs.
+            self.emit_message(self.db.update_message(message_id, status="failed", error="Delivery was not confirmed.",
+                                                     attempts=int(row["attempts"]) + 1))
+        self.emit_peer(row["peer_id"], force=True)
+
     def handle_message(self, envelope: Any, source_ip: str | None) -> dict[str, Any]:
         payload = codec.open_envelope(envelope, kind="message", me=self.me)
         sender = payload["from"]
+        if "provider_resource" in payload:
+            return self._receive_provider_message(payload)
         relation = self._authorize(sender, source_ip)
         message_id = str(payload.get("message_id") or "")
         if not re.fullmatch(r"[0-9a-f]{32}", message_id):
@@ -1887,6 +2055,47 @@ class DropEngine:
         self.emit_message(row)
         self.emit_peer(sender, force=True)
         return self._respond(sender, {"ok": True, "message_id": message_id}, payload)
+
+    def _receive_provider_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if set(payload) != {"protocol", "type", "from", "to", "ts", "nonce", "provider_resource", "message_id", "from_pub", "sealed"}:
+            raise DropError("bad_request", "Invalid text message.", 400)
+        sender, resource = payload["from"], payload["provider_resource"]
+        if not isinstance(resource, str):
+            raise DropError("provider_denied", "Message permission is unavailable.", 403)
+        target = provider_target(resource, sender)
+        try:
+            parse_provider_target(target)
+        except ValueError:
+            raise DropError("provider_denied", "Message permission is unavailable.", 403) from None
+        member = self._provider_row(resource, sender)
+        if payload.get("from_pub") != member.get("messaging_pub"):
+            raise DropError("identity_mismatch", "The sender identity changed.", 403)
+        # The caller verified the Ed25519 envelope; decrypt before membership IO.
+        try:
+            secret = json.loads(codec.open_from(self.msg_priv, payload["from_pub"], payload["sealed"], codec.MESSAGE_INFO))
+        except (ValueError, TypeError, KeyError):
+            raise DropError("bad_request", "Invalid text message.", 400) from None
+        if (not isinstance(secret, dict) or set(secret) - {"text", "kind", "created_at"}
+                or not isinstance(secret.get("text"), str) or not secret["text"].strip()
+                or len(secret["text"]) > MAX_MESSAGE_CHARS or secret.get("kind") not in {"text", "link"}):
+            raise DropError("bad_request", "Invalid text message.", 400)
+        message_id = str(payload.get("message_id") or "")
+        if not re.fullmatch(r"[0-9a-f]{32}", message_id):
+            raise DropError("bad_request", "Invalid message id.", 400)
+        self._provider_permission(resource, sender, self.me)
+        local_id = hashlib.sha256((target + "\0" + message_id).encode()).hexdigest()[:32]
+        with self._lock:
+            existing = self.db.message(local_id)
+            if existing:
+                if existing["peer_id"] != target or existing["direction"] != "in" or existing["text"] != secret["text"]:
+                    raise DropError("message_conflict", "This message has different content.", 409)
+            else:
+                row = self.db.insert_message({"message_id": local_id, "peer_id": target, "direction": "in",
+                    "kind": "link" if URL_RE.match(secret["text"].strip()) else "text", "text": secret["text"],
+                    "created_at": now_iso(), "status": "delivered", "delivered_at": now_iso()})
+                self.emit_message(row)
+                self.emit_peer(target, force=True)
+        return self._respond(sender, {"ok": True, "message_id": message_id, "provider_resource": resource}, payload)
 
     # ---- browser uploads ---------------------------------------------------
     def upload_target(self, batch: str, rel: str) -> tuple[Path, str]:

@@ -34,6 +34,7 @@ import {
 } from "./personal/model";
 import { DesktopPage } from "./personal/Desktop";
 import { isTauriDesktop } from "./domain/nodeUrl";
+import { DesktopUpdateNotice } from "./screens/UpdatesPanel";
 import { PersonalShell } from "./personal/Shell";
 import { DropProvider } from "./personal/dropStore";
 import { IncomingTransferDialog } from "./personal/drop/IncomingTransferDialog";
@@ -54,6 +55,7 @@ import AIWorkspace from "./screens/AIWorkspace";
 import RynAgent from "./screens/RynAgent";
 import NodeApps from "./screens/NodeApps";
 import CraftApps from "./screens/CraftApps";
+import PluginWorkspace from "./screens/PluginWorkspace";
 import { craftPlugins } from "./domain/craftPlugins";
 import Publish from "./screens/Publish";
 import Peers from "./screens/Peers";
@@ -288,6 +290,7 @@ export default function App() {
     >
       <DropProvider mode={client.mode} notify={notify}>
       <PersonalShell>
+        {isTauriDesktop() ? <DesktopUpdateNotice /> : null}
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
       </PersonalShell>
@@ -401,6 +404,7 @@ export function AppRoutes() {
           <Route path="agent/extensions" element={<AgentExtensions />} />
           <Route path="agent/extensions/:section" element={<AgentExtensions />} />
           <Route path="apps" element={<CraftApps />} />
+          <Route path="apps/plugins/:pluginId" element={<PluginWorkspace />} />
           <Route path="apps/workspaces" element={<NodeApps />} />
           <Route path="ask" element={<LegacyAgentRedirect />} />
           <Route path="ask/history" element={<AskRyn />} />

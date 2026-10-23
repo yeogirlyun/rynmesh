@@ -80,19 +80,31 @@ class PluginManager:
         self.closed = False
         self.nas = nas
         self.migration_error = None
+        from .plugin_updates import PluginUpdates
+        self.updates = PluginUpdates(self)
+        if self.state_path.exists():
+            try:
+                self.updates.recover()
+            except (craft_host.CraftError, OSError):
+                self.updates.load_error = "update_recovery_failed"
 
-    @staticmethod
-    def specification(slug):
+    def specification(self, slug):
+        if slug not in builtin.BUILTINS:
+            override = self.update_spec(slug)
+            if override:
+                return override
         return builtin.manifest(slug) if slug in builtin.BUILTINS else craft_host.specification(slug)
 
-    @staticmethod
-    def version(slug):
-        return builtin.VERSION if slug in builtin.BUILTINS else craft_host.specification(slug)["tag"]
+    def update_spec(self, slug, *, compatible=False):
+        return self.updates.active_spec(slug, self._read()["plugins"].get(slug, {}), compatible=compatible)
+
+    def version(self, slug):
+        return builtin.VERSION if slug in builtin.BUILTINS else self.specification(slug)["tag"]
 
     def verify(self, slug):
         if slug in builtin.BUILTINS:
             return builtin.verify(self.cache, slug)
-        return craft_host.installed(self.cache, slug)
+        return craft_host.installed(self.cache, slug, spec=self.update_spec(slug, compatible=True))
 
     def adopt_legacy(self, service):
         self.migration_error = None
@@ -173,7 +185,8 @@ class PluginManager:
             state = self._read()
             selection = installer_selection()
             items = []
-            for slug, spec in CRAFT.items():
+            for slug in CRAFT:
+                spec = self.specification(slug)
                 row = state["plugins"].get(slug, {})
                 present = row.get("version") == spec["tag"] and (self.cache / slug / spec["tag"] / "receipt.json").is_file()
                 enabled = bool(present and row.get("enabled"))
@@ -184,7 +197,7 @@ class PluginManager:
                     "id": slug, "name": spec["name"], "version": spec["tag"],
                     "web": spec["web"], "group": GROUPS.get(slug, "media"),
                     "formats": spec["formats"], "sha256": spec["web_sha256"],
-                    "source_url": f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
+                    "source_url": row.get("update_source", {}).get("url") or f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
                     "installed": bool(present), "enabled": enabled,
                     "running": slug in self.servers and self.servers[slug][1].is_alive(),
                     "busy": slug in self.mutating or bool(self.active.get(slug)),
@@ -248,10 +261,10 @@ class PluginManager:
                 builtin.install(self.cache, slug)
             else:
                 kwargs = {"download": self.download} if self.download else {}
-                craft_host.install(self.cache, slug, **kwargs)
+                craft_host.install(self.cache, slug, spec=self.update_spec(slug), **kwargs)
             with self.lock, file_transaction(self.lock_path):
                 state = self._read()
-                state["plugins"][slug] = {"version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
+                state["plugins"][slug] = {**state["plugins"].get(slug, {}), "version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
                 if slug == "nas":
                     self.nas._enable(True)
                 self._write(state)
@@ -382,7 +395,7 @@ class PluginManager:
                 raise craft_host.CraftError("plugin_busy")
             ticket = secrets.token_urlsafe(32)
             self.tickets[ticket] = (slug, time.monotonic() + 120)
-            return {"app": slug, "version": CRAFT[slug]["tag"], "node_id": self.peer_id,
+            return {"app": slug, "version": self.version(slug), "node_id": self.peer_id,
                     "url": f"http://127.0.0.1:{self.port(slug)}/", "ticket": ticket}
 
     def launch(self, slug, ticket):
@@ -408,7 +421,7 @@ class PluginManager:
                 except OSError:
                     listener.close()
                     raise craft_host.CraftError("plugin_port_busy") from None
-                editor = craft_host.create_editor(self.cache, slug)
+                editor = craft_host.create_editor(self.cache, slug, spec=self.update_spec(slug))
                 server = uvicorn.Server(uvicorn.Config(editor, access_log=False, log_level="error", lifespan="off"))
                 thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True,
                                           name=f"ryn-craft-{slug}")
@@ -420,10 +433,11 @@ class PluginManager:
                 if not server.started:
                     self._stop(slug)
                     raise craft_host.CraftError("plugin_start_failed")
-            return {"app": slug, "node_id": self.peer_id, "version": CRAFT[slug]["tag"],
+            return {"app": slug, "node_id": self.peer_id, "version": self.version(slug),
                     "url": f"http://127.0.0.1:{self.port(slug)}/", "state": "ready"}
 
     def close(self):
+        self.updates.stop.set()
         with self.lock:
             self.closed = True
             for slug in list(self.servers):
@@ -445,6 +459,7 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
     @asynccontextmanager
     async def lifespan(instance):
         async with previous_lifespan(instance) as state:
+            manager.updates.start()
             try:
                 yield state
             finally:
@@ -474,6 +489,40 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
         if await body(request) != {}:
             raise HTTPException(400, detail="plugin_invalid_request")
         return await run(request, manager.finish_setup)
+
+    @app.get("/api/local/plugin-updates")
+    async def update_status(request: Request):
+        return await run(request, manager.updates.status)
+
+    @app.get("/api/local/plugin-updates/readiness")
+    def update_readiness(request: Request):
+        local_control(request)
+        blockers = []
+        with manager.lock:
+            if manager.mutating or any(manager.active.values()):
+                blockers.append("plugin_busy")
+        runtime = getattr(app.state, "agent_runtime", None)
+        if runtime is not None:
+            with runtime._active_lock:
+                if runtime._active_runs:
+                    blockers.append("agent_running")
+        drop = getattr(app.state, "drop_engine", None)
+        if drop is not None:
+            with drop._lock:
+                if drop._workers or drop._slots or drop._verifying or drop._delivering:
+                    blockers.append("transfer_running")
+        return {"ready": not blockers, "blockers": blockers}
+
+    @app.post("/api/local/plugin-updates/{slug}/{action}")
+    async def update_plugin(request: Request, slug: str, action: str):
+        local_control(request)
+        value = await body(request, 8192)
+        if action == "configure":
+            return await run(request, manager.updates.configure, slug, value)
+        methods = {"check": manager.updates.check, "apply": manager.updates.apply, "rollback": manager.updates.rollback}
+        if action not in methods or value:
+            raise HTTPException(400, detail="plugin_invalid_request")
+        return await run(request, methods[action], slug)
 
     @app.post("/api/local/plugins/{slug}/{action}")
     @app.post("/api/local/craft-plugins/{slug}/{action}")

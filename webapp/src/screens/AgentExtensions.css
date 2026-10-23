@@ -808,6 +808,15 @@
   overflow: hidden;
 }
 
+.ae-dialog.ae-dialog-workspace {
+  width: min(1180px, calc(100vw - 40px));
+}
+
+.ae-plugin-settings { flex-shrink: 0; }
+.ae-plugin-settings > summary { cursor: pointer; padding: 12px 0; font-size: 13px; }
+.ae-plugin-settings[open] > .ae-setting-row,
+.ae-plugin-settings[open] > .ae-section-card { margin-top: 16px; }
+
 .ae-dialog::backdrop {
   background: rgba(15, 23, 42, 0.48);
   backdrop-filter: blur(4px);
@@ -1256,4 +1265,158 @@
   background: var(--pf-panel);
   color: var(--pf-ink);
   font-size: 12px;
+}
+
+.ae-subcard-fieldset {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ae-subcard-fieldset legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pf-muted);
+}
+
+.ae-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.ae-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ae-checkbox-item:hover {
+  background: var(--pf-panel);
+}
+
+.ae-checkbox-item code {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--pf-muted);
+}
+
+.ae-confirm-dialog {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ae-confirm-dialog p {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.ae-confirm-tool-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 150px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.ae-auth-advanced {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-bg);
+}
+
+.ae-auth-advanced summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ae-auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.ae-auth-field input {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-panel);
+  color: var(--pf-ink);
+  font: inherit;
+}
+
+.ae-peer-directory {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ae-peer-directory-summary {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ae-peer-member-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.ae-peer-member-chip {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.ae-peer-member-chip span {
+  color: var(--pf-muted);
+  font-size: 11px;
+}
+
+.ae-peer-model-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+}
+
+.ae-peer-publish-area {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }

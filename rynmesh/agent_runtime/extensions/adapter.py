@@ -19,6 +19,7 @@ from jsonschema import validate as jsonschema_validate
 from ...atomic_io import atomic_write_bytes
 from ...llm_package.chat import validate_tool_arguments
 from ...services import peer_box
+from .. import data_policy
 from ..native_computer import NativeComputerFacade, bind_owner_native_computer
 from ..store import AgentError, AgentToolRejected, encoded
 from .imports import ExtensionImportManager
@@ -59,6 +60,7 @@ ALLOWLISTED_DIAGNOSTIC_ERROR_CODES = ALLOWLISTED_MCP_RPC_ERROR_CODES | frozenset
     "agent_stale_revision",
     "agent_tool_definition_changed",
     "agent_disabled",
+    "agent_extension_model_not_allowed",
     "agent_approval_mismatch",
     "agent_operation_id_conflict",
 })
@@ -332,6 +334,24 @@ class ExtensionToolAdapter:
             self._manager = McpSessionManager(self.store)
         return self._manager
 
+    def overview(self, *, desktop_access: bool = False) -> dict[str, Any]:
+        value = self.store.overview(desktop_access=desktop_access)
+        oauth = getattr(self.manager, "oauth", None)
+        if oauth is None:
+            return value
+        statuses = {}
+        for server in value.get("mcp_servers", []):
+            state = oauth.public_status(str(server.get("instance_id") or ""))
+            server["oauth"] = state
+            if server.get("enabled") and state.get("state") in {"logged_out", "pending", "error"}:
+                server.update(status="NeedsAuth", status_message="agent_mcp_auth_required")
+            statuses[server["id"]] = {key: server.get(key) for key in ("oauth", "status", "status_message")}
+        for plugin in value.get("plugins", []):
+            for server in plugin.get("mcp_servers", []):
+                if server["id"] in statuses:
+                    server.update(statuses[server["id"]])
+        return value
+
     def close(self) -> None:
         with self._lock:
             mgr = self._manager
@@ -372,6 +392,9 @@ class ExtensionToolAdapter:
         """Return mapping of model_tool_name -> (server, tool, extension_binding) for enabled tools."""
         out: dict[str, tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = {}
         for server in self.store.list_enabled_mcp_servers_internal():
+            oauth = getattr(self.manager, "oauth", None)
+            if oauth is not None and oauth.public_status(str(server.get("instance_id") or "")).get("state") in {"logged_out", "pending", "error"}:
+                continue
             enabled_tools = server.get("enabled_tools")
             disabled_tools = set(server.get("disabled_tools") or [])
             read_only_tools = set(server.get("read_only_tools") or [])
@@ -417,11 +440,13 @@ class ExtensionToolAdapter:
                 out[model_name] = (server, tool, binding)
         return out
 
-    def specs(self) -> list[dict[str, Any]]:
+    def specs(self, context: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = [copy.deepcopy(READ_SKILL_FILE_SPEC)]
         active = self._active_mcp_tools()
         for model_name in sorted(active.keys()):
             server, tool, _binding = active[model_name]
+            if not data_policy.allows(server.get("data_policy"), context):
+                continue
             schema = (
                 copy.deepcopy(tool["input_schema"])
                 if isinstance(tool.get("input_schema"), dict)
@@ -440,6 +465,21 @@ class ExtensionToolAdapter:
                 }
             )
         return result
+
+    def _check_data_policy(self, binding, context, *, persist=False):
+        server = self.store.get_mcp_server_internal(
+            binding["server_id"], require_enabled=True,
+            expected_instance_id=binding["instance_id"],
+            expected_config_generation=binding["config_generation"])
+        policy = data_policy.normalize_policy(server.get("data_policy"))
+        if not data_policy.allows(policy, context):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        if policy["models"]["mode"] == "any" and policy["memory"] == "allow":
+            return
+        admit = context.get("_admit_extension_policy") if isinstance(context, dict) else None
+        if not callable(admit):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        admit(data_policy.snapshot_source(server), persist=persist)
 
     def metadata(self, name: str) -> dict[str, Any]:
         if name == READ_SKILL_FILE_TOOL:
@@ -582,6 +622,7 @@ class ExtensionToolAdapter:
         server, tool, binding = entry
         if context.get("extension_binding"):
             binding = self.verify_binding(context["extension_binding"])
+        self._check_data_policy(binding, context)
         builtin_auth = self.store.verify_builtin_computer_use_authority(binding)
         try:
             self.validate(name, arguments)
@@ -817,6 +858,8 @@ class ExtensionToolAdapter:
                 raise AgentToolRejected("agent_unknown_tool")
             binding = entry[2]
 
+        self._check_data_policy(binding, context)
+
         builtin_auth = self.store.verify_builtin_computer_use_authority(binding)
         route_to_native = (
             builtin_auth is not None and self._should_route_builtin_to_native_computer()
@@ -843,6 +886,7 @@ class ExtensionToolAdapter:
                 if cancelled():
                     raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
                 self.verify_binding(binding)
+                self._check_data_policy(binding, context, persist=True)
                 self.store.verify_builtin_computer_use_authority(binding)
                 if binding["computer_access"]:
                     self._check_computer_access(context)
@@ -967,6 +1011,7 @@ class ExtensionToolAdapter:
                     self._check_computer_access(context)
 
                 def _on_ready_native_gate(_validated_ready: dict[str, Any]) -> None:
+                    self._check_data_policy(binding, context, persist=True)
                     ledger.update(operation_id, "dispatched", receipt_reserve=32768)
 
                 try:
@@ -1087,6 +1132,7 @@ class ExtensionToolAdapter:
                 if cancelled():
                     raise AgentToolRejected(getattr(cancelled, "reason", None) or "agent_cancelled")
                 self.verify_binding(binding)
+                self._check_data_policy(binding, context, persist=True)
                 if binding["computer_access"]:
                     self._check_computer_access(context)
                 else:

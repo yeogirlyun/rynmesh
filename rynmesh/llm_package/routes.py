@@ -42,11 +42,13 @@ from .adapters import (
     LLMAdapter,
     actual_usage,
     adapter_from_manifest,
+    cached_input_tokens,
 )
 from .chat import reported_token_count, validate_chat
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
+from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .lifecycle import (
     LifecycleError,
     connect_cli,
@@ -262,7 +264,11 @@ class ProviderService:
                  balance: TaskBalanceLedger, messaging_key: Any,
                  access_check: Callable | None = None) -> None:
         self.manifest = manifest
+        self.usage_store = ModelUsageStore(store.home / "llm" / "model-usage.json")
         from .cli_adapter import CLIAgentAdapter
+        if isinstance(adapter, CLIAgentAdapter):
+            adapter._usage_store = self.usage_store
+            adapter._usage_service_id = manifest.package_id
         if isinstance(adapter, CLIAgentAdapter) and manifest.adapter in {"codex_cli", "antigravity_cli"}:
             from .cli_binding import CLIModelDispatchAdapter
             adapter = CLIModelDispatchAdapter(adapter, manifest, store.home)
@@ -481,10 +487,12 @@ class ProviderService:
         )
         space = getattr(self.store, "personal_space", None)
         explicit_friends = "explicit-friends" in self.manifest.capabilities
+        external_permission = body.get("external_permission")
+        external_request = external_permission is not None
         cli_service = self.manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"} or "personal-space-only" in self.manifest.capabilities
-        if cli_service and (space is None or not space.enforces_ai()):
+        if not external_request and cli_service and (space is None or not space.enforces_ai()):
             raise TaskProtocolError("CLI sharing requires a personal space.")
-        if not explicit_friends and space is not None and space.enforces_ai() and not space.allows_ai(str(outer["from_peer_id"])):
+        if not external_request and not explicit_friends and space is not None and space.enforces_ai() and not space.allows_ai(str(outer["from_peer_id"])):
             raise TaskProtocolError("This device is not allowed to use this personal-space AI service.")
         task_id = str(outer["task_id"])
         if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_REQUEST:
@@ -513,7 +521,7 @@ class ProviderService:
         max_amount = float(body.get("max_amount") or 0)
         own_request = outer["from_peer_id"] == self.store.peer_id
         space_authorized = not explicit_friends and space is not None and space.enforces_ai() and space.allows_ai(str(outer["from_peer_id"]))
-        if not own_request and not space_authorized:
+        if not external_request and not own_request and not space_authorized:
             try:
                 self.access_check(outer["from_peer_id"], self.manifest.package_id, body.get("ai_permission"))
             except (AIAccessError, OSError, ValueError):
@@ -535,6 +543,8 @@ class ProviderService:
         actual_model_binding = (self.adapter.binding_for_model(cli_model)
             if callable(getattr(self.adapter, "binding_for_model", None)) else getattr(self.adapter, "model_binding", None))
         expected_binding = body.get("expected_model_binding")
+        if external_request and (expected_binding is None or "ai_permission" in body or "space_permission" in body):
+            return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
         bound_authorize, bound_authority_lock = None, None
         if expected_binding is not None:
             from .peer_binding import expected
@@ -543,7 +553,17 @@ class ProviderService:
             if (parsed is None or parsed != expected_binding
                     or parsed["model_binding"] != actual_model_binding):
                 return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "model_configuration_changed")
-            if "space_permission" in parsed:
+            if "external_permission" in parsed:
+                if not external_request or parsed["external_permission"] != external_permission:
+                    return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
+                from .external_models import authorize_model
+
+                def bound_authorize():
+                    return authorize_model(self.store, outer["from_peer_id"], self.manifest.package_id,
+                                           external_permission, actual_model_binding)
+            elif external_request:
+                return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied")
+            elif "space_permission" in parsed:
                 supports_space_binding = ("personal-space-only" in self.manifest.capabilities
                     or self.manifest.adapter in {"codex_cli", "antigravity_cli"})
                 if explicit_friends or not supports_space_binding or space is None or "ai_permission" in body:
@@ -575,7 +595,7 @@ class ProviderService:
         if existing is not None:
             existing, claimed = self.task_store.claim(task_id=task_id, bindings=bindings)
         else:
-            if not self.accepting_orders and not own_request:
+            if not self.accepting_orders and not own_request and not external_request:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "service_paused",
                 )
@@ -604,6 +624,8 @@ class ProviderService:
                 encrypted = existing.get("encrypted_response")
                 if existing.get("state") in TERMINAL_STATES:
                     if isinstance(encrypted, dict):
+                        if external_request:
+                            bound_authorize()
                         return dict(encrypted)
                     return self._sealed_failure(
                         task_id, reply_pub, str(outer["from_peer_id"]), "failed", _missing_provider_response_code(existing),
@@ -628,7 +650,9 @@ class ProviderService:
         with self._lock:
             self._running += 1
             if not own_request:
-                self._active_permissions[task_id] = (outer["from_peer_id"], body.get("ai_permission"))
+                self._active_permissions[task_id] = (outer["from_peer_id"],
+                    {"external_permission": external_permission, "model_binding": actual_model_binding}
+                    if external_request else body.get("ai_permission"))
         try:
             self.task_store.transition(task_id=task_id, state="accepted", metadata=metadata)
             self.task_store.transition(task_id=task_id, state="running", metadata=metadata)
@@ -636,59 +660,97 @@ class ProviderService:
             if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 return self._failure(task_id, reply_pub, outer["from_peer_id"], "cancelled", "ai_permission_revoked")
             started = time.monotonic()
-            if chat:
-                if not hasattr(self.adapter, "chat"):
-                    raise AdapterError("structured_chat_not_supported")
-                if chat.get("stream") and on_event is None:
-                    raise AdapterError("stream_transport_not_supported")
-                sequence = 0
+            last_external_check = started
 
-                def emit(chunk: dict[str, Any]) -> None:
-                    nonlocal sequence
-                    if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
-                        raise AdapterError("task_cancelled")
-                    envelope = seal_task(
-                        body={"task_id": task_id, "service_id": self.manifest.package_id,
-                              "sequence": sequence, "chunk": chunk},
-                        task_id=task_id, kind="llm_stream", sender_peer_id=self.store.peer_id,
-                        recipient_peer_id=str(outer["from_peer_id"]),
-                        sender_signing_key=self.store.private_key_bytes, recipient_messaging_pub=reply_pub,
-                        expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
-                    ).to_dict()
-                    on_event(envelope)
-                    sequence += 1
+            def check_external_output():
+                nonlocal last_external_check
+                if external_request and time.monotonic() - last_external_check >= 1:
+                    bound_authorize()
+                    last_external_check = time.monotonic()
 
-                chat["max_tokens"] = max_tokens
-                options = {"task_id": task_id, "timeout_s": self.manifest.timeout_seconds,
-                           "on_event": emit if chat.get("stream") else None,
-                           **({"model": cli_model} if cli_model else {})}
-                if getattr(self.adapter, "supports_conversation_scope", False) is True:
-                    # The signed sender is the requester; its window key only
-                    # labels a conversation inside that sender's own group.
-                    options["conversation_scope"] = codex_threads.scope(
-                        "local" if own_request else "peer:" + str(outer["from_peer_id"]), body.get("conversation_key"))
-                if bound_authorize is not None:
-                    result = self.adapter.call_bound("chat", expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
-                        bound_authorize, chat, authority_lock=bound_authority_lock, **options)
-                else:
-                    result = self.adapter.chat(chat, **options)
-            else:
-                inference = getattr(self.adapter, "infer_stream", None) if on_delta is not None else self.adapter.infer
-                if not callable(inference):
-                    raise AdapterError("stream_not_supported")
-                infer_options = dict(
-                    prompt=prompt, max_tokens=max_tokens, task_id=task_id,
-                    **({"on_delta": on_delta} if on_delta is not None else {}),
-                    timeout_s=self.manifest.timeout_seconds,
-                    **({"messages": messages} if messages is not None else {}),
-                    **({"model": cli_model} if cli_model else {}),
+            original_delta = on_delta
+            if external_request and original_delta is not None:
+                def on_delta(value):
+                    check_external_output()
+                    original_delta(value)
+            caller_kind = "self" if own_request else "shared"
+            adapter_tracks_usage = (
+                getattr(self.adapter, "usage_store", None) is not None
+                or getattr(self.adapter, "_usage_store", None) is not None
+            )
+            local_model_key = "local/" + self.manifest.package_id
+            if not adapter_tracks_usage:
+                self.usage_store.admit_and_record_dispatch(
+                    local_model_key, caller=caller_kind, task_id=task_id
                 )
-                if bound_authorize is not None:
-                    result = self.adapter.call_bound("infer_stream" if on_delta is not None else "infer",
-                        expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
-                        bound_authorize, authority_lock=bound_authority_lock, **infer_options)
-                else:
-                    result = inference(**infer_options)
+            try:
+                with usage_caller_scope(caller_kind):
+                    if chat:
+                        if not hasattr(self.adapter, "chat"):
+                            raise AdapterError("structured_chat_not_supported")
+                        if chat.get("stream") and on_event is None:
+                            raise AdapterError("stream_transport_not_supported")
+                        sequence = 0
+
+                        def emit(chunk: dict[str, Any]) -> None:
+                            nonlocal sequence
+                            check_external_output()
+                            if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
+                                raise AdapterError("task_cancelled")
+                            envelope = seal_task(
+                                body={"task_id": task_id, "service_id": self.manifest.package_id,
+                                      "sequence": sequence, "chunk": chunk},
+                                task_id=task_id, kind="llm_stream", sender_peer_id=self.store.peer_id,
+                                recipient_peer_id=str(outer["from_peer_id"]),
+                                sender_signing_key=self.store.private_key_bytes, recipient_messaging_pub=reply_pub,
+                                expires_at=_expires(max(300, self.manifest.timeout_seconds * 2)),
+                            ).to_dict()
+                            on_event(envelope)
+                            sequence += 1
+
+                        chat["max_tokens"] = max_tokens
+                        options = {"task_id": task_id, "timeout_s": self.manifest.timeout_seconds,
+                                   "on_event": emit if chat.get("stream") else None,
+                                   **({"model": cli_model} if cli_model else {})}
+                        if getattr(self.adapter, "supports_conversation_scope", False) is True:
+                            # The signed sender is the requester; its window key only
+                            # labels a conversation inside that sender's own group.
+                            options["conversation_scope"] = codex_threads.scope(
+                                "local" if own_request else "peer:" + str(outer["from_peer_id"]), body.get("conversation_key"))
+                        if bound_authorize is not None:
+                            result = self.adapter.call_bound("chat", expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
+                                bound_authorize, chat, authority_lock=bound_authority_lock, **options)
+                        else:
+                            result = self.adapter.chat(chat, **options)
+                    else:
+                        inference = getattr(self.adapter, "infer_stream", None) if on_delta is not None else self.adapter.infer
+                        if not callable(inference):
+                            raise AdapterError("stream_not_supported")
+                        infer_options = dict(
+                            prompt=prompt, max_tokens=max_tokens, task_id=task_id,
+                            **({"on_delta": on_delta} if on_delta is not None else {}),
+                            timeout_s=self.manifest.timeout_seconds,
+                            **({"messages": messages} if messages is not None else {}),
+                            **({"model": cli_model} if cli_model else {}),
+                        )
+                        if bound_authorize is not None:
+                            result = self.adapter.call_bound("infer_stream" if on_delta is not None else "infer",
+                                expected_binding["model_binding"] if expected_binding else self.adapter.model_binding,
+                                bound_authorize, authority_lock=bound_authority_lock, **infer_options)
+                        else:
+                            result = inference(**infer_options)
+                if not adapter_tracks_usage:
+                    self.usage_store.record_completion(
+                        local_model_key, result=result, caller=caller_kind, state="succeeded", task_id=task_id
+                    )
+            except Exception:
+                if not adapter_tracks_usage:
+                    self.usage_store.record_completion(
+                        local_model_key, result=None, caller=caller_kind, state="failed", task_id=task_id
+                    )
+                raise
+            if external_request:
+                bound_authorize()
             if (self.task_store.get(task_id) or {}).get("state") == "cancelled":
                 return self._failure(
                     task_id, reply_pub, str(outer["from_peer_id"]),
@@ -703,6 +765,7 @@ class ProviderService:
             # The hold is a price ceiling the consumer consented to: bill at
             # most that ceiling instead of failing after inference already ran.
             counts = actual_usage(result)
+            cached = cached_input_tokens(result)
             usage_complete = all(value is not None for value in counts.values())
             amount = (0.0 if own_request else min(_price(self.manifest, counts["input_tokens"], counts["output_tokens"]), max_amount)
                       if usage_complete else None)
@@ -713,7 +776,9 @@ class ProviderService:
                 "task_id": task_id, "state": "succeeded", "service_id": self.manifest.package_id,
                 "model_alias": self.manifest.public_model_alias, "output": str(result["text"]),
                 **({"cli_model": cli_model} if cli_model else {}),
-                **counts, **billing, "reported_usage": counts,
+                **counts,
+                **({"cached_tokens": cached} if cached is not None else {}),
+                **billing, "reported_usage": counts,
                 "duration_ms": duration_ms, "amount": amount, "currency": "DEV_TASK_BALANCE",
             }
             if chat:
@@ -760,6 +825,11 @@ class ProviderService:
         cancelled = False
         for task_id, (peer_id, permission) in active:
             try:
+                if isinstance(permission, dict) and "external_permission" in permission:
+                    from .external_models import authorize_model
+                    authorize_model(self.store, peer_id, self.manifest.package_id,
+                                    permission["external_permission"], permission["model_binding"])
+                    continue
                 space = getattr(self.store, "personal_space", None)
                 if "explicit-friends" not in self.manifest.capabilities and space is not None and space.enforces_ai():
                     if not space.allows_ai(peer_id):
@@ -971,6 +1041,7 @@ def _record_is_stale(updated_at: Any) -> bool:
 def _peer_post_json(
     endpoint: str, path: str | dict[str, Any], payload: dict[str, Any] | None = None, *, timeout_s: float,
     max_bytes: int = _MAX_PEER_RESPONSE_BYTES,
+    external: bool = False,
 ) -> dict[str, Any]:
     """POST bounded JSON through the peer client's configured Transport."""
     # Late import avoids the peer_http -> install_llm_routes import cycle while
@@ -982,7 +1053,8 @@ def _peer_post_json(
         parsed = urlsplit(endpoint)
         payload, path = path, parsed.path + ("?" + parsed.query if parsed.query else "")
         endpoint = parsed.scheme + "://" + parsed.netloc
-    return HttpPeerClient(endpoint, timeout_s=timeout_s).post_json(
+    from .external_transport import ExternalPeerTransport
+    return HttpPeerClient(endpoint, timeout_s=timeout_s, **({"transport": ExternalPeerTransport()} if external else {})).post_json(
         path, payload, max_bytes=max_bytes,
     )
 
@@ -1026,7 +1098,7 @@ def _download_relay_ciphertext(store: RynmeshStore, reference: str, *,
 
 def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: str,
                         service_id: str, amount: float, network_id: str,
-                        endpoint: str = "") -> bool:
+                        endpoint: str = "", external: bool = False) -> bool:
     """Sign and deliver the body-free settlement acknowledgement.
 
     One implementation for the live order path and crash recovery — the two
@@ -1043,6 +1115,7 @@ def dispatch_settlement(store: RynmeshStore, *, task_id: str, provider_peer_id: 
         try:
             _peer_post_json(
                 endpoint, "/api/peer/llm/settlements", settlement.to_dict(), timeout_s=15,
+                **({"external": True} if external else {}),
             )
             return True
         except Exception:
@@ -1214,6 +1287,10 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         from rynmesh.personal_space import PersonalSpace
         store.personal_space = PersonalSpace(store)
     source_store = SourceStore(home, store.private_key_bytes)
+    from .external_models import ExternalModelCatalog, resource_of
+    peer_providers = getattr(app.state, "peer_providers", None)
+    external_catalog = ExternalModelCatalog(peer_providers, store,
+        probe=getattr(getattr(app.state, "drop_engine", None), "provider_probe", None)) if peer_providers else None
     if getattr(app.state, "ai_access", None):
         app.state.ai_access.store.sources = source_store
     from .tool_capabilities import ToolCapabilities
@@ -1676,12 +1753,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         if access_state and access_state.catalog:
             services.extend(row for row in access_state.catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
         services.extend(row for row in space_catalog.records() if row.get("network_id", "rynmesh-main") == network_id)
+        if external_catalog:
+            services.extend(external_catalog.records())
         # A model can switch between explicit-friend and space policy while an
         # older authenticated catalog is still cached. Catalog and dispatch
         # must select the same most recently authenticated record.
         unique = {}
         for row in services:
-            key = (row.get("peer_id"), row.get("service", {}).get("package_id"))
+            key = (row.get("peer_id"), row.get("service", {}).get("package_id"), row.get("provider_resource", ""))
             previous = unique.get(key)
             if previous is None or str(row.get("updated_at", "")) > str(previous.get("updated_at", "")):
                 unique[key] = row
@@ -1750,11 +1829,36 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             except Exception:
                 members = []
         presence = getattr(app.state, "peer_presence", None)
-        return annotate_services(
+        annotated = annotate_services(
             rows, self_id=store.peer_id, members=members,
             allows_ai=space.allows_ai if space is not None else (lambda _peer: False),
             probe_for=presence.get if presence is not None else (lambda _peer: None),
         )
+        usage_snapshot = source_store.usage_store.read_cached()
+        for item in annotated:
+            sid = dict(item.get("service") or {}).get("package_id", "")
+            pid = str(item.get("peer_id") or "")
+            if not sid or not pid:
+                continue
+            mkey = (
+                "local/" + sid
+                if pid == store.peer_id
+                else "peer/" + hashlib.sha256(pid.encode()).hexdigest() + "/" + sid
+            )
+            item["usage"] = source_store.usage_store.public_usage(mkey, snapshot=usage_snapshot)
+            if isinstance(item.get("cli_models"), list):
+                item["cli_models"] = [
+                    {
+                        **cm,
+                        "usage": source_store.usage_store.public_usage(
+                            f"{mkey}/model/{cm['id']}", snapshot=usage_snapshot
+                        ),
+                    }
+                    if isinstance(cm, dict) and cm.get("id")
+                    else cm
+                    for cm in item["cli_models"]
+                ]
+        return annotated
 
     # The peer directory (/api/local/directory) joins these rows to their devices.
     app.state.llm_discover = discover
@@ -2061,6 +2165,9 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         app.state.background_workers = registry
     if not isinstance(registry, BackgroundWorkerRegistry):
         raise TypeError("app.state.background_workers must be a BackgroundWorkerRegistry")
+    if external_catalog:
+        registry.register(BackgroundWorkerSpec(name="llm.external-presence", run_once=external_catalog.run_once,
+            initial_delay_s=1.0, policy=BackoffPolicy.fixed(1.0)), replace=True)
     registry.register(BackgroundWorkerSpec(
         name="llm.relay-poll",
         run_once=lambda: bool(relay_once()),
@@ -2261,6 +2368,79 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             await asyncio.to_thread(refresh_publication)
         return saved
 
+    @app.get("/api/local/llm/models/usage")
+    def get_models_usage(model_key: str = "", usage_key: str = "") -> dict[str, Any]:
+        snapshot = source_store.usage_store.read_cached()
+        target_key = model_key or usage_key
+        if target_key:
+            try:
+                canonical = normalize_model_key(target_key)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            return {
+                "model_key": canonical,
+                "usage_key": canonical,
+                "usage": source_store.usage_store.public_usage(canonical, snapshot=snapshot),
+            }
+        return {
+            "usage": {
+                key: source_store.usage_store.public_usage(key, snapshot=snapshot)
+                for key in sorted(snapshot.keys())
+            }
+        }
+
+    @app.post("/api/local/llm/models/usage/reset")
+    async def reset_model_usage_route(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        raw_key = body.get("model_key") or body.get("usage_key") if isinstance(body, dict) else None
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            raise HTTPException(400, "model_key_invalid")
+        scope = str(body.get("scope") or "all")
+        try:
+            canonical = normalize_model_key(raw_key)
+            policy = None
+            for record in source_store.read().values():
+                for m in record.get("models", []):
+                    if "local/" + source_store.model_service_id(record, m) == canonical:
+                        from . import model_settings
+                        policy = model_settings.effective(record, m)
+                        break
+            if canonical == "local/" + native_model.manifest.package_id:
+                native_model.policies.reset_daily(native_model.manifest.package_id)
+                native_pol = native_model.policies.current(native_model.manifest.package_id)
+                if native_pol:
+                    policy = native_pol.get("configuration")
+            updated = source_store.usage_store.reset_usage(canonical, scope=scope, policy=policy)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "model_key": canonical, "usage_key": canonical, "scope": scope, "usage": updated}
+
+    @app.put("/api/local/llm/models/usage/quota")
+    async def configure_model_quota_route(request: Request) -> dict[str, Any]:
+        body = await request.json()
+        raw_key = body.get("model_key") or body.get("usage_key") if isinstance(body, dict) else None
+        if not isinstance(body, dict) or not isinstance(raw_key, str) or not raw_key.strip():
+            raise HTTPException(400, "model_quota_request_invalid")
+        config = body.get("configuration")
+        if not isinstance(config, dict):
+            config = {
+                k: body[k]
+                for k in ("requests_per_day", "tokens_per_day", "shared_tokens_per_day")
+                if k in body
+            }
+        try:
+            canonical = normalize_model_key(raw_key)
+            updated = source_store.usage_store.configure_quota(canonical, config)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "ok": True,
+            "model_key": canonical,
+            "usage_key": canonical,
+            "quota": updated.get("quota"),
+            "usage": updated,
+        }
+
     @app.delete("/api/local/llm/sources/{source_id}")
     def delete_source(source_id: str):
         was_shared = source_store.read().get(source_id, {}).get("sharing", False)
@@ -2420,6 +2600,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
 
         configured = read_cli_settings()
         active = active_cli_managers()
+        usage_snapshot = source_store.usage_store.read_cached()
         values = []
         for kind, title, _executable in (
             ("codex_cli", "Codex CLI", "codex"),
@@ -2428,13 +2609,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         ):
             entry = configured.get(kind) or {}
             current = active.get(kind)
+            sid = current.manifest.package_id if current else ""
             values.append({"kind": kind, "title": title,
                            "installed": bool(CLIAgentAdapter(kind).health().get("ok")),
                            "configured": current is not None,
                            "publication_enabled": bool(entry.get("publication_enabled")),
                            "online": bool(current and current.adapter.health().get("ok")),
                            "api_text_only": kind == "claude_cli",
-                           "service_id": current.manifest.package_id if current else ""})
+                           "service_id": sid,
+                           "usage": source_store.usage_store.public_usage(
+                               "local/" + (sid or kind.replace("_", "-")), snapshot=usage_snapshot
+                           )})
         space_status = store.personal_space.status()
         return {"services": values,
                 "personal_space_required": True,
@@ -2450,7 +2635,20 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             current = active_cli_managers().get(kind)
             values = (await asyncio.to_thread(current.cli_models) if current is not None else
                       await asyncio.to_thread(list_models, kind, CLIAgentAdapter(kind)._command_path()))
-            return {"models": values}
+            sid = current.manifest.package_id if current is not None else kind.replace("_", "-")
+            usage_snapshot = source_store.usage_store.read_cached()
+            models_with_usage = [
+                {
+                    **m,
+                    "usage": source_store.usage_store.public_usage(
+                        f"local/{sid}/model/{m['id']}", snapshot=usage_snapshot
+                    ),
+                }
+                if isinstance(m, dict) and m.get("id")
+                else m
+                for m in values
+            ]
+            return {"models": models_with_usage}
         except (AdapterError, OSError) as exc:
             raise HTTPException(503, str(exc)) from exc
 
@@ -2897,9 +3095,12 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             with terminal_commit_lock:
                 if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
                     return {"task_id": task_id, "state": "cancelled"}
+                cached = cached_input_tokens(result)
                 response = {"task_id": task_id, "state": "succeeded", **metadata,
                             "model_alias": current.manifest.public_model_alias,
-                            "output": result["text"], **actual_usage(result), "reported_usage": actual_usage(result),
+                            "output": result["text"], **actual_usage(result),
+                            **({"cached_tokens": cached} if cached is not None else {}),
+                            "reported_usage": actual_usage(result),
                             "usage_complete": all(value is not None for value in actual_usage(result).values()),
                             "amount": 0.0, "billing_status": "own_request", "billing_basis": "own_request",
                             "duration_ms": result["duration_ms"]}
@@ -2920,13 +3121,19 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 if committed.get("state") != "succeeded":
                     return local_llm_order_status(task_id)
                 return response
-        except Exception:
+        except Exception as exc:
+            error_code = (
+                exc.code
+                if isinstance(exc, AdapterError)
+                and exc.code in {"model_daily_quota_exhausted", "model_configuration_changed", "runtime_busy"}
+                else "local_cli_failed"
+            )
             with terminal_commit_lock:
                 if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
                     return {"task_id": task_id, "state": "cancelled"}
                 consumer_orders.transition(task_id=task_id, state="failed",
-                                           metadata={**metadata, "error_code": "local_cli_failed"})
-                return {"task_id": task_id, "state": "failed", "error_code": "local_cli_failed"}
+                                           metadata={**metadata, "error_code": error_code})
+                return {"task_id": task_id, "state": "failed", "error_code": error_code}
         finally:
             with current._lock:
                 current._running -= 1
@@ -2963,9 +3170,22 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if local and (local.manifest.adapter in {"codex_cli", "claude_cli", "antigravity_cli"} or service_id in active_source_managers()):
                 return await execute_local_cli(body, local, prompt, max_tokens, chat)
         records = await asyncio.to_thread(discover, network_id)
+        external_resource = resource_of(body.get("expected_model_binding"))
         selected = next((item for item in records
                          if item.get("peer_id") == provider_peer_id
-                         and dict(item.get("service") or {}).get("package_id") == service_id), None)
+                          and dict(item.get("service") or {}).get("package_id") == service_id
+                          and item.get("provider_resource", "") == external_resource), None)
+        if external_resource:
+            if selected is None or peer_providers is None or body.get("ai_permission") is not None:
+                raise HTTPException(403, "peer_provider_access_denied")
+            try:
+                await peer_providers.authorize(external_resource, store.peer_id, provider_peer_id, "model.invoke", service_id)
+            except Exception:
+                raise HTTPException(403, "peer_provider_access_denied") from None
+            body["external_permission"] = {"resource": external_resource}
+            selected["online"] = await asyncio.to_thread(external_catalog.refresh, selected)
+        elif "external_permission" in body:
+            raise HTTPException(403, "peer_provider_access_denied")
         if selected and (selected.get("ready") is False or dict(selected.get("health") or {}).get("ok") is False):
             health_code = dict(selected.get("health") or {}).get("error_code")
             code = health_code if isinstance(health_code, str) and health_code in RUNTIME_ERROR_CODES else "service_unhealthy"
@@ -3091,6 +3311,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             **({"cli_model": cli_model} if cli_model else {}),
             **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
             **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
+            **({"external_permission": body["external_permission"]} if external_resource else {}),
             **({"expected_model_binding": body["expected_model_binding"]} if "expected_model_binding" in body else {}),
             **({"conversation_key": conversation_key} if conversation_key else {}),
             "max_tokens": max_tokens,
@@ -3103,6 +3324,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             "service_id": service_id,
             "idempotency_key": idempotency_key,
             "request_fingerprint": request_fingerprint,
+            **({"provider_resource": external_resource} if external_resource else {}),
         }
         try:
             existing, claimed = consumer_orders.claim(task_id=task_id, bindings=bindings)
@@ -3145,6 +3367,38 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                           "reason": "consumer_cancelled_before_start"},
             )
             return {"task_id": task_id, "state": "cancelled"}
+        peer_model_key: str | None = None
+        peer_child_key: str | None = None
+        if provider_peer_id != store.peer_id:
+            peer_digest = hashlib.sha256(provider_peer_id.encode()).hexdigest()
+            peer_model_key = f"peer/{peer_digest}/{service_id}"
+            peer_child_key = f"{peer_model_key}/model/{cli_model}" if cli_model else None
+            try:
+                if peer_child_key:
+                    source_store.usage_store.check_quota(peer_child_key, caller="self")
+                source_store.usage_store.admit_and_record_dispatch(peer_model_key, caller="self", task_id=task_id)
+                if peer_child_key:
+                    source_store.usage_store.admit_and_record_dispatch(
+                        peer_child_key, caller="self", task_id=task_id, enforce_quota=False
+                    )
+            except AdapterError as exc:
+                if exc.code == "model_daily_quota_exhausted":
+                    consumer_orders.transition(
+                        task_id=task_id,
+                        state="failed",
+                        metadata={
+                            "provider_peer_id": provider_peer_id,
+                            "service_id": service_id,
+                            "error_code": "model_daily_quota_exhausted",
+                        },
+                    )
+                    return {
+                        "task_id": task_id,
+                        "service_id": service_id,
+                        "state": "failed",
+                        "error_code": "model_daily_quota_exhausted",
+                    }
+                raise
         try:
             balance.hold(task_id=task_id, amount=maximum, service_id=service_id,
                          provider_peer_id=provider_peer_id, idempotency_key=idempotency_key,
@@ -3166,6 +3420,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     **({"cli_model": cli_model} if cli_model else {}),
                     **({"prompt_format": prompt_format} if prompt_format != "text" else {}),
                     **({"ai_permission": body["ai_permission"]} if "ai_permission" in body else {}),
+                    **({"external_permission": body["external_permission"]} if external_resource else {}),
                     **({"expected_model_binding": body["expected_model_binding"]} if "expected_model_binding" in body else {}),
                     **({"conversation_key": conversation_key} if conversation_key else {}),
                     "max_amount": maximum,
@@ -3264,8 +3519,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 nonlocal sequence
                 from rynmesh.peer_http import HttpPeerClient
 
+                from .external_transport import ExternalPeerTransport
+
                 client = HttpPeerClient(
                     endpoint, timeout_s=manifest.timeout_seconds + 30,
+                    **({"transport": ExternalPeerTransport()} if external_resource else {}),
                 )
                 verifier = StreamSequenceVerifier(
                     task_id=task_id,
@@ -3314,8 +3572,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             direct_endpoints = [*lan_endpoints, None] if transport_mode in {"auto", "direct"} else []
             if prefer_lan:
                 direct_endpoints = lan_endpoints
+            if external_resource and transport_mode in {"auto", "direct", "p2p"}:
+                # Provider endpoints remain untrusted locators. The hello and
+                # every response are checked against the selected node key.
+                direct_endpoints = list(dict.fromkeys([*selected.get("endpoints", []), *lan_endpoints]))
             if transport_mode == "auto" and ai_connections.has_session(network_id + ":" + provider_peer_id):
-                direct_endpoints = []
+                if not external_resource:
+                    direct_endpoints = []
             tried_endpoints: set[str] = set()
             for endpoint in direct_endpoints:
                 is_lan = endpoint is not None
@@ -3338,14 +3601,17 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     if stream_direct:
                         encrypted_response = await asyncio.to_thread(_consume_direct_stream)
                     elif chat and chat.get("stream"):
+                        from .external_transport import response as external_response
                         encrypted_response = await asyncio.to_thread(
                             peer_stream, endpoint + "/api/peer/llm/tasks/stream", signed.to_dict(),
                             timeout_s=manifest.timeout_seconds + 30, on_event=receive_event,
+                            **({"response_factory": external_response} if external_resource else {}),
                         )
                     else:
                         encrypted_response = await asyncio.to_thread(
                             _peer_post_json, endpoint, "/api/peer/llm/tasks",
                             signed.to_dict(), timeout_s=manifest.timeout_seconds + 30,
+                            **({"external": True} if external_resource else {}),
                         )
                     _open_provider_response(
                         encrypted_response, recipient_peer_id=store.peer_id, messaging_key=messaging_key,
@@ -3441,6 +3707,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if encrypted_response is None and transport_mode == "direct":
                 raise TaskProtocolError("strict direct provider path failed") from direct_error
             if encrypted_response is None:
+                if external_resource:
+                    raise TaskProtocolError("peer_provider_direct_path_failed") from direct_error
                 if chat and chat.get("stream"):
                     raise TaskProtocolError("streaming direct path failed; buffered relay is not supported") from direct_error
                 relay_url = os.environ.get("RYNMESH_LLM_RELAY_URL", "").strip()
@@ -3486,6 +3754,11 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 task_id=task_id,
                 provider_peer_id=provider_peer_id, service_id=service_id,
             )
+            if external_resource:
+                try:
+                    await peer_providers.authorize(external_resource, store.peer_id, provider_peer_id, "model.invoke", service_id)
+                except Exception:
+                    raise TaskProtocolError("peer_provider_access_denied") from None
             with terminal_commit_lock:
                 if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
                     return {"task_id": task_id, "service_id": service_id, "state": "cancelled",
@@ -3497,6 +3770,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 result["transport_evidence"] = transport_evidence
                 result["connection_attempts"] = list(attempts)
                 if state != "succeeded":
+                    if peer_model_key:
+                        source_store.usage_store.record_completion(
+                            peer_model_key, result=None, caller="self", state="failed", task_id=task_id
+                        )
+                    if peer_child_key:
+                        source_store.usage_store.record_completion(
+                            peer_child_key, result=None, caller="self", state="failed", task_id=task_id
+                        )
                     balance.release(task_id=task_id, reason=str(result.get("error_code") or state))
                     retention = 0 if body.get("_no_retention") else response_retention()
                     committed = consumer_orders.transition(
@@ -3524,6 +3805,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 retention = 0 if body.get("_no_retention") else response_retention()
                 counts = actual_usage(result)
                 result.update(**counts, reported_usage=counts)
+                if peer_model_key:
+                    source_store.usage_store.record_completion(
+                        peer_model_key, result=result, caller="self", state="succeeded", task_id=task_id
+                    )
+                if peer_child_key:
+                    source_store.usage_store.record_completion(
+                        peer_child_key, result=result, caller="self", state="succeeded", task_id=task_id
+                    )
                 usage_complete = all(value is not None for value in counts.values())
                 billing_pending = result.get("amount") is None or (not usage_complete and not own_request)
                 if billing_pending:
@@ -3565,6 +3854,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                 provider_peer_id=provider_peer_id, service_id=service_id,
                 amount=float(result["amount"]), network_id=network_id,
                 endpoint=endpoint if transport_evidence.get("transport") == "peer_http_direct" else "",
+                **({"external": True} if external_resource else {}),
             )
             if settlement_delivered:
                 consumer_orders.checkpoint(
@@ -3581,6 +3871,14 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             stream_broker.publish(task_id, {"event": "error", **result})
             return result
         except Exception as exc:
+            if peer_model_key:
+                source_store.usage_store.record_completion(
+                    peer_model_key, result=None, caller="self", state="failed", task_id=task_id
+                )
+            if peer_child_key:
+                source_store.usage_store.record_completion(
+                    peer_child_key, result=None, caller="self", state="failed", task_id=task_id
+                )
             error_code = _delivery_error_code(exc, transport=attempted_transport)
             with terminal_commit_lock:
                 if (consumer_orders.get(task_id) or {}).get("state") == "cancelled":
@@ -3890,12 +4188,20 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if current is not None and current.manifest.package_id == service_id:
                 current.cancel_signed(signed_cancel.to_dict())
             return {"task_id": task_id, "state": (consumer_orders.get(task_id) or {}).get("state")}
-        endpoint = resolve_provider_endpoint(provider_peer_id, cancellation=True)
+        external_resource = str(bindings.get("provider_resource") or "")
+        endpoint = ""
+        if external_resource and peer_providers:
+            candidates = [row for row in peer_providers.cached_peers()
+                          if row.get("provider_resource") == external_resource and row.get("peer_id") == provider_peer_id]
+            endpoint = next(iter(candidates[0].get("endpoints", [])), "") if candidates else ""
+        elif not external_resource:
+            endpoint = resolve_provider_endpoint(provider_peer_id, cancellation=True)
         if endpoint:
             try:
                 _peer_post_json(
                     endpoint, "/api/peer/llm/cancellations",
                     signed_cancel.to_dict(), timeout_s=5,
+                    **({"external": True} if external_resource else {}),
                 )
                 delivered = True
             except Exception:
@@ -3991,6 +4297,15 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     app.state.llm_provider = active_manager()
+    if peer_providers:
+        def provider_model_status():
+            from .peer_binding import valid
+            values = collect_services("rynmesh-main", cache_registry=True, local_only=True)
+            fields = ("service", "capacity", "model_binding", "chat_protocol", "tool_support", "delivery_protocols")
+            return [{key: row[key] for key in fields if key in row} for row in values
+                    if row.get("ready") and valid(row.get("model_binding"), row["service"]["package_id"])
+                    and row["service"].get("adapter") not in {"codex_cli", "claude_cli", "antigravity_cli"}]
+        peer_providers.model_status = provider_model_status
     # Trusted in-process integrations use the same services as owner inference.
     # No synthetic loopback requests, API keys, or provider-side Agent context.
     app.state.llm_agent_services = {
@@ -4004,11 +4319,13 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
         "discover_local": lambda network: collect_services(network, cache_registry=True, local_only=True),
         "discover_local_model": lambda network, service_id: collect_services(network, cache_registry=True, local_only=True, selected_service_id=service_id),
         "cancel_order": local_llm_cancel, "source_store": source_store,
+        "usage_store": source_store.usage_store,
         "active_manager": active_manager, "active_source_managers": active_source_managers,
         "active_cli_managers": active_cli_managers,
         "cli_services": local_cli_services, "probe_service_tools": probe_service_tools,
         "refresh_publication": refresh_publication,
         "space_catalog": space_catalog,
+        "external_catalog": external_catalog,
     }
     from .api import install_inference_api
 

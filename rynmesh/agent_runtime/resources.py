@@ -22,6 +22,7 @@ from .resource_documents import PDF_BYTES, pdf_text
 from .store import AgentReadFailure, AgentToolRejected
 
 PROTOCOLS = {"smb", "webdav", "baidu", "google", "onedrive"}
+CREATE_PROTOCOLS = {"smb", "webdav", "baidu"}
 FORMATS = {".txt", ".md", ".markdown", ".json", ".csv", ".tsv", ".log", ".yaml", ".yml", ".pdf"}
 
 
@@ -47,7 +48,7 @@ class ResourceTools:
         with plugin.lock:
             return {"connections": [{"connection_id": s["id"], "name": s["name"], "protocol": s["protocol"],
                      "enabled": plugin.state["enabled"], "allow_ai": bool(s.get("allow_ai")),
-                     "writable": bool(s.get("writable")), "create_supported": s["protocol"] in {"smb", "webdav"},
+                     "writable": bool(s.get("writable")), "create_supported": s["protocol"] in CREATE_PROTOCOLS,
                      "agent_supported": s["protocol"] in PROTOCOLS,
                      "reason": "" if s["protocol"] in PROTOCOLS else "Current ancestor verification is unavailable."}
                     for s in plugin.state["sources"]], "supported_formats": sorted(FORMATS)}
@@ -74,6 +75,55 @@ class ResourceTools:
         if self.nas.cipher is None:
             reject("agent_resources_unavailable")
         return self.nas.cipher.encrypt(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()).decode()
+
+    def _seal_deterministic(self, value, seed: str):
+        if self.nas.cipher is None:
+            reject("agent_resources_unavailable")
+        raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False, sort_keys=True).encode()
+        if hasattr(self.nas.cipher, "_encrypt_from_parts"):
+            iv = hashlib.sha256(seed.encode()).digest()[:16]
+            return self.nas.cipher._encrypt_from_parts(raw, 0, iv).decode()
+        return self._seal(value)
+
+    def default_scope(self, *, task_id, owner_id, consumer_node_id, model_destination, scope_revision=1):
+        plugin = getattr(self.app.state, "nas_plugin", None)
+        if plugin is None or not isinstance(model_destination, dict) or not model_destination.get("destination_revision"):
+            return {"resource_grants": [], "egress_grants": []}
+        grants = []
+        with plugin.lock:
+            if not plugin.state.get("enabled"):
+                return {"resource_grants": [], "egress_grants": []}
+            for source in plugin.state.get("sources", []):
+                if source.get("protocol") != "baidu" or not source.get("allow_ai"):
+                    continue
+                generation = self._generation(source)
+                seed = f"default:{task_id}:{scope_revision}:{owner_id}:{consumer_node_id}:{source['id']}:{generation}"
+                grant_id = hashlib.sha256(seed.encode()).hexdigest()[:32]
+                actions = ["list", "read_ai", "create_file", "create_directory"] if source.get("writable") else ["list", "read_ai"]
+                grant = {
+                    "grant_id": grant_id,
+                    "connection_id": source["id"],
+                    "connection_access_generation": generation,
+                    "actions": sorted(actions),
+                    "recursive": True,
+                    "root_kind": "directory",
+                    "byte_limit": 256 * 1024,
+                    "document_byte_limit": PDF_BYTES,
+                    "allowed_formats": sorted(FORMATS),
+                }
+                grant["root_resource_ref"] = self._seal_deterministic({
+                    "grant_id": grant_id,
+                    "path": "",
+                    "owner_id": owner_id,
+                    "consumer_node_id": consumer_node_id,
+                    "directory": True,
+                }, seed)
+                grants.append(grant)
+        return {
+            "resource_grants": grants,
+            "egress_grants": [{"destination": copy.deepcopy(model_destination),
+                               "origin_grant_ids": [g["grant_id"] for g in grants]}] if grants else [],
+        }
 
     def _open(self, reference):
         try:
@@ -144,7 +194,7 @@ class ResourceTools:
             with self.nas.lock:
                 source = self._source(row.get("connection_id"))
                 if set(actions) & {"create_file", "create_directory"}:
-                    if source["protocol"] not in {"smb", "webdav"}:
+                    if source["protocol"] not in CREATE_PROTOCOLS:
                         reject("agent_resource_create_backend_unsupported")
                     if not source.get("writable"):
                         reject("agent_resource_read_only")

@@ -139,7 +139,10 @@ class CraftTools:
             session["process"].close()
             del self.sessions[key]
             # An existing task must explicitly discover a new session after loss.
-            raise AgentToolRejected("agent_craft_session_expired_reopen_saved_file")
+            raise AgentToolRejected(
+                "agent_craft_session_expired_reopen_saved_file",
+                correction=f"The headless '{app}' document session expired or closed. Call {TOOLS}(app='{app}') first to start a fresh session, then reopen any saved file.",
+            )
         if session:
             return session
         if len(self.sessions) >= 16:
@@ -186,15 +189,76 @@ class CraftTools:
         process = session["process"]
         return process.closed.is_set() or process.failure is not None or process.process.poll() is not None
 
+    @staticmethod
+    def _compact_schema(schema):
+        if not isinstance(schema, dict):
+            return {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
+        props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        compact_props = {
+            k: {pk: pv for pk, pv in v.items() if pk in ("type", "enum", "items", "required", "properties")}
+            if isinstance(v, dict) else {}
+            for k, v in props.items()
+        }
+        return {
+            "type": "object",
+            "properties": compact_props,
+            "required": list(schema.get("required") or []),
+            "additionalProperties": False,
+        }
+
+    @staticmethod
+    def _normalize_arg_keys(schema, args):
+        if not isinstance(args, dict) or not isinstance(schema, dict):
+            return args
+        props = schema.get("properties")
+        if not isinstance(props, dict) or not props:
+            return args
+        out = copy.deepcopy(args)
+        semantic_aliases = {
+            "text": "query",
+            "query": "text",
+            "file": "path",
+            "file_path": "path",
+            "filepath": "path",
+            "bg_color": "fillColor",
+            "background_color": "fillColor",
+        }
+        for key in list(out.keys()):
+            if key in props or not isinstance(key, str):
+                continue
+            camel = "".join(part.capitalize() if idx else part for idx, part in enumerate(key.split("_")))
+            snake = "".join(("_" + ch.lower()) if ch.isupper() else ch for ch in key).lstrip("_")
+            target = (
+                camel if camel in props
+                else snake if snake in props
+                else semantic_aliases.get(key) if semantic_aliases.get(key) in props
+                else None
+            )
+            if target and target not in out:
+                out[target] = out.pop(key)
+        return out
+
     def _arguments(self, app, tool, args, session, context):
         from ..llm_package.chat import validate_tool_arguments
 
         if tool not in session["tools"] or len(encoded(args)) > 64000:
-            raise AgentToolRejected("agent_craft_tool_not_supported")
+            supported = sorted(session["tools"].keys())
+            raise AgentToolRejected(
+                "agent_craft_tool_not_supported",
+                correction=f"Tool '{tool}' is not supported by '{app}'. Supported tools: {', '.join(supported)}.",
+                details={"app": app, "tool": tool, "supported_tools": supported},
+            )
+        schema = session["tools"][tool]["inputSchema"]
+        args = self._normalize_arg_keys(schema, args)
         try:
-            validate_tool_arguments(session["tools"][tool]["inputSchema"], args)
+            validate_tool_arguments(schema, args)
         except ValueError:
-            raise AgentToolRejected("agent_tool_arguments_invalid") from None
+            compact = self._compact_schema(schema)
+            raise AgentToolRejected(
+                "agent_tool_arguments_invalid",
+                correction=f"Invalid arguments for '{app}.{tool}'. Expected inputSchema: {json.dumps(compact, ensure_ascii=False)[:1200]}",
+                details={"app": app, "tool": tool, "required": compact["required"], "properties": list(compact["properties"])},
+            ) from None
         args = copy.deepcopy(args)
         inputs, outputs = [], []
         for field in INPUT_FIELDS.get((app, tool), ()):
@@ -210,7 +274,10 @@ class CraftTools:
         if (app, tool) in OUTPUT_TOOLS:
             path = self.local.path(args["path"], context)
             if path.exists() or not path.parent.is_dir():
-                raise AgentToolRejected("agent_craft_new_output_path_required")
+                raise AgentToolRejected(
+                    "agent_craft_new_output_path_required",
+                    correction="Saves in Ryn Craft require a NEW output file path inside an existing workspace directory and never overwrite existing files. Specify a new filename.",
+                )
             if path.suffix.lower() not in OUTPUT_FORMATS[app]:
                 raise AgentToolRejected("agent_craft_output_format_unsupported")
             if app == "deckcraft" and args.get("format") and args["format"] != path.suffix.lower()[1:]:
@@ -233,7 +300,11 @@ class CraftTools:
             with self.manager.lease(app):
                 session = self._session(app, context, lambda: False)
                 if args["tool"] not in ACTION_TOOLS[app]:
-                    raise AgentToolRejected("agent_craft_action_required")
+                    exec_tool = READ if args["tool"] in READ_TOOLS[app] else TOOLS
+                    raise AgentToolRejected(
+                        "agent_craft_action_required",
+                        correction=f"Tool '{args['tool']}' is not an action tool for '{app}'. Use {exec_tool} instead.",
+                    )
                 normalized, inputs, outputs = self._arguments(app, args["tool"], args["arguments"], session, context)
                 return {"title": "Use Ryn application document", "app": app, "version": CRAFT[app]["tag"],
                         "session_id": session["id"], "session_revision": session["revision"], "generation": session["generation"],
@@ -389,17 +460,28 @@ class CraftTools:
                             definitions = session["tools"]
                             if args.get("tool"):
                                 if args["tool"] not in definitions:
-                                    raise AgentToolRejected("agent_craft_tool_not_supported")
+                                    supported = sorted(definitions.keys())
+                                    raise AgentToolRejected(
+                                        "agent_craft_tool_not_supported",
+                                        correction=f"Tool '{args['tool']}' is not supported by '{app}'. Supported tools: {', '.join(supported)}.",
+                                        details={"app": app, "tool": args["tool"], "supported_tools": supported},
+                                    )
                                 tools = [definitions[args["tool"]]]
                             else:
                                 tools = [{"name": item["name"], "description": item.get("description", "")[:180],
-                                          "execution_tool": READ if item["name"] in READ_TOOLS[app] else ACTION}
+                                          "execution_tool": READ if item["name"] in READ_TOOLS[app] else ACTION,
+                                          "inputSchema": self._compact_schema(item.get("inputSchema"))}
                                          for item in definitions.values()]
                             return {"app": app, "ready": True, "session_id": session["id"], "tools": tools,
                                     "session_kind": "task_headless_document", "saves_require_new_path": True,
                                     "unsaved_editor_window_access": False}
                         if args["tool"] not in READ_TOOLS[app]:
-                            raise AgentToolRejected("agent_craft_read_only_tool_required")
+                            exec_tool = ACTION if args["tool"] in ACTION_TOOLS[app] else TOOLS
+                            raise AgentToolRejected(
+                                "agent_craft_read_only_tool_required",
+                                correction=f"Tool '{args['tool']}' is not a read-only tool for '{app}'. Use {exec_tool} instead (or call {TOOLS}(app='{app}') to list read/action tools).",
+                                details={"app": app, "tool": args["tool"], "read_tools": sorted(READ_TOOLS[app])},
+                            )
                         normalized, _, _ = self._arguments(app, args["tool"], args["arguments"], session, context)
                         result = self._aliases(data_result(session["process"].tools_call(args["tool"], normalized, cancelled=cancelled)),
                                                session.get("path_aliases", {}))

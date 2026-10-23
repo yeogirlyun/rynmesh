@@ -7,10 +7,12 @@ import time
 from typing import Any, Callable
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from ..diagnostic_log import failure
 from ..store import AgentError
 from .adapter import ExtensionToolAdapter
+from .views import query_view
 
 
 def _error_status(code: str) -> int:
@@ -113,7 +115,7 @@ def install_extension_routes(
         local_control(request)
         return await _run(
             "overview",
-            lambda: extensions.store.overview(desktop_access=_desktop_access()),
+            lambda: extensions.overview(desktop_access=_desktop_access()),
         )
 
     @app.post("/api/local/agent/extensions/mcp/servers")
@@ -129,6 +131,23 @@ def install_extension_routes(
             )
 
         return await _run("create_mcp_server", _op)
+
+    @app.get("/api/local/agent/extensions/model-availability")
+    async def extension_model_availability(request: Request):
+        local_control(request)
+        model_id = request.query_params.get("model_id", "")
+        if not model_id or len(model_id) > 2048:
+            raise HTTPException(400, detail="agent_invalid_request")
+        return await _run("model_availability", lambda: runtime.extension_model_availability(model_id))
+
+    @app.post("/api/local/agent/extensions/mcp/servers/{server_id}/apply-server-hints")
+    async def apply_server_hints(server_id: str, request: Request):
+        payload = await _body(request, 128 * 1024)
+        def operation():
+            result = extensions.store.apply_server_hints(server_id, payload, desktop_access=_desktop_access())
+            extensions.manager.invalidate_server(server_id)
+            return result
+        return await _run("apply_server_hints", operation)
 
     @app.patch("/api/local/agent/extensions/mcp/servers/{server_id}")
     async def update_mcp_server(server_id: str, request: Request):
@@ -152,14 +171,55 @@ def install_extension_routes(
         expected_rev = await _delete_revision(request)
 
         def _op():
+            previous = extensions.store.get_mcp_server_internal(server_id)
             result = extensions.store.delete_mcp_server(
                 server_id,
                 expected_revision=expected_rev,
             )
             extensions.manager.invalidate_server(server_id)
+            oauth = getattr(extensions.manager, "oauth", None)
+            if oauth is not None and previous:
+                oauth.forget(previous["instance_id"])
             return result
 
         return await _run("delete_mcp_server", _op)
+
+    @app.post("/api/local/agent/extensions/mcp/servers/{server_id}/oauth/login")
+    async def start_mcp_login(server_id: str, request: Request):
+        payload = await _body(request, 16384)
+        return await _run("oauth_login", lambda: extensions.manager.oauth.start_login(
+            server_id, _parse_expected_revision(payload.get("expected_revision")),
+            language="zh" if str(payload.get("language", "zh")).startswith("zh") else "en"))
+
+    @app.get("/api/local/agent/extensions/mcp/servers/{server_id}/oauth/login/{auth_id}")
+    async def get_mcp_login(server_id: str, auth_id: str, request: Request):
+        local_control(request)
+        return await _run("oauth_status", lambda: extensions.manager.oauth.login_status(server_id, auth_id))
+
+    @app.post("/api/local/agent/extensions/mcp/servers/{server_id}/oauth/login/{auth_id}/cancel")
+    async def cancel_mcp_login(server_id: str, auth_id: str, request: Request):
+        local_control(request)
+        return await _run("oauth_cancel", lambda: extensions.manager.oauth.cancel_login(server_id, auth_id))
+
+    @app.post("/api/local/agent/extensions/mcp/servers/{server_id}/oauth/logout")
+    async def logout_mcp(server_id: str, request: Request):
+        payload = await _body(request, 16384)
+        def operation():
+            result = extensions.manager.oauth.logout(server_id, _parse_expected_revision(payload.get("expected_revision")))
+            extensions.manager.invalidate_server(server_id)
+            return result
+        return await _run("oauth_logout", operation)
+
+    @app.post("/api/local/agent/extensions/mcp/oauth/clear-local-authorizations")
+    async def clear_mcp_authorizations(request: Request):
+        payload = await _body(request, 16384)
+        if payload.get("confirm") is not True:
+            raise HTTPException(400, "agent_confirmation_required")
+        def operation():
+            extensions.manager.oauth.clear_all()
+            extensions.manager.close()
+            return {"cleared": True}
+        return await _run("oauth_clear", operation)
 
     @app.post("/api/local/agent/extensions/mcp/servers/{server_id}/test")
     async def test_mcp_server(server_id: str, request: Request):
@@ -205,6 +265,13 @@ def install_extension_routes(
             lambda: extensions.manager.clear_app_data(desktop_access=_desktop_access()),
         )
 
+    @app.post("/api/local/agent/extensions/plugins/{plugin_id}/views/{view_id}/query")
+    async def query_plugin_view(plugin_id: str, view_id: str, request: Request):
+        payload = await _body(request, 16 * 1024)
+        result = await _run("query_plugin_view", lambda: query_view(
+            extensions.store, extensions.manager, plugin_id, view_id, payload))
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     @app.patch("/api/local/agent/extensions/plugins/{plugin_id}")
     async def update_plugin(plugin_id: str, request: Request):
         payload = await _body(request)
@@ -230,12 +297,18 @@ def install_extension_routes(
         expected_rev = await _delete_revision(request)
 
         def _op():
+            previous = [server for server in extensions.store.list_mcp_servers_internal()
+                        if server.get("plugin_id") == plugin_id]
             result = extensions.store.delete_plugin(
                 plugin_id,
                 expected_revision=expected_rev,
             )
             for mid in result.get("removed_mcp_server_ids") or []:
                 extensions.manager.invalidate_server(mid)
+            oauth = getattr(extensions.manager, "oauth", None)
+            if oauth is not None:
+                for server in previous:
+                    oauth.forget(server["instance_id"])
             return result
 
         return await _run("delete_plugin", _op)

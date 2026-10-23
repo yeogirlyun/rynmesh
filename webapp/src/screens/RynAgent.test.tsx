@@ -211,6 +211,7 @@ it.each(["unknown", "unsupported"] as const)("sends a configured CLI model direc
 });
 
 beforeEach(() => {
+  server.use(http.get("*/api/local/agent/extensions/model-availability", () => HttpResponse.json({ servers: [] })));
   sessionStorage.clear();
   localStorage.clear();
   agentTaskCache().clear();

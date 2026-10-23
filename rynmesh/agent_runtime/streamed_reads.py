@@ -140,7 +140,7 @@ class StreamedReads:
         if call.get("computer_access") or meta.get("computer_access") or (call.get("extension_binding") or {}).get("computer_access"):
             if not data["settings"].get("desktop_access") or not (row.get("local_execution") or {}).get("desktop_access"):
                 return None
-        spec = next((item["function"] for item in self.runtime.tools.specs()
+        spec = next((item["function"] for item in self.runtime._business_specs(row)
                      if item["function"]["name"] == call["name"]), None)
         assert_schema_unchanged(call, spec)
         validate(call["arguments"], spec["parameters"])

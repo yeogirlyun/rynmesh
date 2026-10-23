@@ -1363,7 +1363,9 @@ class CodeModeRunner:
         enabled_tools: list[dict[str, str]] = []
         desktop_enabled = bool(((context or {}).get("local_execution") or {}).get("desktop_access"))
 
-        for spec in self.parent_tools.specs():
+        specs = (self.parent_tools.specs(context=context)
+                 if getattr(self.parent_tools, "supports_model_context", False) is True else self.parent_tools.specs())
+        for spec in specs:
             fn = spec.get("function") or {}
             t_name = str(fn.get("name") or "")
             if not t_name or t_name == NAME:

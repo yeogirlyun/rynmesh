@@ -22,7 +22,7 @@ SYSTEM = (
     "Batch independent reads/searches (up to eight calls or via ryn_code_exec) and combine related edits in one ryn_apply_patch call. "
     "Use ryn_discover_tools with query (BM25 search) or load to activate needed tools in one step. "
     "For background processes, drain output with next_offset and use ryn_process_read with wait_seconds at offset=output_length instead of empty polling. "
-    "For Ryn internal document plugins (PdfCraft/WordCraft/SheetCraft), use ryn_list_plugins first; for OS desktop applications (e.g. WeChat, WeCom/WXWork, Zoom) when desktop_access is enabled, use computer_observe_windows -> computer_read_window -> computer_act_window directly without calling ryn_list_plugins or ryn_project_inspect. "
+    "For Ryn internal document plugins (PdfCraft/WordCraft/SheetCraft), use ryn_list_plugins first; for OS desktop applications (e.g. WeChat, Zoom) when desktop_access is enabled, use computer_observe_windows -> computer_read_window -> computer_act_window directly without calling ryn_list_plugins or ryn_project_inspect. "
     "Explicit requests for OS-installed software may use shell. "
     "Use ryn_file_search and ryn_file_read before editing; give ryn_apply_patch unique context lines and exact indentation, and use tool error details/corrections to fix rejected calls without repeating them. "
     "Prefer local workspace search/read for project code; for external documentation or current web facts, use read-only ryn_web_search (queries, open by ref_id, find in page) without launching a browser. "
@@ -127,7 +127,10 @@ def authority(row: dict) -> str:
     context["file_output_policy"] = (
         "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); binary files use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
-        "Use the supplied workspace without asking for a folder.")
+        "Use the supplied workspace without asking for a folder."
+        + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
+           if (row.get("scope") or {}).get("resource_grants") else "")
+    )
     permissions = permission_projection(row)
     if permissions:
         context["operation_permissions"] = permissions

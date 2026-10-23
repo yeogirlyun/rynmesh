@@ -249,10 +249,12 @@ def _digest(path: Path):
 
 
 def final_text(row) -> str:
-    """The latest answer the owner sees; internal review prompts are not answers."""
+    """The latest answer the owner sees in the current turn; internal review prompts are not answers."""
     if row.get("result"):
         return row["result"]
     for message in reversed(row.get("messages", [])):
+        if message.get("role") == "user":
+            break
         if message.get("role") == "assistant" and message.get("content") and not message.get("tool_calls") \
                 and (message.get("ui") or {}).get("kind") != "change_review":
             return message["content"]
@@ -271,7 +273,7 @@ def _turn_answers(row) -> dict[int, str]:
               and (message.get("ui") or {}).get("kind") not in {"change_review", "verification_feedback"}):
             by_turn.setdefault(max(0, turn_idx), []).append(message["content"])
     latest_turn = max(0, turn_idx)
-    if row.get("result"):
+    if row.get("result") and not any(row["result"] in parts for parts in by_turn.values()):
         existing = by_turn.setdefault(latest_turn, [])
         if row["result"] not in existing:
             existing.append(row["result"])
@@ -393,17 +395,7 @@ def listing(row) -> dict:
     # Deliverables first, then most recently updated; the sorts are stable.
     items.sort(key=lambda item: item["updated_at"] or "", reverse=True)
     items.sort(key=lambda item: (item["role"] != "deliverable", item["status"] == "missing"))
-    known = {item["name"].casefold() for item in items}
-    unbacked = []
-    mention_text = answer
-    # Mask full known names first, including spaces and parentheses in office filenames.
-    for item in items:
-        mention_text = re.sub(re.escape(item["name"]), lambda match: " " * len(match.group()), mention_text, flags=re.IGNORECASE)
-    for match in MENTION.finditer(mention_text):
-        name = Path(match.group(1).strip().replace("\\", "/")).name
-        if name.casefold() not in known and name not in unbacked:
-            unbacked.append(name)
-    return {"files": items, "unbacked_mentions": unbacked[:8]}
+    return {"files": items, "unbacked_mentions": []}
 
 
 def location(row, file_id) -> Path:

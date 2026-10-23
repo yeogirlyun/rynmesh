@@ -10,6 +10,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Any
 
+from .data_policy import memory_blocked
 from .protocol import digest, sanitized
 from .store import AgentError, encoded
 
@@ -55,6 +56,8 @@ _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "profile": ("个人", "身份", "职业", "技能", "特长", "擅长", "语言", "背景", "profile", "identity", "role", "skill", "language", "background"),
     "preference": ("偏好", "喜好", "爱好", "喜欢", "习惯", "风格", "倾向", "preference", "prefer", "hobby", "interest", "like", "style", "habit"),
     "environment": ("环境", "设备", "电脑", "系统", "软件", "工具", "编辑器", "终端", "配置", "硬件", "environment", "device", "system", "os", "tool", "editor", "setup", "config", "hardware"),
+    "equipment": ("设备", "器材", "机身", "相机", "镜头", "拍摄", "摄影", "equipment", "gear", "camera", "lens", "device", "hardware"),
+    "photography": ("摄影", "拍摄", "拍照", "人像", "风光", "相机", "机身", "镜头", "器材", "photography", "photo", "portrait", "camera", "lens"),
     "workflow": ("工作流", "习惯", "流程", "代码", "测试", "规范", "约定", "workflow", "process", "habit", "testing", "convention"),
     "project": ("项目", "仓库", "架构", "模块", "构建", "目录", "project", "repo", "architecture", "module", "build", "workspace"),
 }
@@ -706,6 +709,8 @@ def verify_source_ref_against_state(
     row = tasks.get(task_id)
     if not isinstance(row, dict):
         return False, "source_task_missing"
+    if memory_blocked(row):
+        return False, "source_data_policy_denied"
 
     relearn_epoch = int((fences.get("relearn_tasks") or {}).get(task_id, -1))
     reset_boundaries = fences.get("reset_task_boundaries") or {}
@@ -1621,6 +1626,31 @@ def reset_memory(
         return _save_idempotency(mem, client_request_id, cached, result)
 
 
+def invalidate_task_policy_in_tx(data: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Retire outstanding memory writes in the same transaction as task restriction."""
+    if not memory_blocked(row) or not row.get("id"):
+        return False
+    mem = data.get("memory")
+    if not isinstance(mem, dict):
+        return False
+    changed = False
+    now = _now()
+    for job in (mem.get("jobs") or {}).values():
+        if isinstance(job, dict) and job.get("task_id") == row["id"] and job.get("state") in {"queued", "leased", "extracted"}:
+            job.update(state="stale", error_code="source_data_policy_denied", updated_at=now, lease_until=0)
+            changed = True
+    for candidate in (mem.get("candidates") or {}).values():
+        if isinstance(candidate, dict) and candidate.get("status") == "pending" and any(
+            isinstance(source, dict) and source.get("task_id") == row["id"] for source in candidate.get("sources") or []
+        ):
+            candidate.update(status="stale", stale_reason="source_data_policy_denied", updated_at=now,
+                             revision=int(candidate.get("revision", 0)) + 1)
+            changed = True
+    if changed:
+        mem["generation"] = int(mem.get("generation", 0)) + 1
+    return changed
+
+
 def enqueue_extraction_job(
     data: dict[str, Any],
     *,
@@ -1635,6 +1665,8 @@ def enqueue_extraction_job(
         row = tasks.get(task_id)
         if not isinstance(row, dict):
             raise AgentError("agent_not_found")
+        if memory_blocked(row):
+            return {"queued": False, "reason": "source_data_policy_denied", "reset_epoch": mem["reset_epoch"]}
         if row.get("archived") and not force_relearn:
             raise AgentError("agent_memory_source_archived")
         if task_id in mem["source_fences"].get("deleted_tasks", {}):
@@ -1826,6 +1858,9 @@ def commit_extraction_job(
 
         # 2. Re-verify task project generation & every source in the job's manifest against live task/branch/fence state
         live_row = (data.get("tasks") or {}).get(job.get("task_id"))
+        if memory_blocked(live_row):
+            job.update(state="stale", error_code="source_data_policy_denied", updated_at=now)
+            return {"state": "stale", "job": copy.deepcopy(job), "committed_candidates": []}
         if isinstance(live_row, dict) and job.get("project_id"):
             live_proj = live_row.get("project") if isinstance(live_row.get("project"), dict) else {}
             if live_proj.get("id") != job.get("project_id") or live_proj.get("generation") != job.get("project_generation"):
@@ -2488,9 +2523,12 @@ def select_memories_for_task(
         owner_parts = []
         if isinstance(row.get("goal"), dict) and row["goal"].get("text"):
             owner_parts.append(str(row["goal"]["text"]))
-        for msg in (row.get("messages") or [])[-6:]:
-            if isinstance(msg, dict) and msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                owner_parts.append(msg["content"])
+        user_messages = [
+            msg["content"]
+            for msg in (row.get("messages") or [])
+            if isinstance(msg, dict) and msg.get("role") == "user" and isinstance(msg.get("content"), str)
+        ]
+        owner_parts.extend(user_messages[-6:])
         query_text = "\n".join(owner_parts)
 
     is_automatic_mode = str(settings.get("activation_policy") or "owner_review") == "automatic"
