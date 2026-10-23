@@ -3,8 +3,10 @@ name: Build signed desktop update
 on:
   push:
     tags: ["v*"]
+    branches: ["codex/desktop-update-release"]
   push:
     tags: ["v*"]
+    branches: ["codex/desktop-update-release"]
   workflow_dispatch:
     inputs:
       tag:
@@ -36,11 +38,11 @@ jobs:
       RYN_DESKTOP_UPDATE_PUBLIC_KEY: ${{ vars.RYN_DESKTOP_UPDATE_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.8.0' }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag || github.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
@@ -87,17 +89,18 @@ jobs:
           path: update-assets/*
 
   draft:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.8.0' }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.tag || github.sha }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
