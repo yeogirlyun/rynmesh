@@ -6,7 +6,16 @@ import hashlib
 import json
 import uuid
 
-FIELDS = {"context_window", "max_output_tokens", "request_defaults", "max_concurrent", "requests_per_day", "share_scope"}
+FIELDS = {
+    "context_window",
+    "max_output_tokens",
+    "request_defaults",
+    "max_concurrent",
+    "requests_per_day",
+    "tokens_per_day",
+    "shared_tokens_per_day",
+    "share_scope",
+}
 DESTINATION_FIELDS = {"context_window", "max_output_tokens", "request_defaults"}
 FALLBACK_CONTEXT_WINDOW = 32768
 KNOWN_VENDOR_CONTEXT_WINDOWS = (
@@ -125,7 +134,10 @@ def defaults(record, model=None):
             "max_output_tokens": max_output,
             "request_defaults": copy.deepcopy(record.get("request_defaults", {})),
             "max_concurrent": _known_vendor_max_concurrent(model) or 1,
-            "requests_per_day": None, "share_scope": "personal_space"}
+            "requests_per_day": None,
+            "tokens_per_day": None,
+            "shared_tokens_per_day": None,
+            "share_scope": "personal_space"}
 
 
 def validate(values):
@@ -139,6 +151,10 @@ def validate(values):
         raise ValueError("model_share_scope_invalid")
     if quota is not None and (type(quota) is not int or not 1 <= quota <= 1000000):
         raise ValueError("model_requests_per_day_invalid")
+    for tok_key in ("tokens_per_day", "shared_tokens_per_day"):
+        tok_limit = values.get(tok_key)
+        if tok_limit is not None and (type(tok_limit) is not int or not 1 <= tok_limit <= 10000000000):
+            raise ValueError("model_" + tok_key + "_invalid")
     request = values.get("request_defaults", {})
     if not isinstance(request, dict) or set(request) - {"thinking", "reasoning_effort", "temperature", "top_p"}:
         raise ValueError("model_request_defaults_invalid")

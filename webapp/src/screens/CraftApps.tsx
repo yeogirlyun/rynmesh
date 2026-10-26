@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, CheckCircle2, Download, FileUser, FolderCheck, HardDrive, Headset, UsersRound } from "lucide-react";
 import { Modal } from "../personal/components";
+import { agentExtensions, type ExtensionOverview } from "../domain/agentExtensions";
 import { craftPlugins, openCraftWindow, verifiedCraftUrl, verifiedPluginPath, type CraftCatalog, type CraftPlugin } from "../domain/craftPlugins";
 import { nasChanged, setNasHandoff } from "../domain/nas";
 import CraftPluginLibrary from "./CraftPluginLibrary";
@@ -36,6 +37,7 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
   const warningShortText = (app: CraftPlugin) => text(app.warning === "cjk_font_coverage" ? "cjkWarningShort" : "fontWarningShort");
   const navigate = useNavigate();
   const [catalog, setCatalog] = useState<CraftCatalog | null>(null);
+  const [extensionOverview, setExtensionOverview] = useState<ExtensionOverview | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,8 +55,17 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
     const code = e instanceof Error ? e.message : "plugin_operation_failed";
     setError(code === "plugin_local_browser_required" ? text("localBrowserRequired") : text(`errors.${code}`, { defaultValue: text("errors.plugin_operation_failed") }));
   };
+  const loadExtensions = async () => {
+    try {
+      const ext = await agentExtensions.overview();
+      if (mounted.current) setExtensionOverview(ext);
+    } catch {
+      /* Extension overview is optional on the Craft Apps surface. */
+    }
+  };
   const load = async () => {
     setError("");
+    void loadExtensions();
     try {
       const data = await craftPlugins.catalog();
       if (!mounted.current) return;
@@ -141,10 +152,10 @@ export default function CraftApps({ manage = false }: { manage?: boolean }) {
         <footer><div>{text("selected", { count: selected.filter(id => !catalog.plugins.find(p => p.id === id)?.installed).length })}<small>{text(hasDownloads ? "downloadHelp" : "registrationHelp")}</small></div><div className="craft-actions"><button className="craft-button quiet" disabled={busy} onClick={() => void dismissSetup()}>{text(setup === "initial" ? "later" : "back")}</button><button className="craft-button primary" disabled={busy || (setup === "add" && !selected.some(id => !catalog.plugins.find(p => p.id === id)?.installed))} onClick={() => void install()}>{text(busy ? "busy" : selected.length ? hasDownloads ? "download" : "installBuiltin" : "finish")}</button></div></footer>
       </div>
     </div> : <>
-      {manage ? <CraftPluginLibrary catalog={catalog} busy={busy} onAdd={add} onOpen={app => void open(app)}
+      {manage ? <CraftPluginLibrary catalog={catalog} extensionOverview={extensionOverview} busy={busy} onAdd={add} onOpen={app => void open(app)}
         onToggle={app => app.enabled ? setModal({ kind: "disable", app }) : void run(async () => { setCatalog(await craftPlugins.enable(app.id, true)); if (app.id === "nas") nasChanged(); setNotice(text("saved")); })}
         onDetails={app => setModal({ kind: "detail", app })} onAgent={app => setModal({ kind: "agent", app })}
-        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <AppsLauncher catalog={catalog} busy={busy} filter={filter} onFilterChange={setFilter} text={text}
+        onUninstall={app => { setClearPreferences(false); setModal({ kind: "uninstall", app }); }} /> : <AppsLauncher catalog={catalog} extensionOverview={extensionOverview} onRefreshExtensions={() => void loadExtensions()} busy={busy} filter={filter} onFilterChange={setFilter} text={text}
         onOpen={app => void open(app)} onInstall={app => add([app.id])} onAgent={app => setModal({ kind: "agent", app })} />}
       {ready && <div className="craft-ready"><FolderCheck size={18} /><span>{name(ready.app)}</span><a href={ready.url} target="_blank" rel="noopener noreferrer" onClick={e => { if ("__TAURI_INTERNALS__" in window) { e.preventDefault(); void openCraftWindow(ready.app.id, ready.url).catch(failure); } }}>{text("openWindow")}<ArrowUpRight size={15} /></a></div>}
     </>)}

@@ -16,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
+from .data_policy import memory_blocked, merge_state
 from .protocol import now as now_iso
 
 AUTOMATION_UPDATE_TOOL = "ryn_automation_update"
@@ -28,8 +29,8 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
         "function": {
             "name": AUTOMATION_UPDATE_TOOL,
             "description": (
-                "Create, update, pause, resume, delete, or list scheduled tasks/reminders (automations). "
-                "Default kind='heartbeat' to wake up this chat thread for reminders/monitors; use kind='cron' only when each run should start a new chat."
+                "Manage scheduled tasks/reminders (automations). "
+                "Default kind='heartbeat' to wake this chat; use 'cron' for a new chat."
             ),
             "parameters": {
                 "type": "object",
@@ -39,8 +40,8 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
                         "enum": ["create", "update", "pause", "resume", "delete", "list"],
                     },
                     "id": {"type": "string"},
-                    "name": {"type": "string", "description": "Short task title"},
-                    "prompt": {"type": "string", "description": "Task or reminder instructions"},
+                    "name": {"type": "string"},
+                    "prompt": {"type": "string"},
                     "kind": {
                         "type": "string",
                         "enum": ["heartbeat", "cron"],
@@ -49,15 +50,15 @@ AUTOMATION_TOOL_SPECS: list[dict[str, Any]] = [
                         "type": "string",
                         "enum": ["daily", "weekdays", "weekly", "hourly", "minutely", "once"],
                     },
-                    "time": {"type": "string", "description": "24h HH:MM local time, e.g. 22:00"},
-                    "delay_minutes": {"type": "integer", "description": "Minutes from now for once/relative reminder"},
+                    "time": {"type": "string", "description": "24h HH:MM local time"},
+                    "delay_minutes": {"type": "integer"},
                     "interval_minutes": {"type": "integer"},
                     "weekday": {
                         "type": "string",
                         "enum": ["MO", "TU", "WE", "TH", "FR", "SA", "SU"],
                     },
                     "interval_hours": {"type": "integer"},
-                    "rrule": {"type": "string", "description": "Optional RFC 5545 RRULE"},
+                    "rrule": {"type": "string"},
                     "desktop_access": {"type": "boolean"},
                     "notification_policy": {
                         "type": "string",
@@ -607,6 +608,8 @@ def serialize_automation_toml(item: dict[str, Any]) -> str:
         f"auto_archive = {'true' if bool(item.get('auto_archive', False)) else 'false'}",
         f"created_at = {_toml_quote(str(item.get('created_at') or ''))}",
         f"updated_at = {_toml_quote(str(item.get('updated_at') or ''))}",
+        f"data_policy_state_json = {_toml_quote(json.dumps(item.get('data_policy_state'), sort_keys=True))}",
+        f"source_task_ids_json = {_toml_quote(json.dumps(item.get('source_task_ids') or []))}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -661,7 +664,7 @@ def write_automation_files(store: Any, item: dict[str, Any]) -> None:
             pass
 
     mem_file = folder / "memory.md"
-    if not mem_file.exists():
+    if not memory_blocked(item) and not mem_file.exists():
         header = (
             f"# Automation Memory: {item.get('name') or auto_id}\n\n"
             f"- ID: `{auto_id}`\n"
@@ -717,6 +720,14 @@ def normalize_automation_record(
     existing: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     base = dict(existing or {})
+    incoming_policy = raw.get("data_policy_state")
+    if incoming_policy is None and isinstance(raw.get("data_policy_state_json"), str):
+        incoming_policy = json.loads(raw["data_policy_state_json"])
+    policy_state = merge_state(base.get("data_policy_state"), incoming_policy)
+    source_tasks = raw.get("source_task_ids") or []
+    if isinstance(raw.get("source_task_ids_json"), str):
+        source_tasks = json.loads(raw["source_task_ids_json"])
+    source_tasks = sorted(set(base.get("source_task_ids") or []) | {item for item in source_tasks if isinstance(item, str) and item})
     now_str = now_iso()
     current_ms = now_ms()
     auto_id = str(raw.get("id") or base.get("id") or "").strip()
@@ -862,6 +873,8 @@ def normalize_automation_record(
         "toml_path": str(automation_toml_path(store, auto_id)),
         "created_at": created_at,
         "updated_at": updated_at,
+        "data_policy_state": policy_state,
+        "source_task_ids": source_tasks,
     }
     return record
 
@@ -969,6 +982,7 @@ def create_or_update_automation_in_tx(
     payload: dict[str, Any],
     *,
     automation_id: str | None = None,
+    source_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_automation_state(data)
     automations: dict[str, Any] = data["automations"]
@@ -979,9 +993,49 @@ def create_or_update_automation_in_tx(
         {**payload, **({"id": target_id} if target_id else {})},
         existing=existing if isinstance(existing, dict) else None,
     )
+    if isinstance(source_row, dict):
+        record["data_policy_state"] = merge_state(record.get("data_policy_state"), source_row.get("data_policy_state"))
+        if source_row.get("id"):
+            record["source_task_ids"] = sorted(set(record.get("source_task_ids") or []) | {source_row["id"]})
+        _absorb_automation_policy_in_tx(data, source_row, record)
     automations[record["id"]] = record
+    if isinstance(source_row, dict):
+        inherit_task_policy_in_tx(data, source_row)
     write_automation_files(store, record)
     return public_automation(store, record)
+
+
+def inherit_task_policy_in_tx(data: dict[str, Any], row: dict[str, Any]) -> None:
+    """Tighten scheduled derivatives before a source task can receive new data."""
+    from .memory import invalidate_task_policy_in_tx
+
+    pending = [row]
+    while pending:
+        source = pending.pop()
+        source_state = source.get("data_policy_state")
+        if not source_state:
+            continue
+        for item in (data.get("automations") or {}).values():
+            if not isinstance(item, dict) or not (
+                source.get("id") in (item.get("source_task_ids") or []) or source.get("automation_id") == item.get("id")
+            ):
+                continue
+            item["data_policy_state"] = merge_state(item.get("data_policy_state"), source_state)
+            for target in (data.get("tasks") or {}).values():
+                if not isinstance(target, dict) or target.get("automation_id") != item.get("id"):
+                    continue
+                inherited = merge_state(target.get("data_policy_state"), item["data_policy_state"])
+                if inherited != target.get("data_policy_state"):
+                    target["data_policy_state"] = inherited
+                    invalidate_task_policy_in_tx(data, target)
+                    pending.append(target)
+
+
+def _absorb_automation_policy_in_tx(data: dict[str, Any], row: dict[str, Any], item: dict[str, Any]) -> None:
+    from .memory import invalidate_task_policy_in_tx
+
+    row["data_policy_state"] = merge_state(row.get("data_policy_state"), item.get("data_policy_state"))
+    invalidate_task_policy_in_tx(data, row)
 
 
 def delete_automation_in_tx(store: Any, data: dict[str, Any], automation_id: str) -> bool:
@@ -1056,6 +1110,10 @@ def execute_automation_tool_call_in_tx(
 
     if action == "list":
         listed = list_automations_in_tx(store, data)
+        for item in data["automations"].values():
+            if isinstance(item, dict):
+                _absorb_automation_policy_in_tx(data, row, item)
+        inherit_task_policy_in_tx(data, row)
         return {
             "ok": True,
             "action": "list",
@@ -1067,6 +1125,9 @@ def execute_automation_tool_call_in_tx(
         if not target_id:
             return {"ok": False, "error": "Missing automation id to delete."}
         existing = automations.get(target_id)
+        if isinstance(existing, dict):
+            _absorb_automation_policy_in_tx(data, row, existing)
+            inherit_task_policy_in_tx(data, row)
         deleted = delete_automation_in_tx(store, data, target_id)
         return {
             "ok": deleted,
@@ -1084,6 +1145,7 @@ def execute_automation_tool_call_in_tx(
             data,
             {"status": new_status},
             automation_id=target_id,
+            source_row=row,
         )
         return {
             "ok": True,
@@ -1136,6 +1198,7 @@ def execute_automation_tool_call_in_tx(
         data,
         payload,
         automation_id=target_id if is_update else None,
+        source_row=row,
     )
     return {
         "ok": True,
@@ -1153,7 +1216,8 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
         return ""
     kind = str(row.get("automation_kind") or "").strip().lower()
     mem_path = automation_memory_path(store, auto_id)
-    mem_preview = read_automation_memory(store, auto_id, max_chars=2000)
+    blocked = memory_blocked(row)
+    mem_preview = "" if blocked else read_automation_memory(store, auto_id, max_chars=2000)
 
     if kind == "heartbeat":
         lines = [
@@ -1161,7 +1225,7 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
             "User messages wrapped in `<heartbeat>` tags are scheduled wakeups for this thread.",
             "Each `<heartbeat>` message includes `<automation_id>`, `<current_time_iso>`, and `<instructions>`.",
             "The user is not interactively watching the screen right now. Execute the scheduled instructions or tools directly without asking for confirmation.",
-            f"Persistent memory file across runs: {mem_path}",
+            "Long-term memory is disabled for this task. Do not read or write automation memory files." if blocked else f"Persistent memory file across runs: {mem_path}",
             "",
             "# Stopping completed reminders or monitors",
             "If this wakeup is a one-off reminder (e.g. 'remind me in 10 minutes') or a monitor whose condition has now been satisfied ('notify me once X finishes'), call `ryn_automation_update` with `action=\"delete\"` (or `action=\"pause\"`) and `id=\"<automation_id>\"` before finishing so it does not keep firing.",
@@ -1185,9 +1249,9 @@ def automation_developer_instructions(store: Any, row: dict[str, Any]) -> str:
         "<automation_context>",
         f"mode: Automation (automation_id={auto_id})",
         "The user is not interactively watching the screen right now. Execute the scheduled instructions directly without asking for confirmation.",
-        f"memory_file: {mem_path}",
-        "Before starting work, review the memory notes below to understand what happened on previous runs.",
-        "If you need to record state for the next scheduled run, update that memory.md file or include a concise summary.",
+        "Long-term memory is disabled for this task. Do not read or write automation memory files." if blocked else f"memory_file: {mem_path}",
+        "" if blocked else "Before starting work, review the memory notes below to understand what happened on previous runs.",
+        "" if blocked else "If you need to record state for the next scheduled run, update that memory.md file or include a concise summary.",
         'At the end of your final response, include `::inbox-item{title="..." summary="..."}` to summarize the outcome.',
     ]
     if mem_preview:
@@ -1242,6 +1306,7 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
         return
 
     ensure_automation_state(data)
+    inherit_task_policy_in_tx(data, row)
     status = str(row.get("status") or "").strip()
     if status not in {"completed", "failed", "cancelled"}:
         return
@@ -1330,5 +1395,5 @@ def settle_automation_turn_in_tx(store: Any, data: dict[str, Any], row: dict[str
         if auto_item.get("next_run_at") is None and str(auto_item.get("repeat") or "") == "once":
             auto_item["status"] = "PAUSED"
         write_automation_files(store, auto_item)
-        if summary:
+        if summary and not memory_blocked(row) and not memory_blocked(auto_item):
             append_automation_memory_note(store, auto_id, f"({status}) {summary}")

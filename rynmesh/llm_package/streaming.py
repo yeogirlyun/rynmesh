@@ -55,9 +55,9 @@ async def events(run: Any, cancel: Any):
         task.add_done_callback(lambda future: future.exception() if not future.cancelled() else None)
 
 
-def peer_stream(url: str, body: dict[str, Any], *, timeout_s: float, on_event: Any) -> dict[str, Any]:
+def peer_stream(url: str, body: dict[str, Any], *, timeout_s: float, on_event: Any, response_factory=None) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_s
-    with peer_response(url, body, timeout_s=timeout_s) as response:
+    with (response_factory or peer_response)(url, body, timeout_s=timeout_s) as response:
         if "text/event-stream" not in response.headers.get("content-type", ""):
             raise ValueError("peer_streaming_not_supported")
         total = 0

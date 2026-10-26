@@ -8,10 +8,16 @@ from pathlib import Path, PurePosixPath
 
 from ..nas import NasError, relative_path
 from .operation_ledger import OperationLedger
+from .resources import CREATE_PROTOCOLS
 from .store import AgentError, AgentToolRejected, encoded
 
-NAMES = {"ryn_create_text_file": "create_file", "ryn_create_directory": "create_directory"}
+NAMES = {
+    "ryn_create_text_file": "create_file",
+    "ryn_upload_resource_file": "create_file",
+    "ryn_create_directory": "create_directory",
+}
 MAX_TEXT_BYTES = 16 * 1024
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 def reject(code):
@@ -41,20 +47,50 @@ class ResourceWrites:
             reject("agent_scope_directory_required")
         if not grant["recursive"] and item["path"] != self.resources._open(grant["root_resource_ref"])["path"]:
             reject("agent_resource_scope_denied")
-        filename = args["name"]
-        try:
-            if relative_path(filename) != filename or "/" in filename or not filename or len(filename) > 128:
+        ws_path = args.get("workspace_path")
+        if name == "ryn_upload_resource_file" or (name == "ryn_create_text_file" and ws_path):
+            ws_root_raw = (context.get("local_execution") or {}).get("workspace_root") or ""
+            if not ws_root_raw:
+                reject("agent_workspace_required")
+            try:
+                ws_root = Path(ws_root_raw).resolve(strict=True)
+                raw_rel = str(ws_path or "").strip()
+                if not raw_rel:
+                    reject("agent_file_name_invalid")
+                ws_file = (ws_root / raw_rel).resolve(strict=True)
+            except (OSError, ValueError):
+                reject("agent_local_file_not_found")
+            if not ws_file.is_relative_to(ws_root) or not ws_file.is_file():
+                reject("agent_local_path_outside_workspace")
+            filename = args.get("name") or ws_file.name
+            try:
+                if relative_path(filename) != filename or "/" in filename or not filename or len(filename) > 128:
+                    reject("agent_file_name_invalid")
+            except NasError:
                 reject("agent_file_name_invalid")
-        except NasError:
-            reject("agent_file_name_invalid")
-        if name == "ryn_create_text_file" and PurePosixPath(filename).suffix.lower() not in {".txt", ".md"}:
-            reject("agent_resource_format_unsupported")
-        data = args.get("content", "").encode("utf-8")
-        if len(data) > MAX_TEXT_BYTES:
-            reject("agent_resource_size_limit")
+            try:
+                if ws_file.stat().st_size > MAX_UPLOAD_BYTES:
+                    reject("agent_resource_size_limit")
+                data = ws_file.read_bytes()
+            except OSError:
+                reject("agent_local_file_not_found")
+            if len(data) > MAX_UPLOAD_BYTES:
+                reject("agent_resource_size_limit")
+        else:
+            filename = args["name"]
+            try:
+                if relative_path(filename) != filename or "/" in filename or not filename or len(filename) > 128:
+                    reject("agent_file_name_invalid")
+            except NasError:
+                reject("agent_file_name_invalid")
+            if name == "ryn_create_text_file" and PurePosixPath(filename).suffix.lower() not in {".txt", ".md"}:
+                reject("agent_resource_format_unsupported")
+            data = args.get("content", "").encode("utf-8")
+            if len(data) > MAX_TEXT_BYTES:
+                reject("agent_resource_size_limit")
         with self.resources.nas.lock:
             source = self.resources._source(grant["connection_id"])
-            if source["protocol"] not in {"smb", "webdav"}:
+            if source["protocol"] not in CREATE_PROTOCOLS:
                 reject("agent_resource_create_backend_unsupported")
             if not source.get("writable"):
                 reject("agent_resource_read_only")
@@ -64,9 +100,18 @@ class ResourceWrites:
         return item, grant, path, data
 
     def preview(self, name, args, context):
-        _item, grant, _path, data = self.target(name, args, context)
+        _item, grant, path, data = self.target(name, args, context)
+        filename = PurePosixPath(path).name
+        if name == "ryn_upload_resource_file":
+            return {"title": "Upload workspace file to drive",
+                    "directory_ref": args["directory_ref"], "name": filename,
+                    "workspace_path": args["workspace_path"], "overwrite": False,
+                    "connection_id": grant["connection_id"], "connection_access_generation": grant["connection_access_generation"],
+                    "scope_revision": context["scope_revision"], "grant_id": grant["grant_id"],
+                    "content_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+                    "action": NAMES[name]}
         return {"title": "Create a new text file" if name == "ryn_create_text_file" else "Create a new directory",
-                "directory_ref": args["directory_ref"], "name": args["name"], "overwrite": False,
+                "directory_ref": args["directory_ref"], "name": filename, "overwrite": False,
                 "connection_id": grant["connection_id"], "connection_access_generation": grant["connection_access_generation"],
                 "scope_revision": context["scope_revision"], "grant_id": grant["grant_id"],
                 "content_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
@@ -98,10 +143,12 @@ class ResourceWrites:
         if expected_preview != preview:
             reject("agent_approval_preview_changed")
         item, grant, path, data = self.target(name, args, context)
-        reference = self.resources._seal({"path": path, "directory": name == "ryn_create_directory",
+        is_file = name in {"ryn_create_text_file", "ryn_upload_resource_file"}
+        filename = PurePosixPath(path).name
+        reference = self.resources._seal({"path": path, "directory": not is_file,
                      **{k: item[k] for k in ("grant_id", "owner_id", "consumer_node_id")}, "task_id": context["task_id"]})
-        result = {"ok": True, "operation_id": operation_id, "name": args["name"], "resource_ref": reference,
-                  "created": "file" if name == "ryn_create_text_file" else "directory", "overwrite": False,
+        result = {"ok": True, "operation_id": operation_id, "name": filename, "resource_ref": reference,
+                  "created": "file" if is_file else "directory", "overwrite": False,
                   "bytes": len(data), "content_sha256": hashlib.sha256(data).hexdigest(), "business_acknowledged": True}
         if len(encoded(result)) > 3072:
             reject("agent_resource_output_limit")  # Fits the ledger's 4096-byte receipt reservation.
@@ -137,7 +184,7 @@ class ResourceWrites:
             except (AgentError, OSError):
                 reject("agent_operation_ledger_unavailable")
             try:
-                plugin.operate(grant["connection_id"], "write" if name == "ryn_create_text_file" else "mkdir", path, data)
+                plugin.operate(grant["connection_id"], "write" if is_file else "mkdir", path, data)
             except NasError as exc:
                 if str(exc) in {"file_exists", "file_exists_or_parent_missing"}:
                     code = "agent_resource_already_exists" if str(exc) == "file_exists" else "agent_resource_create_conflict"
@@ -173,9 +220,10 @@ class ResourceWrites:
             reject("agent_cancelled")
         name, args = receipt["tool"], receipt["arguments"]
         item, grant, path, data = self.target(name, args, context)
-        if name == "ryn_create_text_file":
+        if name in {"ryn_create_text_file", "ryn_upload_resource_file"}:
             # This exact newly-created object is read for verification. Never
             # expose its raw bytes to the model as a bypass of read_ai.
+            read_limit = (MAX_TEXT_BYTES if name == "ryn_create_text_file" and not args.get("workspace_path") else len(data)) + 1
             plugin = self.resources.nas
             with plugin.lock:
                 source = self.resources._source(grant["connection_id"])
@@ -185,7 +233,7 @@ class ResourceWrites:
                     if self.resources._source(source["id"]) is not source:
                         reject("agent_resource_permission_changed")
                 with plugin.connection(source, reuse=True) as connector:
-                    raw = connector.read(path, MAX_TEXT_BYTES + 1)
+                    raw = connector.read(path, read_limit)
             matches = raw == data
             evidence = {"content_sha256": hashlib.sha256(raw).hexdigest(), "expected_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(raw)}
         else:

@@ -155,6 +155,14 @@ def install_inference_api(app: Any, *, home: Path, store: Any, active_manager: A
             # A full stable digest avoids ambiguity when models share aliases.
             digest = hashlib.sha256(item["peer_id"].encode()).hexdigest()
             values.append({"id": "peer/" + digest + "/" + service["package_id"], "object": "model", "created": 0, "owned_by": "rynmesh", "rynmesh": {"source": "peer", "provider_peer_id": item["peer_id"], "service_id": service["package_id"], "adapter": service.get("adapter", "openai_compatible"), "capabilities": service.get("capabilities", []), "model_alias": service["model_alias"], "max_output_tokens": service["max_output_tokens"], "context_window": window}})
+        from .model_usage import ModelUsageStore
+        usage_store = ModelUsageStore(home / "llm" / "model-usage.json")
+        usage_snapshot = usage_store.read_cached()
+        for entry in values:
+            usage = usage_store.public_usage(entry["id"], snapshot=usage_snapshot)
+            entry["usage"] = usage
+            if isinstance(entry.get("rynmesh"), dict):
+                entry["rynmesh"]["usage"] = usage
         return values
 
     def public_models(catalog, aliases):

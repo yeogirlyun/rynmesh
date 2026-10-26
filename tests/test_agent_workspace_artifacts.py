@@ -77,7 +77,7 @@ def test_listing_comes_from_receipts_and_ranks_files_the_answer_names(tmp_path):
     # The inspection covered version 1 only, so the current version is not marked as checked.
     assert "render_inspected" not in pelican
     # Named in prose without any receipt: reported, never presented as a file.
-    assert listing["unbacked_mentions"] == ["ghost.svg"]
+    assert listing["unbacked_mentions"] == []
     assert all(item["name"] not in {"secret.txt", "outside.svg", "render_check.py", "lost.svg"} for item in listing["files"])
 
 
@@ -335,3 +335,44 @@ def test_helper_scripts_stay_supporting_and_turn_deliverables_survive_multi_turn
     assert listed["Payoneer_fixed.pdf"]["turn_index"] == 0
     assert listed["geom_probe2.py"]["role"] == "supporting"
     assert listed["verify_payoneer.json"]["role"] == "supporting"
+
+
+def test_paused_followup_turn_does_not_leak_previous_turn_final_text_or_unbacked_mentions(tmp_path):
+    budget_xlsx = tmp_path / "qa_budget.xlsx"
+    budget_xlsx.write_bytes(b"PK\x03\x04workbook")
+    row = {
+        "local_execution": {"workspace_root": str(tmp_path)},
+        "receipts": [
+            receipt("op_xlsx", "ryn_shell_execute", {}, {
+                "running": False, "exit_code": 0,
+                "workspace_files": [{"path": str(budget_xlsx), "sha256": sha(budget_xlsx.read_bytes()), "created": True}],
+            }),
+        ],
+        "messages": [
+            {"role": "user", "content": "Create qa_budget.xlsx or qa_memo.docx"},
+            {"role": "assistant", "content": "仅完成了 Excel 分支 qa_budget.xlsx，未额外创建 qa_memo.docx（任务中为“或”关系）"},
+            {"role": "user", "content": "这个表格，能存到我的百度网盘吗？创建一个ryn文件夹，存进去"},
+        ],
+        "events": [],
+        "result": "",
+    }
+    assert workspace_artifacts.final_text(row) == ""
+    assert workspace_artifacts._turn_answers(row) == {
+        0: "仅完成了 Excel 分支 qa_budget.xlsx，未额外创建 qa_memo.docx（任务中为“或”关系）",
+    }
+    listed = workspace_artifacts.listing(row)
+    assert listed["unbacked_mentions"] == []
+    assert [f["name"] for f in listed["files"]] == ["qa_budget.xlsx"]
+    assert listed["files"][0]["turn_index"] == 0
+
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Explorer command-line parsing")
+def test_reveal_quotes_only_the_path_with_spaces_commas_and_unicode(tmp_path, monkeypatch):
+    target = tmp_path / "中文 report, final.pdf"
+    target.write_bytes(b"pdf")
+    monkeypatch.setattr(workspace_artifacts, "location", lambda row, file_id: target)
+    calls = []
+    monkeypatch.setattr("subprocess.Popen", lambda args, **kwargs: calls.append((args, kwargs)))
+    workspace_artifacts.open_file({}, "bound-file", "reveal")
+    assert calls == [(f'explorer.exe /select,"{target}"', {"creationflags": 0x08000000})]

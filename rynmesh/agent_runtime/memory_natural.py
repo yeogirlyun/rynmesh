@@ -71,6 +71,8 @@ def _is_stampable_owner_message(msg: Any) -> bool:
         return False
     if str(msg.get("role") or "") != "user":
         return False
+    if not isinstance(msg.get("message_id"), str) or not msg["message_id"].strip():
+        return False
     if (
         msg.get("synthetic")
         or msg.get("is_summary")

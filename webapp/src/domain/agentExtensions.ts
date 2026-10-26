@@ -39,6 +39,23 @@ export interface ExtensionMcpToolAnnotations {
   openWorldHint?: boolean;
 }
 
+export type ExtensionDataPolicyRule = { on_device: true } | { api_base_url_prefix: string } | { catalog_model_id: string };
+export interface ExtensionDataPolicy {
+  models: { mode: "any" } | { mode: "allowlist"; allow: ExtensionDataPolicyRule[] };
+  memory: "allow" | "deny";
+}
+export interface ExtensionServerHintCandidate {
+  name: string;
+  title: string;
+  schema_sha256: string;
+}
+export interface ExtensionServerHintsInput {
+  expected_revision: number;
+  instance_id: string;
+  discovery_revision: number;
+  tools: Array<{ name: string; schema_sha256: string }>;
+}
+
 export interface ExtensionMcpTool {
   name: string;
   model_tool_name?: string;
@@ -55,6 +72,12 @@ export interface ExtensionMcpTool {
 }
 
 export interface ExtensionMcpServer {
+  auth?: { mode: "auto" | "oauth" | "none"; client_id: string | null; scopes: string[]; callback_port: number | null };
+  oauth?: McpOauthStatus;
+  data_policy?: ExtensionDataPolicy;
+  discovery_revision?: number;
+  read_only_sources?: Record<string, "owner" | "server_hint">;
+  server_hint_candidates?: ExtensionServerHintCandidate[];
   id: string;
   instance_id?: string;
   revision: number;
@@ -101,6 +124,38 @@ export interface ExtensionMcpServer {
   last_tested_at: string | null;
   updated_at?: string | null;
 }
+
+export interface McpOauthStatus {
+  state: "not_required" | "logged_out" | "pending" | "logged_in" | "error";
+  expires_at?: number | null;
+  scopes?: string[];
+  issuer_host?: string | null;
+  error?: string | null;
+}
+
+export interface McpOauthLogin {
+  auth_id: string;
+  authorization_url: string;
+  expires_in: number;
+}
+
+export interface McpOauthProgress {
+  state: "waiting" | "exchanging" | "connected" | "failed" | "cancelled" | "expired";
+  error?: string;
+}
+
+export const startMcpOauthLogin = (id: string, expected_revision: number, language: string) =>
+  extensionRequest<McpOauthLogin>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login`, "POST", { expected_revision, language });
+export const getMcpOauthLogin = (id: string, authId: string, signal?: AbortSignal) =>
+  extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}`, "GET", undefined, signal);
+export const cancelMcpOauthLogin = (id: string, authId: string) =>
+  extensionRequest<McpOauthProgress>(`/mcp/servers/${encodeURIComponent(id)}/oauth/login/${encodeURIComponent(authId)}/cancel`, "POST", {});
+export const logoutMcpOauth = (id: string, expected_revision: number) =>
+  extensionRequest<McpOauthStatus>(`/mcp/servers/${encodeURIComponent(id)}/oauth/logout`, "POST", { expected_revision });
+export const clearLocalMcpAuthorizations = () =>
+  extensionRequest<{ cleared: boolean }>("/mcp/oauth/clear-local-authorizations", "POST", { confirm: true });
+export const applyMcpServerHints = async (id: string, input: ExtensionServerHintsInput) =>
+  normalizeMcpServer(await extensionRequest<Record<string, unknown>>(`/mcp/servers/${encodeURIComponent(id)}/apply-server-hints`, "POST", input));
 
 export interface ExtensionSkillFile {
   path: string;
@@ -182,7 +237,36 @@ export interface ExtensionPluginCapabilities {
   permission_note?: string;
 }
 
+export type ExtensionViewFormat = "text" | "number" | "money";
+export interface ExtensionPluginView {
+  id: string;
+  title: string;
+  description?: string;
+  mcpServer: string;
+  tool: string;
+  inputs: Array<{ name: string; label: string; type: "text" | "date"; required?: boolean; default?: "today" | "month_start" }>;
+  columns: Array<{ key: string; label: string; format?: ExtensionViewFormat }>;
+  rowsPath: string;
+  summaryFields: Array<{ path: string; label: string; format?: ExtensionViewFormat }>;
+  pagination: { pageArgument: string; sizeArgument: string; path: string; pageSize: number };
+}
+
+export const queryPluginView = (plugin: ExtensionPlugin, viewId: string, args: Record<string, string>, page: number, signal?: AbortSignal) =>
+  extensionRequest<{ view_id: string; result: Record<string, unknown> }>(
+    `/plugins/${encodeURIComponent(plugin.id)}/views/${encodeURIComponent(viewId)}/query`, "POST",
+    { arguments: args, page, expected_instance_id: plugin.instance_id, expected_revision: plugin.revision }, signal,
+  );
+
+export const queryPluginTool = (plugin: ExtensionPlugin, toolName: string, args: Record<string, unknown>, signal?: AbortSignal) =>
+  extensionRequest<{ tool: string; result: Record<string, unknown> }>(
+    `/plugins/${encodeURIComponent(plugin.id)}/tool-query`, "POST",
+    { tool: toolName, arguments: args, expected_instance_id: plugin.instance_id, expected_revision: plugin.revision }, signal,
+  );
+
 export interface ExtensionPlugin {
+  views?: ExtensionPluginView[];
+  data_policy?: ExtensionDataPolicy;
+  peer_provider?: { url: string; oauth: { clientId: string; scopes: string[] } } | null;
   id: string;
   instance_id?: string;
   revision: number;
@@ -241,6 +325,7 @@ export interface ExtensionDeleteResponse {
 }
 
 export interface ExtensionMcpServerCreateInput {
+  auth?: ExtensionMcpServer["auth"];
   name: string;
   description?: string;
   transport: ExtensionMcpTransport;
@@ -265,6 +350,7 @@ export interface ExtensionMcpServerCreateInput {
 }
 
 export interface ExtensionMcpServerUpdateInput {
+  auth?: ExtensionMcpServer["auth"];
   name?: string;
   description?: string;
   transport?: ExtensionMcpTransport;
@@ -303,6 +389,7 @@ export interface ExtensionImportPreview {
   version: string;
   source_format: ExtensionSourceFormat;
   plugins: Array<{
+    data_policy?: ExtensionDataPolicy;
     id: string;
     name: string;
     title: string;
@@ -321,6 +408,7 @@ export interface ExtensionImportPreview {
     files?: ExtensionSkillFile[];
   }>;
   mcp_servers: Array<{
+    data_policy?: ExtensionDataPolicy;
     id: string;
     name: string;
     title?: string;
@@ -333,6 +421,9 @@ export interface ExtensionImportPreview {
     env_keys?: string[];
     header_keys?: string[];
     has_secrets?: boolean;
+    auth?: ExtensionMcpServer["auth"];
+    login_required?: boolean;
+    oauth_issuer?: string | null;
   }>;
   warnings: string[];
   unsupported_components: string[];
@@ -665,6 +756,16 @@ export function normalizeMcpServer(raw: Record<string, unknown>): ExtensionMcpSe
     masked_headers: maskedHeadersRaw,
     env_http_headers: envHttpHeadersRaw,
     oauth_client_registration: oauthClientRegistration,
+    auth: raw.auth && typeof raw.auth === "object" ? raw.auth as ExtensionMcpServer["auth"] : undefined,
+    oauth: raw.oauth && typeof raw.oauth === "object" ? raw.oauth as McpOauthStatus : undefined,
+    data_policy: raw.data_policy && typeof raw.data_policy === "object" ? raw.data_policy as ExtensionDataPolicy : undefined,
+    discovery_revision: typeof raw.discovery_revision === "number" ? raw.discovery_revision : undefined,
+    read_only_sources: raw.read_only_sources && typeof raw.read_only_sources === "object"
+      ? Object.fromEntries(Object.entries(raw.read_only_sources).filter(([, value]) => value === "owner" || value === "server_hint")) as Record<string, "owner" | "server_hint"> : {},
+    server_hint_candidates: Array.isArray(raw.server_hint_candidates) ? raw.server_hint_candidates
+      .filter((value): value is ExtensionServerHintCandidate => Boolean(value && typeof value === "object" && typeof value.name === "string"
+        && typeof value.schema_sha256 === "string" && /^[0-9a-f]{64}$/.test(value.schema_sha256)))
+      .map(value => ({ name: value.name, title: typeof value.title === "string" ? value.title : value.name, schema_sha256: value.schema_sha256 })) : [],
     has_secrets: typeof raw.has_secrets === "boolean" ? raw.has_secrets : Boolean(Object.keys(maskedEnvRaw).length || Object.keys(maskedHeadersRaw).length),
     startup_timeout_ms: typeof raw.startup_timeout_ms === "number" ? raw.startup_timeout_ms : 10000,
     tool_timeout_ms: typeof raw.tool_timeout_ms === "number" ? raw.tool_timeout_ms : 30000,
@@ -842,6 +943,9 @@ export function normalizePlugin(raw: Record<string, unknown>): ExtensionPlugin {
     : undefined;
   return {
     id,
+    peer_provider: normalizePeerProvider(raw.peer_provider),
+    views: normalizePluginViews(raw.views),
+    data_policy: raw.data_policy && typeof raw.data_policy === "object" ? raw.data_policy as ExtensionDataPolicy : undefined,
     instance_id: typeof raw.instance_id === "string" ? raw.instance_id : undefined,
     revision: typeof raw.revision === "number" ? raw.revision : 1,
     name,
@@ -869,6 +973,33 @@ export function normalizePlugin(raw: Record<string, unknown>): ExtensionPlugin {
     capabilities: raw.capabilities && typeof raw.capabilities === "object" ? (raw.capabilities as ExtensionPluginCapabilities) : undefined,
     updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,
   };
+}
+
+function normalizePluginViews(raw: unknown): ExtensionPluginView[] {
+  if (!Array.isArray(raw) || raw.length > 8) return [];
+  return raw.filter((item): item is ExtensionPluginView => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const pagination = item.pagination;
+    return [item.id, item.title, item.mcpServer, item.tool, item.rowsPath].every(x => typeof x === "string" && x.length > 0 && x.length <= 256)
+      && (item.description === undefined || typeof item.description === "string")
+      && Array.isArray(item.inputs) && item.inputs.length <= 20 && item.inputs.every((x: Record<string, unknown>) =>
+        x && typeof x.name === "string" && typeof x.label === "string" && ["text", "date"].includes(String(x.type)))
+      && Array.isArray(item.columns) && item.columns.length > 0 && item.columns.length <= 32 && item.columns.every((x: Record<string, unknown>) =>
+        x && typeof x.key === "string" && typeof x.label === "string")
+      && Array.isArray(item.summaryFields) && item.summaryFields.length <= 16 && item.summaryFields.every((x: Record<string, unknown>) =>
+        x && typeof x.path === "string" && typeof x.label === "string")
+      && pagination && typeof pagination.path === "string" && Number.isInteger(pagination.pageSize) && pagination.pageSize > 0 && pagination.pageSize <= 20;
+  });
+}
+
+function normalizePeerProvider(raw: unknown): ExtensionPlugin["peer_provider"] {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const oauth = value.oauth as Record<string, unknown> | undefined;
+  if (typeof value.url !== "string" || !oauth || typeof oauth.clientId !== "string" ||
+      !Array.isArray(oauth.scopes) || !oauth.scopes.every(s => typeof s === "string")) return null;
+  // Copy only public declaration fields; credentials never belong in plugin views.
+  return { url: value.url, oauth: { clientId: oauth.clientId, scopes: oauth.scopes as string[] } };
 }
 
 export function normalizeOverview(raw: Record<string, unknown>): ExtensionOverview {

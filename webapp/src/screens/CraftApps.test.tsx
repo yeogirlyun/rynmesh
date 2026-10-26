@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import CraftApps from "./CraftApps";
+import { agentExtensions, normalizeMcpServer, normalizePlugin } from "../domain/agentExtensions";
 import { craftPlugins, verifiedPluginPath, type CraftCatalog, type CraftLaunch, type CraftPlugin } from "../domain/craftPlugins";
 import { setLanguagePreference } from "../i18n";
 import en from "../locales/craft.en.json";
@@ -47,6 +48,14 @@ beforeEach(() => {
   vi.restoreAllMocks(); setLanguagePreference("en");
   vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
   state = { node_id: "this-node", plugins: ids.map(plugin), defaults: ids, selection: ids, setup_completed: false, storage_path: "C:/Local/Ryn/plugins/node" };
+  vi.spyOn(agentExtensions, "overview").mockResolvedValue({
+    revision: 1,
+    desktop_access: false,
+    windows_supported: true,
+    plugins: [],
+    skills: [],
+    mcp_servers: [],
+  });
   vi.spyOn(craftPlugins, "catalog").mockImplementation(async () => clone());
   vi.spyOn(craftPlugins, "setup").mockImplementation(async () => { state.setup_completed = true; return clone(); });
   vi.spyOn(craftPlugins, "install").mockImplementation(async id => { const p = state.plugins.find(p => p.id === id)!; p.installed = true; p.enabled = true; p.agent_tools = ["editor_info"]; return clone(); });
@@ -350,4 +359,56 @@ it("rejects forged built-in launch routes and explains NAS resource permissions"
   await user.click(screen.getByRole("button", { name: "Agent" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("File access keeps existing resource scope and permissions");
   expect(craftPlugins.launch).not.toHaveBeenCalled();
+});
+
+it("displays the example-reports extension plugin as a uniform card inside the Installed grid on the Apps page", async () => {
+  present();
+  setLanguagePreference("zh-CN");
+  vi.mocked(agentExtensions.overview).mockResolvedValue({
+    revision: 5,
+    desktop_access: false,
+    windows_supported: true,
+    plugins: [
+      normalizePlugin({
+        id: "example-reports",
+        title: "公司财务",
+        version: "1.1.0",
+        description: "公司财务只读查询、报表分析、审批状态核对与异常排查插件（企业微信扫码登录）。",
+        enabled: true,
+        component_enabled: true,
+        mcp_server_ids: ["example-reports-mcp"],
+        views: [
+          {
+            id: "journal",
+            title: "日记账",
+            mcpServer: "example-reports-mcp",
+            tool: "tool_journal",
+            inputs: [],
+            columns: [],
+            rowsPath: "data.rows",
+            summaryFields: [],
+          },
+        ],
+      }),
+    ],
+    skills: [],
+    mcp_servers: [
+      normalizeMcpServer({
+        id: "example-reports-mcp",
+        plugin_id: "example-reports",
+        enabled: true,
+        transport: "streamable_http",
+        oauth: { state: "logged_out" },
+        tools: [],
+      }),
+    ],
+  });
+  mount();
+  const heading = await screen.findByRole("heading", { name: "公司财务" });
+  const card = heading.closest("article")!;
+  expect(card).toHaveAttribute("data-extension-plugin", "example-reports");
+  expect(within(card).getByText("财务看板、同事对话与 AI 共享。")).toBeInTheDocument();
+  expect(within(card).getByText("待企业微信扫码登录")).toBeInTheDocument();
+  expect(within(card).getByRole("button", { name: "打开" })).toBeEnabled();
+  expect(within(card).getByRole("button", { name: "同事与 AI" })).toBeEnabled();
 });

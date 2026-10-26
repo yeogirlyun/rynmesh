@@ -140,6 +140,17 @@
 .craft-apps-v2 .ra-row p { min-height: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .craft-apps-v2 .ra-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ra-warn-ink); }
 
+/* ---- extension / company plugins ---- */
+.craft-apps-v2 .ra-ext-list { display: flex; flex-direction: column; gap: 16px; }
+.craft-apps-v2 .ra-ext-card { padding: 18px 20px; gap: 14px; }
+.craft-apps-v2 .ra-ext-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-identity { display: flex; align-items: flex-start; gap: 14px; min-width: 0; flex: 1; }
+.craft-apps-v2 .ra-ext-glyph { display: grid; place-items: center; cursor: default; }
+.craft-apps-v2 .ra-ext-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.craft-apps-v2 .ra-ext-view-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.craft-apps-v2 .ra-ext-workbench .plugin-views { margin: 4px 0 0; background: var(--ra-card); }
+
 /* ---- footer note ---- */
 .craft-apps-v2 .ra-info { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; padding: 16px 20px; border: 1px solid var(--ra-line); border-radius: 16px; color: var(--ra-ink2); font-size: 13px;
   background: linear-gradient(115deg, color-mix(in srgb, var(--ra-brand) 8%, var(--ra-card)), color-mix(in srgb, #7a55f0 7%, var(--ra-card))); }

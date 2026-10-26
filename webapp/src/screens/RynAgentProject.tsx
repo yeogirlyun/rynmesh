@@ -9,6 +9,8 @@ import RynAgentContextMenu from "./RynAgentContextMenu";
 import RynAgentTaskIndicator from "./RynAgentTaskIndicator";
 import "./RynAgentProject.css";
 
+const PROJECT_TASK_PREVIEW_LIMIT = 8;
+
 export interface RynAgentProjectProps {
   value: string;
   onChange: (id: string) => void;
@@ -27,7 +29,8 @@ type ProjectNavigation = Pick<RynAgentProjectProps, "value" | "activeTaskID" | "
 
 /** Saved projects stay visible while their conversations are opened. */
 export default function RynAgentProject({ value, onChange, disabled = false, tasks = [], activeTaskID, navigationRevision = 0, onSelectTask, onNewTask, onProjectsChange, restoreSelection = true, renderTask }: RynAgentProjectProps) {
-  const { t } = useTranslation("rynAgent");
+  const { t, i18n } = useTranslation("rynAgent");
+  const zh = i18n.language.startsWith("zh");
   const [projects, setProjects] = useState<AgentProject[]>(() => [...new Map(tasks.filter(task => task.project).map(task => [task.project!.id, task.project!])).values()]);
   const [path, setPath] = useState("");
   const [open, setOpen] = useState(false);
@@ -35,6 +38,7 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
   const [busyID, setBusyID] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [expandedAllTasks, setExpandedAllTasks] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<{ project: AgentProject; anchor: { x: number; y: number } } | null>(null);
   const [dialog, setDialog] = useState<{ project: AgentProject; kind: "rename" | "remove" } | null>(null);
   const [projectName, setProjectName] = useState("");
@@ -183,6 +187,11 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
       const projectTasks = tasks.filter(task => task.project?.id === project.id && !task.archived);
       const expanded = !collapsed.has(project.id);
       const isSelected = project.id === selectedProjectID;
+      const showAll = expandedAllTasks.has(project.id);
+      const hasOverflow = projectTasks.length > PROJECT_TASK_PREVIEW_LIMIT;
+      const visibleTasks = hasOverflow && !showAll
+        ? projectTasks.filter((tItem, idx) => idx < PROJECT_TASK_PREVIEW_LIMIT || tItem.id === activeTaskID)
+        : projectTasks;
       return <li key={project.id} className={`ra-project-group${isSelected ? " selected" : ""}`}>
         <div className="ra-project-row" onContextMenu={event => {
           event.preventDefault();
@@ -190,11 +199,11 @@ export default function RynAgentProject({ value, onChange, disabled = false, tas
           event.currentTarget.querySelector<HTMLButtonElement>(".ra-project-select")?.focus();
           setMenu({ project, anchor: { x: event.clientX, y: event.clientY } });
         }}>
-          <button type="button" className="ra-project-chevron" aria-label={t(expanded ? "projectCollapse" : "projectExpand", { name: project.name, defaultValue: `${expanded ? "Hide" : "Show"} tasks in {{name}}` })} aria-expanded={expanded} onClick={() => setCollapsed(current => { const next = new Set(current); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next; })}>{expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
+          <button type="button" className="ra-project-chevron" aria-label={t(expanded ? "projectCollapse" : "projectExpand", { name: project.name, defaultValue: `${expanded ? "Hide" : "Show"} tasks in {{name}}` })} aria-expanded={expanded} onClick={() => setCollapsed(current => { const next = new Set(current); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next; })}>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}</button>
           <button type="button" className="ra-project-select" title={project.path} aria-label={`${project.name} · ${project.path}`} aria-pressed={isSelected} disabled={blocked} onClick={() => void select(project.id)}>{busyID === project.id ? <LoaderCircle size={15} className="ra-project-spinner" /> : isSelected ? <FolderOpen size={15} /> : <Folder size={15} />}<span>{project.name}</span></button>
           <div className="ra-project-actions">{onNewTask && <button type="button" className="ra-project-icon" title={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} aria-label={t("projectNewTask", { name: project.name, defaultValue: "New task in {{name}}" })} disabled={blocked} onClick={() => void select(project.id, true)}><SquarePen size={14} /></button>}<button type="button" className="ra-project-icon" aria-label={t("projectMenu", { name: project.name, defaultValue: "Project options for {{name}}" })} aria-haspopup="menu" aria-expanded={menu?.project.id === project.id} disabled={blocked} onClick={event => { const bounds = event.currentTarget.getBoundingClientRect(); setMenu({ project, anchor: { x: bounds.right, y: bounds.bottom + 4 } }); }}><MoreHorizontal size={15} /></button></div>
         </div>
-        {expanded && <div className="ra-project-task-list">{projectTasks.map(task => <Fragment key={task.id}>{renderTask ? renderTask(task) : <button type="button" className={`ra-project-task${task.id === activeTaskID ? " selected" : ""}`} aria-pressed={task.id === activeTaskID} aria-label={task.title} aria-description={t(agentTaskState(task))} disabled={disabled || !onSelectTask} title={`${task.title} · ${t(agentTaskState(task))}`} onClick={() => onSelectTask?.(task.id)}><span className="ra-task-title">{task.title}</span><RynAgentTaskIndicator task={task} /></button>}</Fragment>)}{!projectTasks.length && isSelected && <p className="ra-projects-note">{t("projectTasksEmpty", { defaultValue: "No tasks yet" })}</p>}</div>}
+        {expanded && <div className="ra-project-task-list">{visibleTasks.map(task => <Fragment key={task.id}>{renderTask ? renderTask(task) : <button type="button" className={`ra-project-task${task.id === activeTaskID ? " selected" : ""}`} aria-pressed={task.id === activeTaskID} aria-label={task.title} aria-description={t(agentTaskState(task))} disabled={disabled || !onSelectTask} title={`${task.title} · ${t(agentTaskState(task))}`} onClick={() => onSelectTask?.(task.id)}><span className="ra-task-title">{task.title}</span><RynAgentTaskIndicator task={task} /></button>}</Fragment>)}{hasOverflow && <button type="button" className="ra-project-show-more" onClick={() => setExpandedAllTasks(current => { const next = new Set(current); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next; })}>{showAll ? (zh ? "收起" : "Show less") : (zh ? "展开显示" : "Show more")}</button>}{!projectTasks.length && isSelected && <p className="ra-projects-note">{t("projectTasksEmpty", { defaultValue: "No tasks yet" })}</p>}</div>}
       </li>;
     })}</ul>}
     {!loading && value && !projects.some(project => project.id === value) && <p className="ra-projects-note">{t("projectUnavailable")}</p>}

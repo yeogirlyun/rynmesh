@@ -23,6 +23,7 @@ from .adapters import AdapterError, OpenAICompatibleAdapter, deadline_options
 from .gguf_import import NativeModelError, inspect_model
 from .hardware import _memory, _nvidia
 from .manifest import LLMPackageManifest
+from .model_usage import ModelUsageStore, current_usage_caller
 from .native_policy import NativeModelPolicy
 
 MODEL_ID = "ryn-local-model"
@@ -183,6 +184,8 @@ class ManagedAdapter:
     def __init__(self, owner):
         self.owner = owner
         self.service_id = owner.manifest.package_id
+        self.model_key = "local/" + self.service_id
+        self.usage_store = owner.usage_store
         policy = owner.policies.current(self.service_id)
         self.model_binding = owner.policies.binding(self.service_id, policy) if policy else None
         self.maximum = policy["configuration"]["max_output_tokens"] if policy else owner.manifest.max_output_tokens
@@ -193,8 +196,9 @@ class ManagedAdapter:
             return {"ok": ready, "model": self.owner.manifest.model}
 
     @contextmanager
-    def request(self):
+    def request(self, *, task_id=None, caller=None):
         bound = _NATIVE_BOUND.get()
+        effective_caller = caller or current_usage_caller()
         with (bound[2] if bound and bound[2] is not None else nullcontext()), self.owner.lock:
             if not self.health()["ok"]:
                 raise AdapterError("local_model_stopped")
@@ -208,7 +212,18 @@ class ManagedAdapter:
                 except (ValueError, OSError):
                     raise AdapterError("ai_permission_denied", code="ai_permission_denied") from None
             if self.model_binding:
-                self.owner.policies.admit(self.service_id, self.model_binding, self.owner.active)
+                self.owner.policies.admit(
+                    self.service_id,
+                    self.model_binding,
+                    self.owner.active,
+                    usage_store=self.usage_store,
+                    caller=effective_caller,
+                    task_id=task_id,
+                )
+            elif self.usage_store is not None:
+                self.usage_store.admit_and_record_dispatch(
+                    self.model_key, caller=effective_caller, task_id=task_id
+                )
             adapter = self.owner.upstream
             self.owner.active += 1
         try:
@@ -219,15 +234,45 @@ class ManagedAdapter:
                 self.owner.lock.notify_all()
 
     def infer(self, **kwargs):
-        with self.request() as adapter:
+        caller = current_usage_caller()
+        task_id = kwargs.get("task_id")
+        with self.request(task_id=task_id, caller=caller) as adapter:
             kwargs["max_tokens"] = min(kwargs.get("max_tokens", self.maximum), self.maximum)
-            return adapter.infer(**kwargs)
+            try:
+                result = adapter.infer(**kwargs)
+                if self.usage_store is not None:
+                    self.usage_store.record_completion(
+                        self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                    )
+                return result
+            except Exception:
+                if self.usage_store is not None:
+                    self.usage_store.record_completion(
+                        self.model_key, result=None, caller=caller, state="failed", task_id=task_id
+                    )
+                raise
 
     def chat(self, body, *, deadline=None, **kwargs):
         kwargs = deadline_options(kwargs, deadline)
-        with self.request() as adapter:
-            return adapter.chat({**body, "max_tokens": min(body.get("max_tokens", self.maximum), self.maximum)},
-                                **deadline_options(kwargs, deadline))
+        caller = current_usage_caller()
+        task_id = kwargs.get("task_id")
+        with self.request(task_id=task_id, caller=caller) as adapter:
+            try:
+                result = adapter.chat(
+                    {**body, "max_tokens": min(body.get("max_tokens", self.maximum), self.maximum)},
+                    **deadline_options(kwargs, deadline),
+                )
+                if self.usage_store is not None:
+                    self.usage_store.record_completion(
+                        self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                    )
+                return result
+            except Exception:
+                if self.usage_store is not None:
+                    self.usage_store.record_completion(
+                        self.model_key, result=None, caller=caller, state="failed", task_id=task_id
+                    )
+                raise
 
     def call_bound(self, method, expected, authorize, *args, authority_lock=None, **kwargs):
         token = _NATIVE_BOUND.set((expected, authorize, authority_lock))
@@ -256,6 +301,7 @@ class ManagedAdapter:
 class NativeModel:
     def __init__(self, home: Path):
         self.root = home.resolve() / "llm" / "native"
+        self.usage_store = ModelUsageStore(home.resolve() / "llm" / "model-usage.json")
         self.config_path = self.root / "settings.json"
         self.policies = NativeModelPolicy(self.root)
         self.model_path = self.root / "models" / "model.gguf"
@@ -341,14 +387,20 @@ class NativeModel:
             except NativeModelError:
                 supported = False
             policy = self.policies.current(self.manifest.package_id)
+            usage = self.usage_store.public_usage(
+                "local/" + self.manifest.package_id,
+                policy=policy["configuration"] if policy else None,
+            )
             return {"id": self.manifest.package_id, "name": self.metadata.get("name", ""), "file_name": self.metadata.get("file_name", ""),
                     "size_bytes": self.metadata.get("size_bytes", 0), "state": "installing" if self.uploading else self.state,
                     "stage": "uploading" if self.uploading else self.stage,
                     "progress": self.upload_progress if self.uploading else self.progress, "error": self.error, "backend": self.backend,
                     "supported": supported, "active_requests": self.active, **self.config,
+                    "usage": usage,
                     "model_settings": {"configuration": policy["configuration"], "context_window": self.manifest.context_window,
                         "rule_revision": policy["rule_revision"],
                         "model_binding": self.policies.binding(self.manifest.package_id, policy),
+                        "usage": usage,
                         "enforcement": {"output_tokens": "upstream_request_limit", "concurrency": "node_process",
                                         "quota": "persisted_dispatch_attempts_utc_day"}} if policy else None}
 

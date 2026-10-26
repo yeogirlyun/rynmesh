@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry
 
-from .adapters import actual_usage
+from .adapters import actual_usage, cached_input_tokens
 from .image_input_profile import (
     current_internal_image_profile,
     verify_messages_against_profile,
@@ -280,9 +280,12 @@ def reported_token_count(value: Any) -> int | None:
 
 def completion(result: dict[str, Any], model: str, request_id: str) -> dict[str, Any]:
     counts = actual_usage(result)
-    usage = {"prompt_tokens": counts["input_tokens"], "completion_tokens": counts["output_tokens"]}
+    usage: dict[str, Any] = {"prompt_tokens": counts["input_tokens"], "completion_tokens": counts["output_tokens"]}
     usage["total_tokens"] = (usage["prompt_tokens"] + usage["completion_tokens"]
                              if all(value is not None for value in usage.values()) else None)
+    cached = cached_input_tokens(result)
+    if cached is not None and usage["prompt_tokens"] is not None:
+        usage["prompt_tokens_details"] = {"cached_tokens": cached}
     message = copy.deepcopy(result.get("message") or {"role": "assistant", "content": result.get("output", result.get("text", ""))})
     message.pop("provider_state", None)
     return {"id": "chatcmpl-" + request_id, "object": "chat.completion", "created": int(time.time()),

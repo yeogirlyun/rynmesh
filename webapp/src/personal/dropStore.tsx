@@ -52,8 +52,8 @@ export function mergeMessage(data: DropData, message: DropMessage): boolean {
   if (current && current.version === message.version) return false;
   data.messages[message.message_id] = message;
   const local = message.client_id ? localId(message.client_id) : "";
-  const replace = local && data.messages[local] ? `m:${local}` : undefined;
-  if (local && data.messages[local]) delete data.messages[local];
+  const replace = local && data.messages[local]?.peer_id === message.peer_id ? `m:${local}` : undefined;
+  if (replace) delete data.messages[local];
   addRef(data, message.peer_id, `m:${message.message_id}`, replace);
   return true;
 }
