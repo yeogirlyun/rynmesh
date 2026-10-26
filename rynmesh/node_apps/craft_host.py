@@ -214,7 +214,15 @@ def install(cache, slug, *, download=download_to, spec=None):
             }
             (stage / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
             archive.unlink()
-            stage.rename(root)
+            for attempt in range(8):
+                try:
+                    stage.rename(root)
+                    break
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 7:
+                        raise
+                    import time
+                    time.sleep(min(0.01 * 2 ** attempt, 0.1))
         finally:
             if stage.exists():
                 shutil.rmtree(stage)

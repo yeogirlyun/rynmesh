@@ -28,7 +28,7 @@ describe("AutomationDialog schedule preservation", () => {
 
   it("does not rewrite the schedule or enable desktop access when renaming a task", async () => {
     const update = openDialog();
-    fireEvent.change(screen.getByPlaceholderText("Task title (e.g. Send WeChat message)"), { target: { value: "New review title" } });
+    fireEvent.change(screen.getByPlaceholderText("Scheduled task title"), { target: { value: "New review title" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith("weekly-task", {
       name: "New review title",
@@ -53,7 +53,7 @@ describe("AutomationDialog schedule preservation", () => {
 
   it("uses the explicitly selected single weekday when changing the day", async () => {
     const update = openDialog();
-    fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: "FR" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Day of the week" }), { target: { value: "FR" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][1]).toMatchObject({ repeat: "weekly", weekday: "FR" });

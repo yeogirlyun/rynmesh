@@ -776,7 +776,15 @@ def normalize_automation_record(
             repeat=str(raw.get("repeat") or existing_parts["repeat"]),
             time_str=str(raw.get("time") or existing_parts["time"]),
             weekday=str(raw.get("weekday") or existing_parts["weekday"]),
-            weekdays=raw.get("weekdays") if isinstance(raw.get("weekdays"), list) else None,
+            weekdays=(
+                raw.get("weekdays")
+                if isinstance(raw.get("weekdays"), list)
+                else (
+                    existing_parts["byday"]
+                    if "weekday" not in raw and existing_parts.get("byday")
+                    else None
+                )
+            ),
             interval_hours=int(raw.get("interval_hours") or existing_parts["interval_hours"]),
             interval_minutes=int(raw.get("interval_minutes") or existing_parts.get("interval_minutes", 5)),
             delay_minutes=int(raw.get("delay_minutes") or 0) if raw.get("delay_minutes") is not None else None,

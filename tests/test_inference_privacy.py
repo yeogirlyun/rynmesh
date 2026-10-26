@@ -21,7 +21,7 @@ from rynmesh.llm_package.cli_adapter import CLIAgentAdapter
 from rynmesh.llm_package.manifest import LLMPackageManifest
 from rynmesh.llm_package.process_guard import communicate_bounded, spawn, terminate
 from rynmesh.llm_package.routes import ProviderService, _expires
-from rynmesh.llm_package.safety import InferenceBodyLimit, SharedSlots
+from rynmesh.llm_package.safety import MAX_REQUEST, InferenceBodyLimit, SharedSlots
 from rynmesh.llm_package.task_balance import TaskBalanceLedger
 from rynmesh.llm_package.task_protocol import TaskOrderStore, open_task, seal_task
 from rynmesh.services import peer_box
@@ -49,8 +49,20 @@ def fake_rpc(monkeypatch, tmp_path):
         def initialize(self):
             pass
 
+        def diagnostics(self):
+            return {"rpc_stage": getattr(self, "stage", "init")}
+
+        def _raise_with_diagnostics(self, message, *, code=None):
+            err = AdapterError(message, code=code) if code is not None else AdapterError(message)
+            err.diagnostics = self.diagnostics()
+            raise err
+
         def call(self, method, params):
             self.calls.append((method, copy.deepcopy(params)))
+            if method == "model/list":
+                if self in instances:
+                    instances.remove(self)
+                return {"data": [{"model": "mock", "displayName": "Mock", "isDefault": True}], "nextCursor": None}
             if method == "thread/start":
                 return {"thread": {"id": "ephemeral"}, "model": "mock"}
             assert method == "turn/start"
@@ -280,7 +292,7 @@ def test_http_chunked_body_limit_and_no_store():
     app = FastAPI()
     app.add_middleware(InferenceBodyLimit)
     with TestClient(app) as client:
-        response = client.post("/v1/chat/completions", content=iter([b"a" * 600000, b"b" * 600000]))
+        response = client.post("/v1/chat/completions", content=iter([b"a" * (MAX_REQUEST // 2 + 100000), b"b" * (MAX_REQUEST // 2 + 100000)]))
         assert response.status_code == 413
         assert response.headers["cache-control"] == "no-store"
 

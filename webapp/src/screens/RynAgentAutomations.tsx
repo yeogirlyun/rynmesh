@@ -341,6 +341,16 @@ function CodexAutomationDetailPane({
 
   const latestRun = itemRuns[0] || null;
 
+  const initKind = initial?.kind || (initial?.target_task_id || activeTaskId ? "heartbeat" : "cron");
+  const initTarget = initial?.target_task_id || (initKind === "heartbeat" ? activeTaskId || "" : "");
+  const initNotificationPolicy =
+    initial?.notification_policy === "failed_runs_only" ? "failed_runs_only" : "all_runs";
+  const initRepeat = initial?.repeat || "daily";
+  const initTime = initial?.time || "09:00";
+  const initWeekday = (initial?.weekdays && initial.weekdays[0]) || initial?.weekday || "FR";
+  const initIntervalHours = initial?.interval_hours || 1;
+  const initIntervalMinutes = initial?.interval_minutes || 15;
+
   const handleSave = async (e?: React.FormEvent, nextStatusOverride?: "ACTIVE" | "PAUSED") => {
     if (e) e.preventDefault();
     const cleanPrompt = prompt.trim();
@@ -357,6 +367,13 @@ function CodexAutomationDetailPane({
           ? "minutely"
           : "hourly"
         : repeatMode;
+    const scheduleChanged =
+      !isEditing ||
+      finalRepeat !== initRepeat ||
+      (repeatMode !== "interval" && time !== initTime) ||
+      (finalRepeat === "weekly" && weekday !== initWeekday) ||
+      (finalRepeat === "hourly" && intervalValue !== initIntervalHours) ||
+      (finalRepeat === "minutely" && intervalValue !== initIntervalMinutes);
 
     setSaving(true);
     setError("");
@@ -364,18 +381,37 @@ function CodexAutomationDetailPane({
       const payload: Record<string, unknown> = {
         name: cleanName,
         prompt: cleanPrompt,
-        kind: effectiveKind,
-        target_task_id: effectiveTargetTaskId,
-        notification_policy: notificationPolicy,
         status: finalStatus,
         desktop_access: initial?.desktop_access ?? true,
-        repeat: finalRepeat,
-        time,
-        weekday,
-        weekdays: repeatMode === "weekdays" ? ["MO", "TU", "WE", "TH", "FR"] : [weekday],
-        interval_hours: intervalUnit === "hour" ? intervalValue : 1,
-        interval_minutes: intervalUnit === "minute" ? intervalValue : null,
       };
+      if (!isEditing || effectiveKind !== initKind || effectiveTargetTaskId !== initTarget) {
+        payload.kind = effectiveKind;
+        payload.target_task_id = effectiveTargetTaskId;
+      }
+      if (!isEditing || notificationPolicy !== initNotificationPolicy) {
+        payload.notification_policy = notificationPolicy;
+      }
+      if (scheduleChanged) {
+        payload.repeat = finalRepeat;
+        if (repeatMode === "interval") {
+          payload.interval_hours = intervalUnit === "hour" ? intervalValue : 1;
+          payload.interval_minutes = intervalUnit === "minute" ? intervalValue : null;
+        } else {
+          payload.time = time;
+          payload.weekday = weekday;
+          if (repeatMode === "weekdays") {
+            payload.weekdays = ["MO", "TU", "WE", "TH", "FR"];
+          } else if (
+            finalRepeat === "weekly" &&
+            isEditing &&
+            initial?.repeat === "weekly" &&
+            weekday === initWeekday &&
+            initial.weekdays?.length
+          ) {
+            payload.weekdays = initial.weekdays;
+          }
+        }
+      }
       const res =
         isEditing && initial?.id
           ? await rynAgent.updateAutomation(initial.id, payload)

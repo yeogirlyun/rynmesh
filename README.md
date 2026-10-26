@@ -231,4 +231,4 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 
 ## License
 
-Rynmesh is licensed under the [MIT License](LICENSE).
+Rynmesh is licensed under the [MIT License](LICENSE). Third-party browser runtime bundles, WebAssembly modules, and native helper binaries used by the agent workspace are documented in [Third-Party Runtime, WASM & Native Binary Provenance](docs/THIRD_PARTY_RUNTIME_PROVENANCE.md).

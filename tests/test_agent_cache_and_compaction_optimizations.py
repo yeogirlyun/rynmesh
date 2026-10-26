@@ -7,11 +7,10 @@ import json
 import pytest
 from test_agent_runtime import advance, assistant, make_runtime
 
-from rynmesh.agent_runtime import budget, memory, projects, results, tool_menu
+from rynmesh.agent_runtime import memory, projects, results, tool_menu
 from rynmesh.agent_runtime.bridge import AgentModelBridge
-from rynmesh.agent_runtime.store import AgentError, encoded
+from rynmesh.agent_runtime.store import AgentError
 from rynmesh.llm_package.adapters import (
-    OpenAICompatibleAdapter,
     actual_usage,
     cached_input_tokens,
 )

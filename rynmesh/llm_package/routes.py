@@ -48,7 +48,6 @@ from .chat import reported_token_count, validate_chat
 from .chat_prompt import CHAT_FORMAT, decode_chat_prompt
 from .consumer_cancellation import ConsumerOrderCancelled, cancellable_exchange
 from .consumer_commands import ConsumerCommands
-from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .lifecycle import (
     LifecycleError,
     connect_cli,
@@ -78,6 +77,7 @@ from .lifecycle import (
     update as update_runtime,
 )
 from .manifest import LLMPackageManifest, ManifestError, load_manifest
+from .model_usage import ModelUsageStore, normalize_model_key, usage_caller_scope
 from .p2p import (
     SIGNAL_LONG_POLL_S,
     IceSignal,

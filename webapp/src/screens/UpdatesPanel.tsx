@@ -57,7 +57,7 @@ export function DesktopUpdatesPanel() {
     <h3>{tx("Ryn 软件更新", "Ryn software updates")}</h3>
     <p>{tx("当前版本", "Current version")}: {status?.currentVersion || "…"}
       {status?.availableVersion ? ` → ${status.availableVersion}` : ""}</p>
-    <a href="https://github.com/yeogirlyun/rynmesh/releases" target="_blank" rel="noreferrer">GitHub · yeogirlyun/rynmesh</a>
+    <a href="https://github.com/yeogirlyun/rynmesh/releases" target="_blank" rel="noreferrer">{tx("GitHub · yeogirlyun/rynmesh", "GitHub · yeogirlyun/rynmesh")}</a>
     <p role="status">{tx(...(states[status?.state || "idle"] || states.idle))}</p>
     {status && !status.configured && <p role="alert">{tx("此构建尚未配置官方更新签名公钥，暂不能下载安装更新。", "This build does not have the official update signing key configured.")}</p>}
     <label className="toggle-row"><input type="checkbox" checked={status?.autoDownload ?? true} disabled={working || !status?.configured}
@@ -130,7 +130,7 @@ export function PluginUpdatesPanel() {
         <label>{tx("更新来源", "Source")}<select value={source.kind} disabled={busy} onChange={e => setSource({ ...source, kind: e.target.value as PluginUpdateSource["kind"], url: "", token_env: "" })}><option value="public">{tx("公共 Git Release", "Public Git Release")}</option><option value="company">{tx("公司后台 URL", "Company URL")}</option></select></label>
         <label>{tx("订阅地址", "Manifest URL")}<input type="url" required value={source.url} disabled={busy} onChange={e => setSource({ ...source, url: e.target.value })} /></label>
         <label>{tx("发布者公钥（由发布者提供）", "Publisher public key")}<input required value={source.public_key} disabled={busy} onChange={e => setSource({ ...source, public_key: e.target.value.trim() })} /></label>
-        {source.kind === "company" && <label>{tx("凭证环境变量名（可选，由管理员配置）", "Credential environment variable (optional, administrator configured)")}<input placeholder="RYN_PLUGIN_TOKEN_COMPANY" value={source.token_env || ""} disabled={busy} onChange={e => setSource({ ...source, token_env: e.target.value })} /></label>}
+        {source.kind === "company" && <label>{tx("凭证环境变量名（可选，由管理员配置）", "Credential environment variable (optional, administrator configured)")}<input placeholder={tx("RYN_PLUGIN_TOKEN_COMPANY", "RYN_PLUGIN_TOKEN_COMPANY")} value={source.token_env || ""} disabled={busy} onChange={e => setSource({ ...source, token_env: e.target.value })} /></label>}
         <label><input type="checkbox" checked={source.auto_update} disabled={busy} onChange={e => setSource({ ...source, auto_update: e.target.checked })} />{tx("允许后台下载，并在插件空闲时更新", "Allow background downloads and updates when idle")}</label>
         <Button type="submit" disabled={busy}>{tx("保存订阅", "Save source")}</Button>
       </>}

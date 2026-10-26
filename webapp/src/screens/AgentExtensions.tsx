@@ -2970,7 +2970,7 @@ function McpServerDetailsModal({
                 </strong>
                 {Object.entries(server.env_http_headers!).map(([hk, hv]) => (
                   <span key={hk} className="ae-badge" style={{ marginRight: 6 }}>
-                    {hk} &larr; ${hv}
+                    {`${hk} ← $${hv}`}
                   </span>
                 ))}
               </div>
@@ -3785,7 +3785,7 @@ function McpServerFormModal({
                 disabled={submitting || replacedOrDeleted}
                 onClick={() => setTransport("stdio")}
               >
-                STDIO
+                {tx("STDIO", "STDIO")}
               </button>
               <button
                 type="button"
@@ -4052,7 +4052,7 @@ function McpServerFormModal({
                         `传递环境变量 ${idx + 1}`,
                         `Passthrough environment variable ${idx + 1}`,
                       )}
-                      placeholder="ENV_VAR_NAME"
+                      placeholder={tx("ENV_VAR_NAME", "ENV_VAR_NAME")}
                       value={varName}
                       disabled={submitting || replacedOrDeleted}
                       onChange={event =>

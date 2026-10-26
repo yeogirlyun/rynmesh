@@ -344,6 +344,8 @@ _KNOWN_WORKER_NAMES = {
     "llm.publish-refresh",
     "llm.friend-permissions",
     "llm.space-catalog",
+    "llm.external-presence",
+    "peer-provider-directory",
     "ai-access.discovery",
     "llm.relay-poll",
     "updates.poll",

@@ -487,3 +487,44 @@ def test_codex_heartbeat_notify_vs_dont_notify_and_auto_pause_archived(tmp_path:
     paused_auto = next(i for i in runtime.list_automations()["items"] if i["id"] == auto_id)
     assert paused_auto["status"] == "PAUSED"
     assert paused_auto["next_run_at"] is None
+
+
+def test_updating_time_or_name_preserves_multiday_weekly_schedule(tmp_path: Path):
+    _app, _runtime, _model, client = _build_test_env(tmp_path)
+    created = client.post(
+        "/api/local/agent/automations",
+        json={
+            "name": "Mon/Wed standup",
+            "prompt": "Summarize progress",
+            "repeat": "weekly",
+            "time": "09:00",
+            "weekdays": ["MO", "WE"],
+        },
+    )
+    assert created.status_code == 200
+    auto = created.json()["automation"]
+    auto_id = auto["id"]
+    assert auto["weekdays"] == ["MO", "WE"]
+    assert "BYDAY=MO,WE" in auto["rrule"]
+
+    # Updating only time must preserve Monday + Wednesday
+    updated_time = client.patch(
+        f"/api/local/agent/automations/{auto_id}",
+        json={"time": "10:30"},
+    )
+    assert updated_time.status_code == 200
+    after_time = updated_time.json()["automation"]
+    assert after_time["time"] == "10:30"
+    assert after_time["weekdays"] == ["MO", "WE"]
+    assert "BYDAY=MO,WE" in after_time["rrule"]
+
+    # Updating only name must also preserve Monday + Wednesday
+    updated_name = client.patch(
+        f"/api/local/agent/automations/{auto_id}",
+        json={"name": "Updated standup"},
+    )
+    assert updated_name.status_code == 200
+    after_name = updated_name.json()["automation"]
+    assert after_name["name"] == "Updated standup"
+    assert after_name["weekdays"] == ["MO", "WE"]
+    assert "BYDAY=MO,WE" in after_name["rrule"]

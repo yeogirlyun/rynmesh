@@ -172,6 +172,31 @@ def message_text(value: Any) -> str:
     return value.strip()
 
 
+class _ExtensionPolicyAdmitter:
+    def __init__(self, runtime: AgentRuntime, row: dict) -> None:
+        self.runtime = runtime
+        self.row = row
+        self.selected = {
+            "id": row["id"],
+            "control_revision": row.get("control_revision"),
+            "model_id": row["model_id"],
+            "model_destination": copy.deepcopy(row.get("model_destination")),
+        }
+
+    def __call__(self, snapshot: dict, persist: bool = True) -> dict:
+        return self.runtime._admit_extension_policy(self.row, snapshot, persist=persist)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, _ExtensionPolicyAdmitter)
+            and self.runtime is other.runtime
+            and self.selected == other.selected
+        )
+
+    def __deepcopy__(self, memo: dict) -> _ExtensionPolicyAdmitter:
+        return self
+
+
 class AgentRuntime(AgentLoop):
     def __init__(self, store: AgentStore, model: Any, tools: Any, catalog: Any, *, owner_id="local_owner", consumer_node_id=None):
         self.store, self.model, self.tools, self.catalog = store, model, tools, catalog
@@ -395,7 +420,7 @@ class AgentRuntime(AgentLoop):
             except Exception:
                 pass
         return {**self._policy_context(row),
-                "_admit_extension_policy": lambda snapshot, persist=True: self._admit_extension_policy(row, snapshot, persist=persist),
+                "_admit_extension_policy": _ExtensionPolicyAdmitter(self, row),
                 "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],

@@ -99,7 +99,7 @@ export function newSource(provider = "zai"): AISource {
   return { id: "new", name: preset.name, kind: ["ollama", "lmstudio"].includes(provider) ? "local" : "api",
     provider, protocol: provider === "anthropic" ? "anthropic_messages" : "openai_chat",
     base_url: preset.url, models: provider === "deepseek" ? ["deepseek-flash", "deepseek-v4-pro"] : preset.model ? [preset.model] : [],
-    context_window: (provider === "deepseek" || provider === "zai") ? 1048576 : 32768, context_window_mode: "auto", max_output_tokens: provider === "deepseek" ? 393216 : provider === "zai" ? 131072 : 4096,
+    context_window: 32768, context_window_mode: "auto", max_output_tokens: 4096,
     request_defaults: provider === "zai" ? { thinking: { type: "enabled" }, reasoning_effort: "max" } : {},
     enabled: true, sharing: false, status: "untested", has_key: false };
 }

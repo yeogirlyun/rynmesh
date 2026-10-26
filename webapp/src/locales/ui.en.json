@@ -1780,5 +1780,7 @@
   "Device unreachable — check the connection": "Device unreachable — check the connection",
   "{{count}} installed": "{{count}} installed",
   "Not installed": "Not installed",
-  "{{count}} not installed": "{{count}} not installed"
+  "{{count}} not installed": "{{count}} not installed",
+  "重置用量失败，请重试": "Failed to reset usage. Please try again.",
+  "保存配额失败，请重试": "Failed to save quota. Please try again."
 }

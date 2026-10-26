@@ -1780,5 +1780,7 @@
   "Device unreachable — check the connection": "设备无法连接 — 请检查网络连接",
   "{{count}} installed": "已安装 {{count}} 个",
   "Not installed": "未安装",
-  "{{count}} not installed": "未安装 {{count}} 个"
+  "{{count}} not installed": "未安装 {{count}} 个",
+  "重置用量失败，请重试": "重置用量失败，请重试",
+  "保存配额失败，请重试": "保存配额失败，请重试"
 }

@@ -510,14 +510,14 @@ class ModelUsageStore:
 
     def public_usage(self, model_key: str, *, policy: dict[str, Any] | None = None,
                      snapshot: dict[str, dict[str, Any]] | None = None,
-                     **quota_Overrides: Any) -> dict[str, Any]:
+                     **quota_overrides: Any) -> dict[str, Any]:
         canonical = normalize_model_key(model_key)
         data = snapshot if snapshot is not None else self.read_cached()
         entry = data.get(canonical) or _empty_entry(_utc_today())
         merged_policy = dict(policy or {})
         for k in QUOTA_FIELDS:
-            if k in quota_Overrides:
-                merged_policy[k] = quota_Overrides[k]
+            if k in quota_overrides:
+                merged_policy[k] = quota_overrides[k]
         return format_public_usage(canonical, entry, policy=merged_policy or None)
 
     def check_quota(

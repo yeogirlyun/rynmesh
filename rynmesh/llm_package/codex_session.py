@@ -546,6 +546,14 @@ def _prompt(body, output_schema, choice):
     return json.dumps({"messages": text_messages(messages), "tool_choice": choice}, ensure_ascii=False)
 
 
+def _raise_rpc_error(rpc, message: str, *, code: str | None = None):
+    if hasattr(rpc, "_raise_with_diagnostics"):
+        rpc._raise_with_diagnostics(message, code=code)
+    err = AdapterError(message, code=code) if code is not None else AdapterError(message)
+    err.diagnostics = rpc.diagnostics() if hasattr(rpc, "diagnostics") else {}
+    raise err
+
+
 def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=None, schemas=None,
           on_text=None, resumed=False):
     """One provider turn; any provider-side execution attempt ends it."""
@@ -577,7 +585,7 @@ def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=N
                         "input": inputs})
     except AdapterError as exc:
         if not getattr(exc, "diagnostics", None):
-            exc.diagnostics = rpc.diagnostics()
+            exc.diagnostics = rpc.diagnostics() if hasattr(rpc, "diagnostics") else {}
         if resumed and exc.code == "inference_failed":
             # The kept thread is gone (for example an app-server restart or
             # eviction); nothing ran, so the caller may resend full history.
@@ -601,10 +609,10 @@ def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=N
         if "id" in event and "method" in event:
             if event["method"] != "item/tool/call" or data.get("threadId") != thread_id or data.get("turnId") != turn_id:
                 rpc.reject(event)
-                rpc._raise_with_diagnostics("provider execution request denied")
+                _raise_rpc_error(rpc, "provider execution request denied")
             name, arguments = data.get("tool"), data.get("arguments")
             if name not in names or not isinstance(arguments, dict):
-                rpc._raise_with_diagnostics("unregistered client tool request")
+                _raise_rpc_error(rpc, "unregistered client tool request")
             validate_tool_arguments(schemas[name], arguments)
             calls = [{"id": "call_" + uuid.uuid4().hex, "type": "function",
                       "function": {"name": names[name], "arguments": json.dumps(arguments, ensure_ascii=False)}}]
@@ -616,7 +624,7 @@ def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=N
             rpc.stage = "turn_stream"
             item = data.get("item", {})
             if item.get("type") in _PROVIDER_ITEMS:
-                rpc._raise_with_diagnostics("provider execution protocol violation")
+                _raise_rpc_error(rpc, "provider execution protocol violation")
             if event["method"] == "item/completed" and item.get("type") == "agentMessage":
                 answer = item.get("text", "")
         elif event.get("method") == "thread/tokenUsage/updated" and data.get("turnId", turn_id) == turn_id:
@@ -624,7 +632,7 @@ def _turn(rpc, thread_id, body, prompt, *, deadline, output_schema=None, names=N
             usage = _reported_usage(reported.get("last") if isinstance(reported, dict) else None)
         elif event.get("method") == "turn/completed" and data.get("turn", {}).get("id") == turn_id:
             if data["turn"].get("status") != "completed":
-                rpc._raise_with_diagnostics("Codex turn did not complete", code="upstream_http_failed")
+                _raise_rpc_error(rpc, "Codex turn did not complete", code="upstream_http_failed")
             rpc.stage = "completed"
             break
     return answer, usage, calls
