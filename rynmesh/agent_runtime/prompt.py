@@ -127,7 +127,10 @@ def authority(row: dict) -> str:
     context["file_output_policy"] = (
         "Create and edit text files in workspace_root with ryn_apply_patch (several files per patch); binary files use shell. Confirm outputs via readback or workspace_files. "
         "Link final files as [name](absolute-path) with forward slashes, <paths with spaces>; embed images as ![description](absolute-path). "
-        "Use the supplied workspace without asking for a folder.")
+        "Use the supplied workspace without asking for a folder."
+        + (" For connected cloud drives (e.g. Baidu Netdisk / 百度网盘, Google Drive, OneDrive) and NAS resources, use ryn_list_resource_roots, ryn_list_resources, ryn_create_directory, ryn_upload_resource_file, and ryn_create_text_file directly instead of searching the local OS desktop or filesystem."
+           if (row.get("scope") or {}).get("resource_grants") else "")
+    )
     permissions = permission_projection(row)
     if permissions:
         context["operation_permissions"] = permissions

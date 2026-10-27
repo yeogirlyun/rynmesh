@@ -8,6 +8,7 @@ from typing import Any
 
 from ..background_workers import WorkerRunResult
 from . import memory, memory_integration, memory_natural, memory_runtime, projects
+from .data_policy import memory_blocked
 from .store import AgentError, encoded
 
 MEMORY_WORKER_NAME = "ryn-agent-memory"
@@ -38,6 +39,8 @@ class MemoryExtractionWorker:
     @staticmethod
     def _is_task_eligible_for_capture(data: dict[str, Any], tid: str | None, row: Any) -> bool:
         if not isinstance(tid, str) or not tid or not isinstance(row, dict):
+            return False
+        if memory_blocked(row):
             return False
         if row.get("status") != "completed" or row.get("archived"):
             return False

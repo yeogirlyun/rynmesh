@@ -2630,9 +2630,28 @@ def create_app(store: RynmeshStore | None = None):
     )
 
     from .drop.integration import install_device_drop
+    from .peer_providers import PeerProviderService, install_peer_provider_routes
+
+    def provider_endpoints():
+        from .peer_providers.validation import PeerProviderError, endpoints
+        value = str(active_store.node_info().get("peer_endpoint") or "")
+        try:
+            return endpoints([value]) if value else []
+        except PeerProviderError:
+            return []
+
+    async def open_provider_login(url):
+        import asyncio
+        import webbrowser
+        await asyncio.to_thread(webbrowser.open, url, new=2)
+
+    peer_providers = PeerProviderService(active_store.home, active_store, _msg_priv,
+                                        endpoints=provider_endpoints, browser_open=open_provider_login)
+    active_store.peer_providers = peer_providers
+    install_peer_provider_routes(app, peer_providers, local_control)
 
     install_device_drop(app, store=active_store, messaging_key=_msg_priv, personal_space=personal_space,
-                        network_id=control_network_id, local_control=local_control)
+                        network_id=control_network_id, local_control=local_control, peer_providers=peer_providers)
 
     from .exchange.routes import install_exchange
 
@@ -2799,6 +2818,47 @@ def create_app(store: RynmeshStore | None = None):
         workers=app.state.background_workers, local_control=local_control,
         messaging_key=_msg_priv,
     )
+    peer_providers.extension_source = lambda: app.state.agent_runtime.tools.extensions.store.list_peer_providers_internal()
+
+    def _mcp_token_for_plugin(plugin_id: str):
+        try:
+            ext = app.state.agent_runtime.tools.extensions
+            servers = ext.store.list_mcp_servers_internal()
+            for srv in servers:
+                if srv.get("plugin_id") == plugin_id and srv.get("effective_enabled", srv.get("enabled", False)):
+                    try:
+                        tok = ext.manager.oauth.access_token(srv)
+                        if tok:
+                            return tok
+                    except Exception:
+                        pass
+        except Exception:
+                            pass
+        except Exception:
+            return None
+        return None
+
+    peer_providers.mcp_token_source = _mcp_token_for_plugin
+
+    def refresh_peer_providers():
+        import asyncio
+        asyncio.run(peer_providers.refresh_directories())
+        return False
+
+    app.state.background_workers.register(BackgroundWorkerSpec(
+        name="peer-provider-directory", run_once=refresh_peer_providers,
+        initial_delay_s=1.0, policy=BackoffPolicy.fixed(30.0)), replace=True)
+    provider_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def close_peer_providers(instance):
+        try:
+            async with provider_lifespan(instance) as state:
+                yield state
+        finally:
+            peer_providers.close()
+
+    app.router.lifespan_context = close_peer_providers
 
     # ---- bundled web UI -------------------------------------------------
     # A packaged install serves the built webapp from the node itself, so the

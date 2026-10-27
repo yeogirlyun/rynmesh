@@ -55,11 +55,12 @@ async function changed(result: Promise<CraftCatalog>): Promise<CraftCatalog> {
   return catalog;
 }
 export const craftPlugins = {
-  catalog: () => request<CraftCatalog>(),
+  catalog: () => request<CraftCatalog>(""),
   setup: () => changed(request<CraftCatalog>("/setup", {})),
   install: (id: string) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/install`, {})),
   installAutomation: (id: string) => request<CraftCatalog>(`/${encodeURIComponent(id)}/install-automation`, {}),
   enable: (id: string, enabled: boolean) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/enable`, { enabled })),
+  configure: (id: string, config: Record<string, unknown>) => request<CraftCatalog>(`/${encodeURIComponent(id)}/configure`, config),
   uninstall: (id: string, clear_preferences: boolean) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/uninstall`, { clear_preferences })),
   preview: (id: string) => request<CraftLaunch>(`/${encodeURIComponent(id)}/preview-launch`, {}),
   launch: (id: string, ticket: string) => request<Omit<CraftLaunch, "ticket">>(`/${encodeURIComponent(id)}/launch`, { ticket }),

@@ -16,13 +16,19 @@ from .craft_host import CraftError
 
 BUSINESS = ("resume", "recruit", "desk")
 BUILTINS = (*BUSINESS, "nas")
+ALL_BUILTINS = BUILTINS
 VERSION = "1.0.0"
 NAS_TOOLS = ("ryn_list_resource_roots", "ryn_list_resources", "ryn_read_resource", "ryn_search_resource",
              "ryn_create_text_file", "ryn_create_directory")
 
 
+def normalize_slug(slug):
+    return slug
+
+
 def manifest(slug):
-    if slug not in BUILTINS:
+    slug = normalize_slug(slug)
+    if slug not in ALL_BUILTINS:
         raise CraftError("craft_unknown_app")
     item = CATALOG.get(slug)
     return {
@@ -43,12 +49,14 @@ def checksum(slug):
 
 
 def location(cache, slug):
-    if slug not in BUILTINS:
+    slug = normalize_slug(slug)
+    if slug not in ALL_BUILTINS:
         raise CraftError("craft_unknown_app")
     return Path(cache) / slug / VERSION
 
 
 def verify(cache, slug):
+    slug = normalize_slug(slug)
     root = location(cache, slug)
     try:
         if root.is_symlink() or root.parent.is_symlink():
@@ -69,6 +77,7 @@ def verify(cache, slug):
 
 
 def install(cache, slug):
+    slug = normalize_slug(slug)
     root = location(cache, slug)
     if root.exists():
         return verify(cache, slug)

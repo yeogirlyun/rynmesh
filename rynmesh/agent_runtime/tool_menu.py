@@ -118,14 +118,22 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     """
     internal = [spec for spec in internal_specs if spec["function"]["name"] != NAME]
     all_specs = [*business_specs, *internal]
+    full_specs = (
+        [
+            s for s in all_specs
+            if s["function"]["name"] not in {"ryn_automation_update", "ryn_memory_search", "ryn_memory_propose"}
+        ]
+        if max_context_bytes <= 16000
+        else all_specs
+    )
     limit = capacity(max_context_bytes, authority_bytes)
     prior = state or {}
     base = [*internal, directory_spec(business_specs)]
     target = min(8192, max_context_bytes // 2, max_context_bytes - authority_bytes - 2048)
     # For small registries a discovery schema would cost more than all tools.
     directory_useful = len(encoded(all_specs)) > len(encoded(base))
-    mode = "directory" if (len(encoded(all_specs)) > limit or
-                           directory_useful and (len(encoded(all_specs)) > target or prior.get("mode") == "directory")) else "full"
+    mode = "directory" if (len(encoded(full_specs)) > limit or
+                           directory_useful and (len(encoded(full_specs)) > target or prior.get("mode") == "directory")) else "full"
     # In a small window, unused plan/input/result schemas can occupy more
     # space than all usable conversation. Keep them discoverable instead of
     # repeatedly summarizing or unloading necessary business schemas.
@@ -133,10 +141,18 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
     catalog = [*business_specs, *internal] if lazy else business_specs
     revision = catalog_revision(catalog)
     binding = {"catalog_revision": revision, "context_epoch": epoch, "goal_revision": goal_revision, "lazy_controls": lazy}
-    same = all(prior.get(key) == value for key, value in binding.items())
+    same_epoch = (
+        prior.get("catalog_revision") == revision
+        and prior.get("context_epoch") == epoch
+        and prior.get("lazy_controls") == lazy
+    )
+    same = same_epoch and prior.get("goal_revision") == goal_revision
+    # Normal/additive windows keep discovered tool schemas across owner follow-ups
+    # so the tools prefix at token 0 remains KV-cache stable across turns.
+    keep_loaded = same or (same_epoch and max_context_bytes >= ADDITIVE_CAPACITY)
     if lazy:
         base = [directory_spec(catalog)]
-    loaded = list(prior.get("loaded_names", [])) if same and mode == "directory" else []
+    loaded = list(prior.get("loaded_names", [])) if keep_loaded and mode == "directory" else []
     by_name = {spec["function"]["name"]: spec for spec in catalog}
     if len(by_name) != len(catalog) or NAME in by_name:
         raise AgentError("agent_tool_definition_changed")
@@ -154,9 +170,10 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
         name in BROWSER_TOOLS or name.startswith("mcp__computer_use__computer_")
         for name in requested_pins
     )
+    has_resource_pins = "ryn_list_resource_roots" in requested_pins
     pinned = []
-    seed_cap = 26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000
-    pin_floor = 24000 if has_browser_pins else 15000
+    seed_cap = (26000 if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY else 17000) + (2500 if has_resource_pins else 0)
+    pin_floor = (24000 if has_browser_pins else 15000) + (2500 if has_resource_pins else 0)
     seed_limit = min(limit, max(target, min(seed_cap, max_context_bytes // 3)))
     if has_browser_pins and max_context_bytes >= ADDITIVE_CAPACITY:
         seed_limit = min(limit, max(seed_limit, pin_floor))
@@ -187,9 +204,7 @@ def project(business_specs, internal_specs, state, *, max_context_bytes, authori
                     loaded.append(name)
     def exposure(names):
         if mode == "full":
-            if max_context_bytes <= 16000:
-                return [s for s in all_specs if s["function"]["name"] != "ryn_automation_update"]
-            return all_specs
+            return full_specs
         return [*base, *(by_name[name] for name in [*pinned, *names])]
     # Loaded schemas are a reloadable cache: release the least recently loaded
     # before refusing, as pinned core tools now share the same space.

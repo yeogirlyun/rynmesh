@@ -3,7 +3,7 @@ import { nativeModelRequest, type NativeModelStatus } from "../../domain/nativeM
 import { useUILanguage } from "../../uiI18n";
 
 type Configuration = NonNullable<NativeModelStatus["model_settings"]>["configuration"];
-type Field = keyof Configuration;
+type Field = Extract<keyof Configuration, "max_output_tokens" | "max_concurrent" | "requests_per_day">;
 const draftOf = (value: Configuration): Record<Field, string> => ({
   max_output_tokens: String(value.max_output_tokens), max_concurrent: String(value.max_concurrent),
   requests_per_day: value.requests_per_day === null ? "" : String(value.requests_per_day),

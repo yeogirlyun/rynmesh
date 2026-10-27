@@ -13,6 +13,7 @@ from test_agent_runtime_model_switch import setup as switch_setup
 
 from rynmesh.agent_runtime.bridge import AgentModelBridge
 from rynmesh.agent_runtime.models import ModelCatalog
+from rynmesh.agent_runtime.prompt import INPUT
 from rynmesh.agent_runtime.store import AgentError, AgentStore
 from rynmesh.llm_package import codex_session
 from rynmesh.llm_package.adapters import AdapterError
@@ -179,11 +180,27 @@ def test_real_runtime_bridge_cli_proposal_path_sends_effort_to_turn_start(tmp_pa
     runtime.model = AgentModelBridge({"provider_for": lambda _: manager}, catalog)
     created = runtime.create({"message": "hello", "reasoning_effort": "ultra"})
     advance(runtime)
-    assert runtime.get(created["id"])["status"] == "completed"
+    completed = runtime.get(created["id"])
+    assert completed["status"] == "completed" and completed["result"] == "done"
     turn = next(params for method, params in wire if method == "turn/start")
     thread = next(params for method, params in wire if method == "thread/start")
-    assert turn["effort"] == "ultra" and "outputSchema" in turn
+    assert turn["effort"] == "ultra"
+    # The real menu includes conditional input rules outside the strict-output
+    # subset. The object protocol must retain those rules instead of narrowing
+    # the client interface merely to obtain an outputSchema.
+    framing, encoded = turn["input"][0]["text"].split("\n", 1)
+    payload = json.loads(encoded)
+    functions = {function["name"]: function for function in payload["functions"]}
+    variants = payload["output_schema"]["properties"]["tool_calls"]["items"]["anyOf"]
+    input_variant = next(variant for variant in variants
+                         if variant["properties"]["name"]["enum"] == ["ryn_request_input"])
+    assert "allOf" in INPUT
+    assert functions["ryn_request_input"]["parameters"] == input_variant["properties"]["arguments"] == INPUT
+    assert "outputSchema" not in turn
+    assert "unconstrained object protocol" in framing and "Omit unused optional properties" in framing
     assert thread["model"] == "gpt-test" and thread["sandbox"] == "read-only"
+    assert thread["approvalPolicy"] == "never"
+    assert thread["runtimeWorkspaceRoots"] == thread["selectedCapabilityRoots"] == []
     assert thread["dynamicTools"] == [] and thread["environments"] == turn["environments"] == []
 
 

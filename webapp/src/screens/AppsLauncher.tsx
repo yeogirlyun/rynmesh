@@ -1,6 +1,7 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ArrowUpRight, Bot, Check, Info, Plus } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Bot, Building2, Check, Info, Plus } from "lucide-react";
+import type { ExtensionOverview } from "../domain/agentExtensions";
 import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
 import { tr } from "../uiI18n";
 import AppIcon, { appTone } from "./appIcons";
@@ -13,6 +14,8 @@ const canInstall = (app: CraftPlugin) => app.installable ?? app.web;
 
 type Props = {
   catalog: CraftCatalog;
+  extensionOverview?: ExtensionOverview | null;
+  onRefreshExtensions?: () => void;
   busy: boolean;
   /** Kept by the parent so it survives the installer replacing this view. */
   filter: AppsFilter;
@@ -25,8 +28,16 @@ type Props = {
 };
 
 /** The Apps page: what is installed is one click from opening, what is not is one click from installing. */
-export default function AppsLauncher({ catalog, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
+export default function AppsLauncher({ catalog, extensionOverview, busy, filter, onFilterChange, text, onOpen, onInstall, onAgent }: Props) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
+  const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
+  const tx = (zh: string, en: string) => (isZh ? zh : en);
+  const extensionPlugins = (extensionOverview?.plugins ?? []).filter(
+    (p) => !p.builtin || (p.views?.length ?? 0) > 0,
+  );
+  const showExtensionPlugins =
+    extensionPlugins.length > 0 && (filter === "all" || filter === "workflow");
   const name = (app: CraftPlugin) => text(app.id);
   const warning = (app: CraftPlugin) => text(app.warning === "cjk_font_coverage" ? "cjkWarningShort" : "fontWarningShort");
   const summary = (app: CraftPlugin) => text(`descriptions.${app.id}`, { defaultValue: app.name });
@@ -67,12 +78,79 @@ export default function AppsLauncher({ catalog, busy, filter, onFilterChange, te
           </button>
         ))}
       </nav>
-      {installed.length > 0 && (
+      {(installed.length > 0 || showExtensionPlugins) && (
         <section className="ra-section" aria-label={text("installed")}>
           <h2>
-            {text("installed")} <span>({installed.length})</span>
+            {text("installed")} <span>({installed.length + (showExtensionPlugins ? extensionPlugins.length : 0)})</span>
           </h2>
           <div className="ra-grid4">
+            {showExtensionPlugins &&
+              extensionPlugins.map((plugin) => {
+                const servers = plugin.mcp_servers?.length ? plugin.mcp_servers : (extensionOverview?.mcp_servers ?? []).filter(m => m.plugin_id === plugin.id || plugin.mcp_server_ids.includes(m.id));
+                const isLoggedIn = servers.some(s => s.oauth?.state === "logged_in");
+                const hasOauth = servers.some(s => Boolean(s.oauth));
+                const appPath = `/settings/extensions/plugins?plugin=${encodeURIComponent(plugin.id)}`;
+                return (
+                  <article
+                    key={`ext-${plugin.id}`}
+                    className={`ra-card ra-t-teal${plugin.enabled ? "" : " off"}`}
+                    data-extension-plugin={plugin.id}
+                  >
+                    <div className="ra-top">
+                      <button
+                        type="button"
+                        className="ra-glyph"
+                        aria-label={`${text("open")} ${plugin.title}`}
+                        disabled={!plugin.enabled}
+                        onClick={() => navigate(appPath)}
+                      >
+                        <Building2 size={22} color="#fff" />
+                      </button>
+                      {!plugin.enabled && <span className="ra-chip">{text("disabled")}</span>}
+                    </div>
+                    <div>
+                      <h3>
+                        {plugin.title}
+                      </h3>
+                      <p>
+                        {plugin.description}
+                      </p>
+                    </div>
+                    <div className="ra-slot">
+                      {isLoggedIn ? (
+                        <span className="ra-chip ok">
+                          <Check size={13} aria-hidden="true" />
+                          {tx("已登录", "Signed in")}
+                        </span>
+                      ) : hasOauth ? (
+                        <span className="ra-chip warn">{tx("待登录", "Sign-in required")}</span>
+                      ) : null}
+                    </div>
+                    <div className="ra-foot">
+                      <button
+                        type="button"
+                        className="ra-btn primary sm"
+                        disabled={!plugin.enabled}
+                        onClick={() => navigate(appPath)}
+                      >
+                        {text("open")}
+                        <ArrowUpRight size={14} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        className="ra-btn ghost sm"
+                        disabled={!plugin.enabled}
+                        onClick={() =>
+                          navigate("/agent")
+                        }
+                      >
+                        {tx("打开 Agent", "Open Agent")}
+                        <ArrowRight size={14} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             {installed.map((app) => (
               <article className={`ra-card ra-t-${appTone(app.id)}${app.enabled ? "" : " off"}`} key={app.id} data-tool={app.id}>
                 <div className="ra-top">

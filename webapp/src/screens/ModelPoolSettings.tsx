@@ -1,7 +1,116 @@
-import { useState } from "react";
-import { sourceRequest, type AISource, type AIModelParameters } from "../domain/aiSources";
+import { useMemo, useState } from "react";
+import {
+  formatTokenCount,
+  resetModelUsage,
+  sourceRequest,
+  type AIModelParameters,
+  type AISource,
+  type ModelTokenUsage,
+} from "../domain/aiSources";
 import { Modal } from "../personal/components";
 import { useUILanguage } from "../uiI18n";
+
+export function buildDailySeries(
+  usages: Array<ModelTokenUsage | undefined>,
+  daysCount: 7 | 30 = 7,
+): Array<{ day: string; label: string; isToday: boolean; tokens: number }> {
+  const anchorIso =
+    usages.map(u => u?.today?.day).find((d): d is string => Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d))) ||
+    new Date().toISOString().slice(0, 10);
+  const [y, m, d] = anchorIso.split("-").map(Number);
+  const anchorUtc = Date.UTC(y, (m || 1) - 1, d || 1);
+
+  const byDay = new Map<string, number>();
+  for (const u of usages) {
+    if (!u) continue;
+    const seenForModel = new Set<string>();
+    for (const item of u.daily || []) {
+      if (!item?.day) continue;
+      const tok = Math.max(0, Number(item.total_tokens ?? item.tokens ?? 0));
+      byDay.set(item.day, (byDay.get(item.day) || 0) + tok);
+      seenForModel.add(item.day);
+    }
+    const todayKey = u.today?.day || anchorIso;
+    const todayTok = Math.max(0, Number(u.today?.total_tokens || 0));
+    if (todayTok > 0 && !seenForModel.has(todayKey)) {
+      byDay.set(todayKey, (byDay.get(todayKey) || 0) + todayTok);
+    }
+  }
+
+  const result: Array<{ day: string; label: string; isToday: boolean; tokens: number }> = [];
+  for (let i = daysCount - 1; i >= 0; i--) {
+    const dt = new Date(anchorUtc - i * 86_400_000);
+    const iso = dt.toISOString().slice(0, 10);
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(dt.getUTCDate()).padStart(2, "0");
+    result.push({
+      day: iso,
+      label: `${mm}/${dd}`,
+      isToday: i === 0,
+      tokens: byDay.get(iso) || 0,
+    });
+  }
+  return result;
+}
+
+export function ModelTokenUsageSummaryCard({
+  usage,
+  busy,
+  onReset,
+}: {
+  usage?: ModelTokenUsage;
+  busy?: boolean;
+  onReset?: (scope: "today" | "all") => Promise<void>;
+}) {
+  const zh = useUILanguage().startsWith("zh");
+  const text = (cn: string, en: string) => (zh ? cn : en);
+  const series = useMemo(() => (usage ? buildDailySeries([usage], 7) : []), [usage]);
+  if (!usage) return null;
+  const todayTokens = usage.today?.total_tokens || 0;
+  const totalTokens = usage.total?.total_tokens || 0;
+  const sevenDayTokens = series.reduce((sum, item) => sum + item.tokens, 0);
+  const maxBar = Math.max(1, ...series.map(item => item.tokens));
+
+  return (
+    <section className="mp-codex-usage-card mp-codex-usage-compact" aria-label={text("Token 每日用量", "Daily token usage")}>
+      <div className="mp-codex-stats">
+        <div className="mp-codex-stat">
+          <span>{text("今日用量", "Today")}</span>
+          <strong>{formatTokenCount(todayTokens)}</strong>
+        </div>
+        <div className="mp-codex-stat">
+          <span>{text("近 7 天", "Last 7 days")}</span>
+          <strong>{formatTokenCount(sevenDayTokens)}</strong>
+        </div>
+        <div className="mp-codex-stat">
+          <span>{text("累计总计", "Total")}</span>
+          <strong>{formatTokenCount(totalTokens)}</strong>
+        </div>
+        {onReset && (todayTokens > 0 || totalTokens > 0) && (
+          <button type="button" className="mp-link-btn mp-codex-reset" disabled={busy} onClick={() => void onReset("today")}>
+            {text("清零今日", "Reset today")}
+          </button>
+        )}
+      </div>
+      <div className="mp-codex-bars" role="img" aria-label={text("近 7 天每日用量", "Last 7 days daily token usage")}>
+        {series.map(item => {
+          const heightPct = item.tokens > 0 ? Math.max(10, Math.round((item.tokens / maxBar) * 100)) : 3;
+          return (
+            <div key={item.day} className={`mp-codex-bar-col${item.isToday ? " is-today" : ""}`} title={`${item.day}: ${item.tokens.toLocaleString()} tokens`}>
+              <small className="mp-codex-bar-val">{item.tokens > 0 ? formatTokenCount(item.tokens) : "0"}</small>
+              <div className="mp-codex-bar-track">
+                <div className="mp-codex-bar-fill" style={{ height: `${heightPct}%` }} />
+              </div>
+              <span className="mp-codex-bar-day">{item.isToday ? text("今天", "Today") : item.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+type NumericParameterField = "context_window" | "max_output_tokens" | "max_concurrent" | "requests_per_day";
 
 export default function ModelPoolSettings({ source, modelID, onClose, onSaved }: { source: AISource; modelID: string; onClose: () => void; onSaved: () => Promise<unknown> }) {
   const zh = useUILanguage().startsWith("zh");
@@ -14,22 +123,54 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
   const [changedFields, setChangedFields] = useState<Array<keyof AIModelParameters>>([]);
   const [draft, setDraft] = useState<Record<keyof AIModelParameters, string>>(() => {
     const overrides = source.model_settings?.[modelID]?.overrides || {};
-    return { context_window: overrides.context_window?.toString() || "", max_output_tokens: overrides.max_output_tokens?.toString() || "", max_concurrent: overrides.max_concurrent?.toString() || "", requests_per_day: overrides.requests_per_day?.toString() || "", request_defaults: overrides.request_defaults === undefined ? "" : JSON.stringify(overrides.request_defaults, null, 2) };
+    return {
+      context_window: overrides.context_window?.toString() || "",
+      max_output_tokens: overrides.max_output_tokens?.toString() || "",
+      max_concurrent: overrides.max_concurrent?.toString() || "",
+      requests_per_day: overrides.requests_per_day?.toString() || "",
+      tokens_per_day: overrides.tokens_per_day?.toString() || "",
+      shared_tokens_per_day: overrides.shared_tokens_per_day?.toString() || "",
+      request_defaults: overrides.request_defaults === undefined ? "" : JSON.stringify(overrides.request_defaults, null, 2),
+    };
   });
   if (!settings) return null;
-  const fields: Array<[keyof AIModelParameters, string, number, number]> = [
-    ["context_window", text("上下文窗口", "Context window"), 256, 2000000], ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, 393216],
-    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 2500], ["requests_per_day", text("每日请求上限", "Daily request limit"), 1, 1000000],
+  const usage = settings.usage || inheritedSource.model_usage?.[modelID];
+  const fields: Array<[NumericParameterField, string, number, number]> = [
+    ["context_window", text("上下文窗口", "Context window"), 256, 2000000],
+    ["max_output_tokens", text("最大输出 Token", "Maximum output tokens"), 1, 393216],
+    ["max_concurrent", text("并发请求上限", "Concurrent request limit"), 1, 2500],
+    ["requests_per_day", text("每日请求上限", "Daily request limit"), 1, 1000000],
   ];
-  const edit = (name: keyof AIModelParameters, value: string) => { setDraft(current => ({ ...current, [name]: value })); setChangedFields(current => current.includes(name) ? current : [...current, name]); };
+  const resetButtonLabel = (name: NumericParameterField) => {
+    if (name === "requests_per_day") return text("取消每日上限", "Remove daily limit");
+    return text("恢复继承", "Inherit source");
+  };
+  const edit = (name: keyof AIModelParameters, value: string) => {
+    setDraft(current => ({ ...current, [name]: value }));
+    setChangedFields(current => current.includes(name) ? current : [...current, name]);
+  };
   const reset = (name: keyof AIModelParameters) => edit(name, "");
+  const handleResetUsage = async (scope: "today" | "all") => {
+    if (busy || !usage?.usage_key) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await resetModelUsage(usage.usage_key, scope);
+      setSettings(current => current ? { ...current, usage: res.usage } : current);
+      await onSaved();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : text("重置用量失败。", "Could not reset usage."));
+    } finally {
+      setBusy(false);
+    }
+  };
   const save = async () => {
     if (busy || conflict) return;
     setError("");
     const configuration: Record<string, unknown> = {};
     try {
       for (const [name, , min, max] of fields) {
-        const value = draft[name].trim();
+        const value = (draft[name] || "").trim();
         if (value && (!Number.isInteger(Number(value)) || Number(value) < min || Number(value) > max)) throw new Error(text("请核对数值范围。", "Check numeric ranges."));
         configuration[name] = value ? Number(value) : null;
       }
@@ -63,7 +204,15 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
       setInheritedSource(currentSource!);
       setSettings(next); setConflict(false);
       setChangedFields([]);
-      setDraft({ context_window: next.overrides.context_window?.toString() || "", max_output_tokens: next.overrides.max_output_tokens?.toString() || "", max_concurrent: next.overrides.max_concurrent?.toString() || "", requests_per_day: next.overrides.requests_per_day?.toString() || "", request_defaults: next.overrides.request_defaults === undefined ? "" : JSON.stringify(next.overrides.request_defaults, null, 2) });
+      setDraft({
+        context_window: next.overrides.context_window?.toString() || "",
+        max_output_tokens: next.overrides.max_output_tokens?.toString() || "",
+        max_concurrent: next.overrides.max_concurrent?.toString() || "",
+        requests_per_day: next.overrides.requests_per_day?.toString() || "",
+        tokens_per_day: next.overrides.tokens_per_day?.toString() || "",
+        shared_tokens_per_day: next.overrides.shared_tokens_per_day?.toString() || "",
+        request_defaults: next.overrides.request_defaults === undefined ? "" : JSON.stringify(next.overrides.request_defaults, null, 2),
+      });
     } catch { setConflict(true); setError(text("无法读取当前模型配置。", "Could not read current model configuration.")); }
     finally { setBusy(false); }
   };
@@ -88,17 +237,40 @@ export default function ModelPoolSettings({ source, modelID, onClose, onSaved }:
     } catch { setError(text("无法读取探测后的最新证据，当前显示为先前记录，不能据此判断连接正常。", "Could not reload probe evidence. Displayed evidence is the previous record and does not establish current connectivity.")); }
     finally { setBusy(false); }
   };
+  const renderField = ([name, label, min, max]: [NumericParameterField, string, number, number]) => {
+    const effectiveValue = settings.effective[name] ?? null;
+    const isInherited = settings.inherited_fields.includes(name) || settings.overrides[name] === undefined;
+    return (
+      <label className="ais-field mp-compact-field" key={name}>
+        {label}
+        <input type="number" aria-label={label} min={min} max={max} value={draft[name] || ""} disabled={busy || conflict} onChange={event => edit(name, event.target.value)} placeholder={effectiveValue === null ? text("不限", "Unlimited") : String(effectiveValue)} />
+        <span className="mp-field-foot">
+          <small>{text("当前生效", "Currently effective")}: {effectiveValue === null ? text("不限", "Unlimited") : String(effectiveValue)} · {isInherited ? text("继承来源", "Inherited from source") : text("此模型覆盖", "Model override")}</small>
+          <button className="mp-link-btn" type="button" disabled={busy || conflict} onClick={() => reset(name)}>{resetButtonLabel(name)}</button>
+        </span>
+      </label>
+    );
+  };
   return <Modal title={`${text("此模型参数", "Parameters for this model")} · ${modelID}`} onClose={() => { if (!busy) onClose(); }}><div className="ais-modal mp-parameters">
-    <p>{source.name} · {modelID}</p><p className="ais-muted">{text("只改变这个模型，同一来源的其他模型、助手默认选择与分享设置保持独立。留空恢复继承；每日上限留空为不限。", "Changes only this model. Sibling models, the assistant default and sharing remain independent. Leave blank to inherit; an empty daily limit means unlimited.")}</p>
+    <p className="mp-modal-sub">{source.name} · {modelID}</p>
+    <ModelTokenUsageSummaryCard usage={usage} busy={busy} onReset={usage?.usage_key ? handleResetUsage : undefined} />
     {settings.context_window_basis && <p className="ais-muted">{settings.context_window_known === false
       ? text("模型未声明实际窗口，当前为保守回退值；可手动覆盖。", "The model did not declare its window. A conservative fallback applies; you can set an override.")
       : settings.context_window_basis === "provider_model_metadata"
         ? text("窗口来自该来源的模型列表；手动覆盖优先。", "The window comes from this source's model listing; manual overrides take priority.")
         : text("当前使用手动配置的模型窗口。", "The configured model window applies.")}</p>}
-    {fields.map(([name, label, min, max]) => <label className="ais-field" key={name}>{label}<input type="number" aria-label={label} min={min} max={max} value={draft[name]} disabled={busy || conflict} onChange={event => edit(name, event.target.value)} placeholder={settings.effective[name] === null ? text("不限", "Unlimited") : String(settings.effective[name])} /><small>{text("当前生效", "Currently effective")}: {settings.effective[name] === null ? text("不限", "Unlimited") : String(settings.effective[name])} · {settings.inherited_fields.includes(name) ? text("继承来源", "Inherited from source") : text("此模型覆盖", "Model override")}</small><button className="ais-secondary" type="button" disabled={busy || conflict} onClick={() => reset(name)}>{name === "requests_per_day" ? text("取消每日上限", "Remove daily limit") : text("恢复继承", "Inherit source")}</button></label>)}
-    <label className="ais-field">{text("请求参数 JSON", "Request parameters JSON")}<textarea aria-label={text("请求参数 JSON", "Request parameters JSON")} value={draft.request_defaults} disabled={busy || conflict} onChange={event => edit("request_defaults", event.target.value)} placeholder={JSON.stringify(settings.effective.request_defaults, null, 2)} /><small>{text("支持 temperature、top_p、thinking、reasoning_effort。请使用供应商支持的参数；下方探测可帮助排查连接问题。", "Supports temperature, top_p, thinking and reasoning_effort. Use parameters supported by the provider; the probes below can help diagnose connection issues.")}</small><button className="ais-secondary" disabled={busy || conflict} onClick={() => reset("request_defaults")}>{text("恢复来源请求参数", "Inherit source request parameters")}</button></label>
-    <details><summary>{text("当前请求参数及证据", "Effective request parameters and evidence")}</summary><pre>{JSON.stringify({ request_defaults: settings.effective.request_defaults, evidence: settings.evidence }, null, 2)}</pre></details>
-    <p className="ais-muted">{text("每日上限按 UTC 日计算实际推理派发次数，失败或取消不退还次数；不是 Token 或费用额度。探测为主动请求，不会在打开弹窗时自动执行。", "Daily limits count actual inference dispatches per UTC day, including failures and cancellations. They are not token or cost limits. Probes are explicit requests and never run when this dialog opens.")}</p>
+    <div className="mp-param-grid">
+      {fields.map(f => renderField(f))}
+    </div>
+    <label className="ais-field mp-compact-field">
+      {text("请求参数 JSON", "Request parameters JSON")}
+      <textarea rows={2} aria-label={text("请求参数 JSON", "Request parameters JSON")} value={draft.request_defaults} disabled={busy || conflict} onChange={event => edit("request_defaults", event.target.value)} placeholder={JSON.stringify(settings.effective.request_defaults)} />
+      <span className="mp-field-foot">
+        <small>{text("支持 temperature、top_p、thinking、reasoning_effort", "Supports temperature, top_p, thinking and reasoning_effort")}</small>
+        <button className="mp-link-btn" type="button" disabled={busy || conflict} onClick={() => reset("request_defaults")}>{text("恢复来源请求参数", "Inherit source request parameters")}</button>
+      </span>
+    </label>
+    <details className="mp-evidence-details"><summary>{text("当前请求参数及证据", "Effective request parameters and evidence")}</summary><pre>{JSON.stringify({ request_defaults: settings.effective.request_defaults, evidence: settings.evidence }, null, 2)}</pre></details>
     <div className="mp-probes"><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("connection")}>{text("探测连接", "Probe connection")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("model_exists")}>{text("核对模型列表", "Check model listing")}</button><button className="ais-secondary" disabled={busy || conflict} onClick={() => void probe("tools")}>{text("诊断工具调用", "Diagnose tool calls")}</button></div>
     {error && <p role="alert">{error}</p>}
     <div className="ais-modal-footer"><button className="ais-secondary" disabled={busy} onClick={() => void reload()}>{text("重新读取", "Reload")}</button><button className="ais-primary" disabled={busy || conflict} onClick={() => void save()}>{text("保存此模型参数", "Save this model's parameters")}</button></div>

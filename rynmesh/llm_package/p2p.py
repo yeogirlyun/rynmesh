@@ -24,7 +24,17 @@ from collections import deque
 from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable
 
-import aioice
+try:
+    import aioice
+except ImportError:  # pragma: no cover - optional when WebRTC ICE transport is unused
+    class _AioiceFallback:
+        class Connection:
+            pass
+
+        class Candidate:
+            pass
+
+    aioice = _AioiceFallback()  # type: ignore[assignment]
 
 
 class P2PError(RuntimeError):

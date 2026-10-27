@@ -557,6 +557,31 @@ def test_codex_cli_image_inspect_preserves_turn_start_image_items_and_keeps_stor
         tools.close()
 
 
+def test_inspect_image_uses_model_configured_output_up_to_16384_tokens(tmp_path):
+    api_row = _api_model_row(context_window=128000, max_output_tokens=32768)
+    runtime, bridge, tools, _store, workspace = _setup_runtime_with_model(
+        tmp_path,
+        api_row,
+        _assistant(name="ryn_image_inspect", args={"path": "canary.png", "question": "Check layout"}, call_id="call_img_cap"),
+        _assistant("Detailed layout inspection without length truncation."),
+        _assistant("Layout verified."),
+    )
+    try:
+        (workspace / "canary.png").write_bytes(_make_png_bytes(color=(20, 80, 140), size=(80, 60)))
+        task = runtime.create({"message": "Inspect canary.png with reasoning model output budget."})
+        for _ in range(6):
+            runtime.run_once()
+            if runtime.get(task["id"])["status"] in {"completed", "failed"}:
+                break
+
+        current = runtime.get(task["id"])
+        assert current["status"] == "completed", current.get("error")
+        assert len(bridge.calls) == 3
+        assert bridge.calls[1]["options"]["max_output_tokens"] == 16384
+    finally:
+        tools.close()
+
+
 def test_inspect_image_never_reinvokes_model_on_type_error(tmp_path):
     api_row = _api_model_row()
 
@@ -1129,3 +1154,52 @@ def test_mcp_artifact_verification_rejects_tamper_crosstask_outside_symlink_and_
     )
     assert report_later["has_candidate_artifacts"] is False
     assert image_inputs(out_later) == []
+
+
+def test_inspect_image_auto_downscales_oversized_pixel_image_and_retries_transient_invalid_response(tmp_path):
+    api_row = _api_model_row()
+    attempts = {"count": 0}
+
+    def _transient_then_valid(_model_id, _messages, _specs, _options):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise AgentError("agent_invalid_model_response")
+        return {
+            "message": {"role": "assistant", "content": "Downscaled high-DPI image inspected successfully."},
+            "usage": {"input_tokens": 120, "output_tokens": 18},
+            "finish_reason": "stop",
+        }
+
+    runtime, bridge, tools, store, workspace = _setup_runtime_with_model(
+        tmp_path,
+        api_row,
+        _transient_then_valid,
+        _transient_then_valid,
+    )
+    try:
+        # 5000 x 3600 = 18,000,000 pixels (> 16 MP single-image transport limit, within 64 MP source limit)
+        (workspace / "high_dpi_page.png").write_bytes(_make_png_bytes(color=(30, 90, 150), size=(5000, 3600)))
+        task = runtime.create({"message": "Inspect oversized high-DPI page"})
+        store.transaction(lambda data: data["tasks"][task["id"]].update(status="running"))
+        selected = store.read()["tasks"][task["id"]]
+        selected["_run_control_revision"] = selected["control_revision"]
+        context = runtime._tool_context(selected, "op-high-dpi")
+
+        result = tools.execute(
+            "ryn_image_inspect",
+            {"path": "high_dpi_page.png", "question": "Check high-DPI render"},
+            operation_id="op-high-dpi",
+            cancelled=lambda: False,
+            context=context,
+        )
+        assert result["image_submitted"] is True
+        assert result["width"] == 5000 and result["height"] == 3600
+        assert result["original_dimensions_preserved"] is False
+        assert isinstance(result["resized_to"], list) and len(result["resized_to"]) == 2
+        assert result["resized_to"][0] * result["resized_to"][1] <= 2_400_000
+        assert isinstance(result.get("coordinate_scale"), list)
+        assert result["observed"] == "Downscaled high-DPI image inspected successfully."
+        assert len(bridge.calls) == 2
+    finally:
+        tools.close()
+

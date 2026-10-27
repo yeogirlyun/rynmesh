@@ -1,6 +1,176 @@
-.ra-turn-duration { display: flex; align-items: center; gap: 6px; margin: 16px 0 12px; color: var(--pf-muted); font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
-.ra-turn-duration svg { flex-shrink: 0; opacity: .75; }
-.ra-turn-duration-live svg { color: var(--pf-blue); }
-.ra-process-observations { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
-.ra-process-observations button { border: 0; padding: 2px 0; background: transparent; color: var(--pf-muted); font-size: 12px; cursor: pointer; }
-.ra-process-observations button:hover { color: var(--pf-blue); text-decoration: underline; }
+.ra-turn-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 10px 0 6px;
+  color: #8e8e8e;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.ra-turn-duration svg {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.ra-turn-duration-live {
+  color: #525252;
+  font-weight: 500;
+}
+
+.ra-turn-duration-live svg {
+  color: #0066cc;
+  opacity: 0.9;
+}
+
+@keyframes ra-shimmer-text {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.ra-turn-duration-live span[role="timer"] {
+  background: linear-gradient(90deg, #525252 0%, #0d0d0d 50%, #525252 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ra-shimmer-text 2.2s linear infinite;
+}
+
+[data-theme="dark"] .ra-turn-duration-live span[role="timer"] {
+  background: linear-gradient(90deg, #9ca3af 0%, #f3f4f6 50%, #9ca3af 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Codex-Style 2-Line File Edit Diff Card */
+.ra-edit-diff-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.ra-edit-diff-card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 100%;
+  padding: 8px 13px;
+  border-radius: 12px;
+  border: 1px solid #e5e5e5;
+  background: #fafafa;
+  font-size: 12.5px;
+  line-height: 1.38;
+  transition: background 0.14s, border-color 0.14s;
+}
+
+.ra-edit-diff-card.is-clickable {
+  cursor: pointer;
+}
+
+.ra-edit-diff-card.is-clickable:hover {
+  background: #f3f3f3;
+  border-color: #d4d4d4;
+}
+
+.ra-edit-diff-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ra-edit-diff-verb {
+  color: #737373;
+  flex-shrink: 0;
+}
+
+.ra-edit-diff-name {
+  color: #0066cc;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ra-edit-diff-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 11.5px/1.3 ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.ra-diff-add {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.ra-diff-del {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .ra-edit-diff-card {
+  background: var(--pf-panel);
+  border-color: var(--pf-line);
+}
+
+[data-theme="dark"] .ra-edit-diff-name {
+  color: var(--pf-blue);
+}
+
+.ra-process-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #525252;
+}
+
+.ra-process-tool-arg {
+  font-style: normal;
+  font: 11.5px/1.35 ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: #8e8e8e;
+  background: #f3f3f3;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+[data-theme="dark"] .ra-process-tool-chip {
+  color: var(--pf-muted);
+}
+
+[data-theme="dark"] .ra-process-tool-arg {
+  background: var(--pf-subtle);
+  color: var(--pf-muted);
+}
+
+.ra-process-observations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+}
+
+.ra-process-observations button {
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--pf-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ra-process-observations button:hover {
+  color: var(--pf-blue);
+  text-decoration: underline;
+}

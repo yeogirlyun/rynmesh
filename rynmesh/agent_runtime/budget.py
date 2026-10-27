@@ -66,12 +66,16 @@ def _totals(state, records, *, lifetime):
     legacy = state["legacy_usage_unknown"] and (lifetime or state["round"] == 1)
     known_input = sum(record.get("input_tokens") or 0 for record in models)
     known_output = sum(record.get("output_tokens") or 0 for record in models)
+    known_cached = sum(record.get("cached_input_tokens") or 0 for record in models)
+    has_cached = any(record.get("cached_input_tokens") is not None for record in models)
     model_floor = len(models) + (state["legacy_model_calls"] if lifetime else 0)
     tool_floor = len(records) - len(models) + (state.get("legacy_tool_calls", 0) if lifetime else 0)
     return {"model_calls": None if legacy else model_floor,
             "tool_calls": None if legacy else tool_floor,
             "charged_model_calls": model_floor, "charged_tool_calls": tool_floor,
             "known_input_tokens": known_input, "known_output_tokens": known_output,
+            "known_cached_input_tokens": known_cached,
+            "cached_input_tokens": known_cached if has_cached and not legacy else None,
             "input_tokens": None if legacy or any(record.get("input_tokens") is None for record in models) else known_input,
             "output_tokens": None if legacy or any(record.get("output_tokens") is None for record in models) else known_output,
             "total_tokens": None if unknown or legacy else known_input + known_output,
@@ -126,6 +130,9 @@ def settle(row, reservation_id, *, usage=None, elapsed_seconds=None):
     for key in ("input_tokens", "output_tokens"):
         value = usage.get(key)
         record[key] = value if type(value) is int and value >= 0 else None
+    cached_val = usage.get("cached_tokens", usage.get("cached_input_tokens"))
+    if type(cached_val) is int and cached_val >= 0:
+        record["cached_input_tokens"] = cached_val
     if record["kind"] == "model":
         record["charged_tokens"] = sum(record[key] if record[key] is not None else record[bound] for key, bound in
                                        (("input_tokens", "input_reservation"), ("output_tokens", "output_reservation")))

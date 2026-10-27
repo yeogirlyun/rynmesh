@@ -7,6 +7,7 @@ import os
 import threading
 
 from ..llm_package import model_settings, peer_binding
+from ..llm_package.model_usage import ModelUsageStore
 from ..llm_package.reasoning import metadata as reasoning_metadata
 from ..llm_package.tool_capabilities import client_tools_contract
 from .image_capabilities import catalog_image_fields
@@ -79,6 +80,9 @@ class ModelCatalog:
             own = peer_id == self.store.peer_id
             model_ref = ("local/" + service_id if own else
                          "peer/" + hashlib.sha256(peer_id.encode()).hexdigest() + "/" + service_id)
+            provider_resource = value.get("provider_resource")
+            if not own and provider_resource:
+                model_ref = "provider/" + hashlib.sha256(provider_resource.encode()).hexdigest() + "/" + model_ref
             adapter = manifest.get("adapter", "")
             capabilities = manifest.get("capabilities") or []
             # Admission follows the bridge contract, not optional inference probes.
@@ -107,6 +111,8 @@ class ModelCatalog:
                    "share_scope": ("personal_space" if "personal-space-only" in capabilities else
                                    "friends" if value.get("access_policy") == "explicit_friends" else "none") if own else "unknown"}
             row.update(catalog_image_fields(row, service_record=value))
+            if provider_resource:
+                row.update(provider_resource=provider_resource, source_name=value.get("provider_name", value.get("node_name", "")))
             rows[model_ref] = row
             if own and manifest.get("runtime") == "native_llama_cpp":
                 native_binding = value.get("model_binding")
@@ -121,8 +127,10 @@ class ModelCatalog:
                 # when the catalog marks it unavailable. That never establishes
                 # current authorization, invocation success or full provider policy.
                 if bound is not None:
-                    permission = "ai_permission" if "ai_permission" in bound else "space_permission"
-                    access.update(kind="friend" if permission == "ai_permission" else "personal_space",
+                    permission = ("external_permission" if "external_permission" in bound else
+                                  "ai_permission" if "ai_permission" in bound else "space_permission")
+                    access.update(kind={"ai_permission": "friend", "space_permission": "personal_space",
+                                        "external_permission": "provider"}[permission],
                                   basis="authenticated_catalog_observation", **{permission: dict(bound[permission])})
                 row.update(destination_revision=peer_binding.revision(value, self.store.peer_id),
                            destination_binding_supported=bound is not None, expected_model_binding=bound,
@@ -253,7 +261,30 @@ class ModelCatalog:
                 default_output = model_settings._known_vendor_max_output_tokens(default.get("id", ""))
             if isinstance(default_output, int) and 0 < default_output <= row["context_window"]:
                 row["max_output_tokens"] = default_output
+        usage_store = getattr(sources, "usage_store", None)
+        if usage_store is None:
+            from pathlib import Path
+            store_home = getattr(self.store, "home", None)
+            usage_path = (
+                store_home / "llm" / "model-usage.json"
+                if store_home is not None
+                else getattr(sources, "path", Path(".")).parent / "model-usage.json"
+            )
+            usage_store = ModelUsageStore(usage_path)
+        usage_snapshot = usage_store.read_cached()
         for row in rows.values():
+            ms = row.get("model_settings")
+            policy = (
+                ms.get("effective")
+                if isinstance(ms, dict) and isinstance(ms.get("effective"), dict)
+                else ms.get("configuration")
+                if isinstance(ms, dict) and isinstance(ms.get("configuration"), dict)
+                else None
+            )
+            usage = usage_store.public_usage(row["id"], policy=policy, snapshot=usage_snapshot)
+            row["usage"] = usage
+            if isinstance(ms, dict):
+                ms["usage"] = usage
             row["description"] = ("模型当前不可用，请检查来源连接。" if not row["available"] else
                 "可供本机 Agent 使用；工具在本机执行。" if row["agent_supported"] else
                 "此接入只支持对话，不能执行 Agent 工具。" if row["adapter"] == "claude_cli" else

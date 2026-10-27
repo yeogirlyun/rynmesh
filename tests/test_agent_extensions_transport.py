@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from test_agent_extensions_oauth import no_network as no_network  # noqa: F401
 
 from rynmesh.agent_runtime.extensions import ExtensionStore
 from rynmesh.agent_runtime.extensions import imports as ext_imports

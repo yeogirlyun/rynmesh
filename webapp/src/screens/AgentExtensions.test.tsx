@@ -445,6 +445,19 @@ describe("agentExtensions domain contract & helpers", () => {
 });
 
 describe("AgentExtensions UI", () => {
+  it("shows provider controls in the installed plugin detail without granting access", async () => {
+    const fixture = makeOverviewFixture();
+    const withProvider = { ...fixture.plugins[1], peer_provider: { url: "https://provider.example/connect", oauth: { clientId: "desktop", scopes: ["peer.connect"] } } };
+    server.use(http.get("*/api/local/agent/extensions", () => HttpResponse.json({ ...fixture, plugins: [withProvider] })));
+    const user = userEvent.setup(); renderExtensions("/settings/extensions/plugins");
+    const card = (await screen.findByRole("heading", { name: "Team Toolkit" })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "View details" }));
+    const dialog = await screen.findByRole("dialog", { name: "Team Toolkit" });
+    expect(within(dialog).getByRole("region", { name: "Peer provider" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Sign in" })).toBeDisabled();
+    expect(within(dialog).getByText("Enable the plugin first.")).toBeInTheDocument();
+  });
+
   it("renders Plugins, controls Computer Use plugin switch and desktop_access separately, and handles package plugin child switches", async () => {
     const user = userEvent.setup();
     const pluginPatchBodies: unknown[] = [];
@@ -793,6 +806,7 @@ describe("AgentExtensions UI", () => {
               transport: "stdio",
               command: "npx",
               args: ["-y", "@modelcontextprotocol/server-filesystem"],
+              data_policy: { models: { mode: "allowlist", allow: [{ catalog_model_id: "import-model" }] }, memory: "deny" },
             },
           ],
           warnings: ["OAuth configuration ignored; use bearer_token_env or headers."],
@@ -828,6 +842,8 @@ describe("AgentExtensions UI", () => {
     await user.click(within(importDialog).getByRole("button", { name: "Preview import" }));
 
     expect(await within(importDialog).findByText(/Imported FS Server/)).toBeInTheDocument();
+    expect(within(importDialog).getByText("import-model")).toBeInTheDocument();
+    expect(within(importDialog).getByText(/Tasks using these tools do not create automatic long-term memories/)).toBeInTheDocument();
     expect(within(importDialog).getByText("oauth")).toBeInTheDocument();
     expect(
       within(importDialog).getByText(/OAuth configuration ignored/i),

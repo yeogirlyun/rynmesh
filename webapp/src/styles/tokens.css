@@ -10,7 +10,7 @@
    <html> or any container to flip.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&family=Archivo+Black&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+/* Local offline-safe font stack (no external Google Fonts fetch) */
 
 /* ============================================================
    ROOT — theme-agnostic primitives

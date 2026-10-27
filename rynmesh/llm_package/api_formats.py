@@ -128,7 +128,13 @@ def convert_response(chat: dict[str, Any], protocol: str) -> dict[str, Any]:
     reported = reported if isinstance(reported, dict) else {}
     usage = {"input_tokens": reported_token_count(reported.get("prompt_tokens")),
              "output_tokens": reported_token_count(reported.get("completion_tokens"))}
+    details = reported.get("prompt_tokens_details") if isinstance(reported.get("prompt_tokens_details"), dict) else {}
+    cached = reported_token_count(details.get("cached_tokens"))
+    if cached is None:
+        cached = reported_token_count(reported.get("cached_tokens"))
     if protocol == "messages":
+        if cached is not None and usage["input_tokens"] is not None:
+            usage["cache_read_input_tokens"] = cached
         content = []
         if message.get("content"):
             content.append({"type": "text", "text": message["content"]})
@@ -146,7 +152,7 @@ def convert_response(chat: dict[str, Any], protocol: str) -> dict[str, Any]:
             "incomplete_details": {"reason": "max_output_tokens" if reason == "length" else "content_filter"} if reason in {"length", "content_filter"} else None,
             "output": output, "parallel_tool_calls": True, "tool_choice": "auto", "tools": [],
             "usage": {**usage, "total_tokens": sum(usage.values()) if all(value is not None for value in usage.values()) else None,
-                      "input_tokens_details": {"cached_tokens": 0 if usage["input_tokens"] is not None else None},
+                      "input_tokens_details": {"cached_tokens": (cached if cached is not None else 0) if usage["input_tokens"] is not None else None},
                       "output_tokens_details": {"reasoning_tokens": 0 if usage["output_tokens"] is not None else None}}}
 
 

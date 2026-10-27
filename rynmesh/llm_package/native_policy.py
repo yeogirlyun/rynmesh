@@ -9,9 +9,10 @@ from ..atomic_io import atomic_write_json, read_json
 from ..file_transactions import file_transaction
 from .adapters import AdapterError
 from .model_settings import validate
+from .model_usage import current_usage_caller
 from .peer_binding import VERSION
 
-FIELDS = {"max_output_tokens", "max_concurrent", "requests_per_day"}
+FIELDS = {"max_output_tokens", "max_concurrent", "requests_per_day", "tokens_per_day", "shared_tokens_per_day"}
 
 
 class NativeModelPolicy:
@@ -33,9 +34,13 @@ class NativeModelPolicy:
             if previous is None and len(rows) >= 128:
                 raise ValueError("native_model_policy_capacity_exhausted")
             row = copy.deepcopy(previous) if previous else {"configuration": {
-                "max_output_tokens": manifest.max_output_tokens, "max_concurrent": 1, "requests_per_day": None},
+                "max_output_tokens": manifest.max_output_tokens, "max_concurrent": 1,
+                "requests_per_day": None, "tokens_per_day": None, "shared_tokens_per_day": None},
                 "model_generation": uuid.uuid4().hex, "rule_revision": uuid.uuid4().hex,
                 "sharing": sharing, "day": "", "requests": 0}
+            if isinstance(row.get("configuration"), dict):
+                row["configuration"].setdefault("tokens_per_day", None)
+                row["configuration"].setdefault("shared_tokens_per_day", None)
             if rotate:
                 row["model_generation"] = uuid.uuid4().hex
             if rotate or row["sharing"] != sharing:
@@ -73,7 +78,7 @@ class NativeModelPolicy:
                 self._save(rows)
             return copy.deepcopy(row)
 
-    def admit(self, service_id, expected, active):
+    def admit(self, service_id, expected, active, *, usage_store=None, caller=None, task_id=None):
         with file_transaction(self.lock):
             rows = self._read()
             row = rows.get(service_id)
@@ -86,6 +91,21 @@ class NativeModelPolicy:
             count = row["requests"] if row["day"] == day else 0
             if config["requests_per_day"] is not None and count >= config["requests_per_day"]:
                 raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
+            if usage_store is not None:
+                usage_store.admit_and_record_dispatch(
+                    "local/" + service_id,
+                    policy=config,
+                    caller=caller or current_usage_caller(),
+                    task_id=task_id,
+                )
             row.update(day=day, requests=count + 1)
             self._save(rows)
             return copy.deepcopy(config)
+
+    def reset_daily(self, service_id):
+        with file_transaction(self.lock):
+            rows = self._read()
+            row = rows.get(service_id)
+            if row is not None:
+                row.update(day="", requests=0)
+                self._save(rows)

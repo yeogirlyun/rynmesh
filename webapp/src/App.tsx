@@ -34,6 +34,7 @@ import {
 } from "./personal/model";
 import { DesktopPage } from "./personal/Desktop";
 import { isTauriDesktop } from "./domain/nodeUrl";
+import { DesktopUpdateNotice } from "./screens/UpdatesPanel";
 import { PersonalShell } from "./personal/Shell";
 import { DropProvider } from "./personal/dropStore";
 import { IncomingTransferDialog } from "./personal/drop/IncomingTransferDialog";
@@ -288,6 +289,7 @@ export default function App() {
     >
       <DropProvider mode={client.mode} notify={notify}>
       <PersonalShell>
+        {isTauriDesktop() ? <DesktopUpdateNotice /> : null}
         {offline ? <OfflineBanner onRetry={refreshShell} /> : null}
         <Outlet context={context} />
       </PersonalShell>

@@ -54,6 +54,10 @@ import {
 } from "../domain/agentExtensions";
 import { rynAgent } from "../domain/rynAgent";
 import { AgentComputerStatusPanel } from "./AgentComputerStatusPanel";
+import { PeerProviderSettings } from "./PeerProviderSettings";
+import { McpAuthSettings } from "./McpAuthSettings";
+import { PluginViews } from "./PluginViews";
+import { McpDataPolicy, McpDataPolicySummary } from "./McpDataPolicy";
 import { CodexSkillsView } from "./CodexSkillsView";
 import "./AgentExtensions.css";
 
@@ -174,6 +178,7 @@ function AccessibleModal({
   subtitle,
   onClose,
   busy = false,
+  wide = false,
   footer,
   children,
 }: {
@@ -181,6 +186,7 @@ function AccessibleModal({
   subtitle?: string;
   onClose: () => void;
   busy?: boolean;
+  wide?: boolean;
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -237,7 +243,7 @@ function AccessibleModal({
     >
       <dialog
         ref={dialogRef}
-        className="ae-dialog"
+        className={`ae-dialog${wide ? " ae-dialog-workspace" : ""}`}
         aria-labelledby={titleId}
         onCancel={event => {
           event.preventDefault();
@@ -634,7 +640,21 @@ export default function AgentExtensions() {
   const [mcpSearch, setMcpSearch] = useState("");
 
   // Active modals
-  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
+  const [selectedPluginId, setSelectedPluginId] = useState<string | null>(() =>
+    new URLSearchParams(location.search).get("plugin"),
+  );
+  const [selectedPluginViewId, setSelectedPluginViewId] = useState<string | undefined>(
+    () => new URLSearchParams(location.search).get("view") ?? undefined,
+  );
+  useEffect(() => {
+    const query = new URLSearchParams(location.search);
+    const pluginParam = query.get("plugin");
+    const viewParam = query.get("view") ?? undefined;
+    if (pluginParam) {
+      setSelectedPluginId(pluginParam);
+      setSelectedPluginViewId(viewParam);
+    }
+  }, [location.search]);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const selectedServerIdRef = useRef<string | null>(null);
@@ -1598,6 +1618,15 @@ export default function AgentExtensions() {
                               ) : (
                                 <span className="ae-badge">{tx("已停用", "Disabled")}</span>
                               )}
+                              {overview.mcp_servers.some(
+                                m =>
+                                  (m.plugin_id === plugin.id || plugin.mcp_server_ids.includes(m.id)) &&
+                                  m.oauth?.state === "logged_in",
+                              ) ? (
+                                <span className="ae-badge ae-badge-success">
+                                  {tx("企业微信已登录 · 状态已固定", "Signed in · Persistent")}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -1615,6 +1644,11 @@ export default function AgentExtensions() {
 
                     <div className="ae-plugin-footer">
                       <div className="ae-plugin-meta">
+                        {(plugin.views?.length ?? 0) > 0 ? (
+                          <span className="ae-badge ae-badge-info">
+                            {tx(`${plugin.views!.length} 个报表页面`, `${plugin.views!.length} pages`)}
+                          </span>
+                        ) : null}
                         {plugin.skill_ids.length > 0 ? (
                           <span className="ae-badge">
                             {tx(`${plugin.skill_ids.length} 个技能`, `${plugin.skill_ids.length} skills`)}
@@ -1640,7 +1674,7 @@ export default function AgentExtensions() {
                         className="ae-btn ae-btn-sm"
                         onClick={() => setSelectedPluginId(plugin.id)}
                       >
-                        {tx("查看详情", "View details")}
+                        {plugin.views?.length ? tx("打开插件", "Open plugin") : tx("查看详情", "View details")}
                       </button>
                     </div>
                   </article>
@@ -1889,7 +1923,7 @@ export default function AgentExtensions() {
                           type="button"
                           className="ae-btn ae-btn-sm"
                           disabled={isBusy}
-                          onClick={() => setServerEditorState({ mode: "edit", server })}
+                          onClick={() => selectServer(server.id)}
                         >
                           <span>
                             {isTesting
@@ -2113,7 +2147,12 @@ export default function AgentExtensions() {
           plugin={selectedPlugin}
           overview={overview}
           busyIds={busyIds}
-          onClose={() => setSelectedPluginId(null)}
+          initialViewId={selectedPluginViewId}
+          onRefresh={() => { void loadOverview(true); }}
+          onClose={() => {
+            setSelectedPluginId(null);
+            setSelectedPluginViewId(undefined);
+          }}
           onTogglePlugin={next => void handleTogglePlugin(selectedPlugin, next)}
           onToggleDesktopAccess={next => void handleToggleDesktopAccess(next)}
           onToggleSkill={(skill, next) => void handleToggleSkill(skill, next)}
@@ -2160,6 +2199,7 @@ export default function AgentExtensions() {
       {selectedServer && !confirmDelete ? (
         <McpServerDetailsModal
           server={selectedServer}
+          onRefresh={() => { void loadOverview(true); }}
           desktopAccess={overview?.desktop_access}
           testing={Boolean(testingServerIds[selectedServer.id])}
           probeResult={activeServerProbeResult}
@@ -2336,6 +2376,8 @@ function PluginDetailsModal({
   plugin,
   overview,
   busyIds,
+  initialViewId,
+  onRefresh,
   onClose,
   onTogglePlugin,
   onToggleDesktopAccess,
@@ -2348,6 +2390,8 @@ function PluginDetailsModal({
   plugin: ExtensionPlugin;
   overview: ExtensionOverview;
   busyIds: Record<string, boolean>;
+  initialViewId?: string;
+  onRefresh?: () => void;
   onClose: () => void;
   onTogglePlugin: (next: boolean) => void;
   onToggleDesktopAccess: (next: boolean) => void;
@@ -2377,6 +2421,7 @@ function PluginDetailsModal({
   return (
     <AccessibleModal
       title={plugin.title}
+      wide={Boolean(plugin.views?.length)}
       subtitle={`${formatSourceLabel(plugin.source_format, plugin.builtin, tx)} · v${plugin.version}`}
       onClose={onClose}
       footer={
@@ -2398,6 +2443,13 @@ function PluginDetailsModal({
       }
     >
       <p style={{ margin: 0, lineHeight: 1.5 }}>{plugin.description}</p>
+
+      <PluginViews plugin={plugin} servers={bundledServers} initialViewId={initialViewId} onOpenServer={onOpenServer} onRefresh={onRefresh} />
+
+      <details className="ae-plugin-settings" open={!plugin.enabled || !plugin.views?.length ? true : undefined}>
+        <summary>{tx("插件设置与连接", "Plugin settings & connections")}</summary>
+
+      {plugin.peer_provider ? <PeerProviderSettings key={`${plugin.id}:${plugin.instance_id}`} plugin={plugin} /> : null}
 
       <div className="ae-setting-row">
         <div className="ae-setting-copy">
@@ -2608,6 +2660,7 @@ function PluginDetailsModal({
           ) : null}
         </div>
       ) : null}
+      </details>
     </AccessibleModal>
   );
 }
@@ -2719,6 +2772,7 @@ function SkillDetailsModal({
 
 function McpServerDetailsModal({
   server,
+  onRefresh,
   desktopAccess,
   testing,
   probeResult,
@@ -2734,6 +2788,7 @@ function McpServerDetailsModal({
   onRequestDelete,
 }: {
   server: ExtensionMcpServer;
+  onRefresh: () => void;
   desktopAccess?: boolean;
   testing: boolean;
   probeResult?: ServerExplicitProbeResult | null;
@@ -2849,6 +2904,9 @@ function McpServerDetailsModal({
             )}
           </span>
         </div>
+
+        <McpAuthSettings key={`${server.id}:${server.instance_id}`} server={server} onRefresh={onRefresh} />
+        <McpDataPolicy key={`policy:${server.id}:${server.instance_id}`} server={server} onRefresh={onRefresh} />
 
         {server.transport === "stdio" ? (
           <div style={{ fontSize: 13, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -4768,6 +4826,8 @@ function ExtensionImportModal({
                   <li key={m.id}>
                     <strong>{m.name}</strong> (<code>{m.id}</code> · {m.transport}) —{" "}
                     <code>{m.transport === "streamable_http" ? m.url : m.command}</code>
+                    {m.login_required ? <span className="ae-badge ae-badge-warning">{tx("导入后需登录", "Sign-in required after import")}</span> : null}
+                    <McpDataPolicySummary policy={m.data_policy} compact />
                   </li>
                 ))}
               </ul>

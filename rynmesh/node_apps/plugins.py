@@ -55,6 +55,10 @@ def installer_selection():
 
 def package_root(peer_id):
     node = hashlib.sha256(peer_id.encode()).hexdigest()[:24]
+    if custom := os.environ.get("RYNMESH_PLUGIN_CACHE", "").strip():
+        return Path(custom) / node
+    if ryn_home := os.environ.get("RYNMESH_HOME", "").strip():
+        return Path(ryn_home) / "plugins" / node
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
     elif sys.platform == "darwin":
@@ -80,19 +84,35 @@ class PluginManager:
         self.closed = False
         self.nas = nas
         self.migration_error = None
+        from .plugin_updates import PluginUpdates
+        self.updates = PluginUpdates(self)
+        if self.state_path.exists():
+            try:
+                self.updates.recover()
+            except (craft_host.CraftError, OSError):
+                self.updates.load_error = "update_recovery_failed"
 
-    @staticmethod
-    def specification(slug):
-        return builtin.manifest(slug) if slug in builtin.BUILTINS else craft_host.specification(slug)
+    def specification(self, slug):
+        slug = builtin.normalize_slug(slug)
+        if slug not in builtin.ALL_BUILTINS:
+            override = self.update_spec(slug)
+            if override:
+                return override
+        return builtin.manifest(slug) if slug in builtin.ALL_BUILTINS else craft_host.specification(slug)
 
-    @staticmethod
-    def version(slug):
-        return builtin.VERSION if slug in builtin.BUILTINS else craft_host.specification(slug)["tag"]
+    def update_spec(self, slug, *, compatible=False):
+        slug = builtin.normalize_slug(slug)
+        return self.updates.active_spec(slug, self._read()["plugins"].get(slug, {}), compatible=compatible)
+
+    def version(self, slug):
+        slug = builtin.normalize_slug(slug)
+        return builtin.VERSION if slug in builtin.ALL_BUILTINS else self.specification(slug)["tag"]
 
     def verify(self, slug):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             return builtin.verify(self.cache, slug)
-        return craft_host.installed(self.cache, slug)
+        return craft_host.installed(self.cache, slug, spec=self.update_spec(slug, compatible=True))
 
     def adopt_legacy(self, service):
         self.migration_error = None
@@ -136,13 +156,14 @@ class PluginManager:
             self._write(state)
 
     def generation(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self.lock:
             row = self._row(slug)
             if self.closed or slug in self.mutating or not row.get("enabled"):
                 raise craft_host.CraftError("plugin_disabled")
             if row.get("version") != self.version(slug):
                 raise craft_host.CraftError("plugin_not_installed")
-            if slug in builtin.BUILTINS:
+            if slug in builtin.ALL_BUILTINS:
                 builtin.verify(self.cache, slug)
             if slug == "nas" and (not self.nas or not self.nas.state["enabled"]):
                 raise craft_host.CraftError("plugin_disabled")
@@ -165,15 +186,44 @@ class PluginManager:
         atomic_write_json(self.state_path, state, max_bytes=65536)
 
     def _row(self, slug):
+        slug = builtin.normalize_slug(slug)
         self.specification(slug)
         return self._read()["plugins"].get(slug, {})
+
+    def _builtin_catalog_item(self, slug, state):
+        row = state["plugins"].get(slug, {})
+        present = False
+        if row.get("version") == builtin.VERSION:
+            try:
+                builtin.verify(self.cache, slug)
+                present = True
+            except craft_host.CraftError:
+                pass
+        available = slug != "nas" or self.nas is not None
+        enabled = bool(present and available and row.get("enabled") and (slug != "nas" or self.nas.state["enabled"]))
+        launch_path = "/nas" if slug == "nas" else f"/apps/workspaces?app={slug}"
+        name = CRAFT.get(slug, {}).get("name", slug.title() if slug != "nas" else "NAS")
+        item = {
+            "id": slug, "name": name,
+            "version": builtin.VERSION, "web": False, "kind": "builtin_adapter",
+            "installable": available, "group": "storage" if slug == "nas" else "workflow",
+            "formats": [], "sha256": builtin.checksum(slug),
+            "source_url": "https://github.com/yeogirlyun/rynmesh",
+            "installed": present, "enabled": enabled, "running": False,
+            "busy": slug in self.mutating or bool(self.active.get(slug)),
+            "agent_tools": builtin.manifest(slug)["operations"] if enabled else [],
+            "editing_supported": False,
+            "warning": None, "launch_path": launch_path,
+        }
+        return item
 
     def catalog(self):
         with self.lock, file_transaction(self.lock_path):
             state = self._read()
             selection = installer_selection()
             items = []
-            for slug, spec in CRAFT.items():
+            for slug in CRAFT:
+                spec = self.specification(slug)
                 row = state["plugins"].get(slug, {})
                 present = row.get("version") == spec["tag"] and (self.cache / slug / spec["tag"] / "receipt.json").is_file()
                 enabled = bool(present and row.get("enabled"))
@@ -184,7 +234,7 @@ class PluginManager:
                     "id": slug, "name": spec["name"], "version": spec["tag"],
                     "web": spec["web"], "group": GROUPS.get(slug, "media"),
                     "formats": spec["formats"], "sha256": spec["web_sha256"],
-                    "source_url": f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
+                    "source_url": row.get("update_source", {}).get("url") or f"https://github.com/storytold/{slug}/tree/{spec['tag']}",
                     "installed": bool(present), "enabled": enabled,
                     "running": slug in self.servers and self.servers[slug][1].is_alive(),
                     "busy": slug in self.mutating or bool(self.active.get(slug)),
@@ -197,28 +247,7 @@ class PluginManager:
                     "kind": "web_editor", "installable": spec["web"], "launch_path": None,
                 })
             for slug in builtin.BUILTINS:
-                row = state["plugins"].get(slug, {})
-                present = False
-                if row.get("version") == builtin.VERSION:
-                    try:
-                        builtin.verify(self.cache, slug)
-                        present = True
-                    except craft_host.CraftError:
-                        pass
-                available = slug != "nas" or self.nas is not None
-                enabled = bool(present and available and row.get("enabled") and (slug != "nas" or self.nas.state["enabled"]))
-                items.append({
-                    "id": slug, "name": CRAFT.get(slug, {}).get("name", slug.title() if slug != "nas" else "NAS"),
-                    "version": builtin.VERSION, "web": False, "kind": "builtin_adapter",
-                    "installable": available, "group": "storage" if slug == "nas" else "workflow",
-                    "formats": [], "sha256": builtin.checksum(slug),
-                    "source_url": "https://github.com/yeogirlyun/rynmesh",
-                    "installed": present, "enabled": enabled, "running": False,
-                    "busy": slug in self.mutating or bool(self.active.get(slug)),
-                    "agent_tools": builtin.manifest(slug)["operations"] if enabled else [],
-                    "editing_supported": False,
-                    "warning": None, "launch_path": "/nas" if slug == "nas" else f"/apps/workspaces?app={slug}",
-                })
+                items.append(self._builtin_catalog_item(slug, state))
             items.sort(key=lambda item: DEFAULT_PLUGINS.index(item["id"]) if item["id"] in DEFAULT_PLUGINS else len(DEFAULT_PLUGINS))
             return {"node_id": self.peer_id, "plugins": items,
                     "setup_completed": bool(state.get("setup_completed")),
@@ -229,6 +258,7 @@ class PluginManager:
 
     @contextmanager
     def _mutation(self, slug):
+        slug = builtin.normalize_slug(slug)
         self.specification(slug)
         with self.lock:
             if self.closed or slug in self.mutating or self.active.get(slug):
@@ -241,21 +271,54 @@ class PluginManager:
                 self.mutating.discard(slug)
 
     def install(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self._mutation(slug):
-            if slug in builtin.BUILTINS:
+            if slug in builtin.ALL_BUILTINS:
                 if slug == "nas" and not self.nas:
                     raise craft_host.CraftError("plugin_unavailable")
                 builtin.install(self.cache, slug)
             else:
                 kwargs = {"download": self.download} if self.download else {}
-                craft_host.install(self.cache, slug, **kwargs)
+                craft_host.install(self.cache, slug, spec=self.update_spec(slug), **kwargs)
             with self.lock, file_transaction(self.lock_path):
                 state = self._read()
-                state["plugins"][slug] = {"version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
+                state["plugins"][slug] = {**state["plugins"].get(slug, {}), "version": self.version(slug), "enabled": True, "generation": secrets.token_hex(16)}
                 if slug == "nas":
                     self.nas._enable(True)
                 self._write(state)
         return self.catalog()
+
+    def configure(self, slug, config):
+        slug = builtin.normalize_slug(slug)
+        if not isinstance(config, dict):
+            raise craft_host.CraftError("plugin_invalid_request")
+        safe_config = {
+            k: v
+            for k, v in config.items()
+            if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+        }
+        with self._mutation(slug), self.lock, file_transaction(self.lock_path):
+            state = self._read()
+            prefs = state.setdefault("preferences", {})
+            existing_safe = {
+                k: v
+                for k, v in prefs.get(slug, {}).items()
+                if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+            }
+            prefs[slug] = {**existing_safe, **safe_config}
+            self._write(state)
+        return self.catalog()
+
+    def get_configuration(self, slug):
+        slug = builtin.normalize_slug(slug)
+        with self.lock:
+            state = self._read()
+            raw = dict(state.get("preferences", {}).get(slug, {}))
+            return {
+                k: v
+                for k, v in raw.items()
+                if not any(s in str(k).lower() for s in ("secret", "password", "token", "private_key"))
+            }
 
     def finish_setup(self):
         with self.lock, file_transaction(self.lock_path):
@@ -309,6 +372,7 @@ class PluginManager:
         self.tickets = {key: value for key, value in self.tickets.items() if value[0] != slug}
 
     def set_enabled(self, slug, enabled):
+        slug = builtin.normalize_slug(slug)
         if not isinstance(enabled, bool):
             raise craft_host.CraftError("plugin_invalid_request")
         with self._mutation(slug), self.lock, file_transaction(self.lock_path):
@@ -329,6 +393,7 @@ class PluginManager:
         return self.catalog()
 
     def uninstall(self, slug, clear_preferences=False):
+        slug = builtin.normalize_slug(slug)
         with self._mutation(slug), self.lock, file_transaction(self.lock_path):
             state = self._read()
             self._stop(slug)
@@ -350,6 +415,7 @@ class PluginManager:
 
     @contextmanager
     def lease(self, slug):
+        slug = builtin.normalize_slug(slug)
         with self.lock:
             row = self._row(slug)
             if self.closed or slug in self.mutating:
@@ -374,7 +440,8 @@ class PluginManager:
         return 8920 + sorted(CRAFT).index(slug)
 
     def preview_launch(self, slug):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
         with self.lease(slug), self.lock:
             self.tickets = {key: value for key, value in self.tickets.items() if value[1] > time.monotonic()}
@@ -382,11 +449,12 @@ class PluginManager:
                 raise craft_host.CraftError("plugin_busy")
             ticket = secrets.token_urlsafe(32)
             self.tickets[ticket] = (slug, time.monotonic() + 120)
-            return {"app": slug, "version": CRAFT[slug]["tag"], "node_id": self.peer_id,
+            return {"app": slug, "version": self.version(slug), "node_id": self.peer_id,
                     "url": f"http://127.0.0.1:{self.port(slug)}/", "ticket": ticket}
 
     def launch(self, slug, ticket):
-        if slug in builtin.BUILTINS:
+        slug = builtin.normalize_slug(slug)
+        if slug in builtin.ALL_BUILTINS:
             raise craft_host.CraftError("plugin_internal_entry")
         with self.lease(slug), self.lock:
             approved = self.tickets.pop(ticket, None)
@@ -408,7 +476,7 @@ class PluginManager:
                 except OSError:
                     listener.close()
                     raise craft_host.CraftError("plugin_port_busy") from None
-                editor = craft_host.create_editor(self.cache, slug)
+                editor = craft_host.create_editor(self.cache, slug, spec=self.update_spec(slug))
                 server = uvicorn.Server(uvicorn.Config(editor, access_log=False, log_level="error", lifespan="off"))
                 thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True,
                                           name=f"ryn-craft-{slug}")
@@ -420,10 +488,11 @@ class PluginManager:
                 if not server.started:
                     self._stop(slug)
                     raise craft_host.CraftError("plugin_start_failed")
-            return {"app": slug, "node_id": self.peer_id, "version": CRAFT[slug]["tag"],
+            return {"app": slug, "node_id": self.peer_id, "version": self.version(slug),
                     "url": f"http://127.0.0.1:{self.port(slug)}/", "state": "ready"}
 
     def close(self):
+        self.updates.stop.set()
         with self.lock:
             self.closed = True
             for slug in list(self.servers):
@@ -445,6 +514,7 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
     @asynccontextmanager
     async def lifespan(instance):
         async with previous_lifespan(instance) as state:
+            manager.updates.start()
             try:
                 yield state
             finally:
@@ -475,11 +545,47 @@ def install_plugin_routes(app, *, home, peer_id, local_control):
             raise HTTPException(400, detail="plugin_invalid_request")
         return await run(request, manager.finish_setup)
 
+    @app.get("/api/local/plugin-updates")
+    async def update_status(request: Request):
+        return await run(request, manager.updates.status)
+
+    @app.get("/api/local/plugin-updates/readiness")
+    def update_readiness(request: Request):
+        local_control(request)
+        blockers = []
+        with manager.lock:
+            if manager.mutating or any(manager.active.values()):
+                blockers.append("plugin_busy")
+        runtime = getattr(app.state, "agent_runtime", None)
+        if runtime is not None:
+            with runtime._active_lock:
+                if runtime._active_runs:
+                    blockers.append("agent_running")
+        drop = getattr(app.state, "drop_engine", None)
+        if drop is not None:
+            with drop._lock:
+                if drop._workers or drop._slots or drop._verifying or drop._delivering:
+                    blockers.append("transfer_running")
+        return {"ready": not blockers, "blockers": blockers}
+
+    @app.post("/api/local/plugin-updates/{slug}/{action}")
+    async def update_plugin(request: Request, slug: str, action: str):
+        local_control(request)
+        value = await body(request, 8192)
+        if action == "configure":
+            return await run(request, manager.updates.configure, slug, value)
+        methods = {"check": manager.updates.check, "apply": manager.updates.apply, "rollback": manager.updates.rollback}
+        if action not in methods or value:
+            raise HTTPException(400, detail="plugin_invalid_request")
+        return await run(request, methods[action], slug)
+
     @app.post("/api/local/plugins/{slug}/{action}")
     @app.post("/api/local/craft-plugins/{slug}/{action}")
     async def change(request: Request, slug: str, action: str):
         local_control(request)
-        value = await body(request, 2048)
+        value = await body(request, 4096)
+        if action == "configure":
+            return await run(request, manager.configure, slug, value)
         methods = {
             "install": (manager.install, set(), []),
             "install-automation": (manager.install_automation, set(), []),
