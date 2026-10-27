@@ -4,7 +4,7 @@ import { nodeControlBaseUrl } from "./nodeUrl";
 
 export type Bytes = number | string;
 export type Route = "lan" | "public" | "relay";
-export type Relationship = "own" | "friend" | "nearby" | "other";
+export type Relationship = "own" | "friend" | "nearby" | "other" | "external";
 
 export type DropCapabilities = {
   direct_size_limit: null;
@@ -20,6 +20,11 @@ export type DropCapabilities = {
 
 export type PeerMeta = {
   peer_id: string;
+  device_peer_id?: string;
+  provider_resource?: string;
+  member_name?: string;
+  plugin_id?: string;
+  file_sendable?: boolean;
   relationship: Relationship;
   name: string;
   online: boolean | null;

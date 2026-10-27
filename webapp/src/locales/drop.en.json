@@ -230,5 +230,22 @@
   "sendToDevice": "Send to",
   "deviceWorkspaceSubtitle": "Connect your devices. Send messages and files between them.",
   "composerDevicePlaceholder": "Message {{name}}…",
-  "deviceSync": "Device sync"
+  "deviceSync": "Device sync",
+  "bandLabel": "Devices overview",
+  "bandCaption_one": "device · {{online}} online",
+  "bandCaption_other": "devices · {{online}} online",
+  "bandRoutes": "Routes from this device",
+  "bandRouteCount": "{{count}} {{label}}",
+  "statTransfers_one": "transfer in progress",
+  "statTransfers_other": "transfers in progress",
+  "statUnread_one": "unread message",
+  "statUnread_other": "unread messages",
+  "searchDevices": "Search devices",
+  "noMatchingDevices": "No matching devices",
+  "noMatchingDevicesHint": "Try another name.",
+  "colDevice": "Device",
+  "colConnection": "Connection",
+  "colStatus": "Status",
+  "detailTabs": "Device details",
+  "groupStopped": "Stopped"
 }

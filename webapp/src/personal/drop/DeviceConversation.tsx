@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowUp, ArrowDownLeft, ArrowUpRight, Ellipsis, Info, Paperclip } from "lucide-react";
-import { DeviceArt } from "../components";
+import { ArrowLeft, ArrowUp, Ellipsis, Info, Lock, MessageCircle, Paperclip, WifiOff } from "lucide-react";
 import { useDrop } from "../dropStore";
 import type { DropMessage, Transfer } from "../../domain/dropClient";
 import type { MapAnchor } from "../DeviceTopology";
 import { TransferCard, type TransferHandlers } from "./TransferCard";
 import { DeviceConnection } from "./DeviceConnection";
+import { Callout, DeviceLine, DeviceTile, EmptyState, deviceHue } from "./DevicesParts";
 import { formatClock, relationshipLabel, statusLabel, type DropDevice } from "./dropModel";
 import { useDropDevices } from "./useDropDevices";
 
@@ -54,7 +54,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
 
   const threads = useMemo(() => {
     const ids = new Set<string>();
-    for (const peer of Object.values(data.peers)) if (peer.relationship === "own" || peer.relationship === "friend" || peer.last || peer.unread > 0) ids.add(peer.peer_id);
+    for (const peer of Object.values(data.peers)) if (peer.relationship === "own" || peer.relationship === "friend" || peer.relationship === "external" || peer.last || peer.unread > 0) ids.add(peer.peer_id);
     for (const transfer of drop.transfers) ids.add(transfer.peer_id);
     if (activeId) ids.add(activeId);
     return Array.from(ids).map(id => byId.get(id)).filter((d): d is DropDevice => Boolean(d) && !d!.self)
@@ -87,6 +87,7 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
   useEffect(() => { body.current?.scrollTo?.({ top: body.current.scrollHeight }); }, [timeline.length, activeId]);
 
   const canMessage = Boolean(active?.meta) && active!.relationship !== "other" && active!.meta!.send_mode !== "unavailable";
+  const canFiles = canMessage && active?.relationship !== "external" && active?.meta?.file_sendable !== false;
   const needsVerify = active?.meta?.send_mode === "verify" && !active.meta.verification.verified;
   const draft = drafts[activeId] || "";
   const submit = async () => {
@@ -108,8 +109,8 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
   const statusText = (message: DropMessage) => message.status === "waiting_online" ? t("drop.msgWaiting")
     : message.status === "sending" ? t("drop.msgSending") : message.status === "delivered" ? t("drop.msgDelivered") : t("drop.msgFailed");
   const selfName = self?.name || t("drop.thisDevice");
-  const senderLabel = (mine: boolean) => <div className="pf-drop-sender">{mine ? <ArrowUpRight size={12} /> : <ArrowDownLeft size={12} />}
-    <strong>{mine ? selfName : active?.name}</strong><span>{t(mine ? "drop.fromLocalDevice" : "drop.fromRemoteDevice")}</span></div>;
+  // The side a message sits on already says who sent it; the text is for screen readers.
+  const senderLabel = (mine: boolean) => <span className="rd-sr">{mine ? selfName : active?.name} · {t(mine ? "drop.fromLocalDevice" : "drop.fromRemoteDevice")}</span>;
   let lastDay = "";
   const dayLabel = (iso: string) => {
     const date = new Date(iso);
@@ -117,78 +118,92 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
   };
   const entry = (item: TimelineEntry): ReactNode => {
     const day = item.at.slice(0, 10);
-    const separator = day !== lastDay ? <div className="pf-drop-date" key={`d-${day}`}>{dayLabel(item.at)}</div> : null;
+    const separator = day !== lastDay ? <div className="rd-date" key={`d-${day}`}>{dayLabel(item.at)}</div> : null;
     lastDay = day;
     if (item.kind === "transfer") {
       const mine = item.transfer.direction === "out";
       return <Fragment key={`t-${item.transfer.transfer_id}`}>{separator}
-        <div className={`pf-drop-message wide${mine ? " mine" : ""}`}>
+        <div className={`rd-msg wide${mine ? " mine" : ""}`}>
           {senderLabel(mine)}
           <TransferCard transfer={item.transfer} handlers={handlers} />
-          <div className="pf-drop-msgmeta">{formatClock(item.transfer.created_at, i18n.language)}</div>
+          <div className="rd-msgmeta">{mine ? selfName : active?.name} · {formatClock(item.transfer.created_at, i18n.language)}</div>
         </div>
       </Fragment>;
     }
     const message = item.message;
     if (message.kind === "system") return <Fragment key={`m-${message.message_id}`}>{separator}
-      <p className="pf-drop-system"><LinkifiedText text={message.text} /> · {formatClock(message.created_at, i18n.language)}</p></Fragment>;
+      <p className="rd-system"><LinkifiedText text={message.text} /> · {formatClock(message.created_at, i18n.language)}</p></Fragment>;
     const mine = message.direction === "out";
     return <Fragment key={`m-${message.message_id}`}>{separator}
-      <div className={`pf-drop-message${mine ? " mine" : ""}`}>
+      <div className={`rd-msg${mine ? " mine" : ""}`}>
         {senderLabel(mine)}
-        <div className="pf-drop-bubble"><LinkifiedText text={message.text} /></div>
-        <div className={`pf-drop-msgmeta${message.status === "failed" ? " warn" : ""}`}>
+        <div className="rd-bubble"><LinkifiedText text={message.text} /></div>
+        <div className={`rd-msgmeta${message.status === "failed" || message.status === "waiting_online" ? " warn" : ""}`}>
           {mine ? `${formatClock(message.created_at, i18n.language)} · ${statusText(message)}`
             : formatClock(message.created_at, i18n.language)}
-          {mine && message.status === "failed" && <button type="button" className="pf-drop-textbutton" disabled={drop.isPending(`retry:${message.message_id}`)}
+          {mine && message.status === "failed" && <button type="button" className="rd-link sm" disabled={drop.isPending(`retry:${message.message_id}`)}
             onClick={() => void drop.run(`retry:${message.message_id}`, () => drop.retryMessage(message.message_id)).catch(() => undefined)}>{t("drop.retry")}</button>}
         </div>
       </div>
     </Fragment>;
   };
 
-  return <div className={`pf-drop-conversation${mobileChat ? " show-chat" : ""}`}>
-    <aside className="pf-drop-threads" aria-label={t("drop.conversations")}>
-      <div className="pf-drop-rail-self"><DeviceArt kind={self?.kind || "desktop"} small /><div><small>{t("drop.thisDevice")}</small><strong>{selfName}</strong></div></div>
-      <div className="pf-drop-rail-heading"><span>{t("drop.messageDevices")}</span><span>{threads.length}</span></div>
+  return <div className={`rd-conv${mobileChat ? " show-chat" : ""}`}>
+    <aside className="rd-rail" aria-label={t("drop.conversations")}>
+      <div className="rd-self rd-h-indigo"><span className="rd-dg lg"><DeviceLine kind={self?.kind || "desktop"} /></span><div><small>{t("drop.thisDevice")}</small><b>{selfName}</b></div></div>
+      <div className="rd-rail-head"><span>{t("drop.messageDevices")}</span><span>{threads.length}</span></div>
       {threads.map(device => {
-        return <div key={device.id} className={`pf-drop-thread${device.id === activeId ? " active" : ""}`}>
-          <button type="button" className="pf-drop-thread-select" aria-current={device.id === activeId ? "true" : undefined}
+        const last = device.meta?.last;
+        const unreadCount = device.meta?.unread ?? 0;
+        return <div key={device.id} className={`rd-thread rd-h-${deviceHue(device)}${device.id === activeId ? " active" : ""}`}>
+          <button type="button" className="rd-thread-select" aria-current={device.id === activeId ? "true" : undefined}
             onClick={() => onActiveChange(device.id)} onContextMenu={contextMenu(device)} onKeyDown={menuKey(device)}>
-            <span className="pf-drop-thread-device"><DeviceArt kind={device.kind} small /><i className={`pf-netmap-dot ${device.online === true ? "online" : device.online === false ? "offline" : "unknown"}`} /></span>
-            <span className="pf-drop-grow"><strong>{device.name}</strong><small className="pf-drop-thread-state">{statusLabel(t, device.online)} · {relationshipLabel(t, device)}</small><small>{device.meta?.last?.text || t("drop.startConversation")}</small></span>
-            {(device.meta?.unread ?? 0) > 0 && <span className="pf-drop-count" aria-label={String(device.meta!.unread)}>{device.meta!.unread}</span>}
+            <span className="rd-thread-device"><DeviceTile device={device} size="sm" /><i className={`rd-sdot ${device.online === true ? "online" : device.online === false ? "offline" : "unknown"}`} /></span>
+            <span className="rd-thread-text">
+              <span className="rd-thread-top"><b>{device.name}</b>{last && <small>{formatClock(last.at, i18n.language)}</small>}</span>
+              <small className="rd-thread-state">{statusLabel(t, device.online)} · {relationshipLabel(t, device)}</small>
+              <span className="rd-thread-last">
+                <small>{last?.text || t("drop.startConversation")}</small>
+                {unreadCount > 0 && <span className="rd-badge" aria-label={String(unreadCount)}>{unreadCount}</span>}
+              </span>
+            </span>
           </button>
-          <button type="button" className="pf-icon-button pf-drop-thread-more" aria-haspopup="menu" aria-label={t("drop.moreActions", { name: device.name })}
+          <button type="button" className="rd-ib xs rd-thread-more" aria-haspopup="menu" aria-label={t("drop.moreActions", { name: device.name })}
             onClick={event => onMenu(device, event.currentTarget)}><Ellipsis size={15} /></button>
         </div>;
       })}
-      {!threads.length && <div className="pf-drop-empty"><h3>{t("drop.noConversations")}</h3><p>{t("drop.noConversationsHint")}</p></div>}
+      {!threads.length && <EmptyState icon={<MessageCircle size={24} strokeWidth={1.7} />} title={t("drop.noConversations")}>{t("drop.noConversationsHint")}</EmptyState>}
+      <p className="rd-rail-note"><Lock size={12} strokeWidth={1.9} aria-hidden="true" />{t("drop.e2eNote")}</p>
     </aside>
-    <section className="pf-drop-chat" aria-label={active?.name}>
+    <section className={`rd-chat${active ? ` rd-h-${deviceHue(active)}` : ""}`} aria-label={active?.name}>
       {active ? <>
-        <header className="pf-drop-chathead">
-          <button type="button" className="pf-icon-button pf-drop-back" aria-label={t("drop.back")} onClick={onMobileBack}><ArrowLeft size={18} /></button>
-          <span className="pf-drop-chathead-device"><DeviceArt kind={active.kind} small /></span>
-          <div className="pf-drop-grow">
+        <header className="rd-chathead">
+          <button type="button" className="rd-ib rd-back" aria-label={t("drop.back")} onClick={onMobileBack}><ArrowLeft size={18} /></button>
+          <DeviceTile device={active} size="sm" />
+          <div className="rd-chathead-id">
             <h3>{active.name}</h3>
             <DeviceConnection self={self} peer={active} onDetails={() => onDetails(active.id)} />
           </div>
-          <button type="button" className="pf-button pf-drop-header-send" disabled={!canMessage} onClick={() => onSendFiles(active)}><Paperclip size={15} />{t("drop.sendFile")}</button>
-          <button type="button" className="pf-icon-button" aria-haspopup="menu" aria-label={t("drop.moreActions", { name: active.name })}
+          <span className="rd-sendwrap">
+            <button type="button" className="rd-btn rd-header-send" disabled={!canFiles} onClick={() => onSendFiles(active)}><Paperclip size={15} strokeWidth={1.7} />{t("drop.sendFile")}</button>
+            {!canFiles && <small>{t("drop.sendUnavailable")}</small>}
+          </span>
+          <button type="button" className="rd-ib" aria-haspopup="menu" aria-label={t("drop.moreActions", { name: active.name })}
             onClick={event => onMenu(active, event.currentTarget)}><Ellipsis size={18} /></button>
         </header>
-        <div className="pf-drop-chatbody" ref={body}>
-          {active.online === false && canMessage && <p className="pf-drop-status">{t("drop.offlineNotice")}</p>}
-          {loadError && <p className="pf-error" role="alert">{loadError}</p>}
+        <div className="rd-chatbody" ref={body}>
+          {active.relationship === "external" && <Callout role="status" icon={<Info size={15} strokeWidth={1.7} />}>{t("drop.externalMessageTarget", { defaultValue: "Text to this device only. Delivery requires a reachable device and an active connection." })} · {relationshipLabel(t, active)}</Callout>}
+          {active.online === false && canMessage && active.relationship !== "external" && <Callout role="status" icon={<WifiOff size={15} strokeWidth={1.7} />}>{t("drop.offlineNotice")}</Callout>}
+          {loadError && <Callout tone="err" role="alert" icon={<Info size={15} strokeWidth={1.7} />}>{loadError}</Callout>}
           {timeline.map(entry)}
-          {conv?.loaded && !timeline.length && <div className="pf-drop-empty"><h3>{t("drop.startConversation")}</h3><p>{t("drop.startConversationHint")}</p></div>}
+          {conv?.loaded && !timeline.length && <EmptyState icon={<MessageCircle size={24} strokeWidth={1.7} />} title={t("drop.startConversation")}>{t("drop.startConversationHint")}</EmptyState>}
         </div>
         {canMessage ? <form data-drop-peer={active.id}
-          className={`pf-drop-composer${dragId === active.id || dropTargetId === active.id ? " drop-target" : ""}`}
+          className={`rd-form${dragId === active.id || dropTargetId === active.id ? " drop-target" : ""}`}
           onDragOver={event => {
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
+            if (!canFiles) { event.dataTransfer.dropEffect = "none"; return; }
             event.dataTransfer.dropEffect = "copy";
             setDragId(active.id);
           }}
@@ -197,29 +212,33 @@ export function DeviceConversation({ activeId, onActiveChange, onMenu, onSendFil
             if (!event.dataTransfer.types.includes("Files")) return;
             event.preventDefault();
             setDragId("");
+            if (!canFiles) return;
             onDropFiles?.(active, event);
           }}
           onSubmit={event => { event.preventDefault(); void submit(); }}>
-          {(dragId === active.id || dropTargetId === active.id) && <p className="pf-drop-hint" role="status"><Paperclip size={14} aria-hidden="true" />{t("drop.orDropHere")}</p>}
-          {needsVerify && <p className="pf-drop-hint"><Info size={14} aria-hidden="true" />{t("drop.verifyRequired")} <button type="button" className="pf-drop-textbutton" onClick={() => onDetails(active.id)}>{t("drop.verifyNearby")}</button></p>}
-          <textarea rows={2} value={draft} aria-label={t("drop.composerLabel", { name: active.name })}
-            placeholder={t("drop.composerDevicePlaceholder", { name: active.name })}
-            onChange={event => { const value = event.target.value; setDrafts(current => ({ ...current, [active.id]: value })); }}
-            onCompositionStart={() => { composing.current = true; }}
-            onCompositionEnd={() => { composing.current = false; }}
-            onKeyDown={event => { if (isSendKey(event, composing.current)) { event.preventDefault(); void submit(); } }} />
-          <div className="pf-drop-composer-bottom">
-            <div className="pf-drop-row">
-              <button type="button" className="pf-drop-textbutton" disabled={active.meta?.send_mode === "unavailable"} onClick={() => onSendFiles(active)}><Paperclip size={15} aria-hidden="true" />{t("drop.files")}</button>
-              <small className="pf-drop-composer-tip">{t("drop.composerTip")}</small>
+          {(dragId === active.id || dropTargetId === active.id) && <p className="rd-hint" role="status"><Paperclip size={14} aria-hidden="true" />{t("drop.orDropHere")}</p>}
+          {needsVerify && <p className="rd-hint"><Info size={14} aria-hidden="true" />{t("drop.verifyRequired")} <button type="button" className="rd-link sm" onClick={() => onDetails(active.id)}>{t("drop.verifyNearby")}</button></p>}
+          <div className="rd-composer">
+            <textarea rows={2} value={draft} aria-label={t("drop.composerLabel", { name: active.name })}
+              placeholder={t("drop.composerDevicePlaceholder", { name: active.name })}
+              onChange={event => { const value = event.target.value; setDrafts(current => ({ ...current, [active.id]: value })); }}
+              onCompositionStart={() => { composing.current = true; }}
+              onCompositionEnd={() => { composing.current = false; }}
+              onKeyDown={event => { if (isSendKey(event, composing.current)) { event.preventDefault(); void submit(); } }} />
+            <div className="rd-composer-bottom">
+              <div className="rd-composer-tools">
+                <button type="button" className="rd-tb" disabled={!canFiles} onClick={() => onSendFiles(active)}><Paperclip size={15} strokeWidth={1.7} aria-hidden="true" />{t("drop.files")}</button>
+                <small className="rd-composer-tip">{t("drop.composerTip")}</small>
+              </div>
+              <button type="submit" className="rd-btn primary sm" disabled={!draft.trim() || needsVerify}><ArrowUp size={15} strokeWidth={1.9} aria-hidden="true" />{t("drop.send")}</button>
             </div>
-            <button type="submit" className="pf-button primary" disabled={!draft.trim() || needsVerify}><ArrowUp size={15} aria-hidden="true" />{t("drop.send")}</button>
           </div>
-        </form> : <p className="pf-drop-hint pf-drop-readonly">{t("drop.readOnly")}</p>}
-      </> : threads.length > 0 && <div className="pf-drop-empty"><h3>{t("drop.conversations")}</h3><p>{t("drop.noConversationsHint")}</p></div>}
+        </form> : <p className="rd-readonly"><MessageCircle size={15} strokeWidth={1.7} aria-hidden="true" />{t("drop.readOnly")}</p>}
+      </> : threads.length > 0 && <EmptyState icon={<MessageCircle size={24} strokeWidth={1.7} />} title={t("drop.conversations")}>{t("drop.noConversationsHint")}</EmptyState>}
     </section>
   </div>;
 }
 
 export const firstThreadId = (list: DropDevice[]) => list.find(device => !device.self && (device.meta?.last || (device.meta?.unread ?? 0) > 0))?.id
-  || list.find(device => !device.self && device.online === true && (device.relationship === "own" || device.relationship === "friend"))?.id || "";
+  || list.find(device => !device.self && device.online === true && (device.relationship === "own" || device.relationship === "friend"))?.id
+  || list.find(device => !device.self && device.relationship === "external")?.id || "";

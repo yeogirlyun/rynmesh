@@ -54,7 +54,7 @@ export function buildDropDevices(devices: Device[], peers: Record<string, PeerMe
   for (const meta of Object.values(peers)) {
     if (seen.has(meta.peer_id)) continue;
     result.push({
-      id: meta.peer_id, name: meta.name || meta.peer_id, kind: "desktop", self: false,
+      id: meta.peer_id, name: meta.member_name ? `${meta.member_name} · ${meta.name}` : meta.name || meta.peer_id, kind: "desktop", self: false,
       relationship: meta.relationship, online: meta.online, route: meta.route,
       scope: meta.route === "lan" ? "lan" : "remote", latency: meta.latency_ms, address: meta.address, meta,
     });
@@ -72,6 +72,7 @@ export function routeLabel(t: TFunction, route: Route | null | undefined) {
 }
 
 export function relationshipLabel(t: TFunction, device: Pick<DropDevice, "relationship" | "meta">) {
+  if (device.relationship === "external") return device.meta?.plugin_id || t("drop.relExternal", { defaultValue: "Plugin connection" });
   if (device.relationship === "own") return t("drop.relOwn");
   if (device.relationship === "friend") return t("drop.relFriend");
   if (device.relationship === "nearby") return device.meta?.verification.verified ? t("drop.relNearbyVerified") : t("drop.relNearby");
@@ -105,7 +106,7 @@ export function sendButtonLabel(t: TFunction, device: DropDevice) {
 }
 
 export function canSendTo(device: DropDevice) {
-  return isTargetable(device) && Boolean(device.meta) && device.meta!.send_mode !== "unavailable";
+  return isTargetable(device) && device.relationship !== "external" && Boolean(device.meta) && device.meta!.file_sendable !== false && device.meta!.send_mode !== "unavailable";
 }
 
 export function formatEta(t: TFunction, seconds: number | null | undefined) {
