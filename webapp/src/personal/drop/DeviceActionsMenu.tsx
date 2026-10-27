@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowRightLeft, FolderUp, MessageCircle, Radio, Send } from "lucide-react";
 import type { MapAnchor } from "../DeviceTopology";
 import type { DropDevice } from "./dropModel";
+import "./family.css";
 import { canSendTo } from "./dropModel";
 
 export type DeviceMenuAction = "send_files" | "send_folder" | "message" | "history" | "details";
@@ -98,12 +99,12 @@ export function DeviceActionsMenu({ device, anchor, onAction, onClose }: {
     if (next >= 0) { event.preventDefault(); buttons[next]?.focus({ preventScroll: true }); }
   };
 
-  const content = <div className={`pf-device-menu-layer${sheet ? " sheet" : ""}`}>
-    {sheet && <button type="button" className="pf-device-menu-backdrop" aria-label={t("drop.close")} tabIndex={-1} onClick={() => close(true)} />}
+  const content = <div className={`pf-device-menu-layer rf rf-menu-layer${sheet ? " sheet" : ""}`}>
+    {sheet && <button type="button" className="pf-device-menu-backdrop rf-menu-backdrop" aria-label={t("drop.close")} tabIndex={-1} onClick={() => close(true)} />}
     <div ref={menu} role="menu" aria-label={t("drop.deviceActions", { name: device.name })}
-      className={`pf-device-menu${sheet ? " sheet" : ""}`} onKeyDown={navigate}
+      className={`pf-device-menu rf-menu${sheet ? " sheet" : ""}`} onKeyDown={navigate}
       style={sheet ? undefined : position ? { left: position.left, top: position.top } : { left: -9999, top: -9999 }}>
-      <div className="pf-device-menu-title" aria-hidden="true">{device.name}</div>
+      <div className="pf-device-menu-title rf-menu-title" aria-hidden="true">{device.name}</div>
       {items.map(item => <div key={item.action} role="none">
         {item.separator && <hr />}
         <button type="button" role="menuitem" disabled={item.disabled}

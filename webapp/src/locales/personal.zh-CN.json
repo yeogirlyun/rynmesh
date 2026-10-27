@@ -505,5 +505,12 @@
   "servicesBandLabel": "服务概览",
   "servicesBandSummary": "{{ready}} 项就绪，{{offline}} 项离线，{{notConnected}} 项未连接",
   "servicesProvidedBy": "提供设备",
-  "servicesStatus": "状态"
+  "servicesStatus": "状态",
+  "done": "完成",
+  "onYourOtherComputer": "在你的另一台电脑上",
+  "addDeviceStep1": "打开 Ryn 并进入「设备」",
+  "addDeviceStep2": "选择「添加设备」，再选「加入已有空间」",
+  "addDeviceStep3": "粘贴此邀请，然后点击「加入空间」",
+  "serviceCountShare_one": "{{count}} 项服务",
+  "serviceCountShare_other": "{{count}} 项服务"
 }

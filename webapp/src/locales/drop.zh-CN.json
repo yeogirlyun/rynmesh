@@ -247,5 +247,10 @@
   "colConnection": "连接",
   "colStatus": "状态",
   "detailTabs": "设备详情",
-  "groupStopped": "已停止"
+  "groupStopped": "已停止",
+  "connectionSection": "连接",
+  "deviceSection": "设备",
+  "autoAcceptOn": "来自 {{name}} 的文件会直接保存，不再询问。",
+  "autoAcceptOff": "每次传输前都会先询问你。",
+  "freeUpSpace": "请先清理 {{name}} 的空间，或移除部分项目后重试。"
 }

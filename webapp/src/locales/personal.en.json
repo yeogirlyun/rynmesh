@@ -505,5 +505,12 @@
   "servicesBandLabel": "Services overview",
   "servicesBandSummary": "{{ready}} ready, {{offline}} offline, {{notConnected}} not connected",
   "servicesProvidedBy": "Provided by",
-  "servicesStatus": "Status"
+  "servicesStatus": "Status",
+  "done": "Done",
+  "onYourOtherComputer": "On your other computer",
+  "addDeviceStep1": "Open Ryn and go to Devices",
+  "addDeviceStep2": "Choose Add device, then Join an existing space",
+  "addDeviceStep3": "Paste this invitation and select Join space",
+  "serviceCountShare_one": "{{count}} service",
+  "serviceCountShare_other": "{{count}} services"
 }

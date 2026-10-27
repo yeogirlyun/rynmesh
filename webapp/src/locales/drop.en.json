@@ -247,5 +247,10 @@
   "colConnection": "Connection",
   "colStatus": "Status",
   "detailTabs": "Device details",
-  "groupStopped": "Stopped"
+  "groupStopped": "Stopped",
+  "connectionSection": "Connection",
+  "deviceSection": "Device",
+  "autoAcceptOn": "Files from {{name}} are saved without asking.",
+  "autoAcceptOff": "You will be asked before each transfer.",
+  "freeUpSpace": "Free up space on {{name}}, or remove some items, then try again."
 }
