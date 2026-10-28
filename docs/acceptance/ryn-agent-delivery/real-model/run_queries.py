@@ -101,6 +101,13 @@ def main():
 
     owner_path, owner_hash, source, adapter = None, None, {}, None
     planner_policy = None
+    if args.fixture_only:
+        # This scripted collector exercises several full tool receipts. Give its
+        # synthetic provider an explicit context capacity, including the encoded
+        # peer envelope counted by the production context admission guard.
+        generation = {"context_window": 131072, "max_output_tokens": 4096, "request_defaults": {}}
+        planner_policy = {"model_id": "fixture", "generation": generation,
+                          "policy_sha256": hashlib.sha256(json.dumps(generation, sort_keys=True).encode()).hexdigest()}
     if args.live:
         owner_home = Path(os.environ.get("RYNMESH_HOME", str(Path.home() / ".rynmesh")))
         owner_path = owner_home / "llm/sources.enc"
