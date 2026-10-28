@@ -66,7 +66,7 @@ class FriendAICatalog:
         nonce, ciphertext = peer_box.seal(friends.messaging_private, relationship["messaging_pub"], canonical_json(payload))
         return {"nonce": nonce, "ciphertext": ciphertext}
 
-    def refresh(self, peer_id: str) -> dict:
+    def refresh(self, peer_id: str, *, verified_endpoint: str | None = None) -> dict:
         friends = self.friends()
         relationship, secret = friends._relationship(peer_id)
         request = {"request_id": uuid.uuid4().hex, "relationship_id": relationship["relationship_id"],
@@ -76,7 +76,8 @@ class FriendAICatalog:
             ticket = self.sequence
             self.pending[peer_id] = ticket
         try:
-            wire = friends._request_wire(relationship, secret, PATH, request, max_response_bytes=MAX_RESPONSE_BYTES)
+            target = {**relationship, "endpoint": verified_endpoint} if verified_endpoint else relationship
+            wire = friends._request_wire(target, secret, PATH, request, max_response_bytes=MAX_RESPONSE_BYTES)
             plaintext = peer_box.open_sealed(friends.messaging_private, relationship["messaging_pub"], wire["nonce"], wire["ciphertext"])
             if len(plaintext) > MAX_RESPONSE_BYTES:
                 raise ValueError
@@ -112,6 +113,8 @@ class FriendAICatalog:
                     "ready": service.get("ready") is True, "ai_permission": permission, "access": "friend",
                     "peer_id": peer_id, "node_name": relationship["node_name"], "node_messaging_pub": relationship["messaging_pub"],
                     "updated_at": datetime.fromtimestamp(now, timezone.utc).isoformat()})
+            if verified_endpoint:
+                friends.store.update_endpoint(relationship, verified_endpoint)
             latest = friends.store.relationship(relationship["relationship_id"])
             if not latest or latest["peer_id"] != peer_id:
                 raise AIAccessError("ai_friend_inactive")

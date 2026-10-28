@@ -12,12 +12,14 @@ const errors: Record<string, string> = {
   sync_restore_new_identity_required: "Keep this branch as a new conversation; the original history cannot be overwritten.",
   sync_restore_copy_not_deleted: "That copy still exists. Open it from history, or refresh the branches before choosing again.",
   ask_run_busy: "This conversation already has an active task. Wait for it or cancel it before sending another question.",
-  ask_preview_changed: "The prepared input changed after review. Review the current question and sources again before sending.",
+  ask_preview_changed: "The input, model, price, or permission changed after review. Review the current question and service again before sending. Your input has been kept.",
   ask_run_identity_conflict: "This task ID belongs to a different request. Check its original result before continuing.",
   ask_run_not_found: "The node has no saved receipt for this task. Retry the same reviewed request to confirm it; do not create a different task.",
   ask_context_unavailable: "This source copy is missing, damaged or no longer readable. Reopen the article to prepare it again, or remove it from this conversation.",
   ask_context_changed: "This offline version changed or was cleared. Reopen the current copy and review it before asking.",
   ask_provider_unavailable: "The original provider is unavailable. Wait for it or start a separate conversation with another service.",
+  ask_provider_not_ready: "The original provider's model is not ready. Ask your friend to start it and run its self-test, then send again. Your input has been kept.",
+  ask_provider_busy: "The original provider is busy. Wait for its current request to finish, then send again. Your input has been kept.",
   ask_context_budget_unavailable: "This service has no usable context budget. Choose a service with a larger context window.",
   ask_question_too_large: "This question does not fit with the required prompt framing. Shorten it or choose a larger context window.",
   ask_revision_conflict: "This conversation changed in another view. Reload its history before continuing; your input has been kept.",
@@ -37,6 +39,7 @@ export interface AskSource {
 }
 export interface AskPreview {
   cli_model?: string;
+  service_review: { token: string; model_alias: string; pricing: { input_per_1k: number; output_per_1k: number; minimum: number; maximum_per_task: number; currency: string } };
   ai_permission?: { relationship_id: string; revision: number };
   conversation_id: string; revision: number; provider_peer_id: string; service_id: string;
   prompt: string; prompt_sha256: string; context_window: number; input_token_upper_estimate: number;
@@ -46,6 +49,7 @@ export interface AskRun {
   task_id: string; conversation_id: string; state: string; cancel_requested: boolean; error_code?: string;
 }
 export interface AskRunRequest {
+  service_review_token: string;
   ai_permission?: { relationship_id: string; revision: number };
   task_id: string; conversation_id: string; expected_revision: number; question: string; prompt_sha256: string;
 }

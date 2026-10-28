@@ -1,0 +1,178 @@
+{
+  "scope": "Windows loopback, real HTTP and CPU llama.cpp, browser initiated tasks",
+  "provider": {
+    "ready": true,
+    "online": true,
+    "service": {
+      "package_id": "local-small",
+      "version": "0.1.0",
+      "protocol_version": "rynmesh.llm.task.v1",
+      "adapter": "openai_compatible",
+      "runtime": "native_llama_cpp",
+      "model_alias": "rynmesh-qwen2.5-0.5b-q4",
+      "capabilities": [
+        "text-generation",
+        "chat_messages_v1"
+      ],
+      "context_window": 4096,
+      "max_output_tokens": 256,
+      "max_concurrent": 2,
+      "queue_limit": 0,
+      "timeout_seconds": 120.0,
+      "hardware_requirements": {
+        "estimated_memory_mb": 900
+      },
+      "pricing": {
+        "currency": "DEV_TASK_BALANCE",
+        "input_per_1k": 0,
+        "output_per_1k": 0,
+        "minimum": 0,
+        "maximum_per_task": 1.0
+      },
+      "privacy": {
+        "log_bodies": false,
+        "temporary_storage": false,
+        "retention_seconds": 0,
+        "compute_node_sees_plaintext": true,
+        "policy_text": "No prompt/response logging; plaintext exists at the compute node during inference."
+      },
+      "healthcheck": {
+        "enabled": true
+      },
+      "license_id": "Apache-2.0",
+      "license_notice": "Qwen2.5 and llama.cpp are Apache-2.0; review their notices before use.",
+      "risk_labels": [],
+      "content_rules": "Provider-defined content policy applies.",
+      "model_fingerprint": "sha256:74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+    },
+    "publication_enabled": true
+  },
+  "orders": {
+    "orders": [
+      {
+        "task_id": "task_35fd627e43df4963b2e01f2b6bc27bc7",
+        "state": "succeeded",
+        "created_at": "2026-09-14T16:30:36.352677+00:00",
+        "updated_at": "2026-09-14T16:30:36.743808+00:00",
+        "history": [
+          {
+            "at": "2026-09-14T16:30:36.352677+00:00",
+            "state": "created"
+          },
+          {
+            "at": "2026-09-14T16:30:36.363179+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "accepted"
+          },
+          {
+            "at": "2026-09-14T16:30:36.368204+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "running",
+            "transport": "auto"
+          },
+          {
+            "amount": 0,
+            "at": "2026-09-14T16:30:36.714642+00:00",
+            "checkpoint": true,
+            "duration_ms": 281,
+            "input_tokens": 87,
+            "network_id": "rynmesh-main",
+            "output_tokens": 3,
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "relay_used": false,
+            "response_expires_at": "2026-09-14T17:30:36.714642+00:00",
+            "service_id": "local-small",
+            "settlement_pending": true,
+            "state": "running",
+            "transport": "peer_http_direct",
+            "transport_evidence": {
+              "relay_used": false,
+              "transport": "peer_http_direct"
+            }
+          },
+          {
+            "amount": 0,
+            "at": "2026-09-14T16:30:36.727158+00:00",
+            "duration_ms": 281,
+            "input_tokens": 87,
+            "network_id": "rynmesh-main",
+            "output_tokens": 3,
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "relay_used": false,
+            "response_expires_at": "2026-09-14T17:30:36.714642+00:00",
+            "service_id": "local-small",
+            "state": "succeeded",
+            "transport": "peer_http_direct",
+            "transport_evidence": {
+              "relay_used": false,
+              "transport": "peer_http_direct"
+            }
+          },
+          {
+            "at": "2026-09-14T16:30:36.743808+00:00",
+            "checkpoint": true,
+            "settlement_dispatched": true,
+            "state": "succeeded"
+          }
+        ],
+        "amount": 0,
+        "duration_ms": 281,
+        "input_tokens": 87,
+        "network_id": "rynmesh-main",
+        "output_tokens": 3,
+        "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+        "relay_used": false,
+        "response_expires_at": "2026-09-14T17:30:36.714642+00:00",
+        "service_id": "local-small",
+        "transport": "peer_http_direct",
+        "transport_evidence": {
+          "relay_used": false,
+          "transport": "peer_http_direct"
+        },
+        "settlement_dispatched": true
+      },
+      {
+        "task_id": "task_dfc0490c5c5b496cbac74750d10d5b8b",
+        "state": "failed",
+        "created_at": "2026-09-14T16:28:03.758056+00:00",
+        "updated_at": "2026-09-14T16:28:03.808263+00:00",
+        "history": [
+          {
+            "at": "2026-09-14T16:28:03.758056+00:00",
+            "state": "created"
+          },
+          {
+            "at": "2026-09-14T16:28:03.766585+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "accepted"
+          },
+          {
+            "at": "2026-09-14T16:28:03.770619+00:00",
+            "network_id": "rynmesh-main",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "running",
+            "transport": "auto"
+          },
+          {
+            "at": "2026-09-14T16:28:03.808263+00:00",
+            "error_code": "direct_transport_failed",
+            "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+            "service_id": "local-small",
+            "state": "failed"
+          }
+        ],
+        "error_code": "direct_transport_failed",
+        "provider_peer_id": "udJlEtV1rjr7IDlyg4bubFQ6iH0V8/5P0OU+qtkHFjw=",
+        "service_id": "local-small"
+      }
+    ]
+  },
+  "consumer_gguf_count": 0
+}

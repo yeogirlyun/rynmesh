@@ -393,7 +393,7 @@ export default function PrivateAIChat() {
     if (client.mode === "live" && preview) {
       cancelRequestedRef.current = false;
       return submitReviewed({ task_id: "task_" + crypto.randomUUID().replaceAll("-", ""), conversation_id: preview.conversation_id,
-        expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256,
+        expected_revision: preview.revision, question: text, prompt_sha256: preview.prompt_sha256, service_review_token: preview.service_review.token,
         ...(preview.ai_permission ? { ai_permission: preview.ai_permission } : {}) });
     }
     if (!conversation) {
@@ -575,7 +575,7 @@ export default function PrivateAIChat() {
       if (row.id !== selectedConversationRef.current) return;
       confirm({ title: tr("Send to {{service}}?", { service: selectedService.service.model_alias }), risk: "medium", confirmLabel: tr("Send reviewed question"),
         body: tr("Recipient: {{peer}}. Conservative input estimate {{input}}, framing reserve {{framing}}, output reserve {{output}}, context window {{window}}. {{omitted}} older history messages omitted.", { peer: preview.provider_peer_id, input: preview.input_token_upper_estimate, framing: preview.framing_reserve, output: preview.max_output_tokens, window: preview.context_window, omitted: preview.history_messages_omitted }) + tr(preview.sources.length ? " Article text is treated as untrusted material." : " No article material is attached."),
-        details: [{ label: tr("Question"), value: question }, ...(preview.cli_model ? [{ label: tr("模型"), value: preview.cli_model }] : []), ...preview.sources.map((source) => ({ label: tr("Source {{number}}: {{title}}", { number: source.source_number, title: source.title }), value: `${source.nas ? `${source.nas.source_name} / ${source.nas.path}` : source.source_url || tr("Private local document")} · ${source.included_bytes}/${source.text_bytes} ${tr("bytes")}${source.budget_truncated || source.extraction_truncated ? ` · ${tr("TRUNCATED")}` : ""}` }))],
+        details: [{ label: tr("Question"), value: question }, { label: tr("Model and price"), value: `${preview.service_review.model_alias}: ${preview.service_review.pricing.input_per_1k} input / ${preview.service_review.pricing.output_per_1k} output per 1k tokens; minimum ${preview.service_review.pricing.minimum}, task maximum ${preview.service_review.pricing.maximum_per_task} ${preview.service_review.pricing.currency}` }, ...(preview.cli_model ? [{ label: tr("模型"), value: preview.cli_model }] : []), ...preview.sources.map((source) => ({ label: tr("Source {{number}}: {{title}}", { number: source.source_number, title: source.title }), value: `${source.nas ? `${source.nas.source_name} / ${source.nas.path}` : source.source_url || tr("Private local document")} · ${source.included_bytes}/${source.text_bytes} ${tr("bytes")}${source.budget_truncated || source.extraction_truncated ? ` · ${tr("TRUNCATED")}` : ""}` }))],
         onConfirm: () => runPrompt(question, preview),
       });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not prepare the send review."); }

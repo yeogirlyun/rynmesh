@@ -2464,13 +2464,6 @@ function PluginDetailsModal({
 
       {plugin.peer_provider ? <PeerProviderSettings key={`${plugin.id}:${plugin.instance_id}`} plugin={plugin} /> : null}
 
-      <PluginViews plugin={plugin} servers={bundledServers} initialViewId={initialViewId} onOpenServer={onOpenServer} onRefresh={onRefresh} />
-
-      <details className="ae-plugin-settings" open={!plugin.enabled || !plugin.views?.length ? true : undefined}>
-        <summary>{tx("插件设置与连接", "Plugin settings & connections")}</summary>
-
-      {plugin.peer_provider ? <PeerProviderSettings key={`${plugin.id}:${plugin.instance_id}`} plugin={plugin} /> : null}
-
       <div className="ae-setting-row">
         <div className="ae-setting-copy">
           <strong>{tx("启用插件包", "Enable plugin package")}</strong>

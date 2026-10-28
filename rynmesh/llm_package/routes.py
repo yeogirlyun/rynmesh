@@ -91,6 +91,7 @@ from .p2p import (
 )
 from .safety import MAX_OUTPUT, MAX_REQUEST, SharedSlots, install_body_limit
 from .service_view import annotate_services
+from .review import service_review
 from .setup_recovery import (
     RECOVERY_FAILED,
     SetupRecovery,
@@ -150,7 +151,7 @@ def _delivery_error_code(exc: Exception, *, transport: str) -> str:
 
 def _submission_error_code(detail: str) -> str:
     message = detail.strip().lower()
-    if message in RUNTIME_ERROR_CODES or message == "service_unhealthy":
+    if message in RUNTIME_ERROR_CODES or message in {"service_unhealthy", "service_review_changed"}:
         return message
     if "insufficient development task balance" in message:
         return "insufficient_task_balance"
@@ -529,9 +530,13 @@ class ProviderService:
                 return self._sealed_failure(
                     task_id, reply_pub, outer["from_peer_id"], "rejected", "ai_permission_denied",
                 )
-        if max_amount < 0 or (max_amount == 0 and not own_request):
-            # Reject before inference: without a positive hold every completed
-            # generation would fail the price check after burning compute.
+        if "service_review_token" in body and body["service_review_token"] != service_review(self.manifest.public_dict(), own_request=own_request)["token"]:
+            return self._sealed_failure(task_id, reply_pub, outer["from_peer_id"], "rejected", "service_review_changed")
+        pricing = self.manifest.pricing
+        zero_price = pricing.input_per_1k == pricing.output_per_1k == pricing.minimum == 0
+        if max_amount < 0 or (max_amount == 0 and not own_request and not zero_price):
+            # A genuinely zero-price service needs no hold. Paid remote work
+            # must still reserve a positive amount before consuming compute.
             raise TaskProtocolError("max_amount must be a positive hold")
         if max_amount > self.manifest.pricing.maximum_per_task:
             raise TaskProtocolError("task maximum exceeds provider price limit")
@@ -2198,7 +2203,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             current = active_manager()
             values = ([current] if current else []) + [service for service in active_source_managers().values()
                 if "explicit-friends" in service.manifest.capabilities]
-            return [{**service.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main")} for service in values]
+            return [{**service.public_status(), "network_id": read_provider_settings().get("network_id", "rynmesh-main"), "publication_enabled": bool(read_provider_settings().get("publication_enabled"))} for service in values]
         app.state.ai_access.provider = own_service_status
     registry.register(BackgroundWorkerSpec(
         name="llm.friend-permissions", run_once=recheck_permissions_once,
@@ -3229,6 +3234,8 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             if public_manifest.get("adapter") not in {"codex_cli", "antigravity_cli"} or not any(
                     row.get("id") == cli_model for row in selected.get("cli_models", [])):
                 raise HTTPException(409, "cli_model_unavailable")
+        if "service_review_token" in body and body["service_review_token"] != service_review(public_manifest)["token"]:
+            raise HTTPException(status_code=409, detail="service_review_changed")
         if prompt_format == CHAT_FORMAT and CHAT_FORMAT not in public_manifest.get("capabilities", []):
             raise HTTPException(status_code=409, detail="provider no longer supports the reviewed prompt format")
         response_mode = str(body.get("response_mode") or "complete-v1").strip().lower()
@@ -3315,6 +3322,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
             **({"external_permission": body["external_permission"]} if external_resource else {}),
             **({"expected_model_binding": body["expected_model_binding"]} if "expected_model_binding" in body else {}),
             **({"conversation_key": conversation_key} if conversation_key else {}),
+            **({"service_review_token": body["service_review_token"]} if "service_review_token" in body else {}),
             "max_tokens": max_tokens,
             "max_amount": maximum,
             "transport": requested_transport,
@@ -3424,6 +3432,7 @@ def install_llm_routes(app: Any, *, store: RynmeshStore, home: Path, messaging_k
                     **({"external_permission": body["external_permission"]} if external_resource else {}),
                     **({"expected_model_binding": body["expected_model_binding"]} if "expected_model_binding" in body else {}),
                     **({"conversation_key": conversation_key} if conversation_key else {}),
+                    **({"service_review_token": body["service_review_token"]} if "service_review_token" in body else {}),
                     "max_amount": maximum,
                     "reply_messaging_pub": peer_box.public_key_b64(messaging_key),
                     **(

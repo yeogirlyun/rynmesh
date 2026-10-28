@@ -46,8 +46,40 @@ def setup(tmp_path):
     orders = Orders()
     runs = AskRunService(history, lambda: context, lambda: orders)
     preview = context.preview(row, "中文秘密问题")
-    request = {"task_id": "task_" + "a" * 32, "conversation_id": row["id"], "expected_revision": row["revision"], "question": "中文秘密问题", "prompt_sha256": preview["prompt_sha256"]}
+    request = {"task_id": "task_" + "a" * 32, "conversation_id": row["id"], "expected_revision": row["revision"], "question": "中文秘密问题", "prompt_sha256": preview["prompt_sha256"], "service_review_token": preview["service_review"]["token"]}
     return history, runs, orders, request
+
+
+@pytest.mark.parametrize("field,value", [("pricing", {"minimum": 1}), ("model_fingerprint", "changed-model")])
+def test_price_or_model_change_rejects_old_review_without_dispatch_or_losing_draft(tmp_path, field, value):
+    history, runs, orders, request = setup(tmp_path)
+    original_catalog = runs.context().catalog
+    changed = copy.deepcopy(original_catalog("network"))
+    changed[0]["service"][field] = value
+    runs.context().catalog = lambda _: changed
+    before = history.get("conversation")
+    with pytest.raises(ConversationError, match="ask_preview_changed"):
+        runs.begin(request)
+    assert history.get("conversation") == before
+    assert orders.sent == []
+    request["service_review_token"] = runs.context().preview(before, request["question"])["service_review"]["token"]
+    runs.begin(request)
+    runs.run_once()
+    assert orders.sent[0]["service_review_token"] == request["service_review_token"]
+
+
+@pytest.mark.parametrize('code', ['service_review_changed', 'ai_permission_denied'])
+def test_rejected_provider_response_finishes_original_run_without_retry(tmp_path, code):
+    history, runs, orders, request = setup(tmp_path)
+    runs.begin(request)
+    runs.run_once()
+    orders.results[request['task_id']] = {'state': 'rejected', 'error_code': code}
+    restarted = AskRunService(ConversationStore(history.root, history.key), runs.context, lambda: orders)
+    restarted.run_once()
+    assert restarted.get(request['task_id'])['state'] == 'rejected'
+    assert history.get('conversation')['messages'][-1]['status'] == 'failed'
+    restarted.run_once()
+    assert len(orders.sent) == 1 and orders.acknowledged == [request['task_id']]
 
 
 @pytest.mark.parametrize('code,reason,action', [
@@ -373,7 +405,7 @@ def test_three_active_runs_are_each_ticked_exactly_once_in_last_checked_order(tm
         preview = context.preview(row, f"question {index}")
         task_id = "task_" + chr(ord("a") + index) * 32
         runs.begin({"task_id": task_id, "conversation_id": conversation_id, "expected_revision": row["revision"],
-                    "question": f"question {index}", "prompt_sha256": preview["prompt_sha256"]})
+                    "question": f"question {index}", "prompt_sha256": preview["prompt_sha256"], "service_review_token": preview["service_review"]["token"]})
         task_ids.append(task_id)
 
     runs.run_once()

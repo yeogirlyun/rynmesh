@@ -1,0 +1,67 @@
+Browser tab: 48282168, Title: "Ryn Webapp", URL: "http://127.0.0.1:19042/ask?peer=udJlEtV1rjr7IDlyg4bubFQ6iH0V8%2F5P0OU%2BqtkHFjw%3D&service=local-small&network=rynmesh-main&conversation=e6173b5f-4d28-42a3-a1ee-b2a668be3b08".
+1 AXWebArea Ryn Webapp, URL: 127.0.0.1:19042/ask?peer=udJlEtV1rjr7IDlyg4bubFQ6iH0V8%2F5P0OU%2BqtkHFjw%3D&service=local-small&network=rynmesh-main&conversation=e6173b5f-4d28-42a3-a1ee-b2a668be3b08
+	2 container root
+		3 container
+			4 image Ryn mark
+			5 text Ryn WEBAPP local console -  ryn-node 0.6.2 daemon registry 0  peers live
+			6 button Open getting started guide
+			7 button Toggle Ask Ryn panel
+		8 container
+			9 text CONSOLE
+			10 link Description: Home, Value: 127.0.0.1:19042/
+			11 link Description: For You, Value: 127.0.0.1:19042/digest
+			12 link Description: My reading, Value: 127.0.0.1:19042/reading
+			13 link Description: Explore, Value: 127.0.0.1:19042/explore
+			14 link Description: Search, Value: 127.0.0.1:19042/search
+			15 link Description: Ask Ryn, Value: 127.0.0.1:19042/ask
+			16 link Description: Publish, Value: 127.0.0.1:19042/publish
+			17 link Description: Peers, Value: 127.0.0.1:19042/peers
+			18 link Description: Friends, Value: 127.0.0.1:19042/friends
+			19 link Description: Friend updates, Value: 127.0.0.1:19042/friend-updates
+			20 link Description: Offline reading, Value: 127.0.0.1:19042/offline
+			21 link Description: Services, Value: 127.0.0.1:19042/services
+			22 link Description: Chat, Value: 127.0.0.1:19042/chat
+			23 link Description: Settings, Value: 127.0.0.1:19042/settings
+			24 text THIS NODE
+			25 image Ryn mark
+			26 text Ryn E8 FAI-B
+			27 button Copy 5k4KeYrIv9szJ/rJuGZQk+XYzOa5ukj2f34gKFwNB9c=
+			28 text 0 local 0 fetched
+		29 container
+			30 container Private AI conversations
+				31 button New chat
+				32 text field (settable) Search conversations
+				33 container
+					34 heading TODAY, Value: 2
+						47 text TODAY
+					35 button 计算 7+8，只回答数字。 00:30
+						48 text 计算 7+8，只回答数字。
+						49 text 00:30
+					36 button Delete 计算 7+8，只回答数字。
+				37 button Clear history
+				38 button Import older browser conversations
+			39 container
+				40 heading Ask Ryn, Value: 1
+					50 text Ask Ryn
+				41 link Description: History and model selection, Value: 127.0.0.1:19042/ask
+				51 text rynmesh-qwen2.5-0.5b-q4 Provided by  FAI-A . This device receives your questions. Available in discovery Encrypted
+				42 button (collapsed) Details, Secondary Actions: Expand
+					52 text Details
+			53 text 计算 7+8，只回答数字。
+			54 text 00:28
+			55 text The direct connection failed. Check the provider's connection, then check the original task before retrying.
+			56 text 00:28
+			43 button Copy
+			44 button Good response
+			45 button Check original task
+			59 text What is 9 plus 6? Answer with only the number.
+			60 text 00:30
+			61 text 15
+			62 text 00:30  · 0 credits
+			63 button Copy
+			64 button Good response
+			46 text entry area (settable) Message Private AI
+			57 button (disabled) Send message
+			58 text Encrypted history on your node Estimated minimum 0 Development Task Balance
+
+The focused UI element is 1 AXWebArea Ryn Webapp, URL: 127.0.0.1:19042/ask?peer=udJlEtV1rjr7IDlyg4bubFQ6iH0V8%2F5P0OU%2BqtkHFjw%3D&service=local-small&network=rynmesh-main&conversation=e6173b5f-4d28-42a3-a1ee-b2a668be3b08

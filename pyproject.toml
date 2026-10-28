@@ -120,6 +120,7 @@ include = ["rynmesh*"]
 # Built webapp, folded in by scripts/build_release.zsh so the node serves its
 # own UI. Absent in a source checkout — the daemon simply skips the mount.
 "rynmesh" = ["webui/**/*", "locales/*.json", "bin/*"]
+"rynmesh.friends" = ["invitation.html", "invitation.js"]
 
 [tool.ruff]
 line-length = 100

@@ -1,11 +1,12 @@
+import { Button, Panel } from "../components/ui";
 import QRCode from "qrcode";
 import { Activity, UserPlus } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppContext } from "../appContext";
 import { runThenReload } from "../domain/actThenReload";
-import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendRecord } from "../domain/friendTypes";
-import { extractInvite, friendsApi, invitationText } from "../domain/friendsClient";
+import type { FriendContentCard, FriendInvitePreview, FriendInviteResult, FriendRecord, AIJoinOperation } from "../domain/friendTypes";
+import { extractInvite, friendsApi, invitationText, installationLink, aiJoinExplanation } from "../domain/friendsClient";
 import { tr, uiLocale, useUILanguage } from "../uiI18n";
 import AddFriendDialog, { type InviteTab } from "./components/AddFriendDialog";
 import FriendAI from "./components/FriendAI";
@@ -22,6 +23,7 @@ type FriendTab = "msgs" | "cards" | "ai" | "conn";
 export default function Friends() {
   useUILanguage();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const { confirm } = useAppContext();
   const [friends, setFriends] = useState<FriendRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -36,7 +38,12 @@ export default function Friends() {
   useEffect(() => { void refreshReach(); }, [refreshReach]);
   const [qr, setQr] = useState("");
   const [paste, setPaste] = useState("");
-  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview } | null>(null);
+  const [review, setReview] = useState<{ uri: string; preview: FriendInvitePreview; operationId?: string } | null>(null);
+  const [operations, setOperations] = useState<AIJoinOperation[]>([]);
+  const errorFocus = useRef<HTMLDivElement>(null);
+  const reviewFocus = useRef<HTMLHeadingElement>(null);
+  const continuationId = useRef("");
+  const pasteFocus = useRef<HTMLTextAreaElement>(null);
   const revision = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -50,14 +57,42 @@ export default function Friends() {
   const [cards, setCards] = useState<FriendContentCard[]>([]);
   const [allowed, setAllowed] = useState<string[] | null>(null);
   const [copied, setCopied] = useState(false);
+  const reconnecting = review?.preview.purpose !== "ai" && friends.some((friend) => friend.status === "active" && friend.peer_id === review?.preview.peer_id);
   const load = useCallback(async () => {
-    const [result, invitations] = await Promise.all([friendsApi.list(), friendsApi.invites()]);
+    const [result, invitations, joins] = await Promise.all([friendsApi.list(), friendsApi.invites(), friendsApi.aiJoins()]);
+    setOperations(joins.operations);
     setFriends(result.friends); setLoaded(true); setLoadError("");
     setInvite((current) => {
       const stored = invitations.invites.find((row) => row.invite_id === current?.invite.invite_id);
       return stored && (stored.status !== "active" || Date.parse(stored.expires_at) <= Date.now()) ? null : current;
     });
   }, []);
+  useEffect(() => { if (error) errorFocus.current?.focus(); }, [error]);
+  useEffect(() => { if (review) reviewFocus.current?.focus(); }, [review]);
+  useEffect(() => {
+    let active = true;
+    const version = revision.current;
+    void friendsApi.continuation().then((saved) => {
+      if (active && saved.invite_uri && version === revision.current) {
+        continuationId.current = saved.id ?? "";
+        setPaste(saved.invite_uri); setAddOpen(true); setInviteTab("use"); setNotice("Your saved invitation is ready. Review it before accepting.");
+        pasteFocus.current?.focus();
+      }
+    }).catch(() => { if (active) setNotice("Saved invitation could not be loaded. Paste your original invitation to continue."); });
+    return () => { active = false; };
+  }, []);
+  const clearContinuation = async () => {
+    if (continuationId.current) await friendsApi.clearContinuation(continuationId.current);
+    continuationId.current = "";
+  };
+  const finishAI = async (operation: AIJoinOperation) => {
+    await load();
+    if (operation.stage !== "complete" || operation.error) {
+      throw new Error(`${aiJoinExplanation(operation.error ?? "ai_grant_pending")} Operation ${operation.operation_id} is saved.`);
+    }
+    await clearContinuation(); setPaste(""); setReview(null);
+    navigate(`/ask?${new URLSearchParams({ peer: operation.peer_id, service: operation.service_id, network: operation.network_id })}`);
+  };
   const act = async (operation: () => Promise<void>) => {
     setBusy(true); setError(""); setNotice("");
     try { await operation(); }
@@ -86,7 +121,7 @@ export default function Friends() {
   useEffect(() => {
     let active = true;
     setQr("");
-    if (invite) void QRCode.toDataURL(invite.invite_uri, { width: 512, margin: 4 })
+    if (invite) void QRCode.toDataURL(installationLink(invite), { width: 512, margin: 4 })
       .then((value) => { if (active) setQr(value); })
       .catch(() => { if (active) setNotice(tr("QR code unavailable. Copy the invitation instead.")); });
     return () => { active = false; };
@@ -206,6 +241,19 @@ export default function Friends() {
       {showEmpty ? <EmptyFriends onAdd={() => setAddOpen(true)} /> : null}
     </div>
 
+    {operations.length ? <Panel><h2>AI invitation progress</h2><p>Unfinished operations survive restart. Continue the original operation; permission is checked before opening chat.</p>
+      {operations.map((operation) => <section key={operation.operation_id} aria-label={`AI invitation from ${operation.node_name}`}>
+        <h3>{operation.node_name} · {operation.service_id}</h3>
+        <p>Operation {operation.operation_id} · {operation.stage === "joining" ? "Friendship / authorization unfinished" : operation.stage === "discovering" ? "Service confirmation unfinished" : operation.stage === "complete" ? "Previously accepted; recheck to open" : "Stopped locally"}</p>
+        {operation.error ? <p>{aiJoinExplanation(operation.error)}</p> : null}
+        {operation.stage !== "cancelled" ? <>
+          <Button disabled={busy} onClick={() => void act(async () => finishAI(await friendsApi.resumeAIJoin(operation.operation_id)))}>{operation.stage === "complete" ? "Open this friend's AI" : "Continue original operation"}</Button>
+          {operation.stage === "joining" || operation.stage === "discovering" ? <Button disabled={busy} onClick={() => void act(async () => setReview({ uri: "", operationId: operation.operation_id, preview: await friendsApi.reviewAIJoin(operation.operation_id) }))}>Review current AI details</Button> : null}
+          <Button disabled={busy} onClick={() => confirm({ title: "Stop continuing this invitation?", body: "Clears its saved invitation on this device. Any friendship or AI permission already saved by the provider remains; ask them to revoke it if needed.", risk: "medium", confirmLabel: "Stop and clear invitation", onConfirm: () => act(async () => { await friendsApi.abandonAIJoin(operation.operation_id); await load(); }) })}>Stop continuing</Button>
+        </> : null}
+      </section>)}
+    </Panel> : null}
+
     <PageNote><LinkedText text={tr("Messages with your own computers are in [link]Messages[/link].")} to="/chat" /></PageNote>
 
     {addOpen ? <AddFriendDialog tab={inviteTab} onTab={setInviteTab} onClose={() => setAddOpen(false)} busy={busy} error={error} notice={notice}
@@ -213,17 +261,25 @@ export default function Friends() {
       onCreate={create}
       onCopy={() => void act(async () => { await navigator.clipboard.writeText(invitationText(invite!)); setNotice(tr("Invitation and installation instructions copied.")); })}
       onCancelInvite={() => void act(async () => { await friendsApi.cancel(invite!.invite.invite_id); setInvite(null); setNotice(tr("Invitation cancelled.")); })}
-      paste={paste} onPaste={(value) => { revision.current += 1; setPaste(value); setReview(null); }} review={review}
+      paste={paste} onPaste={(value) => { revision.current += 1; setPaste(value); setReview(null); }} review={review} reconnecting={reconnecting}
+      onCancelReview={() => void act(async () => { await clearContinuation(); revision.current += 1; setPaste(""); setReview(null); })}
       onReview={() => void act(async () => {
         const version = revision.current; const uri = extractInvite(paste);
+        continuationId.current = (await friendsApi.saveContinuation(uri)).id;
         const preview = await friendsApi.inspect(uri);
         if (version === revision.current) setReview({ uri, preview });
       })}
       onJoin={() => void act(async () => {
         const version = revision.current;
-        const friend = await friendsApi.join(review!.uri);
+        if (review!.preview.purpose === "ai") {
+          await finishAI(review!.operationId ? await friendsApi.resumeAIJoin(review!.operationId, review!.preview.review_token)
+            : await friendsApi.beginAIJoin(review!.uri, review!.preview.review_token ?? ""));
+          return;
+        }
+        const friend = await (reconnecting ? friendsApi.reconnect(review!.uri) : friendsApi.join(review!.uri));
+        await clearContinuation();
         if (version === revision.current) { setPaste(""); setReview(null); }
-        setSelected(friend.peer_id); setTab("msgs"); setAddOpen(false); setNotice(tr("Friend added. Send your first message below.")); await load();
+        setSelected(friend.peer_id); setTab("msgs"); setAddOpen(false); setNotice(reconnecting ? "Friend address verified and updated." : tr("Friend added. Send your first message below.")); await load();
       })} /> : null}
   </div>;
 }

@@ -28,7 +28,7 @@ function liveHistory() {
   });
   vi.spyOn(askHistory, "preview").mockImplementation(async (row, question) => ({ conversation_id: row.id, revision: row.revision ?? 1,
     provider_peer_id: row.providerPeerId, service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: question, prompt_sha256: "fixture",
-    context_window: 4096, input_token_upper_estimate: question.length, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 0, sources: [] }));
+    service_review: { token: "review", model_alias: "Fixture model", pricing: { input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 0, currency: "task_balance" } }, context_window: 4096, input_token_upper_estimate: question.length, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 0, sources: [] }));
   return vi.spyOn(askHistory, "save").mockImplementation(async (row) => {
     const saved = { ...row, revision: (row.revision ?? 0) + 1 }; rows.set(row.id, saved); return saved;
   });
@@ -152,7 +152,7 @@ describe("Private AI chat", () => {
     await screen.findByRole("heading", { name: "AI workspace" });
     vi.mocked(askHistory.preview).mockImplementation(async (row) => ({ conversation_id: row.id, revision: row.revision!, provider_peer_id: row.providerPeerId,
       service_id: row.serviceKey.slice(row.providerPeerId.length + 2), prompt: "A verified prompt with bounded untrusted article material", prompt_sha256: "a".repeat(64),
-      context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
+      service_review: { token: "review", model_alias: "Fixture model", pricing: { input_per_1k: 0, output_per_1k: 0, minimum: 0, maximum_per_task: 0, currency: "task_balance" } }, context_window: 4096, input_token_upper_estimate: 2000, framing_reserve: 1024, max_output_tokens: 256, history_messages_omitted: 3,
       ai_permission: { relationship_id: "d".repeat(32), revision: 7 },
       sources: [{ library_id: "import:imp_" + "b".repeat(64), title: "Article", source_url: "https://example.test/article", sha256: "c".repeat(64), extraction_truncated: false,
         text_bytes: 10000, source_number: 1, included_bytes: 1000, budget_truncated: true }] }));
@@ -161,7 +161,7 @@ describe("Private AI chat", () => {
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     const review = confirm.mock.calls[0][0];
     expect(review.details[0]).toEqual({ label: "Question", value: "Summarize this article" });
-    expect(review.details[1].value).toContain("TRUNCATED");
+    expect(review.details[2].value).toContain("TRUNCATED");
     expect(review.body).toContain("3 older history messages omitted");
     expect(submit).not.toHaveBeenCalled();
     await act(() => review.onConfirm());

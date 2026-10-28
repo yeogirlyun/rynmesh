@@ -1,10 +1,11 @@
 import { ArrowRight, RefreshCw, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAppContext } from "../../appContext";
 import { aiAccess, type AIGrant, type FriendAISnapshot } from "../../domain/aiAccess";
 import type { FriendRecord } from "../../domain/friendTypes";
 import type { LLMProviderStatus } from "../../domain/nodeClient";
+import AIInvitations from "./AIInvitations";
 import { relativeAgo } from "../../personal/drop/FamilyParts";
 import { tr, uiLocale, useUILanguage } from "../../uiI18n";
 import { errorText } from "./friendLinks";
@@ -17,6 +18,8 @@ import "../friends-refresh.css";
  */
 export default function FriendAI({ friends, friend: only, onAllowed }: { friends: FriendRecord[]; friend?: FriendRecord | null; onAllowed?: (relationshipIds: string[]) => void }) {
   useUILanguage();
+  const [params] = useSearchParams();
+  const heading = useRef<HTMLHeadingElement>(null);
   const { client, confirm } = useAppContext();
   const [grants, setGrants] = useState<AIGrant[]>([]);
   const [remote, setRemote] = useState<FriendAISnapshot[]>([]);
@@ -33,6 +36,10 @@ export default function FriendAI({ friends, friend: only, onAllowed }: { friends
   report.current = onAllowed;
   const allowedKey = loaded ? grants.filter((row) => row.effective && row.service_id === provider?.service?.package_id).map((row) => row.relationship_id).sort().join(",") : null;
   useEffect(() => { if (allowedKey !== null) report.current?.(allowedKey ? allowedKey.split(",") : []); }, [allowedKey]);
+  const serviceChanged = Boolean(params.get("share") && provider?.service?.package_id !== params.get("share"));
+  const pricing = provider?.service?.pricing;
+  const price = pricing ? `Development Task Balance: ${pricing.input_per_1k} input / ${pricing.output_per_1k} output per 1k tokens; minimum ${pricing.minimum}, task maximum ${pricing.maximum_per_task}. This is not RMB billing.` : "Price unknown; check the service configuration before sharing.";
+  useEffect(() => { if (loaded && params.has("share")) heading.current?.focus(); }, [loaded, params]);
   const load = async () => {
     const generation = ++epoch.current;
     try {
@@ -70,19 +77,20 @@ export default function FriendAI({ friends, friend: only, onAllowed }: { friends
   };
   const service = provider?.service?.package_id;
   return <div className="rq-ai">
+    {provider?.service && <AIInvitations serviceId={provider.service.package_id} disabled={busy || serviceChanged || !pricing || !provider.publication_enabled} />}
     <div className="rq-cards-head">
       <p className="rq-help">{tr("Being friends does not grant AI access. Choose who can use each service; your friend's device sees the questions sent to their model.")}</p>
       <button type="button" className="rf-ib rf-ib-sm" aria-label={tr("Refresh AI permissions")} title={tr("Refresh AI permissions")} disabled={busy} onClick={() => void load()}><RefreshCw size={14} strokeWidth={1.7} aria-hidden="true" /></button>
     </div>
-    {error ? <p className="rq-banner rq-banner-bad" role="alert">{error}</p> : null}{notice ? <p className="rq-banner rq-banner-ok" role="status">{notice}</p> : null}
+    {loaded && serviceChanged ? <p role="alert">The selected service changed. Open the current model before sharing.</p> : null}{error ? <p className="rq-banner rq-banner-bad" role="alert">{error}</p> : null}{notice ? <p className="rq-banner rq-banner-ok" role="status">{notice}</p> : null}
     {!loaded ? <p className="rq-loading">{tr("Loading AI permissions…")}</p> : <>
       <section className="rq-ai-sec" aria-labelledby="rq-ai-mine">
-        <h3 id="rq-ai-mine">{tr("Your AI")}</h3>
+        <h3 ref={heading} tabIndex={-1} id="rq-ai-mine">{tr("Your AI")}</h3>
         <div className="rq-box">
           {provider?.service ? <div className="rq-ai-row">
             <span className="rq-ai-tile rf-h-indigo" aria-hidden="true"><Sparkles size={18} strokeWidth={1.8} /></span>
             <div className="rq-ai-main"><b>{provider.service.model_alias}</b>
-              <small>{provider.ready ? tr("Model ready") : tr("Model not ready")} · {provider.publication_enabled ? tr("Friend sharing enabled") : tr("Friend sharing paused")}</small></div>
+              <small>{price}</small><small>{provider.ready ? tr("Model ready") : tr("Model not ready")} · {provider.publication_enabled ? tr("Friend sharing enabled") : tr("Friend sharing paused")}</small></div>
             <Link className="rf-lnk rf-lnk-sm" to="/services/manage">{tr("Manage local model")}</Link>
             {!provider.publication_enabled ? <button type="button" className="rf-btn rf-btn-sm" disabled={busy} onClick={() => confirm({ title: tr("Enable friend AI sharing?"),
               body: tr("Publishes this service's model and capacity metadata to the network. Only explicitly authorized friends can submit requests. Prompts and model files are not published."),
@@ -102,7 +110,7 @@ export default function FriendAI({ friends, friend: only, onAllowed }: { friends
                 </div>
                 <span className="rf-sr">{tr("Your {{model}}: {{state}}", { model: provider?.service?.model_alias ?? "", state: allowed ? tr("Allowed") : tr("Not allowed") })}</span>
                 <span aria-hidden="true"><Tinted tone={allowed ? "self" : "off"} className="rq-status"><i />{allowed ? tr("Allowed") : tr("Not allowed")}</Tinted></span>
-                <button type="button" className={`rf-btn rf-btn-sm${allowed ? " rf-btn-d" : " rf-btn-p"}`} disabled={busy} onClick={() => confirm({ title: allowed ? tr("Revoke AI access for {{name}}?", { name: friend.node_name }) : tr("Allow AI access for {{name}}?", { name: friend.node_name }),
+                <button type="button" className={`rf-btn rf-btn-sm${allowed ? " rf-btn-d" : " rf-btn-p"}`} disabled={busy || (!allowed && (serviceChanged || !pricing || !provider?.publication_enabled))} onClick={() => confirm({ title: allowed ? tr("Revoke AI access for {{name}}?", { name: friend.node_name }) : tr("Allow AI access for {{name}}?", { name: friend.node_name }),
                   body: allowed ? tr("Blocks new requests immediately. Running work will be asked to cancel, but computation may not stop immediately.")
                     : tr("Allows {{name}} to use {{model}} while friend sharing is enabled. Other services remain unchanged.", { name: friend.node_name, model: provider?.service?.model_alias ?? "" }),
                   risk: "medium", confirmLabel: allowed ? tr("Revoke access") : tr("Allow access"),

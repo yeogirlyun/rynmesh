@@ -156,7 +156,8 @@ export default function App() {
       if (successStatus) setFirstSuccess(successStatus);
       if (successStatus && !firstSuccessEvaluated.current) {
         firstSuccessEvaluated.current = true;
-        setFirstSuccessOpen(!successStatus.completed && !successStatus.dismissed);
+        const destination = window.location.pathname;
+        setFirstSuccessOpen(!successStatus.completed && !successStatus.dismissed && destination !== "/friends" && destination !== "/ask" && destination !== "/services/private-ai/chat");
       }
       setOffline(false);
     } catch {

@@ -19,7 +19,7 @@ from ..background_workers import WorkerRunResult
 from ..file_transactions import file_transaction
 from .store import ConversationError, ConversationStore, _json, clean_conversation
 
-TERMINAL = {"succeeded", "failed", "cancelled", "timed_out", "interrupted"}
+TERMINAL = {"succeeded", "failed", "cancelled", "timed_out", "interrupted", "rejected"}
 
 
 def run_records(data: dict) -> dict:
@@ -45,6 +45,8 @@ class AskRunService:
         if not isinstance(task_id, str) or not re.fullmatch(r"task_[a-f0-9]{32}", task_id):
             raise ConversationError("ask_invalid_request")
         intent = {key: value.get(key) for key in ("conversation_id", "expected_revision", "question", "prompt_sha256")}
+        if "service_review_token" in value:
+            intent["service_review_token"] = value["service_review_token"]
         if value.get("ai_permission") is not None:
             intent["ai_permission"] = value["ai_permission"]
         fingerprint = hashlib.sha256(_json(intent)).hexdigest()
@@ -72,6 +74,8 @@ class AskRunService:
                 raise ConversationError("ask_preview_changed")
             if preview.get("ai_permission") != intent.get("ai_permission"):
                 raise ConversationError("ask_preview_changed")
+            if preview["service_review"]["token"] != intent.get("service_review_token"):
+                raise ConversationError("ask_preview_changed")
             now = datetime.now(timezone.utc).isoformat()
             sources = {"contextIds": [source["library_id"] for source in preview["sources"]],
                        "contextBytes": [source["included_bytes"] for source in preview["sources"]],
@@ -90,6 +94,7 @@ class AskRunService:
                             "service_id": preview["service_id"], "network_id": row["networkId"], "transport": "auto", "response_mode": "stream-v1",
                             "prompt": preview["prompt"], "prompt_format": preview.get("prompt_format", "text"),
                             **({"cli_model": preview["cli_model"]} if preview.get("cli_model") else {}),
+                            "service_review_token": intent["service_review_token"],
                             **({"ai_permission": intent["ai_permission"]} if "ai_permission" in intent else {}),
                             "max_tokens": preview["max_output_tokens"]}}
             runs[task_id] = run
@@ -177,6 +182,7 @@ class AskRunService:
                     "p2p_transport_failed": "The peer connection failed. Check the connection, then check the original task before retrying.",
                     "encrypted_relay_failed": "The relay connection failed. Check the connection, then check the original task before retrying.",
                     "ai_permission_denied": "This friend has not granted access to this AI service, or has revoked it. Ask them to review your permission; no other provider was used.",
+                    "service_review_changed": "The model or price changed after your review. Review the current service before sending a new question. This task was not run.",
                     "capacity_exhausted": "The provider is busy. Wait or choose another service.",
                     "p2p_capacity_exhausted": "No connection session is available. Wait for the active session to close.",
                     "insufficient_balance": "There are not enough credits for this request.",

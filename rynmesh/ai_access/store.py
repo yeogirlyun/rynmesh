@@ -75,6 +75,10 @@ class AIAccessStore:
             return self._public(row) if row else None
 
     def set(self, service_id: str, relationship_id: str, *, allowed: bool, expected_revision: int) -> dict:
+        with file_transaction(self.path.parent / '.sharing.lock'):
+            return self._set(service_id, relationship_id, allowed=allowed, expected_revision=expected_revision)
+
+    def _set(self, service_id: str, relationship_id: str, *, allowed: bool, expected_revision: int) -> dict:
         key = rule_key(service_id, relationship_id)
         if type(allowed) is not bool or type(expected_revision) is not int or expected_revision < 0:
             raise AIAccessError("ai_permission_request_invalid")
