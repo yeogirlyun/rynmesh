@@ -5,9 +5,11 @@ mod localization;
 mod local_model;
 mod drop;
 mod drive_browser;
+mod mcp_auth_browser;
 mod craft_browser;
 mod system_apps;
 mod deployment;
+mod updates;
 use localization::tr;
 
 use node::NodeState;
@@ -53,6 +55,7 @@ pub fn run() {
             if !argv.iter().any(|arg| arg == "--background") { focus_main(app); }
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(|invoke| {
             if !craft_browser::allows_native_commands(invoke.message.webview_ref().label()) {
                 invoke.resolver.reject("plugin_native_access_denied");
@@ -60,16 +63,20 @@ pub fn run() {
             }
             let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![preferences::get_desktop_preferences,
             preferences::set_desktop_preferences, preferences::desktop_node_port,
+            updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_download,
+            updates::desktop_update_install, updates::desktop_update_preferences,
             desktop::desktop_status, desktop::desktop_action, localization::set_desktop_language,
             local_model::choose_local_model, drive_browser::open_drive_browser,
+            mcp_auth_browser::open_mcp_auth_browser,
             craft_browser::open_craft_browser, system_apps::sync_system_apps, system_apps::system_app_info,
             system_apps::choose_default_system_app,
-            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path];
+            drop::choose_drop_paths, drop::choose_drop_dir, drop::drop_open_path, drop::drag_local_file];
             handler(invoke)
         })
         .manage(preferences::DesktopState::default())
         .manage(desktop::RuntimeState::default())
         .manage(localization::LocalizedMenu::default())
+        .manage(updates::UpdateState::default())
         .manage(NodeState { child: Mutex::new(None), port, stopping: AtomicBool::new(false), lifecycle: Mutex::new(()) })
         .setup(move |app| {
             localization::initialize(app.handle());
@@ -110,6 +117,7 @@ pub fn run() {
             });
             desktop::watchdog(app.handle().clone(), status, sharing);
             system_apps::sync_when_ready(app.handle());
+            updates::initialize(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {

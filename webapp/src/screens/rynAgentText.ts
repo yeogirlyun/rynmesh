@@ -85,6 +85,14 @@ const en = {
   noToolsThisTurn: "No tools were executed in this turn.", turnTools: "{{count}} tool calls executed in this turn", partialResponse: "Response in progress · not a completed result", queued: "Queued", running: "Running", waiting_approval: "Awaiting approval", paused: "Paused", completed: "Turn finished", cancelled: "Cancelled", failed: "Failed", interrupted: "Interrupted",
   tool_started: "Tool started", tool_result: "Tool finished", approved: "Change approved", denied: "Change rejected", approval_requested: "Approval requested", model_started: "Model started", protocolUnsupported: "The selected protocol does not support these request parameters. Review the model source settings.", protocolInvalid: "The upstream response was incomplete or incompatible with the selected protocol. Check the model source before retrying.", unknownError: "The task could not be completed. See its error code below.",
   extensions: "Extensions", manageExtensions: "Manage plugins, skills, and MCP servers",
+  continueConversation: "Continue conversation", pausedBannerHelp: "This conversation is paused. Type a follow-up message below or click Continue conversation to resume.",
+  queueFollowUp: "Queue follow-up", queueFollowUpTitle: "Queue this message to send automatically after the current turn finishes (Ctrl+Enter)", queueShort: "Queue", steerShort: "Steer",
+  followUpModeSteer: "Send immediately", followUpModeQueue: "Queue for next turn", queuedMessages: "Queued follow-up messages", queuedAfterTurn: "Sends after current turn",
+  steerNow: "Steer", steerQueuedNow: "Steer queued message now", steerQueuedTooltip: "Submit immediately into the active turn without waiting",
+  editQueuedMessage: "Edit queued message", deleteQueuedMessage: "Delete queued message",
+  turnOnQueueing: "Default: Queue while running", turnOffQueueing: "Default: Send immediately while running",
+  queuePausedInterrupted: "Queue paused because the task was interrupted", queuePausedStopped: "Queue paused because the turn was stopped", queuePausedFailed: "Queue paused because the previous turn failed",
+  resumeQueue: "Resume queue", steeringInProgress: "Steering active turn…",
 };
 const zh: Record<keyof typeof en, string> = {
   addAttachments: "添加图片或文件", removeAttachment: "移除 {{name}}", dropAttachments: "松开以添加文件", preparingAttachments: "正在准备附件…", attachments: "附件", attachmentLimit: "最多添加 8 个文件、4 张图片；单个文件不超过 10 MB，总计不超过 20 MB。", attachmentReadError: "无法读取附件，请重新添加。", attachmentOnlyMessage: "请查看附件文件。",
@@ -171,6 +179,14 @@ const zh: Record<keyof typeof en, string> = {
   noToolsThisTurn: "本轮未执行工具。", turnTools: "本轮已执行 {{count}} 次工具调用", partialResponse: "尚未完成的回复 · 暂不代表最终结果", queued: "等待执行", running: "正在处理", waiting_approval: "等待确认", paused: "已暂停", completed: "本轮结束", cancelled: "已取消", failed: "失败", interrupted: "已中断",
   tool_started: "工具开始执行", tool_result: "工具执行结束", approved: "已确认变更", denied: "已拒绝变更", approval_requested: "请求确认", model_started: "模型开始处理", protocolUnsupported: "所选协议不支持当前请求参数，请检查模型来源设置。", protocolInvalid: "上游响应不完整或与所选协议不兼容，请检查模型来源后再重试。", unknownError: "任务未能完成，错误代码见下方。",
   extensions: "扩展", manageExtensions: "管理插件、技能与 MCP 服务器",
+  continueConversation: "继续对话", pausedBannerHelp: "当前对话已暂停。可直接输入新消息继续，或点击右侧按钮继续处理。",
+  queueFollowUp: "排队等本轮结束", queueFollowUpTitle: "加入队列，等当前这轮思考结束后自动发送（Ctrl+Enter）", queueShort: "排队", steerShort: "直接发",
+  followUpModeSteer: "直接发送", followUpModeQueue: "本轮结束后发送", queuedMessages: "排队等待发送的消息", queuedAfterTurn: "本轮结束后自动发送",
+  steerNow: "立即发送", steerQueuedNow: "立即插入发送此排队消息", steerQueuedTooltip: "不等本轮结束，立即作为调整发送给正在思考的助手",
+  editQueuedMessage: "编辑排队消息", deleteQueuedMessage: "删除排队消息",
+  turnOnQueueing: "默认改为：思考时排队发送", turnOffQueueing: "默认改为：思考时直接发送",
+  queuePausedInterrupted: "队列已暂停（因任务中断）", queuePausedStopped: "队列已暂停（因任务已暂停/停止）", queuePausedFailed: "队列已暂停（因上一轮执行失败）",
+  resumeQueue: "继续发送队列", steeringInProgress: "正在插入本轮调整…",
 };
 i18n.addResourceBundle("en", "rynAgent", en, true, true);
 i18n.addResourceBundle("zh-CN", "rynAgent", zh, true, true);

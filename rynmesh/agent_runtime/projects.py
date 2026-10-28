@@ -417,7 +417,7 @@ def guidance(row):
     )
 
 
-def read_progress(row):
+def read_progress(row, *, exclude_call_ids=None):
     """Keep observed page coverage across lossy checkpoints, never file prose or grants."""
     if not row.get("project") or not row.get("context_checkpoint"):
         return ""
@@ -425,7 +425,8 @@ def read_progress(row):
     pages = {}
     for event in row.get("events", []):
         if (event.get("type") != "tool_result" or event.get("tool") != "ryn_file_read"
-                or event.get("context_epoch", 0) != row.get("context_epoch", 0)):
+                or event.get("context_epoch", 0) != row.get("context_epoch", 0)
+                or (exclude_call_ids and event.get("call_id") in exclude_call_ids)):
             continue
         result = event.get("result") or {}
         if not isinstance(result, dict):

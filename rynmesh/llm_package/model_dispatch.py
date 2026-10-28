@@ -3,13 +3,10 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from contextvars import ContextVar
-from datetime import datetime, timezone
-from pathlib import Path
 
-from ..atomic_io import atomic_write_json, read_json
-from ..file_transactions import file_transaction
 from . import model_settings
 from .adapters import AdapterError, deadline_options
+from .model_usage import ModelUsageStore, current_usage_caller
 from .peer_binding import model_binding
 
 _BOUND = ContextVar("ryn_source_model_dispatch_binding", default=None)
@@ -25,12 +22,14 @@ class ModelDispatchAdapter:
         self.fingerprint = model_settings.fingerprint(record, model)
         self.model_binding = model_binding(record, model)
         self.service_id = sources.model_service_id(record, model)
+        self.model_key = "local/" + self.service_id
         self.path = sources.path.parent / "model-usage.json"
+        self.usage_store = getattr(sources, "usage_store", None) or ModelUsageStore(self.path)
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
 
-    def _start(self):
+    def _start(self, *, task_id=None, caller=None):
         bound = _BOUND.get()
         # Match owner mutations' space -> source lock order. Release both at
         # admission, before network I/O; already admitted requests are in flight.
@@ -54,16 +53,12 @@ class ModelDispatchAdapter:
                 raise AdapterError("runtime_busy", code="runtime_busy")
             # Attempts consume quota when dispatched. Unknown/failed/cancelled
             # outcomes never refund it; a restart cannot reset today's usage.
-            with file_transaction(Path(str(self.path) + ".lock")):
-                data = read_json(self.path, max_bytes=2 * 1024 * 1024) if self.path.exists() else {}
-                day = datetime.now(timezone.utc).date().isoformat()
-                data = {k: v for k, v in data.items() if v.get("day") == day}
-                count = data.get(self.service_id, {}).get("requests", 0)
-                limit = policy["requests_per_day"]
-                if limit is not None and count >= limit:
-                    raise AdapterError("model_daily_quota_exhausted", code="model_daily_quota_exhausted")
-                data[self.service_id] = {"day": day, "requests": count + 1}
-                atomic_write_json(self.path, data, max_bytes=2 * 1024 * 1024)
+            self.usage_store.admit_and_record_dispatch(
+                self.model_key,
+                policy=policy,
+                caller=caller or current_usage_caller(),
+                task_id=task_id,
+            )
             self.sources._active_models[self.service_id] = active + 1
             return policy
 
@@ -80,23 +75,56 @@ class ModelDispatchAdapter:
 
     def chat(self, body, *, deadline=None, **kwargs):
         kwargs = deadline_options(kwargs, deadline)
-        policy = self._start()
+        caller = current_usage_caller()
+        task_id = kwargs.get("task_id")
+        policy = self._start(task_id=task_id, caller=caller)
         try:
             body = {**body, "max_tokens": min(body.get("max_tokens", policy["max_output_tokens"]), policy["max_output_tokens"])}
-            return self.inner.chat(body, **deadline_options(kwargs, deadline))
+            result = self.inner.chat(body, **deadline_options(kwargs, deadline))
+            self.usage_store.record_completion(
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+            )
+            return result
+        except Exception:
+            self.usage_store.record_completion(
+                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
+            )
+            raise
         finally:
             self._finish()
 
     def infer(self, *, max_tokens, **kwargs):
-        policy = self._start()
+        caller = current_usage_caller()
+        task_id = kwargs.get("task_id")
+        policy = self._start(task_id=task_id, caller=caller)
         try:
-            return self.inner.infer(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            result = self.inner.infer(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            self.usage_store.record_completion(
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+            )
+            return result
+        except Exception:
+            self.usage_store.record_completion(
+                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
+            )
+            raise
         finally:
             self._finish()
 
     def infer_stream(self, *, max_tokens, **kwargs):
-        policy = self._start()
+        caller = current_usage_caller()
+        task_id = kwargs.get("task_id")
+        policy = self._start(task_id=task_id, caller=caller)
         try:
-            return self.inner.infer_stream(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            result = self.inner.infer_stream(max_tokens=min(max_tokens, policy["max_output_tokens"]), **kwargs)
+            self.usage_store.record_completion(
+                self.model_key, result=result, caller=caller, state="succeeded", task_id=task_id
+            )
+            return result
+        except Exception:
+            self.usage_store.record_completion(
+                self.model_key, result=None, caller=caller, state="failed", task_id=task_id
+            )
+            raise
         finally:
             self._finish()

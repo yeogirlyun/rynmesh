@@ -1691,7 +1691,8 @@
 .pf-shell.pf-agent-shell { height: 100dvh; min-height: 0; overflow: hidden; }
 .pf-agent-shell .pf-main-column { display: flex; flex-direction: column; min-height: 0; }
 .pf-agent-shell .pf-main { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; overflow: hidden; }
-.pf-agent-shell .pf-main > .ra-workspace { flex: 1; min-height: 0; }
+.pf-agent-shell .pf-main > .ra-workspace,
+.pf-agent-shell .pf-main > .cfa-root { flex: 1; min-height: 0; }
 .pf-agent-shell.pf-agent-nav-collapsed { grid-template-columns: minmax(0, 1fr); }
 .pf-agent-shell .pf-sidebar[hidden] { display: none !important; }
 @media (max-width: 760px) {

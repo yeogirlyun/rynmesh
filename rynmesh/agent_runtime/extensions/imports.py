@@ -18,6 +18,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from ..data_policy import normalize_policy
 from ..store import AgentError
 from .store import (
     COMPUTER_USE_PLUGIN_ID,
@@ -32,7 +33,12 @@ from .store import (
     ExtensionStore,
     _slugify,
     compute_directory_manifest,
+    normalize_mcp_auth,
+    validate_identity_group,
+    validate_peer_provider,
 )
+from .views import normalize_views
+from .web_app import validate_web_app
 
 try:
     import tomllib  # type: ignore[import-not-found]
@@ -61,7 +67,7 @@ KNOWN_UNSUPPORTED_MANIFEST_KEYS = {
     "output_styles": "Output style overrides are not supported in Ryn.",
     "lspServers": "LSP server definitions in plugin manifests are not supported in Ryn.",
     "monitors": "Background monitor definitions are not supported in Ryn.",
-    "oauth": "Interactive OAuth flows are not supported in v1; use bearer_token_env or headers.",
+    "oauth": "Top-level OAuth settings are not imported. Peer-provider login uses ryn.peerProvider.oauth.",
 }
 
 KNOWN_UNSUPPORTED_DIRS = {
@@ -550,6 +556,11 @@ class ExtensionImportManager:
                         "source_format": p["source_format"],
                         "skill_ids": p["skill_ids"],
                         "mcp_server_ids": p["mcp_server_ids"],
+                        "identity_group": copy.deepcopy(p.get("identity_group")),
+                        "peer_provider": copy.deepcopy(p.get("peer_provider")),
+                        "web_app": copy.deepcopy(p.get("web_app")),
+                        "data_policy": normalize_policy(p.get("data_policy")),
+                        "views": copy.deepcopy(p.get("views", [])),
                     }
                     for p in parsed["plugins"]
                 ]
@@ -575,6 +586,10 @@ class ExtensionImportManager:
                         "args": list(m.get("args") or []),
                         "url": m.get("url") or "",
                         "bearer_token_env": m.get("bearer_token_env") or "",
+                        "auth": normalize_mcp_auth(m.get("auth")),
+                        "data_policy": normalize_policy(m.get("data_policy")),
+                        "login_required": m.get("auth", {}).get("mode") == "oauth",
+                        "oauth_issuer": None,
                         "enabled_tools": m.get("enabled_tools"),
                         "disabled_tools": list(m.get("disabled_tools") or []),
                         "env_keys": sorted((m.get("secret_env") or {}).keys()),
@@ -839,6 +854,7 @@ class ExtensionImportManager:
         filename: str = "",
         plugin_id: str | None = None,
         package_root: Path | None = None,
+        default_data_policy: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], str, list[str], list[str]]:
         stripped = text.strip()
         if not stripped:
@@ -888,10 +904,30 @@ class ExtensionImportManager:
                 raise AgentError("agent_import_duplicate_id")
             seen_server_ids.add(sid)
 
-            if any(k in cfg for k in ("oauth", "oauthClientId", "auth_url")):
-                unsupported.append("oauth")
+            ryn = cfg.get("ryn", {})
+            if not isinstance(ryn, dict):
+                raise AgentError("agent_invalid_data_policy")
+            data_policy = normalize_policy(ryn.get("dataPolicy", default_data_policy))
+            auth = normalize_mcp_auth(cfg.get("auth"))
+            if "client_secret" in cfg or "clientSecret" in cfg:
+                raise AgentError("agent_mcp_invalid_auth")
+            if "oauth" in cfg or "oauthClientId" in cfg:
+                if "auth" in cfg:
+                    raise AgentError("agent_mcp_invalid_auth")
+                oauth = cfg.get("oauth", {})
+                if not isinstance(oauth, dict) or set(oauth) - {"clientId", "client_id", "scopes", "callbackPort", "callback_port"}:
+                    raise AgentError("agent_mcp_invalid_auth")
+                client_ids = [oauth[key] for key in ("clientId", "client_id") if key in oauth]
+                if "oauthClientId" in cfg:
+                    client_ids.append(cfg["oauthClientId"])
+                ports = [oauth[key] for key in ("callbackPort", "callback_port") if key in oauth]
+                if (client_ids and any(value != client_ids[0] for value in client_ids)) or (ports and any(value != ports[0] for value in ports)):
+                    raise AgentError("agent_mcp_invalid_auth")
+                auth = normalize_mcp_auth({"mode": "oauth", "client_id": client_ids[0] if client_ids else None,
+                    "scopes": oauth.get("scopes", []), "callback_port": ports[0] if ports else None})
+            if "auth_url" in cfg:
                 warnings.append(
-                    f"MCP server '{sid}' declares OAuth settings which are not supported in v1; configure bearer_token_env or headers instead."
+                    f"MCP server '{sid}' auth_url is ignored; authorization endpoints are discovered when signing in."
                 )
 
             url = str(cfg.get("url") or cfg.get("httpUrl") or "").strip()
@@ -1032,6 +1068,7 @@ class ExtensionImportManager:
             servers.append(
                 {
                     "id": sid,
+                    "import_key": str(raw_key),
                     "name": str(cfg.get("name") or raw_key),
                     "description": str(cfg.get("description") or "")[:1000],
                     "transport": transport,
@@ -1044,6 +1081,9 @@ class ExtensionImportManager:
                     "env_vars": env_vars if transport == "stdio" else [],
                     "url": url if transport == "streamable_http" else None,
                     "bearer_token_env": bearer_token_env if transport == "streamable_http" else None,
+                    "auth": auth,
+                    "data_policy": data_policy,
+                    "oauth_client_registration": str(cfg.get("oauth_client_registration") or cfg.get("oauthClientRegistration") or "auto"),
                     "secret_headers": secret_headers,
                     "env_http_headers": env_http_headers if transport == "streamable_http" else {},
                     "startup_timeout_ms": max(1000, min(60000, startup_timeout_ms)),
@@ -1280,6 +1320,14 @@ class ExtensionImportManager:
             ).strip()[:1000]
         version = str(raw_manifest.get("version") or "1.0.0").strip()[:64]
 
+        ryn = raw_manifest.get("ryn", {})
+        if not isinstance(ryn, dict):
+            raise AgentError("agent_invalid_plugin_package")
+        identity_group = validate_identity_group(ryn.get("identity_group")) if "identity_group" in ryn else None
+        peer_provider = validate_peer_provider(ryn["peerProvider"]) if "peerProvider" in ryn else None
+        web_app = validate_web_app(ryn.get("webApp"))
+        data_policy = normalize_policy(ryn.get("dataPolicy"))
+
         warnings: list[str] = []
         unsupported: list[str] = []
 
@@ -1422,6 +1470,7 @@ class ExtensionImportManager:
                 filename=mcp_file.name,
                 plugin_id=plugin_id,
                 package_root=None,
+                default_data_policy=data_policy,
             )
             for srv in parsed_srvs:
                 if srv["id"] in seen_plugin_server_ids:
@@ -1437,6 +1486,7 @@ class ExtensionImportManager:
                 filename="plugin.json",
                 plugin_id=plugin_id,
                 package_root=None,
+                default_data_policy=data_policy,
             )
             for srv in parsed_srvs:
                 if srv["id"] in seen_plugin_server_ids:
@@ -1446,9 +1496,10 @@ class ExtensionImportManager:
             warnings.extend(mcp_warns)
             unsupported.extend(mcp_unsup)
 
+        views = normalize_views(ryn.get("views", []), {srv["import_key"]: srv["id"] for srv in mcp_servers})
         if "sse" in unsupported:
             can_import = False
-        if not skills and not mcp_servers:
+        if not skills and not mcp_servers and peer_provider is None and web_app is None:
             can_import = False
             if not warnings:
                 warnings.append("Plugin package contains no importable skills or MCP servers.")
@@ -1464,6 +1515,11 @@ class ExtensionImportManager:
             "manifest_sha256": manifest_info["manifest_sha256"],
             "skill_ids": [s["id"] for s in skills],
             "mcp_server_ids": [m["id"] for m in mcp_servers],
+            "identity_group": identity_group,
+            "peer_provider": peer_provider,
+            "web_app": web_app,
+            "data_policy": data_policy,
+            "views": views,
             "unsupported_components": sorted(set(unsupported)),
             "warnings": warnings,
         }

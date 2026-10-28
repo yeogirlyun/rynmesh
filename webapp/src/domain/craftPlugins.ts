@@ -14,6 +14,20 @@ export type CraftCatalog = {
   defaults: string[]; selection: string[]; setup_requested?: boolean; storage_path: string; migration_error?: string | null;
 };
 export type CraftLaunch = { app: string; version: string; node_id: string; url: string; ticket: string };
+export type CraftInstallPhase = "downloading" | "verifying" | "installing" | "registering";
+export type CraftInstallProgress = {
+  app: string;
+  kind?: "plugin" | "automation";
+  phase: CraftInstallPhase;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  percent: number | null;
+  installed_files?: number | null;
+  total_files?: number | null;
+};
+export type CraftProgressSnapshot = {
+  active: Record<string, CraftInstallProgress>;
+};
 
 export class PluginError extends Error {}
 async function request<T>(path = "", body?: Record<string, unknown>): Promise<T> {
@@ -55,11 +69,13 @@ async function changed(result: Promise<CraftCatalog>): Promise<CraftCatalog> {
   return catalog;
 }
 export const craftPlugins = {
-  catalog: () => request<CraftCatalog>(),
+  catalog: () => request<CraftCatalog>(""),
+  progress: (app?: string) => request<CraftProgressSnapshot>(app ? `/progress?app=${encodeURIComponent(app)}` : "/progress"),
   setup: () => changed(request<CraftCatalog>("/setup", {})),
   install: (id: string) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/install`, {})),
   installAutomation: (id: string) => request<CraftCatalog>(`/${encodeURIComponent(id)}/install-automation`, {}),
   enable: (id: string, enabled: boolean) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/enable`, { enabled })),
+  configure: (id: string, config: Record<string, unknown>) => request<CraftCatalog>(`/${encodeURIComponent(id)}/configure`, config),
   uninstall: (id: string, clear_preferences: boolean) => changed(request<CraftCatalog>(`/${encodeURIComponent(id)}/uninstall`, { clear_preferences })),
   preview: (id: string) => request<CraftLaunch>(`/${encodeURIComponent(id)}/preview-launch`, {}),
   launch: (id: string, ticket: string) => request<Omit<CraftLaunch, "ticket">>(`/${encodeURIComponent(id)}/launch`, { ticket }),

@@ -25,7 +25,10 @@ from rynmesh.store import RynmeshStore
 
 
 @pytest.fixture
-def node(tmp_path):
+def node(tmp_path, monkeypatch):
+    # Registration stays real; host address discovery must not consult DNS or routes.
+    monkeypatch.setattr("rynmesh.store._primary_lan_ip", lambda: "192.0.2.10")
+    monkeypatch.setattr("rynmesh.store._local_ip_addresses", lambda: ("192.0.2.10",))
     store = RynmeshStore(home=tmp_path / "node", network_dir=tmp_path / "network")
     app = FastAPI()
     install_llm_routes(app, store=store, home=store.home,
@@ -493,9 +496,11 @@ def test_per_model_share_immediately_publishes_and_last_delete_withdraws(node):
         # The stable service IDs make the explicit model selection observable in discovery.
         advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
         assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-b"]
+        assert not (store.home / "llm" / "publication-pending.json").exists()
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "published"
         capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
         assert not [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        assert not (store.home / "llm" / "publication-pending.json").exists()
 
 
 def test_failed_last_model_withdrawal_retries_from_existing_publication_worker(node, monkeypatch):
@@ -506,12 +511,19 @@ def test_failed_last_model_withdrawal_retries_from_existing_publication_worker(n
     original = store.register_job_capacity
     with TestClient(app) as client:
         assert client.put(f"/api/local/llm/sources/{record['id']}", json={"shared_models": ["model-a"]}).json()["publication"] == "published"
-        def offline(**_):
+        failed_publications = []
+        def offline(**payload):
+            failed_publications.append(payload)
             raise OSError("registry offline")
         monkeypatch.setattr(store, "register_job_capacity", offline)
         assert client.delete(f"/api/local/llm/sources/{record['id']}").json()["publication"] == "pending"
+        assert len(failed_publications) == 1
+        assert failed_publications[0]["metadata"]["llm_services"] == []
         pending = store.home / "llm" / "publication-pending.json"
         assert pending.exists()
+        capacities = store.list_job_capacities(network_id="rynmesh-main", capability=CAPABILITY, max_age_hours=1)["capacities"]
+        advertised = [service for capacity in capacities for service in capacity.get("metadata", {}).get("llm_services", [])]
+        assert [service["service"]["model_alias"] for service in advertised] == ["Owner API · model-a"]
         monkeypatch.setattr(store, "register_job_capacity", original)
         app.state.background_workers._specs["llm.publish-refresh"].run_once()
         assert not pending.exists()

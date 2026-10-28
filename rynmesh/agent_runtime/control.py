@@ -73,7 +73,7 @@ def allowed_actions(row, settings):
     uncertain = ambiguous(row)
     recoverable_read = status == "interrupted" and recoverable_read_in_flight(row) and not uncertain
     active = status in {"queued", "running", "waiting_approval", "waiting_input"}
-    mutable = enabled and not uncertain and status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"}
+    mutable = enabled and not uncertain and (status in {"queued", "running", "waiting_approval", "waiting_input", "paused", "completed", "failed"} or (status == "interrupted" and (not flight or recoverable_read)))
     possible = {"pause": active, "stop": active, "cancel": status not in {"completed", "failed", "cancelled"},
                 "resume": enabled and status in {"paused", "interrupted"} and (not flight or recoverable_read) and not uncertain,
                 "approve": enabled and status == "waiting_approval" and bool(row["pending_approval"]) and "read_only" not in {row["permission_mode"], settings["permission_mode"]},

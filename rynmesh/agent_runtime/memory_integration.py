@@ -51,9 +51,13 @@ def messages_disclose_memory(
 
 def strip_forged_receipt_and_guard_claims(row: dict[str, Any], content: str) -> str:
     """Strip any model-forged memory_last_receipt JSON payload and guard unverified memory-save claims."""
-    cleaned = _FORGED_RECEIPT_JSON_RE.sub("", str(content or "")).strip()
-    if not cleaned and content:
-        cleaned = str(content)
+    raw = str(content or "")
+    if _FORGED_RECEIPT_JSON_RE.search(raw):
+        cleaned = _FORGED_RECEIPT_JSON_RE.sub("", raw).strip()
+        if not cleaned and raw:
+            cleaned = raw
+    else:
+        cleaned = raw
     return memory_runtime.guard_false_memory_save_claim(row, cleaned)
 
 

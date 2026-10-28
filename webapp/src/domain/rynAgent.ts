@@ -1,5 +1,6 @@
 import { nodeControlUrl } from "./nodeUrl";
 import type { AgentAttachmentInput, AgentMessageAttachment } from "./agentAttachments";
+import type { ModelTokenUsage } from "./aiSources";
 
 export type AgentStatus = "queued" | "running" | "waiting_approval" | "waiting_input" | "pausing" | "reconciling" | "paused" | "completed" | "cancelled" | "failed" | "interrupted";
 export type AgentRunState = "queued" | "running" | "pausing" | "paused" | "waiting_input" | "waiting_approval" | "reconciling" | "ended";
@@ -108,6 +109,7 @@ export interface AgentModel {
   source_id?: string;
   source_name?: string;
   peer_id?: string;
+  usage?: ModelTokenUsage;
 }
 export interface AgentTool { name: string; title: string; effect: "read" | "write"; description?: string; }
 export interface AgentSkill { id: string; version: string; title: string; description: string; }
@@ -193,7 +195,86 @@ export interface AgentTaskSummary {
   automation_kind?: "cron" | "heartbeat";
   latest_turn_is_silent_heartbeat?: boolean;
   automation_notification?: { id: string; automation_id: string; automation_name: string; kind: "cron" | "heartbeat"; decision: string; title: string; message: string; task_id: string; status?: string; created_at: string } | null;
+  parent_task_id?: string | null;
+  subagent_ids?: string[];
+  subagents?: AgentSubagentSummary[];
 }
+export interface AgentSubagentDiffLine {
+  type: "add" | "del" | "ctx";
+  old_lineno: number | null;
+  new_lineno: number | null;
+  text: string;
+}
+
+export type AgentSubagentTimelineItem =
+  | {
+      kind: "read_group";
+      count: number;
+      items: Array<{
+        kind: "read_step";
+        tool: string;
+        target: string;
+        line_range?: string | null;
+        summary: string;
+        duration_seconds?: number;
+        status: string;
+      }>;
+    }
+  | {
+      kind: "file_edit";
+      tool: string;
+      path: string;
+      added: number;
+      removed: number;
+      diff_lines: AgentSubagentDiffLine[];
+      duration_seconds?: number;
+      status: string;
+    }
+  | {
+      kind: "tool_call";
+      tool: string;
+      target: string;
+      summary: string;
+      duration_seconds?: number;
+      status: string;
+    }
+  | {
+      kind: "thought";
+      text: string;
+    };
+
+export interface AgentSubagentSummary {
+  id: string;
+  parent_task_id: string;
+  nickname: string;
+  task_name: string;
+  agent_path: string;
+  role: "default" | "explorer" | "worker" | "awaiter" | string;
+  fork_turns: "none" | "all" | string;
+  write_scope: string[];
+  instructions: string;
+  status: AgentStatus;
+  is_waiting: boolean;
+  closed: boolean;
+  model_id: string;
+  reasoning_effort: string;
+  steps: number;
+  step_index?: number;
+  estimated_total_steps?: number;
+  step_progress_label?: string;
+  elapsed_seconds: number;
+  progress_percent: number;
+  current_step_text: string;
+  conclusion_preview?: string | null;
+  completed_at_ms?: number | null;
+  diff_stats: { added: number; removed: number; files: number };
+  timeline: AgentSubagentTimelineItem[];
+  final_reply: string | null;
+  notification_payload: Record<string, unknown> | null;
+  created_at?: number | string;
+  updated_at?: number | string;
+}
+
 export interface AgentResultRef { id: string; task_id: string; tool: string; operation_id: string; goal_revision: number; scope_revision: number; context_epoch: number; sha256: string; bytes: number; }
 export interface AgentProject { id: string; name: string; path: string; generation: number; entry_files: string[]; manifests: string[]; directories: string[]; }
 export interface AgentResultPage { id: string; sha256: string; bytes: number; characters: number; offset: number; next_offset: number | null; content: string; }
@@ -214,6 +295,7 @@ export interface AgentTask extends AgentTaskSummary {
   /** Live model text is projected from memory independently of durable checkpoints. */
   streaming?: { step: number; context_epoch: number; text: string } | null;
   messages: AgentMessage[];
+  pending_user_messages?: AgentMessage[];
   events: AgentEvent[];
   limits: Partial<AgentSettings>;
 }
@@ -276,7 +358,7 @@ async function readWithRecovery<T>(run: (signal: AbortSignal) => Promise<T>, sig
     return readAttempt(run, signal);
   }
 }
-export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing" | "budget" | "allowed_actions" | "run_state" | "streaming">> {
+export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing" | "budget" | "allowed_actions" | "run_state" | "streaming" | "subagents">> {
   id: string;
   revision: number;
   unchanged: true;
@@ -285,7 +367,7 @@ export interface AgentTaskUnchanged extends Partial<Pick<AgentTask, "run_timing"
 export function mergeUnchangedTask(cached: AgentTask, value: AgentTask | AgentTaskUnchanged): AgentTask {
   if (!("unchanged" in value) || value.unchanged !== true || value.id !== cached.id || value.revision !== cached.revision) return value as AgentTask;
   const merged: AgentTask = { ...cached };
-  for (const key of ["run_timing", "budget", "allowed_actions", "run_state", "streaming"] as const) {
+  for (const key of ["run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents"] as const) {
     if (value[key] !== undefined) Object.assign(merged, { [key]: value[key] });
   }
   return merged;
@@ -391,6 +473,12 @@ export const rynAgent = {
   updateAutomation: (id: string, body: Record<string, unknown>) => request<{ automation: AgentAutomation }>(`/automations/${encodeURIComponent(id)}`, "PATCH", body),
   deleteAutomation: (id: string) => request<{ deleted: boolean; id: string }>(`/automations/${encodeURIComponent(id)}`, "DELETE"),
   runAutomationNow: (id: string) => request<{ triggered: boolean; deferred: boolean; task_id?: string; automation: AgentAutomation }>(`/automations/${encodeURIComponent(id)}/run-now`, "POST", {}),
+  interruptSubagent: (task: AgentTask, subagent_id: string) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
+    action: "interrupt_subagent", subagent_id, client_request_id: crypto.randomUUID(),
+  }),
+  stopAllSubagents: (task: AgentTask) => request<AgentTask>(`/tasks/${encodeURIComponent(task.id)}/actions`, "POST", {
+    action: "stop_all_subagents", client_request_id: crypto.randomUUID(),
+  }),
 };
 
 export function agentMessageBody(task: AgentTask, message: string, intent: AgentMessageIntent, reasoning_effort?: string, attachments?: AgentAttachmentInput[]): Record<string, unknown> {
@@ -410,7 +498,7 @@ export function agentScopeBody(snapshot: AgentScopeSnapshot, scope: AgentScopeSe
 
 export function canContinueAgentTask(task: AgentTaskSummary): boolean {
   if (task.allowed_actions) return canUseAgentAction(task, "information");
-  return ["completed", "failed", "paused"].includes(task.status) && !task.pending_approval && !task.pending_input;
+  return (["completed", "failed", "paused"].includes(task.status) || canResumeAgentTask(task)) && !task.pending_approval && !task.pending_input;
 }
 export function isAgentActive(status: AgentStatus): boolean {
   return ["queued", "running", "waiting_approval", "waiting_input", "pausing", "reconciling"].includes(status);

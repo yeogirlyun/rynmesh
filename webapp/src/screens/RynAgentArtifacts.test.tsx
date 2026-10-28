@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
@@ -115,10 +115,10 @@ it("presents receipt-backed result files and opens an SVG only as an inert image
     http.get("*/api/local/agent/tasks/file-task/files/:id", ({ request }) => { requested.push(request.url); return new HttpResponse(svgV2, { headers: { "Content-Type": "text/html" } }); }));
   const { container } = render(<TaskArtifacts task={done} />);
   const section = await screen.findByRole("region", { name: "Result files" });
-  expect(section).toHaveTextContent("Ryn checked how this version renders");
-  expect(section).toHaveTextContent("Other files from this task (1)");
-  expect(section).toHaveTextContent("The answer mentions ghost.svg, but no file operation in this task produced it.");
   await user.click(screen.getByLabelText("Open with · pelican.svg"));
+  expect(await screen.findByText("Ryn checked how this version renders")).toBeInTheDocument();
+  expect(section).toHaveTextContent("Other files from this task (1)");
+  expect(section).not.toHaveTextContent("ghost.svg");
   const tab = screen.getByRole("link", { name: "Open pelican.svg in a new tab" });
   expect(tab.getAttribute("href")).toMatch(/\/agent\/tasks\/file-task\/files\/file_pelican\?v=v1$/);
   expect(tab).toHaveAttribute("target", "_blank"); expect(tab.getAttribute("rel")).toContain("noopener");
@@ -391,4 +391,63 @@ it("hides helper scripts and places earlier turn deliverables inline at their tu
   expect(screen.queryByText(/geom_probe2\.py|verify_payoneer\.json/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Observed during command|命令运行期间发现/)).not.toBeInTheDocument();
   expect(view.container.querySelectorAll("section.ra-files")).toHaveLength(1);
+});
+
+
+it("waits for both turn completion and background file production before presenting current files", async () => {
+  let pending = true;
+  const loaded = vi.fn();
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => {
+    loaded();
+    return HttpResponse.json({ artifacts: [artifact], files: [pelican], pending_files: pending });
+  }));
+  const view = render(<TaskArtifacts task={{ ...done, status: "running", result: "" }} />);
+  await waitFor(() => expect(loaded).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open report.md" })).not.toBeInTheDocument();
+  view.rerender(<TaskArtifacts task={done} />);
+  await waitFor(() => expect(loaded).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+  pending = false;
+  view.rerender(<TaskArtifacts task={{ ...done, file_artifact_revision: 1 }} />);
+  expect(await screen.findByRole("button", { name: "Open pelican.svg" })).toBeVisible();
+  expect(await screen.findByRole("button", { name: "Open report.md" })).toBeVisible();
+  view.rerender(<TaskArtifacts task={{ ...done, run_state: "running", file_artifact_revision: 1 }} />);
+  expect(screen.queryByRole("button", { name: "Open pelican.svg" })).not.toBeInTheDocument();
+});
+
+it("keeps script implementation in collapsed activity without claiming a tool request succeeded", async () => {
+  const user = userEvent.setup();
+  const messages = [{ role: "assistant", content: "", tool_calls: [{ id: "write", function: {
+    name: "ryn_file_write", arguments: JSON.stringify({ path: "redact_emails.py", content: "print('redact')" }),
+  } }] }];
+  render(<RynAgentProgress task={{ ...done, status: "running", events: [] }} messages={messages} />);
+  const script = screen.getByText("redact_emails.py");
+  expect(script).not.toBeVisible();
+  expect(screen.queryByText("Edited")).not.toBeInTheDocument();
+  expect(screen.queryByText("+1")).not.toBeInTheDocument();
+  await user.click(screen.getByText("View activity"));
+  expect(script).toBeVisible();
+});
+
+
+it("exports the absolute local path through native drag and keeps the floating menu above a low card", async () => {
+  const user = userEvent.setup();
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+  const local = { ...pelican, absolute_path: "C:\\工作 文件\\report, final.svg" };
+  server.use(http.get("*/api/local/agent/tasks/file-task/artifacts", () => HttpResponse.json({ artifacts: [], files: [local] })));
+  render(<TaskArtifacts task={done} />);
+  const name = await screen.findByRole("button", { name: "Open pelican.svg" });
+  expect(name.closest(".ra-file-card")).toHaveAttribute("draggable", "true");
+  fireEvent.dragStart(name);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("drag_local_file", { path: local.absolute_path }, undefined));
+  const anchor = screen.getByLabelText("Open with · pelican.svg").parentElement!;
+  vi.spyOn(anchor, "getBoundingClientRect").mockReturnValue({ top: 660, bottom: 690, right: 600, left: 500, width: 100, height: 30, x: 500, y: 660, toJSON() {} });
+  await user.click(screen.getByLabelText("Open with · pelican.svg"));
+  const options = (await screen.findByRole("button", { name: "Default application" })).parentElement!;
+  expect(options.parentElement).toBe(document.body);
+  expect(parseFloat(options.style.top)).toBeLessThan(660);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Default application" })).not.toBeInTheDocument());
 });

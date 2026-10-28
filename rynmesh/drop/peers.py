@@ -82,7 +82,8 @@ def network_headers() -> dict[str, str]:
     return dict(network_key_header())
 
 
-def http_json(endpoint: str, method: str, path: str, body: Any = None, *, timeout: float = 15.0
+def http_json(endpoint: str, method: str, path: str, body: Any = None, *, timeout: float = 15.0,
+              network_auth: bool = True
               ) -> tuple[int, Any]:
     url = urlsplit(endpoint)
     if url.scheme not in {"http", "https"} or not url.hostname:
@@ -91,7 +92,7 @@ def http_json(endpoint: str, method: str, path: str, body: Any = None, *, timeou
     conn = cls(url.hostname, url.port or (443 if url.scheme == "https" else 80), timeout=timeout)
     try:
         data = None if body is None else json.dumps(body).encode("utf-8")
-        headers = {"Accept": "application/json", **network_headers()}
+        headers = {"Accept": "application/json", **(network_headers() if network_auth else {})}
         if data is not None:
             headers["Content-Type"] = "application/json"
         conn.request(method, path, body=data, headers=headers)
@@ -131,6 +132,7 @@ class PeerDirectory:
         relationship: Callable[[str], str],
         extra_endpoints: Callable[[str], list[str]] | None = None,
         p2p: Any = None,
+        network_auth: bool = True,
     ) -> None:
         self._store = store
         # Internet path (ICE hole punching + QUIC) for own devices and friends
@@ -139,6 +141,7 @@ class PeerDirectory:
         self._network_id = network_id
         self._relationship = relationship
         self._extra_endpoints = extra_endpoints
+        self._network_auth = network_auth
         self._lock = threading.Lock()
         self._records: dict[str, dict[str, Any]] = {}
         self._records_at = 0.0
@@ -233,11 +236,11 @@ class PeerDirectory:
                 ) -> tuple[int, Any]:
         """``http_json`` for HTTP endpoints, the QUIC link for ``ryn-p2p://`` ones."""
         if not is_p2p_endpoint(endpoint):
-            return http_json(endpoint, method, path, body, timeout=timeout)
+            return http_json(endpoint, method, path, body, timeout=timeout, network_auth=self._network_auth)
         if self.p2p is None:
             raise ConnectionError("p2p is not available")
         data = None if body is None else json.dumps(body).encode("utf-8")
-        headers = {"Accept": "application/json", **network_headers()}
+        headers = {"Accept": "application/json", **(network_headers() if self._network_auth else {})}
         if data is not None:
             headers["Content-Type"] = "application/json"
         try:
@@ -263,7 +266,7 @@ class PeerDirectory:
             started = time.monotonic()
             try:
                 status, body = http_json(endpoint, "GET", f"/api/peer/drop/hello?nonce={nonce}",
-                                         timeout=PROBE_TIMEOUT_S)
+                                         timeout=PROBE_TIMEOUT_S, network_auth=self._network_auth)
             except ConnectionError as exc:
                 last_error = f"unreachable: {exc}"
                 continue
@@ -285,7 +288,7 @@ class PeerDirectory:
 
     def _probe_p2p(self, peer_id: str, *, urgent: bool) -> Probe | None:
         p2p = self.p2p
-        if p2p is None or not p2p.running or self._relationship(peer_id) not in ("own", "friend"):
+        if p2p is None or not p2p.running or self._relationship(peer_id) not in ("own", "friend", "external"):
             return None
         try:
             info = p2p.connect(peer_id, urgent=urgent)

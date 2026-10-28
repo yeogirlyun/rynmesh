@@ -74,7 +74,7 @@ class CLIAgentAdapter:
     # Callers pass conversation_scope (authenticated requester + opaque window).
     supports_conversation_scope = True
 
-    def __init__(self, kind: str, *, executable: str = "") -> None:
+    def __init__(self, kind: str, *, executable: str = "", usage_store: Any = None, service_id: str = "") -> None:
         if kind not in {"codex_cli", "claude_cli", "antigravity_cli"}:
             raise ValueError("unsupported CLI adapter")
         self.kind = kind
@@ -82,6 +82,8 @@ class CLIAgentAdapter:
         self._lock = threading.Lock()
         self._running: dict[str, subprocess.Popen[str]] = {}
         self._cancelled: set[str] = set()
+        self._usage_store: Any = usage_store
+        self._usage_service_id: str = service_id
 
     def _command_path(self) -> str:
         # Packaged desktop processes can receive a virtual LOCALAPPDATA and a
@@ -250,6 +252,49 @@ class CLIAgentAdapter:
 
     def chat(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
              on_event: Any = None, model: str = "", conversation_scope: dict | None = None) -> dict[str, Any]:
+        usage_store = getattr(self, "_usage_store", None)
+        service_id = getattr(self, "_usage_service_id", "") or self.kind
+        is_probe = str(task_id).startswith(("source-test-", "source-tools-", "native-self-test"))
+        if usage_store is None or is_probe:
+            return self._chat_inner(
+                body, task_id=task_id, timeout_s=timeout_s, on_event=on_event,
+                model=model, conversation_scope=conversation_scope,
+            )
+        from .model_usage import current_usage_caller
+        caller = current_usage_caller()
+        effective_model = model or (str(body.get("cli_model") or "") if isinstance(body, dict) else "")
+        parent_key = "local/" + service_id
+        child_key = f"{parent_key}/model/{effective_model}" if effective_model else None
+        if child_key:
+            usage_store.check_quota(child_key, caller=caller)
+        usage_store.admit_and_record_dispatch(parent_key, caller=caller, task_id=task_id)
+        if child_key:
+            usage_store.admit_and_record_dispatch(child_key, caller=caller, task_id=task_id, enforce_quota=False)
+        try:
+            result = self._chat_inner(
+                body, task_id=task_id, timeout_s=timeout_s, on_event=on_event,
+                model=model, conversation_scope=conversation_scope,
+            )
+            usage_store.record_completion(
+                parent_key, result=result, caller=caller, state="succeeded", task_id=task_id
+            )
+            if child_key:
+                usage_store.record_completion(
+                    child_key, result=result, caller=caller, state="succeeded", task_id=task_id
+                )
+            return result
+        except Exception:
+            usage_store.record_completion(
+                parent_key, result=None, caller=caller, state="failed", task_id=task_id
+            )
+            if child_key:
+                usage_store.record_completion(
+                    child_key, result=None, caller=caller, state="failed", task_id=task_id
+                )
+            raise
+
+    def _chat_inner(self, body: dict[str, Any], *, task_id: str, timeout_s: float,
+                    on_event: Any = None, model: str = "", conversation_scope: dict | None = None) -> dict[str, Any]:
         with self._lock:
             if task_id in self._cancelled:
                 self._cancelled.discard(task_id)

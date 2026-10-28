@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -12,17 +13,22 @@ import stat
 import sys
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from cryptography.exceptions import InvalidTag
 
 from ...atomic_io import atomic_write_json, read_json
 from ...file_transactions import file_transaction
 from ...services import peer_box
+from ..data_policy import normalize_policy
 from ..knowledge import SKILLS as BUILTIN_SKILLS
 from ..store import AgentError, AgentToolRejected, encoded
+from .views import normalize_views
+from .web_app import validate_web_app
 
 EXTENSIONS_VERSION = "ryn.agent.extensions.v1"
 EXTENSIONS_CHANNEL = b"rynmesh-agent-extensions-v1"
@@ -34,6 +40,67 @@ MAX_SKILL_FILE_BYTES = 512 * 1024
 MAX_SKILL_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_SKILL_PACKAGE_DEPTH = 8
 STREAM_CHUNK_BYTES = 64 * 1024
+
+
+def validate_peer_provider(value: Any) -> dict[str, Any]:
+    """Validate a non-secret declaration; importing it does not grant peer access."""
+    invalid = "agent_invalid_peer_provider"
+    if not isinstance(value, dict) or set(value) != {"url", "oauth"}:
+        raise AgentError(invalid)
+    resource, oauth = value["url"], value["oauth"]
+    if (not isinstance(resource, str) or not 1 <= len(resource) <= 2048
+            or not resource.isascii() or re.search(r"[\x00-\x20\x7f\\]", resource)):
+        raise AgentError(invalid)
+    try:
+        url = urlsplit(resource)
+        host, port = url.hostname, url.port
+        if not host or (port is not None and not 1 <= port <= 65535):
+            raise ValueError(invalid)
+        try:
+            if str(ipaddress.ip_address(host)) != host:
+                raise ValueError(invalid)
+        except ValueError:
+            if (len(host) > 253 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                                         for label in host.split("."))):
+                raise ValueError(invalid) from None
+        authority = (f"[{host}]" if host and ":" in host else host) or ""
+        if port is not None and port != 443:
+            authority += f":{port}"
+        if (url.scheme != "https" or not host or url.username is not None or url.password is not None
+                or url.query or url.fragment or not re.fullmatch(r"/[A-Za-z0-9._~/-]*", url.path)
+                or any(part in {".", ".."} for part in url.path.split("/")) or "//" in url.path or url.path.endswith("/")
+                or resource != urlunsplit(("https", authority, url.path, "", ""))):
+            raise ValueError(invalid)
+    except ValueError:
+        raise AgentError(invalid) from None
+    if (not isinstance(oauth, dict) or set(oauth) != {"clientId", "scopes"}
+            or not isinstance(oauth["clientId"], str)
+            or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", oauth["clientId"])):
+        raise AgentError(invalid)
+    scopes = oauth["scopes"]
+    if (not isinstance(scopes, list) or not 1 <= len(scopes) <= 16
+            or any(not isinstance(s, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,80}", s) for s in scopes)
+            or len(set(scopes)) != len(scopes)):
+        raise AgentError(invalid)
+    return {"url": resource, "oauth": {"clientId": oauth["clientId"], "scopes": list(scopes)}}
+
+
+def validate_identity_group(value: Any) -> dict[str, str] | None:
+    """Validate optional identity_group grouping metadata for multi-plugin identity_group SSO."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not value.get("id"):
+        raise AgentError("agent_invalid_plugin_package")
+    raw_id = str(value.get("id") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", raw_id):
+        raise AgentError("agent_invalid_plugin_package")
+    raw_name = str(value.get("name") or raw_id).strip()[:160]
+    if not raw_name:
+        raise AgentError("agent_invalid_plugin_package")
+    out: dict[str, str] = {"id": raw_id, "name": raw_name}
+    if isinstance(value.get("origin"), str) and value["origin"].strip():
+        out["origin"] = value["origin"].strip()[:512]
+    return out
 
 EXTENSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
@@ -262,6 +329,29 @@ def compute_directory_manifest(
     }
 
 
+def normalize_mcp_auth(value: Any = None) -> dict[str, Any]:
+    """Public OAuth configuration only; credentials live in a separate store."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict) or set(value) - {"mode", "client_id", "scopes", "callback_port"}:
+        raise AgentError("agent_mcp_invalid_auth")
+    mode = value.get("mode", "auto")
+    client_id = value.get("client_id")
+    scopes = value.get("scopes", [])
+    port = value.get("callback_port")
+    if mode not in ("auto", "oauth", "none"):
+        raise AgentError("agent_mcp_invalid_auth")
+    if client_id is not None and (not isinstance(client_id, str) or not client_id.strip()
+            or len(client_id) > 256 or not client_id.isprintable()):
+        raise AgentError("agent_mcp_invalid_auth")
+    if (not isinstance(scopes, list) or len(scopes) > 16
+            or any(not isinstance(scope, str) or not re.fullmatch(r'[\x21\x23-\x5b\x5d-\x7e]{1,128}', scope) for scope in scopes)):
+        raise AgentError("agent_mcp_invalid_auth")
+    if port is not None and (type(port) is not int or not 1024 <= port <= 65535):
+        raise AgentError("agent_mcp_invalid_auth")
+    return {"mode": mode, "client_id": client_id, "scopes": sorted(set(scopes)), "callback_port": port}
+
+
 def _mcp_config_fingerprint(server: dict[str, Any]) -> str:
     """Digest of transport/endpoint/command/auth configuration to detect stale probes."""
     relevant = {
@@ -276,6 +366,8 @@ def _mcp_config_fingerprint(server: dict[str, Any]) -> str:
         "secret_headers": server.get("secret_headers") or {},
         "env_http_headers": server.get("env_http_headers") or {},
         "oauth_client_registration": server.get("oauth_client_registration") or "auto",
+        "auth": normalize_mcp_auth(server.get("auth")),
+        "data_policy": normalize_policy(server.get("data_policy")),
         "computer_access": bool(server.get("computer_access", False)),
     }
     return _canon_sha256(relevant)
@@ -365,6 +457,9 @@ class ExtensionStore:
             "enabled_tools": None,
             "disabled_tools": [],
             "read_only_tools": ["computer_observe_windows", "computer_read_window"],
+            "read_only_sources": {"computer_observe_windows": "owner", "computer_read_window": "owner"},
+            "discovery_revision": 0,
+            "data_policy": normalize_policy(None),
             "discovered_tools": self._default_computer_use_tools(),
             "status": "disabled",
             "status_message": "",
@@ -398,6 +493,7 @@ class ExtensionStore:
                     "deletable": False,
                     "enabled": False,
                     "computer_access": True,
+                    "data_policy": normalize_policy(None),
                     "skill_ids": [],
                     "mcp_server_ids": [COMPUTER_USE_SERVER_ID],
                     "unsupported_components": [],
@@ -496,6 +592,20 @@ class ExtensionStore:
             srv.setdefault("env_vars", [])
             srv.setdefault("env_http_headers", {})
             srv.setdefault("oauth_client_registration", "auto")
+            legacy_config = "auth" not in srv or "data_policy" not in srv
+            srv["auth"] = normalize_mcp_auth(srv.get("auth"))
+            srv["data_policy"] = normalize_policy(srv.get("data_policy"))
+            srv.setdefault("discovery_revision", 0)
+            sources = srv.get("read_only_sources") or {}
+            srv["read_only_sources"] = {
+                name: "server_hint" if sources.get(name) == "server_hint" else "owner"
+                for name in srv.get("read_only_tools") or []
+            }
+            if legacy_config:
+                srv["config_sha256"] = _mcp_config_fingerprint(srv)
+        for plugin in plugins.values():
+            plugin["data_policy"] = normalize_policy(plugin.get("data_policy"))
+
         return state
 
     def _write(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -558,6 +668,21 @@ class ExtensionStore:
     # Public View Formatting (Masking secrets & enriching metadata)
     # ------------------------------------------------------------------
 
+    def _resolve_plugin_identity_group(
+        self,
+        plugin: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, str] | None:
+        if plugin.get("id") == COMPUTER_USE_PLUGIN_ID or plugin.get("builtin"):
+            return None
+        explicit = plugin.get("identity_group")
+        if isinstance(explicit, dict) and explicit.get("id"):
+            try:
+                return validate_identity_group(explicit)
+            except AgentError:
+                pass
+        return None
+
     def _public_plugin(
         self,
         plugin: dict[str, Any],
@@ -605,6 +730,11 @@ class ExtensionStore:
             "computer_access": bool(plugin.get("computer_access", False)),
             "skill_ids": list(plugin.get("skill_ids", [])),
             "mcp_server_ids": list(plugin.get("mcp_server_ids", [])),
+            "identity_group": self._resolve_plugin_identity_group(plugin, state),
+            "web_app": validate_web_app(plugin.get("web_app")),
+            "peer_provider": copy.deepcopy(plugin.get("peer_provider")),
+            "data_policy": normalize_policy(plugin.get("data_policy")),
+            "views": copy.deepcopy(plugin.get("views", [])),
             "skills_count": len(bundled_skills),
             "mcp_servers_count": len(bundled_servers),
             "skills": bundled_skills,
@@ -766,6 +896,10 @@ class ExtensionStore:
         enabled_tools = server.get("enabled_tools")
         disabled_tools = set(server.get("disabled_tools") or [])
         read_only_tools = set(server.get("read_only_tools") or [])
+        read_only_sources = {
+            name: (server.get("read_only_sources") or {}).get(name, "owner")
+            for name in sorted(read_only_tools)
+        }
         tools_view: list[dict[str, Any]] = []
         for tool in server.get("discovered_tools") or []:
             t_name = str(tool.get("name", ""))
@@ -791,7 +925,7 @@ class ExtensionStore:
                     "effective_effect": "read" if owner_read_only else "write",
                     "effective_risk": "low" if owner_read_only else "high",
                     "annotations": {
-                        "readOnlyHint": bool(annotations.get("readOnlyHint", False)),
+                        "readOnlyHint": annotations.get("readOnlyHint") is True,
                         "destructiveHint": bool(annotations.get("destructiveHint", False)),
                         "idempotentHint": bool(annotations.get("idempotentHint", False)),
                         "openWorldHint": bool(annotations.get("openWorldHint", False)),
@@ -801,6 +935,7 @@ class ExtensionStore:
                     "input_schema": tool.get("input_schema") or {"type": "object"},
                 }
             )
+        tool_name_counts = Counter(tool["name"] for tool in tools_view)
         bearer_env = server.get("bearer_token_env")
         bearer_env_present = bool(bearer_env and os.environ.get(bearer_env))
         env_vars = [str(v) for v in (server.get("env_vars") or []) if str(v).strip()]
@@ -860,12 +995,22 @@ class ExtensionStore:
             "masked_headers": masked_headers,
             "env_http_headers": env_http_headers,
             "oauth_client_registration": oauth_client_registration,
+            "auth": normalize_mcp_auth(server.get("auth")),
+            "data_policy": normalize_policy(server.get("data_policy")),
             "has_secrets": bool(masked_env or masked_headers),
             "startup_timeout_ms": int(server.get("startup_timeout_ms", 10000)),
             "tool_timeout_ms": int(server.get("tool_timeout_ms", 30000)),
             "enabled_tools": list(enabled_tools) if isinstance(enabled_tools, list) else None,
             "disabled_tools": sorted(disabled_tools),
             "read_only_tools": sorted(read_only_tools),
+            "read_only_sources": read_only_sources,
+            "discovery_revision": int(server.get("discovery_revision", 0)),
+            "server_hint_candidates": [
+                {"name": tool["name"], "title": tool["title"], "schema_sha256": tool["schema_sha256"]}
+                for tool in tools_view
+                if tool["annotations"]["readOnlyHint"] is True and not tool["owner_read_only"]
+                and tool_name_counts[tool["name"]] == 1 and int(server.get("discovery_revision", 0)) > 0
+            ],
             "tools": tools_view,
             "tools_count": len(tools_view),
             "enabled_tools_count": sum(1 for item in tools_view if item["enabled"]),
@@ -884,7 +1029,13 @@ class ExtensionStore:
                 self._public_plugin(plugin, state, desktop_access=desktop_access)
                 for plugin in state["plugins"].values()
             ]
-            plugins.sort(key=lambda item: (not item["builtin"], item["title"].lower(), item["id"]))
+            plugins.sort(
+                key=lambda item: (
+                    not item["builtin"],
+                    item["title"].lower(),
+                    item["id"],
+                )
+            )
 
             builtin_enabled = state.get("builtin_skills_enabled", {})
             builtin_revs = state.get("builtin_skills_revisions", {})
@@ -919,6 +1070,19 @@ class ExtensionStore:
     # ------------------------------------------------------------------
     # Runtime Queries (Skills, Active MCP Servers, Invocation Boundaries)
     # ------------------------------------------------------------------
+
+    def list_peer_providers_internal(self) -> list[dict[str, Any]]:
+        """Installed declarations, including disabled ones, for host authority sync.
+
+        Instance ids change on replacement, so a new package cannot inherit a
+        prior installation's login. Deleted packages are absent from this list.
+        """
+        with file_transaction(self.lock):
+            state = self._read()
+            return [{"plugin_id": plugin["id"], "instance_id": plugin.get("instance_id", ""),
+                     "revision": int(plugin.get("revision", 1)), "enabled": bool(plugin.get("enabled")),
+                     "peer_provider": validate_peer_provider(plugin["peer_provider"])}
+                    for plugin in state["plugins"].values() if plugin.get("peer_provider") is not None]
 
     def enabled_skills_catalog(self) -> list[dict[str, Any]]:
         """Return enabled built-in and imported skills matching knowledge.catalog() shape."""
@@ -1127,6 +1291,76 @@ class ExtensionStore:
                 "files": [f["path"] for f in manifest["files"]],
             }
 
+    def get_plugin_view_internal(self, plugin_id: str, view_id: str) -> dict[str, Any]:
+        """Read one live view and its exact tool binding atomically, without credentials."""
+        with file_transaction(self.lock):
+            state = self._read()
+            plugin = state["plugins"].get(plugin_id)
+            if not plugin:
+                raise AgentError("agent_plugin_not_found")
+            if not plugin.get("enabled"):
+                raise AgentError("agent_plugin_disabled")
+            views = normalize_views(plugin.get("views", []), {sid: sid for sid in plugin.get("mcp_server_ids", [])})
+            view = next((item for item in views if item["id"] == view_id), None)
+            if view is None:
+                raise AgentError("agent_plugin_view_not_found")
+            server = state["mcp_servers"].get(view["mcpServer"])
+            if not server or server.get("plugin_id") != plugin_id:
+                raise AgentError("agent_mcp_server_not_found")
+            if server.get("computer_access") is True:
+                raise AgentError("agent_plugin_view_unsupported_server")
+            if not self._is_server_effectively_enabled(server, state):
+                raise AgentError("agent_mcp_server_disabled")
+            name = view["tool"]
+            if name in (server.get("disabled_tools") or []) or (server.get("enabled_tools") is not None and name not in server["enabled_tools"]):
+                raise AgentError("agent_mcp_tool_disabled")
+            matches = [item for item in server.get("discovered_tools", []) if item.get("name") == name]
+            if len(matches) != 1 or matches[0].get("enabled", True) is not True:
+                raise AgentError("agent_mcp_tool_disabled")
+            tool = matches[0]
+            if (tool.get("annotations") or {}).get("readOnlyHint") is not True:
+                raise AgentError("agent_plugin_view_not_read_only")
+            if name not in (server.get("read_only_tools") or []):
+                raise AgentError("agent_plugin_view_read_only_confirmation_required")
+            if not isinstance(tool.get("input_schema"), dict) or _canon_sha256(tool["input_schema"]) != tool.get("schema_sha256"):
+                raise AgentError("agent_stale_revision")
+            return copy.deepcopy({"plugin_instance_id": plugin["instance_id"], "plugin_revision": plugin["revision"],
+                "view": view, "server": {key: server[key] for key in ("id", "instance_id", "revision", "config_generation", "discovery_revision")},
+                "tool": {key: tool[key] for key in ("name", "input_schema", "schema_sha256", "annotations")}})
+
+    def get_plugin_tool_internal(self, plugin_id: str, tool_name: str) -> dict[str, Any]:
+        """Read one live read-only MCP tool belonging to a plugin atomically."""
+        with file_transaction(self.lock):
+            state = self._read()
+            plugin = state["plugins"].get(plugin_id)
+            if not plugin:
+                raise AgentError("agent_plugin_not_found")
+            if not plugin.get("enabled"):
+                raise AgentError("agent_plugin_disabled")
+            server_ids = plugin.get("mcp_server_ids") or []
+            if not server_ids:
+                raise AgentError("agent_mcp_server_not_found")
+            server = state["mcp_servers"].get(server_ids[0])
+            if not server or server.get("plugin_id") != plugin_id:
+                raise AgentError("agent_mcp_server_not_found")
+            if server.get("computer_access") is True:
+                raise AgentError("agent_plugin_view_unsupported_server")
+            if not self._is_server_effectively_enabled(server, state):
+                raise AgentError("agent_mcp_server_disabled")
+            if tool_name in (server.get("disabled_tools") or []) or (server.get("enabled_tools") is not None and tool_name not in server["enabled_tools"]):
+                raise AgentError("agent_mcp_tool_disabled")
+            matches = [item for item in server.get("discovered_tools", []) if item.get("name") == tool_name]
+            if len(matches) != 1 or matches[0].get("enabled", True) is not True:
+                raise AgentError("agent_mcp_tool_disabled")
+            tool = matches[0]
+            if (tool.get("annotations") or {}).get("readOnlyHint") is not True:
+                raise AgentError("agent_plugin_view_not_read_only")
+            if not isinstance(tool.get("input_schema"), dict) or _canon_sha256(tool["input_schema"]) != tool.get("schema_sha256"):
+                raise AgentError("agent_stale_revision")
+            return copy.deepcopy({"plugin_instance_id": plugin["instance_id"], "plugin_revision": plugin["revision"],
+                "server": {key: server[key] for key in ("id", "instance_id", "revision", "config_generation", "discovery_revision")},
+                "tool": {key: tool[key] for key in ("name", "input_schema", "schema_sha256", "annotations")}})
+
     def get_mcp_server_internal(
         self,
         server_id: str,
@@ -1163,7 +1397,33 @@ class ExtensionStore:
                 if pid and pid in state["plugins"]
                 else None
             )
+            comp = (
+                self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                if pid and pid in state["plugins"]
+                else None
+            )
+            out["identity_group_id"] = comp["id"] if comp else None
             return out
+
+    def list_mcp_servers_internal(self) -> list[dict[str, Any]]:
+        """Include disabled installations so host-owned OAuth state can be retired."""
+        with file_transaction(self.lock):
+            state = self._read()
+            result = []
+            for server in state["mcp_servers"].values():
+                item = copy.deepcopy(server)
+                pid = server.get("plugin_id")
+                item["effective_enabled"] = self._is_server_effectively_enabled(server, state)
+                item["parent_enabled"] = self._is_parent_plugin_enabled(pid, state)
+                item["plugin_revision"] = int(state["plugins"][pid].get("revision", 1)) if pid and pid in state["plugins"] else None
+                comp = (
+                    self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                    if pid and pid in state["plugins"]
+                    else None
+                )
+                item["identity_group_id"] = comp["id"] if comp else None
+                result.append(item)
+            return result
 
     def list_enabled_mcp_servers_internal(self) -> list[dict[str, Any]]:
         """Return only MCP servers where both the server and any parent plugin are enabled."""
@@ -1181,6 +1441,12 @@ class ExtensionStore:
                         if pid and pid in state["plugins"]
                         else None
                     )
+                    comp = (
+                        self._resolve_plugin_identity_group(state["plugins"][pid], state)
+                        if pid and pid in state["plugins"]
+                        else None
+                    )
+                    item["identity_group_id"] = comp["id"] if comp else None
                     result.append(item)
             return result
 
@@ -1333,6 +1599,7 @@ class ExtensionStore:
             self._check_expected_revision(expected_revision, int(plugin.get("revision", 1)))
             now = _now()
             gen = _alloc_generation(state)
+            lifecycle_changed = bool(plugin.get("enabled")) != bool(enabled)
             plugin["enabled"] = bool(enabled)
             plugin["revision"] = gen
             plugin["updated_at"] = now
@@ -1348,6 +1615,13 @@ class ExtensionStore:
                     srv = state["mcp_servers"][mid]
                     if enabled and not srv.get("explicitly_disabled", False):
                         srv["enabled"] = True
+                    if lifecycle_changed:
+                        self._clear_server_hints(srv)
+                        srv["discovery_revision"] = 0
+                    if not self._is_server_effectively_enabled(srv, state):
+                        srv["status"] = "disabled"
+                    elif srv.get("status") == "disabled":
+                        srv["status"] = "ready" if srv.get("discovered_tools") else "NeedsTest"
                     srv["revision"] = _alloc_generation(state)
                     srv["updated_at"] = now
             state["updated_at"] = now
@@ -1726,6 +2000,12 @@ class ExtensionStore:
     ) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise AgentError("agent_invalid_extension")
+        if "data_policy" in payload or "dataPolicy" in payload or (
+            isinstance(payload.get("ryn"), dict) and "dataPolicy" in payload["ryn"]
+        ):
+            raise AgentError("agent_invalid_data_policy")
+        if set(payload) & {"read_only_sources", "discovery_revision", "server_hint_candidates"}:
+            raise AgentError("agent_mcp_invalid_server_hints")
         if expected_revision is None and "expected_revision" in payload:
             expected_revision = payload["expected_revision"]
 
@@ -1746,6 +2026,8 @@ class ExtensionStore:
                     existing["enabled"] = bool(payload["enabled"])
                     existing["explicitly_disabled"] = not bool(payload["enabled"])
                 self._apply_mcp_policy_fields(existing, payload)
+                self._clear_server_hints(existing)
+                existing["discovery_revision"] = 0
                 gen = _alloc_generation(state)
                 existing["config_generation"] = gen
                 existing["config_sha256"] = _mcp_config_fingerprint(existing)
@@ -1975,11 +2257,15 @@ class ExtensionStore:
                 "secret_headers": secret_headers,
                 "env_http_headers": env_http_headers if transport == "streamable_http" else {},
                 "oauth_client_registration": oauth_client_registration,
+                "auth": normalize_mcp_auth(payload.get("auth") if "auth" in payload else (existing or {}).get("auth")),
+                "data_policy": normalize_policy((existing or {}).get("data_policy")),
                 "startup_timeout_ms": int(existing.get("startup_timeout_ms", 10000) if existing else 10000),
                 "tool_timeout_ms": int(existing.get("tool_timeout_ms", 30000) if existing else 30000),
                 "enabled_tools": existing.get("enabled_tools") if existing else None,
                 "disabled_tools": list(existing.get("disabled_tools") or []) if existing else [],
                 "read_only_tools": list(existing.get("read_only_tools") or []) if existing else [],
+                "read_only_sources": dict(existing.get("read_only_sources") or {}) if existing else {},
+                "discovery_revision": int(existing.get("discovery_revision", 0)) if existing else 0,
                 "discovered_tools": list(existing.get("discovered_tools") or []) if existing else [],
                 "status": existing.get("status", "NeedsTest") if existing else ("NeedsTest" if enabled else "disabled"),
                 "status_message": existing.get("status_message", "") if existing else "",
@@ -1991,9 +2277,13 @@ class ExtensionStore:
             self._apply_mcp_policy_fields(record, payload)
             new_fp = _mcp_config_fingerprint(record)
             old_fp = existing.get("config_sha256") if existing else None
-            if not existing or new_fp != old_fp:
+            lifecycle_changed = existing is not None and bool(existing.get("enabled")) != enabled
+            if not existing or new_fp != old_fp or lifecycle_changed:
                 record["config_generation"] = gen
                 if existing:
+                    self._clear_server_hints(record)
+                    record["discovery_revision"] = 0
+                if existing and new_fp != old_fp:
                     record["discovered_tools"] = []
                     record["status"] = "NeedsTest" if record["enabled"] else "disabled"
                     record["status_message"] = ""
@@ -2023,6 +2313,10 @@ class ExtensionStore:
             record["disabled_tools"] = sorted({str(x) for x in payload["disabled_tools"] if str(x)})
         if "read_only_tools" in payload and isinstance(payload["read_only_tools"], list):
             record["read_only_tools"] = sorted({str(x) for x in payload["read_only_tools"] if str(x)})
+            previous_sources = record.get("read_only_sources") or {}
+            record["read_only_sources"] = {
+                name: previous_sources.get(name, "owner") for name in record["read_only_tools"]
+            }
         if "computer_access" in payload and not record.get("builtin"):
             record["computer_access"] = bool(payload["computer_access"])
 
@@ -2070,7 +2364,7 @@ class ExtensionStore:
                 raise AgentError("agent_mcp_server_disabled")
 
             now = _now()
-            old_tools_hash = _canon_sha256(server.get("discovered_tools") or [])
+            old_tools = {tool["name"]: tool for tool in server.get("discovered_tools") or []}
             if discovered_tools is not None:
                 normalized: list[dict[str, Any]] = []
                 for item in discovered_tools:
@@ -2089,7 +2383,7 @@ class ExtensionStore:
                             "input_schema": schema,
                             "schema_sha256": _canon_sha256(schema),
                             "annotations": {
-                                "readOnlyHint": bool(annotations.get("readOnlyHint", False)),
+                                "readOnlyHint": annotations.get("readOnlyHint") is True,
                                 "destructiveHint": bool(annotations.get("destructiveHint", False)),
                                 "idempotentHint": bool(annotations.get("idempotentHint", False)),
                                 "openWorldHint": bool(annotations.get("openWorldHint", False)),
@@ -2097,16 +2391,82 @@ class ExtensionStore:
                             "model_tool_name": compute_model_tool_name(server_id, name),
                         }
                     )
+                sources = server.get("read_only_sources") or {}
+                retained = set(server.get("read_only_tools") or [])
+                for name in list(retained):
+                    if sources.get(name, "owner") != "server_hint":
+                        continue
+                    matching = [tool for tool in normalized if tool["name"] == name]
+                    if (len(matching) != 1 or matching[0]["annotations"]["readOnlyHint"] is not True
+                            or matching[0]["schema_sha256"] != old_tools.get(name, {}).get("schema_sha256")):
+                        retained.remove(name)
+                server["read_only_tools"] = sorted(retained)
+                server["read_only_sources"] = {name: sources.get(name, "owner") for name in sorted(retained)}
                 server["discovered_tools"] = normalized
-                new_tools_hash = _canon_sha256(normalized)
-                if new_tools_hash != old_tools_hash:
-                    server["revision"] = _alloc_generation(state)
+                server["revision"] = server["discovery_revision"] = _alloc_generation(state)
 
             server["status"] = status if effective_enabled else "disabled"
             server["status_message"] = str(status_message or "")[:500]
             server["last_tested_at"] = now
             server["updated_at"] = now
             state["updated_at"] = now
+            self._write(state)
+            return self._public_mcp_server(server, state, desktop_access=desktop_access)
+
+    @staticmethod
+    def _clear_server_hints(server: dict[str, Any]) -> None:
+        sources = server.get("read_only_sources") or {}
+        server["read_only_tools"] = sorted(
+            name for name in server.get("read_only_tools") or [] if sources.get(name, "owner") == "owner"
+        )
+        server["read_only_sources"] = dict.fromkeys(server["read_only_tools"], "owner")
+
+    def apply_server_hints(
+        self,
+        server_id: str,
+        payload: dict[str, Any],
+        *,
+        desktop_access: bool = False,
+    ) -> dict[str, Any]:
+        """Apply the owner's selection only to the exact reviewed discovery."""
+        invalid = "agent_mcp_invalid_server_hints"
+        if (not isinstance(payload, dict)
+                or set(payload) != {"expected_revision", "instance_id", "discovery_revision", "tools"}
+                or type(payload.get("expected_revision")) is not int or payload["expected_revision"] < 1
+                or type(payload.get("discovery_revision")) is not int or payload["discovery_revision"] < 1
+                or not isinstance(payload.get("instance_id"), str) or not 1 <= len(payload["instance_id"]) <= 128
+                or not isinstance(payload.get("tools"), list) or not 1 <= len(payload["tools"]) <= 1000):
+            raise AgentError(invalid)
+        selected: dict[str, str] = {}
+        for tool in payload["tools"]:
+            if (not isinstance(tool, dict) or set(tool) != {"name", "schema_sha256"}
+                    or not isinstance(tool["name"], str) or not 1 <= len(tool["name"]) <= 512
+                    or tool["name"] in selected or not isinstance(tool["schema_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", tool["schema_sha256"])):
+                raise AgentError(invalid)
+            selected[tool["name"]] = tool["schema_sha256"]
+        with file_transaction(self.lock):
+            state = self._read()
+            server = state["mcp_servers"].get(server_id)
+            if not server:
+                raise AgentError("agent_mcp_server_not_found")
+            self._check_expected_revision(payload["expected_revision"], int(server.get("revision", 1)))
+            if (payload["instance_id"] != server.get("instance_id")
+                    or payload["discovery_revision"] != server.get("discovery_revision")):
+                raise AgentError("agent_extensions_revision_conflict")
+            for name, schema_hash in selected.items():
+                matches = [tool for tool in server.get("discovered_tools") or [] if tool.get("name") == name]
+                if (len(matches) != 1 or matches[0].get("schema_sha256") != schema_hash
+                        or (matches[0].get("annotations") or {}).get("readOnlyHint") is not True):
+                    raise AgentError("agent_extensions_revision_conflict")
+            sources = dict(server.get("read_only_sources") or {})
+            previous = set(server.get("read_only_tools") or [])
+            for name in selected:
+                sources[name] = sources.get(name, "owner") if name in previous else "server_hint"
+            server["read_only_tools"] = sorted(previous | set(selected))
+            server["read_only_sources"] = {name: sources.get(name, "owner") for name in server["read_only_tools"]}
+            server["revision"] = _alloc_generation(state)
+            server["updated_at"] = state["updated_at"] = _now()
             self._write(state)
             return self._public_mcp_server(server, state, desktop_access=desktop_access)
 
@@ -2182,6 +2542,7 @@ class ExtensionStore:
             committed_plugins: list[str] = []
             committed_skills: list[str] = []
             committed_servers: list[str] = []
+            plugin_policies = {plugin["id"]: normalize_policy(plugin.get("data_policy")) for plugin in plugins}
 
             for skill in skills:
                 sid = skill["id"]
@@ -2294,11 +2655,15 @@ class ExtensionStore:
                     ),
                     "env_http_headers": dict(srv.get("env_http_headers") or {}),
                     "oauth_client_registration": str(srv.get("oauth_client_registration") or "auto"),
+                    "auth": normalize_mcp_auth(srv.get("auth")),
+                    "data_policy": normalize_policy(srv.get("data_policy", plugin_policies.get(srv.get("plugin_id")))),
                     "startup_timeout_ms": int(srv.get("startup_timeout_ms", 10000)),
                     "tool_timeout_ms": int(srv.get("tool_timeout_ms", 30000)),
                     "enabled_tools": enabled_tools,
                     "disabled_tools": disabled_tools,
                     "read_only_tools": [],
+                    "read_only_sources": {},
+                    "discovery_revision": 0,
                     "discovered_tools": [],
                     "status": "disabled",
                     "status_message": "",
@@ -2328,10 +2693,18 @@ class ExtensionStore:
                     manifest_sha256 = manifest["manifest_sha256"]
                 else:
                     manifest_sha256 = expected_manifest_sha256
+                own_servers = {srv["id"]: srv["id"] for srv in mcp_servers
+                               if srv.get("plugin_id") == pid and srv["id"] in plugin.get("mcp_server_ids", [])}
+                views = normalize_views(plugin.get("views", []), own_servers)
                 state["plugins"][pid] = {
                     "id": pid,
                     "instance_id": uuid.uuid4().hex,
                     "name": plugin.get("name") or pid,
+                    "identity_group": validate_identity_group(plugin.get("identity_group")) if plugin.get("identity_group") is not None else None,
+                    "web_app": validate_web_app(plugin.get("web_app")),
+                    "peer_provider": validate_peer_provider(plugin["peer_provider"]) if plugin.get("peer_provider") is not None else None,
+                    "data_policy": normalize_policy(plugin.get("data_policy")),
+                    "views": views,
                     "title": plugin.get("title") or plugin.get("name") or pid,
                     "description": plugin.get("description", ""),
                     "version": str(plugin.get("version", "1.0.0")),
@@ -2364,6 +2737,7 @@ class ExtensionStore:
                 },
                 "overview": view,
             }
+
 
     def allocate_package_dir(self, category: str, item_id: str) -> Path:
         safe_cat = _slugify(category, "pkg")

@@ -1,4 +1,4 @@
-param([switch]$SkipSidecar)
+param([switch]$SkipSidecar, [switch]$Updater)
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $tauriRoot = Join-Path $repoRoot 'webapp/src-tauri'
@@ -120,7 +120,14 @@ Push-Location (Join-Path $repoRoot 'webapp')
 try {
     npm ci
     Assert-Success 'Install frontend dependencies'
-    npm run tauri -- build --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json
+    $updateArgs = @()
+    if ($Updater) {
+        if (-not $env:RYN_DESKTOP_UPDATE_PUBLIC_KEY -or -not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw 'Signed updates require RYN_DESKTOP_UPDATE_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY.'
+        }
+        $updateArgs = @('--config', 'src-tauri/tauri.updater.conf.json')
+    }
+    npm run tauri -- build --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json @updateArgs
     Assert-Success 'Build Windows installer'
 } finally { Pop-Location }
 

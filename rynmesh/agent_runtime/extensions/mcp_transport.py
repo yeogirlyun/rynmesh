@@ -19,9 +19,17 @@ import httpx
 
 from ...llm_package import process_guard
 from ..store import AgentError, AgentToolRejected
+from .mcp_oauth import (
+    USER_AGENT,
+    McpOAuthError,
+    McpOAuthManager,
+    has_static_authorization,
+    parse_auth_challenge,
+)
 from .store import COMPUTER_USE_SERVER_ID, ExtensionStore
 
 PROTOCOL_VERSION = "2025-03-26"
+STREAMABLE_HTTP_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = {
     "2025-11-25",
     "2025-06-18",
@@ -570,7 +578,10 @@ class StreamableHttpMcpSession:
         server: dict[str, Any],
         *,
         cancelled: Callable[[], bool] = lambda: False,
+        oauth: McpOAuthManager | None = None,
     ) -> None:
+        self._server = server
+        self.oauth = oauth if not has_static_authorization(server) and (server.get("auth") or {}).get("mode") != "none" else None
         self.server_id = str(server["id"])
         self.instance_id = str(server.get("instance_id", ""))
         self.revision = int(server.get("revision", 1))
@@ -585,6 +596,7 @@ class StreamableHttpMcpSession:
         self.notifications = 0
         self.initialized = False
         self.session_id: str | None = None
+        self.protocol_version: str | None = None
         self.server_info: dict[str, Any] = {}
         self.closed = threading.Event()
         self.lock = threading.RLock()
@@ -595,6 +607,7 @@ class StreamableHttpMcpSession:
         headers: dict[str, str] = {
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
         }
         env_http_headers = server.get("env_http_headers") or {}
         if isinstance(env_http_headers, dict):
@@ -609,7 +622,7 @@ class StreamableHttpMcpSession:
                 if isinstance(k, str) and k and v is not None:
                     headers[k] = str(v)
         bearer_env = server.get("bearer_token_env")
-        if bearer_env and "Authorization" not in headers and "authorization" not in headers:
+        if bearer_env and not any(key.lower() == "authorization" for key in headers):
             token = os.environ.get(str(bearer_env))
             if not token:
                 raise McpTransportError("agent_mcp_auth_required", dispatched=False)
@@ -678,11 +691,39 @@ class StreamableHttpMcpSession:
         finally:
             done.set()
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, refresh_on_error=False, refresh_state=None) -> dict[str, str]:
         hdrs = dict(self._base_headers)
         if self.session_id:
             hdrs["Mcp-Session-Id"] = self.session_id
+        if self.protocol_version:
+            hdrs["MCP-Protocol-Version"] = self.protocol_version
+        if self.oauth:
+            try:
+                try:
+                    token = self.oauth.access_token(self._server, refresh_state=refresh_state)
+                except McpOAuthError as exc:
+                    if str(exc) != "agent_mcp_auth_required" or not refresh_on_error or (refresh_state and refresh_state[0]):
+                        raise
+                    token = self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
+            except McpOAuthError as exc:
+                raise McpTransportError(str(exc), dispatched=False, phase="pre_dispatch") from None
+            if token:
+                hdrs["Authorization"] = "Bearer " + token
         return hdrs
+
+    def _auth_error(self, response, *, dispatched, request_id=None):
+        challenge = parse_auth_challenge(response.headers.get("WWW-Authenticate", ""))
+        if self.oauth:
+            try:
+                self.oauth.record_challenge(self._server, challenge)
+            except McpOAuthError:
+                # Invalid metadata hints never initiate network discovery and
+                # never replace the bounded local authentication error.
+                challenge = {}
+        error = McpTransportError("agent_mcp_auth_required", dispatched=dispatched,
+            phase="http_status", request_id=request_id, http_status=int(response.status_code))
+        error.auth_challenge = challenge
+        return error
 
     @staticmethod
     def _check_content_length(response: httpx.Response, *, dispatched: bool) -> None:
@@ -748,19 +789,9 @@ class StreamableHttpMcpSession:
         before_dispatch: Callable[[], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
         _deadline: float | None = None,
+        _auth_retry: bool = False,
     ) -> dict[str, Any]:
         deadline = _deadline if _deadline is not None else (time.monotonic() + timeout)
-        self._check_deadline(deadline, cancelled, dispatched=False)
-        if before_dispatch is not None:
-            try:
-                before_dispatch()
-            except BaseException as exc:
-                if not hasattr(exc, "dispatched"):
-                    exc.dispatched = False  # type: ignore[attr-defined]
-                if getattr(exc, "phase", None) is None:
-                    exc.phase = "pre_dispatch"  # type: ignore[attr-defined]
-                self.close()
-                raise
         self._check_deadline(deadline, cancelled, dispatched=False)
 
         self.sequence += 1
@@ -775,6 +806,21 @@ class StreamableHttpMcpSession:
                 "agent_mcp_request_too_large", dispatched=False, phase="pre_dispatch"
             )
 
+        refresh_state = [_auth_retry]
+        headers = self._headers(refresh_on_error=method in {"initialize", "tools/list"}, refresh_state=refresh_state)
+        # Refresh can block. Authenticate before marking a tool dispatched,
+        # then recheck cancellation/configuration immediately before sending.
+        self._check_deadline(deadline, cancelled, dispatched=False)
+        if before_dispatch is not None:
+            try:
+                before_dispatch()
+            except BaseException as exc:
+                if not hasattr(exc, "dispatched"):
+                    exc.dispatched = False  # type: ignore[attr-defined]
+                if getattr(exc, "phase", None) is None:
+                    exc.phase = "pre_dispatch"  # type: ignore[attr-defined]
+                self.close()
+                raise
         req_timeout = self._remaining_timeout(deadline, cancelled, dispatched=False)
         dispatched = False
         message: dict[str, Any] | None = None
@@ -784,19 +830,13 @@ class StreamableHttpMcpSession:
                 "POST",
                 self.url,
                 content=body,
-                headers=self._headers(),
+                headers=headers,
                 timeout=req_timeout,
             ) as response, self._watch_response(response, deadline, cancelled):
                 self._check_deadline(deadline, cancelled, dispatched=True)
                 if response.status_code in (401, 403):
-                    raise McpTransportError(
-                        "agent_mcp_auth_required",
-                        dispatched=True,
-                        phase="http_status",
-                        request_id=ident,
-                        http_status=int(response.status_code),
-                    )
-                if response.status_code >= 400:
+                    raise self._auth_error(response, dispatched=True, request_id=ident)
+                if response.status_code >= 300:
                     raise McpTransportError(
                         "agent_mcp_http_error",
                         dispatched=True,
@@ -856,6 +896,15 @@ class StreamableHttpMcpSession:
                             request_id=ident,
                         ) from exc
         except McpTransportError as exc:
+            if (exc.http_status == 401 and self.oauth and headers.get("Authorization")
+                    and method in {"initialize", "tools/list"} and not refresh_state[0]):
+                try:
+                    self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
+                except McpOAuthError as auth_exc:
+                    raise McpTransportError(str(auth_exc), dispatched=True, phase="http_status",
+                        request_id=ident, http_status=401, transport="streamable_http", server_id=self.server_id) from None
+                return self._exchange(method, params, timeout, before_dispatch=before_dispatch,
+                    cancelled=cancelled, _deadline=deadline, _auth_retry=True)
             if exc.request_id is None:
                 exc.request_id = ident
             if exc.phase is None:
@@ -944,7 +993,7 @@ class StreamableHttpMcpSession:
             result = self._exchange(
                 "initialize",
                 {
-                    "protocolVersion": PROTOCOL_VERSION,
+                    "protocolVersion": STREAMABLE_HTTP_PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": {"name": "Ryn", "version": "1.0"},
                 },
@@ -958,31 +1007,40 @@ class StreamableHttpMcpSession:
             ):
                 self.close()
                 raise McpTransportError("agent_mcp_protocol_unsupported", dispatched=False)
+            self.protocol_version = result["protocolVersion"]
             notif = json.dumps(
                 {"jsonrpc": "2.0", "method": "notifications/initialized"},
                 separators=(",", ":"),
             ).encode("utf-8")
-            req_timeout = self._remaining_timeout(deadline, cancelled, dispatched=False)
             try:
-                with self._client.stream(
-                    "POST",
-                    self.url,
-                    content=notif,
-                    headers=self._headers(),
-                    timeout=req_timeout,
-                ) as resp, self._watch_response(resp, deadline, cancelled):
-                    self._check_deadline(deadline, cancelled, dispatched=False)
-                    if resp.status_code in (401, 403):
-                        raise McpTransportError("agent_mcp_auth_required", dispatched=False)
-                    if resp.status_code >= 400 and resp.status_code not in (202, 204):
-                        raise McpTransportError("agent_mcp_http_error", dispatched=False)
-                    self._check_content_length(resp, dispatched=False)
-                    notif_total = 0
-                    for chunk in resp.iter_bytes():
+                refresh_state = [False]
+                for attempt in range(2):
+                    headers = self._headers(refresh_on_error=True, refresh_state=refresh_state)
+                    req_timeout = self._remaining_timeout(deadline, cancelled, dispatched=False)
+                    retry = False
+                    with self._client.stream("POST", self.url, content=notif, headers=headers, timeout=req_timeout) as resp, self._watch_response(resp, deadline, cancelled):
                         self._check_deadline(deadline, cancelled, dispatched=False)
-                        notif_total += len(chunk)
-                        if notif_total > MAX_OUTPUT_BYTES:
-                            raise McpTransportError("agent_mcp_output_limit", dispatched=False)
+                        if resp.status_code in (401, 403):
+                            auth_error = self._auth_error(resp, dispatched=True)
+                            retry = bool(resp.status_code == 401 and self.oauth and headers.get("Authorization") and attempt == 0 and not refresh_state[0])
+                            if not retry:
+                                raise auth_error
+                        elif resp.status_code >= 300:
+                            raise McpTransportError("agent_mcp_http_error", dispatched=False)
+                        if not retry:
+                            self._check_content_length(resp, dispatched=False)
+                            notif_total = 0
+                            for chunk in resp.iter_bytes():
+                                self._check_deadline(deadline, cancelled, dispatched=False)
+                                notif_total += len(chunk)
+                                if notif_total > MAX_OUTPUT_BYTES:
+                                    raise McpTransportError("agent_mcp_output_limit", dispatched=False)
+                    if not retry:
+                        break
+                    try:
+                        self.oauth.access_token(self._server, force_refresh=True, refresh_state=refresh_state)
+                    except McpOAuthError as exc:
+                        raise McpTransportError(str(exc), dispatched=True, phase="http_status", http_status=401) from None
             except McpTransportError:
                 self.close()
                 raise
@@ -1081,6 +1139,7 @@ class McpSessionManager:
 
     def __init__(self, store: ExtensionStore) -> None:
         self.store = store
+        self.oauth = McpOAuthManager(store, on_connected=self._oauth_connected)
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str | None], StdioMcpSession | StreamableHttpMcpSession] = {}
         self._pending: dict[
@@ -1091,6 +1150,14 @@ class McpSessionManager:
         self._scope_generations: dict[str, int] = {}
         self._fallback_cwd = self.store.root / "mcp_runtime"
         self._fallback_cwd.mkdir(parents=True, exist_ok=True)
+
+    def _oauth_connected(self, server_id: str) -> None:
+        try:
+            current = self.store.get_mcp_server_internal(server_id, require_enabled=False)
+            if self.oauth.public_status(current["instance_id"])["state"] == "logged_in":
+                self.test_server(server_id, expected_revision=current["revision"], restart=True)
+        except Exception:
+            pass
 
     @staticmethod
     def _session_key(server_id: str, session_scope: str | None = None) -> tuple[str, str | None]:
@@ -1136,7 +1203,7 @@ class McpSessionManager:
     ) -> StdioMcpSession | StreamableHttpMcpSession:
         transport = str(server.get("transport", "stdio")).lower()
         if transport == "streamable_http":
-            return StreamableHttpMcpSession(server, cancelled=cancelled)
+            return StreamableHttpMcpSession(server, cancelled=cancelled, oauth=self.oauth)
         return StdioMcpSession(server, fallback_cwd=self._fallback_cwd, cancelled=cancelled)
 
     def invalidate_server(self, server_id: str) -> None:
@@ -1166,6 +1233,7 @@ class McpSessionManager:
             session.close()
 
     def close(self) -> None:
+        self.oauth.close()
         with self._lock:
             self._manager_generation += 1
             sessions = list(self._sessions.values())

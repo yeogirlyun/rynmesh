@@ -297,6 +297,71 @@ def test_edit_preserves_response_provenance_without_reviving_excluded_model_cont
     assert reply_again["context_epoch"] == 3 and reply_again["original_context_epoch"] == 1
 
 
+def test_interrupted_restart_task_continues_with_followup_or_resume_and_exposes_pending_steer(tmp_path):
+    runtime, model, tools, key = make_runtime(tmp_path, assistant("Resumed answer."), assistant("Continued after follow-up."))
+    row = runtime.create({"message": "Inspect the current node."})
+    runtime.store.transaction(lambda data: data["tasks"][row["id"]].update(
+        status="running", steps=16, elapsed_seconds=180.0,
+        in_flight={"kind": "model", "dispatched": True},
+    ))
+    restarted = AgentRuntime(AgentStore(tmp_path, key), model, tools, runtime.catalog)
+    restarted.reconcile()
+    interrupted = restarted.get(row["id"])
+    assert interrupted["status"] == "interrupted" and interrupted["error"] == "agent_node_restarted"
+    assert interrupted["allowed_actions"]["resume"]["enabled"] is True
+    assert interrupted["allowed_actions"]["steer"]["enabled"] is True
+    assert interrupted["allowed_actions"]["information"]["enabled"] is True
+
+    # Sending a follow-up message directly on an interrupted task continues it.
+    continued = restarted.add_message(row["id"], {
+        "message": "Continue from where it stopped and also check services.",
+        "intent": "information",
+        "expected_control_revision": interrupted["control_revision"],
+        "expected_goal_revision": interrupted["goal"]["revision"],
+    })
+    assert continued["status"] == "queued" and continued["error"] is None
+    assert continued["steps"] == 0 and continued["run_timing"]["elapsed_seconds"] == 0
+    advance(restarted)
+    done = restarted.get(row["id"])
+    assert done["status"] == "completed" and done["result"] == "Resumed answer."
+
+    # Mid-turn steer exposes pending_user_messages while in flight and settles on step completion.
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_complete(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return assistant("Steered response.")
+
+    model.complete = slow_complete
+    restarted.add_message(row["id"], {
+        "message": "Start second turn.",
+        "intent": "information",
+        "expected_control_revision": done["control_revision"],
+        "expected_goal_revision": done["goal"]["revision"],
+    })
+    failures = []
+    worker = threading.Thread(target=_run, args=(restarted, failures))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        running = restarted.get(row["id"])
+        steered = restarted.add_message(row["id"], {
+            "message": "Adjust mid-turn: focus on local API.",
+            "intent": "steer",
+            "expected_control_revision": running["control_revision"],
+            "expected_goal_revision": running["goal"]["revision"],
+        })
+        assert steered["pending_user_messages"][-1]["content"] == "Adjust mid-turn: focus on local API."
+    finally:
+        release.set()
+        worker.join(5)
+    assert not failures
+    settled = restarted.get(row["id"])
+    assert "pending_user_messages" not in settled
+    assert any(m.get("content") == "Adjust mid-turn: focus on local API." for m in settled["messages"])
+
+
 def _run(runtime, failures):
     try:
         runtime.run_once()

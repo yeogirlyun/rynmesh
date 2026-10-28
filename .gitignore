@@ -2,6 +2,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest-tmp/
+.pytest-peer-provider-*/
+.tmp/
+.tmp_chrome/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 .ruff_cache/
 .playwright-cli/
 .claude/

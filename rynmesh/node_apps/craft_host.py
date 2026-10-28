@@ -5,6 +5,7 @@ startup downloads or background workers. One editor per origin/port.
 """
 
 import argparse
+import contextvars
 import hashlib
 import json
 import mimetypes
@@ -15,6 +16,7 @@ import stat
 import tempfile
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 import certifi
@@ -37,6 +39,27 @@ REDIRECT_HOSTS = {
 
 class CraftError(ValueError):
     pass
+
+
+_PROGRESS_CALLBACK = contextvars.ContextVar("craft_progress_callback", default=None)
+
+
+@contextmanager
+def track_progress(callback):
+    token = _PROGRESS_CALLBACK.set(callback)
+    try:
+        yield
+    finally:
+        _PROGRESS_CALLBACK.reset(token)
+
+
+def report_progress(**fields):
+    callback = _PROGRESS_CALLBACK.get()
+    if callback is not None:
+        try:
+            callback(fields)
+        except Exception:
+            pass
 
 
 def specification(slug):
@@ -76,14 +99,29 @@ def download_to(url, path):
     )
     request = urllib.request.Request(url, headers={"User-Agent": "Rynmesh-Craft/1.0"})
     with opener.open(request, timeout=60) as response, Path(path).open("xb") as out:
-        if int(response.headers.get("Content-Length") or 0) > MAX_ARCHIVE:
+        total = int(response.headers.get("Content-Length") or 0)
+        if total > MAX_ARCHIVE:
             raise CraftError("craft_archive_limit")
+        total_bytes = total if total > 0 else None
+        report_progress(
+            phase="downloading",
+            downloaded_bytes=0,
+            total_bytes=total_bytes,
+            percent=0 if total_bytes else None,
+        )
         size = 0
-        while chunk := response.read(256 * 1024):
+        while chunk := response.read(64 * 1024):
             size += len(chunk)
             if size > MAX_ARCHIVE:
                 raise CraftError("craft_archive_limit")
             out.write(chunk)
+            percent = min(99, int(size * 100 // total_bytes)) if total_bytes else None
+            report_progress(
+                phase="downloading",
+                downloaded_bytes=size,
+                total_bytes=total_bytes,
+                percent=percent,
+            )
 
 
 def extract(archive_path, destination):
@@ -125,16 +163,18 @@ def extract(archive_path, destination):
     return candidates[0].parent
 
 
-def _location(cache, slug):
-    spec = specification(slug)
+def _location(cache, slug, spec=None):
+    spec = spec or specification(slug)
     return Path(cache).expanduser().resolve() / slug / spec["tag"]
 
 
-def _upstream_installed(cache, slug):
+def _upstream_installed(cache, slug, spec=None):
     """Verify every installed file before starting a server; never trust saved paths."""
-    spec = specification(slug)
-    root = _location(cache, slug)
+    spec = spec or specification(slug)
+    root = _location(cache, slug, spec)
     try:
+        if root.is_symlink() or root.parent.is_symlink() or (root / "payload").is_symlink():
+            raise ValueError
         raw = (root / "receipt.json").read_bytes()
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError
@@ -164,39 +204,72 @@ def _upstream_installed(cache, slug):
         raise CraftError("craft_build_not_verified") from None
 
 
-def installed(cache, slug):
+def installed(cache, slug, *, spec=None):
     """Verify the original release before selecting a separately pinned compatibility build."""
     from . import craft_compat
 
+    if spec is not None:
+        return _upstream_installed(cache, slug, spec)
     web = _upstream_installed(cache, slug)
     return craft_compat.installed(cache, slug) or web
 
 
-def install(cache, slug, *, download=download_to):
-    spec = specification(slug)
+def install(cache, slug, *, download=download_to, spec=None):
+    override = spec
+    spec = spec or specification(slug)
     if not spec["web"]:
         raise CraftError("craft_native_only")
-    root = _location(cache, slug)
+    root = _location(cache, slug, spec)
+    if root.is_symlink() or root.parent.is_symlink() or not root.resolve().is_relative_to(Path(cache).resolve()):
+        raise CraftError("plugin_unsafe_path")
     root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_transaction(root.parent / ".install.lock"):
         if root.exists():
-            web = installed(cache, slug)
+            web = installed(cache, slug, spec=override)
             return {"app": slug, "version": spec["tag"], "state": "ready", "web_dir": str(web)}
         stage = Path(tempfile.mkdtemp(prefix=".install-", dir=root.parent))
         os.chmod(stage, 0o700)
         try:
             archive = stage / "release.zip"
-            url = f"https://github.com/storytold/{slug}/releases/download/{spec['tag']}/{spec['web_asset']}"
+            url = spec.get("download_url") or f"https://github.com/storytold/{slug}/releases/download/{spec['tag']}/{spec['web_asset']}"
+            report_progress(phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
             download(url, archive)
-            if archive.stat().st_size > MAX_ARCHIVE or digest(archive) != spec["web_sha256"]:
+            archive_size = archive.stat().st_size
+            report_progress(phase="verifying", downloaded_bytes=archive_size, total_bytes=archive_size, percent=100)
+            if archive_size > MAX_ARCHIVE or digest(archive) != spec["web_sha256"]:
                 raise CraftError("craft_checksum_mismatch")
             payload = stage / "payload"
+            report_progress(
+                phase="installing",
+                downloaded_bytes=archive_size,
+                total_bytes=archive_size,
+                percent=100,
+                installed_files=0,
+                total_files=None,
+            )
             web = extract(archive, payload)
-            files = {
-                p.relative_to(payload).as_posix(): digest(p)
-                for p in payload.rglob("*")
-                if p.is_file()
-            }
+            payload_files = [p for p in payload.rglob("*") if p.is_file()]
+            total_files = len(payload_files)
+            report_progress(
+                phase="installing",
+                downloaded_bytes=archive_size,
+                total_bytes=archive_size,
+                percent=100,
+                installed_files=0,
+                total_files=total_files,
+            )
+            files = {}
+            for index, p in enumerate(payload_files, 1):
+                files[p.relative_to(payload).as_posix()] = digest(p)
+                if index == total_files or index % 20 == 0:
+                    report_progress(
+                        phase="installing",
+                        downloaded_bytes=archive_size,
+                        total_bytes=archive_size,
+                        percent=100,
+                        installed_files=index,
+                        total_files=total_files,
+                    )
             receipt = {
                 "app": slug,
                 "version": spec["tag"],
@@ -215,13 +288,13 @@ def install(cache, slug, *, download=download_to):
         "app": slug,
         "version": spec["tag"],
         "state": "ready",
-        "web_dir": str(installed(cache, slug)),
+        "web_dir": str(installed(cache, slug, spec=override)),
     }
 
 
-def create_editor(cache, slug, *, public_host="127.0.0.1"):
+def create_editor(cache, slug, *, public_host="127.0.0.1", spec=None):
     """Dedicated static origin: no node-app/control routes, state, token or cookies."""
-    web = installed(cache, slug)
+    web = installed(cache, slug, spec=spec)
     app = FastAPI(
         title=specification(slug)["name"], docs_url=None, redoc_url=None, openapi_url=None
     )

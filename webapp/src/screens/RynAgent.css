@@ -1362,12 +1362,93 @@
 /* ============================================================================
    Codex Desktop Conversation UI: User Bubble, Crisp Prose & Per-Turn Files
    ============================================================================ */
+.ra-workspace .ra-tasks {
+  padding: 14px 10px;
+  background: #f9f9f9;
+  border-right: 1px solid #eeeeee;
+  gap: 4px;
+}
+[data-theme="dark"] .ra-workspace .ra-tasks {
+  background: var(--pf-subtle);
+  border-right-color: var(--pf-line);
+}
+.ra-workspace .ra-tasks > .ra-new,
+.ra-workspace .ra-tasks > .ra-nav-automations {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #171717;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.ra-workspace .ra-tasks > .ra-new svg,
+.ra-workspace .ra-tasks > .ra-nav-automations svg {
+  color: #525252;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-tasks > .ra-new:hover,
+.ra-workspace .ra-tasks > .ra-nav-automations:hover {
+  background: #eeeeee;
+}
+.ra-workspace .ra-tasks > .ra-nav-automations.is-active {
+  background: #eaeaea;
+  color: #0d0d0d;
+  font-weight: 600;
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations {
+  color: var(--pf-text);
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new svg,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations svg {
+  color: var(--pf-muted);
+}
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-new:hover,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations:hover,
+[data-theme="dark"] .ra-workspace .ra-tasks > .ra-nav-automations.is-active {
+  background: var(--pf-selection);
+}
+.ra-workspace .ra-recent-heading {
+  margin: 14px 0 4px;
+  padding: 0 8px;
+  color: #8e8e93;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.ra-workspace .ra-chat {
+  position: relative;
+  background: #ffffff;
+}
+[data-theme="dark"] .ra-workspace .ra-chat {
+  background: var(--pf-panel);
+}
+.ra-workspace .ra-scroll {
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+.ra-workspace .ra-thread,
+.ra-workspace .ra-composer-area {
+  max-width: 760px;
+}
+
 .ra-workspace .ra-message,
 .ra-workspace .ra-result {
   font-size: 15px;
   line-height: 1.68;
   color: #0d0d0d;
   -webkit-font-smoothing: antialiased;
+  max-width: 100%;
 }
 .ra-workspace .ra-message p,
 .ra-workspace .ra-message li,
@@ -1394,6 +1475,125 @@
   color: #171717;
   font: 13px/1.4 ui-monospace, "Cascadia Code", Consolas, monospace;
 }
+
+/* Codex-style inline file/code links with solid micro-badge */
+.ra-workspace .ra-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 5px 1px 3px;
+  margin: 0 1px;
+  border-radius: 6px;
+  color: #0066cc;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-decoration: none;
+  vertical-align: baseline;
+  transition: background 0.12s ease;
+}
+.ra-workspace .ra-file-link:hover {
+  background: rgba(0, 102, 204, 0.08);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ra-workspace .ra-file-link-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 3.5px;
+  background: #0066cc;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-file-link > svg {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 0;
+  color: #0066cc;
+  flex-shrink: 0;
+}
+
+/* Codex minimalist horizontal-rule tables inside messages */
+.ra-workspace .ra-message table,
+.ra-workspace .ra-result table {
+  display: table;
+  width: 100%;
+  max-width: 100%;
+  margin: 14px 0 18px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.ra-workspace .ra-message th,
+.ra-workspace .ra-result th {
+  border: 0;
+  border-bottom: 1px solid #e5e5e5;
+  padding: 8px 12px 8px 0;
+  text-align: left;
+  font-weight: 600;
+  color: #0d0d0d;
+  background: transparent;
+}
+.ra-workspace .ra-message td,
+.ra-workspace .ra-result td {
+  border: 0;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 10px 12px 10px 0;
+  vertical-align: top;
+  color: #262626;
+}
+.ra-workspace .ra-message tr:last-child td,
+.ra-workspace .ra-result tr:last-child td {
+  border-bottom: 0;
+}
+[data-theme="dark"] .ra-workspace .ra-message th,
+[data-theme="dark"] .ra-workspace .ra-result th {
+  border-bottom-color: var(--pf-line);
+  color: var(--pf-text);
+}
+[data-theme="dark"] .ra-workspace .ra-message td,
+[data-theme="dark"] .ra-workspace .ra-result td {
+  border-bottom-color: var(--pf-line);
+  color: var(--pf-text);
+}
+
+/* Constrain inline images inside messages so they never overflow */
+.ra-workspace .ra-message img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.ra-workspace .ra-inline-image {
+  display: inline-flex;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 0;
+  margin: 6px 0;
+  overflow: hidden;
+  background: #f9f9f9;
+  cursor: zoom-in;
+  width: auto;
+  max-width: min(320px, 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.ra-workspace .ra-inline-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 240px;
+  object-fit: contain;
+}
+
 .ra-workspace .ra-message.ra-assistant,
 .ra-workspace .ra-thread .ra-result {
   margin: 14px 0 18px;
@@ -1410,7 +1610,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   max-width: 100%;
   margin: 20px 0 8px;
@@ -1418,6 +1618,7 @@
   background: transparent;
   border: 0;
   border-radius: 0;
+  scroll-margin-top: 20px;
 }
 .ra-workspace .ra-user-bubble {
   max-width: min(72%, 560px);
@@ -1455,6 +1656,28 @@
 .ra-workspace .ra-file-card:hover {
   background: #f3f3f3;
   border-color: #dcdcdc;
+}
+.ra-workspace .ra-file-hover-hint {
+  font-size: 12px;
+  color: #8e8e93;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.ra-workspace .ra-file-card:hover .ra-file-hover-hint {
+  opacity: 1;
+}
+.ra-workspace .ra-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 .ra-workspace .ra-file-icon {
   width: 38px;
@@ -1519,4 +1742,1379 @@
   .ra-workspace .ra-user-bubble {
     max-width: 90%;
   }
+}
+
+.ra-file-open-floating { position: fixed; bottom: auto; right: auto; width: 230px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; z-index: 1000; color: var(--pf-text); }
+.ra-file-card[draggable="true"] .ra-file-icon, .ra-file-card[draggable="true"] .ra-file-name { cursor: grab; }
+
+/* Interrupted & Paused Resume Banner + Codex Follow-Up Queue (`QueuedMessageList`) */
+.ra-workspace .ra-interrupted-banner,
+.ra-workspace .ra-paused-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ra-workspace button.ra-banner-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-queued-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #fafafa;
+}
+[data-theme="dark"] .ra-workspace .ra-queued-list {
+  background: var(--pf-subtle);
+  border-color: var(--pf-line);
+}
+.ra-workspace .ra-queued-paused {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  font-size: 12.5px;
+  color: #92400e;
+}
+[data-theme="dark"] .ra-workspace .ra-queued-paused {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--pf-text);
+}
+.ra-workspace button.ra-queued-resume-btn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ra-workspace .ra-queued-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ra-workspace .ra-queued-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid #f0f0f0;
+}
+[data-theme="dark"] .ra-workspace .ra-queued-item {
+  background: var(--pf-panel);
+  border-color: var(--pf-line);
+}
+.ra-workspace .ra-queued-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.ra-workspace .ra-queued-icon {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+.ra-workspace .ra-queued-text {
+  font-size: 13.5px;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ra-workspace .ra-queued-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+[data-theme="dark"] .ra-workspace .ra-queued-badge {
+  background: var(--pf-subtle);
+  color: var(--pf-muted);
+}
+.ra-workspace .ra-queued-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.ra-workspace button.ra-queued-steer-btn {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.ra-workspace .ra-queued-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 0;
+  font-size: 11.5px;
+  color: #6b7280;
+}
+.ra-workspace button.ra-queued-mode-toggle {
+  border: 0;
+  background: transparent;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  color: #2563eb;
+  cursor: pointer;
+}
+.ra-workspace button.ra-queue-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.ra-workspace .ra-message-steering .ra-user-bubble {
+  border: 1px dashed #9ca3af;
+  opacity: 0.92;
+}
+
+
+/* ============================================================================
+   Codex Multi-Agent / Subagents Stitch UI (4 Core Touchpoints)
+   ============================================================================ */
+
+.ra-layout:has(.ra-subagent-drawer) {
+  grid-template-columns: 240px minmax(0, 1fr) 400px;
+}
+.ra-tasks-collapsed .ra-layout:has(.ra-subagent-drawer) {
+  grid-template-columns: minmax(0, 1fr) 400px;
+}
+@media (max-width: 1120px) {
+  .ra-layout:has(.ra-subagent-drawer) {
+    grid-template-columns: 240px minmax(0, 1fr);
+  }
+  .ra-tasks-collapsed .ra-layout:has(.ra-subagent-drawer) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  .ra-layout:has(.ra-subagent-drawer),
+  .ra-tasks-collapsed .ra-layout:has(.ra-subagent-drawer) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ra-subagent-pixel-avatar {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.ra-subagent-avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+.ra-subagent-avatar-stack-item {
+  display: inline-flex;
+  margin-left: -4px;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 1px;
+}
+.ra-subagent-avatar-stack-item:first-child {
+  margin-left: 0;
+}
+
+/* 1. Top-Right Thread Summary Pill */
+.ra-workspace button.ra-subagent-header-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #1e293b;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+.ra-workspace button.ra-subagent-header-pill:hover,
+.ra-workspace button.ra-subagent-header-pill.is-open {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+.ra-workspace button.ra-subagent-header-pill.is-active {
+  border-color: #93c5fd;
+  background: #f0f9ff;
+}
+.ra-subagent-header-pill-label strong.is-running {
+  color: #0284c7;
+  font-weight: 600;
+}
+.ra-subagent-header-pill-chevron {
+  font-size: 11px;
+  color: #64748b;
+  margin-left: 2px;
+}
+
+/* Role Badges & Diff Stats */
+.ra-subagent-role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: #f1f5f9;
+  color: #475569;
+  flex-shrink: 0;
+}
+.ra-subagent-role-badge.is-worker {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.ra-subagent-role-badge.is-explorer {
+  background: #f3e8ff;
+  color: #6d28d9;
+}
+.ra-subagent-role-badge.is-awaiter {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.ra-subagent-diff-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.ra-subagent-diff-stat .is-add {
+  color: #16a34a;
+}
+.ra-subagent-diff-stat .is-del {
+  color: #dc2626;
+}
+.ra-subagent-diff-stat .is-zero {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+@keyframes raSubagentPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(14, 165, 233, 0.08);
+  }
+}
+
+.ra-subagent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.ra-subagent-dot.is-running {
+  background: #0ea5e9;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.2);
+  animation: raSubagentPulse 1.8s ease-in-out infinite;
+}
+.ra-subagent-dot.is-waiting {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+.ra-subagent-dot.is-completed {
+  background: #10b981;
+}
+
+/* 2. Main Chat Inline Subagent Action Group */
+.ra-subagent-inline-group {
+  margin: 10px 0 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #fafafa;
+  overflow: hidden;
+}
+.ra-workspace button.ra-subagent-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  text-align: left;
+}
+.ra-subagent-inline-chevron {
+  font-size: 10px;
+  color: #6b7280;
+  width: 12px;
+}
+.ra-subagent-inline-title {
+  flex: 1;
+}
+.ra-subagent-inline-meta {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.ra-subagent-inline-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+.ra-subagent-inline-row-wrap {
+  border-bottom: 1px solid #f1f5f9;
+}
+.ra-subagent-inline-row-wrap:last-child {
+  border-bottom: 0;
+}
+.ra-subagent-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+}
+.ra-workspace button.ra-subagent-inline-row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+}
+.ra-subagent-inline-chevron-sm {
+  font-size: 11px;
+  color: #94a3b8;
+  width: 10px;
+  flex-shrink: 0;
+}
+.ra-subagent-inline-row-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-subagent-inline-action-verb {
+  color: #374151;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.ra-subagent-inline-nick {
+  color: #0d0d0d;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.ra-subagent-inline-role-tag {
+  color: #6b7280;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.ra-subagent-inline-prompt-snippet {
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ra-workspace button.ra-subagent-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.ra-workspace button.ra-subagent-status-pill.is-running {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+.ra-workspace button.ra-subagent-status-pill.is-waiting {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+.ra-workspace button.ra-subagent-status-pill.is-completed {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #6b7280;
+}
+
+.ra-subagent-inline-expanded {
+  padding: 8px 14px 10px 34px;
+  background: #f8fafc;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 12px;
+}
+.ra-subagent-inline-expanded-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 6px;
+  color: #64748b;
+}
+.ra-subagent-scope-code {
+  margin-left: 4px;
+  padding: 1px 5px;
+  background: #e2e8f0;
+  border-radius: 4px;
+}
+.ra-subagent-inline-expanded-prompt {
+  color: #334155;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ra-subagent-inline-summary-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #f8fafc;
+  border-top: 1px solid #e5e7eb;
+  font-size: 12.5px;
+  color: #334155;
+  cursor: pointer;
+}
+.ra-subagent-inline-summary-footer:hover {
+  background: #f1f5f9;
+}
+.ra-subagent-inline-summary-text {
+  flex: 1;
+  font-weight: 500;
+}
+.ra-subagent-inline-summary-link {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* 3. Composer Background Subagents Bar */
+.ra-subagent-composer-bar {
+  margin-bottom: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.ra-subagent-composer-bar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+}
+.ra-workspace button.ra-subagent-composer-bar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+}
+.ra-subagent-composer-bar-title {
+  font-weight: 600;
+  color: #1e293b;
+}
+.ra-subagent-composer-bar-hint {
+  color: #64748b;
+  font-size: 11.5px;
+}
+.ra-subagent-composer-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ra-workspace button.ra-subagent-stop-all-btn {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.ra-workspace button.ra-subagent-stop-all-btn:hover {
+  background: #fee2e2;
+}
+
+.ra-subagent-composer-bar-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  max-height: 156px;
+  overflow-y: auto;
+}
+.ra-subagent-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 12px;
+}
+.ra-subagent-composer-row:last-child {
+  border-bottom: 0;
+}
+.ra-subagent-composer-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+.ra-subagent-composer-nick {
+  font-weight: 600;
+  color: #0f172a;
+  flex-shrink: 0;
+}
+.ra-subagent-composer-status {
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ra-subagent-composer-status.is-running {
+  color: #0284c7;
+}
+.ra-subagent-composer-status.is-waiting {
+  color: #d97706;
+}
+.ra-subagent-composer-status.is-completed {
+  color: #059669;
+}
+
+.ra-subagent-composer-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ra-workspace button.ra-subagent-mention-chip {
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ra-subagent-composer-model {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 4. Right-Side Subagents Drawer (Overview List + Drilldown Detail) */
+.ra-subagent-drawer {
+  order: 3;
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  max-width: 100%;
+  min-height: 0;
+  height: 100%;
+  border-left: 1px solid #e5e7eb;
+  background: #fafafa;
+  z-index: 20;
+}
+@media (max-width: 1120px) {
+  .ra-subagent-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
+  }
+}
+
+.ra-subagent-drawer-header,
+.ra-subagent-drawer-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+.ra-subagent-drawer-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+.ra-subagent-drawer-subtitle {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: #64748b;
+}
+.ra-workspace button.ra-subagent-close-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+  color: #64748b;
+}
+.ra-workspace button.ra-subagent-back-btn {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.ra-subagent-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ra-subagent-list-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ra-subagent-list-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.ra-subagent-group-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.ra-subagent-waiting-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 11px;
+}
+.ra-subagent-avg-time {
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+.ra-subagent-empty-card {
+  padding: 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.ra-subagent-overview-card {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: box-shadow 0.14s ease, border-color 0.14s ease;
+}
+.ra-subagent-overview-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.05);
+}
+.ra-subagent-overview-card.is-running {
+  border-left-color: #0ea5e9;
+}
+.ra-subagent-overview-card.is-waiting {
+  border-left-color: #f59e0b;
+}
+.ra-subagent-overview-card.is-completed {
+  border-left-color: #10b981;
+}
+
+.ra-subagent-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.ra-subagent-card-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ra-subagent-card-nick {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #0f172a;
+}
+.ra-subagent-card-path {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-subagent-card-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ra-subagent-card-timer {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #0284c7;
+}
+.ra-subagent-completed-time {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #059669;
+}
+.ra-subagent-completed-time.is-muted {
+  color: #64748b;
+}
+.ra-subagent-card-objective {
+  font-size: 12.5px;
+  color: #334155;
+  line-height: 1.45;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ra-subagent-card-progress-track {
+  height: 5px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  overflow: hidden;
+  margin-bottom: 7px;
+}
+.ra-subagent-card-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #0ea5e9;
+  transition: width 0.3s ease;
+}
+.ra-subagent-card-progress-fill.is-waiting {
+  background: #f59e0b;
+}
+.ra-subagent-waiting-pill {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.ra-subagent-card-step-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ra-subagent-card-chevron {
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.ra-subagent-card-step,
+.ra-subagent-card-summary {
+  font-size: 11.5px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Drilldown Detail View */
+.ra-subagent-drilldown-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+}
+.ra-subagent-drilldown-identity-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ra-subagent-drilldown-sep {
+  color: #cbd5e1;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.ra-subagent-drilldown-identity-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ra-subagent-drilldown-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ra-subagent-drilldown-nick {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.ra-subagent-drilldown-model {
+  font-size: 11.5px;
+  color: #64748b;
+}
+.ra-subagent-drilldown-path {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+.ra-subagent-drilldown-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #475569;
+  flex-shrink: 0;
+}
+.ra-subagent-drilldown-badge.is-running {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.ra-subagent-drilldown-badge.is-waiting {
+  background: #fef3c7;
+  color: #b45309;
+}
+.ra-subagent-drilldown-badge.is-completed {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.ra-subagent-detail-section {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+.ra-subagent-detail-section.is-final-reply {
+  border-color: #a7f3d0;
+  background: #f0fdf4;
+}
+.ra-subagent-detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+.ra-subagent-task-id {
+  font-size: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.ra-subagent-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ra-subagent-scope-pill {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.ra-subagent-scope-pill.is-readonly {
+  background: #f3e8ff;
+  border-color: #ddd6fe;
+  color: #6d28d9;
+}
+.ra-subagent-instructions-box {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #1e293b;
+  white-space: pre-wrap;
+}
+
+.ra-subagent-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ra-subagent-timeline-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ra-subagent-timeline-step-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: #64748b;
+}
+.ra-subagent-timeline-node {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.ra-subagent-node-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  color: #15803d;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ra-subagent-node-pulse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  border: 1px solid #7dd3fc;
+  flex-shrink: 0;
+}
+.ra-subagent-timeline-read-group,
+.ra-subagent-timeline-diff-card,
+.ra-subagent-timeline-thought,
+.ra-subagent-timeline-tool,
+.ra-subagent-timeline-live {
+  flex: 1;
+  min-width: 0;
+}
+.ra-subagent-timeline-empty {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 8px 0;
+}
+.ra-workspace button.ra-subagent-timeline-read-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #475569;
+  text-align: left;
+}
+.ra-subagent-read-toggle-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-subagent-read-toggle-action {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.ra-subagent-timeline-read-items {
+  padding: 6px 10px 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  color: #64748b;
+  border: 1px solid #f1f5f9;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+  background: #ffffff;
+}
+.ra-subagent-timeline-read-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ra-subagent-read-bullet {
+  color: #3b82f6;
+  font-size: 8px;
+  flex-shrink: 0;
+}
+.ra-subagent-read-prefix {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.ra-subagent-read-text {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-subagent-step-dur {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.ra-subagent-diff-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ra-subagent-timeline-diff-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  overflow: hidden;
+  background: #ffffff;
+}
+.ra-subagent-timeline-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ra-subagent-diff-path {
+  font-family: ui-monospace, monospace;
+  color: #0f172a;
+}
+.ra-subagent-unified-diff {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  max-height: 210px;
+  overflow: auto;
+}
+.ra-subagent-diff-line {
+  display: flex;
+  padding: 1px 8px;
+  white-space: pre;
+}
+.ra-subagent-diff-line.is-add {
+  background: #dcfce7;
+  color: #14532d;
+}
+.ra-subagent-diff-line.is-del {
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+.ra-subagent-diff-ln {
+  width: 28px;
+  color: #94a3b8;
+  text-align: right;
+  padding-right: 6px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.ra-subagent-diff-sign {
+  width: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ra-subagent-diff-code {
+  flex: 1;
+}
+
+.ra-subagent-timeline-thought,
+.ra-subagent-timeline-tool,
+.ra-subagent-timeline-live {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid #f1f5f9;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #475569;
+}
+.ra-subagent-tool-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ra-subagent-timeline-live {
+  border-color: #bae6fd;
+  background: linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%);
+  color: #0369a1;
+  font-weight: 500;
+}
+.ra-subagent-timeline-live-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+.ra-subagent-live-pill {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 10.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ra-subagent-final-reply-prose {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+.ra-subagent-final-reply-prose p {
+  margin: 0 0 8px;
+}
+.ra-subagent-final-reply-prose p:last-child {
+  margin-bottom: 0;
+}
+.ra-subagent-notif-details {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #047857;
+}
+.ra-subagent-notif-details summary {
+  cursor: pointer;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.ra-workspace pre.ra-subagent-notif-pre {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+}
+
+.ra-subagent-drawer-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+.ra-subagent-footer-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+.ra-subagent-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.ra-workspace button.ra-subagent-footer-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ra-workspace button.ra-subagent-footer-btn.is-primary {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+.ra-workspace button.ra-subagent-footer-btn.is-danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+/* Dark Theme Support for Codex Multi-Agent / Subagents UI */
+[data-theme="dark"] .ra-subagent-avatar-stack-item {
+  background: #0f172a;
+}
+[data-theme="dark"] .ra-workspace button.ra-subagent-header-pill {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+[data-theme="dark"] .ra-workspace button.ra-subagent-header-pill:hover,
+[data-theme="dark"] .ra-workspace button.ra-subagent-header-pill.is-open,
+[data-theme="dark"] .ra-workspace button.ra-subagent-header-pill.is-active {
+  background: #172554;
+  border-color: #1d4ed8;
+  color: #93c5fd;
+}
+[data-theme="dark"] .ra-subagent-inline-group,
+[data-theme="dark"] .ra-subagent-composer-bar,
+[data-theme="dark"] .ra-subagent-drawer {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+[data-theme="dark"] .ra-subagent-inline-rows,
+[data-theme="dark"] .ra-subagent-composer-bar-list,
+[data-theme="dark"] .ra-subagent-drawer-header,
+[data-theme="dark"] .ra-subagent-drawer-topbar,
+[data-theme="dark"] .ra-subagent-drilldown-identity,
+[data-theme="dark"] .ra-subagent-overview-card,
+[data-theme="dark"] .ra-subagent-detail-section,
+[data-theme="dark"] .ra-subagent-timeline-read-items,
+[data-theme="dark"] .ra-subagent-timeline-diff-card,
+[data-theme="dark"] .ra-subagent-drawer-footer {
+  background: #111827;
+  border-color: #1f2937;
+}
+[data-theme="dark"] .ra-subagent-inline-row-wrap,
+[data-theme="dark"] .ra-subagent-composer-row {
+  border-color: #1f2937;
+}
+[data-theme="dark"] .ra-workspace button.ra-subagent-inline-header,
+[data-theme="dark"] .ra-subagent-inline-nick,
+[data-theme="dark"] .ra-subagent-composer-bar-title,
+[data-theme="dark"] .ra-subagent-composer-nick,
+[data-theme="dark"] .ra-subagent-drawer-title,
+[data-theme="dark"] .ra-subagent-card-nick,
+[data-theme="dark"] .ra-subagent-drilldown-nick,
+[data-theme="dark"] .ra-subagent-diff-path,
+[data-theme="dark"] .ra-subagent-final-reply-prose {
+  color: #f1f5f9;
+}
+[data-theme="dark"] .ra-subagent-inline-action-verb,
+[data-theme="dark"] .ra-subagent-inline-expanded-prompt,
+[data-theme="dark"] .ra-subagent-inline-summary-footer,
+[data-theme="dark"] .ra-subagent-card-objective,
+[data-theme="dark"] .ra-subagent-detail-section-header,
+[data-theme="dark"] .ra-subagent-instructions-box,
+[data-theme="dark"] .ra-subagent-read-text {
+  color: #cbd5e1;
+}
+[data-theme="dark"] .ra-subagent-inline-expanded,
+[data-theme="dark"] .ra-subagent-inline-summary-footer,
+[data-theme="dark"] .ra-workspace button.ra-subagent-timeline-read-toggle,
+[data-theme="dark"] .ra-subagent-timeline-diff-header,
+[data-theme="dark"] .ra-subagent-timeline-thought,
+[data-theme="dark"] .ra-subagent-timeline-tool {
+  background: #1e293b;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+[data-theme="dark"] .ra-workspace button.ra-subagent-status-pill.is-completed {
+  background: #1e293b;
+  border-color: #334155;
+  color: #94a3b8;
+}
+[data-theme="dark"] .ra-subagent-detail-section.is-final-reply {
+  background: #062e22;
+  border-color: #065f46;
+}
+[data-theme="dark"] .ra-workspace pre.ra-subagent-notif-pre {
+  background: #022c22;
+  border-color: #065f46;
+  color: #a7f3d0;
+}
+[data-theme="dark"] .ra-subagent-diff-line.is-add {
+  background: rgba(22, 163, 74, 0.2);
+  color: #86efac;
+}
+[data-theme="dark"] .ra-subagent-diff-line.is-del {
+  background: rgba(220, 38, 38, 0.2);
+  color: #fca5a5;
 }

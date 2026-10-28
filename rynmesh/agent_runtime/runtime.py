@@ -19,6 +19,7 @@ from . import (
     automations,
     budget,
     credential_control,
+    data_policy,
     diagnostic_log,
     image_capabilities,
     knowledge,
@@ -30,6 +31,7 @@ from . import (
     projects,
     reasoning,
     results,
+    subagents,
     timing,
     tool_menu,
     verification,
@@ -79,17 +81,18 @@ RETRYABLE_MODEL_ERRORS = {"agent_inference_timeout", "agent_model_connection_fai
                           "agent_model_upstream_failed",
                           "agent_invalid_model_response", "agent_compaction_size_limit", "agent_compaction_incomplete"}
 PUBLIC_FIELDS = ("id", "client_request_id", "title", "model_id", "reasoning_effort", "status", "revision", "created_at", "updated_at",
-                 "messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
+                 "messages", "pending_user_messages", "events", "pending_approval", "steps", "result", "error", "limits", "permission_mode", "allowed_write_tools",
                  "model_destination", "local_execution", "project", "verification_evidence", "reconciliation", "archived", "result_refs", "file_artifact_revision",
                  "conversation_revision", "conversation_event_cursor", "source", "automation_id", "automation_run_id", "automation_kind",
-                 "latest_turn_is_silent_heartbeat", "automation_notification", *PUBLIC_STATE_FIELDS)
+                 "latest_turn_is_silent_heartbeat", "automation_notification", "parent_task_id", "subagent_ids", *PUBLIC_STATE_FIELDS)
 VISUAL_SUFFIXES = (".svg", ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp")
 
 
 def public_task(row: dict, *, summary: bool = False, settings: dict | None = None,
-                active_run: dict | None = None, monotonic_now: float | None = None) -> dict:
+                active_run: dict | None = None, monotonic_now: float | None = None,
+                data: dict | None = None) -> dict:
     synchronize(row)
-    result = copy.deepcopy({key: row[key] for key in PUBLIC_FIELDS if key in row and not (summary and key in {"messages", "events"})})
+    result = copy.deepcopy({key: row[key] for key in PUBLIC_FIELDS if key in row and not (summary and key in {"messages", "pending_user_messages", "events"})})
     # Metadata changes advance revision too; only an actual completed response
     # identifies a new completion for clients that were away from the task.
     result["completion_event_seq"] = next((item["seq"] for item in reversed(row.get("events", []))
@@ -98,9 +101,13 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     result["skills"] = [{key: value for key, value in skill.items() if key != "content"} for skill in row.get("skills", [])]
     result["budget"] = budget.public(row)
     result["run_timing"] = timing.snapshot(row, active_run=active_run, monotonic_now=monotonic_now)
+    if "_subagents_projection" in row:
+        result["subagents"] = copy.deepcopy(row["_subagents_projection"])
+    elif data is not None and row.get("subagent_ids"):
+        result["subagents"] = subagents.project_subagents_for_parent(data, row)
     if not summary:
         result["streaming"] = None
-    for message in result.get("messages", []):
+    for message in [*result.get("messages", []), *result.get("pending_user_messages", [])]:
         # Some providers require their opaque reasoning continuation field back.
         # Keep it encrypted internally; it is never an owner-facing transcript.
         message.pop("reasoning_content", None)
@@ -114,7 +121,7 @@ def public_task(row: dict, *, summary: bool = False, settings: dict | None = Non
     return result
 
 
-def detached(row: dict, *, summary: bool = False) -> dict:
+def detached(row: dict, *, summary: bool = False, data: dict | None = None) -> dict:
     """A row public_task may annotate without touching the store's cached copy.
 
     public_task deep-copies the fields it returns; it only writes run_state and
@@ -127,6 +134,8 @@ def detached(row: dict, *, summary: bool = False) -> dict:
                if not (summary and "budget" in row and key == "messages")}
     if "outcome" in shallow:
         shallow["outcome"] = copy.deepcopy(shallow["outcome"])
+    if data is not None and row.get("subagent_ids"):
+        shallow["_subagents_projection"] = subagents.project_subagents_for_parent(data, row)
     return shallow
 
 
@@ -260,8 +269,69 @@ class AgentRuntime(AgentLoop):
         return output_policy.context_budget(model, row["limits"].get("max_context_chars"),
                                             provenance=row.get("context_budget_provenance"))
 
+    def _business_specs(self, row=None):
+        if row is not None and getattr(self.tools, "supports_model_context", False) is True:
+            return self.tools.specs(context=self._execution_context(row))
+        return self.tools.specs()
+
+    def _policy_context(self, row):
+        destination = copy.deepcopy(row.get("model_destination") or {})
+        context = {"consumer_node_id": self.consumer_node_id, "model_destination": destination,
+                   "model_destination_verified": False}
+        inspect_destination = getattr(self.model, "data_policy_context", None)
+        if callable(inspect_destination):
+            try:
+                context.update(inspect_destination(row["model_id"], destination))
+            except (AgentError, ValueError, KeyError):
+                pass  # Unverifiable destinations never match an allowlist.
+        return context
+
+    def _admit_extension_policy(self, selected, snapshot, *, persist=True):
+        # This host-only callback is carried through ordinary and Code Mode calls.
+        # Persist before dispatch, even when the eventual tool call fails.
+        current = self.store.inspect(lambda data: copy.deepcopy(task(data, selected["id"])))
+        if (current.get("control_revision") != selected.get("control_revision")
+                or current["model_id"] != selected["model_id"]
+                or current.get("model_destination") != selected.get("model_destination")):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        context = self._policy_context(current)
+        merged = data_policy.merge_state(current.get("data_policy_state"), snapshot)
+        if not data_policy.allows_task(merged, context):
+            raise AgentToolRejected("agent_extension_model_not_allowed")
+        if not persist:
+            return
+        def update(data):
+            row = task(data, selected["id"])
+            if (row.get("control_revision") != current.get("control_revision")
+                    or row["model_id"] != current["model_id"]
+                    or row.get("model_destination") != current.get("model_destination")):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            state = data_policy.merge_state(row.get("data_policy_state"), snapshot)
+            if not data_policy.allows_task(state, context):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            changed = row.get("data_policy_state") != state
+            row["data_policy_state"] = state
+            automations.inherit_task_policy_in_tx(data, row)
+            if data_policy.memory_denied(state) or data_policy.task_requires_model_restriction(state):
+                from .memory import invalidate_task_policy_in_tx
+                invalidate_task_policy_in_tx(data, row)
+            if changed:
+                event(row, "data_policy_restricted", policy_revision=state["revision"])
+        self.store.transaction(update)
+
+    def extension_model_availability(self, model_id):
+        model = self._model_metadata(model_id)
+        if not model:
+            raise AgentError("agent_model_unavailable")
+        context = self._policy_context({"model_id": model_id, "model_destination": self._destination(model)})
+        extensions = getattr(self.tools, "extensions", None)
+        servers = extensions.store.list_enabled_mcp_servers_internal() if extensions else []
+        return {"servers": [{"id": server["id"], "name": server.get("name") or server["id"],
+                             "allowed": data_policy.allows(server.get("data_policy"), context)}
+                            for server in servers]}
+
     def _menu(self, row, *, business_specs=None, max_context_bytes=None):
-        business_specs = self.tools.specs() if business_specs is None else business_specs
+        business_specs = self._business_specs(row) if business_specs is None else business_specs
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in business_specs):
             raise AgentError("agent_tool_definition_changed")
         pinned = {**row, "messages": [message for message in row["messages"] if message["role"] == "user"],
@@ -276,17 +346,23 @@ class AgentRuntime(AgentLoop):
                                  if spec["function"]["name"].startswith("mcp__computer_use__computer_"))
             desktop = computer_use + desktop
         skill_tools = ("ryn_read_skill_file",) if any(isinstance(s, dict) and s.get("files") for s in (row.get("skills") or [])) else ()
+        resource_tools = (
+            ("ryn_list_resource_roots", "ryn_list_resources", "ryn_create_directory", "ryn_upload_resource_file", "ryn_create_text_file")
+            if (not row["scope"].get("resource_grants") and "selection" not in row["scope"]
+                and self._execution_context(row).get("resource_grants"))
+            else ()
+        )
         return tool_menu.project(business_specs, ALL_INTERNAL_SPECS, row.get("tool_menu"),
             max_context_bytes=max_context_bytes, authority_bytes=authority_bytes,
             epoch=row.get("context_epoch", 0), goal_revision=row["goal"]["revision"],
             # Pins need room; in small windows the earlier seeds still apply.
-            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools,
+            pinned_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect",) if row.get("project") else ()) + tool_menu.CORE_TOOLS + ("ryn_code_exec",) + desktop + skill_tools + resource_tools,
             initial_names=tool_menu.PLUGIN_DISCOVERY_TOOLS + (("ryn_project_inspect", "ryn_file_read", "ryn_file_search", "ryn_file_edit",
                            "ryn_shell_execute", "ryn_file_write", "ryn_file_list", "ryn_code_exec") if row.get("project") else
-                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools), authority_bytes
+                          ("ryn_shell_execute", "ryn_file_read", "ryn_file_search", "ryn_code_exec")) + desktop + skill_tools + resource_tools), authority_bytes
 
     def _specs(self, row=None) -> list:
-        specs = self.tools.specs()
+        specs = self._business_specs(row)
         if any(spec["function"]["name"] in ALL_INTERNAL_NAMES for spec in specs):
             raise AgentError("agent_tool_definition_changed")
         if row is not None:
@@ -305,13 +381,36 @@ class AgentRuntime(AgentLoop):
         for message in self._history(row):
             if message.get("role") == "tool" and isinstance(message.get("resource_origin"), dict) and "grant_id" in message["resource_origin"]:
                 origins[digest(message["resource_origin"])] = copy.deepcopy(message["resource_origin"])
-        return {"task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
+        model_destination = copy.deepcopy(row.get("model_destination") or {"catalog_model_id": row["model_id"], "provider_peer_id": "", "source_id": "", "destination_revision": ""})
+        resource_grants = copy.deepcopy(row["scope"]["resource_grants"])
+        egress_grants = copy.deepcopy(row["scope"]["egress_grants"])
+        if (not resource_grants and "selection" not in row["scope"]
+                and hasattr(self.tools, "default_scope")
+                and getattr(self.model, "supports_destination_binding", False) is True
+                and model_destination.get("destination_revision")):
+            try:
+                if self._current_destination(row["model_id"], require_bound=True) == model_destination:
+                    auto_scope = self.tools.default_scope(
+                        task_id=row["id"],
+                        owner_id=self.owner_id,
+                        consumer_node_id=self.consumer_node_id,
+                        model_destination=model_destination,
+                        scope_revision=row["scope_revision"],
+                    )
+                    if auto_scope.get("resource_grants"):
+                        resource_grants = auto_scope["resource_grants"]
+                        egress_grants = auto_scope["egress_grants"]
+            except Exception:
+                pass
+        return {**self._policy_context(row),
+                "_admit_extension_policy": lambda snapshot, persist=True: self._admit_extension_policy(row, snapshot, persist=persist),
+                "task_id": row["id"], "operation_id": operation_id, "owner_id": self.owner_id,
                 "consumer_node_id": self.consumer_node_id, "goal_revision": row["goal"]["revision"],
                 "control_revision": row["control_revision"], "scope_revision": row["scope_revision"],
                 "local_execution": copy.deepcopy(row.get("local_execution") or {}),
-                "model_destination": copy.deepcopy(row.get("model_destination") or {"catalog_model_id": row["model_id"], "provider_peer_id": "", "source_id": "", "destination_revision": ""}),
-                "resource_grants": copy.deepcopy(row["scope"]["resource_grants"]),
-                "egress_grants": copy.deepcopy(row["scope"]["egress_grants"]), "resource_origins": list(origins.values())}
+                "model_destination": model_destination,
+                "resource_grants": resource_grants,
+                "egress_grants": egress_grants, "resource_origins": list(origins.values())}
 
     @staticmethod
     def _requires_destination_binding(row: dict, context: dict) -> bool:
@@ -379,6 +478,7 @@ class AgentRuntime(AgentLoop):
             bound = model.get("expected_model_binding")
             if isinstance(bound, dict) and set(bound) in (
                     {"model_binding", "ai_permission", "consumer_peer_id"},
+                    {"model_binding", "external_permission", "consumer_peer_id"},
                     {"model_binding", "space_permission", "consumer_peer_id", "consumer_access_generation"}):
                 record = {**bound, "binding_verified": True, "peer_id": model.get("peer_id"),
                           "service_id": model.get("service_id")}
@@ -506,6 +606,19 @@ class AgentRuntime(AgentLoop):
         dispatched = False
         def _invoke_model(allowed):
             nonlocal dispatched
+            # Read live state, including restrictions added by overlapped reads.
+            state = self.store.inspect(lambda data: copy.deepcopy(task(data, row["id"]).get("data_policy_state")))
+            if not data_policy.allows_task(state, self._policy_context(row)):
+                raise AgentToolRejected("agent_extension_model_not_allowed")
+            if data_policy.task_requires_model_restriction(state):
+                if getattr(self.model, "supports_data_policy", False) is not True:
+                    raise AgentToolRejected("agent_extension_model_not_allowed")
+                options["data_policy_state"] = state
+                options["expected_destination"] = self._bound_destination(model)
+                if options["expected_destination"] != context["model_destination"]:
+                    raise AgentToolRejected("agent_extension_model_not_allowed")
+                if "conversation" in options:
+                    options["conversation"] += ":policy:" + str(state["revision"])
             dispatched = True
             return self.model.complete(
                 row["model_id"], dispatch_messages, specs, cancelled, on_event,
@@ -629,6 +742,10 @@ class AgentRuntime(AgentLoop):
             raise
         finally:
             usage = response.get("reported_usage", response.get("usage")) if isinstance(response, dict) else None
+            if isinstance(usage, dict) and isinstance(response, dict):
+                cached = response.get("cached_tokens")
+                if type(cached) is int and cached >= 0:
+                    usage = {**usage, "cached_tokens": cached}
             self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started)
 
     def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None):
@@ -684,10 +801,24 @@ class AgentRuntime(AgentLoop):
                 "source_artifacts": [source_artifact] if isinstance(source_artifact, dict) else [],
                 "linkage_out": linkage_out,
             }
-            response = self._complete(selected, messages, [], cancelled, lambda _event: None,
-                                      nested=True, stage="image_inspection", output_cap=1024,
-                                      request_id=nested_request_id,
-                                      image_context=nested_image_context)
+            for attempt in range(2):
+                try:
+                    response = self._complete(selected, messages, [], cancelled, lambda _event: None,
+                                              nested=True, stage="image_inspection",
+                                              output_cap=min(output_policy.configured_output(model), 16384),
+                                              request_id=nested_request_id,
+                                              image_context=nested_image_context)
+                    break
+                except AgentError as exc:
+                    if attempt == 0 and str(exc) in {
+                        "agent_invalid_model_response",
+                        "agent_model_busy",
+                        "agent_model_connection_failed",
+                        "agent_model_upstream_failed",
+                    } and not cancelled():
+                        nested_request_id = "req_" + uuid.uuid4().hex
+                        continue
+                    raise
             message = response.get("message") or {}
             valid_observation = (
                 isinstance(message.get("content"), str)
@@ -1205,17 +1336,26 @@ class AgentRuntime(AgentLoop):
     def list_tasks(self, archived: bool = False) -> list[dict]:
         if archived:
             data = self.store.read()
-            rows = [lifecycle.find(self.store, data, task_id) for task_id in data.get("archives", {})]
+            rows = [
+                lifecycle.find(self.store, data, task_id)
+                for task_id in data.get("archives", {})
+            ]
             stamp = time.monotonic()
-            return [public_task(row, summary=True, settings=data["settings"], active_run=self._task_run(row["id"]), monotonic_now=stamp)
-                    for row in sorted(rows, key=lambda row: row["created_at"], reverse=True)]
+            return [
+                public_task(row, summary=True, settings=data["settings"], active_run=self._task_run(row["id"]), monotonic_now=stamp, data=data)
+                for row in sorted(rows, key=lambda row: row["created_at"], reverse=True)
+                if not row.get("parent_task_id")
+            ]
 
         def view(data):
             # Summaries never include transcripts, so nothing else is copied.
             stamp = time.monotonic()
-            return [public_task(detached(row, summary=True), summary=True, settings=data["settings"],
-                                active_run=self._task_run(row["id"]), monotonic_now=stamp)
-                    for row in sorted(data["tasks"].values(), key=lambda row: row["created_at"], reverse=True)]
+            return [
+                public_task(detached(row, summary=True, data=data), summary=True, settings=data["settings"],
+                            active_run=self._task_run(row["id"]), monotonic_now=stamp, data=data)
+                for row in sorted(data["tasks"].values(), key=lambda row: row["created_at"], reverse=True)
+                if not row.get("parent_task_id")
+            ]
         return self.store.inspect(view)
 
     def get(self, task_id: str, since_revision: int | None = None) -> dict:
@@ -1223,21 +1363,21 @@ class AgentRuntime(AgentLoop):
             row = data["tasks"].get(task_id)
             if row is None:
                 return None
-            current = public_task(detached(row, summary=since_revision == row["revision"]), settings=data["settings"],
+            current = public_task(detached(row, summary=since_revision == row["revision"], data=data), settings=data["settings"],
                                   active_run=self._task_run(task_id), monotonic_now=time.monotonic(),
-                                  summary=since_revision == row["revision"])
+                                  summary=since_revision == row["revision"], data=data)
             current["streaming"] = self._stream_snapshot(row)
             if since_revision != row["revision"]:
                 return current
             # Unchanged since the caller's copy: only fields that move on their own.
             return {"id": task_id, "revision": row["revision"], "unchanged": True,
-                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming") if key in current}}
+                    **{key: current[key] for key in ("run_timing", "budget", "allowed_actions", "run_state", "streaming", "subagents") if key in current}}
         found = self.store.inspect(view)
         if found is not None:
             return found
         data = self.store.read()
         return public_task(lifecycle.find(self.store, data, task_id), settings=data["settings"],
-                           active_run=self._task_run(task_id), monotonic_now=time.monotonic())
+                           active_run=self._task_run(task_id), monotonic_now=time.monotonic(), data=data)
 
     def lifecycle(self, task_id: str, value: dict, operation: str) -> dict:
         with credential_control.gate(self.store, task_id):
@@ -1395,7 +1535,7 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_disabled")
             if (uses_default or default_binding) and data.get("settings_revision", 0) != configuration.get("settings_revision", 0):
                 raise AgentError("agent_settings_revision_conflict")
-            if len(data["tasks"]) >= 200 or sum(row["status"] not in TERMINAL for row in data["tasks"].values()) >= 16:
+            if len(data["tasks"]) >= 200 or sum(row["status"] not in TERMINAL and not row.get("parent_task_id") for row in data["tasks"].values()) >= 16:
                 raise AgentError("agent_task_limit")
             row = {"id": "agent_" + uuid.uuid4().hex, "client_request_id": request_id,
                    "request_fingerprint": fingerprint, "title": title.strip(), "model_id": model_id,
@@ -1467,13 +1607,26 @@ class AgentRuntime(AgentLoop):
             check_version(row, value, goal=intent is not None)
             if not data["settings"]["enabled"]:
                 raise AgentError("agent_disabled")
-            if intent is None and (row["status"] not in {"completed", "failed", "paused"} or row["in_flight"] or row["queue"] or row["pending_approval"] or row["pending_input"]):
+            resumable_interrupted = row["status"] == "interrupted" and (not row["in_flight"] or recoverable_read_in_flight(row)) and not ambiguous(row)
+            if intent is None and ((row["status"] not in {"completed", "failed", "paused"} and not resumable_interrupted) or (row["in_flight"] and not resumable_interrupted) or row["queue"] or row["pending_approval"] or row["pending_input"]):
                 raise AgentError("agent_task_busy")
             if intent is not None and not allowed_actions(row, data["settings"])[intent]["enabled"]:
                 raise AgentError("agent_operation_unresolved" if ambiguous(row) else "agent_invalid_transition")
             if len(row["events"]) >= 1000:
                 raise AgentError("agent_task_limit")
             effort = reasoning.validate(self._model_metadata(row["model_id"]), value["reasoning_effort"]) if "reasoning_effort" in value else None
+            if row["status"] == "interrupted" and row["in_flight"]:
+                if not recoverable_read_in_flight(row) or ambiguous(row):
+                    raise AgentError("agent_operation_unresolved")
+                flight = row["in_flight"]
+                err_code = row.get("error") or "agent_read_interrupted"
+                cleanup_ok, recovery = self._recover_read_operation_details(row, flight, error=err_code)
+                if not cleanup_ok:
+                    raise AgentError("agent_operation_unresolved")
+                if flight.get("effect") == "write":
+                    self._settle_interrupted_read(row, flight, err_code, recovery=recovery)
+                row["in_flight"] = None
+                row["approved"] = None
             # Recover old, unbound conversations when the owner continues them.
             # Never relocate an existing workspace or change an in-flight grant.
             if (not (row.get("local_execution") or {}).get("workspace_root")
@@ -1497,7 +1650,7 @@ class AgentRuntime(AgentLoop):
                 raise AgentError("agent_task_limit")
             memory_natural.stamp_single_owner_message_in_tx(data, message)
             row["skills"] = merged_skills
-            ended = row["status"] in {"completed", "failed"} or bool(row.get("turn_stopped"))
+            ended = row["status"] in {"completed", "failed", "interrupted"} or bool(row.get("turn_stopped"))
             if effort is not None:
                 # Running requests already own an immutable task snapshot.
                 # This preference starts with the next admitted request.
@@ -1509,14 +1662,39 @@ class AgentRuntime(AgentLoop):
                        latest_turn_is_silent_heartbeat=False, automation_run_id=None)
             row.setdefault("pending_user_messages", []).append(message)
             was_stopped = row.pop("turn_stopped", False)
-            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and intent is not None and not was_stopped}
-            if ended or intent is None or was_stopped:
+            row["pending_control"] = {"kind": "steer", "remain_paused": row["status"] == "paused" and bool(row.get("in_flight")) and intent is not None and not was_stopped}
+            if ended or intent is None or was_stopped or (row["status"] == "paused" and not row.get("in_flight")):
                 row.update(steps=0, elapsed_seconds=0.0)
             event(row, "goal_changed" if intent == "steer" else "information_added" if intent else "message_added", goal_revision=row["goal"]["revision"])
             close_queue(row, event, "agent_owner_changed")
             settle(row, event, data=data)
+            if row.get("subagent_ids") and "@" in content:
+                routed_ids: set[str] = set()
+                for token in re.findall(r"@([A-Za-z0-9_-]+)", content):
+                    tok_low = token.strip().lower()
+                    if not tok_low or tok_low in {"all", "*"}:
+                        continue
+                    try:
+                        matched = subagents.resolve_subagent_targets(data, row, token)
+                        for child in matched:
+                            cid = child.get("id")
+                            if not cid or cid in routed_ids:
+                                continue
+                            meta = child.get("subagent_meta") or {}
+                            nick_low = str(meta.get("nickname") or "").lower()
+                            tname_low = str(meta.get("task_name") or "").lower()
+                            if tok_low not in {nick_low, tname_low}:
+                                continue
+                            if not meta.get("closed"):
+                                routed_ids.add(cid)
+                                if child.get("status") == "running" or child.get("in_flight"):
+                                    subagents.send_message_in_tx(data, row, {"target": cid, "message": content})
+                                else:
+                                    subagents.followup_task_in_tx(data, row, {"target": cid, "prompt": content})
+                    except Exception:
+                        pass
             remember_request(row, value)
-            return public_task(row, settings=data["settings"])
+            return public_task(row, settings=data["settings"], data=data)
         return self.store.transaction(add)
 
     def _edit_message(self, task_id: str, value: dict, content: str, prepared=None, *, added_skills=None) -> dict:
@@ -1568,22 +1746,38 @@ class AgentRuntime(AgentLoop):
         return self.store.transaction(edit)
 
     def action(self, task_id: str, value: dict) -> dict:
-        if set(value) - {"action", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id"}:
+        if set(value) - {"action", "expected_revision", "expected_control_revision", "expected_goal_revision", "approval_id", "pending_input_id", "answers", "client_request_id", "subagent_id", "target"}:
             raise AgentError("agent_invalid_request")
         action = value.get("action")
 
         def apply(data):
             row = task(data, task_id)
             if request_replayed(row, value):
-                return public_task(row, settings=data["settings"])
-            if action not in {"pause", "stop", "cancel"}:
+                return public_task(row, settings=data["settings"], data=data)
+            if action not in {"pause", "stop", "cancel", "interrupt_subagent", "stop_all_subagents"}:
                 check_version(row, value, goal=action == "answer")
-            if action == "cancel":
+            if action == "interrupt_subagent":
+                target_id = str(value.get("subagent_id") or value.get("target") or "").strip()
+                if not target_id:
+                    raise AgentError("agent_invalid_request")
+                try:
+                    subagents.interrupt_agent_in_tx(data, row, {"target": target_id})
+                except AgentToolRejected as exc:
+                    raise AgentError(str(exc)) from None
+                remember_request(row, value)
+                return public_task(row, settings=data["settings"], data=data)
+            elif action == "stop_all_subagents":
+                subagents.interrupt_agent_in_tx(data, row, {"target": "all"})
+                remember_request(row, value)
+                return public_task(row, settings=data["settings"], data=data)
+            elif action == "cancel":
                 if row["status"] not in {"completed", "failed", "cancelled"}:
                     row.update(status="cancelled", pending_approval=None, approved=None, pending_input=None, pending_control={"kind": "cancel"})
                     event(row, "cancelled", operation_in_flight=bool(row["in_flight"]))
                     close_queue(row, event, "agent_cancelled")
                     settle(row, event, data=data)
+                    subagents.on_subagent_settled_in_tx(data, row)
+                    subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_cancel", close=True)
             elif action == "stop":
                 if ambiguous(row):
                     row["pending_control"] = {"kind": "stop"}
@@ -1600,6 +1794,8 @@ class AgentRuntime(AgentLoop):
                     event(row, "paused", operation_in_flight=bool(row["in_flight"]), reason="owner_stopped")
                     close_queue(row, event, "agent_cancelled")
                     settle(row, event, data=data)
+                    subagents.on_subagent_settled_in_tx(data, row)
+                    subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_stop", close=False)
             elif action == "pause":
                 row.pop("turn_stopped", None)
                 if ambiguous(row):
@@ -1608,16 +1804,18 @@ class AgentRuntime(AgentLoop):
                     row["pending_control"] = {"kind": "pause"}
                     event(row, "paused", operation_in_flight=True)
                     remember_request(row, value)
-                    return public_task(row, settings=data["settings"])
+                    return public_task(row, settings=data["settings"], data=data)
                 if row["status"] in {"paused", "completed", "failed", "cancelled", "interrupted"}:
                     remember_request(row, value)
-                    return public_task(row, settings=data["settings"])
+                    return public_task(row, settings=data["settings"], data=data)
                 if row["status"] not in {"queued", "running", "waiting_approval", "waiting_input"}:
                     raise AgentError("agent_invalid_transition")
                 row["status"] = "paused"
                 row["pending_control"] = {"kind": "pause"}
                 event(row, "paused", operation_in_flight=bool(row["in_flight"]))
                 settle(row, event, data=data)
+                subagents.on_subagent_settled_in_tx(data, row)
+                subagents.cascade_stop_subagents_in_tx(data, row, reason="owner_pause", close=False)
             elif action == "resume":
                 if row["status"] not in {"paused", "interrupted"}:
                     raise AgentError("agent_invalid_transition")
@@ -1637,6 +1835,11 @@ class AgentRuntime(AgentLoop):
                     row["in_flight"] = None
                     row["approved"] = None
                     settle(row, event, data=data)
+                if (row.get("steps", 0) >= (row.get("limits") or {}).get("max_steps", 16)
+                        or row.get("elapsed_seconds", 0.0) >= (row.get("limits") or {}).get("max_seconds", 180)):
+                    row.update(steps=0, elapsed_seconds=0.0, model_retry_count=0)
+                    row.pop("model_retry_authority", None)
+                    budget.new_round(row)
                 row["status"] = "waiting_input" if row["pending_input"] else "waiting_approval" if row["pending_approval"] else "queued"
                 row["error"] = None
                 event(row, "resumed")
@@ -1736,7 +1939,7 @@ class AgentRuntime(AgentLoop):
             else:
                 raise AgentError("agent_invalid_action")
             remember_request(row, value)
-            return public_task(row, settings=data["settings"])
+            return public_task(row, settings=data["settings"], data=data)
         return self.store.transaction(apply)
 
     def _recover_read_operation_details(
@@ -2099,6 +2302,7 @@ class AgentRuntime(AgentLoop):
                 row.update(status="interrupted", error="agent_write_outcome_unknown", approved=None, pending_approval=None)
                 self._schedule_reconciliation(row)
                 event(row, "interrupted", error=row["error"], ambiguous_write=True)
+                subagents.on_subagent_settled_in_tx(data, row)
             else:
                 if is_verified_read:
                     if read_cleanup_ok is None:
@@ -2117,6 +2321,7 @@ class AgentRuntime(AgentLoop):
                             continued=False,
                             cleanup_confirmed=False,
                         )
+                        subagents.on_subagent_settled_in_tx(data, row)
                         return
                     self._settle_interrupted_read(row, flight, code, recovery=recovery)
                 row["in_flight"] = None
@@ -2131,6 +2336,7 @@ class AgentRuntime(AgentLoop):
                 elif row["status"] in {"running", "queued"}:
                     row.update(status="failed", error=code, approved=None)
                     event(row, "failed", error=code)
+                subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(fail)
 
     def _operation_error(
@@ -2195,6 +2401,7 @@ class AgentRuntime(AgentLoop):
                     verification.finish(row, error=code)
                     event(row, "verification_finished", outcome=row["outcome"]["status"], error=code)
                     event(row, "completed")
+                    subagents.on_subagent_settled_in_tx(data, row)
             self.store.transaction(verification_failed)
             return
         if code in RETRYABLE_MODEL_ERRORS and not selected["queue"]:
@@ -2255,6 +2462,7 @@ class AgentRuntime(AgentLoop):
                 if error:
                     row.update(status="failed", error=error)
                     event(row, "failed", error=error, **extra_event)
+                    subagents.on_subagent_settled_in_tx(data, row)
                     return True
                 row.update(status="queued", error=None, model_retry_count=1, model_retry_authority=authority)
                 event(row, "model_retry_scheduled", error=code, retry_count=1, **extra_event)
@@ -2383,6 +2591,7 @@ class AgentRuntime(AgentLoop):
                     if code == "agent_time_limit" or code.endswith("_budget_exhausted"):
                         row.update(status="failed", error=code)
                         event(row, "failed", error=code)
+                        subagents.on_subagent_settled_in_tx(data, row)
                     else:
                         row["status"] = "queued"
                 settle(row, event, data=data)
@@ -2482,28 +2691,34 @@ class AgentRuntime(AgentLoop):
                     if budget.time_remaining(row) <= 0:
                         row.update(status="failed", error="agent_time_budget_exhausted")
                         event(row, "failed", error=row["error"])
+                        subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if row.get("model_retry_count", 0) and row.get("model_retry_authority") != model_retry_authority(data["settings"]):
                         row.update(status="failed", error="agent_permission_denied")
                         event(row, "failed", error=row["error"])
+                        subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if row["elapsed_seconds"] >= row["limits"]["max_seconds"]:
                         if row.get("verification"):
                             verification.finish(row, error="agent_time_limit")
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_time_limit")
                             event(row, "completed")
+                            subagents.on_subagent_settled_in_tx(data, row)
                             continue
                         row.update(status="failed", error="agent_time_limit")
                         event(row, "failed", error=row["error"])
+                        subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     if not row["queue"] and row["steps"] >= row["limits"]["max_steps"]:
                         if row.get("verification"):
                             verification.finish(row, error="agent_step_limit")
                             event(row, "verification_finished", outcome=row["outcome"]["status"], error="agent_step_limit")
                             event(row, "completed")
+                            subagents.on_subagent_settled_in_tx(data, row)
                             continue
                         row.update(status="failed", error="agent_step_limit")
                         event(row, "failed", error=row["error"])
+                        subagents.on_subagent_settled_in_tx(data, row)
                         continue
                     row["status"] = "running"
                     row["in_flight"] = {"kind": "verification" if row.get("verification") else "tool" if row["queue"] else "model", "dispatched": False,
@@ -2819,4 +3034,5 @@ class AgentRuntime(AgentLoop):
                 event(row, "verification_retry_scheduled", repair_count=row["verification_cycle"]["repairs"], goal_revision=row["goal"]["revision"])
             else:
                 event(row, "completed")
+                subagents.on_subagent_settled_in_tx(data, row)
         self.store.transaction(finish_check)

@@ -62,4 +62,22 @@
 .craft-center .craft-choice input[type="checkbox"] { min-height:16px; max-height:16px; min-width:16px; max-width:16px; padding:0; }
 .craft-dialog .craft-clear input[type="checkbox"] { min-height:16px; max-height:16px; min-width:16px; max-width:16px; padding:0; }
 .pf-dialog.craft-dialog h2 { font-size:20px; font-weight:500; letter-spacing:-.3px; }
+.craft-choice.is-installing { border:1px solid color-mix(in srgb,var(--craft-tool,var(--pf-text)) 35%,var(--craft-line)); background:color-mix(in srgb,var(--craft-tool,var(--pf-text)) 7%,var(--pf-panel)); }
+.craft-choice-status { margin-left:auto; margin-right:6px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:500; color:var(--craft-muted); background:color-mix(in srgb,var(--pf-text) 6%,var(--pf-panel)); white-space:nowrap; }
+.craft-choice-status.is-active { color:var(--craft-tool,var(--pf-text)); background:color-mix(in srgb,var(--craft-tool,var(--pf-text)) 14%,var(--pf-panel)); }
+.craft-choice:has(.craft-choice-status) input { margin-left:4px; }
+.craft-progress-card { margin:16px 0 8px; padding:12px 14px; border:1px solid var(--craft-line); border-radius:10px; background:var(--craft-stage); display:flex; flex-direction:column; gap:8px; }
+.craft-progress-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.craft-progress-meta { font-size:11px; color:var(--craft-muted); font-variant-numeric:tabular-nums; }
+.craft-progress-track { width:100%; height:6px; border-radius:999px; background:color-mix(in srgb,var(--pf-text) 12%,var(--pf-panel)); overflow:hidden; position:relative; }
+.craft-progress-fill { height:100%; border-radius:999px; background:var(--pf-text); transition:width 180ms ease; }
+.craft-progress-track.is-indeterminate .craft-progress-fill { width:38%; animation:craft-progress-slide 1.25s ease-in-out infinite; }
+@keyframes craft-progress-slide { 0% { transform:translateX(-100%); } 100% { transform:translateX(280%); } }
+.craft-progress-steps { display:flex; flex-wrap:wrap; gap:12px; font-size:11px; color:var(--craft-muted); }
+.craft-progress-steps span { display:inline-flex; align-items:center; gap:5px; opacity:.6; }
+.craft-progress-steps span::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.45; }
+.craft-progress-steps span.is-active { color:var(--craft-ink); font-weight:600; opacity:1; }
+.craft-progress-steps span.is-active::before { opacity:1; }
+.craft-progress-steps span.is-done { color:var(--pf-green,#0e9384); opacity:.95; }
+.craft-progress-steps span.is-done::before { opacity:1; }
 @media(max-width:620px) { .craft-center .craft-foot { margin-top:35px; }.pf-shell .craft-center h1 { font-size:26px; } }

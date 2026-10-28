@@ -60,9 +60,20 @@ def context(row, criterion):
     return output
 
 
+def _strip_live_usage(payload):
+    value = copy.deepcopy(payload)
+    if isinstance(value, dict):
+        for row in value.get("models", []):
+            if isinstance(row, dict):
+                row.pop("usage", None)
+                if isinstance(row.get("model_settings"), dict):
+                    row["model_settings"].pop("usage", None)
+    return value
+
+
 def expected(tools, receipt, prior, *, context, cancelled):
     """Patch only co-committed before/after fields; all other facts remain strict."""
-    result = copy.deepcopy(prior)
+    result = _strip_live_usage(prior)
     applied = []
     if receipt["tool"] not in READERS:
         return result, applied
@@ -109,7 +120,7 @@ def expected(tools, receipt, prior, *, context, cancelled):
 
 def compare(tools, receipt, prior, fresh, *, context, cancelled):
     expected_value, applied = expected(tools, receipt, prior, context=context, cancelled=cancelled)
-    actual = copy.deepcopy(fresh)
+    actual = _strip_live_usage(fresh)
     if applied and receipt["tool"] == "ryn_inspect_services":
         # Grant rows are a keyed collection; membership and every field remain
         # exact. Migration from the legacy grant file may change iteration order.

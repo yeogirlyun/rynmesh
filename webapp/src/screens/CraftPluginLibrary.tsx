@@ -1,26 +1,33 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, ArrowUpRight, Bot, Check, ChevronRight, Ellipsis, Info, Layers3, Plus, Search, ShieldCheck, Trash2, X } from "lucide-react";
+import type { ExtensionOverview } from "../domain/agentExtensions";
 import type { CraftCatalog, CraftPlugin } from "../domain/craftPlugins";
 import { isTauriDesktop } from "../domain/nodeUrl";
 import CraftPluginIcon from "./CraftPluginIcon";
 import "./craftPluginLibrary.css";
 
 type Props = {
-  catalog: CraftCatalog; busy: boolean;
+  catalog: CraftCatalog; extensionOverview?: ExtensionOverview | null; busy: boolean;
   onAdd: (ids?: string[]) => void; onOpen: (app: CraftPlugin) => void;
   onToggle: (app: CraftPlugin) => void; onDetails: (app: CraftPlugin) => void;
   onUninstall: (app: CraftPlugin) => void; onAgent: (app: CraftPlugin) => void;
 };
 
-export default function CraftPluginLibrary({ catalog, busy, onAdd, onOpen, onToggle, onDetails, onUninstall, onAgent }: Props) {
-  const { t } = useTranslation();
+export default function CraftPluginLibrary({ catalog, extensionOverview, busy, onAdd, onOpen, onToggle, onDetails, onUninstall, onAgent }: Props) {
+  const { t, i18n } = useTranslation();
+  const isZh = (i18n.resolvedLanguage || i18n.language || "en").toLowerCase().startsWith("zh");
+  const tx = (zh: string, en: string) => (isZh ? zh : en);
+  const rawExtPlugins = extensionOverview?.plugins ?? [];
+  const extPlugins = rawExtPlugins.filter(p => !p.builtin || (p.views?.length ?? 0) > 0);
   const text = (key: string, options?: Record<string, unknown>) => String(t(`craft.${key}`, options));
   const [view, setView] = useState<"installed" | "discover">("installed");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
-  const installed = catalog.plugins.filter(app => app.installed);
-  const available = catalog.plugins.filter(app => !app.installed);
+  const craftCatalogPlugins = catalog.plugins;
+  const installed = craftCatalogPlugins.filter(app => app.installed);
+  const available = craftCatalogPlugins.filter(app => !app.installed);
   const search = query.trim().toLocaleLowerCase();
   const filtered = (view === "installed" ? installed : available).filter(app =>
     (view !== "discover" || category === "all" || app.group === category) &&
@@ -32,6 +39,27 @@ export default function CraftPluginLibrary({ catalog, busy, onAdd, onOpen, onTog
       <div><div className="craft-library-eyebrow"><Layers3 size={14} />{text("yourToolkit")}</div><h1>{text("plugins")}</h1><p>{text("libraryIntro")}</p></div>
       <button className="craft-library-add" disabled={busy} onClick={() => onAdd()}><Plus size={17} />{text("add")}</button>
     </header>
+
+    {extPlugins.length > 0 && (
+      <section className="craft-library-ext-banner" aria-label={tx("Agent 扩展插件", "Agent extension plugins")}>
+        {extPlugins.map(plugin => (
+          <div key={plugin.id} className="craft-library-ext-row">
+            <div>
+              <strong>{plugin.title} · v{plugin.version}</strong>
+              <p>{plugin.description}</p>
+            </div>
+            <div className="craft-library-ext-actions">
+              <Link className="craft-library-open" to={plugin.web_app ? `/apps/extensions/${encodeURIComponent(plugin.id)}` : "/apps"}>
+                {tx("在应用中打开报表", "Open in Apps")}<ArrowUpRight size={15} />
+              </Link>
+              <Link className="craft-library-open" to={`/settings/extensions/plugins?plugin=${encodeURIComponent(plugin.id)}`}>
+                {tx("管理插件与连接", "Manage plugin & connection")}<ArrowRight size={15} />
+              </Link>
+            </div>
+          </div>
+        ))}
+      </section>
+    )}
 
     <div className="craft-library-toolbar">
       <nav className="craft-library-tabs" aria-label={text("pluginViews")}>

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { AgentMessage, AgentTask } from "../domain/rynAgent";
 import { agentTurnTiming } from "./rynAgentTiming";
 import { AgentFileContext } from "./RynAgentFileContext";
+import { extractSubagentCallBatchesFromMessages, isSubagentToolName, SubagentInlineGroup } from "./RynAgentSubagents";
 import "./RynAgentProgress.css";
 
 type TranscriptEntry = ({ kind: "message"; message: AgentMessage } | { kind: "progress"; messages: AgentMessage[] }) & { turnIndex: number };
@@ -23,6 +24,21 @@ export function groupAgentMessages(messages: AgentMessage[]): TranscriptEntry[] 
     } else entries.push({ kind: "message", message, turnIndex });
   }
   return entries;
+}
+
+function summarizeCallTarget(rawArgs: string): string {
+  try {
+    const args = JSON.parse(rawArgs || "{}") as Record<string, unknown>;
+    const candidate = args.path || args.file_path || args.command || args.cmd || args.query || args.url || "";
+    if (typeof candidate !== "string" || !candidate.trim()) return "";
+    const clean = candidate.trim().replaceAll("\\", "/");
+    if (clean.includes("/") && !clean.includes(" ")) {
+      return clean.split("/").slice(-2).join("/");
+    }
+    return clean.length > 48 ? `${clean.slice(0, 48)}…` : clean;
+  } catch {
+    return "";
+  }
 }
 
 /** Render once just after each user message so timing appears before the first
@@ -46,13 +62,30 @@ export function RynAgentTurnDuration({ task, turnIndex }: { task: AgentTask; tur
   const label = timing.seconds === null ? t("turnDurationUnknown")
     : t(`turnDuration_${timing.state}`, { duration: timing.approximate ? t("durationApproximate", { duration }) : duration });
   return <div className={`ra-turn-duration${timing.live ? " ra-turn-duration-live" : ""}`} title={t(timing.approximate ? "turnDurationEstimatedHelp" : "turnDurationHelp")}>
-    <Clock3 size={13} aria-hidden="true" /><span role="timer" aria-live="off" aria-label={t("turnDurationLabel")}>{label}</span>
+    <Clock3 size={12} aria-hidden="true" /><span role="timer" aria-live="off" aria-label={t("turnDurationLabel")}>{label}</span>
   </div>;
 }
 
-export default function RynAgentProgress({ messages, task }: { messages: AgentMessage[]; task?: AgentTask }) {
+export default function RynAgentProgress({
+  messages,
+  task,
+  onSelectSubagent,
+}: {
+  messages: AgentMessage[];
+  task?: AgentTask;
+  onSelectSubagent?: (subagentId: string) => void;
+}) {
   const { t } = useTranslation("rynAgent");
   const fileContext = useContext(AgentFileContext);
+  const subagentBatches = useMemo(
+    () => extractSubagentCallBatchesFromMessages(messages, task?.events || [], task?.subagents || []),
+    [messages, task?.events, task?.subagents],
+  );
+  const nonSubagentCount = messages.reduce(
+    (total, message) =>
+      total + (message.tool_calls?.filter(tc => !isSubagentToolName(tc.function.name)).length || 0),
+    0,
+  );
   const calls = new Set(messages.flatMap(message => message.tool_calls?.map(call => call.id) || []));
   const operations = new Set(task?.events.filter(event => typeof event.call_id === "string" && calls.has(event.call_id)).map(event => event.operation_id));
   const observations = fileContext?.files.filter(file =>
@@ -60,14 +93,31 @@ export default function RynAgentProgress({ messages, task }: { messages: AgentMe
     operations.has(file.operation_id || file.path.replaceAll("\\", "/").split("/").at(-2))) || [];
   const count = messages.reduce((total, message) => total + (message.tool_calls?.length || 0), 0);
   return <div className="ra-process">
-    <details className="ra-process-details">
-      <summary><ChevronRight size={14} /><span>{t("processDetails")}</span><small>{t("processCount", { count })}</small></summary>
-      <div className="ra-process-entries">{messages.map((message, index) => <div className="ra-process-entry" key={index}>
-        <div className="ra-process-tools">{message.tool_calls?.map(call => <span key={call.id}>{t(`tool_${call.function.name}`, { defaultValue: call.function.name })}</span>)}</div>
-      </div>)}{observations.length > 0 && <div className="ra-process-observations">{observations.map((file, index) =>
-        <button key={file.id} onClick={() => fileContext?.open(file)} disabled={file.status === "missing"}>
-          {t("computerObservation", { count: index + 1 })}
-        </button>)}</div>}</div>
-    </details>
+    {subagentBatches.map((batch, bIdx) => (
+      <SubagentInlineGroup
+        key={batch[0]?.callId || `subagent-batch-${bIdx}`}
+        calls={batch}
+        subagents={task?.subagents || []}
+        onSelectSubagent={onSelectSubagent}
+      />
+    ))}
+    {(nonSubagentCount > 0 || subagentBatches.length === 0) && (
+      <details className="ra-process-details">
+        <summary><ChevronRight size={13} /><span>{t("processDetails")}</span><small>{t("processCount", { count: nonSubagentCount > 0 ? nonSubagentCount : count })}</small></summary>
+        <div className="ra-process-entries">{messages.map((message, index) => {
+          const filteredCalls = message.tool_calls?.filter(call => !isSubagentToolName(call.function.name)) || [];
+          if (!filteredCalls.length) return null;
+          return <div className="ra-process-entry" key={index}>
+            <div className="ra-process-tools">{filteredCalls.map(call => {
+              const detail = summarizeCallTarget(call.function.arguments);
+              return <span key={call.id} className="ra-process-tool-chip">{t(`tool_${call.function.name}`, { defaultValue: call.function.name })}{detail && <em className="ra-process-tool-arg" aria-hidden="true">{detail}</em>}</span>;
+            })}</div>
+          </div>;
+        })}{observations.length > 0 && <div className="ra-process-observations">{observations.map((file, index) =>
+          <button key={file.id} onClick={() => fileContext?.open(file)} disabled={file.status === "missing"}>
+            {t("computerObservation", { count: index + 1 })}
+          </button>)}</div>}</div>
+      </details>
+    )}
   </div>;
 }

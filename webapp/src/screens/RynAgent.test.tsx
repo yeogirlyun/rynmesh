@@ -211,6 +211,7 @@ it.each(["unknown", "unsupported"] as const)("sends a configured CLI model direc
 });
 
 beforeEach(() => {
+  server.use(http.get("*/api/local/agent/extensions/model-availability", () => HttpResponse.json({ servers: [] })));
   sessionStorage.clear();
   localStorage.clear();
   agentTaskCache().clear();
@@ -1335,4 +1336,107 @@ it("evicts a selected task and returns to the new-task composer when the server 
   expect(screen.queryByText(/Could not refresh this task/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Could not load created files/)).not.toBeInTheDocument();
   expect(agentTaskCache().has("deleted-task")).toBe(false);
+});
+
+it("continues an interrupted restart conversation directly by sending a follow-up message", async () => {
+  await i18n.changeLanguage("en");
+  const interrupted = controlled({
+    status: "interrupted",
+    run_state: "ended",
+    error: "agent_node_restarted",
+    allowed_actions: {
+      resume: { enabled: true, reason: null, requires_control_revision: true },
+      steer: { enabled: true, reason: null, requires_control_revision: true },
+      information: { enabled: true, reason: null, requires_control_revision: true },
+    },
+  });
+  const backend = api(true, [interrupted]);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText(/The node restarted before this task finished/);
+  expect(screen.getByRole("button", { name: "Resume" })).toBeVisible();
+  const resumed = controlled({
+    revision: interrupted.revision + 1,
+    control_revision: 8,
+    status: "running",
+    run_state: "running",
+    error: null,
+    messages: [...interrupted.messages, { role: "user", content: "Continue from step 3" }],
+  });
+  const controlSpy = vi.spyOn(rynAgent, "control").mockImplementationOnce(async () => {
+    backend.setTasks([resumed]);
+    return resumed;
+  });
+  await user.type(screen.getByRole("textbox"), "Continue from step 3");
+  await user.click(screen.getByRole("button", { name: "Send information" }));
+  expect(controlSpy).toHaveBeenCalledWith("task-1", "messages", expect.objectContaining({ message: "Continue from step 3", intent: "information", expected_control_revision: 7 }));
+  await screen.findByRole("button", { name: "Pause" });
+});
+
+it("supports mid-turn steer vs queued follow-up messages and auto-dispatches queued messages on turn completion", async () => {
+  await i18n.changeLanguage("en");
+  localStorage.removeItem("ryn.agent.followUpQueueMode");
+  localStorage.removeItem("ryn.agent.queuedMessages");
+  const running = controlled({
+    status: "running",
+    run_state: "running",
+    pending_user_messages: [{ role: "user", content: "Already steering", ui: { kind: "steer", text: "Already steering" } }],
+  });
+  const backend = api(true, [running]);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Inspect devices" }));
+  await screen.findByText("Already steering");
+
+  await user.type(screen.getByRole("textbox"), "Wait until this turn ends");
+  await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
+  expect(screen.getByRole("textbox")).toHaveValue("");
+  const queueRegion = await screen.findByRole("region", { name: "Queued follow-up messages" });
+  expect(within(queueRegion).getByText("Wait until this turn ends")).toBeVisible();
+
+  await user.type(screen.getByRole("textbox"), "Second queued item");
+  await user.click(screen.getByRole("button", { name: "Queue follow-up" }));
+  expect(within(queueRegion).getByText("Second queued item")).toBeVisible();
+
+  const steered = controlled({
+    revision: running.revision + 1,
+    control_revision: 8,
+    status: "running",
+    run_state: "running",
+    messages: [...running.messages, { role: "user", content: "Wait until this turn ends" }],
+  });
+  const controlSpy = vi.spyOn(rynAgent, "control").mockImplementationOnce(async () => {
+    backend.setTasks([steered]);
+    return steered;
+  });
+  await user.click(within(queueRegion).getAllByRole("button", { name: "Steer queued message now" })[0]);
+  expect(controlSpy).toHaveBeenCalledWith("task-1", "messages", expect.objectContaining({ message: "Wait until this turn ends", intent: "steer" }));
+  await waitFor(() => expect(within(queueRegion).queryByText("Wait until this turn ends")).not.toBeInTheDocument());
+  expect(within(queueRegion).getByText("Second queued item")).toBeVisible();
+
+  const afterAutoDrain = controlled({
+    revision: steered.revision + 2,
+    control_revision: 10,
+    status: "running",
+    run_state: "running",
+    messages: [...steered.messages, { role: "assistant", content: "Turn 1 finished" }, { role: "user", content: "Second queued item" }],
+  });
+  controlSpy.mockImplementationOnce(async () => {
+    backend.setTasks([afterAutoDrain]);
+    return afterAutoDrain;
+  });
+  backend.setTasks([{
+    ...steered,
+    revision: steered.revision + 1,
+    control_revision: 9,
+    status: "completed",
+    run_state: "ended",
+    result: "Turn 1 finished",
+    messages: [...steered.messages, { role: "assistant", content: "Turn 1 finished" }],
+    allowed_actions: { information: { enabled: true, reason: null, requires_control_revision: true } },
+  }]);
+  window.dispatchEvent(new Event("focus"));
+  await waitFor(() => expect(controlSpy).toHaveBeenCalledTimes(2), { timeout: 3000 });
+  expect(controlSpy).toHaveBeenLastCalledWith("task-1", "messages", expect.objectContaining({ message: "Second queued item" }));
 });

@@ -228,7 +228,7 @@ def test_full_history_checkpoint_preserves_reasoning_content_and_oversized_read_
         "structuredContent": {
             "status": "ok",
             "hwnd": 267326,
-            "title": "Example - Google Chrome",
+            "title": "Example workspace - Google Chrome",
             "state_token": "st_chrome_1",
             "observation_id": "obs_1",
             "elements": [{"element_id": f"el_{i}", "name": "item" * 50} for i in range(120)],

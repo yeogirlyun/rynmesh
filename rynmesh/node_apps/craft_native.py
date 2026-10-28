@@ -320,11 +320,15 @@ def install_runtime(cache, slug, *, download=craft_host.download_to):
             os.chmod(stage, 0o700)
             archive = stage / "release.zip"
             url = f"https://github.com/storytold/{slug}/releases/download/{CRAFT[slug]['tag']}/{spec['asset']}"
+            craft_host.report_progress(phase="downloading", downloaded_bytes=0, total_bytes=None, percent=0)
             download(url, archive)
-            if (archive.stat().st_size > MAX_ARCHIVE
+            archive_size = archive.stat().st_size
+            craft_host.report_progress(phase="verifying", downloaded_bytes=archive_size, total_bytes=archive_size, percent=100)
+            if (archive_size > MAX_ARCHIVE
                     or craft_host.digest(archive) != spec["sha256"]):
                 raise CraftError("craft_agent_runtime_checksum_mismatch")
             payload = stage / "payload"
+            craft_host.report_progress(phase="installing", downloaded_bytes=archive_size, total_bytes=archive_size, percent=100)
             try:
                 _extract(archive, payload)
             except (zipfile.BadZipFile, OSError, RuntimeError):
