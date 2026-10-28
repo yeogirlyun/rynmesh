@@ -1,3 +1,4 @@
+import MyContent from "./screens/MyContent";
 import { tr, useUILanguage } from "./uiI18n";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
@@ -380,6 +381,7 @@ export function AppRoutes() {
           <Route path="friend-updates" element={<FriendFeed />} />
           <Route path="shared-reading" element={<SharedReading />} />
           <Route path="offline" element={<OfflineReading />} />
+          <Route path="library" element={<MyContent />} />
           <Route path="reading" element={<Reading />} />
           <Route path="items/:contentId" element={<ItemDetail />} />
           <Route

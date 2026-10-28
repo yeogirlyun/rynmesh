@@ -2856,6 +2856,10 @@ def create_app(store: RynmeshStore | None = None):
     # A packaged install serves the built webapp from the node itself, so the
     # whole product is one process on one port — no dev server, no npm.
     # Mounted LAST so every /api route above wins.
+    from .services.library_routes import install_library
+    install_library(app, home=active_store.home, imports=app.state.friends.content.imports,
+        consumption=app.state.consumption_store, digest=_digest_service, local_control=local_control)
+
     _mount_webui(app)
 
     return app

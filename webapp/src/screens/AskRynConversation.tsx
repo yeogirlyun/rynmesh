@@ -216,15 +216,16 @@ export default function PrivateAIChat() {
         let stored = (await history.list(key)).filter((row) => row.networkId === network);
         if (requestedId && !stored.some((row) => row.id === requestedId)) throw new Error("This conversation is unavailable for this provider and network. It has not been replaced by another history.");
         if ((!stored.length && !requestedId) || searchParams.get("new") === "1" || (!requestedId && (nasHandoff || searchParams.get("material")))) {
-          const material = searchParams.get("material");
-          if (material && client.mode === "live") await askHistory.context(material);
+          const materials = [...new Set(searchParams.getAll("material"))];
+          if (materials.length > 8) throw new Error("You can attach up to eight materials.");
+          if (client.mode === "live") await Promise.all(materials.map(id => askHistory.context(id)));
           const fresh = createConversation({
             serviceKey: key,
             serviceName: selected.service.model_alias,
             providerPeerId: selected.peer_id,
             networkId: network,
           });
-          if (material) fresh.contextIds = [material];
+          if (materials.length) fresh.contextIds = materials;
           stored = [await history.save(fresh), ...stored];
         }
         if (active) {

@@ -68,7 +68,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     { to: "/friends", label: tr("Friends"), icon: UserRound },
     { to: "/exchange", label: tr("Exchange"), icon: Box },
   ];
-  const explorePaths = ["/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
+  const explorePaths = ["/library", "/explore", "/digest", "/search-ask", "/publish", "/items/", "/reading", "/offline", "/search", "/shared-reading", "/friend-updates"];
   const inExplore = explorePaths.some((path) => location.pathname.startsWith(path));
   const inAgent = location.pathname === "/agent";
   const inFullWorkspace = inAgent || location.pathname.startsWith("/apps/extensions/");
@@ -83,7 +83,7 @@ export function PersonalShell({ children }: { children: ReactNode }) {
     ["/services/manage", t("nav.serviceSetup")],
   ];
   const sublinks = inExplore
-    ? [["/explore", t("nav.library")], ["/digest", t("nav.forYou")], ["/reading", tr("My reading")], ["/offline", tr("Offline reading")], ["/search", tr("Search")], ["/shared-reading", tr("Shared lists")], ["/friend-updates", tr("Friend updates")], ["/publish", t("nav.publish")]]
+    ? [["/explore", t("nav.library")], ["/library", tr("My Content")], ["/digest", t("nav.forYou")], ["/reading", tr("My reading")], ["/offline", tr("Offline reading")], ["/search", tr("Search")], ["/shared-reading", tr("Shared lists")], ["/friend-updates", tr("Friend updates")], ["/publish", t("nav.publish")]]
     : inServices
       ? serviceLinks
       : (location.pathname === "/peers" || location.pathname.startsWith("/devices/"))
