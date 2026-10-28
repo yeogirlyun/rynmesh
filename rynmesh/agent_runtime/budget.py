@@ -11,6 +11,33 @@ DEFAULT_LIMITS = {"max_total_model_calls": 128, "max_total_tool_calls": 256,
                   "max_total_tokens": 2000000, "max_total_seconds": 3600}
 RANGES = {"max_total_model_calls": (1, 1024), "max_total_tool_calls": (1, 4096),
           "max_total_tokens": (1000, 20000000), "max_total_seconds": (10, 86400)}
+DEFAULT_CACHED_INPUT_WEIGHT = 0.1
+PEER_CACHED_INPUT_WEIGHT = 1.0
+
+
+def infer_cached_input_weight(row: dict | None = None, model: dict | None = None) -> float:
+    """Return cached-input billing weight for the route (1.0 for peer routes, 0.1 for direct API routes)."""
+    if isinstance(model, dict):
+        src = str(model.get("source") or "").strip().lower()
+        if src == "peer":
+            return PEER_CACHED_INPUT_WEIGHT
+        if src:
+            return DEFAULT_CACHED_INPUT_WEIGHT
+    if isinstance(row, dict):
+        model_id = str(row.get("model_id") or "").strip().lower()
+        dest = row.get("model_destination") if isinstance(row.get("model_destination"), dict) else {}
+        cat_id = str(dest.get("catalog_model_id") or "").strip().lower()
+        dest_src = str(dest.get("source") or "").strip().lower()
+        if model_id.startswith("local/") or cat_id.startswith("local/") or (dest_src and dest_src != "peer"):
+            return DEFAULT_CACHED_INPUT_WEIGHT
+        if (
+            model_id.startswith("peer/")
+            or cat_id.startswith("peer/")
+            or dest_src == "peer"
+            or bool(dest.get("provider_peer_id"))
+        ):
+            return PEER_CACHED_INPUT_WEIGHT
+    return DEFAULT_CACHED_INPUT_WEIGHT
 
 
 def record_request_policy(row, policy):
@@ -120,7 +147,7 @@ def reserve(row, kind, stage, *, input_bound=0, output_bound=0, seconds_bound=No
     return copy.deepcopy(record)
 
 
-def settle(row, reservation_id, *, usage=None, elapsed_seconds=None):
+def settle(row, reservation_id, *, usage=None, elapsed_seconds=None, cached_input_weight=None):
     state = initialize(row)
     record = next((item for item in state["records"] if item["id"] == reservation_id), None)
     if record is None or record["status"] != "reserved":
@@ -134,8 +161,26 @@ def settle(row, reservation_id, *, usage=None, elapsed_seconds=None):
     if type(cached_val) is int and cached_val >= 0:
         record["cached_input_tokens"] = cached_val
     if record["kind"] == "model":
-        record["charged_tokens"] = sum(record[key] if record[key] is not None else record[bound] for key, bound in
-                                       (("input_tokens", "input_reservation"), ("output_tokens", "output_reservation")))
+        weight = (
+            float(cached_input_weight)
+            if isinstance(cached_input_weight, (int, float))
+            and not isinstance(cached_input_weight, bool)
+            and math.isfinite(cached_input_weight)
+            and 0.0 <= float(cached_input_weight) <= 1.0
+            else infer_cached_input_weight(row)
+        )
+        inp = record["input_tokens"]
+        out = record["output_tokens"] if record["output_tokens"] is not None else record["output_reservation"]
+        cached = record.get("cached_input_tokens")
+        if inp is not None and type(cached) is int and 0 < cached <= inp and weight < 1.0:
+            effective_input = (inp - cached) + math.ceil(cached * weight)
+            record["charged_tokens"] = effective_input + out
+            record["charge_basis"] = "cached_discounted"
+            record["cached_input_weight"] = weight
+        else:
+            record["charged_tokens"] = (inp if inp is not None else record["input_reservation"]) + out
+            record["charge_basis"] = "raw"
+            record["cached_input_weight"] = weight
     if isinstance(elapsed_seconds, (int, float)) and not isinstance(elapsed_seconds, bool) and math.isfinite(elapsed_seconds) and elapsed_seconds >= 0:
         record["elapsed_seconds"] = elapsed_seconds
         record["charged_seconds"] = elapsed_seconds

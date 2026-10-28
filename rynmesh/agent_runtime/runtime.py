@@ -722,6 +722,10 @@ class AgentRuntime(AgentLoop):
             self._record_image_request_linkage(row, linkage)
         return response
 
+    def _cached_input_weight(self, row: dict) -> float:
+        model = self._model_metadata(row.get("model_id", "")) if isinstance(row, dict) else None
+        return budget.infer_cached_input_weight(row, model if isinstance(model, dict) else None)
+
     def _meter_model(self, selected, invoke, *, input_bound, output_bound, nested=False, stage=None, can_reduce_output=True, output_policy_record=None):
         def admit(data):
             row = task(data, selected["id"])
@@ -729,7 +733,9 @@ class AgentRuntime(AgentLoop):
                     or not data["settings"]["enabled"]):
                 raise AgentToolRejected("agent_cancelled")
             state = budget.public(row)
-            available = state["limits"]["max_total_tokens"] - state["lifetime"]["charged_tokens"] - input_bound
+            max_tokens = state["limits"]["max_total_tokens"]
+            wrap_up_reserve = min(100000, max_tokens // 15) if nested and max_tokens >= 100000 else 0
+            available = max_tokens - wrap_up_reserve - state["lifetime"]["charged_tokens"] - input_bound
             if available <= 0 or (available < output_bound and not can_reduce_output):
                 raise AgentError("agent_token_budget_exhausted")
             flight = row.get("in_flight") or {}
@@ -771,23 +777,26 @@ class AgentRuntime(AgentLoop):
                 cached = response.get("cached_tokens")
                 if type(cached) is int and cached >= 0:
                     usage = {**usage, "cached_tokens": cached}
-            self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started)
+            self._settle_usage(selected["id"], reservation["id"], usage=usage, elapsed=0 if nested else time.monotonic() - started,
+                               cached_input_weight=self._cached_input_weight(selected))
 
-    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None):
+    def _settle_usage(self, task_id, reservation_id, *, usage=None, elapsed=None, cached_input_weight=None):
         def finish(data):
             row = data["tasks"].get(task_id)
             if row is not None:
-                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed)
+                weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
+                budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight)
         self.store.transaction(finish)
 
-    def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None):
+    def _settle_usage_batch(self, task_id, reservation_ids, *, usage=None, elapsed=None, cached_input_weight=None):
         if not reservation_ids:
             return
         def finish(data):
             row = data["tasks"].get(task_id)
             if row is not None:
+                weight = cached_input_weight if cached_input_weight is not None else self._cached_input_weight(row)
                 for reservation_id in reservation_ids:
-                    budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed)
+                    budget.settle(row, reservation_id, usage=usage, elapsed_seconds=elapsed, cached_input_weight=weight)
         self.store.transaction(finish)
 
     def _record_image_request_linkage(self, selected_row: dict, linkage: dict) -> None:
@@ -1681,6 +1690,57 @@ class AgentRuntime(AgentLoop):
                 # This preference starts with the next admitted request.
                 row["reasoning_effort"] = effort
             budget.new_round(row)
+            if ended:
+                b_state = budget.public(row)
+                b_limits = row["budget"]["limits"]
+                b_life = b_state["lifetime"]
+                auto_extended = {}
+                tok_threshold = min(250000, max(1000, b_limits["max_total_tokens"] // 8))
+                wrap_reason = (row.get("outcome") or {}).get("budget_wrap_up_reason")
+                if b_limits["max_total_tokens"] - b_life["charged_tokens"] <= tok_threshold or wrap_reason == "token_budget_low":
+                    new_tok = min(
+                        budget.RANGES["max_total_tokens"][1],
+                        max(b_limits["max_total_tokens"], b_life["charged_tokens"]) + budget.DEFAULT_LIMITS["max_total_tokens"],
+                    )
+                    if new_tok > b_limits["max_total_tokens"]:
+                        b_limits["max_total_tokens"] = new_tok
+                        auto_extended["max_total_tokens"] = new_tok
+                if b_limits["max_total_model_calls"] - b_life["charged_model_calls"] <= 0 or wrap_reason == "model_call_budget_low":
+                    new_mc = min(
+                        budget.RANGES["max_total_model_calls"][1],
+                        max(b_limits["max_total_model_calls"], b_life["charged_model_calls"]) + budget.DEFAULT_LIMITS["max_total_model_calls"],
+                    )
+                    if new_mc > b_limits["max_total_model_calls"]:
+                        b_limits["max_total_model_calls"] = new_mc
+                        auto_extended["max_total_model_calls"] = new_mc
+                if isinstance(row.get("outcome"), dict):
+                    row["outcome"].pop("budget_wrap_up_reason", None)
+                    row["outcome"].pop("budget_limited", None)
+                if b_limits["max_total_tool_calls"] - b_life["charged_tool_calls"] <= 0:
+                    new_tc = min(
+                        budget.RANGES["max_total_tool_calls"][1],
+                        max(b_limits["max_total_tool_calls"], b_life["charged_tool_calls"]) + budget.DEFAULT_LIMITS["max_total_tool_calls"],
+                    )
+                    if new_tc > b_limits["max_total_tool_calls"]:
+                        b_limits["max_total_tool_calls"] = new_tc
+                        auto_extended["max_total_tool_calls"] = new_tc
+                sec_threshold = min(60.0, max(5.0, b_limits["max_total_seconds"] * 0.1))
+                if budget.time_remaining(row) <= sec_threshold:
+                    new_sec = min(
+                        budget.RANGES["max_total_seconds"][1],
+                        int(math.ceil(max(b_limits["max_total_seconds"], b_life["charged_seconds"]))) + budget.DEFAULT_LIMITS["max_total_seconds"],
+                    )
+                    if new_sec > b_limits["max_total_seconds"]:
+                        b_limits["max_total_seconds"] = new_sec
+                        auto_extended["max_total_seconds"] = new_sec
+                if auto_extended:
+                    event(row, "budget_auto_extended", limits=copy.deepcopy(b_limits), extended=auto_extended, round=row["budget"]["round"])
+                if b_life["charged_tokens"] >= b_limits["max_total_tokens"]:
+                    raise AgentError("agent_token_budget_exhausted")
+                if b_life["charged_model_calls"] >= b_limits["max_total_model_calls"]:
+                    raise AgentError("agent_model_call_budget_exhausted")
+                if budget.time_remaining(row) <= 0:
+                    raise AgentError("agent_time_budget_exhausted")
             if intent != "information" or ended:
                 owner_update(row, message)
             row.update(approved=None, pending_approval=None, pending_input=None, result="",

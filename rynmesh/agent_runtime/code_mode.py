@@ -715,13 +715,44 @@ async function ensureBrowserServiceReady() {
 }
 
 function buildTabDecorator(userDecorateTab) {
+  const normPoint = (pt) => {
+    if (Array.isArray(pt) && pt.length >= 2) return [Number(pt[0]), Number(pt[1])];
+    if (pt && typeof pt === 'object' && typeof pt.x === 'number' && typeof pt.y === 'number') return [pt.x, pt.y];
+    return pt;
+  };
+  const normTarget = (target, extra) => {
+    if (Array.isArray(target) || (target && typeof target === 'object')) return normPoint(target);
+    if (target === undefined && extra && typeof extra === 'object') {
+      if (extra.point !== undefined) return normPoint(extra.point);
+      if (typeof extra.x === 'number' && typeof extra.y === 'number') return [extra.x, extra.y];
+    }
+    return target;
+  };
   return (tab) => {
     try {
       if (tab && tab.ax) {
+        if (typeof tab.ax.click === 'function' && !tab.ax.click._rynWrapped) {
+          const origClick = tab.ax.click.bind(tab.ax);
+          const wrappedClick = async (target, options) => origClick(normTarget(target, options), options);
+          wrappedClick._rynWrapped = true;
+          tab.ax.click = wrappedClick;
+        }
+        if (typeof tab.ax.scroll === 'function' && !tab.ax.scroll._rynWrapped) {
+          const origScroll = tab.ax.scroll.bind(tab.ax);
+          const wrappedScroll = async (target, direction, pages) => origScroll(normPoint(target), direction, pages);
+          wrappedScroll._rynWrapped = true;
+          tab.ax.scroll = wrappedScroll;
+        }
+        if (typeof tab.ax.drag === 'function' && !tab.ax.drag._rynWrapped) {
+          const origDrag = tab.ax.drag.bind(tab.ax);
+          const wrappedDrag = async (from, to) => origDrag(normPoint(from), normPoint(to));
+          wrappedDrag._rynWrapped = true;
+          tab.ax.drag = wrappedDrag;
+        }
         if (typeof tab.ax.getState !== 'function') {
           tab.ax.getState = async (opts) => {
-            const state = await tab.ax.get('state', opts);
-            return { state, toString: () => state };
+            const state = String((await tab.ax.get('state', opts)) ?? '');
+            return Object.assign(new String(state), { state, toString: () => state, valueOf: () => state });
           };
         }
         if (typeof tab.ax.action !== 'function') {
@@ -730,7 +761,7 @@ function buildTabDecorator(userDecorateTab) {
               throw new Error('tab.ax.action expects an action object');
             }
             const kind = act.kind || act.type;
-            const idx = act.element_index ?? act.target ?? act.index;
+            const idx = normTarget(act.element_index ?? act.target ?? act.index, act);
             if (kind === 'click') return await tab.ax.click(idx, act);
             if (kind === 'set_value' || kind === 'setValue') return await tab.ax.setValue(idx, act.value ?? act.text ?? '');
             if (kind === 'type_text' || kind === 'typeText') return await tab.ax.typeText(idx, act.text ?? act.value ?? '');
@@ -738,7 +769,7 @@ function buildTabDecorator(userDecorateTab) {
             if (kind === 'scroll') return await tab.ax.scroll(idx, act.direction ?? 'down', act.pages);
             if (kind === 'select_text' || kind === 'selectText') return await tab.ax.selectText(idx, act.text, act);
             if (kind === 'paste') return await tab.ax.paste(idx, act.text ?? '', act);
-            if (kind === 'drag') return await tab.ax.drag(act.from, act.to);
+            if (kind === 'drag') return await tab.ax.drag(normPoint(act.from), normPoint(act.to));
             if (kind === 'perform_secondary_action') return await tab.ax.performSecondaryAction(idx, act.action);
             throw new Error('Unsupported ax action kind: ' + String(kind));
           };
@@ -887,6 +918,7 @@ function ensureSandboxInitialized() {
     error: (...args) => sandbox.text(...args),
   });
   sandbox.setupBrowserRuntime = setupBrowserRuntimeWrapper;
+  sandbox.buildTabDecorator = buildTabDecorator;
   sandbox.__ryn_import = dynamicImportWrapper;
 
   vmContext = vm.createContext(sandbox, {
@@ -1072,6 +1104,12 @@ rl.on('close', () => {
   cleanupWorker().finally(() => process.exit(0));
 });
 """
+
+_NODE_HOST_SCRIPT = "\n".join(
+    line.strip()
+    for line in _NODE_HOST_SCRIPT.splitlines()
+    if line.strip() and not line.strip().startswith("//")
+)
 
 
 def sanitize_js_tool_name(name: str) -> str:
@@ -1646,7 +1684,6 @@ class CodeModeRunner:
                 continue
             if item.get("type") == "input_text" and isinstance(item.get("text"), str):
                 text_parts.append(item["text"])
-                content_items.append({"type": "input_text", "text": item["text"]})
             elif item.get("type") in {"input_image", "image"}:
                 img_url = item.get("image_url")
                 if isinstance(img_url, str) and img_url.startswith("data:image/") and ";base64," in img_url and local_tools is not None and hasattr(local_tools, "path"):

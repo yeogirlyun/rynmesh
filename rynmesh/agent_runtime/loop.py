@@ -248,6 +248,58 @@ class AgentLoop:
             if self._request_context_bytes(selected, messages, specs) > context_limit:
                 raise AgentError("agent_context_limit")
 
+            wrap_up_reason = None
+            if int(selected.get("steps") or 0) >= 1:
+                b_state = budget.public(selected)
+                b_limits = b_state["limits"]
+                b_life = b_state["lifetime"]
+                model_meta = (self._model_metadata(selected["model_id"]) or {}) if hasattr(self, "_model_metadata") else {}
+                est_policy = output_policy.select(model_meta, messages, specs)
+                est_input = int(est_policy["estimated_input_tokens"])
+                est_output = int(est_policy["effective_cap"])
+                can_reduce_out = getattr(self.model, "supports_output_token_limit", False) is True
+                min_turn_needed = est_input + (min(est_output, 1024) if can_reduce_out else est_output)
+                two_turns_needed = (2 * est_input) + (min(est_output, 4096) if can_reduce_out else (2 * est_output))
+                rem_tokens = int(b_limits["max_total_tokens"]) - int(b_life["charged_tokens"])
+                if rem_tokens >= min_turn_needed and rem_tokens < two_turns_needed:
+                    wrap_up_reason = "token_budget_low"
+                elif (
+                    int(b_limits["max_total_model_calls"]) >= 32
+                    and int(b_life["charged_model_calls"]) + 1 == int(b_limits["max_total_model_calls"])
+                ):
+                    wrap_up_reason = "model_call_budget_low"
+                elif (
+                    int(selected["limits"].get("max_steps") or 0) >= 32
+                    and int(selected.get("steps") or 0) + 1 == int(selected["limits"]["max_steps"])
+                ):
+                    wrap_up_reason = "step_budget_low"
+            if wrap_up_reason:
+                wrap_up_note = (
+                    f"Server budget wrap-up notice ({wrap_up_reason}): Remaining task budget is only sufficient for this final response. "
+                    "Do NOT call any tools in this turn. Summarize all progress, findings, URLs/paths discovered so far, "
+                    "and clearly list what remains so the user can send a follow-up message to continue."
+                )
+                injected = False
+                for idx in range(len(messages) - 1, -1, -1):
+                    msg = messages[idx]
+                    if isinstance(msg, dict) and msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+                        try:
+                            parsed_tool = json.loads(msg["content"])
+                            if isinstance(parsed_tool, dict):
+                                existing_note = parsed_tool.get("server_note")
+                                parsed_tool["server_note"] = f"{existing_note}\n{wrap_up_note}" if existing_note else wrap_up_note
+                                Candidate_msgs = [*messages[:idx], {**msg, "content": encoded(parsed_tool).decode()}, *messages[idx + 1:]]
+                                if self._request_context_bytes(selected, Candidate_msgs, specs) <= context_limit:
+                                    messages = Candidate_msgs
+                                    injected = True
+                                break
+                        except Exception:
+                            pass
+                if not injected:
+                    candidate_msgs = [*messages, {"role": "user", "content": wrap_up_note}]
+                    if self._request_context_bytes(selected, candidate_msgs, specs) <= context_limit:
+                        messages = candidate_msgs
+
             router_specs = [
                 *specs,
                 *(
@@ -437,23 +489,44 @@ class AgentLoop:
                 event(row, "model_response_completed", step=step, request_id=request_id,
                       finish_reason=finish_reason, tool_count=len(pending))
                 row["messages"].append({**message, "context_epoch": selected.get("context_epoch", 0)})
-                row["queue"] = pending
-                if streamed_results:
-                    if not reads.publish(row, streamed_results):
-                        raise AgentError("agent_owner_changed")
-                    consumed = {record["call"]["call_id"] for record in streamed_results}
-                    row["queue"] = [call for call in row["queue"] if call["call_id"] not in consumed]
+                if wrap_up_reason:
+                    for call in pending:
+                        skipped_res = {
+                            "status": "skipped",
+                            "not_executed": True,
+                            "no_mutation": True,
+                            "reason": f"budget_wrap_up:{wrap_up_reason}",
+                            "message": "Tool execution skipped because this turn is the final budget wrap-up turn.",
+                        }
+                        row["messages"].append({
+                            "role": "tool",
+                            "tool_call_id": call["call_id"],
+                            "content": encoded(skipped_res).decode(),
+                            "context_epoch": selected.get("context_epoch", 0),
+                        })
+                    row["queue"] = []
+                else:
+                    row["queue"] = pending
+                    if streamed_results:
+                        if not reads.publish(row, streamed_results):
+                            raise AgentError("agent_owner_changed")
+                        consumed = {record["call"]["call_id"] for record in streamed_results}
+                        row["queue"] = [call for call in row["queue"] if call["call_id"] not in consumed]
                 row["model_retry_count"] = 0
                 row.pop("model_retry_authority", None)
                 row.pop("rejected_response_note", None)
                 subagents.drain_subagent_notifications_in_tx(data, row)
                 event(row, "assistant", content=message["content"], tool_count=len(pending),
                       step=step, request_id=request_id, attempt=attempt, timing=timing)
-                event(row, "turn_decision", action=decision.action, reason=decision.reason, step=step)
-                if decision.action == "execute_tools":
+                effective_action = "complete" if wrap_up_reason else decision.action
+                effective_reason = f"budget_wrap_up:{wrap_up_reason}" if wrap_up_reason else decision.reason
+                event(row, "turn_decision", action=effective_action, reason=effective_reason, step=step)
+                if wrap_up_reason:
+                    event(row, "budget_wrap_up", reason=wrap_up_reason, step=step, skipped_tool_calls=len(pending))
+                if effective_action == "execute_tools":
                     row.pop("answer_continuation", None)
                     row["status"] = "queued"
-                elif decision.action == "continue":
+                elif effective_action == "continue":
                     # A transport output limit is not an answer boundary. Keep the
                     # partial turn and continue under the existing task budget.
                     row["messages"].append({"role": "assistant", "content":
@@ -474,18 +547,39 @@ class AgentLoop:
                     prefix = continuation.get("text", "") if (continuation.get("goal_revision") == row["goal"]["revision"] and
                         continuation.get("context_epoch") == row.get("context_epoch", 0)) else ""
                     answer = prefix + message["content"]
+                    if wrap_up_reason and not answer.strip():
+                        answer = (
+                            "已到达本轮任务预算上限，已自动为你保存当前进度并暂停工具调用。"
+                            "你可以直接发送「继续」自动补充下一轮额度并接着往下执行。"
+                        )
+                    if wrap_up_reason and pending:
+                        row["messages"].append({
+                            "role": "assistant",
+                            "content": answer,
+                            "context_epoch": selected.get("context_epoch", 0),
+                        })
                     if len(answer.encode()) > row["limits"]["max_output_chars"]:
                         raise AgentError("agent_output_limit")
                     row.update(status="completed", result=answer)
                     # Independent verification is an explicit optional feature.
                     # Normal turns end here; no hidden reviewer or repair loop.
-                    if row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
+                    if not wrap_up_reason and row.get("verify_text_responses") and hasattr(self.tools, "verification_specs") and hasattr(self.tools, "verify"):
                         verification.begin(row, self.tools.verification_specs())
                         row["status"] = "queued"
                         event(row, "verification_started", goal_revision=row["goal"]["revision"])
                     else:
-                        row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
-                            uncertainties=["No independent goal assessment was requested."])
+                        if wrap_up_reason:
+                            row["outcome"].update(
+                                status="budget_limited",
+                                budget_limited=True,
+                                budget_wrap_up_reason=wrap_up_reason,
+                                summary=answer,
+                                assessment_requested=False,
+                                uncertainties=[f"Soft-landing wrap-up triggered ({wrap_up_reason}). Send a follow-up message to continue."],
+                            )
+                        else:
+                            row["outcome"].update(status="unverified", summary=answer, assessment_requested=False,
+                                uncertainties=["No independent goal assessment was requested."])
                         event(row, "completed")
                         automations.settle_automation_turn_in_tx(self.store, data, row)
                         subagents.on_subagent_settled_in_tx(data, row)

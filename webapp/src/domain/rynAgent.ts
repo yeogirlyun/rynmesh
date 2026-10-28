@@ -115,7 +115,7 @@ export interface AgentTool { name: string; title: string; effect: "read" | "writ
 export interface AgentSkill { id: string; version: string; title: string; description: string; }
 export interface AgentPreferences { revision: number; items: Array<{ id: string; text: string }>; }
 export interface AgentBudgetLimits { max_total_model_calls: number; max_total_tool_calls: number; max_total_tokens: number; max_total_seconds: number; }
-export interface AgentBudgetUsage { model_calls: number | null; tool_calls: number | null; charged_model_calls?: number; charged_tool_calls?: number; legacy_usage_unknown?: boolean; total_tokens: number | null; charged_tokens: number; charged_seconds: number; active_seconds: number | null; cost: number | null; usage_complete: boolean; unsettled_operations: number; }
+export interface AgentBudgetUsage { model_calls: number | null; tool_calls: number | null; charged_model_calls?: number; charged_tool_calls?: number; legacy_usage_unknown?: boolean; input_tokens?: number | null; output_tokens?: number | null; cached_input_tokens?: number | null; known_input_tokens?: number; known_output_tokens?: number; known_cached_input_tokens?: number; total_tokens: number | null; charged_tokens: number; charged_seconds: number; active_seconds: number | null; cost: number | null; usage_complete: boolean; unsettled_operations: number; }
 export interface AgentBudget { limits: AgentBudgetLimits; round: number; lifetime: AgentBudgetUsage; current_round: AgentBudgetUsage; }
 export interface AgentRunTiming {
   recorded_seconds: number | null;

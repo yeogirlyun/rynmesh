@@ -23,7 +23,7 @@ _MODEL_FIELDS = ("id", "name", "source", "source_id", "source_name", "model_id",
 _LIMITS = ("max_steps", "max_seconds", "max_context_chars", "max_output_chars")
 _STATES = {"queued", "running", "paused", "waiting_input", "waiting_approval", "completed", "cancelled", "failed", "interrupted"}
 _RUN_STATES = _STATES | {"pausing", "reconciling", "ended"}
-_OUTCOMES = {"unverified", "verified", "partial", "not_achieved", "unknown"}
+_OUTCOMES = {"unverified", "verified", "partial", "not_achieved", "unknown", "budget_limited"}
 _ERROR_GUIDANCE = {
     "agent_workspace_required": ("choose_workspace", "No working directory is bound to this task. The owner must select a working directory in task settings; a chat answer containing a path does not configure it.", "/agent"),
     "agent_workspace_changed_new_task_required": ("choose_workspace", "The working directory changed. The owner must explicitly rebind this task to the new directory before continuing.", "/agent"),

@@ -364,4 +364,124 @@ def test_cached_tokens_extraction_across_deepseek_openai_anthropic_and_budget(tm
     b = runtime.get(task["id"])["budget"]
     assert b["lifetime"]["cached_input_tokens"] == 896
     assert b["lifetime"]["known_cached_input_tokens"] == 896
-    assert b["lifetime"]["charged_tokens"] == 1050
+    assert b["lifetime"]["total_tokens"] == 1050
+    # Direct API route discounts cached input tokens at 10%: (1000 - 896) + ceil(896 * 0.1) + 50 = 104 + 90 + 50 = 244
+    assert b["lifetime"]["charged_tokens"] == 244
+
+    # Local catalog model with provider_peer_id populated in model_destination still gets 0.1 weight
+    local_dest_row = {
+        "limits": {"max_seconds": 30},
+        "steps": 0,
+        "elapsed_seconds": 0,
+        "model_id": "local/src-fc320104c4ec4113-7d963f65d1ed",
+        "model_destination": {
+            "catalog_model_id": "local/src-fc320104c4ec4113-7d963f65d1ed",
+            "provider_peer_id": "local-self-peer-id",
+            "source_id": "src-fc320104c4ec4113",
+            "destination_revision": "rev1",
+        },
+    }
+    local_res = budget.reserve(local_dest_row, "model", "main", input_bound=1200, output_bound=100)
+    budget.settle(local_dest_row, local_res["id"], usage={"input_tokens": 1000, "output_tokens": 50, "cached_tokens": 896}, elapsed_seconds=1.0)
+    local_b = budget.public(local_dest_row)
+    assert local_b["lifetime"]["total_tokens"] == 1050
+    assert local_b["lifetime"]["charged_tokens"] == 244
+
+    # Peer route does NOT discount cached input tokens (weight = 1.0)
+    peer_row = {"limits": {"max_seconds": 30}, "steps": 0, "elapsed_seconds": 0, "model_id": "peer/node1:gpt-5"}
+    peer_res = budget.reserve(peer_row, "model", "main", input_bound=1200, output_bound=100)
+    budget.settle(peer_row, peer_res["id"], usage={"input_tokens": 1000, "output_tokens": 50, "cached_tokens": 896}, elapsed_seconds=1.0)
+    peer_b = budget.public(peer_row)
+    assert peer_b["lifetime"]["total_tokens"] == 1050
+    assert peer_b["lifetime"]["charged_tokens"] == 1050
+
+
+def test_proactive_soft_landing_wrap_up_and_user_continuation_auto_renewal(tmp_path):
+    # Step 1 calls a tool and uses enough tokens that only 1 turn's worth of token budget remains.
+    # Step 2 should proactively enter soft-landing wrap-up, skip any tool_calls returned by the model,
+    # pair them with not_executed tool results, and complete with outcome status 'budget_limited'.
+    step1_resp = assistant(name="inspect_service", args={"service_id": "svc"})
+    step1_resp.update(
+        usage={"input_tokens": 7000, "output_tokens": 500},
+        reported_usage={"input_tokens": 7000, "output_tokens": 500},
+    )
+    step2_resp = assistant("Here is the progress summary so far.", name="inspect_service", args={"service_id": "svc2"})
+    step2_resp.update(
+        usage={"input_tokens": 1000, "output_tokens": 100},
+        reported_usage={"input_tokens": 1000, "output_tokens": 100},
+    )
+    step3_resp = assistant("Completed after user continuation.")
+    step3_resp.update(
+        usage={"input_tokens": 1000, "output_tokens": 100},
+        reported_usage={"input_tokens": 1000, "output_tokens": 100},
+    )
+
+    runtime, model, tools, _ = make_runtime(tmp_path, step1_resp, step2_resp, step3_resp)
+    row = runtime.create({"message": "Inspect services", "budget_limits": {"max_total_tokens": 25000}})
+    advance(runtime, 4)
+    wrapped = runtime.get(row["id"])
+    assert wrapped["status"] == "completed"
+    assert wrapped["outcome"]["status"] == "budget_limited"
+    assert "Here is the progress summary so far." in wrapped["result"]
+    # Only step 1's tool call was executed; step 2's tool call was skipped during wrap-up!
+    assert len(tools.calls) == 1
+    assert any(ev.get("type") == "budget_wrap_up" and ev.get("skipped_tool_calls") == 1 for ev in wrapped["events"])
+
+    # Now user sends "继续" via add_message -> budget limit is auto-extended without resetting lifetime usage
+    resumed = runtime.add_message(row["id"], {"message": "继续", "expected_revision": wrapped["revision"]})
+    assert resumed["budget"]["limits"]["max_total_tokens"] > 25000
+    assert resumed["budget"]["lifetime"]["charged_tokens"] == 8600
+    assert any(ev.get("type") == "budget_auto_extended" for ev in resumed["events"])
+    advance(runtime, 4)
+    final = runtime.get(row["id"])
+    assert final["status"] == "completed"
+    assert final["result"] == "Completed after user continuation."
+    assert final["budget"]["lifetime"]["charged_tokens"] == 9700
+
+
+def test_code_mode_tab_ax_decorator_and_output_dedup(tmp_path):
+    from types import SimpleNamespace
+    from rynmesh.agent_runtime import code_mode
+
+    runner = code_mode.CodeModeRunner(SimpleNamespace(local=None, specs=lambda: [], metadata=lambda _n: {}))
+    script = """
+    const clicked = [];
+    const fakeTab = {
+      ax: {
+        get: async (what) => "10 button Login\\n20 text field Username",
+        click: async (target, opts) => { clicked.push(target); return { ok: true, target }; },
+        scroll: async (target, dir, pages) => ({ target, dir, pages }),
+        drag: async (from, to) => ({ from, to }),
+      }
+    };
+    const dec = buildTabDecorator();
+    dec(fakeTab);
+    const st = await fakeTab.ax.getState();
+    await fakeTab.ax.click({ x: 688, y: 122 });
+    await fakeTab.ax.action({ kind: "click", point: { x: 100, y: 200 } });
+    await fakeTab.ax.action({ kind: "click", x: 300, y: 400 });
+    const dragRes = await fakeTab.ax.action({ kind: "drag", from: { x: 1, y: 2 }, to: { x: 3, y: 4 } });
+    text("Hello once");
+    return {
+      sliceOk: st.slice(0, 9) === "10 button",
+      includesOk: st.includes("Login"),
+      statePropOk: st.state.includes("Username"),
+      clicked,
+      dragRes,
+    };
+    """
+    res = runner.execute(
+        {"code": script},
+        operation_id="op_ax_test",
+        cancelled=lambda: False,
+        context={"task_id": "t_ax", "context_epoch": 0, "scope_revision": 1},
+    )
+    assert res["status"] == "completed", res
+    rv = res["return_value"]
+    assert rv["sliceOk"] is True
+    assert rv["includesOk"] is True
+    assert rv["statePropOk"] is True
+    assert rv["clicked"] == [[688, 122], [100, 200], [300, 400]]
+    assert rv["dragRes"] == {"from": [1, 2], "to": [3, 4]}
+    assert res["output"] == "Hello once"
+    assert res["content_items"] == []
