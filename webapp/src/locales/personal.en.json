@@ -474,7 +474,7 @@
   "messagesEncryptedConversation": "Encrypted conversation",
   "messagesLoadingConversation": "Loading conversation",
   "messagesNoMessagesYet": "No messages yet",
-  "messagesSayHelloMessagesAreSealedForThisPeerOnly": "Say hello — messages are sealed for this peer only.",
+  "messagesSayHelloMessagesAreSealedForThisPeerOnly": "Say hello. Messages are sealed for this peer only.",
   "messagesAttach": "Attach",
   "messagesTypeAMessage": "Type a message",
   "messagesSend": "Send",
@@ -512,5 +512,17 @@
   "addDeviceStep2": "Choose Add device, then Join an existing space",
   "addDeviceStep3": "Paste this invitation and select Join space",
   "serviceCountShare_one": "{{count}} service",
-  "serviceCountShare_other": "{{count}} services"
+  "serviceCountShare_other": "{{count}} services",
+  "messagesSealedForEachDeviceOnly": "Sealed for each device only",
+  "messagesSearchDevices": "Search devices",
+  "messagesConversationsWithFriendsAreOnTheFriendsPage": "Conversations with friends are on the [link]Friends[/link] page.",
+  "messagesOpenDevices": "Open Devices",
+  "messagesAddAnotherComputerFromDevicesToStartAConversation": "Add another computer from Devices to start a conversation.",
+  "messagesCopyDeviceId": "Copy device ID",
+  "messagesAttachAFile": "Attach a file",
+  "messagesDelivered": "Delivered",
+  "messagesQueued": "queued",
+  "messagesDeliveredWhenComesOnline": "delivered when {{name}} comes online",
+  "messagesQueuedViaTheNetworkMailboxDeliveredWhenThePeerComesOnline": "Queued via the network mailbox; delivered when the peer comes online",
+  "messagesEnterToSendShiftEnterForANewLine": "Enter to send · Shift + Enter for a new line"
 }
