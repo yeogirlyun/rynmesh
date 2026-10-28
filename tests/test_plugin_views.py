@@ -359,4 +359,23 @@ def test_manual_read_only_confirmation_still_requires_server_hint(host):
     assert not host.sent
 
 
+def test_generic_view_preserves_upstream_shape_and_filters_pagination_arguments(host):
+    legacy_view = {**VIEW, "id": "inventory-overview", "tool": "inventory_overview",
+                   "inputs": [{"name": "date", "label": "Date", "type": "date", "required": True, "default": "today"}],
+                   "columns": [{"key": "category", "label": "Category"}, {"key": "itemCount", "label": "Items", "format": "number"}],
+                   "summaryFields": [{"path": "data.totalItems", "label": "Total items", "format": "number"}]}
+    importer = ExtensionImportManager(host.store)
+    preview = importer.preview({"kind": "plugin", "path": str(package(host.tmp_path, legacy_view))})
+    importer.commit(preview["preview_id"], expected_revision=preview["expected_revision"])
+    host.store.set_plugin_enabled("bundle", True, expected_revision=plugin(host.store)["revision"])
+    legacy_schema = {"type": "object", "required": ["date"], "additionalProperties": False, "properties": {"date": {"type": "string"}}}
+    discover(host.store, schema=legacy_schema, read_only=True, name="inventory_overview", confirm=True)
+    host.result = {"isError": False, "structuredContent": {"success": True, "data": {
+        "totalItems": 500, "itemsByCategory": [{"category": "Books", "itemCount": 500}]}}}
+    p = plugin(host.store)
+    out = query_view(host.store, host.manager, "bundle", "inventory-overview", {
+        "arguments": {"date": "2026-10-23"}, "page": 1, "expected_instance_id": p["instance_id"], "expected_revision": p["revision"]})
+    assert host.sent == [("inventory_overview", {"date": "2026-10-23"})]
+    assert out["result"]["data"] == host.result["structuredContent"]["data"]
+    assert "pagination" not in out["result"]["data"]
 

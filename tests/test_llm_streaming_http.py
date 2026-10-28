@@ -129,7 +129,8 @@ def test_real_http_friend_stream_archives_once_and_reconnects_without_new_infere
             preview = consumer.state.ask_ryn.context.preview(row, question)
             task_id = "task_" + "a" * 32
             request = {"task_id": task_id, "conversation_id": row["id"], "expected_revision": row["revision"],
-                "question": question, "prompt_sha256": preview["prompt_sha256"], "ai_permission": preview["ai_permission"]}
+                "question": question, "prompt_sha256": preview["prompt_sha256"], "ai_permission": preview["ai_permission"],
+                "service_review_token": preview["service_review"]["token"]}
             started = client.post(urls[1] + "/api/local/ask/runs", json=request)
             assert started.status_code == 200, started.text
             consumer.state.ask_ryn.runs.run_once()

@@ -271,6 +271,7 @@ class HttpPeerClient:
 
     def post_json(
         self, path: str, payload: dict[str, Any], *, max_bytes: int = MAX_JSON_BYTES,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """POST one JSON object through the configured bounded Transport."""
         post = getattr(self.transport, "post_bytes", None)
@@ -287,7 +288,7 @@ class HttpPeerClient:
                 max_bytes=max_bytes,
                 # Stamped here as well as in the transport, so a third-party
                 # transport that forgets the credential still authenticates.
-                headers=stamp_network_key({"Content-Type": "application/json"}),
+                headers=stamp_network_key({**(headers or {}), "Content-Type": "application/json"}),
             )
         except TransportError as exc:
             if exc.reason == "too_large":
